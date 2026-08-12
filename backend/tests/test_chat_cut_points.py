@@ -151,12 +151,18 @@ class TestACommandTurnCannotBeSpokenTo:
 
 
 class TestSendDuringACommandTurn:
-    """The 06:28-06:30 sequence, end to end: the message must not be recorded
-    against the compact run, because a message in the log that nothing will ever
-    read is worse than one the client still holds."""
+    """The 06:28-06:30 sequence, end to end.
 
-    def test_the_message_is_deferred_and_not_recorded(self, thread, monkeypatch):
+    The message must not be recorded against the command run — a message in the
+    log that nothing will ever read is worse than one still waiting — and it
+    must not be left to the client either. On 2026-08-12 it was: the server
+    answered `deferred` and stored nothing, the browser held the only copy, and
+    two of the operator's messages ceased to exist when that tab moved on.
+    It is TAKEN, onto the thread's own queue."""
+
+    def test_the_message_is_queued_on_the_thread_not_left_to_the_browser(self, thread):
         from routes import chat as chat_routes
+        from services import chat_queue
 
         tid = thread["id"]
 
@@ -165,8 +171,29 @@ class TestSendDuringACommandTurn:
             return await chat_routes._send(tid, "and now do the other thing")
 
         out = asyncio.run(go())
-        assert out["deferred"] is True
+        assert out["queued"] is True
         assert out["injected"] is False
-        # Nothing was written to the log: the client still holds it, queued.
+        # Not in the transcript: it has not been said yet, and a command turn
+        # will never read it.
         contents = [m.get("content") for m in chat_store.get_thread(tid)["messages"]]
         assert "and now do the other thing" not in contents
+        # ...but it IS on the thread, on disk, where any device can see it and
+        # where the server will find it when this run ends.
+        assert [e["text"] for e in chat_queue.read(tid)] == ["and now do the other thing"]
+
+    def test_a_command_typed_during_any_turn_is_queued_too(self, thread):
+        """A command cannot be injected either: the CLI's command layer only
+        runs BETWEEN turns, so one sent mid-turn is swallowed with no user
+        message, no command and no error."""
+        from routes import chat as chat_routes
+        from services import chat_queue
+
+        tid = thread["id"]
+
+        async def go():
+            await build_streaming.claim_run(tid, "run-1", model="m", accepts_input=True)
+            return await chat_routes._send(tid, "/compact")
+
+        out = asyncio.run(go())
+        assert out["queued"] is True
+        assert [e["text"] for e in chat_queue.read(tid)] == ["/compact"]

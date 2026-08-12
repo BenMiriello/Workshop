@@ -62,11 +62,14 @@ export type TranscriptBlock =
       // out of nowhere the moment the server commits the message.
       attachments?: PendingSend["attachments"];
     }
-  // The context boundary a /clear left behind. Nothing else makes one.
-  | { kind: "cut"; key: string; count: number }
-  // A scope change the operator has since sent a message past. See
-  // withScopeNotes: client-side, not stored on the thread, anchored at the
-  // point in the log it actually happened.
+  // A context boundary. `clear` dropped what is behind it; `compact` replaced
+  // it with a summary. Both are read from the log's own `boundary` event, and
+  // both leave the transcript itself untouched: the cut is about what the MODEL
+  // is handed, never about what the operator can see.
+  | { kind: "cut"; key: string; count: number; mode: "clear" | "compact" }
+  // This chat was re-bound to another scope, read from the log's own `scope`
+  // event. It is where it happened, it survives a reload, and it is the same on
+  // every device — none of which was true when it was React state.
   | { kind: "scope"; key: string; to: string };
 
 /** Split a segment list at the cut points of the messages that interrupted it.
@@ -273,18 +276,25 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
   // Only the latest boundary draws a divider, and it draws where the boundary
   // event sits in the log — which is after everything it cut.
   let cutAt = -1;
-  let cutCount = 0;
+
   let messagesSoFar = 0;
 
   for (const ev of events) {
     if (ev.kind === "boundary") {
-      // A boundary from the removed folding path draws NOTHING. It hid messages
-      // behind a running summary that is no longer assembled into any prompt, so
-      // the server stopped honouring it and the divider must not claim a cut
-      // that is not happening. See chat_store._fold.
-      if (ev.mode !== "clear") continue;
+      // WHERE, from the log. WHETHER and WHICH KIND, from the server (below):
+      // the log records every boundary ever written, and the server ignores
+      // some of them. Drawing a divider for one the prompt does not honour is
+      // the transcript describing something that is not happening.
+      if (ev.mode !== "clear" && ev.mode !== "compact") continue;
       cutAt = out.length;
-      cutCount = messagesSoFar;
+
+      continue;
+    }
+    if (ev.kind === "scope") {
+      // Named by its scope KEY, resolved to a label by the renderer: the log
+      // records what the chat was re-bound to, not what one build happened to
+      // call it on screen.
+      out.push({ kind: "scope", key: `scope:${ev.seq}`, to: ev.to || "" });
       continue;
     }
     if (ev.kind !== "message") continue;
@@ -304,9 +314,13 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
     out.push(...replyBlocks(ev, interrupts));
   }
 
-  if (cutAt >= 0 && cutCount > 0) {
+  // The server's own answer, or nothing. `state.cut` is what it is APPLYING to
+  // the prompt, so the count and the wording both come from there; the log only
+  // says where in the order to draw it.
+  if (cutAt >= 0 && state.cut) {
     out.splice(cutAt, 0, {
-      kind: "cut", key: `cut:${cutCount}`, count: cutCount,
+      kind: "cut", key: `cut:${state.cut.count}`,
+      count: state.cut.count, mode: state.cut.mode,
     });
   }
 
@@ -384,24 +398,13 @@ export function composeTranscript(
   return out;
 }
 
-/** A durable-queue entry the server already refused, from a PAST attempt this
- *  tab no longer remembers as pending (the reducer's copy does not survive a
- *  reload — see useSendPipeline's queue.pushFailed).
- *
- *  It is stale, not upcoming, so it must not land where `selectTranscript`
- *  puts genuinely-queued text: after the live run. A failure from before
- *  "now" sinking below a turn that started after it read as the chat ignoring
- *  whatever came next — reported 2026-08-10 ("it's BELOW my more recent
- *  message and below the typing indicator"). It goes immediately before
- *  whatever is happening live instead — the newest point it can truthfully
- *  sit at without claiming to be part of what is running now. */
 /** The client ids the LOG already carries.
  *
- *  A send that fails is written to the durable queue so its text survives a
- *  reload (useMessageQueue invariant 1). A retry then reuses THE SAME client id
- *  on purpose, so if it lands, the server dedupes and the message is committed
- *  under the id the durable entry is still holding. From then on the durable
- *  entry is a GHOST: the message it stands for is in the transcript.
+ *  A failed send is mirrored to durable storage so its text survives a reload
+ *  (useSendOutbox). A retry then reuses THE SAME client id on purpose, so if it
+ *  lands, the server dedupes and the message is committed under the id the
+ *  durable entry is still holding. From then on that entry is a GHOST: the
+ *  message it stands for is in the transcript.
  *
  *  Nothing used to notice. `reconcilePending` drops the in-memory optimistic
  *  copy when the log carries its id, but the durable copy was only ever
@@ -430,51 +433,7 @@ export function withoutCommitted<T extends { clientId: string }>(
     : items;
 }
 
-export function withStaleFailures(
-  blocks: TranscriptBlock[],
-  staleFailed: {
-    clientId: string; text: string; error?: string;
-    // A send that failed and was reloaded still shows the files it carried, so
-    // the retry visibly re-sends the same message rather than a bare line.
-    attachments?: PendingSend["attachments"];
-  }[],
-): TranscriptBlock[] {
-  if (!staleFailed.length) return blocks;
-  const liveAt = blocks.findIndex((b) => b.kind === "live");
-  const insertAt = liveAt === -1 ? blocks.length : liveAt;
-  const extra: TranscriptBlock[] = staleFailed.map((q) => ({
-    kind: "pending", key: `stale:${q.clientId}`, clientId: q.clientId,
-    text: q.text, status: "failed",
-    ...(q.attachments?.length ? { attachments: q.attachments } : {}),
-    // WHY IT FAILED, carried across the reload with the text. It used to be
-    // dropped here, so a 403 or a 500 came back after a refresh reading "this
-    // message never reached the server" (UnsentNote's default) — the one
-    // sentence that is true of no diagnosed failure at all.
-    ...(q.error ? { error: q.error } : {}),
-  }));
-  return [...blocks.slice(0, insertAt), ...extra, ...blocks.slice(insertAt)];
-}
 
-/** A scope change the operator sent a message past, frozen at the seq the log
- *  had at the moment it was sent (Chat.tsx's `onSend`). Not stored on the
- *  thread — this is a client-side annotation of a rebind that already
- *  happened server-side, splices in the same way a stale failure does. */
-export type ScopeNote = { afterSeq: number; to: string };
-
-export function withScopeNotes(blocks: TranscriptBlock[], notes: ScopeNote[]): TranscriptBlock[] {
-  if (!notes.length) return blocks;
-  const out = blocks.slice();
-  // Back-to-front for the same reason composeTranscript anchors pending sends
-  // that way: notes are in the order they settled (non-decreasing afterSeq),
-  // so inserting the latest first keeps every earlier index still valid.
-  for (let i = notes.length - 1; i >= 0; i--) {
-    const n = notes[i];
-    out.splice(anchorIndex(out, n.afterSeq), 0, {
-      kind: "scope", key: `scope:${n.afterSeq}:${i}`, to: n.to,
-    });
-  }
-  return out;
-}
 
 /** Every committed message, flat, in log order. The context meter's local
  *  estimate and the "was this the first exchange" check read this; nothing

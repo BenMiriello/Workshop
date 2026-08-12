@@ -106,6 +106,11 @@ export function useThreadLog({
         events: page.events || [],
         lastSeq: page.last_seq || 0,
         activeRun: page.active_run ?? null,
+        queued: page.queued,
+        queueHeld: page.queue_held,
+        queueError: page.queue_error,
+        clearedThrough: page.cleared_through,
+        cutMode: page.cut_mode,
         requestedAt,
       });
       // A poll landed, so whatever this chat is showing is current.
@@ -157,6 +162,11 @@ export function useThreadLog({
           events: page.events || [],
           lastSeq: page.last_seq || 0,
           activeRun: page.active_run ?? null,
+          queued: page.queued,
+          queueHeld: page.queue_held,
+          queueError: page.queue_error,
+          clearedThrough: page.cleared_through,
+          cutMode: page.cut_mode,
           requestedAt,
         });
       } catch (e) {

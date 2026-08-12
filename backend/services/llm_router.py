@@ -673,7 +673,12 @@ def call_cloud(
     model: str = TIER_HAIKU,
     max_turns: int | None = None,
     timeout_s: float = 600,
-    cwd: str = os.environ.get("WORKSHOP_CHAT_CWD", str(Path.home())),
+    # None = "resolve it now" (paths.chat_cwd). Not a default expression: this is
+    # a function default, evaluated once at import, so the old
+    # `os.environ.get("WORKSHOP_CHAT_CWD", str(Path.home()))` also froze the
+    # answer for the life of the process — and froze it to the account's home
+    # whenever the env var was unset.
+    cwd: str | None = None,
     tools_disabled: bool = False,
     allowed_tools: list[str] | None = None,
     mcp_servers: list[str] | None = None,
@@ -711,8 +716,28 @@ def call_cloud(
     `recovered` is True if exit_code != 0 but we salvaged assistant text from
     the transcript (only meaningful for the stream-json paths).
     """
+    if cwd is None:
+        from services import paths as _paths
+        cwd = str(_paths.chat_cwd())
+    # THE PROMPT GOES ON STDIN, NOT IN ARGV.
+    #
+    # `[CLAUDE_CLI, "-p", prompt]` fails with E2BIG — "[Errno 7] Argument list
+    # too long" — once the prompt passes Linux's MAX_ARG_STRLEN, which is 128KB
+    # for a SINGLE argument regardless of how much room the rest of the argv
+    # has. Every caller that summarizes something long crosses it: chat
+    # compaction, distillation, any digest of a real transcript.
+    #
+    # And it crossed it silently. `_compact_thread` catches, logs a warning and
+    # returns the thread untouched, the endpoint answers 200, and the chat says
+    # "Compacted. Earlier messages are now a summary." Measured on 2026-08-12:
+    # thread 4102a2fe, a 397KB log, `chat compaction failed ... Argument list too
+    # long` at 17:43:43Z, `boundary_seq` still 0 afterwards. So compaction failed
+    # on exactly the threads big enough to need it, and said it had worked.
+    #
+    # `claude -p` with no prompt argument reads it from stdin, which has no such
+    # limit.
     cmd: list[str] = [
-        CLAUDE_CLI, "-p", prompt,
+        CLAUDE_CLI, "-p",
         "--model", model,
     ]
     use_stream_json = False
@@ -768,7 +793,7 @@ def call_cloud(
         start = time.time()
         try:
             proc = subprocess.run(
-                cmd, env=env, cwd=cwd,
+                cmd, env=env, cwd=cwd, input=prompt,
                 capture_output=True, text=True, timeout=_timeout,
             )
         except subprocess.TimeoutExpired as e:

@@ -12,7 +12,7 @@
 // mount. NEW_CHAT is a real, persistable selection — "I asked for a blank chat"
 // has to survive a reload just as much as "I am in thread X" does.
 
-import { newClientId } from "./chat";
+import { DEV_MODE, DEVELOPMENT_SCOPE } from "./devMode";
 
 const SEL_PREFIX = "ws-chat-sel:";
 const PROVIDER_PREFIX = "ws-chat-provider:";
@@ -75,16 +75,28 @@ export function newChatHref(contextKey: string): string {
 // The picker's memory is LAST. It is "the scope I looked at", never "the scope
 // this conversation belongs to"; ranking it above the intents is what made one
 // assistant selection leak into every chat opened afterwards.
+//
+// In a developer build the unscoped surface's OWN default is `development`,
+// not `general`. Development sorts above Workshop in the picker for the same
+// reason (chatScope.ts's scopeGroups): it is where a developer already is, and
+// landing a brand-new chat under the root organising layer instead makes the
+// common case the second click, not the first. This only changes what an
+// UNTOUCHED surface defaults to — `contextKey` naming a specific place (a
+// project, an app dock) and `remembered` (an explicit past pick, including
+// picking `general` on purpose) both still win, same as before.
 export function resolveScope(input: {
   contextKey: string;
   knownScopes: string[];
   linkedThreadHome: string | null;
   startNew: boolean;
   remembered: string | null;
-}): string {
+}, devMode: boolean = DEV_MODE): string {
   const { contextKey, knownScopes, linkedThreadHome, startNew, remembered } = input;
   const known = (k: string | null): boolean => !!k && knownScopes.includes(k);
-  const surface = known(contextKey) ? contextKey : DEFAULT_SCOPE;
+  const devDefault =
+    devMode && known(DEVELOPMENT_SCOPE) ? DEVELOPMENT_SCOPE : DEFAULT_SCOPE;
+  const surface =
+    known(contextKey) && contextKey !== DEFAULT_SCOPE ? contextKey : devDefault;
   if (linkedThreadHome) return known(linkedThreadHome) ? linkedThreadHome : DEFAULT_SCOPE;
   if (startNew) return surface;
   return known(remembered) ? (remembered as string) : surface;
@@ -109,224 +121,114 @@ export function writeProvider(contextKey: string, providerKey: string): void {
   }
 }
 
-// The type-ahead queue: messages typed while a turn is running, waiting to be
-// delivered when it finishes. This used to be React state and nothing else, so
-// closing the tab or refreshing destroyed them silently — a real message-loss
-// path, not just a display bug. Keyed by thread id (the queue belongs to the
-// conversation, not the surface).
-export const QUEUE_PREFIX = "ws-chat-queue:";
 
-// A queued message carries WHEN IT WAS TYPED, not just what it said.
+// ---------------------------------------------------------------------------
+// The OUTBOX: sends this browser made that the server has not taken.
+// ---------------------------------------------------------------------------
 //
-// Without it, three messages typed inside one minute while nothing was
-// responding are indistinguishable — to the model reading them — from three
-// thoughts spread across an afternoon, and the difference decides whether the
-// right reply is three answers or one. The operator's report: "this and the last
-// two were sent in sequence before you ever read any of them and you won't even
-// know that til now."
+// WHAT USED TO BE HERE was a type-ahead queue: messages waiting on a running
+// turn, stored per thread, drained by whichever tab happened to be looking at
+// that thread when the turn ended. Eleven numbered invariants accumulated on
+// top of it, each from a real report, and every one of them was an attempt to
+// make one browser's localStorage behave like storage.
 //
-// It also carries the browser's id for the send. A queued message is one the
-// operator has already hit enter on, so when it finally goes out it is that
-// same send arriving late — and the bubble on screen has to be matched to the
-// committed event by identity, not by comparing its text.
+// It cannot be. On 2026-08-12 the operator sent two long messages during a
+// `/compact` turn, moved to another chat before it finished, and came back on a
+// different device. The messages had never left that first browser and the
+// server had never heard of them. There was nothing to recover.
 //
-// `failed` marks an entry the server would not take. It is durable for the same
-// reason the rest of the entry is: a send that failed is text the operator hit
-// enter on and has not got back, and it used to live only in the reducer — so a
-// reload or a thread switch erased it with no trace. A failed entry never drains
-// on its own (the queue holds beside it); it waits for Retry.
+// THE QUEUE IS THE SERVER'S NOW (backend/services/chat_queue.py). A message the
+// operator hits enter on is POSTed immediately; if the thread is busy with
+// something that cannot be spoken to, the server records it on the thread and
+// sends it when that turn ends, with or without a browser present.
 //
-// `error` is WHY it failed, and it is durable for exactly the same reason. The
-// diagnosis lived only in the reducer, so a reload turned "the server refused
-// this message (403: developer mode is off)" into UnsentNote's default line,
-// "this message never reached the server" — which points at the network no
-// matter what actually happened.
-export type QueuedMessage = {
-  text: string; sentAt: string; clientId: string; failed?: boolean; error?: string;
-  // Files attached to this message, as server ids. They are already uploaded by
-  // the time anything is queued, so a queued message survives a reload with its
-  // attachments intact rather than being sent later as bare text. Carried here
-  // and not just on the in-memory pending record because the queue is the copy
-  // that outlives the tab.
+// So what is left here is the one thing the server genuinely cannot know about:
+// A SEND WHOSE REQUEST NEVER LANDED. Offline, a backend restart, an edge 502.
+// That text exists only in this browser, and it is written here before the
+// request goes out and removed when the server answers.
+//
+// Keyed by thread id (or `scope:<scope>` for a chat that does not exist yet),
+// because an un-sent message belongs to the conversation it was typed into.
+
+export const OUTBOX_PREFIX = "ws-chat-outbox:";
+
+/** One un-acknowledged send. The same shape the reducer's `pending` holds, so
+ *  the mirror is a copy rather than a translation — see useSendOutbox. */
+export type OutboxSend = {
+  clientId: string;
+  text: string;
+  ts: string;
+  status: "sending" | "sent" | "failed";
+  error?: string;
   attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
+  at: number;
+  afterSeq: number;
 };
 
-export function readQueue(threadKey: string): QueuedMessage[] {
+export function readOutbox(key: string): OutboxSend[] {
   try {
-    const raw = localStorage.getItem(QUEUE_PREFIX + threadKey);
+    const raw = localStorage.getItem(OUTBOX_PREFIX + key);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    let minted = false;
-    // Migrates the older `string[]` format in place. A queue written by the
-    // previous build is a message the operator has already hit enter on, so
-    // dropping it would be message loss on upgrade; it just has no send time,
-    // and "" reads as unknown rather than as some fabricated instant.
-    const queue = parsed.flatMap((x): QueuedMessage[] => {
-      if (typeof x === "string") {
-        minted = true;
-        return [{ text: x, sentAt: "", clientId: newClientId() }];
+    const out: OutboxSend[] = [];
+    for (const x of parsed) {
+      if (!x || typeof x.text !== "string" || typeof x.clientId !== "string" || !x.clientId) {
+        continue;
       }
-      if (x && typeof x.text === "string") {
-        const has = typeof x.clientId === "string" && !!x.clientId;
-        if (!has) minted = true;
-        return [{
-          text: x.text,
-          sentAt: typeof x.sentAt === "string" ? x.sentAt : "",
-          ...(x.failed ? { failed: true as const } : {}),
-          ...(typeof x.error === "string" && x.error ? { error: x.error } : {}),
-          // Field-by-field on purpose (see the migration above), so this has to
-          // be named or a queued message loses its files on the next read.
-          ...(Array.isArray(x.attachments) && x.attachments.length
-            ? { attachments: x.attachments as QueuedMessage["attachments"] }
-            : {}),
-          // A queue written by an older build has no id. Minting one here is
-          // right: it has not been sent, so no committed event can be carrying
-          // an id it would need to match.
-          clientId: has ? (x.clientId as string) : newClientId(),
-        }];
-      }
-      return [];
-    });
-    // AND THE MINTED ID IS WRITTEN BACK, so it is the entry's id rather than
-    // this read's id. Two tabs holding the same pre-upgrade queue each minted
-    // their own, sent the same message under different ids, and the server's
-    // client_id dedupe had nothing to collapse them by — the upgrade path turned
-    // into a duplicate-send path.
-    if (minted) writeQueue(threadKey, queue);
-    return queue;
+      out.push({
+        clientId: x.clientId,
+        text: x.text,
+        ts: typeof x.ts === "string" ? x.ts : "",
+        // A send read back from storage is one nothing is currently carrying:
+        // whatever it was doing when this tab went away, it is not doing now.
+        // "failed" is the honest state, and it is the one that offers a Retry.
+        status: "failed",
+        ...(typeof x.error === "string" && x.error ? { error: x.error } : {}),
+        ...(Array.isArray(x.attachments) && x.attachments.length
+          ? { attachments: x.attachments }
+          : {}),
+        at: Number(x.at) || 0,
+        afterSeq: Number(x.afterSeq) || 0,
+      });
+    }
+    return out;
   } catch {
     return [];
   }
 }
 
-export function writeQueue(threadKey: string, queue: QueuedMessage[]): void {
+export function writeOutbox(key: string, sends: OutboxSend[]): void {
   try {
-    if (queue.length) localStorage.setItem(QUEUE_PREFIX + threadKey, JSON.stringify(queue));
-    else localStorage.removeItem(QUEUE_PREFIX + threadKey);
+    if (sends.length) localStorage.setItem(OUTBOX_PREFIX + key, JSON.stringify(sends));
+    else localStorage.removeItem(OUTBOX_PREFIX + key);
   } catch {
     /* see writeSelection */
   }
 }
 
-// THE HOLD, stored beside the queue and keyed the same way.
-//
-// Stop hands the wheel back: the queue stops draining itself until the operator
-// sends again. That promise is only as durable as the thing that records it, and
-// it used to be plain component state while the queue it governs was in
-// localStorage. So the hold died on a reload or a thread switch and the queue
-// did not — press Stop, switch away and back, and everything typed ahead fired
-// as a new turn with nobody watching. Money spent without a click.
-//
-// Same key as the queue (a thread id, or the blank-chat slot for a scope),
-// because it is a property OF that queue and has to travel with it.
-export const HOLD_PREFIX = "ws-chat-hold:";
-
-export function readHold(threadKey: string): boolean {
-  try {
-    return localStorage.getItem(HOLD_PREFIX + threadKey) === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function writeHold(threadKey: string, held: boolean): void {
-  try {
-    if (held) localStorage.setItem(HOLD_PREFIX + threadKey, "1");
-    else localStorage.removeItem(HOLD_PREFIX + threadKey);
-  } catch {
-    /* see writeSelection */
-  }
-}
-
-/** Everything this browser stores for a thread that no longer exists.
+/** TWO TABS ON ONE THREAD MUST NOT DESTROY EACH OTHER'S OUTBOX.
  *
- *  The delete path cleared the QUEUE, and only when the deleted thread was the
- *  one on screen. So deleting any other conversation left its queue behind, and
- *  every delete left its `ws-chat-hold:` key behind forever — a key that says
- *  "do not self-drain" for a chat that is gone. Neither leak was reachable
- *  afterwards, which is precisely why neither was ever noticed. */
-export function forgetThread(threadKey: string): void {
-  writeQueue(threadKey, []);
-  writeHold(threadKey, false);
-}
-
-// What durable storage must hold: everything the server has not accepted yet, in
-// the order the operator sent it. A batch being POSTed right now is still owed,
-// so it stays in front of whatever was typed after it (invariant 5).
-export function durableQueue(inFlight: QueuedMessage[], items: QueuedMessage[]): QueuedMessage[] {
-  return [...inFlight, ...items];
-}
-
-// A batch the server refused goes back where it was: ahead of anything typed
-// while it was in flight, and still ONE batch, so the retry is one turn.
-export function restoreBatch(batch: QueuedMessage[], items: QueuedMessage[]): QueuedMessage[] {
-  const ids = new Set(batch.map((m) => m.clientId));
-  return [...batch, ...items.filter((m) => !ids.has(m.clientId))];
-}
-
-// Drop entries by send id. Used when a batch is accepted after the queue has
-// already moved to another thread: the entries are still sitting in the old
-// thread's storage and nothing else will take them out.
-export function withoutIds(queue: QueuedMessage[], ids: Set<string>): QueuedMessage[] {
-  return queue.filter((m) => !ids.has(m.clientId));
-}
-
-// Mark a batch the server refused, so it says so instead of sitting there
-// claiming it will send when the current turn finishes. It will not: the queue
-// holds after a refusal, by design, and only Retry releases it.
-export function markFailed(batch: QueuedMessage[], error?: string): QueuedMessage[] {
-  return batch.map((m) => {
-    // Nothing to say that is not already said. Returning the entry itself keeps
-    // its identity, which is what stops a re-mark from churning storage and the
-    // list that renders from it.
-    if (m.failed && (!error || m.error === error)) return m;
-    return { ...m, failed: true as const, ...(error ? { error } : {}) };
-  });
-}
-
-export function clearFailedFlag(queue: QueuedMessage[], clientId: string): QueuedMessage[] {
-  return queue.map((m) => {
-    if (m.clientId !== clientId || !m.failed) return m;
-    // The diagnosis goes with the flag. It described the attempt that failed,
-    // and a retry is a new attempt: leaving it would explain the wrong one.
-    const { failed: _dropped, error: _why, ...rest } = m;
-    return rest;
-  });
-}
-
-// TWO TABS ON ONE THREAD MUST NOT DESTROY EACH OTHER'S QUEUE.
-//
-// The queue is per-thread durable storage, and every tab open on that thread
-// writes the same key. A tab used to write its whole in-memory list over
-// whatever was there, so: two tabs on thread X, type A in tab 1 (storage is
-// `[A]`), type B in tab 2 — whose in-memory list is `[]`, because A was typed
-// somewhere else — and tab 2 writes `[B]`. A is gone, and it was a message the
-// operator had already hit enter on. That is invariant 1 broken across tabs by
-// the code that exists to keep it.
-//
-// So a write MERGES. The rule is not "union everything", which would resurrect
-// every entry this tab deliberately took out (a drain, a drop, an accepted
-// batch): it is
-//
-//   an entry this tab has NEVER SEEN belongs to another tab, and survives.
-//
-// `seen` is every id this tab has held for this key since it bound to it. An id
-// in `seen` and absent from `next` was removed on purpose. An id in neither is
-// news from elsewhere and is kept.
-//
-// Order is by WHEN THE OPERATOR HIT ENTER (invariant 5), which is the only
-// ordering that means anything once two tabs are involved — neither list's
-// position can speak for the other's. `sentAt` is an ISO string so it sorts
-// lexicographically; an entry with none (the pre-upgrade format) sorts first,
-// which is true of it, since it was written by an older build.
-export function mergeQueue(
-  stored: QueuedMessage[], next: QueuedMessage[], seen: Set<string>,
-): QueuedMessage[] {
-  const mine = new Set(next.map((m) => m.clientId));
-  const foreign = stored.filter((m) => !mine.has(m.clientId) && !seen.has(m.clientId));
+ *  Both write the same key. A tab that wrote its whole in-memory list over
+ *  whatever was there erased a send made in the other one — invariant 1 broken
+ *  by the code that exists to keep it. So a write MERGES, and the rule is not
+ *  "union everything", which would resurrect every send this tab deliberately
+ *  removed after the server took it:
+ *
+ *      an entry this tab has NEVER SEEN belongs to another tab, and survives.
+ *
+ *  Ordered by `at`, the monotonic counter the reducer stamps, so two sends made
+ *  in the same millisecond keep the order they were made in. */
+export function mergeOutbox(
+  stored: OutboxSend[], next: OutboxSend[], seen: Set<string>,
+): OutboxSend[] {
+  const mine = new Set(next.map((s) => s.clientId));
+  const foreign = stored.filter((s) => !mine.has(s.clientId) && !seen.has(s.clientId));
   if (!foreign.length) return next;
-  // Array.prototype.sort is stable, so entries typed in the same millisecond (or
-  // carrying no time at all) keep the order of the list they came from.
-  return [...next, ...foreign].sort((a, b) => (a.sentAt || "").localeCompare(b.sentAt || ""));
+  return [...next, ...foreign].sort((a, b) => (a.ts || "").localeCompare(b.ts || "") || a.at - b.at);
+}
+
+/** Everything this browser stores for a thread that no longer exists. */
+export function forgetThread(threadKey: string): void {
+  writeOutbox(threadKey, []);
 }

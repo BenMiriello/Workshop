@@ -24,6 +24,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from services import chat_attachments
+from services import chat_drain
+from services import chat_queue
 from services import chat_store, chat_context, chat_log
 from services import tasks
 from services import task_scope
@@ -34,6 +36,8 @@ from services import model_caps
 from services import task_scope
 from services import scope_version
 from services import agent_authority
+from services import ownership
+from services import paths
 from services import ticket_drafts
 from services import knowledge
 from services import origin
@@ -275,18 +279,35 @@ async def providers(scope: str | None = None):
 
 
 @router.get("/threads")
-async def threads(context: str | None = None):
-    return chat_store.list_threads(context_key=context)
+async def threads(context: str | None = None, archived: bool = False):
+    """The live conversations, or the archive. Never both: see list_threads."""
+    return chat_store.list_threads(context_key=context, archived=archived)
 
 
 # ---- Composer drafts -------------------------------------------------------
 # The unsent text in a chat composer, persisted per owner + context_key so a
 # reload (or another device) doesn't lose it. The browser keeps the instant
 # local copy; this is the durable cross-device mirror. See services/draft_store.
+class AttachmentRefIn(BaseModel):
+    """A file the client already uploaded. `name` and `kind` are carried for the
+    transcript to render without a second lookup; the server re-reads both from
+    its own index before handing anything to a model, so a wrong one here can
+    only mislabel a chip, never change what is sent."""
+    id: str
+    name: str = ""
+    kind: str = ""
+
+
 class DraftPut(BaseModel):
     text: str = ""
     ts: int = 0
     client_id: str = ""
+    # FILES ATTACHED TO THIS COMPOSER. A draft is everything in the box, and a
+    # screenshot dropped into it is as much "what I have not sent yet" as the
+    # words beside it. The bytes are already on the server (upload happens on
+    # drop); this is the association, which used to live only in React state and
+    # so was lost by any reload that kept the text.
+    attachments: list[AttachmentRefIn] | None = None
 
 
 @router.get("/drafts")
@@ -301,7 +322,9 @@ async def read_draft(key: str):
 
 @router.put("/drafts/{key:path}")
 async def write_draft(key: str, body: DraftPut):
-    return draft_store.put_draft(key, body.text, body.ts, body.client_id)
+    return draft_store.put_draft(
+        key, body.text, body.ts, body.client_id,
+        [a.model_dump() for a in (body.attachments or [])])
 
 
 @router.delete("/drafts/{key:path}")
@@ -413,7 +436,9 @@ async def thread(thread_id: str):
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
-    return t
+    # Opening a chat shows what is waiting to be sent in it, on the first paint,
+    # from the same read that produced the transcript.
+    return {**t, **chat_queue.state(thread_id)}
 
 
 @router.get("/threads/{thread_id}/events")
@@ -465,7 +490,30 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
         "events": events,
         "last_seq": last_seq,
         "active_run": _active_run_payload(thread_id, meta),
+        # THE CUT THE SERVER IS ACTUALLY APPLYING, so the divider in the
+        # transcript describes the prompt rather than the log. Derived from the
+        # same resolution the prompt uses (chat_store._fold), which is what makes
+        # the two incapable of disagreeing.
+        **_cut_payload(thread_id),
+        # THE QUEUE RIDES ON THE SYNC ENDPOINT, because it is part of the answer
+        # to "what is in this chat". It is small (it is empty on almost every
+        # poll), and sending it here rather than from a second endpoint is what
+        # makes it impossible for the transcript and the queue to disagree about
+        # a message that is in one and not the other. Every device sees the same
+        # queue for free.
+        **chat_queue.state(thread_id),
     }
+
+
+def _cut_payload(thread_id: str) -> dict:
+    """`{cleared_through, cut_mode}`: how many messages are behind the context
+    cut, and which command put them there. Zero means no cut.
+
+    Meta only. This runs on every poll from every open tab, and reading it
+    through `get_thread` parsed the entire log to answer it — the exact cost
+    this endpoint was rebuilt to remove, and pinned by
+    test_chat_run_lifecycle.TestTheSyncEndpointDoesNotReparseTheLog."""
+    return chat_store.cut_state(thread_id)
 
 
 def _active_run_payload(thread_id: str, meta: dict) -> dict | None:
@@ -489,8 +537,31 @@ async def rename(thread_id: str, body: RenameThread):
     return t
 
 
+@router.post("/threads/{thread_id}/archive")
+async def archive(thread_id: str):
+    """Close the conversation without destroying it. This is what the chat's own
+    menu does; DELETE below is reachable only from the archive."""
+    t = chat_store.archive_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    return t
+
+
+@router.post("/threads/{thread_id}/restore")
+async def restore(thread_id: str):
+    t = chat_store.restore_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    return t
+
+
 @router.delete("/threads/{thread_id}")
 async def remove(thread_id: str):
+    # The queue goes with the conversation it belongs to. Left behind it would
+    # be text nothing can ever deliver, held forever under an id with no thread.
+    chat_queue.forget(thread_id)
+    t = chat_store.get_thread(thread_id)
+    draft_store.clear_for_thread(t.get("context_key") if t else None, thread_id)
     return {"deleted": chat_store.delete_thread(thread_id)}
 
 
@@ -783,8 +854,23 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
     if isinstance(provider, chat_context.ProjectContextProvider) and not provider.dir.exists():
         raise HTTPException(400, f"unknown project: {new_key.split(':', 1)[1]}")
 
+    old_key = t.get("context_key") or ""
     t["context_key"] = new_key
     chat_store.save_thread(t)
+    # A REBIND IS SOMETHING THAT HAPPENED TO THIS CONVERSATION, so it goes in the
+    # log, at the point in the order where it happened.
+    #
+    # The transcript used to show this as a client-side annotation held in React
+    # state: the note appeared for the browser that flipped the picker, vanished
+    # on reload, and never existed at all on any other device. A line in the
+    # transcript that only one browser can see is the same defect as a message
+    # only one browser is holding — the reader cannot tell which parts of what
+    # they are looking at are real. Everything rendered in a transcript comes
+    # from the transcript.
+    if old_key and old_key != new_key:
+        chat_log.append_sync(thread_id, {
+            "kind": "scope", "from": old_key, "to": new_key,
+        })
     # AND DROP THE LIVE SESSION. The next turn resumes the claude session this
     # thread already has, and a resumed session is handed only the new message:
     # the persona, the protocol blocks and the project briefing were assembled
@@ -851,6 +937,7 @@ def _build_prompt(
     user_msg: str,
     *,
     preamble: str = "",
+    summary: str = "",
 ) -> str:
     # Layered prompt (see docs 01 §3):
     #   1. ROLE PREAMBLE (platform-owned safety/capability facts) — first, and
@@ -882,6 +969,17 @@ def _build_prompt(
         cap_note = ""
     if cap_note:
         parts.append(cap_note)
+    # These three blocks were briefly operator-only, because all three read
+    # stores that had no owner concept: `learnings`, `workspace_digest`'s
+    # cross-chat roll-up, and `shared/knowledge/`'s `workshop` layer, which
+    # `read_layers` puts into EVERY scope's prompt by design. Gating them
+    # stopped the leak and left a second account with a Workshop whose memory,
+    # digest and knowledge silently did nothing.
+    #
+    # The stores are per-owner now (`knowledge._shared_knowledge_root`,
+    # `learnings._dir`), so this runs for everybody again, against their own.
+    # That is the whole point of partitioning rather than gating: the check
+    # disappears instead of accumulating.
     # Learned memory (Stage 8 / 2f): workspace guardrails for every agent, plus a
     # scoped agent/project's own accumulated memory. Sits in the cache-stable
     # prefix (learnings append oldest-first so the earlier bytes stay stable).
@@ -949,6 +1047,21 @@ def _build_prompt(
         custom = ""
     if custom:
         parts.append("=== CUSTOM INSTRUCTIONS (operator-set) ===\n" + origin.escape_markers(custom))
+    # WHAT COMPACTION LEAVES BEHIND. The messages this stands in for are cut from
+    # `history` by the caller, so this is what the model is given about them
+    # instead: one block, above the verbatim tail, in the stable part of the
+    # prompt. Marked as a summary rather than pasted in as if it were the
+    # conversation, because a model that cannot tell a summary from a transcript
+    # will quote it back as something the operator said.
+    if summary:
+        parts.append(
+            "=== EARLIER IN THIS CONVERSATION (summary) ===\n"
+            "The messages before this point were folded into the summary below to "
+            "reclaim context. They are NOT deleted: the full text is still in the "
+            "transcript and is searchable with mcp__workshop__search. Treat this as "
+            "a summary, not as anyone's words.\n\n"
+            + origin.escape_markers(summary)
+        )
     if history:
         history, over_ceiling = _within_ceiling(history)
         if over_ceiling:
@@ -1130,24 +1243,116 @@ async def compact_thread(thread_id: str):
     get_usage, set_color. Compaction is not in it. The chat reported "Command
     ran." over that for months.
 
-    So the one lever that works from out here is the one /clear already uses:
-    DETACH. The next turn mints a fresh session and re-sends the prompt (every
-    message after the last cut), so the window drops because the session
-    carrying it is gone.
+    DETACHING IS HALF THE ANSWER, and on its own it is not compaction. The next
+    turn mints a fresh session and re-assembles the prompt, so the CLI's private
+    copy of the conversation goes. But the prompt it re-assembles is the whole
+    transcript, so a long chat comes straight back to where it was. Measured on
+    2026-08-12: the cut was recorded, the meter subtracted it, and the prompt
+    still carried every message from before it, because `_assemble_full_prompt`
+    never applied the cut at all. Both this and /clear were bookkeeping.
 
-    NOTHING IS FORGOTTEN, which is what separates this from /clear. The cut does
-    not move and the transcript is untouched: only the CLI's private copy of the
-    conversation goes, and that copy is re-derivable from the transcript by
-    definition. No summarizer, no stored state, no fold. That is also why this
-    returns in milliseconds.
+    So this folds, and the fold is the point:
 
-    `session_reset` is false when there was no live window to reclaim, so the
-    client can say nothing happened only when nothing did."""
+      1. everything except the last `_COMPACT_KEEP_TAIL` messages is summarized
+         into a running summary stored on the thread;
+      2. the cut moves to that point, so the prompt carries `summary + tail`;
+      3. the live session is detached, so the next turn actually uses it.
+
+    NOTHING IS DELETED. The log is append-only and untouched: the operator's
+    transcript still shows every message, and the summary stands in only for
+    what the MODEL is handed. A `boundary` event records the fold, so the
+    divider in the transcript is read rather than guessed and says the same
+    thing on every device.
+
+    IT REPORTS WHAT HAPPENED, including nothing. The summarizer is a model call
+    and it can fail; when it does, this says so and changes nothing, rather than
+    answering 200 over a fold that did not happen. That failure is not
+    hypothetical: this call passed its whole prompt as an argv element until
+    today, so it died with E2BIG on exactly the threads long enough to need
+    compacting, the error was swallowed as best-effort, and the chat said
+    "Compacted. Earlier messages are now a summary." over it."""
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
     provider = chat_context.get_provider(t.get("context_key"))
-    return {"session_reset": _detach_live_session(thread_id, t, provider)}
+    folded, error = await _fold_thread(thread_id, t)
+    # Re-read: the fold moved the cut and wrote the summary.
+    t = chat_store.get_thread(thread_id) or t
+    session_reset = _detach_live_session(thread_id, t, provider)
+    return {"folded": folded, "session_reset": session_reset,
+            "error": error or "",
+            "summary_chars": len((t.get("summary") or ""))}
+
+
+# How many messages stay verbatim. The tail is what the conversation is ABOUT
+# right now, and summarizing it is what makes a compacted chat feel like it has
+# had a stroke: it can describe what you were doing but not continue it.
+_COMPACT_KEEP_TAIL = 6
+
+
+def _fmt_for_summary(messages: list[dict]) -> str:
+    out = []
+    for m in messages:
+        who = origin.speaker_label(m.get("role", "user"), m.get("meta"))
+        out.append(f"{who}: {m.get('content', '')}")
+    return "\n\n".join(out)
+
+
+def _summarize_sync(prev_summary: str, to_fold: list[dict]) -> str:
+    """One summarization call. Text in, text out, no tools.
+
+    `tools_disabled` matters: without it this runs in the CLI's default agentic
+    mode, which spins up every MCP server just to write a paragraph and takes
+    minutes, which is what made /compact look hung."""
+    prompt = (
+        "You are compacting a chat transcript to reclaim context. Write a running "
+        "summary that preserves decisions made, facts established, the operator's "
+        "stated preferences, file paths and identifiers, and anything unfinished. "
+        "Keep what a reader would need to continue the conversation without the "
+        "original. Drop pleasantries and repetition. Write plainly, no em-dashes, "
+        "no emojis.\n\n"
+        + (f"=== SUMMARY SO FAR ===\n{prev_summary}\n\n" if prev_summary else "")
+        + f"=== MESSAGES TO FOLD IN ===\n{_fmt_for_summary(to_fold)}\n\n"
+        "=== OUTPUT ===\nThe updated summary only, no preamble."
+    )
+    res = llm_router.call_cloud(prompt, model=llm_router.TIER_HAIKU,
+                               tools_disabled=True, timeout_s=180)
+    return (res.get("text") or "").strip()
+
+
+async def _fold_thread(thread_id: str, t: dict) -> tuple[int, str]:
+    """Summarize everything but the tail. Returns (messages folded, error).
+
+    Returns `(0, "")` when there is nothing to fold, and `(0, reason)` when the
+    fold was attempted and failed. The caller reports both; neither is silent.
+    """
+    msgs = [m for m in (t.get("messages") or [])
+            if not (m.get("meta") or {}).get("streaming")]
+    ct = int(t.get("cleared_through", 0) or 0)
+    tail = msgs[ct:] if 0 < ct <= len(msgs) else msgs
+    fold_n = max(0, len(tail) - _COMPACT_KEEP_TAIL)
+    if fold_n <= 0:
+        return 0, ""
+    to_fold = tail[:fold_n]
+    try:
+        summary = await asyncio.to_thread(
+            _summarize_sync, (t.get("summary") or "").strip(), to_fold)
+    except Exception as e:
+        log.warning("chat compaction failed for %s: %s", thread_id, e)
+        return 0, f"the summarizer failed: {e}"
+    # STRIPPED HERE, not trusted from the call. A whitespace-only answer is a
+    # failed summary, and storing one would move the cut and leave the model
+    # with neither the messages nor anything standing in for them.
+    summary = (summary or "").strip()
+    if not summary:
+        return 0, "the summarizer returned nothing"
+    # WRITTEN AFTER THE CALL, ONTO THE THREAD AS IT IS NOW. The summarization
+    # takes tens of seconds and the operator can send during it; saving a
+    # snapshot read beforehand would delete whatever arrived meanwhile. The cut
+    # is a COUNT FROM THE FRONT and appends land at the back, so it still names
+    # the same messages however many arrived while this ran.
+    chat_store.set_summary(thread_id, summary, folded_through=ct + fold_n)
+    return fold_n, ""
 
 
 @router.post("/threads/{thread_id}/clear")
@@ -1279,7 +1484,13 @@ async def thread_context(thread_id: str):
     ct = int(t.get("cleared_through", 0) or 0)
     if 0 <= ct <= len(history):
         history = history[ct:]
-    prompt = _build_prompt(provider, history, "", preamble=preamble)
+    # The SAME inputs a turn would use, summary included: this estimate exists to
+    # answer "how full is this chat", and it is only worth anything if it is
+    # measuring the prompt that actually gets sent. It measured a trimmed history
+    # while turns sent the whole thing, which is how a chat could read 12% and
+    # still be re-sending every message ever written in it.
+    prompt = _build_prompt(provider, history, "", preamble=preamble,
+                           summary=(t.get("summary") or ""))
     used = max(1, round(len(prompt) / 4))
     return {
         "used_tokens": used,
@@ -1483,7 +1694,27 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
         cwd=(str(provider.dir) if is_build_mode else None),
         is_build=is_build_mode,
     )
+    # THE CUT IS APPLIED HERE, and until 2026-08-12 it was applied NOWHERE.
+    #
+    # `get_thread` hands over every message the thread has ever held plus a
+    # `cleared_through` COUNT; trimming is the caller's job, and this caller —
+    # the one that builds what the model actually reads — did not do it. So
+    # /clear recorded a boundary, dropped the CLI session, drew a divider in the
+    # transcript, and then the next turn re-sent the entire history anyway. The
+    # context meter DID subtract the cut (see `_context_estimate`), so the meter
+    # went down while nothing else did.
+    #
+    # That is the whole of "compact does not compact": both commands were
+    # bookkeeping. Measured on a six-exchange thread: /clear, then a fresh turn,
+    # and every message from before the clear was still in the prompt.
     history = t.get("messages", [])
+    ct = int(t.get("cleared_through", 0) or 0)
+    if 0 < ct <= len(history):
+        history = history[ct:]
+    # ...and what compaction left in their place. Empty after a /clear, which is
+    # exactly the difference between the two commands: /clear drops the earlier
+    # conversation, /compact replaces it with this.
+    summary = (t.get("summary") or "").strip()
     # AUTO-RECALL IS REMOVED (operator, 2026-08-12). It ran `knowledge.search` on
     # every message and pasted the top 3 notes in here. That search scored a note
     # as `sum(hay.count(t))`: raw term frequency, no stopwords, no IDF, no length
@@ -1498,7 +1729,8 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     # relevant. Pull, not push. Do not reintroduce an injection here.
     # The transcript goes as it is. `chat_store` already cut it at the last
     # /clear before handing it over, and nothing else may remove a message.
-    prompt = _build_prompt(provider, history, content, preamble=preamble)
+    prompt = _build_prompt(provider, history, content, preamble=preamble,
+                           summary=summary)
     # Stated after the persona so it can override the ticket protocols the
     # persona carries, in the direction that removes capability.
     prompt = prompt + "\n\n" + chat_context.chat_mode_block(t.get("mode"))
@@ -1709,16 +1941,6 @@ class TurnPart(BaseModel):
     client_id: str | None = None
 
 
-class AttachmentRefIn(BaseModel):
-    """A file the client already uploaded. `name` and `kind` are carried for the
-    transcript to render without a second lookup; the server re-reads both from
-    its own index before handing anything to a model, so a wrong one here can
-    only mislabel a chip, never change what is sent."""
-    id: str
-    name: str = ""
-    kind: str = ""
-
-
 class StartTurnIn(BaseModel):
     content: str
     # Optional per-turn model override (short tier name or full id); same
@@ -1750,6 +1972,30 @@ class StartTurnIn(BaseModel):
     # the server before Send is pressed, so a turn body stays small and a slow
     # upload is not paid for inside the send.
     attachments: list[AttachmentRefIn] | None = None
+    # WHEN THE OPERATOR HIT ENTER, stamped by the browser because that is the
+    # only party present at that moment. It matters when the message cannot run
+    # immediately: a queued message keeps its own send time rather than being
+    # dated at whatever later instant the queue drained, so the transcript can
+    # still tell a burst typed in one minute from thoughts spread over an hour.
+    # Absent (an older client) means "now", which is what it always meant.
+    sent_at: str | None = None
+    # WHICH COMPOSER THIS CAME OUT OF, so the server can clear it once the
+    # message is accepted. The client cannot reliably do this itself: sending
+    # the first message of a blank chat CHANGES the composer's key (the chat
+    # becomes a thread), so a clear issued after the round trip lands on the new
+    # key and the blank-chat slot keeps the text forever — which is why a
+    # message you already sent turned up in the next new chat you started. See
+    # services/draft_store.
+    draft_key: str | None = None
+
+
+def _first_part_ts(parts: list[TurnPart] | None) -> str | None:
+    """When a batch was first typed. The batch's own oldest send time, not the
+    instant it reached the server."""
+    for p in parts or []:
+        if p.sent_at:
+            return p.sent_at
+    return None
 
 
 def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None,
@@ -1765,6 +2011,22 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
     thread shows the same chips it showed when it was sent. They ride on the
     FIRST part of a drained queue rather than being copied onto each: they were
     attached once."""
+    # ONE PART IS STILL A PART. A single message that WAITED — queued behind a
+    # command turn, then sent by the server when it ended — is recorded at the
+    # moment the operator hit enter, not at the moment it went out. Falling
+    # through to the plain append here dated it at the drain, so a message
+    # written at 17:44 and delivered at 17:46 read as having been written at
+    # 17:46, and the transcript quietly disagreed with the queue the operator
+    # had been watching.
+    if parts and len(parts) == 1 and (parts[0].sent_at or parts[0].client_id):
+        p0 = parts[0]
+        meta = {"queued": True}
+        if attachments:
+            meta["attachments"] = attachments
+        chat_store.append_message_during_turn(
+            thread_id, "user", (p0.text or "").strip() or content, meta=meta,
+            ts=p0.sent_at, client_id=p0.client_id or client_id)
+        return
     if not parts or len(parts) < 2:
         meta = {"attachments": attachments} if attachments else None
         chat_store.append_message(thread_id, "user", content, meta=meta,
@@ -1844,8 +2106,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     # The agent's workspace. A project agent works in its project tree; anything
     # else answers from the chat cwd. This is the "own little bubble" bound —
     # narrow now, and the place a per-session worktree slots in later.
-    cwd = str(task_scope.root_for_context(agent["scope"]) or
-              os.environ.get("WORKSHOP_CHAT_CWD", os.path.expanduser("~")))
+    cwd = str(task_scope.root_for_context(agent["scope"]) or paths.chat_cwd())
 
     # Strip the mention token from what the agent reads. It is addressing
     # information, not part of the question, and leaving it in reliably produces
@@ -2177,6 +2438,34 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
     other chat (project, general, app assistant) carries ONE session per THREAD,
     so a conversation continues instead of being re-derived each turn. The tool
     surface still differs by provider; only the continuity is shared."""
+    # This chat's own MCP choice: None (the overwhelmingly common case) means
+    # every server, and every branch below must then produce exactly the argv it
+    # produced before the control existed. A list narrows the servers the turn
+    # can reach, and — because a tool named in --allowedTools whose server is
+    # not in the strict config is a tool that cannot exist — it narrows the
+    # allowlist to match. Applied HERE rather than deeper down so the filter
+    # runs once, on the values actually handed to the spawn.
+    #
+    # Computed ABOVE the build-agent branch, not below it: that branch returns
+    # early, so a build-agent chat never reached this at all and its per-thread
+    # MCP choice was silently discarded — the one chat kind whose turns run the
+    # full agentic toolset.
+    mcp_selection = chat_store.get_thread_mcp_servers(thread_id)
+    # EVERY MCP server on this instance is configured with the OPERATOR's own
+    # credentials (Plaid, Google, Discord...) — there is no per-user credential
+    # provisioning yet, for any provider. `mcp_selection is None` reads as "give
+    # it every server this provider can reach": on the narrow path that is
+    # `provider.mcp_servers` (e.g. Plaid for budget/finance), and on the
+    # full-agentic path (project/build/development) it is literally every server
+    # in `~/.claude.json` — no provider list scopes it at all. Both are correct
+    # for the operator's OWN chats, which is what this was always exercised
+    # against. A non-operator caller gets an explicit empty selection instead of
+    # the implicit "everything", so the exact same downstream code hands out
+    # nothing rather than someone else's accounts. See
+    # docs/security-audit-2026-08-11-scope-separation.md §4.
+    if mcp_selection is None and not ownership.caller_is_operator():
+        mcp_selection = []
+
     if isinstance(provider, chat_context.BuildAgentContextProvider):
         from services import build_agents as _ba
         try:
@@ -2223,7 +2512,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         mcp_servers: list[str] = []
         tools_disabled = False
     else:
-        cwd = os.environ.get("WORKSHOP_CHAT_CWD", os.path.expanduser("~"))
+        cwd = str(paths.chat_cwd())
         if ENABLE_CHAT_TOOLS:
             mcp_servers = llm_router.select_names(list(provider.mcp_servers), mcp_selection)
             allowed_tools = llm_router.filter_allowed_tools(
@@ -2263,7 +2552,8 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
                 client_id: str | None = None,
                 effort_in: str | None = None,
                 mode_in: str | None = None,
-                attachments: list[dict] | None = None) -> dict:
+                attachments: list[dict] | None = None,
+                sent_at: str | None = None) -> dict:
     """Send one message into a chat: deliver it to the run in flight, or start
     one for it. Returns `{turn_id, injected, at_segment}`.
 
@@ -2286,6 +2576,12 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
+    # An archived conversation is closed, and the archive shows it without a way
+    # in. A tab left open on it before it was archived still has a composer,
+    # though, so the refusal lives here rather than in the UI that hides it. It
+    # says what to do, because there is something to do.
+    if t.get("archived_at"):
+        raise HTTPException(409, "this chat is archived. Restore it to send.")
     # A chat bound to a developer-mode scope, on an installation where the flag
     # is off, must not just answer as if it were an ordinary chat. get_provider
     # degrades to `general` there (it is total by contract and cannot raise), so
@@ -2321,18 +2617,52 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     take_over: str | None = None
     already_recorded = False
     run_id = _live_run_id(thread_id)
-    if run_id and not build_streaming.run_accepts_input(run_id):
+    # NOTHING OVERTAKES SOMETHING ALREADY WAITING. A queue means earlier
+    # messages are owed a turn, so this one joins the back of it rather than
+    # starting a turn of its own — otherwise the window between a command turn
+    # ending and the drain firing is one where a message typed LATER is answered
+    # FIRST, and the transcript records the two in the wrong order permanently.
+    # The queue is ordered by when enter was hit; this is what keeps that true
+    # once the thread goes idle.
+    if not run_id and chat_queue.read(thread_id):
+        st = chat_queue.enqueue(
+            thread_id, text=content, client_id=client_id or chat_log.new_ulid(),
+            ts=_first_part_ts(parts) or sent_at, attachments=attachments,
+            model=model_in, effort=effort_in, permission_mode=mode_in)
+        chat_drain.drain_soon(thread_id, reason="joined the waiting queue")
+        return {"turn_id": None, "injected": False, "queued": True,
+                "at_segment": None, "queue": st}
+    if run_id and (not build_streaming.run_accepts_input(run_id)
+                   or chat_queue.is_command(content)):
         # A COMMAND TURN CANNOT BE SPOKEN TO. `/compact` folds the session and
         # exits; it never reads a word of its input. Filing this message against
         # it is what made one disappear on 2026-08-10 — recorded in the log,
         # delivered to a process that had stopped listening, and never answered.
         #
-        # It is NOT recorded here. Nothing is owed by a message that has not been
-        # accepted, and the client keeps it queued and sends it as its own turn
-        # the moment the command finishes, which is what the operator expects
-        # from typing while something runs.
-        return {"turn_id": run_id, "injected": False, "deferred": True,
-                "at_segment": None}
+        # A COMMAND CANNOT BE INJECTED EITHER, which is the same fact from the
+        # other side: injection hands text to the MODEL, and a command is
+        # executed by the CLI's command layer, which only runs between turns.
+        # Sent mid-turn it is swallowed with no user message, no command, no
+        # error.
+        #
+        # SO IT IS QUEUED, AND THE QUEUE IS OURS. This used to answer
+        # `deferred: true` and record nothing, on the reasoning that nothing is
+        # owed by a message that has not been accepted — leaving the only copy
+        # in the browser's localStorage. It is owed: the operator hit enter. Two
+        # of them were lost that way on 2026-08-12 when the tab moved to another
+        # chat before the command finished. The server takes it now, it is
+        # visible from every device, and `chat_drain` sends it when this run
+        # ends whether or not anything is watching. See services/chat_queue.
+        st = chat_queue.enqueue(
+            thread_id, text=content, client_id=client_id or chat_log.new_ulid(),
+            ts=_first_part_ts(parts) or sent_at, attachments=attachments,
+            model=model_in, effort=effort_in, permission_mode=mode_in)
+        # The run may have finished between the check above and the write. The
+        # drain is idempotent and refuses when a run is live, so asking costs
+        # nothing and not asking would strand the message until the next turn.
+        chat_drain.drain_soon(thread_id, reason="enqueued behind a command turn")
+        return {"turn_id": run_id, "injected": False, "queued": True,
+                "at_segment": None, "queue": st}
     if run_id:
         at_segment = _file_during_run(thread_id, run_id, content, client_id=client_id,
                                       attachments=attachments)
@@ -2369,6 +2699,111 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     return {"turn_id": turn.id, "injected": False, "at_segment": None}
 
 
+async def _start_queued_batch(thread_id: str, batch: list[dict]) -> bool:
+    """Turn a drained batch into a turn. Registered with `chat_drain`.
+
+    This is the one place the queue re-enters the send path, and it goes in at
+    the same door a live message does: the batch becomes `parts`, so every
+    entry is recorded as its own message at its own send time (see
+    `_record_user_turn`), under the client id it was queued with — which is what
+    lets the browser reconcile the bubble it has been showing all along instead
+    of drawing a second one.
+
+    Returns False rather than raising when the thread is busy: a run claimed
+    between the drain's check and this call is not an error, it is the reason
+    the queue exists.
+    """
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        # The thread was deleted while messages waited. Nothing can carry them;
+        # dropping the queue is the only honest outcome, and it is the operator's
+        # own delete that caused it.
+        chat_queue.forget(thread_id)
+        return False
+    if t.get("archived_at"):
+        # ARCHIVING A CHAT PUTS IT AWAY, and a queue that fired afterwards would
+        # start a turn in a conversation the operator has closed. The messages
+        # are NOT dropped: they stay queued, so restoring the chat restores them
+        # with it, and the queue holds so nothing goes out unattended in the
+        # meantime. The send path refuses an archived thread for the same reason
+        # (409); this is that rule on the path a browser is not driving.
+        chat_queue.set_held(thread_id, True, error="This chat is archived. Restore it to send these.")
+        return False
+    if chat_context.dev_scope_refused(t.get("context_key")):
+        raise RuntimeError(task_scope.dev_mode_refusal(t.get("context_key"))
+                           or "developer mode is off, so this scope cannot run here")
+    # ALREADY DELIVERED? Entries leave the queue only after the turn carrying
+    # them has been recorded, which is the right order — a crash in between
+    # leaves them queued rather than gone. The cost is that a crash in exactly
+    # that window leaves them queued AND committed, and the startup drain would
+    # run them a second time. The log itself is idempotent on `client_id` so
+    # nothing would be duplicated in the transcript, but the model would be
+    # handed the message twice. Checking first is what makes the drain
+    # idempotent rather than merely non-destructive.
+    done = [e for e in batch
+            if e.get("client_id")
+            and chat_log.find_message_by_client_id(thread_id, e["client_id"])]
+    if done:
+        chat_queue.drop(thread_id, [e["client_id"] for e in done])
+        batch = [e for e in batch if e not in done]
+        log.info("thread %s: %d queued message(s) were already delivered; dropped",
+                 thread_id, len(done))
+    if not batch:
+        return False
+    parts = [TurnPart(text=e.get("text") or "", sent_at=e.get("ts"),
+                      client_id=e.get("client_id"))
+             for e in batch]
+    content = chat_queue.joined_text(batch)
+    if not content:
+        return False
+    atts = chat_queue.attachments_of(batch)
+    try:
+        await _run_for_message(
+            thread_id, t, content, chat_queue.setting_of(batch, "model"),
+            # ALWAYS the parts, even for one: each queued message is recorded at
+            # the moment it was typed, under the id the browser has been showing
+            # it with. See `_record_user_turn`.
+            parts,
+            client_id=parts[0].client_id if parts else None,
+            effort_in=chat_queue.setting_of(batch, "effort"),
+            mode_in=chat_queue.setting_of(batch, "permission_mode"),
+            attachments=atts or None,
+        )
+    except build_streaming.RunInFlight:
+        # Something claimed the thread first. The batch stays queued and the
+        # drain runs again when that run ends.
+        return False
+    return True
+
+
+chat_drain.register_starter(_start_queued_batch)
+
+
+@router.post("/threads/{thread_id}/queued/{client_id}/cancel")
+async def cancel_queued_message(thread_id: str, client_id: str):
+    """Take a queued message back out.
+
+    It is the operator's text and they must be able to unsend it before it goes.
+    This is the only way anything leaves the queue undelivered, and it is a
+    deliberate act by the person who wrote it."""
+    if chat_store.get_thread(thread_id) is None:
+        raise HTTPException(404, "thread not found")
+    return chat_queue.drop(thread_id, [client_id])
+
+
+@router.post("/threads/{thread_id}/queued/release")
+async def release_queued_messages(thread_id: str):
+    """Send what is waiting: clears a Stop hold or a failed drain's diagnosis.
+
+    The Retry beside a queue that could not be sent, and the "send these now"
+    after a Stop, are the same action, so they are one endpoint."""
+    if chat_store.get_thread(thread_id) is None:
+        raise HTTPException(404, "thread not found")
+    chat_queue.set_held(thread_id, False)
+    await chat_drain.drain(thread_id, reason="operator released the queue")
+    return chat_queue.state(thread_id)
+
+
 @router.post("/threads/{thread_id}/turns")
 async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     content = (body.content or "").strip()
@@ -2382,11 +2817,20 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         raise HTTPException(400, "empty message")
     out = await _send(thread_id, content, body.model, body.parts,
                       client_id=body.client_id, effort_in=body.effort,
-                      mode_in=body.permission_mode, attachments=atts)
-    if out.get("deferred"):
-        # Not taken, not recorded, not lost: the chat is running a command turn
-        # that cannot read it. The client keeps it queued and sends it next.
-        return {"turn_id": out["turn_id"], "injected": False, "deferred": True}
+                      mode_in=body.permission_mode, attachments=atts,
+                      sent_at=body.sent_at)
+    # ACCEPTED IS ACCEPTED, and the composer it came out of is empty from here
+    # on. Every branch below is an acceptance — running now, handed to the run in
+    # flight, or queued — so the clear is unconditional and happens once, on the
+    # server, under the key the operator was actually typing in.
+    if body.draft_key:
+        draft_store.clear_draft(body.draft_key)
+    if out.get("queued"):
+        # Taken and durable, just not running yet: the thread is busy with
+        # something that cannot be spoken to. It is on the thread, every device
+        # can see it, and the server sends it when this run ends.
+        return {"turn_id": out["turn_id"], "injected": False, "queued": True,
+                "queue": out.get("queue") or {}}
     if out["injected"]:
         return {"turn_id": out["turn_id"], "injected": True,
                 "at_segment": out["at_segment"]}
@@ -2515,6 +2959,12 @@ class InjectMessage(BaseModel):
     # Same as StartTurnIn.attachments: files already uploaded, ids only. A file
     # attached to a message typed DURING a turn reaches the running model too.
     attachments: list[AttachmentRefIn] | None = None
+    # See StartTurnIn: when the operator hit enter, and which composer this came
+    # out of. Both matter here for the same reasons — a message typed during a
+    # command turn is queued with its own send time, and the composer it was
+    # typed in is cleared by the server that accepted it.
+    sent_at: str | None = None
+    draft_key: str | None = None
 
 
 def _live_run_id(thread_id: str) -> str | None:
@@ -2640,15 +3090,20 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
         return {"delivered": False, "queued_for_turn": False, "turn_id": None,
                 "at_segment": None,
                 "reason": "no turn is running on this chat"}
-    out = await _send(thread_id, content, client_id=body.client_id, attachments=atts)
-    if out.get("deferred"):
-        # The one other case where re-sending is correct, and for the same
-        # reason: this endpoint has NOT taken the message. A command turn owns
-        # the chat and will not read it.
-        return {"delivered": False, "queued_for_turn": False,
+    out = await _send(thread_id, content, client_id=body.client_id, attachments=atts,
+                      sent_at=body.sent_at)
+    if body.draft_key:
+        draft_store.clear_draft(body.draft_key)
+    if out.get("queued"):
+        # TAKEN, and durable on the thread. A command turn owns the chat and will
+        # never read this, so it waits — but it waits HERE, not in the browser,
+        # and the server sends it when that turn ends. `delivered: false` with
+        # `queued: true` is "we have it, it has not gone yet"; the client must
+        # not re-send it.
+        return {"delivered": False, "queued_for_turn": True, "queued": True,
                 "turn_id": out["turn_id"], "at_segment": None,
-                "deferred": True,
-                "reason": "a command is running on this chat; send it after"}
+                "queue": out.get("queue") or {},
+                "reason": "a command is running on this chat; this goes out next"}
     delivered = bool(out["injected"])
     run_id = out["turn_id"]
     at_segment = out["at_segment"]
@@ -2725,7 +3180,18 @@ async def stop_turn(turn_id: str):
     The run's process group is signalled and whatever it produced is committed as
     the reply, marked `meta.stopped`. Never an error: stopping a run that has
     already finished is a no-op that returns `stopped: false`, because "it is
-    already stopped" is the outcome the caller wanted."""
+    already stopped" is the outcome the caller wanted.
+
+    STOP ALSO HOLDS THE QUEUE. Stopping ends the run, and the drain fires on
+    every run ending — so without this, pressing Stop would immediately send
+    everything typed ahead as a new unattended turn, which is the opposite of
+    what Stop means. The hold is recorded on the thread (not in a browser: it
+    used to live in component state beside a localStorage queue, so a reload
+    dropped the hold, kept the queue, and fired it) and the operator's next send
+    releases it."""
+    turn = build_streaming.get_turn(turn_id)
+    if turn is not None and turn.thread_id and not turn.complete:
+        chat_queue.set_held(turn.thread_id, True)
     return await build_streaming.stop_turn(turn_id)
 
 

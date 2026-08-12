@@ -21,7 +21,7 @@ import { enterAction } from "./chat/enterKey";
 import { usePhysicalKeyboard } from "./chat/usePhysicalKeyboard";
 import { type ChatDrawer } from "./chat/drawers";
 import {
-  deriveMode, buildSlug, taskScopeFor, composerPlaceholder, scopeName,
+  deriveMode, buildSlug, taskScopeFor, composerPlaceholder,
   isEgressFailure, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
 import { useLogScroll } from "./chat/useLogScroll";
@@ -39,9 +39,7 @@ import { staleNoticeText } from "./chat/staleNotice";
 import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
 import {
   committedClientIds, committedMessages, withoutCommitted,
-  withScopeNotes, type ScopeNote,
 } from "./chat/transcriptBlocks";
-import { lastSeq } from "./chat/threadStore";
 import { chatApi, type CardState } from "../lib/chat";
 import { writeSelection, NEW_CHAT } from "../lib/chatSelection";
 import { useDraft } from "../lib/draftSync";
@@ -186,20 +184,6 @@ export default function Chat({
 
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
 
-  // A scope flip the operator hasn't sent anything past yet. NOT rendered:
-  // nothing has happened since, so there is nothing true to say in the
-  // transcript yet, only a pending intent on the picker. A second flip before
-  // the first is acted on just overwrites this, so hopping A -> B -> C reads
-  // as one note ("moved to C") once it does land, not three. `onSend` (below)
-  // freezes it into `scopeNotes`, at the point it actually happened, only if
-  // a message actually follows it.
-  const [scopeAnnounce, setScopeAnnounce] = useState<{ key: string; label: string } | null>(null);
-  // Scope changes the log has moved past, anchored where they happened — same
-  // idea as a stale failed send (transcriptBlocks.withStaleFailures): derived
-  // client-side state spliced into the transcript at a real position, not
-  // stored on the thread itself.
-  const [scopeNotes, setScopeNotes] = useState<ScopeNote[]>([]);
-
   // Changing the scope MOVES this conversation. It does not walk away from it.
   //
   // The picker used to only set `activeProvider`, and the thread list is
@@ -237,7 +221,6 @@ export default function Chat({
       // on blank there too, same as pressing "New chat" does today.
       writeSelection(key, NEW_CHAT);
       scopeState.chooseProvider(key);
-      setScopeAnnounce({ key, label: scopeName(key) });
       return;
     }
     if (plan.action === "refuse") {
@@ -254,7 +237,6 @@ export default function Chat({
       // something else.
       writeSelection(key, id);
       scopeState.chooseProvider(key);
-      setScopeAnnounce({ key, label: scopeName(key) });
       void thread.refreshThreads();
       void sync();
     } catch (e) {
@@ -353,7 +335,10 @@ export default function Chat({
   // that has no thread yet keeps its own "new" draft under the scope, which the
   // send-clear (clearInput below) wipes before the thread it creates is adopted.
   const draftKey = activeId ? `${contextKey}::${activeId}` : `${contextKey}::new`;
-  const [input, setInput, clearInput] = useDraft(draftKey);
+  const {
+    draft: input, setDraft: setInput, clearForSend: clearInput,
+    attachments: draftAttachments, setAttachments: setDraftAttachments,
+  } = useDraft(draftKey);
   const [inputFocused, setInputFocused] = useState(false);
   // Whether the operator has held the message box open at its tall size. Plain
   // component state on purpose: it is a view preference for the session, not
@@ -364,7 +349,16 @@ export default function Chat({
   // removing one a single click instead of a run of backspaces. Not keyed per
   // thread like the draft: an upload is already on the server and the list is
   // cleared on send, so there is nothing to restore.
-  const files = useAttachments({ scope, threadId: activeId });
+  // THE COMPOSER'S FILES ARE PART OF ITS DRAFT. They are uploaded on arrival, so
+  // the bytes were always safe; what was not was the fact that they belong to
+  // THIS composer, which lived in component state alone — so a reload brought
+  // back the text without the screenshot it was about, and left the file
+  // orphaned on the server. They are stored with the text now, under the same
+  // key, and restored with it.
+  const files = useAttachments({
+    scope, threadId: activeId,
+    restored: draftAttachments, onChange: setDraftAttachments,
+  });
   // The voice snapshot is in `followDeps` because ChatLog renders the spoken
   // turn from it directly, not from the transcript — without it the log stops
   // following mid-utterance, which is the one time the operator is not touching
@@ -408,13 +402,6 @@ export default function Chat({
       // stale, so it goes with the error it sits beside.
       setNotice(null);
       followLatest();
-      // A scope flip not yet acted on settles here: this send is the "next
-      // thing" that decides it stuck, so it freezes at the position the log is
-      // at right now rather than staying a tail-only preview.
-      if (scopeAnnounce) {
-        setScopeNotes((prev) => [...prev, { afterSeq: lastSeq(stateRef.current), to: scopeAnnounce.label }]);
-        setScopeAnnounce(null);
-      }
     },
     // `/new` ASKS. It opens the same dialog the toolbar button does rather than
     // abandoning the conversation on a four-character keystroke.
@@ -551,13 +538,11 @@ export default function Chat({
     return () => { cancelled = true; };
   }, [activeId]);
 
-  // A different conversation has nothing to do with a scope flip made on the
-  // last one. Without this, opening another chat kept showing "Scope changed
-  // to X" — a fact about a thread no longer on screen.
-  useEffect(() => {
-    setScopeAnnounce(null);
-    setScopeNotes([]);
-  }, [activeId]);
+  // NOTHING TO RESET. A scope change is a `scope` event in the thread's own log
+  // now, so it arrives with that thread and belongs to it — the reason this
+  // effect existed (opening another chat kept showing "Scope changed to X", a
+  // fact about a thread no longer on screen) cannot happen to a fact that is
+  // read from the thread rather than remembered beside it.
 
   const send = useCallback(() => {
     const text = input.trim();
@@ -809,7 +794,7 @@ export default function Chat({
         `/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`,
       )}
       onNewChat={() => thread.setConfirmNew(true)}
-      onDelete={thread.setConfirmDeleteId}
+      onArchive={(id) => { void thread.archiveThread(id); }}
       onPopOut={popOut}
       onNavigate={navigate}
     />
@@ -836,10 +821,6 @@ export default function Chat({
       confirmClear={confirmClear}
       onCancelClear={() => setConfirmClear(false)}
       onConfirmClear={() => { setConfirmClear(false); void clear(); }}
-      confirmDeleteId={thread.confirmDeleteId}
-      confirmDeleteTitle={thread.confirmDeleteId ? thread.threads.find((t) => t.id === thread.confirmDeleteId)?.title : undefined}
-      onCancelDelete={() => thread.setConfirmDeleteId(null)}
-      onConfirmDelete={async (id) => { thread.setConfirmDeleteId(null); await thread.removeThread(id); }}
     />
   );
 
@@ -895,15 +876,6 @@ export default function Chat({
     ),
     [state.queued, committedIds],
   );
-  // Settled scope changes, spliced back in at the seq they happened at.
-  // `scopeAnnounce` (not sent past yet) deliberately renders NOTHING here — a
-  // flip nobody has acted on isn't a fact about the conversation yet, only
-  // about the picker. It exists purely so `onSend` above knows what to freeze
-  // if and when a message actually follows it.
-  const blocksWithScopeNotes = useMemo(
-    () => withScopeNotes(transcript, scopeNotes),
-    [transcript, scopeNotes],
-  );
   //
   // THIS CALLBACK'S IDENTITY IS LOAD-BEARING. It is passed down to MessageList,
   // which is memoized so a keystroke does not re-render the transcript; every
@@ -956,7 +928,7 @@ export default function Chat({
   // not the place for it, and the slot above the composer takes it instead.
   // Both draw the same component — see ChatProblemBlock.
   const logShowsProblem = logPlaceholder({
-    empty: blocksWithScopeNotes.length === 0,
+    empty: transcript.length === 0,
     loading: logLoading,
     error: !!chatProblem,
     inFlight: runActive || pipeline.starting,
@@ -968,7 +940,7 @@ export default function Chat({
       onScroll={onLogScroll}
       loading={logLoading}
       error={chatProblem}
-      blocks={blocksWithScopeNotes}
+      blocks={transcript}
       isBuild={build}
       inFlight={runActive || pipeline.starting}
       selectedModel={selectedModel}
@@ -1190,7 +1162,6 @@ export default function Chat({
         onClose={() => setVoiceSettings(false)}
         prefs={vprefs}
         updatePrefs={vupdatePrefs}
-        caps={vsnap.caps}
         session={vsession}
       />
     </div>

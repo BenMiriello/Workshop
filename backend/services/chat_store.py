@@ -201,7 +201,7 @@ def _now_iso() -> str:
 # never appear in a thread dict a caller sees, so a caller can never write them
 # back, and `save_thread` never mistakes their absence for a deletion.
 _INTERNAL_META = ("last_seq", "boundary_seq", "active_run_id", "active_run_seq",
-                  "live_message")
+                  "live_message", "cut_through")
 
 
 def _promotion_patch(meta: dict) -> dict:
@@ -258,6 +258,13 @@ def _promotion_patch(meta: dict) -> dict:
 def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
     """(meta, messages, seq-of-each-message, cut-seq) or None if the thread is gone.
 
+    The cut's MODE rides on `_fold.last_mode` rather than in the tuple, because
+    every caller of this destructures four values and only `_document` needs the
+    fifth. See `_document`: the divider the transcript draws is derived from the
+    cut this function RESOLVED, never from the raw boundary events, so a
+    boundary this function decided to ignore cannot draw a divider claiming
+    something that is not happening.
+
     A straight replay: every `message` event in seq order, nothing rewritten and
     nothing moved. The log has no revision event, so this cannot do anything
     else, which is the property the whole rebuild is for.
@@ -302,13 +309,24 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
     # written before `at_seq` existed has the first and not the second, and
     # collapsing them into a single nullable made it indistinguishable from a
     # thread that was never cleared at all.
-    saw_clear = False
+    # A `compact` boundary counts too, and ONLY when a summary is actually
+    # stored. Folding was removed on 2026-08-12 and restored the same day (the
+    # summarizer had been failing with E2BIG on every thread long enough to need
+    # it), which leaves threads carrying a boundary from the broken era with
+    # nothing behind it. The condition IS the migration: a compact boundary with
+    # no summary hides nothing, so those threads keep their full history in the
+    # prompt rather than losing it to a summary that was never written.
+    saw_cut = False
     cut_at: int | None = None
+    cut_mode = ""
+    has_summary = bool((meta.get("summary") or "").strip())
     for ev in chat_log.read_events(thread_id):
         if ev.get("kind") == "boundary":
-            if ev.get("mode") == "clear":
-                saw_clear = True
+            mode = ev.get("mode")
+            if mode == "clear" or (mode == "compact" and has_summary):
+                saw_cut = True
                 cut_at = ev.get("at_seq")
+                cut_mode = mode
             continue
         if ev.get("kind") != "message":
             continue
@@ -321,15 +339,15 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
             msg["meta"] = dict(ev["meta"])
         messages.append(msg)
         seqs.append(ev["seq"])
-    # A clear with no `at_seq` is one written before the event carried it.
-    # No clear at all means no cut, whatever `meta.boundary_seq` still says:
-    # that is what retires a fold boundary without touching the file.
-    if not saw_clear:
+    # A cut with no `at_seq` is one written before the event carried it.
+    # No cut at all means no cut, whatever `meta.boundary_seq` still says.
+    if not saw_cut:
         resolved = 0
     elif cut_at:
         resolved = int(cut_at)
     else:
         resolved = int(meta.get("boundary_seq") or 0)
+    _fold.last_mode = cut_mode if saw_cut else ""      # type: ignore[attr-defined]
     return meta, messages, seqs, resolved
 
 
@@ -404,6 +422,12 @@ def _document(meta: dict, messages: list[dict], seqs: list[int], cut_seq: int = 
     ct = _cleared_through(seqs, cut_seq)
     if ct:
         t["cleared_through"] = ct
+        # WHICH KIND OF CUT, from the one that was actually resolved. The client
+        # draws its divider from this rather than from the boundary events, so a
+        # boundary `_fold` decided to ignore (a `compact` from the hours when
+        # folding was broken, with no summary behind it) cannot draw a divider
+        # announcing a fold that is not in any prompt.
+        t["cut_mode"] = getattr(_fold, "last_mode", "") or "clear"
     live = _live_view(meta)
     t["messages"] = ([*messages, live] if live is not None else messages)
     return t
@@ -494,6 +518,10 @@ def create_thread(
     promo = _promotion_patch(meta)
     if promo:
         meta.update(promo)
+    if meta.get("title") == "Voice":                       # TEMP-DIAG 2026-08-12
+        import traceback
+        log.warning("VOICE-THREAD-CREATED %s from:\n%s", tid,
+                    "".join(traceback.format_stack()[-12:]))
     chat_log.create_thread(tid, meta)
     return get_thread(tid)
 
@@ -521,8 +549,52 @@ def delete_thread(thread_id: str) -> bool:
     return gone
 
 
-def list_threads(context_key: str | None = None) -> list[dict]:
-    """Summaries (no message bodies), newest first."""
+# ---- archive ---------------------------------------------------------------
+#
+# ARCHIVING IS THE GESTURE, DELETING IS THE EXCEPTION. Closing a conversation is
+# something the operator does constantly and destroying one is something they do
+# rarely, so the constant gesture must be the reversible one. `archived_at` is
+# the whole model: a timestamp on the thread's meta, absent when it is live. It
+# hides the thread from every list except the archive's own, and nothing else
+# about the thread changes, which is what makes restoring it a field removal
+# rather than an undo log.
+#
+# The hard delete below it is unchanged and still the only destructive path.
+# What changed is who can reach it: only the archive view, one thread at a time.
+
+
+def archive_thread(thread_id: str) -> dict | None:
+    """Take the thread out of the lists. Returns the archived thread, or None if
+    there is no such thread. Archiving an already-archived thread re-stamps it,
+    which is harmless and keeps the call idempotent."""
+    try:
+        return _patch(thread_id, archived_at=_now_iso())
+    except ValueError:
+        # An id that is not even shaped like one. `delete_thread` reports the
+        # same way: NOT THERE is the honest answer, and it is the difference
+        # between a 404 and a 500 at the route above.
+        return None
+
+
+def restore_thread(thread_id: str) -> dict | None:
+    """Put it back. `_patch` removes a field set to None, so this is the exact
+    inverse of archiving and leaves no trace of the round trip."""
+    try:
+        return _patch(thread_id, archived_at=None)
+    except ValueError:
+        return None
+
+
+def list_threads(context_key: str | None = None,
+                 archived: bool = False) -> list[dict]:
+    """Summaries (no message bodies), newest first.
+
+    `archived` is a SWITCH BETWEEN TWO LISTS, not a widening: False is every
+    live thread, True is every archived one. There is deliberately no "both",
+    because every caller is either showing the operator their conversations or
+    showing them the archive, and a list that mixed the two would need a marker
+    on each row to be readable at all.
+    """
     if not _chat_dir().exists():
         return []
     chat_log.migrate_owner()
@@ -535,6 +607,8 @@ def list_threads(context_key: str | None = None) -> list[dict]:
         if "id" not in meta:
             continue
         if context_key and meta.get("context_key") != context_key:
+            continue
+        if bool(meta.get("archived_at")) != archived:
             continue
         title = meta.get("title", "New chat")
         # When the OPERATOR last spoke in this chat. This is what orders the
@@ -573,11 +647,18 @@ def list_threads(context_key: str | None = None) -> list[dict]:
             "title": title,
             "created_at": meta.get("created_at"),
             "updated_at": meta.get("updated_at"),
+            "archived_at": meta.get("archived_at"),
             "last_user_at": last_user_at,
             "message_count": len(msgs),
             "last_message": ((last.get("content") or "")[:120] if last else ""),
         })
-    out.sort(key=_recency_key, reverse=True)
+    # The archive answers a different question than the chat list, so it takes a
+    # different order: most recently archived first, because what you came to
+    # find is almost always the one you just put there (or just regretted).
+    if archived:
+        out.sort(key=lambda s: s.get("archived_at") or "", reverse=True)
+    else:
+        out.sort(key=_recency_key, reverse=True)
     return out
 
 
@@ -990,8 +1071,9 @@ def update_thread(thread_id: str, **fields: object) -> dict | None:
     return get_thread(thread_id)
 
 
-def _set_cut(thread_id: str, through: int) -> None:
-    """Record the one kind of context cut there is: a `/clear`.
+def _set_cut(thread_id: str, through: int, mode: str = "clear") -> None:
+    """Record a context cut: `clear` (drop what is behind it) or `compact`
+    (replace what is behind it with the stored summary).
 
     The event carries `at_seq`, so the log alone says both that a cut happened
     and where. It used to say only that one happened, leaving the position in
@@ -999,16 +1081,46 @@ def _set_cut(thread_id: str, through: int) -> None:
     without also trusting a mutable field beside it. `boundary_seq` is still
     written, as a cache for readers that have not folded the log.
 
-    `mode` stays on the event even though `clear` is now the only value. It is
-    what makes a retired fold boundary identifiable rather than ambiguous."""
+    `mode` is what tells the two apart everywhere downstream: the divider the
+    transcript draws, and whether `_fold` honours the cut at all (a `compact`
+    boundary with no summary behind it is inert — see `_fold`)."""
     folded = _fold(thread_id)
     if folded is None:
         return
     _meta, _msgs, seqs, _cut = folded
     ct = max(0, min(int(through), len(seqs)))
     at_seq = seqs[ct - 1] if ct > 0 else 0
-    chat_log.append_sync(thread_id, {"kind": "boundary", "mode": "clear", "at_seq": at_seq})
-    chat_log.patch_meta_sync(thread_id, boundary_seq=at_seq)
+    chat_log.append_sync(thread_id, {"kind": "boundary", "mode": mode, "at_seq": at_seq})
+    # `cut_through` and `cut_mode` are the SAME answer `_fold` resolves, cached
+    # in meta so a reader can have it without parsing the log. The sync endpoint
+    # needs it on every poll from every open tab, and computing it there put a
+    # full log read back on the hot path — which is the thing `read_meta` exists
+    # to keep off it (see the endpoint's docstring, and the tests that pin it).
+    #
+    # It cannot drift: the count is FROM THE FRONT and appends land at the back,
+    # so nothing but another cut can change it, and a cut writes both.
+    chat_log.patch_meta_sync(thread_id, boundary_seq=at_seq,
+                             cut_through=ct, cut_mode=mode)
+
+
+def set_summary(thread_id: str, summary: str, *, folded_through: int) -> dict | None:
+    """Store what a fold produced, and move the cut to match.
+
+    THE SUMMARY IS WRITTEN BEFORE THE CUT MOVES. Between the two writes the
+    thread carries a summary and no cut, which sends the summary alongside the
+    full history: redundant for one instant. The other order sends NEITHER the
+    messages nor the summary that replaced them, which is a chat that has
+    forgotten the conversation it is in.
+
+    `context_tokens` goes too: it measured the window this fold just changed, and
+    a stale reading is what pinned a compacted chat's meter to the number it had
+    before (a four-message thread reading 142k)."""
+    if chat_log.read_meta(thread_id) is None:
+        return None
+    chat_log.patch_meta_sync(thread_id, summary=summary)
+    _set_cut(thread_id, folded_through, mode="compact")
+    chat_log.patch_meta_sync(thread_id, context_tokens=None)
+    return get_thread(thread_id)
 
 
 # ---- Runs ------------------------------------------------------------------
@@ -1398,6 +1510,99 @@ def clear_thread_session(thread_id: str) -> dict | None:
     return _patch(thread_id, claude_session=None)
 
 
+def resolve_cut(thread_id: str) -> dict:
+    """Resolve the cut from the log and cache it in meta. One read, then never
+    again for this thread unless another cut is made."""
+    folded = _fold(thread_id)
+    if folded is None:
+        return {"cleared_through": 0, "cut_mode": ""}
+    _meta, _msgs, seqs, cut_seq = folded
+    ct = _cleared_through(seqs, cut_seq)
+    mode = getattr(_fold, "last_mode", "") or ("clear" if ct else "")
+    chat_log.patch_meta_sync(thread_id, cut_through=ct, cut_mode=mode)
+    return {"cleared_through": ct, "cut_mode": mode if ct else ""}
+
+
+def _backfill_cuts_for_owner() -> int:
+    done = 0
+    for tid in chat_log.list_thread_ids():
+        try:
+            meta = chat_log.read_meta(tid)
+            if meta is None or "cut_through" in meta:
+                continue
+            resolve_cut(tid)
+            done += 1
+        except Exception as e:  # pragma: no cover - defensive
+            log.warning("could not resolve the context cut for %s: %s", tid, e)
+    return done
+
+
+def backfill_cuts() -> int:
+    """Cache the resolved cut for every thread of every owner.
+
+    Runs at startup, so the sync endpoint never pays for it. Threads cleared
+    before 2026-08-12 carry `boundary_seq` and no count; without this the
+    divider would vanish from them while the prompt kept honouring the cut.
+
+    IT ITERATES OWNERS EXPLICITLY, like `chat_log.migrate_all_owners`. Every
+    read here is owner-scoped and startup has no owner in context, so the
+    obvious version ran against nothing at all and reported success: measured
+    2026-08-12, zero threads resolved on a box with sixty of them.
+    """
+    root = ownership._RUNTIME / "users"
+    if not root.exists():
+        return 0
+    total = 0
+    prior = ownership.owner_or_none()
+    try:
+        for user_dir in sorted(root.iterdir()):
+            if not user_dir.is_dir() or not user_dir.name.isdigit():
+                continue
+            ownership.set_current_owner(int(user_dir.name))
+            try:
+                total += _backfill_cuts_for_owner()
+            except Exception as e:  # pragma: no cover - defensive
+                log.error("context-cut backfill failed for owner %s: %s", user_dir.name, e)
+    finally:
+        if prior is None:
+            ownership.clear_current_owner()
+        else:
+            ownership.set_current_owner(prior)
+    return total
+
+
+def cut_state(thread_id: str) -> dict:
+    """`{cleared_through, cut_mode}` from META ALONE, with no log read.
+
+    The wire form of the context cut, for the sync endpoint. A `compact` cut
+    with no summary behind it reads as no cut at all, matching `_fold` exactly:
+    folding was removed and restored on 2026-08-12, and threads carrying a
+    boundary from those hours have nothing behind them, so honouring one would
+    hide real messages behind a summary that was never written.
+    """
+    meta = chat_log.read_meta(thread_id) or {}
+    if "cut_through" not in meta and meta.get("boundary_seq"):
+        # A cut made before the count was cached. `backfill_cuts` does this for
+        # every thread at startup; this covers one that appeared since, and both
+        # resolve it the same way `_document` does, so the divider and the
+        # prompt cannot end up describing different cuts.
+        #
+        # Gated on `boundary_seq` rather than run unconditionally, because THIS
+        # RUNS ON EVERY POLL FROM EVERY OPEN TAB: resolving from the log here
+        # for a thread that has no cut at all would put a full log read back on
+        # the endpoint whose whole point is not doing that. Every boundary is
+        # written by `_set_cut`, which writes `boundary_seq` in the same patch.
+        resolve_cut(thread_id)
+        meta = chat_log.read_meta(thread_id) or meta
+    ct = int(meta.get("cut_through") or 0)
+    mode = meta.get("cut_mode") or ("clear" if ct else "")
+    if not ct:
+        return {"cleared_through": 0, "cut_mode": ""}
+    if mode == "compact" and not (meta.get("summary") or "").strip():
+        return {"cleared_through": 0, "cut_mode": ""}
+    return {"cleared_through": ct, "cut_mode": mode}
+
+
 def clear_thread_context(thread_id: str) -> tuple[dict, int] | None:
     """Drop everything this thread would send to a model, keeping the transcript.
 
@@ -1420,8 +1625,14 @@ def clear_thread_context(thread_id: str) -> tuple[dict, int] | None:
     if cleared == 0:
         return _document(meta, msgs, seqs, cut_seq), 0
     _set_cut(thread_id, len(msgs))
+    # `voice_session` joins the other three for the same reason: it is one more
+    # copy of "what this thread has already been told", held by the resident voice
+    # worker. Leaving it behind meant a /clear silently spared the spoken half of
+    # the conversation, so talking after a clear resumed a model that still
+    # remembered everything the clear was meant to drop.
     _patch(thread_id, context_cut="cleared", summary=None, context_tokens=None,
-           claude_session=None, agent_sessions=None, turn_marks=None)
+           claude_session=None, agent_sessions=None, turn_marks=None,
+           voice_session=None)
     return get_thread(thread_id), cleared
 
 

@@ -79,13 +79,23 @@ export function useCompaction({
     setCompacting(true);
     try {
       const r = await chatApi.compactThread(id);
+      // The fold moved the cut and wrote the summary; the divider is drawn from
+      // the boundary event the server appended, so pull it rather than guessing.
+      void sync();
       setCtxNonce((n) => n + 1);
-      // ONE THING HAPPENS NOW, so there is one thing to report. This used to also
-      // weigh `will_fold`, the count of messages a server-side fold was about to
-      // replace with a summary; folding was removed on 2026-08-12 and the live
-      // session is the only thing /compact touches.
-      if (!r.session_reset) {
-        setErr({ text: "Nothing to compact. This chat has no live session to reclaim.", endpoint: null });
+      // WHAT ACTUALLY HAPPENED, in the order it matters. A failed summarizer is
+      // the case this exists for: the fold is a model call, it can fail, and
+      // this endpoint used to answer 200 over a failure while the chat said
+      // "Compacted. Earlier messages are now a summary." On 2026-08-12 that was
+      // not a rare path — the call passed its whole prompt in argv, so it died
+      // with E2BIG on every thread long enough to be worth compacting.
+      if (r.error) {
+        setErr({
+          text: `Couldn't compact: ${r.error}. Nothing was folded and the chat is unchanged.`,
+          endpoint: `/api/chat/threads/${id}/compact`,
+        });
+      } else if (!r.folded && !r.session_reset) {
+        setErr({ text: "Nothing to compact. This chat is already short.", endpoint: null });
       }
     } catch (e) {
       setErr({

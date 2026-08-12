@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { chatApi } from "../../lib/chat";
 import {
   admit, rejectionNotice, sendableRefs,
@@ -40,7 +40,17 @@ let seq = 0;
 const nextLocalId = () => `att-${Date.now().toString(36)}-${(seq += 1)}`;
 
 export function useAttachments(
-  { scope, threadId }: { scope: string; threadId: string | null },
+  { scope, threadId, restored, onChange }: {
+    scope: string;
+    threadId: string | null;
+    /** Files this composer had attached, read back from its draft. A file in the
+     *  box is part of the draft (see lib/draftSync): the bytes were uploaded on
+     *  arrival, but the fact that they belong HERE used to live only in this
+     *  hook's state, so a reload restored the text without them. */
+    restored: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
+    /** Report the ready files so they are stored with the draft. */
+    onChange: (a: { id: string; name: string; kind: "image" | "pdf" | "text" }[]) => void;
+  },
 ): AttachmentsState {
   const [items, setItems] = useState<Attachment[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -51,6 +61,39 @@ export function useAttachments(
   // makes the count and duplicate checks see the real list either way.
   const itemsRef = useRef<Attachment[]>([]);
   itemsRef.current = items;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  // Adopt what the draft says is attached. Keyed on the restored list's own
+  // identity, so it runs when a chat is opened (or another device's copy
+  // arrives) and not on every render. An `uploading` item is never overwritten:
+  // it is a file arriving right now, and the draft cannot know about it yet.
+  const restoredKey = restored.map((a) => a.id).join(",");
+  useEffect(() => {
+    const have = new Set(itemsRef.current.map((a) => a.id).filter(Boolean));
+    const add = restored.filter((a) => !have.has(a.id));
+    if (!add.length) return;
+    itemsRef.current = [
+      ...itemsRef.current,
+      ...add.map((a) => ({
+        localId: nextLocalId(), name: a.name, size: 0, kind: a.kind,
+        status: "ready" as const, id: a.id,
+      })),
+    ];
+    setItems(itemsRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoredKey]);
+
+  // Anything the server has and this composer is holding, reported so the draft
+  // stores it. Called from every path that changes the list rather than from an
+  // effect on `items`, so a clear-on-send cannot race a re-report.
+  const report = useCallback(() => {
+    onChangeRef.current(
+      itemsRef.current
+        .filter((a) => a.status === "ready" && a.id)
+        .map((a) => ({ id: a.id as string, name: a.name, kind: a.kind })),
+    );
+  }, []);
 
   const add = useCallback((files: File[]) => {
     if (!files.length) return;
@@ -73,33 +116,42 @@ export function useAttachments(
       const name = pending[i].name;
       chatApi.uploadAttachment(file, { scope, threadId })
         .then((rec) => {
-          setItems((prev) => prev.map((a) => (
+          itemsRef.current = itemsRef.current.map((a) => (
             a.localId === localId
               ? { ...a, id: rec.id, name: rec.name || name, size: rec.size, status: "ready" as const }
               : a
-          )));
+          ));
+          setItems(itemsRef.current);
+          // Now the server has it AND this composer holds it, which is the pair
+          // of facts the draft has to carry.
+          report();
         })
         .catch((e: unknown) => {
-          setItems((prev) => prev.map((a) => (
+          itemsRef.current = itemsRef.current.map((a) => (
             a.localId === localId
               ? { ...a, status: "failed" as const, error: e instanceof Error ? e.message : "upload failed" }
               : a
-          )));
+          ));
+          setItems(itemsRef.current);
         });
     });
-  }, [scope, threadId]);
+  }, [scope, threadId, report]);
 
   const remove = useCallback((localId: string) => {
-    setItems((prev) => prev.filter((a) => a.localId !== localId));
+    itemsRef.current = itemsRef.current.filter((a) => a.localId !== localId);
+    setItems(itemsRef.current);
     setNotice(null);
-  }, []);
+    // Removing a file is as much a change to the draft as deleting a word.
+    report();
+  }, [report]);
 
   const clear = useCallback(() => {
     itemsRef.current = [];
     setItems([]);
     setNotice(null);
     setDragging(false);
-  }, []);
+    report();
+  }, [report]);
 
   // Read off the ref, not off `items`: send is called from a callback that may
   // have closed over an older render, and the turn must carry what is attached

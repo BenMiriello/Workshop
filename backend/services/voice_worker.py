@@ -32,7 +32,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import build_streaming, chat_context, chat_store, llm_router
+from services import build_streaming, chat_context, chat_store, llm_router, origin
 from services.build_streaming import (
     session_alive, usage_scope_for_thread, _spend_tokens_from_usage,
     _summarize_tool_input,
@@ -188,6 +188,9 @@ class VoiceWorker:
     # model what the user actually heard before barging in.
     pending_note: str = ""
     pump_task: asyncio.Task | None = None
+    # This process was spawned on a FRESH session, so it knows nothing about the
+    # thread it is answering in. Set at spawn, consumed by the first _with_context.
+    needs_seed: bool = False
     # Interrupts waiting on the CLI's control response, by request id. An
     # interrupt used to be written and forgotten: the write almost always
     # succeeds (it is a pipe), so "I stopped it" was reported for a generation
@@ -232,10 +235,14 @@ async def _spawn_proc(worker: VoiceWorker, resume: bool) -> None:
             "--disallowed-tools", "*",
         ]
     cmd += ["--append-system-prompt", _voice_system(provider, worker.is_build)]
-    if resume and session_alive(worker.session_id, worker.cwd):
+    resumed = resume and session_alive(worker.session_id, worker.cwd)
+    if resumed:
         cmd.extend(["--resume", worker.session_id])
     else:
         cmd.extend(["--session-id", worker.session_id])
+    # A resumed session already holds the conversation. A fresh one holds nothing,
+    # so the first turn has to carry the thread in with it. See _thread_seed.
+    worker.needs_seed = not resumed
     env = llm_router._claude_env()
     worker.proc = await asyncio.create_subprocess_exec(
         *cmd, cwd=worker.cwd, env=env,
@@ -419,7 +426,7 @@ async def ensure_worker(context_key: str, thread_id: str, model: str | None) -> 
         # fresh session.) The idle reaper releases this worker quickly (see
         # _reaper) so the text path can resume the same session without two live
         # processes fighting over the session file.
-        session_id = str(uuid.uuid4())
+        session_id = ""
         resume = False
         if context_key.startswith("build:"):
             try:
@@ -428,8 +435,29 @@ async def ensure_worker(context_key: str, thread_id: str, model: str | None) -> 
                 session_id = sid
                 resume = (not is_new) and session_alive(sid, cwd)
             except Exception:  # agent gone / registry hiccup — fall back to fresh session
-                session_id = str(uuid.uuid4())
+                session_id = ""
                 resume = False
+        if not session_id:
+            # THE VOICE SESSION ID IS PERSISTED, or a spoken conversation resets
+            # every time the backend restarts. WORKERS is an in-memory dict, so a
+            # restart destroyed the only copy of a conversational worker's session
+            # id and the next utterance minted a fresh one: the model forgot every
+            # spoken turn in the thread, with nothing in the transcript to explain
+            # why. Storing it beside the text chat's own `claude_session` makes a
+            # spoken conversation survive exactly what a typed one survives.
+            try:
+                stored = ((chat_store.get_thread(thread_id) or {}).get("voice_session") or "").strip()
+            except Exception:
+                stored = ""
+            if stored and session_alive(stored, cwd):
+                session_id, resume = stored, True
+            else:
+                session_id = str(uuid.uuid4())
+                try:
+                    chat_store.update_thread(thread_id, voice_session=session_id)
+                except Exception as e:
+                    # Not fatal: the worker still runs, it just forgets on restart.
+                    log.warning("voice session id not persisted for %s: %s", thread_id, e)
         worker = VoiceWorker(
             session_key=key, thread_id=thread_id,
             session_id=session_id, model=resolved_model,
@@ -521,8 +549,63 @@ async def _run_turn(worker: VoiceWorker, turn: VoiceTurn) -> None:
         _persist_turn(turn)
 
 
+# The thread, replayed into a fresh voice session.
+#
+# VOICE IS ANOTHER INTERFACE TO ONE CONVERSATION, NOT A SECOND CONVERSATION, so a
+# spoken turn has to start from what was typed. It never did. A conversational
+# worker spawns its own `claude -p` with its own session id, and `_with_context`
+# sent only the live-context block and the utterance, so the model answering out
+# loud had never seen a single typed message in the thread. The operator asked
+# this directly ("are you able to see the past messages before this particular
+# audio session?") and the honest answer was no, and never could have been yes.
+#
+# The one branch meant to prevent this shares the AGENT'S session, but it is gated
+# on a `build:` context key and NO thread that has ever used voice has one: a
+# project chat is keyed `development` or `project:notes-app` and falls straight
+# through to the fresh-session path, which the comment there already admits. All
+# nine threads in the store that have spoken turns took that path.
+def _thread_seed(thread_id: str) -> str:
+    try:
+        t = chat_store.get_thread(thread_id) or {}
+    except Exception as e:
+        log.warning("voice seed unavailable for %s: %s", thread_id, e)
+        return ""
+    # A run in flight renders as a trailing assistant message that is not in the
+    # record yet; seeding a half-written reply would hand the model its own
+    # unfinished sentence as history.
+    msgs = [m for m in (t.get("messages") or [])
+            if not (m.get("meta") or {}).get("streaming")]
+    # Everything a /clear put behind the context boundary is, by definition, not
+    # to be said to a model again. Voice honours that cut like every other path.
+    ct = int(t.get("cleared_through", 0) or 0)
+    if 0 < ct <= len(msgs):
+        msgs = msgs[ct:]
+    lines = []
+    for m in msgs:
+        body = (m.get("content") or "").strip()
+        if not body:
+            continue
+        who = origin.speaker_label(m.get("role", ""), m.get("meta"))
+        lines.append(f"{who}: {origin.escape_markers(body)}")
+    if not lines:
+        return ""
+    return (
+        "[This chat is already in progress. Below is the conversation so far, "
+        "typed and spoken. You are continuing it, not starting a new one. Do not "
+        "greet the operator again and do not read this back to them.]\n\n"
+        + "\n\n".join(lines)
+    )
+
+
 def _with_context(worker: VoiceWorker, text: str) -> str:
     prefix = ""
+    # Once per fresh session, before anything else: the model cannot answer in
+    # context it was never given.
+    if worker.needs_seed:
+        worker.needs_seed = False
+        seed = _thread_seed(worker.thread_id)
+        if seed:
+            prefix += seed + "\n\n"
     if worker.pending_note:
         prefix += worker.pending_note + "\n"
         worker.pending_note = ""
@@ -543,7 +626,6 @@ def _persist_turn(turn: VoiceTurn) -> None:
     _run_turn's tail and commit_turn can both reach here for a committed draft."""
     if turn.persisted:
         return
-    turn.persisted = True
     try:
         chat_store.append_message(turn.thread_id, "user", turn.user_text)
         meta: dict = {"voice": True}
@@ -561,7 +643,15 @@ def _persist_turn(turn: VoiceTurn) -> None:
             meta=meta if meta else None,
         )
     except Exception as e:  # pragma: no cover — defensive
-        log.warning("voice turn %s persist failed: %s", turn.id, e)
+        # LOUD, and NOT marked persisted. What the operator said out loud is as
+        # much their message as what they typed; a spoken turn that failed to
+        # append used to be marked done before the write was attempted, so it
+        # was never retried and vanished with a warning nobody reads. It stays
+        # un-persisted, so the next call through here writes it.
+        log.error("voice turn %s could not be recorded on thread %s: %s",
+                  turn.id, turn.thread_id, e)
+        return
+    turn.persisted = True
 
 
 # How long an interrupt waits for the CLI to say it took it. The control channel

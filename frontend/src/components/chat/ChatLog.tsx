@@ -1,6 +1,5 @@
 import type { RefObject } from "react";
-import type { MsgStatus } from "../../lib/chat";
-import type { VoiceSnapshot } from "../../lib/voiceSession";
+import type { VoiceSnapshot } from "../../lib/voice/client";
 import type { UiCardCtx } from "./uiCardActions";
 import type { TranscriptBlock } from "./transcriptBlocks";
 import { logPlaceholder } from "./chatLogState";
@@ -8,9 +7,8 @@ import type { ChatProblem } from "./chatProblem";
 import ChatProblemBlock from "./ChatProblemBlock";
 import MessageList, { SentAttachments, type AnswerPermissionFor } from "./MessageList";
 import CopyMessage from "./CopyMessage";
-import StatusNote from "./StatusNote";
-import UnsentNote from "./UnsentNote";
-import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
+import QueueNote from "./QueueNote";
+import { SettlingTurn, VoiceLiveTurn, VoicePendingTurn } from "./VoiceTurn";
 
 // The scrolling transcript. It renders BLOCKS the selector produced, in the
 // order it produced them, and arranges nothing itself.
@@ -61,9 +59,10 @@ import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
 export default function ChatLog({
   scrollRef, onScroll,
   loading, error, blocks, isBuild, inFlight,
-  selectedModel, cardCtx, onRetry, onRetryQueued, workingLabel, elapsed, nowMs,
+  selectedModel, cardCtx, onRetry, onCancelQueued, onReleaseQueue,
+  queueHeld, queueError, workingLabel, elapsed, nowMs,
   answerPermission, liveTurnId,
-  queued, queuedStatus,
+  queued,
   voiceOn, settling, vsnap,
 }: {
   scrollRef: RefObject<HTMLDivElement>;
@@ -79,10 +78,15 @@ export default function ChatLog({
   selectedModel: string;
   cardCtx: UiCardCtx;
   onRetry: (clientId: string) => void;
-  /** Retry an entry the DURABLE queue is holding after a refusal. Distinct from
-   *  `onRetry`, which re-sends this tab's optimistic copy: after a reload only
-   *  the queue's copy exists, and it is the one that has to work. */
-  onRetryQueued: (clientId: string) => void;
+  /** Unsend a message the SERVER is holding. It is the operator's text and
+   *  taking it back before it goes is theirs to do. */
+  onCancelQueued: (clientId: string) => void;
+  /** Send what is waiting: after a Stop, or after a drain that failed. */
+  onReleaseQueue: () => void;
+  /** Stop is holding the queue. Nothing goes until the operator says so. */
+  queueHeld: boolean;
+  /** Why the queue is not moving, when it stopped for a reason. */
+  queueError: string;
   workingLabel: string;
   elapsed: number;
   // The shared 1Hz clock, threaded to the per-step counters in the live turn.
@@ -91,18 +95,21 @@ export default function ChatLog({
   // The run in flight, so a pending approval on it can be answered. Persisted
   // messages carry their own turn id; a live one has not been committed yet.
   liveTurnId?: string | null;
+  /** Messages the SERVER is holding to send next. Read, never written: this is
+   *  the thread's own queue, the same on every device. */
   queued: {
-    text: string; sentAt: string; clientId: string; failed?: boolean;
+    text: string; sentAt: string; clientId: string;
     attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
   }[];
-  // Progress on a queued message, keyed by the id it will be sent with so it
-  // stays under the entry it belongs to as other messages queue up behind it.
-  queuedStatus: { for: string; status: MsgStatus } | null;
   voiceOn: boolean;
   settling: { user: string; assistant: string } | null;
   vsnap: VoiceSnapshot;
 }) {
   const voiceLive = voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking");
+  // The utterance being spoken right now, as a prospective bubble at the foot of
+  // the log. Only while listening: once the turn commits, `lastUser` in
+  // VoiceLiveTurn owns it and rendering both would print it twice.
+  const voicePending = voiceOn && vsnap.state === "listening" && !!(vsnap.partial || vsnap.pendingUser);
   // `loading` covers the thread list AND this thread's first page, so the empty
   // state cannot be reached before the log has actually arrived. The rule is in
   // chatLogState.ts, where it is tested.
@@ -137,31 +144,39 @@ export default function ChatLog({
         liveTurnId={liveTurnId}
       />
 
-      {/* A FAILED ENTRY IS NOT A WAITING ONE. The queue holds after a refusal,
-          by design, so "sends when the current turn finishes" is the one thing
-          it will not do — and it said exactly that, dimmed, indefinitely. It
-          reads as what it is instead, with the Retry that releases the hold. */}
+      {/* WAITING ON THE SERVER, not in this browser. These have been accepted
+          and are on the thread; they go out when the run in flight ends, sent
+          by the server, whether or not this tab is still open. So the line
+          under them is a statement about the system, not a promise this page
+          is making on its own. */}
       {queued.map((q) => (
         <div key={q.clientId} className="chat-msg user">
           <div
-            className={`chat-bubble ${q.failed ? "" : "chat-bubble--queued"}${q.text.trim() ? " chat-bubble--copyable" : ""}`}
-            title={q.failed ? undefined : "Queued, sends when the current turn finishes"}
+            className={`chat-bubble chat-bubble--queued${q.text.trim() ? " chat-bubble--copyable" : ""}`}
           >
             <div className="chat-bubble__body">
               {/* A queued message keeps its files visible too. They are already
                   uploaded, so the only thing waiting is the turn. */}
               {!!q.attachments?.length && <SentAttachments items={q.attachments} />}
               {q.text}
-              {q.failed && <UnsentNote onRetry={() => onRetryQueued(q.clientId)} />}
             </div>
             {q.text.trim() && <CopyMessage value={q.text} />}
           </div>
-          {queuedStatus?.for === q.clientId && <StatusNote status={queuedStatus.status} />}
         </div>
       ))}
+      {queued.length > 0 && (
+        <QueueNote
+          count={queued.length}
+          held={queueHeld}
+          error={queueError}
+          onRelease={onReleaseQueue}
+          onCancelLast={() => onCancelQueued(queued[queued.length - 1].clientId)}
+        />
+      )}
 
       {voiceOn && settling && <SettlingTurn settling={settling} />}
       {voiceLive && <VoiceLiveTurn vsnap={vsnap} />}
+      {voicePending && <VoicePendingTurn text={vsnap.partial || vsnap.pendingUser} previewing={vsnap.previewing} />}
     </div>
   );
 }

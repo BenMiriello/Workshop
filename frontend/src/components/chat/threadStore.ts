@@ -76,6 +76,25 @@ export type PendingSend = {
   afterSeq: number;
 };
 
+/** A message the SERVER is holding to send next.
+ *
+ *  Not "pending": pending means this browser is mid-request. A queued message
+ *  has been accepted, is on the thread, and will go out when the run in flight
+ *  ends — whether or not this browser is here to see it. It is read, never
+ *  written: the client renders the server's queue and cannot disagree with it.
+ *
+ *  It used to live in localStorage and be drained by whichever tab happened to
+ *  be looking at the thread when the turn ended, which is how two of the
+ *  operator's messages ceased to exist on 2026-08-12. See
+ *  backend/services/chat_queue.py. */
+export type QueuedMessage = {
+  client_id: string;
+  text: string;
+  /** When the operator hit enter. */
+  ts: string;
+  attachments?: PendingSend["attachments"];
+};
+
 export type ThreadState = {
   threadId: string | null;
   byId: Record<string, LogEvent>;
@@ -86,6 +105,25 @@ export type ThreadState = {
   /** The highest seq applied. What the next sync asks for. */
   cursor: number;
   pending: Record<string, PendingSend>;
+  /** The server's queue for this thread, in send order. */
+  queued: QueuedMessage[];
+  /** Stop is holding the queue. Cleared by the operator's next send. */
+  queueHeld: boolean;
+  /** Why the queue is not moving, when it stopped for a reason. */
+  queueError: string;
+  /** THE CONTEXT CUT, AS THE SERVER RESOLVES IT: how many messages are no longer
+   *  sent verbatim, and whether /clear dropped them or /compact folded them into
+   *  a summary.
+   *
+   *  Read from the server rather than derived from the log's boundary events,
+   *  and the difference is not academic. The server ignores a `compact`
+   *  boundary with no summary behind it (folding was removed and restored on
+   *  2026-08-12, so four such boundaries exist in real threads). A client
+   *  deriving its own divider from the raw events would announce a fold on
+   *  those threads while every message was still being sent — the transcript
+   *  describing something that is not happening, which is the whole class of
+   *  bug this chat is being rebuilt to remove. */
+  cut: { count: number; mode: "clear" | "compact" } | null;
   activeRun: ActiveRun | null;
   /** Bumped on every pending write, so `at` is strictly increasing. */
   clock: number;
@@ -98,6 +136,16 @@ export type ThreadAction =
       events: LogEvent[];
       lastSeq: number;
       activeRun: ActiveRunPayload;
+      /** The server's queue, as of this response. Absent (an older backend, or
+       *  a caller that has none to report) leaves what is held. */
+      queued?: QueuedMessage[];
+      queueHeld?: boolean;
+      queueError?: string;
+      /** The cut the server is APPLYING: how many messages are behind it and
+       *  which command put them there. Not derived from the boundary events —
+       *  see `cut` in ThreadState. */
+      clearedThrough?: number;
+      cutMode?: "clear" | "compact" | "";
       /** Epoch ms at which the REQUEST behind this response was issued. Several
        *  syncs are legitimately in flight at once (the 10s poll, focus and
        *  visibilitychange, finish()'s settle loop, useCompaction's un-awaited
@@ -114,6 +162,11 @@ export type ThreadAction =
   | { type: "sendAcked"; clientId: string }
   | { type: "sendFailed"; clientId: string; error?: string }
   | { type: "sendRetracted"; clientId: string }
+  // Un-acknowledged sends read back from durable storage on mount. THE
+  // REDUCER'S `pending` DOES NOT SURVIVE A RELOAD on its own, and a send the
+  // server never took is text the operator hit enter on: it has to come back.
+  // See useSendOutbox — this is the restore half of that mirror.
+  | { type: "pendingRestored"; sends: PendingSend[] }
   // A turn is starting: show it as running from the moment the operator hits
   // send, not from when the POST resolves. (Not in the spec's action list; the
   // spec's `runDelta` cannot express "running, nothing produced yet", and that
@@ -138,6 +191,10 @@ export function initialThreadState(threadId: string | null = null): ThreadState 
     idBySeq: {},
     cursor: 0,
     pending: {},
+    queued: [],
+    queueHeld: false,
+    queueError: "",
+    cut: null,
     activeRun: null,
     clock: 0,
   };
@@ -223,6 +280,32 @@ function adoptRun(
   };
 }
 
+/** The cut, kept referentially stable when it has not moved: it feeds the
+ *  committed-transcript memo, which must not re-derive on every 10s poll. */
+function nextCut(
+  prev: ThreadState["cut"], a: { clearedThrough?: number; cutMode?: string },
+): ThreadState["cut"] {
+  if (a.clearedThrough === undefined) return prev;
+  if (!a.clearedThrough) return prev === null ? prev : null;
+  const mode = a.cutMode === "compact" ? "compact" : "clear";
+  if (prev && prev.count === a.clearedThrough && prev.mode === mode) return prev;
+  return { count: a.clearedThrough, mode };
+}
+
+/** Is the server's queue the one already rendered?
+ *
+ *  Compared by identity and order, not deep-equality: the queue is empty on
+ *  almost every poll, and holding the SAME array reference when nothing changed
+ *  is what keeps the transcript memo from re-deriving on a 10s timer forever. */
+function sameQueue(prev: QueuedMessage[], next: QueuedMessage[] | undefined): boolean {
+  if (!next) return true;
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < prev.length; i++) {
+    if (prev[i].client_id !== next[i].client_id || prev[i].text !== next[i].text) return false;
+  }
+  return true;
+}
+
 /** Drop the optimistic copies of anything the log now carries.
  *
  *  BY CLIENT ID, never by tail index or content equality. Matching on
@@ -232,14 +315,21 @@ function adoptRun(
  *  all. */
 function reconcilePending(
   pending: Record<string, PendingSend>, events: LogEvent[],
+  queued?: QueuedMessage[],
 ): Record<string, PendingSend> {
   let next = pending;
-  for (const ev of events) {
-    const cid = ev.kind === "message" ? ev.client_id : undefined;
-    if (!cid || !next[cid]) continue;
+  const drop = (cid: string | undefined) => {
+    if (!cid || !next[cid]) return;
     if (next === pending) next = { ...pending };
     delete next[cid];
-  }
+  };
+  for (const ev of events) drop(ev.kind === "message" ? ev.client_id : undefined);
+  // ...AND ANYTHING THE SERVER'S QUEUE NOW HOLDS. A send whose response was lost
+  // in flight (the request landed, the answer did not) leaves this tab thinking
+  // the message is still its problem while the server has already taken it. Both
+  // would draw, the same text twice. The queue naming it is proof of delivery,
+  // exactly as a committed event is.
+  for (const q of queued || []) drop(q.client_id);
   return next;
 }
 
@@ -321,9 +411,35 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         idBySeq,
         order,
         cursor: Math.max(state.cursor, action.lastSeq || 0),
-        pending: reconcilePending(state.pending, action.events),
+        // THE SERVER'S QUEUE REPLACES OURS WHOLESALE. There is nothing to merge:
+        // it is not this client's state, it is a fact about the thread, and a
+        // client that "merged" it could show a message the server has already
+        // sent or hide one another device just queued. Identity is stable
+        // (client_id), so React keys survive the swap.
+        queued: sameQueue(state.queued, action.queued) ? state.queued
+          : (action.queued ?? state.queued),
+        queueHeld: action.queueHeld ?? state.queueHeld,
+        queueError: action.queueError ?? state.queueError,
+        cut: nextCut(state.cut, action),
+        // A message that made it out of the queue and into the log is no longer
+        // pending here either: it was OUR send, arriving late.
+        pending: reconcilePending(state.pending, action.events, action.queued),
         activeRun,
       };
+    }
+
+    case "pendingRestored": {
+      // Anything this tab already holds wins: it is live, and the restored copy
+      // is by definition older. Restoring is for a fresh mount, where `pending`
+      // is empty and the durable copy is all there is.
+      let clock = state.clock;
+      const pending = { ...state.pending };
+      for (const s of action.sends) {
+        if (pending[s.clientId]) continue;
+        pending[s.clientId] = { ...s, at: ++clock };
+      }
+      if (clock === state.clock) return state;
+      return { ...state, pending, clock };
     }
 
     case "sendStarted": {

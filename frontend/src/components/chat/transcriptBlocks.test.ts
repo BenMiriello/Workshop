@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatSegment } from "../../lib/chat";
 import { initialThreadState, threadReducer, type LogEvent, type ThreadState } from "./threadStore";
 import {
-  selectTranscript, selectCommitted, composeTranscript, withStaleFailures,
-  withScopeNotes, committedClientIds, withoutCommitted,
+  selectTranscript, selectCommitted, composeTranscript, committedClientIds, withoutCommitted,
   type TranscriptBlock,
 } from "./transcriptBlocks";
 import { splitAtUnits } from "./transcriptUnits";
@@ -20,9 +19,17 @@ const reply = (content: string, meta: Record<string, unknown>): LogEvent =>
 const boundary = (mode: "compact" | "clear"): LogEvent =>
   ({ seq: ++seq, id: `e${seq}`, ts: "2026-08-09T12:00:00Z", kind: "boundary", mode });
 
-function stateOf(events: LogEvent[]): ThreadState {
-  return threadReducer(initialThreadState("t"),
-    { type: "eventsReceived", events, lastSeq: events.length, activeRun: null });
+/** `cut` is what the SERVER says it is applying. Without it there is no
+ *  divider, whatever boundary events the log carries: the transcript describes
+ *  the prompt, and only the server knows what the prompt contains. */
+function stateOf(
+  events: LogEvent[],
+  cut?: { clearedThrough: number; cutMode?: "clear" | "compact" },
+): ThreadState {
+  return threadReducer(initialThreadState("t"), {
+    type: "eventsReceived", events, lastSeq: events.length, activeRun: null,
+    ...(cut ? { clearedThrough: cut.clearedThrough, cutMode: cut.cutMode ?? "clear" } : {}),
+  });
 }
 
 /** A readable shape for an expected transcript. */
@@ -275,16 +282,23 @@ describe("pending sends and the context cut", () => {
   });
 
   it("draws the divider where the boundary sits in the log", () => {
-    const s = stateOf([user("a"), user("b"), boundary("clear"), user("c")]);
+    const s = stateOf([user("a"), user("b"), boundary("clear"), user("c")],
+                      { clearedThrough: 2 });
     expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "cut:2", "user:c"]);
   });
 
   it("shows only the latest boundary, as one divider", () => {
-    const s = stateOf([user("a"), boundary("clear"), user("b"), boundary("clear")]);
+    const s = stateOf([user("a"), boundary("clear"), user("b"), boundary("clear")],
+                      { clearedThrough: 2 });
     expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "cut:2"]);
   });
 
-  it("draws nothing for a boundary left by the removed folding path", () => {
+  it("draws NOTHING for a boundary the server is not applying", () => {
+    // Four of these exist in real threads: `compact` boundaries written during
+    // the hours when folding was broken, with no summary behind them. The
+    // server ignores them, so the divider must too — a transcript announcing a
+    // fold while every message is still in the prompt is the app describing
+    // something that is not happening.
     // A `compact` boundary hid messages behind a running summary that is no
     // longer assembled into any prompt. The server stopped honouring it, so the
     // divider must not claim a cut that is not happening.
@@ -292,9 +306,25 @@ describe("pending sends and the context cut", () => {
     expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "user:c"]);
   });
 
-  it("ignores a stale fold boundary even after a real clear", () => {
-    const s = stateOf([user("a"), boundary("compact"), user("b"), boundary("clear"), user("c")]);
+  it("draws the LATEST boundary the server honours, not an older one", () => {
+    const s = stateOf(
+      [user("a"), boundary("compact"), user("b"), boundary("clear"), user("c")],
+      { clearedThrough: 2 });
     expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "cut:2", "user:c"]);
+  });
+
+  it("says which command made the cut", () => {
+    // Two different things happened to those messages and the sentences differ:
+    // /clear dropped them, /compact folded them into a summary the model still
+    // reads. One wording for both would be wrong for one of them.
+    const cleared = stateOf([user("a"), user("b"), boundary("clear"), user("c")],
+                            { clearedThrough: 2, cutMode: "clear" });
+    const folded = stateOf([user("a"), user("b"), boundary("compact"), user("c")],
+                           { clearedThrough: 2, cutMode: "compact" });
+    const modeOf = (st: ThreadState) =>
+      selectTranscript(st).find((b) => b.kind === "cut") as { mode: string } | undefined;
+    expect(modeOf(cleared)?.mode).toBe("clear");
+    expect(modeOf(folded)?.mode).toBe("compact");
   });
 });
 
@@ -348,110 +378,6 @@ describe("nothing is lost or duplicated by a cut", () => {
   });
 });
 
-describe("withStaleFailures", () => {
-  // Reported 2026-08-10: a send refused earlier (durable in the queue, no
-  // longer in `pending` after a reload) rendered below a LATER message and
-  // below that later message's live run — reading as the chat ignoring
-  // everything sent since. A stale failure must land before whatever is
-  // live, not after it.
-  it("inserts before the live run, not after it", () => {
-    const s = stateOf([user("newer")]);
-    const withLive = threadReducer(s, { type: "runStarted", runId: "r1" });
-    const blocks = selectTranscript(withLive);
-    const out = withStaleFailures(blocks, [{ clientId: "stale-1", text: "Hello" }]);
-    expect(shape(out)).toEqual(["user:newer", "pending:Hello", "live:*"]);
-  });
-
-  it("appends at the end when nothing is live", () => {
-    const s = stateOf([user("newer")]);
-    const blocks = selectTranscript(s);
-    const out = withStaleFailures(blocks, [{ clientId: "stale-1", text: "Hello" }]);
-    expect(shape(out)).toEqual(["user:newer", "pending:Hello"]);
-  });
-
-  it("is a no-op with nothing stale to insert", () => {
-    const s = stateOf([user("a")]);
-    const blocks = selectTranscript(s);
-    expect(withStaleFailures(blocks, [])).toBe(blocks);
-  });
-
-  it("keeps several stale failures together, in order", () => {
-    const s = stateOf([user("newer")]);
-    const withLive = threadReducer(s, { type: "runStarted", runId: "r1" });
-    const blocks = selectTranscript(withLive);
-    const out = withStaleFailures(blocks, [
-      { clientId: "s1", text: "first" }, { clientId: "s2", text: "second" },
-    ]);
-    expect(shape(out)).toEqual(["user:newer", "pending:first", "pending:second", "live:*"]);
-  });
-
-  // The diagnosis is durable now, so the bubble that comes back after a reload
-  // says the same thing it said before it. Dropping it here is what made every
-  // reloaded failure read "this message never reached the server" (UnsentNote's
-  // default) regardless of what the server had actually answered.
-  it("carries the reason across the reload", () => {
-    const blocks = selectTranscript(stateOf([user("newer")]));
-    const out = withStaleFailures(blocks, [
-      { clientId: "s1", text: "first", error: "Not sent: the server refused this message (403)." },
-    ]);
-    const p = out.find((b) => b.kind === "pending");
-    expect(p && p.kind === "pending" && p.error)
-      .toBe("Not sent: the server refused this message (403).");
-  });
-});
-
-describe("withScopeNotes", () => {
-  // `seq` is a module-global counter shared across every test in this file
-  // (see `user`/`reply` above), so a note's `afterSeq` has to be read off the
-  // blocks it is being spliced into rather than guessed as 1, 2, 3 — Chat.tsx
-  // itself always reads it the same way, off `lastSeq(stateRef.current)`.
-  const seqOf = (blocks: TranscriptBlock[], i: number): number => {
-    const b = blocks[i];
-    if (b.kind !== "message") throw new Error("expected a message block");
-    return b.seq;
-  };
-
-  // Chat.tsx never appends more than one note per settle (a flip the operator
-  // hasn't sent past yet just overwrites its own pending state, not this
-  // list), but the merge itself just has to place whatever it is given at the
-  // seq it happened.
-  it("splices a note in at the seq it happened", () => {
-    const blocks = selectTranscript(stateOf([user("a"), user("b")]));
-    const out = withScopeNotes(blocks, [{ afterSeq: seqOf(blocks, 0), to: "development" }]);
-    expect(shape(out)).toEqual(["user:a", "scope:development", "user:b"]);
-  });
-
-  it("keeps several notes in order", () => {
-    const blocks = selectTranscript(stateOf([user("a"), user("b"), user("c")]));
-    const out = withScopeNotes(blocks, [
-      { afterSeq: seqOf(blocks, 0), to: "development" },
-      { afterSeq: seqOf(blocks, 1), to: "general" },
-    ]);
-    expect(shape(out)).toEqual(["user:a", "scope:development", "user:b", "scope:general", "user:c"]);
-  });
-
-  it("is a no-op with nothing to splice in", () => {
-    const blocks = selectTranscript(stateOf([user("a")]));
-    expect(withScopeNotes(blocks, [])).toBe(blocks);
-  });
-
-  it("lands at the very top for a scope changed before the first message", () => {
-    const blocks = selectTranscript(stateOf([user("a")]));
-    const out = withScopeNotes(blocks, [{ afterSeq: 0, to: "development" }]);
-    expect(shape(out)).toEqual(["scope:development", "user:a"]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// WHERE A FAILED SEND SITS.
-// ---------------------------------------------------------------------------
-// Reported 2026-08-11: "it just sort of sits there, and then I send new
-// messages, and my new messages show above this old message, and then
-// subsequent chat messages show above these messages."
-//
-// A failed send never leaves `pending` (nothing commits it, nothing retracts
-// it), and every pending send used to be appended after the whole committed
-// log, so it stayed nailed to the bottom while the conversation grew above it.
 describe("a pending send's place in the log", () => {
   const failed = (s: ThreadState, clientId: string, text: string): ThreadState =>
     threadReducer(
@@ -618,5 +544,82 @@ describe("a durable failure whose message actually landed", () => {
     ];
     const out = withoutCommitted(items, committedClientIds(committedWith("cid-1")));
     expect(out.map((i) => i.clientId)).toEqual(["cid-2"]);
+  });
+});
+
+describe("everything in the transcript comes from the transcript", () => {
+  // THE RULE, and the one test that states it directly.
+  //
+  // A transcript block may be derived from: a log event, the server's active
+  // run, or this browser's own un-acknowledged sends. There is no fourth
+  // source. Anything else — an annotation held in React state, a queue held in
+  // localStorage — is a line the reader cannot verify and that a second device
+  // does not show, which is indistinguishable from the app making things up.
+  //
+  // A scope change used to be exactly that: `withScopeNotes` spliced it in from
+  // component state, so it appeared for the browser that flipped the picker,
+  // vanished on reload, and never existed on any other device.
+  it("renders a scope change from the log's own event", () => {
+    let state = initialThreadState("t1");
+    state = threadReducer(state, {
+      type: "eventsReceived",
+      events: [
+        { seq: 1, id: "e1", ts: "", kind: "message", role: "user", content: "hello" },
+        { seq: 2, id: "e2", ts: "", kind: "scope", from: "general", to: "development" },
+      ] as LogEvent[],
+      lastSeq: 2,
+      activeRun: null,
+    });
+    const blocks = selectTranscript(state);
+    expect(blocks.map((b) => b.kind)).toEqual(["message", "scope"]);
+    expect(blocks[1]).toMatchObject({ kind: "scope", to: "development" });
+  });
+
+  it("shows the queue the SERVER reports, not one this browser is keeping", () => {
+    let state = initialThreadState("t1");
+    state = threadReducer(state, {
+      type: "eventsReceived",
+      events: [],
+      lastSeq: 0,
+      activeRun: null,
+      queued: [{ client_id: "c1", text: "typed during the command", ts: "2026-08-12T17:44:00Z" }],
+    });
+    expect(state.queued.map((q) => q.text)).toEqual(["typed during the command"]);
+  });
+
+  it("drops a pending send the server's queue has taken over", () => {
+    // The response was lost in flight: the request landed, the answer did not.
+    // This tab still thinks the message is its problem while the server has
+    // already accepted it, and both would draw the same text.
+    let state = initialThreadState("t1");
+    state = threadReducer(state, {
+      type: "sendStarted", clientId: "c1", text: "hello", ts: "2026-08-12T17:44:00Z",
+    });
+    expect(Object.keys(state.pending)).toEqual(["c1"]);
+    state = threadReducer(state, {
+      type: "eventsReceived",
+      events: [],
+      lastSeq: 0,
+      activeRun: null,
+      queued: [{ client_id: "c1", text: "hello", ts: "2026-08-12T17:44:00Z" }],
+    });
+    expect(state.pending).toEqual({});
+    expect(selectTranscript(state).filter((b) => b.kind === "pending")).toEqual([]);
+  });
+
+  it("brings back an un-acknowledged send after a reload", () => {
+    // The composer is cleared the instant the operator hits enter, so between
+    // that moment and the server's answer this browser holds the only copy.
+    let state = initialThreadState("t1");
+    state = threadReducer(state, {
+      type: "pendingRestored",
+      sends: [{
+        clientId: "c1", text: "the one that never landed", ts: "2026-08-12T17:44:00Z",
+        status: "failed", error: "the backend was restarting", at: 0, afterSeq: 0,
+      }],
+    });
+    const blocks = selectTranscript(state);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ kind: "pending", status: "failed", text: "the one that never landed" });
   });
 });

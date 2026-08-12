@@ -32,6 +32,14 @@ anything, because there is no operation that writes the transcript as a whole.
     run         run_id, state (started/finished/lost)    a turn's lifecycle marker
     boundary    mode ("clear"), at_seq                   context cut at this point
     title       title, source (auto/manual)              the thread was named
+    scope       from, to                                 the chat was re-bound to
+                                                         another scope
+
+`scope` is in the log for the same reason the rest of it is: it is a thing that
+happened to this conversation, at a point in its order, and the transcript that
+renders it must be readable the same way from any device and after any reload.
+It was a React-state annotation once, visible only in the browser that flipped
+the picker and gone the moment that browser reloaded.
 
 There is no revision, edit or delete event, deliberately. A `message` event says
 what was said and where in the order it was said; nothing later moves it. Pass A
@@ -92,9 +100,12 @@ META_NAME = "meta.json"
 LIVE_NAME = "live.json"
 
 # Files that live alongside thread directories and are not threads.
+# `queue.json` lives INSIDE a thread dir, so it is not listed here; these are
+# the files that sit beside thread directories and would otherwise be read as
+# thread ids.
 NON_THREAD_FILES = ("drafts.json", "prefs.json")
 
-KINDS = ("message", "run", "boundary", "title")
+KINDS = ("message", "run", "boundary", "title", "scope")
 
 # ---- rotation thresholds ---------------------------------------------------
 #

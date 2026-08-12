@@ -1,32 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { canDrainQueue, planSend } from "./sendPlan";
+import { planSend } from "./sendPlan";
 import { TURN_LABEL, elapsedSeconds, turnPhase } from "./turnStatus";
 
-const idle = { compacting: false, starting: false, runActive: false };
+const idle = { compacting: false, starting: false, runActive: false, hasThread: true };
 
 describe("planSend", () => {
+  // THE PLAN NEVER SAYS "DO NOT SEND THIS YET" ANY MORE, and that is the fix.
+  //
+  // It used to answer "queue" for a message typed during a turn that reads
+  // nothing (a slash command, a voice turn) and for a command typed during any
+  // turn. Both facts are still true, and both are now the SERVER's to act on:
+  // the message is POSTed, the server records it on the thread's queue, and the
+  // server sends it when the run ends. When the browser held those messages
+  // instead, delivery depended on that tab being open on that thread at the
+  // moment the turn ended — and on 2026-08-12 it was not, on any device, and
+  // two of the operator's messages were lost with no trace on the server.
   it("sends as a new turn when nothing is running", () => {
     expect(planSend("hello", idle)).toBe("newTurn");
   });
 
-  it("queues an ordinary message while a turn that reads nothing is running", () => {
-    // 2026-08-10, from the thread log: `/compact` opened a turn at 06:28:19, the
-    // operator typed at 06:29:00, and the message was injected into the fold —
-    // which reads nothing, replies "Compacted." and exits. He had to send it
-    // again 22 minutes later. A command turn is never spoken to.
-    expect(planSend("and also do this", { ...idle, runActive: true, runAcceptsInput: false }))
-      .toBe("queue");
+  it("addresses the chat while a turn that reads nothing is running", () => {
+    // 2026-08-10 and again 2026-08-12: `/compact` opens a turn that never reads
+    // a word of input. The message still goes to the server NOW; the server is
+    // what decides it has to wait, and it is what sends it afterwards.
+    expect(planSend("and also do this", { ...idle, runActive: true })).toBe("inject");
   });
 
-  it("still injects into an ordinary turn", () => {
-    // The fix must not turn into "never inject": delivering a message to a
-    // running turn is the behaviour the operator asked for in the first place.
-    expect(planSend("and also do this", { ...idle, runActive: true, runAcceptsInput: true }))
-      .toBe("inject");
+  it("sends a slash command to the server rather than holding it", () => {
+    // The CLI's command layer only runs between turns, so this cannot be
+    // injected into the running turn. The server queues it as its own turn.
+    expect(planSend("/compact", { ...idle, runActive: true })).toBe("inject");
+    expect(planSend("/cost extra", { ...idle, starting: true })).toBe("inject");
   });
 
-  it("hands a message to the run in flight", () => {
-    expect(planSend("hello", { ...idle, runActive: true })).toBe("inject");
+  it("sends a slash command straight out when nothing is running", () => {
+    expect(planSend("/compact", idle)).toBe("newTurn");
   });
 
   it("treats a turn that has been asked for as running", () => {
@@ -35,56 +43,24 @@ describe("planSend", () => {
     expect(planSend("hello", { ...idle, starting: true })).toBe("inject");
   });
 
-  it("queues a slash command rather than injecting it", () => {
-    // The CLI's command layer only runs between turns; a command injected
-    // mid-turn is swallowed silently.
-    expect(planSend("/compact", { ...idle, runActive: true })).toBe("queue");
-    expect(planSend("/cost extra", { ...idle, starting: true })).toBe("queue");
+  it("sends during a fold too", () => {
+    // A fold is a server-side operation on this thread, and the endpoint that
+    // receives the message is the one that knows where the boundary ended up.
+    expect(planSend("hello", { ...idle, compacting: true })).toBe("inject");
+    expect(planSend("/clear", { ...idle, compacting: true })).toBe("inject");
   });
 
-  it("sends a slash command straight out when nothing is running", () => {
-    expect(planSend("/compact", idle)).toBe("newTurn");
+  it("starts the thread with the first message of a blank chat", () => {
+    expect(planSend("hello", { ...idle, hasThread: false })).toBe("newTurn");
   });
 
-  it("does not mistake a path for a command", () => {
-    expect(planSend("/usr/bin/foo is missing", { ...idle, runActive: true })).toBe("inject");
-  });
-
-  it("queues everything while a fold is in flight", () => {
-    // Including a command: the /compact already asked for has to keep the
-    // position the operator gave it.
-    expect(planSend("hello", { ...idle, compacting: true })).toBe("queue");
-    expect(planSend("/clear", { ...idle, compacting: true })).toBe("queue");
-  });
-});
-
-describe("canDrainQueue", () => {
-  it("drains when the chat is genuinely idle", () => {
-    expect(canDrainQueue({ ...idle, loadingThread: false })).toBe(true);
-  });
-
-  it("holds while a turn is starting, running, folding, or loading", () => {
-    expect(canDrainQueue({ ...idle, loadingThread: false, starting: true })).toBe(false);
-    expect(canDrainQueue({ ...idle, loadingThread: false, runActive: true })).toBe(false);
-    expect(canDrainQueue({ ...idle, loadingThread: false, compacting: true })).toBe(false);
-    expect(canDrainQueue({ ...idle, loadingThread: true })).toBe(false);
-  });
-
-  it("does not fire the queue at the moment the operator stops a turn", () => {
-    // The trap: Stop ends the run, which makes the chat idle, which is exactly
-    // the condition the queue self-drains on. So the press that was meant to
-    // take the wheel back would instead send everything typed ahead, unattended.
-    expect(canDrainQueue({ ...idle, loadingThread: false, heldByStop: true })).toBe(false);
-  });
-
-  it("resumes once the operator sends again", () => {
-    // The hold is released on the next send (Chat.tsx, the pipeline's onSend),
-    // so nothing queued is stranded — it goes out when they are driving again.
-    expect(canDrainQueue({ ...idle, loadingThread: false, heldByStop: false })).toBe(true);
-  });
-
-  it("is absent by default, so every other caller is unaffected", () => {
-    expect(canDrainQueue({ ...idle, loadingThread: false })).toBe(true);
+  it("holds ONLY a second message racing the request that creates the chat", () => {
+    // The one thing the client still serializes, because it is the one thing
+    // the server cannot: two POSTs against a chat with no id yet would make two
+    // chats. It waits for the id and goes immediately after — and it is durable
+    // while it waits (useSendOutbox), not merely remembered.
+    expect(planSend("and this", { ...idle, hasThread: false, starting: true }))
+      .toBe("awaitThread");
   });
 });
 

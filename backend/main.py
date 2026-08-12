@@ -13,7 +13,7 @@ from deps_user import (
 # location/birds/health/…) are NOT imported here; they mount from the installed-
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
-from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers
+from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, skills, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers
 from routes import mcp as mcp_routes
 from routes import stores as stores_routes
 from routes import deploys as deploys_routes
@@ -75,11 +75,35 @@ async def lifespan(app: FastAPI):
         build_streaming.reconcile_threads()
     except Exception:
         pass
+    try:
+        # Cache each thread's resolved context cut. Threads cleared before the
+        # cache existed carry a boundary and no count, and the sync endpoint
+        # answers from meta alone — so without this their divider would vanish
+        # while the prompt kept honouring the cut. One log read per thread, once.
+        from services import chat_store as _cs
+        n = _cs.backfill_cuts()
+        if n:
+            log.info("resolved the context cut for %d thread(s)", n)
+    except Exception as e:
+        log.error("context-cut backfill failed at startup: %s", e)
+    try:
+        # ...and then send anything that was waiting behind a turn this restart
+        # killed. The queue is on the thread, so it survived; nothing else would
+        # ever notice it, because the browser that queued those messages may
+        # never open that chat again. Import here, and after the reconcile, so a
+        # thread whose dead run has just been closed out reads as idle.
+        # routes.chat registers the starter, so import it first.
+        from routes import chat as _chat_routes  # noqa: F401
+        from services import chat_drain
+        app.state._bg_queue_drain = asyncio.create_task(chat_drain.drain_all())
+    except Exception as e:
+        log.error("queued chat messages could not be drained at startup: %s", e)
     yield
     for t in [*getattr(app.state, "_app_bg", []),
               getattr(app.state, "_bg_port_reconcile", None),
               getattr(app.state, "_bg_deploy_watcher", None),
-              getattr(app.state, "_bg_job_reconcile", None)]:
+              getattr(app.state, "_bg_job_reconcile", None),
+              getattr(app.state, "_bg_queue_drain", None)]:
         if t:
             t.cancel()
 
@@ -172,6 +196,11 @@ app.include_router(mcp_routes.router, dependencies=_OPERATOR)
 app.include_router(chat.router, prefix="/chat", tags=["chat"], dependencies=_USER)
 # Voice mode — local STT/TTS for the chat surface, per-owner prefs.
 app.include_router(voice.router, tags=["voice"], dependencies=_USER)
+# The voice socket authenticates inside the handler: _USER is typed for an
+# HTTP Request and a WebSocket is not one. Same auth_store, same fail-closed
+# rule, plus an Origin check (a WebSocket is not covered by the same-origin
+# policy but does carry cookies).
+app.include_router(voice_stream.router, tags=["voice"])
 app.include_router(push.router, dependencies=_USER)
 
 # Installed apps — finance/budget/commute/location/birds/health/… mount from the

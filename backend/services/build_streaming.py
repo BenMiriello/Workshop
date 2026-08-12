@@ -25,8 +25,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import (agent_slots, build_agents, chat_attachments, chat_log,
-                      chat_store, llm_router, model_caps, ownership)
+from services import (agent_slots, build_agents, chat_attachments, chat_drain,
+                      chat_log, chat_store, llm_router, model_caps, ownership)
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -471,6 +471,9 @@ def release_external_run(thread_id: str, run_id: str) -> None:
         chat_store.release_run(thread_id, run_id)
     except Exception:  # pragma: no cover — the reconcile owns whatever is left
         log.debug("could not release external run %s on %s", run_id, thread_id)
+    # A voice turn ending leaves the thread idle exactly as a text turn does, and
+    # a message typed during one is queued behind it in the same way.
+    chat_drain.drain_soon(thread_id, reason="external run released")
 
 
 def _push(turn: Turn, kind: str, payload: dict) -> None:
@@ -1422,6 +1425,7 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      allowed_tools: list[str] | None = None,
                      disallowed_tools: list[str] | None = None,
                      mcp_servers: list[str] | None = None,
+                     mcp_selection: list[str] | None = None,
                      tools_disabled: bool = False,
                      speaker: str | None = None,
                      run_id: str | None = None,
@@ -1488,6 +1492,14 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         "timeout_s": timeout_s, "pid": None, "status": "running", "started": turn.started,
         "allowed_tools": allowed_tools, "disallowed_tools": disallowed_tools,
         "mcp_servers": mcp_servers,
+        # The chat's own per-thread MCP choice, a FILTER over whatever the mode
+        # would otherwise reach. Carried in meta for the same reason `effort` is:
+        # a turn respawned after a restart must come back with the same server
+        # surface it started with, not silently widen to the default. JSON keeps
+        # `null` and `[]` distinct, and they mean different things here — None is
+        # "never chosen" (inherit), `[]` is "chosen: none". An older journal
+        # entry has no key at all, which reads as None: today's behavior.
+        "mcp_selection": mcp_selection,
         "tools_disabled": bool(tools_disabled),
         # None = send no --effort, i.e. the model's own default. Carried in meta
         # so a turn resumed after a restart respawns at the level it was started
@@ -1531,17 +1543,35 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
     # agentic turns (Build/Project) fall through to bypassPermissions: headless,
     # no interactive approver, so without it the model stalls asking to write.
     # The auto-checkpoint + git history are the safety net (every turn revertable).
+    #
+    # A full agentic turn reaches tool_flags too when the chat has made an MCP
+    # choice (`mcp_selection is not None`). Without that it fell straight to the
+    # bare `--permission-mode` below and emitted no `--strict-mcp-config` at all,
+    # so the CLI inherited every server in `~/.claude.json` — Plaid, Google,
+    # Discord, all on the operator's credentials — no matter what the chat had
+    # selected. The per-thread MCP picker was therefore honored on the narrow
+    # path and silently ignored on exactly the path with the widest tools.
     tool_env: dict = {}
     mode = meta.get("permission_mode") or model_caps.DEFAULT_PERMISSION_MODE
-    if meta.get("allowed_tools") is not None or meta.get("tools_disabled"):
+    if (meta.get("allowed_tools") is not None or meta.get("tools_disabled")
+            or meta.get("mcp_selection") is not None):
         _tflags, tool_env, _block = llm_router.tool_flags(
             tools_disabled=bool(meta.get("tools_disabled")),
             allowed_tools=meta.get("allowed_tools"),
             disallowed_tools=meta.get("disallowed_tools"),
             mcp_servers=meta.get("mcp_servers"),
             permission_mode=mode,
+            mcp_selection=meta.get("mcp_selection"),
+            cwd=meta.get("cwd") or "",
         )
         cmd.extend(_tflags)
+        # tool_flags' full-agentic branch returns the strict MCP flags ONLY — it
+        # documents that the caller owns the permission mode there (call_cloud
+        # keeps the CLI default; this path needs bypass, headless with no
+        # approver). The narrow and tools-off branches emit their own, so adding
+        # it unconditionally would duplicate the flag.
+        if meta.get("allowed_tools") is None and not meta.get("tools_disabled"):
+            cmd.extend(["--permission-mode", mode])
     else:
         cmd.extend(["--permission-mode", mode])
     # THE COUPLING THAT MATTERS. Every mode except bypass can stop and ask, and
@@ -2138,6 +2168,14 @@ async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
         turn.finished_at = time.time()
         turn.new_event.set()
         turn.finished.set()
+        # THE THREAD IS IDLE, SO ANYTHING WAITING GOES NOW. This is the moment
+        # the browser's queue used to drain from — but only in a tab that was
+        # open, bound to this thread, and awake. Delivery of a message the
+        # operator already sent cannot depend on that; it happens here, where
+        # the turn actually ends. Fire-and-forget: assembling the next turn's
+        # prompt must not sit inside the commit that whoever is blocked on
+        # `turn.finished` is waiting for. See services/chat_drain.
+        chat_drain.drain_soon(turn.thread_id, reason="turn finished")
 
 
 async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool,
@@ -2217,7 +2255,22 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         text = "Compacted. Earlier messages are now a summary."
         is_error = False
     elif rc == 0 and is_command:
-        text = "Command ran."
+        # rc 0 WITH NOTHING TO SHOW IS NOT "it ran". Headless mode parses a
+        # leading slash into a local-command block and executes nothing, so a
+        # command the CLI only implements in its own terminal exits clean,
+        # silent, and in about a second. "Command ran." over that is the chat
+        # asserting an effect that did not happen: /compact reported it for
+        # months while the live window it was supposed to empty stayed exactly
+        # as full (2026-08-12T05:10:18Z, two seconds, no compact_boundary).
+        #
+        # /compact and /clear no longer come through here at all — they are
+        # server-side commands now, see routes/chat.py:compact_thread. This is
+        # for every other slash the operator can still type.
+        text = "Command ran." if turn.segments else (
+            "Nothing ran. In this mode the CLI records a leading slash as one of "
+            "its own commands and executes it only in its own terminal. Send it "
+            "without the slash if you meant it as a message."
+        )
         is_error = False
     elif rc == 0:
         text = _clean_exit_text(turn.segments)

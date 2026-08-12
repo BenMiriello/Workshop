@@ -218,6 +218,9 @@ export type ThreadSummary = {
   participants?: string[];
   title: string;
   updated_at: string;
+  // When this chat was archived. Absent on every live thread: the two lists are
+  // disjoint, so a summary carrying this came from the archive.
+  archived_at?: string | null;
   message_count: number;
   last_message: string;
   model?: string | null;
@@ -250,7 +253,7 @@ export type CardState = {
   ts?: string;
 };
 
-export type Thread = ThreadSummary & { messages: ChatMsg[] };
+export type Thread = ThreadSummary & { messages: ChatMsg[] } & QueueState;
 
 // ---- The event log (the wire shapes) ---------------------------------------
 // A thread IS an append-only, sequence-numbered event log; everything else about
@@ -258,7 +261,7 @@ export type Thread = ThreadSummary & { messages: ChatMsg[] };
 // client's model of a thread is built from nothing else — see
 // components/chat/threadStore.
 
-export type EventKind = "message" | "run" | "boundary" | "title";
+export type EventKind = "message" | "run" | "boundary" | "title" | "scope";
 
 export type LogEvent = {
   // 1-based, assigned by the server, monotonic per thread, never reused. A
@@ -276,6 +279,12 @@ export type LogEvent = {
   // log until it finishes.
   run_id?: string;
   state?: "started" | "finished" | "lost";
+  // kind === "scope" — this chat was re-bound to another scope. In the log
+  // because it is a thing that HAPPENED to the conversation, at a point in its
+  // order. It was a client-side annotation once: visible only in the browser
+  // that flipped the picker, gone on reload, absent on every other device.
+  from?: string;
+  to?: string;
   // kind === "boundary" — a context cut, which only /clear makes.
   // `mode` survives as a discriminator: a boundary left behind by the removed
   // folding path reads as "compact" and is ignored everywhere.
@@ -305,11 +314,44 @@ export type ActiveRunPayload = {
   } | null;
 } | null;
 
+/** One message the SERVER is holding to send next.
+ *
+ *  A chat runs one turn at a time and some turns read nothing at all (a slash
+ *  command, a voice turn), so a message sent during one has to wait. It waits
+ *  ON THE THREAD, not in this browser: the server records it, every device sees
+ *  the same queue, and the server sends it when the run ends whether or not any
+ *  browser is watching. See backend/services/chat_queue.py — this replaced a
+ *  localStorage queue that lost two of the operator's messages on 2026-08-12. */
+export type QueuedMessagePayload = {
+  client_id: string;
+  text: string;
+  /** When the operator hit enter. */
+  ts: string;
+  attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
+};
+
+/** The context cut the server is APPLYING, and which command made it. */
+export type CutState = {
+  /** Messages no longer sent verbatim. 0 means no cut. */
+  cleared_through?: number;
+  /** `clear` dropped them; `compact` folded them into a summary. */
+  cut_mode?: "clear" | "compact" | "";
+};
+
+/** The queue, as every read of a thread reports it. */
+export type QueueState = {
+  queued?: QueuedMessagePayload[];
+  /** Stop is holding it. The operator's next send releases it. */
+  queue_held?: boolean;
+  /** Why it is not moving, when it stopped for a reason worth showing. */
+  queue_error?: string;
+};
+
 export type ThreadEventsPage = {
   events: LogEvent[];
   last_seq: number;
   active_run: ActiveRunPayload;
-};
+} & QueueState & CutState;
 
 // This browser's id for one send, stamped before the request leaves and reused
 // verbatim on a retry.
@@ -452,12 +494,16 @@ export const chatApi = {
   // listThreads now accepts an empty contextKey to list ALL threads (used when
   // we want the cross-scope thread picker to surface every chat the operator
   // has ever opened, regardless of which app they're in now).
-  listThreads: (contextKey?: string) =>
-    fetch(
-      contextKey
-        ? `/api/chat/threads?context=${encodeURIComponent(contextKey)}`
-        : `/api/chat/threads`,
-    ).then(j<ThreadSummary[]>),
+  // `archived` SWITCHES LISTS rather than widening one: the default is every
+  // live thread, `true` is the archive and nothing else. Nothing needs both, and
+  // a mixed list would need a marker per row to be readable.
+  listThreads: (contextKey?: string, archived = false) => {
+    const q = new URLSearchParams();
+    if (contextKey) q.set("context", contextKey);
+    if (archived) q.set("archived", "true");
+    const qs = q.toString();
+    return fetch(`/api/chat/threads${qs ? `?${qs}` : ""}`).then(j<ThreadSummary[]>);
+  },
 
   // `mode` is sent only when the operator chose one on the blank chat before
   // sending; omitted, the server applies their default for new chats.
@@ -541,6 +587,17 @@ export const chatApi = {
       body: JSON.stringify({ context_key: contextKey }),
     }).then(j<ThreadSummary>),
 
+  // Closing a chat is archiving it. This is what the chat's own menu does, and
+  // it is reversible, which is why it asks nothing before doing it.
+  archiveThread: (id: string) =>
+    fetch(`/api/chat/threads/${id}/archive`, { method: "POST" }).then(j<ThreadSummary>),
+
+  restoreThread: (id: string) =>
+    fetch(`/api/chat/threads/${id}/restore`, { method: "POST" }).then(j<ThreadSummary>),
+
+  // The destructive one, reachable only from the archive: a chat is archived
+  // first, then deleted from there, so this is never one tap away from a
+  // conversation you are in.
   deleteThread: (id: string) =>
     fetch(`/api/chat/threads/${id}`, { method: "DELETE" }).then(j<{ deleted: boolean }>),
 
@@ -559,9 +616,19 @@ export const chatApi = {
   // does not move; the CLI's private copy of the conversation is simply
   // discarded, and it is re-derivable from the transcript by definition.
   // `session_reset` says whether there was a live window to reclaim.
+  // Fold the conversation: summarize everything but the recent tail, move the
+  // cut, drop the live session. `folded` is how many messages it stood in for
+  // and `error` is why it did not, when it did not — a summarizer is a model
+  // call and it can fail, and this used to answer 200 over a fold that never
+  // happened while the chat said "Compacted."
   compactThread: (id: string) =>
     fetch(`/api/chat/threads/${id}/compact`, { method: "POST" }).then(
-      j<{ session_reset: boolean }>,
+      j<{
+        folded: number;
+        session_reset: boolean;
+        error: string;
+        summary_chars: number;
+      }>,
     ),
 
   // Drop this thread's context outright — the other half of /clear vs /compact.
@@ -593,7 +660,11 @@ export const chatApi = {
   // `delivered: false` (no run was going) means the endpoint did not take the
   // message and the caller must send it as a turn.
   injectIntoThread: (threadId: string, content: string, clientId?: string,
-                     attachments?: { id: string; name: string; kind: string }[]) =>
+                     opts?: {
+                       sentAt?: string;
+                       attachments?: { id: string; name: string; kind: string }[];
+                       draftKey?: string;
+                     }) =>
     fetch(`/api/chat/threads/${threadId}/inject`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -602,17 +673,43 @@ export const chatApi = {
         ...(clientId ? { client_id: clientId } : {}),
         // A file attached to a message typed DURING a turn reaches the running
         // model the same way it would have at the start of one.
-        ...(attachments?.length ? { attachments } : {}),
+        ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
+        // When the operator hit enter, and which composer it came out of. Both
+        // matter when the message does not run immediately: it is queued under
+        // its own send time, and the server clears the draft it came from.
+        ...(opts?.sentAt ? { sent_at: opts.sentAt } : {}),
+        ...(opts?.draftKey ? { draft_key: opts.draftKey } : {}),
       }),
     }).then(j<{
       delivered: boolean; injected?: boolean; queued_for_turn?: boolean;
-      // The chat is running a slash command, which reads no input. NOT recorded
-      // and NOT taken — the caller keeps it and sends it as its own turn once
-      // the command is done. Distinct from `delivered: false`, which means no
-      // run was going and the message should be sent as a turn right now.
+      // The chat is running something that reads no input (a slash command, a
+      // voice turn). TAKEN AND DURABLE: the server recorded it on the thread's
+      // queue and sends it when that run ends. The caller must NOT re-send it —
+      // that is the difference from `delivered: false`, which means no run was
+      // going and this message should become a turn right now.
+      queued?: boolean;
+      queue?: QueueState;
+      // An OLDER backend's answer: it took nothing and expected the browser to
+      // hold the message. This client refuses to, so a deferral is treated as a
+      // failure rather than silently dropping the text. Kept in the type so that
+      // refusal is deliberate rather than an untyped field nobody handles.
       deferred?: boolean;
       turn_id: string | null; at_segment?: number | null; reason: string;
     }>),
+
+  // Take a queued message back out. It is the operator's text and unsending it
+  // before it goes is theirs to do; this is the only way anything leaves the
+  // queue undelivered.
+  cancelQueued: (threadId: string, clientId: string) =>
+    fetch(`/api/chat/threads/${threadId}/queued/${encodeURIComponent(clientId)}/cancel`,
+          { method: "POST" }).then(j<QueueState>),
+
+  // Send what is waiting: clears a Stop hold, or the diagnosis left by a drain
+  // that failed. The Retry under a stuck queue and "go ahead" after a Stop are
+  // the same action.
+  releaseQueue: (threadId: string) =>
+    fetch(`/api/chat/threads/${threadId}/queued/release`, { method: "POST" })
+      .then(j<QueueState>),
 
   // Stop a running turn. Not "stop watching it": the run's process group is
   // signalled, whatever it produced is committed as the reply, and the thread

@@ -5,7 +5,7 @@ import {
 } from "../../lib/chatSelection";
 import type { ChatModeId } from "./chatModes";
 import type { ChatProblem } from "./chatProblem";
-import type { MessageQueue } from "./useMessageQueue";
+import type { SendOutbox } from "./useSendOutbox";
 
 /** The request `chatApi.listThreads` makes, named so an error block can point at
  *  the thing that actually failed. */
@@ -55,17 +55,17 @@ export type ChatThread = {
   refreshThreads: () => Promise<ThreadSummary[]>;
   scheduleAutoNameRefetch: (wasFirstExchange: boolean) => void;
   newChat: () => void;
-  removeThread: (id: string) => Promise<void>;
+  /** Close this chat into the archive. No confirmation: it is reversible,
+   *  and the delete that is not lives on the archive view. */
+  archiveThread: (id: string) => Promise<void>;
   saveRename: (title: string) => Promise<void>;
   renameBusy: boolean;
   /** A thread was just created by this chat: put it in the picker, record the
-   *  selection, and carry the blank-chat queue onto it. */
+   *  selection, and carry the blank chat's outbox onto it. */
   adoptThread: (t: ThreadSummary) => void;
   /** The voice session started a thread of its own and this chat is on the
    *  blank slot. Same move, minus a summary to insert (the refresh brings it). */
   adoptThreadId: (id: string) => void;
-  confirmDeleteId: string | null;
-  setConfirmDeleteId: (id: string | null) => void;
   confirmNew: boolean;
   setConfirmNew: (v: boolean) => void;
   renameOpen: boolean;
@@ -73,7 +73,7 @@ export type ChatThread = {
 };
 
 export function useChatThread({
-  scope, providersReady, variant, queue,
+  scope, providersReady, variant, outboxRef,
   startNewRef, linkedThreadRef, initialThreadId,
   stripNewParam, setSelectedModel, setSelectedEffort, setSelectedPermissionMode,
   onError, onLeaveForList,
@@ -81,7 +81,10 @@ export function useChatThread({
   scope: string;
   providersReady: boolean;
   variant: string;
-  queue: MessageQueue;
+  /** Durable storage for sends the server has not taken, pointed at the
+   *  conversation being opened. Reached through a ref because it is built from
+   *  the store, which is built from the thread this hook selects. */
+  outboxRef: React.MutableRefObject<SendOutbox>;
   startNewRef: React.MutableRefObject<boolean>;
   linkedThreadRef: React.MutableRefObject<string | null>;
   initialThreadId?: string;
@@ -98,7 +101,6 @@ export function useChatThread({
   const [loadingThreads, setLoadingThreads] = useState(true);
   const [cardStates, setCardStates] = useState<Record<string, CardState>>({});
   const [renameBusy, setRenameBusy] = useState(false);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmNew, setConfirmNew] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   // Bumped by the Retry on the "couldn't open this conversation" block. The
@@ -197,7 +199,7 @@ export function useChatThread({
 
   // The thread's own settings. NOT its messages.
   const adoptSettings = useCallback((t: Thread | ThreadSummary) => {
-    queue.bindThread(t.id);
+    outboxRef.current.bind(t.id);
     setCardStates(t.card_states ?? {});
     setChatMode(t.mode === "orchestrated" ? "orchestrated" : "direct");
     if (t.model) setSelectedModel(t.model);
@@ -206,7 +208,7 @@ export function useChatThread({
     // about the level after a reload.
     setSelectedEffort(t.effort ?? "");
     setSelectedPermissionMode(t.permission_mode ?? "");
-  }, [queue, setSelectedModel, setSelectedEffort, setSelectedPermissionMode]);
+  }, [outboxRef, setSelectedModel, setSelectedEffort, setSelectedPermissionMode]);
 
   useEffect(() => {
     // Gate: never load a thread under a scope that is still being resolved.
@@ -257,9 +259,9 @@ export function useChatThread({
         } else {
           setActiveId(null);
           setCardStates({});
-          // Landing blank: the queue belongs to the blank-chat slot, and
-          // anything already waiting there is still owed delivery.
-          queue.bindBlank();
+          // Landing blank: the outbox belongs to the blank-chat slot, and a
+          // send that never reached the server is still owed delivery.
+          outboxRef.current.bind(`scope:${scope}`);
         }
       } catch (e) {
         if (!cancelled) {
@@ -285,10 +287,9 @@ export function useChatThread({
   const newChat = useCallback(() => {
     setActiveId(null);
     setCardStates({});
-    // Move the queue key to the blank-chat slot FIRST, or clearing the composer
-    // queue for the new chat would wipe the queue still owed to the thread being
-    // left behind.
-    queue.resetToBlank();
+    // Move the outbox key to the blank-chat slot FIRST, or clearing it for the
+    // new chat would wipe the sends still owed to the thread being left behind.
+    outboxRef.current.resetToBlank();
     onError(null);
     setSelectedModel("");
     setSelectedEffort("");
@@ -296,7 +297,7 @@ export function useChatThread({
     // Persist the intent so a reload lands on a blank new chat rather than
     // silently re-adopting the most-recent thread.
     writeSelection(scope, NEW_CHAT);
-  }, [queue, scope, onError, setSelectedModel, setSelectedEffort, setSelectedPermissionMode]);
+  }, [outboxRef, scope, onError, setSelectedModel, setSelectedEffort, setSelectedPermissionMode]);
 
   const adoptThreadId = useCallback((id: string) => {
     setActiveId(id);
@@ -305,8 +306,8 @@ export function useChatThread({
     // so the loader came back blank and the thread the operator had just been
     // talking to was only findable in the picker.
     writeSelection(scope, id);
-    queue.carryToThread(id);
-  }, [scope, queue]);
+    outboxRef.current.carryToThread(id);
+  }, [scope, outboxRef]);
 
   const adoptThread = useCallback((t: ThreadSummary) => {
     // Put the new thread in the picker immediately. Without this a chat you had
@@ -316,29 +317,33 @@ export function useChatThread({
     adoptThreadId(t.id);
   }, [adoptThreadId]);
 
-  const removeThread = useCallback(async (id: string) => {
-    // A DELETE THAT FAILED MUST NOT LOOK LIKE ONE THAT WORKED. This used to be a
-    // bare await: the dialog had already closed, so a 5xx skipped the refresh,
-    // said nothing, and left the thread in the list looking undeleted with no
-    // hint that anything had gone wrong. Nothing after this line may run on a
-    // failure either, or the chat navigates away from a conversation the server
-    // still has.
+  // ARCHIVING is what closing a chat from its own menu does. It is the same
+  // motion the delete used to be (leave the conversation, take it out of the
+  // list, go somewhere), minus the destruction: the thread is still there, in
+  // the archive, where it can be restored or deleted deliberately.
+  const archiveThread = useCallback(async (id: string) => {
+    // AN ARCHIVE THAT FAILED MUST NOT LOOK LIKE ONE THAT WORKED. This used to be
+    // a bare await: the dialog had already closed, so a 5xx skipped the refresh,
+    // said nothing, and left the thread in the list looking gone with no hint
+    // that anything had happened. Nothing after this line may run on a failure
+    // either, or the chat navigates away from a conversation still on screen.
     try {
-      await chatApi.deleteThread(id);
+      await chatApi.archiveThread(id);
     } catch (e) {
       onError({
-        text: `Couldn't delete this conversation: ${e}. It is still here; try again.`,
-        endpoint: `/api/chat/threads/${id}`,
+        text: `Couldn't archive this conversation: ${e}. It is still here; try again.`,
+        endpoint: `/api/chat/threads/${id}/archive`,
       });
       return;
     }
-    // The thread is gone, so everything this browser stored FOR it goes too —
-    // whichever thread it was. This used to clear only the queue, and only when
-    // the deleted thread happened to be the one on screen.
+    // The conversation is out of the lists, so what this browser was holding FOR
+    // it goes too: an unsent queue against a chat you cannot reach is text
+    // nothing will ever deliver. Restoring brings the thread back, not the
+    // queue, which is the honest half of the round trip.
     forgetThread(id);
-    // Deleting the conversation you are looking at has to take you somewhere.
+    // Archiving the conversation you are looking at has to take you somewhere.
     // The focused route is nothing BUT that conversation, so staying put left a
-    // page addressing a thread the server no longer has.
+    // page addressing a chat that is no longer in any list.
     if (id === activeIdRef.current) {
       writeSelection(scope, NEW_CHAT);
       if (variant === "full") { onLeaveForList(); return; }
@@ -370,8 +375,8 @@ export function useChatThread({
   return {
     threads, activeId, activeIdRef, loadingThreads, activeThreadTitle,
     chatMode, chatModeRef, chooseChatMode, cardStates, setCardStates,
-    refreshThreads, scheduleAutoNameRefetch, newChat, removeThread, saveRename, renameBusy,
+    refreshThreads, scheduleAutoNameRefetch, newChat, archiveThread, saveRename, renameBusy,
     adoptThread, adoptThreadId,
-    confirmDeleteId, setConfirmDeleteId, confirmNew, setConfirmNew, renameOpen, setRenameOpen,
+    confirmNew, setConfirmNew, renameOpen, setRenameOpen,
   };
 }

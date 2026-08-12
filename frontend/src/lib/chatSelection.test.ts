@@ -1,13 +1,23 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  clearFailedFlag, durableQueue, markFailed, mergeQueue, readHold, readQueue,
-  restoreBatch, withoutIds, writeHold, writeQueue,
-  type QueuedMessage,
+  mergeOutbox, readOutbox, resolveScope, writeOutbox,
+  type OutboxSend,
 } from "./chatSelection";
 
-// The queue's DURABLE half. Everything here is about what survives a reload, a
-// closed tab or a thread switch, so it is tested against a real key/value store
-// rather than through the hook that calls it.
+// THE OUTBOX: sends this browser made that the server has not taken.
+//
+// What used to be tested here was a type-ahead QUEUE — messages waiting on a
+// running turn, stored per thread, sent later by whichever tab happened to be
+// looking. Eleven invariants accumulated on it, each from a real report, and
+// none of them could fix the thing that was actually wrong: one browser's
+// localStorage is not storage. On 2026-08-12 the operator sent two long
+// messages during a `/compact`, moved to another chat, and came back on a
+// different device. They were gone.
+//
+// The queue is the server's now (backend/services/chat_queue.py, and its tests
+// are the ones that pin queueing). What is left here is the ONE case the server
+// cannot know about, because the request never reached it — and the properties
+// below are the ones that make that case survivable.
 
 function memoryStorage(): Storage {
   const map = new Map<string, string>();
@@ -21,8 +31,8 @@ function memoryStorage(): Storage {
   } as Storage;
 }
 
-const msg = (text: string, clientId: string): QueuedMessage =>
-  ({ text, clientId, sentAt: "2026-08-09T19:00:00.000Z" });
+const send = (text: string, clientId: string, ts = "2026-08-09T19:00:00.000Z"): OutboxSend =>
+  ({ text, clientId, ts, status: "failed", at: 1, afterSeq: 0 });
 
 beforeEach(() => {
   Object.defineProperty(globalThis, "localStorage", {
@@ -30,147 +40,125 @@ beforeEach(() => {
   });
 });
 
-describe("the stop hold", () => {
-  // The regression this exists for: Stop, then reload or switch away and back,
-  // and the queue fired everything typed ahead as an unattended turn — because
-  // the hold was component state and the queue it held was in localStorage.
-  it("survives being read back under the same key", () => {
-    writeHold("thread-1", true);
-    expect(readHold("thread-1")).toBe(true);
+describe("a send the server never took", () => {
+  it("survives a reload, which is the whole point", () => {
+    // The composer is cleared synchronously when the operator hits enter, so
+    // between that moment and the server's answer this is the only copy of what
+    // they wrote. A crash there used to lose it outright.
+    writeOutbox("t1", [send("the long one", "c1")]);
+    expect(readOutbox("t1").map((s) => s.text)).toEqual(["the long one"]);
+  });
+
+  it("comes back as failed, never as still-sending", () => {
+    // Whatever it was doing when the tab went away, nothing is carrying it now.
+    // "Sending" would be a lie with a spinner on it; "failed" is true and it is
+    // the state that offers a Retry.
+    writeOutbox("t1", [{ ...send("hello", "c1"), status: "sending" }]);
+    expect(readOutbox("t1")[0].status).toBe("failed");
+  });
+
+  it("keeps the files it carried, so a retry re-sends the same message", () => {
+    const withFile: OutboxSend = {
+      ...send("look at this", "c1"),
+      attachments: [{ id: "a1", name: "shot.png", kind: "image" }],
+    };
+    writeOutbox("t1", [withFile]);
+    expect(readOutbox("t1")[0].attachments).toEqual(
+      [{ id: "a1", name: "shot.png", kind: "image" }]);
+  });
+
+  it("keeps WHY it failed, because a reload used to turn the reason into a guess", () => {
+    writeOutbox("t1", [{ ...send("hello", "c1"), error: "developer mode is off" }]);
+    expect(readOutbox("t1")[0].error).toBe("developer mode is off");
   });
 
   it("belongs to ONE thread, not to the chat surface", () => {
-    writeHold("thread-1", true);
-    expect(readHold("thread-2")).toBe(false);
+    writeOutbox("t1", [send("for t1", "c1")]);
+    expect(readOutbox("t2")).toEqual([]);
   });
 
-  it("clears", () => {
-    writeHold("thread-1", true);
-    writeHold("thread-1", false);
-    expect(readHold("thread-1")).toBe(false);
+  it("leaves no key behind when there is nothing left to hold", () => {
+    writeOutbox("t1", [send("hello", "c1")]);
+    writeOutbox("t1", []);
+    expect(localStorage.getItem("ws-chat-outbox:t1")).toBeNull();
   });
 
-  it("is absent, not held, for a thread that never stopped anything", () => {
-    expect(readHold("never-seen")).toBe(false);
-  });
-});
-
-describe("what durable storage holds while a batch is in flight", () => {
-  const a = msg("first", "c1");
-  const b = msg("second", "c2");
-  const typedAfter = msg("typed while it was sending", "c3");
-
-  it("still holds the in-flight batch, ahead of what was typed after it", () => {
-    // The window this closes: dispatch used to shorten the stored queue and
-    // THEN send, so a tab closed during the POST lost those messages entirely.
-    expect(durableQueue([a, b], [typedAfter])).toEqual([a, b, typedAfter]);
-  });
-
-  it("is just the queue once the batch is accepted", () => {
-    expect(durableQueue([], [typedAfter])).toEqual([typedAfter]);
-  });
-
-  it("puts a refused batch back in front, as ONE batch", () => {
-    // Order is by when the operator hit enter (invariant 5), and the batch stays
-    // a batch so the retry is one turn (invariant 4).
-    expect(restoreBatch([a, b], [typedAfter])).toEqual([a, b, typedAfter]);
-  });
-
-  it("does not duplicate a message that is somehow already queued", () => {
-    expect(restoreBatch([a, b], [b, typedAfter])).toEqual([a, b, typedAfter]);
-  });
-
-  it("takes an accepted batch out of the thread it was drained from", () => {
-    writeQueue("thread-1", [a, b, typedAfter]);
-    writeQueue("thread-1", withoutIds(readQueue("thread-1"), new Set(["c1", "c2"])));
-    expect(readQueue("thread-1").map((m) => m.clientId)).toEqual(["c3"]);
-  });
-
-  it("round-trips a queue with nothing left as an empty queue", () => {
-    writeQueue("thread-1", [a]);
-    writeQueue("thread-1", withoutIds(readQueue("thread-1"), new Set(["c1"])));
-    expect(readQueue("thread-1")).toEqual([]);
+  it("reads unparseable storage as empty rather than throwing", () => {
+    localStorage.setItem("ws-chat-outbox:t1", "{not json");
+    expect(readOutbox("t1")).toEqual([]);
   });
 });
 
 describe("two tabs on one thread", () => {
-  const at = (text: string, clientId: string, sentAt: string): QueuedMessage =>
-    ({ text, clientId, sentAt });
-
-  // THE REPRO, exactly: two tabs open on thread X during a turn. Tab 1 types A,
-  // so storage holds [A]. Tab 2's in-memory list is empty — A was typed
-  // somewhere else — and it types B. Writing its own list over storage erased a
-  // message the operator had already hit enter on.
-  it("keeps a message the other tab queued", () => {
-    const a = at("from tab one", "c1", "2026-08-09T19:00:00.000Z");
-    const b = at("from tab two", "c2", "2026-08-09T19:00:05.000Z");
-    expect(mergeQueue([a], [b], new Set())).toEqual([a, b]);
+  // Two tabs on one chat is ordinary — the operator keeps a focused chat open
+  // beside the app — and both write the same key. A tab that wrote its whole
+  // in-memory list over whatever was there erased a send made in the other one.
+  it("keeps a send the other tab made", () => {
+    const stored = [send("from the other tab", "other")];
+    const mine = [send("mine", "c1")];
+    expect(mergeOutbox(stored, mine, new Set(["c1"])).map((s) => s.clientId))
+      .toEqual(["c1", "other"]);
   });
 
-  it("orders the merged queue by when enter was hit, not by which tab wrote last", () => {
-    const early = at("typed first", "c1", "2026-08-09T19:00:00.000Z");
-    const late = at("typed second", "c2", "2026-08-09T19:00:05.000Z");
-    // The tab writing holds only the LATER message; the earlier one is news.
-    expect(mergeQueue([early], [late], new Set()).map((m) => m.clientId))
-      .toEqual(["c1", "c2"]);
+  it("does NOT resurrect a send this tab removed on purpose", () => {
+    // Removed because the server took it. A plain union would bring back every
+    // message that had already been delivered.
+    const stored = [send("already accepted", "c1")];
+    expect(mergeOutbox(stored, [], new Set(["c1"]))).toEqual([]);
   });
 
-  it("does NOT resurrect an entry this tab deliberately removed", () => {
-    // A drain, a drop, or an accepted batch takes an entry out. It is in `seen`,
-    // so its absence from `next` is a decision, not ignorance.
-    const a = at("drained", "c1", "2026-08-09T19:00:00.000Z");
-    const b = at("still queued", "c2", "2026-08-09T19:00:05.000Z");
-    expect(mergeQueue([a, b], [b], new Set(["c1", "c2"]))).toEqual([b]);
+  it("orders the merged list by when enter was hit", () => {
+    const stored = [send("typed first", "other", "2026-08-09T19:00:00.000Z")];
+    const mine = [send("typed second", "c1", "2026-08-09T19:05:00.000Z")];
+    expect(mergeOutbox(stored, mine, new Set(["c1"])).map((s) => s.text))
+      .toEqual(["typed first", "typed second"]);
   });
 
-  it("clears the queue when this tab has seen everything in storage", () => {
-    const a = at("only entry", "c1", "2026-08-09T19:00:00.000Z");
-    expect(mergeQueue([a], [], new Set(["c1"]))).toEqual([]);
-  });
-
-  it("prefers this tab's copy of an entry both tabs hold", () => {
-    const stale = at("old text", "c1", "2026-08-09T19:00:00.000Z");
-    const mine = at("old text", "c1", "2026-08-09T19:00:00.000Z");
-    expect(mergeQueue([stale], [mine], new Set(["c1"]))[0]).toBe(mine);
-  });
-
-  it("sorts an entry with no send time first, because it is from an older build", () => {
-    const legacy = at("pre-upgrade", "c1", "");
-    const now = at("typed today", "c2", "2026-08-09T19:00:00.000Z");
-    expect(mergeQueue([legacy], [now], new Set()).map((m) => m.clientId))
-      .toEqual(["c1", "c2"]);
+  it("prefers this tab's copy of a send both tabs hold", () => {
+    const stored = [{ ...send("stale", "c1"), error: "old" }];
+    const mine = [{ ...send("current", "c1"), error: "new" }];
+    const merged = mergeOutbox(stored, mine, new Set(["c1"]));
+    expect(merged).toHaveLength(1);
+    expect(merged[0].error).toBe("new");
   });
 });
 
-describe("a send the server would not take", () => {
-  const a = msg("first", "c1");
-  const b = msg("second", "c2");
+describe("resolveScope", () => {
+  const base = {
+    contextKey: "general",
+    knownScopes: ["general", "development", "budget"],
+    linkedThreadHome: null,
+    startNew: false,
+    remembered: null,
+  };
 
-  // A refused batch used to sit in the queue looking exactly like a message
-  // waiting its turn — dimmed, "sends when the current turn finishes". It does
-  // not: the queue holds after a refusal and only Retry releases it.
-  it("is marked, so the queue stops claiming it will send itself", () => {
-    expect(markFailed([a, b]).every((m) => m.failed)).toBe(true);
+  it("defaults the unscoped surface to development in a dev build", () => {
+    expect(resolveScope(base, true)).toBe("development");
   });
 
-  it("leaves an already-marked entry alone", () => {
-    const once = markFailed([a]);
-    expect(markFailed(once)[0]).toBe(once[0]);
+  it("keeps the ordinary general default outside a dev build", () => {
+    expect(resolveScope(base, false)).toBe("general");
   });
 
-  it("survives a reload, which is the whole point", () => {
-    writeQueue("thread-1", markFailed([a]));
-    expect(readQueue("thread-1")[0].failed).toBe(true);
+  it("does not default to development if it isn't a known scope (dev flag on, backend not in dev mode)", () => {
+    expect(resolveScope({ ...base, knownScopes: ["general", "budget"] }, true)).toBe("general");
   });
 
-  it("is unmarked by Retry, and only for the entry retried", () => {
-    const q = markFailed([a, b]);
-    const after = clearFailedFlag(q, "c1");
-    expect(after[0].failed).toBeUndefined();
-    expect(after[1].failed).toBe(true);
+  it("a specifically-scoped surface (a project/app dock) is unaffected", () => {
+    expect(resolveScope({ ...base, contextKey: "budget", knownScopes: [...base.knownScopes] }, true))
+      .toBe("budget");
   });
 
-  it("leaves a queue with nothing marked untouched", () => {
-    expect(clearFailedFlag([a, b], "c1")).toEqual([a, b]);
+  it("an explicit past pick still wins, including picking general on purpose", () => {
+    expect(resolveScope({ ...base, remembered: "general" }, true)).toBe("general");
+    expect(resolveScope({ ...base, remembered: "budget" }, true)).toBe("budget");
+  });
+
+  it("New chat in dev mode starts on development, not general", () => {
+    expect(resolveScope({ ...base, startNew: true, remembered: "budget" }, true)).toBe("development");
+  });
+
+  it("a linked thread's home still outranks the dev default", () => {
+    expect(resolveScope({ ...base, linkedThreadHome: "budget" }, true)).toBe("budget");
   });
 });

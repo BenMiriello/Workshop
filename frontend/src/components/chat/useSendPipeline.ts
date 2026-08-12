@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from "react";
 import { chatApi, newClientId, shortHttpError, type ThreadSummary } from "../../lib/chat";
-import type { QueuedMessage } from "../../lib/chatSelection";
 import type { AttachmentRef } from "./attachments";
 import type { ChatModeId } from "./chatModes";
 import { isTransientSendFailure, sendFailureText } from "./sendFailure";
@@ -8,7 +7,6 @@ import { planSend } from "./sendPlan";
 import { retiredCommand, typedCommand } from "./typedCommands";
 import type { ThreadAction, ThreadState } from "./threadStore";
 import { committedMessages } from "./transcriptBlocks";
-import type { MessageQueue, SendOutcome } from "./useMessageQueue";
 import type { ChatProblem } from "./chatProblem";
 
 // SENDING, as one decision.
@@ -49,18 +47,17 @@ export type SendPipeline = {
   submitText: (raw: string, attachments?: AttachmentRef[]) => void;
   /** Re-send a message that never reached the server, under its own id. */
   retry: (clientId: string) => void;
-  /** What the queue calls when it drains. Resolves ok once the server has the
-   *  batch; `fromQueue` says the caller will take it back on a refusal, so the
-   *  bubbles are retracted rather than left on screen as N failed sends. */
-  sendBatch: (
-    text: string, parts: QueuedMessage[], opts?: { fromQueue?: boolean },
-  ) => Promise<SendOutcome>;
 };
+
+/** How a send ended. `ok` means THE SERVER HAS IT — running now, handed to the
+ *  turn in flight, or on the thread's queue. Anything else is `ok: false` with
+ *  the reason, and the text stays in this browser's outbox. */
+export type SendOutcome = { ok: true } | { ok: false; error: string };
 
 export function useSendPipeline({
   scope, selectedModel, selectedEffort, selectedPermissionMode,
   chatModeRef, activeIdRef, adoptThread,
-  stateRef, dispatch, sync, queue,
+  stateRef, dispatch, sync, draftKey,
   compacting, compact, clear, setErr, onSend, onNewChat,
 }: {
   scope: string;
@@ -73,7 +70,9 @@ export function useSendPipeline({
   stateRef: React.MutableRefObject<ThreadState>;
   dispatch: React.Dispatch<ThreadAction>;
   sync: () => Promise<void>;
-  queue: MessageQueue;
+  /** The composer key this chat is typing under, so the server can clear the
+   *  right draft when it accepts a message. See services/draft_store. */
+  draftKey: string;
   compacting: boolean;
   compact: () => Promise<void>;
   clear: () => Promise<void>;
@@ -94,12 +93,32 @@ export function useSendPipeline({
     setStarting(v);
   }, []);
 
+  // Sends made while this chat was being CREATED. See planSend's `awaitThread`:
+  // the client serializes exactly one thing, the request that mints the thread,
+  // because two of those make two chats. They are already in `pending` (so they
+  // are on screen and on disk); this is only the list of what still has to be
+  // handed over once there is a thread to hand it to.
+  const awaitingRef = useRef<{
+    clientId: string; text: string; ts: string; attachments?: AttachmentRef[];
+  }[]>([]);
+  // Which composer the current send came out of, so the server can clear it.
+  // A ref because the value is read inside the request builder, and the key
+  // changes the moment a blank chat becomes a thread.
+  const draftKeyRef = useRef<string>(draftKey);
+  draftKeyRef.current = draftKey;
+  // `sendTurn` flushes what was typed while the thread was being created, and
+  // `injectIntoRun` is declared after it. One of the two has to be reached
+  // through a ref; this is the one that does not change identity per send.
+  const injectIntoRunRef = useRef<(
+    threadId: string, text: string, clientId: string, sentAt: string,
+    attachments?: AttachmentRef[],
+  ) => Promise<void>>(async () => {});
+
   // Start a turn for `text`. The message is already in the store as a pending
   // send under `clientId`; the server records it under the same id, so the
   // optimistic copy is reconciled away by the sync rather than popped by hand.
   const sendTurn = useCallback(async (
-    text: string, clientId: string, parts?: QueuedMessage[],
-    opts?: { fromQueue?: boolean }, attachments?: AttachmentRef[],
+    text: string, clientId: string, sentAt?: string, attachments?: AttachmentRef[],
   ): Promise<SendOutcome> => {
     setStartingBoth(true);
     setTurnIsCompact(text.trim() === "/compact");
@@ -129,14 +148,17 @@ export function useSendPipeline({
           // Same rule as effort: sent only when chosen, so a chat nobody has
           // touched keeps running exactly as it did before the picker existed.
           ...(selectedPermissionMode ? { permission_mode: selectedPermissionMode } : {}),
-          // `parts` is present only when the queue drained several messages into
-          // this one turn. It carries WHEN EACH WAS TYPED and its own id, so the
-          // server stores them as the separate messages they were, at their real
-          // times, rather than one blob stamped with the moment the queue
-          // happened to drain.
-          ...(parts && parts.length > 1
-            ? { parts: parts.map((m) => ({ text: m.text, sent_at: m.sentAt, client_id: m.clientId })) }
-            : {}),
+          // WHEN THE OPERATOR HIT ENTER. Only this side was present at that
+          // moment, and it matters whenever the message does not run
+          // immediately: the server queues it under its own send time rather
+          // than dating it at whatever later instant it went out.
+          ...(sentAt ? { sent_at: sentAt } : {}),
+          // WHICH COMPOSER THIS CAME OUT OF, so the server clears exactly that
+          // draft on acceptance. The client cannot do it reliably: the first
+          // send of a blank chat CHANGES the composer's key, so a local clear
+          // lands on the new one and the blank-chat slot keeps the text — which
+          // is why an already-sent message turned up in the next new chat.
+          ...(draftKeyRef.current ? { draft_key: draftKeyRef.current } : {}),
           // Ids only. The bytes went up on drop, so this stays a small JSON body
           // however large the screenshot was.
           ...(attachments?.length ? { attachments } : {}),
@@ -167,24 +189,37 @@ export function useSendPipeline({
         await sleep(RETRY_DELAY_MS);
         res = await attempt();
       }
+      // QUEUED IS ACCEPTED. The thread was busy with something that reads
+      // nothing, so the server took the message onto the thread's own queue and
+      // will send it when that run ends. This browser is no longer responsible
+      // for it: the optimistic copy goes, and the queue that comes back on the
+      // sync is what renders from here on — on every device, not just this one.
+      if (res.queued) {
+        dispatch({ type: "sendRetracted", clientId });
+        void sync();
+        return { ok: true };
+      }
+      // AN OLDER BACKEND, which answers `deferred: true` and stores NOTHING —
+      // it expected the browser to hold the message and send it later, which is
+      // the arrangement that lost two of them. This client does not do that, so
+      // treating a deferral as an acceptance would drop the message outright.
+      // It stays in the outbox, marked, with a Retry, which is the honest
+      // outcome: the server does not have it.
+      if (res.deferred) {
+        const why = "The chat is busy with a command this server cannot queue. Retry when it finishes.";
+        dispatch({ type: "sendFailed", clientId, error: why });
+        return { ok: false, error: why };
+      }
       dispatch({ type: "sendAcked", clientId });
-      for (const p of parts || []) dispatch({ type: "sendAcked", clientId: p.clientId });
       // Show the run as in flight in the same commit that stops "starting".
       // The re-attach effect opens the socket; nothing here needs to know how.
       if (res.turn_id) dispatch({ type: "runStarted", runId: res.turn_id });
       void sync();
       return { ok: true };
     } catch (e) {
-      const ids = parts?.length ? parts.map((p) => p.clientId) : [clientId];
       // The turn never started, so the server has no copy. Mark the bubble
       // rather than leaving it looking delivered: a bubble that silently is not
       // real is exactly what "my messages keep disappearing" felt like.
-      //
-      // ...unless this came from the QUEUE, which still holds these messages and
-      // is about to put them back. Marking them failed there drew them twice —
-      // once queued, once as a dead bubble — and each dead bubble retried as its
-      // own turn, so a refused batch of four came back as four turns instead of
-      // the one turn it was sent as (invariant 4).
       //
       // THE FAILURE BELONGS TO THIS MESSAGE, so it renders under it and nowhere
       // else. It used to also go to `setErr`, which is one slot above the
@@ -192,112 +227,114 @@ export function useSendPipeline({
       // the explanation for a bubble marked "Not sent" outlived the bubble by
       // about one keystroke, and while it lasted it read "TypeError: Failed to
       // fetch". See sendFailure.ts and frontend/CLAUDE.md's log-placement rule.
+      //
+      // ...AND IT SURVIVES THE TAB, because `pending` is mirrored to storage as
+      // it changes (useSendOutbox). This is the ONLY state the browser still
+      // owns on its own, and it owns it precisely because the server never
+      // heard about this send.
       const reason = sendFailureText(e);
-      for (const id of ids) {
-        dispatch(
-          opts?.fromQueue
-            ? { type: "sendRetracted", clientId: id }
-            : { type: "sendFailed", clientId: id, error: reason },
-        );
-      }
-      // ...AND IT SURVIVES THE TAB. `pending` is reducer state, the composer was
-      // cleared synchronously before the POST, and `reset` drops pending on a
-      // thread switch: a 500 left a bubble with a Retry that a reload erased
-      // outright, text and all. The durable queue holds it, marked and held, so
-      // Retry is still there afterwards. A batch from the queue is skipped
-      // because the queue already holds those and is putting them back itself.
-      if (!opts?.fromQueue) queue.pushFailed(text, clientId, undefined, reason, attachments);
+      dispatch({ type: "sendFailed", clientId, error: reason });
       return { ok: false, error: reason };
     } finally {
       setStartingBoth(false);
+      // Anything typed while this chat was being created now has a thread to go
+      // to. Sent one at a time, through the ordinary path: if the first turn is
+      // already running, the server takes them onto its queue, which is exactly
+      // where they belong and is no longer this browser's problem.
+      const waiting = awaitingRef.current;
+      if (waiting.length && activeIdRef.current) {
+        awaitingRef.current = [];
+        for (const w of waiting) {
+          void injectIntoRunRef.current(
+            activeIdRef.current, w.text, w.clientId, w.ts, w.attachments);
+        }
+      }
     }
-  }, [scope, selectedModel, selectedEffort, selectedPermissionMode, chatModeRef, activeIdRef, adoptThread, dispatch, sync, queue, setErr, setStartingBoth]);
+  }, [scope, selectedModel, selectedEffort, selectedPermissionMode, chatModeRef, activeIdRef, adoptThread, dispatch, sync, setErr, setStartingBoth]);
 
   // Hand a message to the run already in flight. It is PERSISTED BEFORE
   // DELIVERY server-side, so `delivered: true` means the chat has it whether or
   // not the running turn took it; `delivered: false` means the endpoint did not
   // take the message at all and it must go out as a turn.
   const injectIntoRun = useCallback(async (
-    threadId: string, text: string, clientId: string, attachments?: AttachmentRef[],
+    threadId: string, text: string, clientId: string, sentAt: string,
+    attachments?: AttachmentRef[],
   ) => {
     try {
-      const r = await chatApi.injectIntoThread(threadId, text, clientId, attachments);
-      // The chat is running a command, which reads nothing. The server did NOT
-      // record this message, so there is nothing to reconcile and nothing to
-      // re-send now: it goes back on the queue and leaves as its own turn when
-      // the command finishes. Sending it as a turn here would only be refused
-      // again, by the run the command still holds.
-      if (r.deferred) {
+      const r = await chatApi.injectIntoThread(threadId, text, clientId, {
+        sentAt, attachments, draftKey: draftKeyRef.current,
+      });
+      // THE SERVER TOOK IT AND IS HOLDING IT. The run in flight reads nothing (a
+      // slash command, a voice turn), so it goes out as the next turn — sent by
+      // the server, from the thread's own queue, whether or not this browser is
+      // still here. It is not this tab's problem any more, so the optimistic
+      // copy goes and the queue the sync brings back is what renders.
+      if (r.queued) {
         dispatch({ type: "sendRetracted", clientId });
-        queue.push(text, clientId, attachments);
+        await sync();
         return;
       }
-      if (!r.delivered) { void sendTurn(text, clientId, undefined, undefined, attachments); return; }
+      // See sendTurn: an older backend deferring means it took nothing.
+      if (r.deferred) {
+        dispatch({
+          type: "sendFailed", clientId,
+          error: "The chat is busy with a command this server cannot queue. Retry when it finishes.",
+        });
+        return;
+      }
+      if (!r.delivered) { void sendTurn(text, clientId, sentAt, attachments); return; }
       dispatch({ type: "sendAcked", clientId });
       // Pull the log immediately: the server recorded the message with the
       // `at_segment` that decides which block it closes, and that is the only
       // place that number exists.
       await sync();
-    } catch {
-      // The request never landed, so nothing was recorded. Queue it rather than
-      // dropping it: the operator hit enter, delivery is owed.
-      dispatch({ type: "sendRetracted", clientId });
-      queue.push(text, clientId, attachments);
+    } catch (e) {
+      // The request never landed, so the server has no copy and this browser is
+      // the only place the text exists. It stays in `pending`, marked, which is
+      // both the bubble the operator sees and the durable outbox entry.
+      dispatch({ type: "sendFailed", clientId, error: sendFailureText(e) });
     }
-  }, [dispatch, sync, sendTurn, queue]);
-
-  const sendBatch = useCallback((
-    text: string, parts: QueuedMessage[], opts?: { fromQueue?: boolean },
-  ) => {
-    // Everything in a drained batch is already the operator's; each part shows
-    // as its own pending bubble under the id it will be committed with.
-    const ts = new Date().toISOString();
-    for (const p of parts) {
-      dispatch({
-        type: "sendStarted", clientId: p.clientId, text: p.text, ts: p.sentAt || ts,
-        ...(p.attachments?.length ? { attachments: p.attachments } : {}),
-      });
-    }
-    // Every part's files, in the order they were attached. A queue that drained
-    // three messages, one of them carrying a screenshot, must still send it.
-    const batchAtts = parts.flatMap((p) => p.attachments || []);
-    // `parts` rides in the POST only when there are several: the server needs it
-    // to record them as the separate messages they were. A batch of one is
-    // already fully described by its client id.
-    return sendTurn(
-      text, parts[0]?.clientId || newClientId(),
-      parts.length > 1 ? parts : undefined, opts,
-      batchAtts.length ? batchAtts : undefined,
-    );
-  }, [dispatch, sendTurn]);
+  }, [dispatch, sync, sendTurn]);
+  injectIntoRunRef.current = injectIntoRun;
 
   const dispatchSend = useCallback((
     text: string, clientId: string, attachments?: AttachmentRef[],
   ) => {
+    // THE BUBBLE EXISTS BEFORE THE REQUEST DOES, and it is durable from this
+    // moment (useSendOutbox mirrors `pending` to storage). The composer has
+    // already been cleared, so anything that can happen between here and the
+    // server's answer — a crash, a closed lid, a dead network — must not be
+    // able to take the text with it.
+    const ts = new Date().toISOString();
+    dispatch({
+      type: "sendStarted", clientId, text, ts,
+      ...(attachments?.length ? { attachments } : {}),
+    });
     const plan = planSend(text, {
       compacting: compactingRef.current,
       starting: startingRef.current,
       runActive: !!stateRef.current.activeRun,
-      runAcceptsInput: stateRef.current.activeRun?.acceptsInput,
+      hasThread: !!activeIdRef.current,
     });
-    if (plan === "queue") {
-      queue.push(text, clientId, attachments);
+    if (plan === "awaitThread") {
+      // This chat is being created by a send that has not come back yet. A
+      // second POST would create a second thread, so this one waits for the id
+      // — the only thing the client still holds, because it is the only thing
+      // the server cannot decide. It is in `pending`, so it is on disk, and
+      // the flush below sends it the moment the thread exists.
+      awaitingRef.current.push({ clientId, text, ts, attachments });
       return;
     }
-    dispatch({
-      type: "sendStarted", clientId, text, ts: new Date().toISOString(),
-      ...(attachments?.length ? { attachments } : {}),
-    });
     if (plan === "inject") {
       const threadId = activeIdRef.current;
       // Addressed by CHAT, not by run id. A client only knows about runs IT
       // started; a second tab, another device, or a run adopted after a restart
       // has no id to send, and every one of those used to fall back to queueing
       // and wait out the whole turn.
-      if (threadId) { void injectIntoRun(threadId, text, clientId, attachments); return; }
+      if (threadId) { void injectIntoRun(threadId, text, clientId, ts, attachments); return; }
     }
-    void sendTurn(text, clientId, undefined, undefined, attachments);
-  }, [queue, dispatch, stateRef, activeIdRef, injectIntoRun, sendTurn]);
+    void sendTurn(text, clientId, ts, attachments);
+  }, [dispatch, stateRef, activeIdRef, injectIntoRun, sendTurn]);
 
   const submitText = useCallback((raw: string, attachments?: AttachmentRef[]) => {
     const text = raw.trim();
@@ -332,18 +369,16 @@ export function useSendPipeline({
     const pending = stateRef.current.pending[clientId];
     if (!pending) return;
     setErr(null);
-    // Take the durable copy back first. It IS this send — written so the text
-    // survives a reload — and this retry replaces it; leaving it there would
-    // draw the message a second time the moment the optimistic bubble
-    // reconciles away, and a failure would then queue a third under the same id.
-    queue.drop(clientId);
     // THE SAME ID. The log dedupes on it, so if the first attempt did reach the
     // server after all, this re-send appends nothing and reconciles against the
-    // event that is already there.
+    // event that is already there. There is nothing to take back first: the
+    // entry in storage IS this pending send (useSendOutbox mirrors the map), so
+    // re-dispatching under the same id updates one record rather than making a
+    // second one.
     dispatchSend(pending.text, clientId, pending.attachments);
-  }, [stateRef, setErr, dispatchSend, queue]);
+  }, [stateRef, setErr, dispatchSend]);
 
-  return { starting, turnIsCompact, submitText, retry, sendBatch };
+  return { starting, turnIsCompact, submitText, retry };
 }
 
 /** Whether this turn is the first exchange in the chat, which is when the

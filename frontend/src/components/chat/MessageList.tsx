@@ -1,7 +1,8 @@
 import { Fragment, memo, useState } from "react";
-import { ArrowRightLeft, Bot, Clock, Eraser, FileText, Lightbulb, Radio, Ticket, TriangleAlert, Zap } from "lucide-react";
+import { Archive, ArrowRightLeft, Bot, Clock, Eraser, FileText, Lightbulb, Radio, Ticket, TriangleAlert, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { chatApi, type ChatMsg } from "../../lib/chat";
+import { scopeName } from "./chatScope";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
 import CopyMessage from "./CopyMessage";
@@ -44,16 +45,23 @@ import { receiptHref, receiptItems, receiptLabel } from "./receipts";
 //    statements of one small fact and reads as an error the operator caused.
 //    The line, and nothing else — see stopReason.ts.
 
-// ONE DIVIDER, ONE MEANING. It used to have two: a fold's summary was real
-// content the operator could still draw on, a clear's was not, and the wording
-// had to distinguish them. Server-side folding was removed on 2026-08-12, so
-// there is one kind of cut and it says one thing.
-function ContextCut({ count }: { count: number }) {
+// TWO CUTS, TWO SENTENCES, because they are two different things that happened
+// to the same messages and the operator's next move differs. /clear drops them;
+// /compact replaces them with a summary the model still reads. Both say "no
+// longer sent VERBATIM" rather than implying anything was deleted: the
+// transcript above the line is complete either way, which is the fact that
+// makes a cut safe to use.
+function ContextCut({ count, mode }: { count: number; mode: "clear" | "compact" }) {
+  const n = `${count} earlier ${count === 1 ? "message" : "messages"}`;
   return (
     <div className="chat-fold" role="separator">
-      <Eraser size={14} strokeWidth={1.8} aria-hidden />
+      {mode === "compact"
+        ? <Archive size={14} strokeWidth={1.8} aria-hidden />
+        : <Eraser size={14} strokeWidth={1.8} aria-hidden />}
       <span>
-        {`Context cleared. ${count} earlier ${count === 1 ? "message is" : "messages are"} no longer sent to the model`}
+        {mode === "compact"
+          ? `Compacted. ${n} folded into a summary, still here to read`
+          : `Context cleared. ${n} no longer sent to the model`}
       </span>
     </div>
   );
@@ -62,11 +70,15 @@ function ContextCut({ count }: { count: number }) {
 // One line, same divider language as ContextCut: a fact about the conversation
 // itself, not a message in it, so it reads as a marker in the log rather than
 // as something either side said.
+// Read from the log's own `scope` event, so it says the same thing on every
+// device and after every reload. `to` is the scope KEY as the thread recorded
+// it; the label is resolved here, at render, rather than being frozen into the
+// record by whichever build happened to write it.
 function ScopeChangeNote({ to }: { to: string }) {
   return (
     <div className="chat-fold" role="separator">
       <ArrowRightLeft size={14} strokeWidth={1.8} aria-hidden />
-      <span>Scope changed to {to}</span>
+      <span>Scope changed to {scopeName(to)}</span>
     </div>
   );
 }
@@ -385,7 +397,7 @@ function MessageList({
     <>
       {blocks.map((b) => (
         <Fragment key={b.key}>
-          {b.kind === "cut" && <ContextCut count={b.count} />}
+          {b.kind === "cut" && <ContextCut count={b.count} mode={b.mode} />}
           {b.kind === "scope" && <ScopeChangeNote to={b.to} />}
           {b.kind === "message" && (
             <MessageBubble

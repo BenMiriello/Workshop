@@ -74,7 +74,6 @@ export function useTurnStream({
   sync,
   onTurnEnd,
   onError,
-  onDrainQueue,
 }: {
   dispatch: React.Dispatch<ThreadAction>;
   stateRef: React.MutableRefObject<ThreadState>;
@@ -82,7 +81,6 @@ export function useTurnStream({
   sync: () => Promise<void>;
   onTurnEnd: () => void;
   onError: (problem: ChatProblem | null) => void;
-  onDrainQueue: () => void;
 }): TurnStream {
   const [attached, setAttached] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -102,8 +100,8 @@ export function useTurnStream({
   const reconnectTimerRef = useRef<number | undefined>(undefined);
 
   // Callers pass inline lambdas; refs keep `attach` referentially stable.
-  const cb = useRef({ dispatch, sync, onTurnEnd, onError, onDrainQueue });
-  cb.current = { dispatch, sync, onTurnEnd, onError, onDrainQueue };
+  const cb = useRef({ dispatch, sync, onTurnEnd, onError });
+  cb.current = { dispatch, sync, onTurnEnd, onError };
 
   const closeStream = useCallback(() => {
     window.clearTimeout(reconnectTimerRef.current);
@@ -275,7 +273,12 @@ export function useTurnStream({
       setAttached(false);
       setReconnecting(false);
       cb.current.onTurnEnd();
-      cb.current.onDrainQueue();
+      // NOTHING IS DRAINED FROM HERE ANY MORE. A turn ending used to be this
+      // tab's cue to send whatever the operator had typed ahead, which made
+      // delivery of an already-sent message depend on a socket being open in a
+      // browser that was still looking at this thread. The server drains its
+      // own queue when the turn ends (services/chat_drain); the sync above is
+      // how this tab finds out.
     };
     es.addEventListener("done", finish);
     es.addEventListener("end", finish);
