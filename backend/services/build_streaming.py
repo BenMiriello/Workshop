@@ -1835,7 +1835,7 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
         # loss as one the CLI never read, and the same remedy: record it as an
         # unread delivery so `_requeue_unread` puts it back on the queue and the
         # drain sends it. Nothing else would ever retry it.
-        pass
+        turn.unread.append({"origin": meta.get("origin") or []})
         await _retire_turn_proc(proc.pid, proc)
         _cleanup_turn_input(turn.id)
         await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
