@@ -19,6 +19,12 @@ from services import build_streaming, chat_context, chat_log, chat_store, owners
 @pytest.fixture()
 def thread(tmp_path, monkeypatch):
     monkeypatch.setattr(ownership, "_RUNTIME", tmp_path)
+    # THE JOURNAL DIR TOO. Without this these tests write their turn journals
+    # into the real `.runtime/turns`, alongside the operator's live runs. They
+    # were invisible only because every journal used to be deleted at commit; a
+    # turn that produces nothing keeps its journal now (it is the only evidence
+    # of why), so test residue would have started accumulating there.
+    monkeypatch.setattr(build_streaming, "TURNS_DIR", tmp_path / "turns")
     ownership.set_current_owner(1)
     try:
         yield chat_store.create_thread("general")
