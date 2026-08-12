@@ -7,10 +7,12 @@ import { formatSize, type Attachment, type AttachmentKind } from "./attachments"
 // draft rather than as text inside it is that removing it is a single click,
 // not a run of backspaces.
 //
-// The remove control sits on the LEFT of the chip and appears on hover or focus
-// (it is always present for a keyboard, just not always painted). On touch there
-// is no hover, so `:focus-within` and the coarse-pointer rule in the stylesheet
-// keep it visible; a control that only exists under a mouse is not a control.
+// The remove control is a square SECTION of the card, at its left edge, before
+// the thumbnail, and it is always visible. It began as a circle overlapping the
+// corner that appeared on hover; operator-directed 2026-08-12 to become part of
+// the card instead. Better on both counts that matter here: on touch there is no
+// hover to reveal anything, and a badge hanging off the corner overlapped the
+// neighbouring chip once the row wrapped.
 
 function KindIcon({ kind }: { kind: AttachmentKind }) {
   if (kind === "image") return <ImageIcon size={14} strokeWidth={1.8} aria-hidden />;
@@ -39,7 +41,7 @@ function Chip({ att, onRemove }: { att: Attachment; onRemove: () => void }) {
         onClick={onRemove}
         aria-label={`Remove ${att.name}`}
       >
-        <X size={12} strokeWidth={2.2} aria-hidden />
+        <X size={14} strokeWidth={2} aria-hidden />
       </button>
       <span className="chat-attach__mark" aria-hidden>
         {thumb

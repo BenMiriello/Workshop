@@ -1061,14 +1061,59 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 .chat-attach-row {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
 }
+/* THE COMPOSER'S ROW IS CAPPED IN ROWS, NOT IN ITEMS, and then it scrolls.
+   Four rows on desktop, two on a phone. Counting rows rather than chips is the
+   point: how many chips fit on a line depends on the filenames and the width,
+   so a cap of "six items" is a different amount of vertical space every time,
+   and on a phone it can be six lines. Capping the height caps what it can take
+   from the transcript, which is the thing actually being protected.
+
+   Derived from the chip's own box (the mark's 1.4rem plus its padding) so the
+   two stay in step; a hardcoded pixel height would drift the moment the chip's
+   padding changed and would cut the last row in half. */
+.chat-composer .chat-attach-row {
+  --attach-rows: 4;
+  /* mark + the chip's padding + its 1px border top and bottom. */
+  --attach-chip-h: calc(1.4rem + var(--space-1) * 2 + 2px);
+  max-height: calc(
+    var(--attach-rows) * var(--attach-chip-h)
+    + (var(--attach-rows) - 1) * var(--space-2)
+  );
+  overflow-y: auto;
+  /* Keeps a scrollbar off the chips rather than on top of them. */
+  padding-right: var(--space-1);
+}
+@media (max-width: 640px) {
+  .chat-composer .chat-attach-row { --attach-rows: 2; }
+}
 .chat-attach {
   position: relative;
   display: inline-flex; align-items: center; gap: var(--space-2);
   max-width: 16rem;
   padding: var(--space-1) var(--space-2);
   font-size: var(--fs-sm); color: var(--fg);
-  background: var(--bg-inset); border-radius: var(--radius-md);
+  /* --card, NOT --bg-inset. The chip IS a small raised card, and the design
+     system's raised surface is --card, which also makes --card-hover below the
+     matching hover rather than an unrelated jump. --bg-inset is the RECESSED
+     surface: in dark mode it is #19161a against a #100d11 page, so a chip took
+     it and read as full black (operator, 2026-08-12). --card is #201d21 there,
+     clearly lifted off the page without going pale. */
+  background: var(--card); border-radius: var(--radius-md);
+  /* THE KIT'S OWN CARD TREATMENT, both halves of it (see .ws-card). They are
+     complementary, which is why both are needed: light mode has a real
+     --shadow-card and a TRANSPARENT --card-ring, dark mode has a visible ring
+     and --shadow-card: none. They cannot be folded into one box-shadow, because
+     a `none` inside a comma list is invalid CSS and would drop the declaration.
+
+     The lift matters most in light, where --card goes LIGHTER than the page
+     rather than darker: --bg-inset separated from the page at 1.097 by going
+     down, --card only at 1.060 by going up. In dark the surfaces already do the
+     work (1.158, against --bg-inset's 1.077) and the ring is a bonus. */
+  border: 1px solid var(--card-ring);
+  box-shadow: var(--shadow-card);
   text-decoration: none;
+  /* Clips the flush remove segment to the card's rounded corners. */
+  overflow: hidden;
 }
 .chat-attach:hover { background: var(--card-hover); }
 .chat-attach.is-uploading { color: var(--muted); }
@@ -1089,25 +1134,31 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 }
 .chat-attach__meta { flex: 0 0 auto; color: var(--muted); font-size: var(--fs-xs); }
 
-/* The remove control sits on the LEFT of the chip, overlapping its corner, and
-   is painted on hover or focus. It is ALWAYS in the DOM (never display:none),
-   so it is always reachable by keyboard: a control that exists only under a
-   mouse is not a control. */
+/* THE REMOVE CONTROL IS A SEGMENT OF THE CARD, not a badge floating on it.
+   It was a small circle overlapping the chip's top-left corner, revealed on
+   hover. Operator-directed 2026-08-12: a square section inside the card, to the
+   LEFT of the thumbnail, always present. Two things get better. It is a real
+   target on touch, where there is no hover to reveal anything and a 1.1rem
+   circle sitting half outside the chip was both hard to hit and easy to hit by
+   accident. And it stops overlapping the chip beside it when the row wraps.
+
+   The negative margins cancel the card's own padding so the button reaches the
+   card's edges. That is what makes it read as a section OF the card rather than
+   a control placed inside one, and it is why the card clips its overflow. */
 .chat-attach__remove {
-  position: absolute; left: calc(var(--space-1) * -1); top: calc(var(--space-1) * -1);
+  flex: 0 0 auto;
+  align-self: stretch;
   display: inline-flex; align-items: center; justify-content: center;
-  width: 1.1rem; height: 1.1rem; padding: 0;
-  border: none; border-radius: var(--radius-pill); cursor: pointer;
-  background: var(--fg); color: var(--bg);
-  opacity: 0; transition: opacity var(--motion-fast) ease;
+  width: 1.55rem; padding: 0;
+  margin: calc(var(--space-1) * -1) 0;
+  margin-left: calc(var(--space-2) * -1);
+  border: none; border-radius: 0; cursor: pointer;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--muted);
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
 }
-.chat-attach:hover .chat-attach__remove,
-.chat-attach:focus-within .chat-attach__remove,
-.chat-attach__remove:focus-visible { opacity: 1; }
-/* Touch has no hover, so the control would otherwise never appear. */
-@media (hover: none) {
-  .chat-attach__remove { opacity: 1; }
-}
+.chat-attach__remove:hover { background: var(--danger-soft); color: var(--danger); }
+.chat-attach.is-failed .chat-attach__remove { color: var(--danger); }
 @media (prefers-reduced-motion: reduce) {
   .chat-attach__remove { transition: none; }
 }
@@ -1136,10 +1187,10 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
    It is a small card sitting ON the message, so it takes the page's inset
    surface and the page's foreground: dark text on a light panel in light mode,
    light text on a dark panel in dark mode. That pairing is guaranteed to be
-   legible, because the palette solves `--fg` against `--bg-inset` directly and
-   the contract pins it (see frontend/CLAUDE.md: every text tone clears AA on
-   --bg, --card AND --bg-inset). Measured across all 27 generated scheme blocks
-   the worst case is well clear of AA.
+   legible, because the palette solves `--fg` against `--card` directly and the
+   contract pins it (see frontend/CLAUDE.md: every text tone clears AA on --bg,
+   --card AND --bg-inset). Measured across all 27 generated scheme blocks the
+   worst case is well clear of AA.
 
    These are the same values the base `.chat-attach` rule sets, restated here on
    purpose: they are DEFENSIVE. The bug this replaces was `.is-sent` setting
@@ -1154,7 +1205,7 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
    mixing the text colour into the surface behind it can only spend contrast,
    and it capped out at a 6% fill before failing AA. */
 .chat-msg.user .chat-attach {
-  background: var(--bg-inset);
+  background: var(--card);
   color: var(--fg);
 }
 .chat-msg.user .chat-attach:hover { background: var(--card-hover); }
@@ -1165,7 +1216,12 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
    is pointer-events:none so it can never eat the drop it is advertising. */
 .chat-panel { position: relative; }
 .chat-dropzone {
-  position: absolute; inset: 0; z-index: 6; pointer-events: none;
+  /* ABOVE the floating jump-to-latest pill, which is `--z-dropdown` and was
+     punching through the overlay. A raw `6` could never have won that; the
+     scale is the whole reason the tokens exist. `--z-dock` is the tier for
+     something floating over the chat, and stays under the modal layer so the
+     attachment viewer still opens on top. */
+  position: absolute; inset: 0; z-index: var(--z-dock); pointer-events: none;
   display: flex; align-items: center; justify-content: center;
   background: var(--accent-soft);
   border-radius: var(--radius-md);
