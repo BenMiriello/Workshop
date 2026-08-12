@@ -1070,57 +1070,6 @@ async def mark_duplicate(scope: str, task_id: str, body: DuplicateOfIn) -> dict:
 
 
 # ---- Promotion (prose that proved itself) ----------------------------------
-
-
-@router.get("/promotion-candidates")
-async def promotion_candidates() -> dict:
-    """Textual rules that have now been re-derived from enough independent blocks
-    to be worth enforcing. A PROMPT, never an action already taken: nothing here
-    mints anything until the operator says so."""
-    rows = learnings.promotion_candidates()
-    return {"candidates": rows, "count": len(rows)}
-
-
-class PromoteIn(BaseModel):
-    scope: str = Field(min_length=1)     # the LEARNINGS scope the rule lives in
-    hash: str = Field(min_length=1)
-    store_uri: str = Field(min_length=1)
-    verbs: list[str]
-    subtree: bool = False
-    ttl_hours: float | None = None
-
-
-@router.post("/promote")
-async def promote(body: PromoteIn) -> dict:
-    """Promote a proven textual rule to an enforced grant. The operator's click is
-    the only thing that can reach this: prose becomes a predicate because someone
-    who owns the rules decided it should.
-
-    The prose is kept and marked `promoted`, so a job that hits the wall still
-    reads why it is there."""
-    caveats: dict = {}
-    if body.ttl_hours:
-        caveats["expiry"] = (
-            datetime.now(timezone.utc) + timedelta(hours=float(body.ttl_hours))
-        ).isoformat()
-    try:
-        grant = permissions.mint_grant(
-            from_app="operator",
-            to=body.scope,
-            store_uri=body.store_uri,
-            verbs=body.verbs,
-            caveats=caveats,
-            subtree=bool(body.subtree),
-        )
-        row = learnings.mark_promoted(body.scope, body.hash, grant["id"])
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    if row is None:
-        permissions.revoke(grant["id"])
-        raise HTTPException(404, f"no promotion candidate: {body.scope}/{body.hash}")
-    return {"promoted": row, "grant": grant}
-
-
 # ---- Run now ---------------------------------------------------------------
 # Chat/UI "run this task now": open a Job and launch a detached single-task sweep
 # (project_ralph.sh --task-id) so work starts in seconds instead of waiting for
@@ -1396,80 +1345,6 @@ def launch_task_run(scope: str, task_id: str) -> dict:
     except OSError:
         pass
     return {"ok": True, "job_id": job["id"], "scope": scope, "task_id": task_id}
-
-
-@router.post("/{scope}/{task_id}/scope-review")
-async def scope_review(scope: str, task_id: str) -> dict:
-    """Judge whether this ticket is one piece of work, what blocks it, and whether
-    it is sequential. Reads only; proposes only.
-
-    Distinct from the readiness check, which is a regex pass and cannot tell a
-    well-written ticket from a well-written ticket that is really four tickets.
-    Meant to be run on a DRAFT, before approval — after approval a worker is about
-    to spend money on it, which is too late for the answer to be worth much."""
-    root = _require_root(scope)
-    task = tasks.get_task(root, task_id)
-    if task is None:
-        raise HTTPException(404, f"task not found: {task_id}")
-    try:
-        out = await ticket_scope_review.review(task)
-    except Exception as e:
-        raise HTTPException(502, f"could not review scope: {e}")
-    out["readiness"] = ticket_readiness.check(
-        task, known_ids={t["id"] for t in tasks.list_tasks(root)})
-    return out
-
-
-class SplitIn(BaseModel):
-    # The sub-tickets to create, as returned by scope-review and possibly edited
-    # by the operator. Sent back rather than re-derived so what they approved is
-    # exactly what gets filed.
-    subtickets: list[dict]
-
-
-@router.post("/{scope}/{task_id}/split")
-async def split_task(scope: str, task_id: str, body: SplitIn) -> dict:
-    """Turn one ticket into sub-tickets.
-
-    The children are `draft`s: a split is a proposal like any other, so each piece
-    still needs approving. The parent keeps its text and becomes the container —
-    it is not cancelled, because the original wording is the record of what was
-    asked for, and it is not queued, because the children are the work now.
-    """
-    root = _require_root(scope)
-    parent = tasks.get_task(root, task_id)
-    if parent is None:
-        raise HTTPException(404, f"task not found: {task_id}")
-    if parent.get("parent"):
-        raise HTTPException(409, "a sub-ticket cannot be split again (depth is capped at two)")
-    rows = [r for r in (body.subtickets or []) if str(r.get("title") or "").strip()]
-    if len(rows) < 2:
-        raise HTTPException(400, "a split needs at least two sub-tickets")
-
-    created = []
-    for r in rows:
-        child = tasks.add(
-            root,
-            title=str(r.get("title")).strip(),
-            body=str(r.get("body") or ""),
-            status="draft",
-            parent=task_id,
-            priority=int(parent.get("priority") or 0),
-            labels=list(parent.get("labels") or []),
-            source=parent.get("source") or {"kind": "operator", "ref": None},
-            scoped_by="agent:scope-review",
-        )
-        created.append(dict(child, scope=scope))
-
-    # The parent is a container now. `draft` keeps it out of `next_ready` without
-    # pretending the request was withdrawn.
-    updated = tasks.update(
-        root, task_id, status="draft",
-        evidence={"kind": "split",
-                  "ref": f"split into {len(created)} sub-tickets: "
-                         + ", ".join(c["id"] for c in created)})
-    return {"parent": _detail(updated or parent, scope, root),
-            "subtickets": created}
 
 
 class TaskApproveIn(BaseModel):

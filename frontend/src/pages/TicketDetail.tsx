@@ -1,48 +1,57 @@
+// One ticket. The standard two-column issue page: the work in the main column,
+// its properties in a rail.
+//
+// What was deleted on 2026-08-12, and why (operator direction: remove the junk,
+// and measure rather than guess). Field occupancy across all 179 live tickets:
+//
+//   parent          0%   -> the Sub-tickets section and the whole split flow
+//   awaiting        0%   -> the five-button "Awaiting an answer" panel
+//   latitude        0%   -> the Latitude editor and its rail row
+//   max_attempts    0%   -> the Attempt cap editor
+//   assignee      100% but "operator" on every ticket -> zero information
+//   labels        7.3%, and 13 of those are one auto-applied "chat-reported"
+//   acceptance    2.8%
+//   relates_to    3.4%   -> a decorative edge with no scheduling effect
+//
+// Also gone: the "Scope" review-and-split card (an LLM judgement pass that could
+// only ever act on `parent`/children, which nothing has), the "Not yet
+// specified" readiness checklist (a nag panel; approve still reports the gap in
+// one line), and the Deploy button and its modal (a project deploy launched from
+// a ticket, which is what /deploys is for).
+//
+// The fields that survived are the ones the data supports: status, priority,
+// effort, dependencies, timestamps, origin, runs, comments and activity. The
+// deleted EDITORS do not delete their fields: `ticketPatch` sends only what
+// changed, so latitude, acceptance, labels and relates_to keep whatever the
+// record holds and are still served by the API.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePoll } from "../lib/usePoll";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  Ticket as TicketIcon, ArrowLeft, RefreshCw, Trash2, Rocket, ExternalLink,
-  Play, CheckCheck, XCircle, KeyRound, ScrollText, Ban, ClipboardList, Scissors,
-  MessageSquare, History, GitBranch, Link2, Send,
+  Ticket as TicketIcon, ArrowLeft, RefreshCw, Trash2, ExternalLink,
+  Play, CheckCheck, ScrollText, MessageSquare, History, Link2, Send,
 } from "lucide-react";
 import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
-  Badge, Tag, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Textarea,
+  Tag, Skeleton, Field, Input, Select, ConfirmDialog, Textarea,
   catFor,
 } from "@workshop/ui";
 import { Markdown } from "@workshop/ui/markdown";
 import {
   type Task, type TaskLink, TASK_STATUSES, taskStatusKind, taskStatusLabel,
   title as titleOf, description as descriptionOf, scopeLabel, scopeHref,
-  isBlockingCheck, readinessLabel,
-  ticketHref, taskAcceptanceLabel,
-  latitudeDesc, latitudeSourceLabel,
+  ticketHref,
 } from "../lib/tasks";
 import {
-  EMPTY_TICKET_DRAFT, LATITUDE_INHERIT, TICKET_ACCEPTANCE_KINDS, TICKET_EFFORTS,
+  EMPTY_TICKET_DRAFT, TICKET_EFFORTS,
   draftFromTask, ticketDirty, ticketPatch, ticketTitleMissing,
   unresolvedIds, type TicketDraft,
 } from "../lib/ticketEdit";
 import { jobIsLive, jobStatusKind } from "../lib/jobs";
-import { pickupFor, pickupNote, type PickupMap } from "../lib/scopePickup";
 import { nextWorkParams } from "../lib/workParams";
-import { GrantDialog, RuleDialog } from "../components/ReviewDialogs";
 
-// A ticket can only be launched from `todo`. This gate lived in Work.tsx's
-// unreachable Edit drawer and nowhere on the live path, so Run was offered on
-// `done` and `cancelled` tickets and simply re-ran finished work.
+// A ticket can only be launched from `todo`.
 const RUNNABLE_STATUSES = new Set(["todo"]);
-
-// The scope review's answer. Proposals only: applying a split is a second,
-// explicit act, and the review never edits the ticket's own text.
-type ScopeReview = {
-  verdict: "ok" | "split" | "underspecified";
-  reason: string;
-  subtickets: { title: string; body: string }[];
-  blockers: string[];
-  stages: string[];
-};
 
 type JobRec = {
   id: string;
@@ -52,12 +61,6 @@ type JobRec = {
   trigger?: string;
   kind?: string;
   evidence?: { summary?: string; url?: string };
-};
-
-type Deploy = {
-  id: string;
-  name: string;
-  target: { kind: string };
 };
 
 function ago(iso?: string | null): string {
@@ -80,8 +83,6 @@ function fmtTs(iso?: string | null): string {
   return isNaN(d.getTime()) ? "" : d.toLocaleString();
 }
 
-// Same rule JobsFeed uses. A run row without a duration or an end time made this
-// page's run list strictly worse than the feed it links to.
 function runDuration(r: JobRec): string {
   if (!r.started_at) return "";
   const start = new Date(r.started_at).getTime();
@@ -94,52 +95,19 @@ function runDuration(r: JobRec): string {
   return s ? `${m}m ${s}s` : `${m}m`;
 }
 
-// One linked ticket, as a row that actually goes somewhere. The href is built
-// from the LINK's own scope, not the current ticket's: the two are often
-// different and the page used to send every cross-scope dependency to a 404.
+// One linked ticket, as a row that goes somewhere. The href is built from the
+// LINK's own scope, not the current ticket's: the two are often different and
+// this page used to send every cross-scope dependency to a 404.
 function LinkRow({ link }: { link: TaskLink }) {
   return (
-    <Link to={ticketHref(link.scope, link.id)} className="ws-ticket-link">
+    <Row>
       <StatusDot status={taskStatusKind(link.status)}>{taskStatusLabel(link.status)}</StatusDot>
-      <span className="ws-truncate ws-ticket-link__title" title={link.title}>
-        {link.title || link.id}
-      </span>
+      <Link to={ticketHref(link.scope, link.id)} className="ws-truncate">{link.title || link.id}</Link>
       <Tag hue={catFor(link.scope)}>{scopeLabel(link.scope)}</Tag>
-    </Link>
+    </Row>
   );
 }
 
-// What the ids in an edge input actually point at, beside the input that holds
-// them. Not links: following one mid-edit would throw the draft away, and the
-// Links section below already offers the clickable version.
-function LinkKey({ links, missing }: { links: TaskLink[]; missing: string[] }) {
-  if (links.length === 0 && missing.length === 0) return null;
-  return (
-    <Stack gap="sm" style={{ marginTop: "var(--space-1)" }}>
-      {links.map((l) => (
-        <Row key={`${l.scope}:${l.id}`} wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-          <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{l.id}</span>
-          <StatusDot status={taskStatusKind(l.status)}>{taskStatusLabel(l.status)}</StatusDot>
-          <span className="ws-truncate" style={{ fontSize: "var(--fs-xs)" }} title={l.title}>
-            {l.title || l.id}
-          </span>
-          <Tag hue={catFor(l.scope)}>{scopeLabel(l.scope)}</Tag>
-        </Row>
-      ))}
-      {missing.map((tid) => (
-        <StatusDot key={tid} status="warn">
-          <span className="ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{tid}</span>
-          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}> resolves to no ticket</span>
-        </StatusDot>
-      ))}
-    </Stack>
-  );
-}
-
-// A ticket's detail. Everything the record already knew and never showed: the
-// family it belongs to, the answers already given to it, what has been attempted
-// and what the gate is. The URL is stable, so bookmarks and chat mentions
-// survive.
 export default function TicketDetail() {
   const { scope: scopeRaw = "", id = "" } = useParams();
   const scope = decodeURIComponent(scopeRaw);
@@ -147,41 +115,22 @@ export default function TicketDetail() {
 
   const [task, setTask] = useState<Task | null>(null);
   const [runs, setRuns] = useState<JobRec[] | null>(null);
-  const [deploys, setDeploys] = useState<Deploy[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [pickupMap, setPickupMap] = useState<PickupMap | null>(null);
   const [editing, setEditing] = useState(false);
   // ONE draft for the whole ticket. Every field here is ticket CONFIG, so all of
-  // it commits on Save and none of it on change (frontend/CLAUDE.md, "When does
-  // a control commit?"). Status and latitude used to PATCH on change; priority,
-  // effort, assignee, the acceptance gate, the attempt cap, labels and the two
-  // edge lists could not be edited on this page at all.
+  // it commits on Save and none of it on change (frontend/CLAUDE.md).
   const [draft, setDraft] = useState<TicketDraft>(EMPTY_TICKET_DRAFT);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [runOpen, setRunOpen] = useState(false);
   const [running, setRunning] = useState(false);
   const [approving, setApproving] = useState(false);
-  // The scope review: a judgement pass over whether this is ONE piece of work.
-  // Only offered on a draft, because after approval a worker is about to spend
-  // money on it and the answer stops being worth much.
-  const [scopeCheck, setScopeCheck] = useState<ScopeReview | null>(null);
-  const [reviewing, setReviewing] = useState(false);
-  const [splitting, setSplitting] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [bannerErr, setBannerErr] = useState(false);
-  const [reviewNote, setReviewNote] = useState("");
-  const [reviewBusy, setReviewBusy] = useState<string | null>(null);
-  const [reviewDialog, setReviewDialog] = useState<"grant" | "rule" | null>(null);
-  const [confirmDeny, setConfirmDeny] = useState(false);
-  const [deployOpen, setDeployOpen] = useState(false);
-  const [deployPick, setDeployPick] = useState<string>("");
-  const [deployBusy, setDeployBusy] = useState(false);
+  const [answer, setAnswer] = useState("");
+  const [answerBusy, setAnswerBusy] = useState(false);
   const [commentDraft, setCommentDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
-
-  const projectSlug = scope.startsWith("project:") ? scope.slice("project:".length) : null;
 
   // One banner, two meanings. A 409 used to land here as raw JSON.
   const say = useCallback((text: string) => { setBanner(text); setBannerErr(false); }, []);
@@ -199,35 +148,17 @@ export default function TicketDetail() {
       setTask(await tr.json());
       const j = await jr.json();
       setRuns(j.jobs || []);
-      if (projectSlug) {
-        const dr = await fetch(`/api/projects/${encodeURIComponent(projectSlug)}/deploys`);
-        if (dr.ok) {
-          const dj = await dr.json();
-          setDeploys(dj.deploys || []);
-        } else {
-          setDeploys([]);
-        }
-      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [scope, id, projectSlug]);
+  }, [scope, id]);
   useEffect(() => { load(); }, [load]);
 
-  // Whether anything picks this scope's tickets up on its own, and whether a
-  // worker can be launched here at all.
-  useEffect(() => {
-    fetch("/api/tasks/scopes")
-      .then((r) => (r.ok ? r.json() : { pickup: null }))
-      .then((j) => setPickupMap(j.pickup ?? null))
-      .catch(() => setPickupMap(null));
-  }, []);
-
   // What the record says right now, in the form's own vocabulary. The draft is
-  // compared against this to decide what changed, so a poll that lands while the
-  // operator is typing cannot quietly widen the patch.
+  // compared against this to decide what changed, so a poll landing while the
+  // operator types cannot quietly widen the patch.
   const saved = useMemo(
     () => (task ? draftFromTask(task) : EMPTY_TICKET_DRAFT), [task]);
 
@@ -240,11 +171,8 @@ export default function TicketDetail() {
       setDraft((d) => ({ ...d, [key]: value })),
     []);
 
-  // Patches the canonical pair, not the joined blob: the store keeps title and
-  // body as separate fields, and sending `text` would make the server re-split
-  // an edit the operator already split by hand. Everything else the record holds
-  // rides along in the same explicit Save, and ONLY the fields that changed are
-  // sent (ticketEdit.ts explains why that matters for a tracker-linked ticket).
+  // Patches the canonical pair, not the joined blob, and sends ONLY the fields
+  // that changed (ticketEdit.ts explains why that matters).
   const saveEdits = useCallback(async () => {
     const fields = ticketPatch(draft, saved);
     if (Object.keys(fields).length === 0 || ticketTitleMissing(draft)) return;
@@ -256,10 +184,7 @@ export default function TicketDetail() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(fields),
       });
-      if (!r.ok) {
-        const text = await r.text();
-        throw new Error(`${r.status} ${text}`);
-      }
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setTask(await r.json());
       // Edit mode closes only on a save that landed. It used to close either
       // way, which threw the operator's edit away on top of the error.
@@ -272,8 +197,7 @@ export default function TicketDetail() {
   }, [draft, saved, scope, id, fail]);
 
   // A draft is a suggestion the system made. Approving is the operator agreeing
-  // to it, and it is the only thing that makes a ticket eligible to run: the
-  // sweep skips drafts and the run endpoint refuses them.
+  // to it, and it is the only thing that makes a ticket eligible to run.
   const approve = useCallback(async () => {
     setApproving(true);
     setBanner(null);
@@ -285,9 +209,6 @@ export default function TicketDetail() {
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const j = await r.json();
-      // Approving does not require a well-specified ticket, but it should not be
-      // silent about approving one that is not: the checklist is the reason the
-      // draft step exists.
       const gaps = j?.readiness?.missing?.length ?? 0;
       say(gaps
         ? `Approved and queued, with ${gaps} thing${gaps === 1 ? "" : "s"} the ticket still does not say.`
@@ -300,67 +221,27 @@ export default function TicketDetail() {
     }
   }, [scope, id, load, say, fail]);
 
-  const scopeReview = useCallback(async () => {
-    setReviewing(true);
-    setScopeCheck(null);
-    try {
-      const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/scope-review`, { method: "POST" });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setScopeCheck(await r.json());
-    } catch (e) {
-      fail(e instanceof Error ? e.message : String(e));
-    } finally {
-      setReviewing(false);
-    }
-  }, [scope, id, fail]);
-
-  const applySplit = useCallback(async () => {
-    if (!scopeCheck?.subtickets?.length) return;
-    setSplitting(true);
-    try {
-      const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/split`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ subtickets: scopeCheck.subtickets }),
-      });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      const j = await r.json();
-      say(`Split into ${j.subtickets.length} sub-tickets. Each needs approving.`);
-      setScopeCheck(null);
-      await load();
-    } catch (e) {
-      fail(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSplitting(false);
-    }
-  }, [scope, id, scopeCheck, load, say, fail]);
-
   const runTask = useCallback(async () => {
     setRunning(true);
     setBanner(null);
     try {
       const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/run`, { method: "POST" });
-      // A busy tree answers 409. It used to render as the raw JSON body of the
-      // error, which tells the operator nothing about what to do next.
       if (r.status === 409) {
         const e = await r.json().catch(() => ({} as { detail?: unknown }));
         const detail = typeof e.detail === "string" ? e.detail : "";
-        fail(detail || "A sweep is already running against this scope. Wait for it to finish, or stop the queue runner.");
+        fail(detail || "A sweep is already running against this scope. Wait for it to finish, or stop the queue runner in Settings.");
         return;
       }
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const j = await r.json();
-      say(
-        j.job_id
-          ? "Run started. It appears under Runs below, and the ticket status moves when the run finishes."
-          : "The run was accepted but returned no id.",
-      );
+      say(j.job_id
+        ? "Run started. It appears under Runs below."
+        : "The run was accepted but returned no id.");
       await load();
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e));
     } finally {
       setRunning(false);
-      setRunOpen(false);
     }
   }, [scope, id, load, say, fail]);
 
@@ -368,33 +249,37 @@ export default function TicketDetail() {
     try {
       const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      nav(`/work?${nextWorkParams(new URLSearchParams(), { tab: "tickets", scope })}`, { replace: true });
+      nav(`/work?${nextWorkParams(new URLSearchParams(), { scope })}`, { replace: true });
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e));
     }
   }, [scope, id, nav, fail]);
 
-  // `extra` carries the fields an action requires: `rule` for mint-rule,
-  // `store_uri`/`verbs` for grant-and-continue. Both used to be sent empty from
-  // this page, so mint-rule hard-400'd every time it was pressed.
-  const review = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
-    setReviewBusy(action);
+  // Releasing a stuck ticket. ONE action, because the five-button panel this
+  // replaces (approve / deny / grant-and-continue / mint-rule / dismiss) read a
+  // field that is empty on every ticket in the store, so four of its five
+  // buttons had never been pressed against real data. The answer is written into
+  // the ticket body by the endpoint, which is what makes it reach the next
+  // attempt: a worker sees the ticket text and nothing else.
+  const unblock = useCallback(async () => {
+    setAnswerBusy(true);
     setBanner(null);
     try {
       const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, note: reviewNote || null, ...extra }),
+        body: JSON.stringify({ action: "approve", note: answer.trim() || null }),
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setReviewNote("");
+      setAnswer("");
+      say("Answered. The next attempt reads it in the ticket body.");
       await load();
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e));
     } finally {
-      setReviewBusy(null);
+      setAnswerBusy(false);
     }
-  }, [scope, id, reviewNote, load, fail]);
+  }, [scope, id, answer, load, say, fail]);
 
   const postComment = useCallback(async () => {
     const text = commentDraft.trim();
@@ -417,851 +302,339 @@ export default function TicketDetail() {
     }
   }, [scope, id, commentDraft, fail]);
 
-  const kickDeploy = useCallback(async () => {
-    if (!deployPick || !projectSlug) return;
-    setDeployBusy(true);
-    setBanner(null);
-    try {
-      const r = await fetch(`/api/projects/${encodeURIComponent(projectSlug)}/deploys/${encodeURIComponent(deployPick)}:deploy`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ref: null, message: `From ticket ${id}` }),
-      });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      const j = await r.json();
-      say(`Deploy started: ${j.job_id}. Watch it in this ticket's Runs list.`);
-      setDeployOpen(false);
-      setDeployPick("");
-      await load();
-    } catch (e) {
-      fail(e instanceof Error ? e.message : String(e));
-    } finally {
-      setDeployBusy(false);
-    }
-  }, [deployPick, projectSlug, id, load, say, fail]);
-
-  // A block the operator already dismissed from the Review tab is answered. It
-  // used to keep showing the whole review panel here, because this page checked
-  // `awaiting` and the Review tab checked `awaiting && !dismissed`.
-  const awaiting = task?.awaiting ?? null;
-  const blocked = task?.status === "blocked" && !!awaiting && !awaiting.dismissed;
-
   const links = task?.links;
-  const children = links?.children ?? [];
   const dependsOn = links?.depends_on ?? [];
-  const relatesTo = links?.relates_to ?? [];
-  const missingLinks = links?.missing ?? [];
-  const hasLinks = dependsOn.length > 0 || relatesTo.length > 0 || missingLinks.length > 0;
   const comments = task?.comments ?? [];
   const evidence = task?.evidence ?? [];
-
+  const blocked = task?.status === "blocked";
+  const originKey = task?.origin?.context_key ?? null;
   const scopeLink = scopeHref(scope);
-  const workHref = `/work?${nextWorkParams(new URLSearchParams(), { tab: "tickets", scope })}`;
 
-  // A run this ticket started is a background process. The ticket record itself
-  // does not move when `launch_task_run` opens a Job, so without this the status
-  // pill still reads "To do" after a successful launch and the page reads as if
-  // nothing happened. Say that a run is in flight, and poll until it is not.
-  const liveRun = (runs || []).find((r) => jobIsLive(r.status)) || null;
-  const liveRunId = liveRun?.id ?? null;
+  const workHref = `/work?${nextWorkParams(new URLSearchParams(), { scope })}`;
+
+  // A run this ticket started is a background process. The ticket record does
+  // not move when the run opens, so without this the status still reads "To do"
+  // after a successful launch. Say a run is in flight, and poll until it is not.
+  const liveRunId = (runs || []).find((r) => jobIsLive(r.status))?.id ?? null;
   usePoll(load, 5000, { enabled: !!liveRunId, immediate: false });
 
-  const pickup = pickupFor(pickupMap, scope);
-  const pickupWarning = pickupNote(pickup);
   const statusRunnable = RUNNABLE_STATUSES.has(task?.status ?? "");
-  const canRun = !!task && !saving && !running && !liveRunId && statusRunnable && pickup.runnable;
-  const cannotRunBecause = !task
-    ? ""
-    : liveRunId ? "A run for this ticket is already in flight."
-    : !pickup.runnable ? "This scope cannot run tickets."
-    : !statusRunnable ? `Run is offered while a ticket is To do. This one is ${taskStatusLabel(task.status)}.`
-    : "";
-
+  const canRun = !!task && !saving && !running && !liveRunId && statusRunnable;
   const dirty = !!task && editing && ticketDirty(draft, saved);
   const titleMissing = editing && ticketTitleMissing(draft);
-  // The ids in each edge input, resolved. `links.missing` covers the record as a
-  // whole, so each list works out its own dead ids by difference.
   const dependsMissing = unresolvedIds(task?.depends_on, links?.depends_on);
-  const relatesMissing = unresolvedIds(task?.relates_to, links?.relates_to);
 
-  // Sub-ticket roll-up, derived and never stored. A parent is finished when its
-  // children are; showing the count is the whole point of splitting.
-  const childrenDone = children.filter(
-    (c) => c.status === "done" || c.status === "cancelled").length;
+  // ---- main column ----------------------------------------------------------
+
+  const description = task ? descriptionOf(task) : "";
+
+  const details = editing ? (
+    <Card>
+      <Stack>
+        <Field label="Title" error={titleMissing ? "A ticket needs a title." : undefined}>
+          <Input value={draft.title} onChange={(e) => setField("title", e.target.value)} />
+        </Field>
+        <Field label="Description">
+          <Textarea
+            rows={14}
+            value={draft.body}
+            onChange={(e) => setField("body", e.target.value)}
+          />
+        </Field>
+        <Row wrap>
+          <Field label="Status">
+            <Select value={draft.status} onChange={(e) => setField("status", e.target.value)}>
+              {TASK_STATUSES.map((s) => (
+                <option key={s} value={s}>{taskStatusLabel(s)}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Priority" help="Higher runs first. 0 is the default.">
+            <Input
+              inputMode="numeric"
+              value={draft.priority}
+              onChange={(e) => setField("priority", e.target.value)}
+            />
+          </Field>
+          <Field label="Effort" help="How deep the work is, not how urgent.">
+            <Select value={draft.effort} onChange={(e) => setField("effort", e.target.value)}>
+              <option value="">Not set</option>
+              {TICKET_EFFORTS.map((v) => <option key={v} value={v}>{v}</option>)}
+            </Select>
+          </Field>
+        </Row>
+        <Field
+          label="Depends on"
+          help="Ticket ids, comma separated. This ticket waits for them."
+        >
+          <Input value={draft.dependsOn} onChange={(e) => setField("dependsOn", e.target.value)} />
+        </Field>
+      </Stack>
+    </Card>
+  ) : (
+    <Card>
+      {description
+        ? <Markdown>{description}</Markdown>
+        : <span className="ws-muted">No description.</span>}
+    </Card>
+  );
+
+  const blockCard = blocked && task ? (
+    <Stack gap="sm">
+      <SectionLabel>Stuck</SectionLabel>
+      <Card>
+        <Stack>
+          <span>{task.blocked_reason || task.awaiting?.question || "This ticket stopped and has not said why."}</span>
+          <Field label="Your answer" help="It is written into the ticket, so the next attempt reads it.">
+            <Textarea rows={4} value={answer} onChange={(e) => setAnswer(e.target.value)} />
+          </Field>
+          <Row>
+            <Button
+              size="sm"
+              variant="primary"
+              loading={answerBusy}
+              onClick={unblock}
+            >
+              <CheckCheck aria-hidden /> Answer and unblock
+            </Button>
+          </Row>
+        </Stack>
+      </Card>
+    </Stack>
+  ) : null;
+
+  const commentsCard = (
+    <Stack gap="sm">
+      <SectionLabel icon={<MessageSquare aria-hidden />}>Comments</SectionLabel>
+      <Card>
+        <Stack>
+          {comments.length === 0 && <span className="ws-muted">No comments.</span>}
+          {comments.map((c) => (
+            <Stack key={c.id} gap="sm">
+              <Row>
+                <strong>{c.author}</strong>
+                <span className="ws-muted">{ago(c.ts)}</span>
+              </Row>
+              <span className="ws-wrap">{c.text}</span>
+            </Stack>
+          ))}
+          <Field label="Add a comment">
+            <Textarea
+              rows={3}
+              value={commentDraft}
+              onChange={(e) => setCommentDraft(e.target.value)}
+            />
+          </Field>
+          <Row>
+            <Button
+              size="sm"
+              loading={commentBusy}
+              onClick={postComment}
+            >
+              <Send aria-hidden /> Comment
+            </Button>
+          </Row>
+        </Stack>
+      </Card>
+    </Stack>
+  );
+
+  const runsCard = (
+    <Stack gap="sm">
+      <Row between>
+        <SectionLabel icon={<ScrollText aria-hidden />}>Runs</SectionLabel>
+        <Link to="/runs">All runs</Link>
+      </Row>
+      <Card>
+        {(runs ?? []).length === 0
+          ? <span className="ws-muted">No runs yet.</span>
+          : (
+            <Stack gap="sm">
+              {(runs ?? []).map((r) => (
+                <Row between key={r.id}>
+                  <Row>
+                    <StatusDot status={jobStatusKind(r.status)}>{r.status}</StatusDot>
+                    <Link to={`/runs/${encodeURIComponent(r.id)}`}>{r.kind || "run"}</Link>
+                  </Row>
+                  <span className="ws-muted">
+                    {[ago(r.started_at), runDuration(r)].filter(Boolean).join(" · ")}
+                  </span>
+                </Row>
+              ))}
+            </Stack>
+          )}
+      </Card>
+    </Stack>
+  );
+
+  const activityCard = evidence.length > 0 ? (
+    <Stack gap="sm">
+      <SectionLabel icon={<History aria-hidden />}>Activity</SectionLabel>
+      <Card>
+        <Stack gap="sm">
+          {evidence.map((e, i) => (
+            <Row between key={i}>
+              <span className="ws-wrap">
+                <strong>{e.kind}</strong>{e.ref ? ` ${e.ref}` : ""}
+              </span>
+              <span className="ws-muted">{ago(e.ts)}</span>
+            </Row>
+          ))}
+        </Stack>
+      </Card>
+    </Stack>
+  ) : null;
+
+  // ---- rail -----------------------------------------------------------------
+
+  const rail = task ? (
+    <Stack gap="sm">
+      <SectionLabel>Properties</SectionLabel>
+      <Card>
+        <Stack>
+          <Field label="Status">
+            <StatusPill status={taskStatusKind(task.status)}>
+              {taskStatusLabel(task.status)}
+            </StatusPill>
+          </Field>
+          <Field label="Scope">
+            {/* Not every scope has a page. An unlinkable one renders as the tag
+                alone rather than as a link to nowhere. */}
+            {scopeLink
+              ? <Link to={scopeLink}><Tag hue={catFor(scope || "workshop")}>{scopeLabel(scope)}</Tag></Link>
+              : <Tag hue={catFor(scope || "workshop")}>{scopeLabel(scope)}</Tag>}
+          </Field>
+          {typeof task.priority === "number" && task.priority !== 0 && (
+            <Field label="Priority"><span>{task.priority}</span></Field>
+          )}
+          {task.effort && <Field label="Effort"><span>{task.effort}</span></Field>}
+          <Field label="Created"><span title={fmtTs(task.created)}>{ago(task.created)}</span></Field>
+          <Field label="Updated"><span title={fmtTs(task.updated)}>{ago(task.updated)}</span></Field>
+          {originKey && (
+            <Field label="Filed from">
+              <Link to={`/chat/${encodeURIComponent(originKey)}`}>
+                {task.origin?.title || "the chat"} <ExternalLink aria-hidden />
+              </Link>
+            </Field>
+          )}
+        </Stack>
+      </Card>
+      {(dependsOn.length > 0 || dependsMissing.length > 0) && (
+        <>
+          <SectionLabel icon={<Link2 aria-hidden />}>Depends on</SectionLabel>
+          <Card>
+            <Stack gap="sm">
+              {dependsOn.map((l) => <LinkRow key={l.id} link={l} />)}
+              {dependsMissing.map((mid) => (
+                <span key={mid} className="ws-muted">{mid} (not found)</span>
+              ))}
+            </Stack>
+          </Card>
+        </>
+      )}
+    </Stack>
+  ) : null;
+
+  // ---- page -----------------------------------------------------------------
 
   return (
     <div>
       <PageHeader
         title={
-          <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>
-            <Link to={workHref} style={{ display: "inline-flex", alignItems: "center" }} aria-label="Back to tickets">
+          <Row>
+            <Link to={workHref} aria-label="Back to tickets">
               <ArrowLeft aria-hidden />
             </Link>
             <TicketIcon aria-hidden />
-            <span className="ws-wrap">{loading ? "Ticket" : titleOf(task) || id}</span>
-          </Row>
-        }
-        sub={
-          <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-            {task && (
-              <>
-                {/* ONE status pill on this page. The State card below used to
-                    render the same fact again as a StatusDot two screens down. */}
-                <StatusPill status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusPill>
-                {/* The ticket record does not move when a run is launched, so
-                    the two facts are shown as two pills rather than one lie. */}
-                {liveRunId && <StatusPill status="running">run in flight</StatusPill>}
-                {/* A hued Tag, matching Work's ticket card. The same scope
-                    rendering as a neutral Badge here and a coloured Tag there
-                    made one fact look like two different kinds of fact. */}
-                <Tag hue={catFor(scope || "workshop")}>{scopeLabel(scope)}</Tag>
-                {scopeLink && (
-                  <Link to={scopeLink} style={{ fontSize: "var(--fs-xs)" }}>
-                    scope <ExternalLink size={10} aria-hidden />
-                  </Link>
-                )}
-                {/* Back to the conversation that produced this ticket. The
-                    reasoning lives there; a ticket without a route back to it
-                    is a decision with its argument amputated. */}
-                {task.origin?.context_key ? (
-                  <Link
-                    to={`/chat/${encodeURIComponent(task.origin.context_key)}?thread=${encodeURIComponent(task.origin.id)}`}
-                    style={{ fontSize: "var(--fs-xs)" }}
-                  >
-                    from "{task.origin.title}" <ExternalLink size={10} aria-hidden />
-                  </Link>
-                ) : task.origin ? (
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                    from a chat that has since been deleted
-                  </span>
-                ) : null}
-                {/* When it was filed and when it last moved. Both were on the
-                    record and neither was ever on the page. */}
-                {task.created && (
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}
-                        title={fmtTs(task.created)}>filed {ago(task.created)}</span>
-                )}
-                {task.updated && task.updated !== task.created && (
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}
-                        title={fmtTs(task.updated)}>updated {ago(task.updated)}</span>
-                )}
-                <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{id}</span>
-              </>
-            )}
+            <span className="ws-wrap">{loading ? "Ticket" : titleOf(task as Task) || id}</span>
           </Row>
         }
         actions={
-          <Row wrap style={{ gap: "var(--space-2)" }}>
-            <Button size="sm" variant="ghost" onClick={load}><RefreshCw aria-hidden /> Refresh</Button>
-            {task?.status === "draft" && (
-              <Button size="sm" variant="primary" onClick={approve}
-                      loading={approving} disabled={approving}>
-                <CheckCheck aria-hidden /> Approve
+          task && (
+            <Row wrap>
+              {liveRunId && <StatusPill status="running">run in flight</StatusPill>}
+              {!editing && (
+                <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>Edit</Button>
+              )}
+              {editing && (
+                <>
+                  <Button size="sm" variant="ghost" onClick={() => { setEditing(false); setDraft(saved); }}>
+                    Cancel
+                  </Button>
+                  <Button size="sm" variant="primary" loading={saving} disabled={!dirty} onClick={saveEdits}>
+                    Save
+                  </Button>
+                </>
+              )}
+              {task.status === "draft" && (
+                <Button size="sm" variant="primary" loading={approving} onClick={approve}>
+                  <CheckCheck aria-hidden /> Approve
+                </Button>
+              )}
+              {canRun && (
+                <Button size="sm" loading={running} onClick={runTask}>
+                  <Play aria-hidden /> Run
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" onClick={load} aria-label="Refresh">
+                <RefreshCw aria-hidden />
               </Button>
-            )}
-            <Button
-              size="sm"
-              variant={task?.status === "draft" ? "ghost" : "primary"}
-              onClick={() => setRunOpen(true)}
-              disabled={!canRun}
-              title={cannotRunBecause || undefined}
-            >
-              <Play aria-hidden /> Run
-            </Button>
-            {projectSlug && (deploys?.length ?? 0) > 0 && (
-              <Button size="sm" variant="ghost" onClick={() => setDeployOpen(true)}>
-                <Rocket aria-hidden /> Deploy
+              <Button
+                size="sm"
+                variant="danger-ghost"
+                onClick={() => setConfirmDelete(true)}
+                aria-label="Delete ticket"
+              >
+                <Trash2 aria-hidden />
               </Button>
-            )}
-            <Button size="sm" variant="danger-ghost" onClick={() => setConfirmDelete(true)}
-                    aria-label="Delete ticket">
-              <Trash2 aria-hidden />
-            </Button>
-          </Row>
+            </Row>
+          )
         }
       />
 
       {banner && (
-        <div style={{ marginBottom: "var(--space-3)" }}>
-          {bannerErr ? (
-            <StateBlock
-              variant="error"
-              title="That didn't work"
-              hint={banner}
-              action={<Button size="sm" onClick={() => setBanner(null)}>Dismiss</Button>}
-            />
-          ) : (
-            <Card>
-              <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>
-                <span style={{ flex: 1 }}>{banner}</span>
-                <Button size="sm" variant="ghost" onClick={() => setBanner(null)}>Dismiss</Button>
-              </Row>
-            </Card>
-          )}
-        </div>
+        <StateBlock
+          variant={bannerErr ? "error" : undefined}
+          title={banner}
+          action={<Button size="sm" onClick={() => setBanner(null)}>Dismiss</Button>}
+        />
       )}
 
-      {loading ? (
+      {loading && !task && (
         <Card><Stack gap="sm"><Skeleton width="60%" /><Skeleton width="40%" /></Stack></Card>
-      ) : err || !task ? (
-        <StateBlock variant="error" title="Couldn't load ticket"
-          hint={<code>{err || "not found"}</code>}
-          action={<Button size="sm" onClick={load}>Retry</Button>} />
-      ) : (
-        <Stack gap="lg">
-          {/* Body: title + description --------------------------------- */}
-          <section>
-            <Row between style={{ marginBottom: "var(--space-2)", alignItems: "center" }}>
-              <SectionLabel>Ticket</SectionLabel>
-              {!editing ? (
-                <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>Edit</Button>
-              ) : (
-                <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                  {dirty && <Badge>unsaved</Badge>}
-                  <Button size="sm" variant="ghost"
-                          onClick={() => { setEditing(false); setDraft(draftFromTask(task)); }}
-                          disabled={saving}>Cancel</Button>
-                  <Button size="sm" variant="primary" onClick={saveEdits} loading={saving}
-                          disabled={saving || !dirty || titleMissing}>Save</Button>
-                </Row>
-              )}
-            </Row>
-            <Card>
-              {editing ? (
-                <Stack gap="sm">
-                  <Field label="Title" error={titleMissing ? "A ticket needs a title." : undefined}>
-                    <Input value={draft.title} onChange={(e) => setField("title", e.target.value)}
-                           placeholder="Ticket title" disabled={saving} />
-                  </Field>
-                  <Field label="Description">
-                    <Textarea rows={10} value={draft.body} onChange={(e) => setField("body", e.target.value)}
-                              placeholder="What needs to happen, and why." disabled={saving} />
-                  </Field>
-                  {/* Every field the record holds lives in the same Save as the
-                      text, so it is edited here rather than in a second card
-                      that commits on a different gesture. Before this, seven of
-                      them could only be set from the chat drawer. */}
-                  <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-start" }}>
-                    <Field label="Status">
-                      <Select value={draft.status} onChange={(e) => setField("status", e.target.value)} disabled={saving}>
-                        {TASK_STATUSES.map((s) => (
-                          <option key={s} value={s}>{taskStatusLabel(s)}</option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label="Latitude" help={latitudeDesc(draft.latitude) || "Inherited from the scope."}>
-                      <Select value={draft.latitude} onChange={(e) => setField("latitude", e.target.value)} disabled={saving}>
-                        <option value={LATITUDE_INHERIT}>inherit</option>
-                        <option value="strict">strict</option>
-                        <option value="standard">standard</option>
-                        <option value="open">open</option>
-                      </Select>
-                    </Field>
-                    <Field label="Priority" help="Higher runs first. 0 is the default.">
-                      <Input type="number" value={draft.priority} disabled={saving}
-                             onChange={(e) => setField("priority", e.target.value)}
-                             style={{ maxWidth: "6rem" }} />
-                    </Field>
-                    <Field label="Effort" help="How deep the work is, not how urgent.">
-                      <Select value={draft.effort} onChange={(e) => setField("effort", e.target.value)} disabled={saving}>
-                        <option value="">none</option>
-                        {TICKET_EFFORTS.map((v) => <option key={v} value={v}>{v}</option>)}
-                      </Select>
-                    </Field>
-                    <Field label="Assignee" help="operator, or agent:slug. Leave empty for unassigned.">
-                      <Input value={draft.assignee} onChange={(e) => setField("assignee", e.target.value)}
-                             placeholder="operator" disabled={saving} style={{ maxWidth: "14rem" }} />
-                    </Field>
-                  </Row>
-                  <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-start" }}>
-                    <Field label="Done when" help="The gate a worker must clear to finish.">
-                      <Select value={draft.acceptanceKind} disabled={saving}
-                              onChange={(e) => setField("acceptanceKind", e.target.value)}>
-                        <option value="">no gate</option>
-                        {TICKET_ACCEPTANCE_KINDS.map((k) => (
-                          <option key={k} value={k}>{taskAcceptanceLabel(k)}</option>
-                        ))}
-                      </Select>
-                    </Field>
-                    {draft.acceptanceKind === "command" && (
-                      <Field label="Command" help="Run from the scope root. It must exit 0.">
-                        <Input value={draft.acceptanceSpec} disabled={saving}
-                               onChange={(e) => setField("acceptanceSpec", e.target.value)}
-                               placeholder="npm test" style={{ maxWidth: "20rem" }} />
-                      </Field>
-                    )}
-                    <Field label="Attempt cap"
-                           help="Runs this ticket gets. 0 means no cap, and empty leaves it as it is.">
-                      <Input type="number" value={draft.maxAttempts} disabled={saving}
-                             onChange={(e) => setField("maxAttempts", e.target.value)}
-                             placeholder="none" style={{ maxWidth: "6rem" }} />
-                    </Field>
-                  </Row>
-                  <Field label="Labels" help="Comma separated.">
-                    <Input value={draft.labels} onChange={(e) => setField("labels", e.target.value)}
-                           placeholder="ui, chat" disabled={saving} />
-                  </Field>
-                  {/* Ticket ids, comma separated, with what they resolve to
-                      underneath: an id says nothing on its own, and this page
-                      already receives the resolved links. */}
-                  <Field label="Depends on"
-                         help="Ticket ids, comma separated. This ticket waits until they are done.">
-                    <Input value={draft.dependsOn} onChange={(e) => setField("dependsOn", e.target.value)}
-                           placeholder="Ticket ids" disabled={saving} className="ws-mono" />
-                  </Field>
-                  <LinkKey links={dependsOn} missing={dependsMissing} />
-                  <Field label="Relates to"
-                         help="Ticket ids, comma separated. A soft link, with no effect on scheduling.">
-                    <Input value={draft.relatesTo} onChange={(e) => setField("relatesTo", e.target.value)}
-                           placeholder="Ticket ids" disabled={saving} className="ws-mono" />
-                  </Field>
-                  <LinkKey links={relatesTo} missing={relatesMissing} />
-                </Stack>
-              ) : (
-                <Stack gap="sm">
-                  {descriptionOf(task) ? (
-                    <Markdown>{descriptionOf(task)}</Markdown>
-                  ) : (
-                    <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-                      No description. Press Edit to add one.
-                    </span>
-                  )}
-                </Stack>
-              )}
-            </Card>
-          </section>
-
-          {/* Scope review: is this one piece of work? ------------------- */}
-          {task.status === "draft" && (
-            <section>
-              <SectionLabel icon={<Scissors aria-hidden />}>Scope</SectionLabel>
-              <Card>
-                <Stack gap="sm">
-                  {!scopeCheck && (
-                    <Row wrap style={{ gap: "var(--space-3)", alignItems: "center" }}>
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-                        Check whether this is one piece of work before approving it.
-                      </span>
-                      <Button size="sm" variant="ghost" onClick={scopeReview}
-                              loading={reviewing} disabled={reviewing}>
-                        Review scope
-                      </Button>
-                    </Row>
-                  )}
-                  {scopeCheck && (
-                    <>
-                      <StatusDot status={scopeCheck.verdict === "ok" ? "ok" : "warn"}>
-                        <strong>{scopeCheck.verdict === "ok" ? "One piece of work"
-                          : scopeCheck.verdict === "split" ? "Should be split" : "Underspecified"}</strong>
-                        {scopeCheck.reason ? <span className="ws-muted">: {scopeCheck.reason}</span> : null}
-                      </StatusDot>
-                      {scopeCheck.blockers.length > 0 && (
-                        <Stack gap="sm">
-                          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Blockers</span>
-                          {scopeCheck.blockers.map((b) => (
-                            <StatusDot key={b} status="warn"><span className="ws-muted">{b}</span></StatusDot>
-                          ))}
-                        </Stack>
-                      )}
-                      {scopeCheck.stages.length > 0 && (
-                        <Stack gap="sm">
-                          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Stages, in order</span>
-                          {scopeCheck.stages.map((st, i) => (
-                            <span key={st} style={{ fontSize: "var(--fs-sm)" }}>{i + 1}. {st}</span>
-                          ))}
-                        </Stack>
-                      )}
-                      {scopeCheck.subtickets.length > 0 && (
-                        <Stack gap="sm">
-                          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                            Proposed sub-tickets
-                          </span>
-                          {scopeCheck.subtickets.map((st) => (
-                            <span key={st.title} style={{ fontSize: "var(--fs-sm)" }}>{st.title}</span>
-                          ))}
-                        </Stack>
-                      )}
-                      <Row wrap style={{ gap: "var(--space-2)" }}>
-                        {scopeCheck.subtickets.length > 1 && (
-                          <Button size="sm" variant="primary" onClick={applySplit}
-                                  loading={splitting} disabled={splitting}>
-                            <Scissors aria-hidden /> Split into {scopeCheck.subtickets.length}
-                          </Button>
-                        )}
-                        <Button size="sm" variant="ghost" onClick={() => setScopeCheck(null)}>Dismiss</Button>
-                      </Row>
-                    </>
-                  )}
-                </Stack>
-              </Card>
-            </section>
-          )}
-
-          {/* What the ticket does not yet say -------------------------- */}
-          {task.readiness && !task.readiness.ok && (
-            <section>
-              <SectionLabel icon={<ClipboardList aria-hidden />}>Not yet specified</SectionLabel>
-              <Card>
-                <Stack gap="sm">
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-                    A worker only ever sees the ticket, which does not answer these yet.
-                  </span>
-                  {task.readiness.missing.map((m) => (
-                    <StatusDot key={m.check}
-                               status={isBlockingCheck(m.check) ? "danger" : "warn"}>
-                      <strong>{readinessLabel(m.check)}</strong>
-                      <span className="ws-muted">: {m.why}</span>
-                    </StatusDot>
-                  ))}
-                  {task.readiness.warnings.map((w) => (
-                    <StatusDot key={w} status="warn">
-                      <span className="ws-muted">{w}</span>
-                    </StatusDot>
-                  ))}
-                </Stack>
-              </Card>
-            </section>
-          )}
-
-          {/* Family: parent + sub-tickets ------------------------------ */}
-          {/* `parent` has been written by the split endpoint since it shipped
-              and rendered ZERO times, so using this page's own Split button
-              produced a parent with no children and children with no way home. */}
-          {(links?.parent || children.length > 0) && (
-            <section>
-              <SectionLabel icon={<GitBranch aria-hidden />}>Sub-tickets</SectionLabel>
-              <Card>
-                <Stack gap="sm">
-                  {links?.parent && (
-                    <div>
-                      <span className="ws-card__meta">part of</span>
-                      <div style={{ marginTop: "var(--space-1)" }}>
-                        <LinkRow link={links.parent} />
-                      </div>
-                    </div>
-                  )}
-                  {children.length > 0 && (
-                    <div>
-                      <span className="ws-card__meta">
-                        {childrenDone} of {children.length} done
-                      </span>
-                      <Stack gap="sm" style={{ marginTop: "var(--space-1)" }}>
-                        {children.map((c) => <LinkRow key={`${c.scope}:${c.id}`} link={c} />)}
-                      </Stack>
-                      {childrenDone < children.length && (
-                        <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: "var(--space-2) 0 0" }}>
-                          Only leaf tickets are run. This one finishes when its sub-tickets do.
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </Stack>
-              </Card>
-            </section>
-          )}
-
-          {/* Depends on / relates to ---------------------------------- */}
-          {hasLinks && (
-            <section>
-              <SectionLabel icon={<Link2 aria-hidden />}>Links</SectionLabel>
-              <Card>
-                <Stack gap="sm">
-                  {dependsOn.length > 0 && (
-                    <div>
-                      <span className="ws-card__meta">blocked until these are done</span>
-                      <Stack gap="sm" style={{ marginTop: "var(--space-1)" }}>
-                        {dependsOn.map((l) => <LinkRow key={`${l.scope}:${l.id}`} link={l} />)}
-                      </Stack>
-                    </div>
-                  )}
-                  {relatesTo.length > 0 && (
-                    <div>
-                      <span className="ws-card__meta">related</span>
-                      <Stack gap="sm" style={{ marginTop: "var(--space-1)" }}>
-                        {relatesTo.map((l) => <LinkRow key={`${l.scope}:${l.id}`} link={l} />)}
-                      </Stack>
-                    </div>
-                  )}
-                  {/* An id that resolves in no scope. Shown as broken rather
-                      than linked, because a link to nothing is worse than a
-                      label that admits the reference is dead. */}
-                  {missingLinks.length > 0 && (
-                    <div>
-                      <span className="ws-card__meta">references that no longer resolve</span>
-                      <Row wrap style={{ gap: "var(--space-2)", marginTop: "var(--space-1)" }}>
-                        {missingLinks.map((tid) => (
-                          <StatusDot key={tid} status="warn">
-                            <span className="ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{tid}</span>
-                          </StatusDot>
-                        ))}
-                      </Row>
-                    </div>
-                  )}
-                </Stack>
-              </Card>
-            </section>
-          )}
-
-          {/* State ---------------------------------------------------- */}
-          {/* Status is NOT repeated here. It is in the header, and the edit
-              control for it is in the Ticket card's edit mode, so this card is
-              only the facts that had no home at all. */}
-          <section>
-            <SectionLabel>State</SectionLabel>
-            <Card>
-              <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-start" }}>
-                <Field label="Latitude"
-                  help={
-                    <>
-                      {task.effective_latitude?.value ? latitudeDesc(task.effective_latitude.value) : ""}
-                      {task.effective_latitude?.source
-                        ? ` (${latitudeSourceLabel(task.effective_latitude.source)})`
-                        : ""}
-                    </>
-                  }>
-                  <span style={{ fontSize: "var(--fs-sm)" }}>
-                    {task.effective_latitude?.value ?? "standard"}
-                  </span>
-                </Field>
-                {/* The fields the Ticket card is editing right now are not
-                    repeated here while it is open: a saved value sitting under
-                    its own editor reads as a second, disagreeing answer. */}
-                {/* Every ticket defaults to priority 0, so rendering it always
-                    put the word "Priority 0" on every ticket in the system.
-                    Work's card already hid it; the two now agree. */}
-                {!editing && typeof task.priority === "number" && task.priority !== 0 && (
-                  <Field label="Priority">
-                    <span style={{ fontSize: "var(--fs-sm)" }}>{task.priority}</span>
-                  </Field>
-                )}
-                {!editing && task.effort && (
-                  <Field label="Effort">
-                    <span style={{ fontSize: "var(--fs-sm)" }}>{task.effort}</span>
-                  </Field>
-                )}
-                {/* The completion gate. This is what decides whether the work is
-                    accepted, and it was rendered nowhere. */}
-                {!editing && task.acceptance?.kind && (
-                  <Field label="Done when" help={task.acceptance.spec || undefined}>
-                    <span style={{ fontSize: "var(--fs-sm)" }}>
-                      {taskAcceptanceLabel(task.acceptance.kind)}
-                    </span>
-                  </Field>
-                )}
-                {/* A cap with no attempts against it yet used to be invisible,
-                    so a ticket could be one run from its limit and not say so. */}
-                {((task.attempts ?? 0) > 0 || task.max_attempts != null) && (
-                  <Field label="Attempts"
-                         help={!editing && task.max_attempts != null
-                           ? `Cap ${task.max_attempts}.` : undefined}>
-                    <span style={{ fontSize: "var(--fs-sm)" }}>{task.attempts ?? 0}</span>
-                  </Field>
-                )}
-                {!editing && task.assignee && task.assignee !== "operator" && (
-                  <Field label="Assignee">
-                    <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{task.assignee}</span>
-                  </Field>
-                )}
-                {task.scoped_by && (
-                  <Field label="Scoped by" help="Who wrote this spec.">
-                    <span style={{ fontSize: "var(--fs-sm)" }}>{task.scoped_by}</span>
-                  </Field>
-                )}
-              </Row>
-              {!editing && (task.labels?.length ?? 0) > 0 && (
-                <Row wrap style={{ gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
-                  {(task.labels ?? []).map((l) => <Tag key={l} hue={catFor(l)}>{l}</Tag>)}
-                </Row>
-              )}
-              {task.blocked_reason && (
-                <div style={{ marginTop: "var(--space-2)" }}>
-                  <StatusDot status="danger">
-                    <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{task.blocked_reason}</span>
-                  </StatusDot>
-                </div>
-              )}
-              {/* What will actually happen to this ticket if nobody presses
-                  Run. For a project scope today, the answer is nothing. */}
-              {pickupWarning && (
-                <div style={{ marginTop: "var(--space-2)" }}>
-                  <StatusDot status="warn">
-                    <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{pickupWarning}</span>
-                  </StatusDot>
-                </div>
-              )}
-            </Card>
-          </section>
-
-          {/* Review (block loop) --------------------------------------- */}
-          {blocked && awaiting && (
-            <section>
-              <SectionLabel icon={<KeyRound aria-hidden />}>Awaiting an answer</SectionLabel>
-              <Card>
-                <Stack gap="sm">
-                  <div>
-                    <span style={{ fontWeight: "var(--fw-semi)" }}>
-                      {awaiting.ask || awaiting.question || "This ticket blocked and needs a review."}
-                    </span>
-                    {awaiting.why && (
-                      <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: "var(--space-1) 0 0" }}>
-                        {awaiting.why}
-                      </p>
-                    )}
-                  </div>
-                  {awaiting.proposal?.uri && (
-                    <div style={{ fontSize: "var(--fs-xs)" }}>
-                      Proposed grant: <code>{awaiting.proposal.verb}</code> on{" "}
-                      <code>{awaiting.proposal.uri}</code>
-                    </div>
-                  )}
-                  <Field label="Your note" help="The next attempt reads this.">
-                    <Textarea rows={3} value={reviewNote} onChange={(e) => setReviewNote(e.target.value)}
-                              placeholder="What did you decide, and why." />
-                  </Field>
-                  <Row wrap style={{ gap: "var(--space-2)" }}>
-                    <Button size="sm" variant="primary" loading={reviewBusy === "approve"}
-                            onClick={() => review("approve")}>
-                      <CheckCheck aria-hidden /> Release
-                    </Button>
-                    {awaiting.proposal && (
-                      <Button size="sm" variant="ghost" loading={reviewBusy === "grant-and-continue"}
-                              onClick={() => setReviewDialog("grant")}>
-                        <KeyRound aria-hidden /> Grant and release
-                      </Button>
-                    )}
-                    {/* Opens the dialog that carries the rule text. It used to
-                        post the action with no rule and take a 400 every time. */}
-                    <Button size="sm" variant="ghost" loading={reviewBusy === "mint-rule"}
-                            onClick={() => setReviewDialog("rule")}>
-                      Mint rule and release
-                    </Button>
-                    <Button size="sm" variant="ghost" loading={reviewBusy === "dismiss"}
-                            onClick={() => review("dismiss")}>
-                      <Ban aria-hidden /> Dismiss
-                    </Button>
-                    {/* Cancelling a ticket is destructive and gets a dialog,
-                        the same as it does on the Review tab. This was a
-                        one-click cancel. */}
-                    <Button size="sm" variant="danger-ghost" loading={reviewBusy === "deny"}
-                            onClick={() => setConfirmDeny(true)}>
-                      <XCircle aria-hidden /> Deny
-                    </Button>
-                  </Row>
-                </Stack>
-              </Card>
-            </section>
-          )}
-
-          {/* Discussion ------------------------------------------------ */}
-          <section>
-            <SectionLabel icon={<MessageSquare aria-hidden />}>Discussion</SectionLabel>
-            <Card>
-              <Stack gap="sm">
-                {comments.length === 0 ? (
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-                    Nothing yet. Notes here are for you and anyone reading the ticket later.
-                    An answer a worker must act on belongs in the description instead.
-                  </span>
-                ) : (
-                  comments.map((c) => (
-                    <div key={c.id} className="ws-comment">
-                      <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-                        <span style={{ fontWeight: "var(--fw-semi)", fontSize: "var(--fs-sm)" }}>{c.author}</span>
-                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }} title={fmtTs(c.ts)}>
-                          {ago(c.ts)}
-                        </span>
-                      </Row>
-                      <p className="ws-wrap" style={{ margin: "var(--space-1) 0 0", fontSize: "var(--fs-sm)" }}>
-                        {c.text}
-                      </p>
-                    </div>
-                  ))
-                )}
-                <Field label="Add a comment">
-                  <Textarea rows={3} value={commentDraft}
-                            onChange={(e) => setCommentDraft(e.target.value)}
-                            placeholder="Context, a decision, something the next reader needs." />
-                </Field>
-                <Row>
-                  <Button size="sm" variant="primary" onClick={postComment}
-                          loading={commentBusy} disabled={commentBusy || !commentDraft.trim()}>
-                    <Send aria-hidden /> Comment
-                  </Button>
-                </Row>
-              </Stack>
-            </Card>
-          </section>
-
-          {/* Runs ------------------------------------------------------ */}
-          <section>
-            <SectionLabel icon={<ScrollText aria-hidden />}>Runs</SectionLabel>
-            <Card>
-              {(runs?.length ?? 0) === 0 ? (
-                <StateBlock title="No runs yet"
-                  hint="Runs appear here every time this ticket is attempted (manually or by an agent sweep)." />
-              ) : (
-                <Stack gap="sm">
-                  {(runs || []).map((r) => {
-                    const dur = runDuration(r);
-                    return (
-                      <Row key={r.id} wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                        {/* jobStatusKind, not a local ternary. The inlined one
-                            here had no awaiting_input case, so a run waiting on
-                            the operator rendered grey on this page and amber on
-                            every other one. */}
-                        <StatusDot status={jobStatusKind(r.status)}>{r.status}</StatusDot>
-                        {r.kind && <Badge>{r.kind}</Badge>}
-                        {r.trigger && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{r.trigger}</span>}
-                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}
-                              title={fmtTs(r.started_at)}>
-                          {[ago(r.started_at), dur].filter(Boolean).join(" · ")}
-                        </span>
-                        {r.evidence?.summary && (
-                          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {r.evidence.summary}
-                          </span>
-                        )}
-                        <Link to={`/runs/${encodeURIComponent(r.id)}`} style={{ textDecoration: "none" }}>
-                          <Button size="sm" variant="ghost">Open</Button>
-                        </Link>
-                      </Row>
-                    );
-                  })}
-                </Stack>
-              )}
-            </Card>
-          </section>
-
-          {/* Activity -------------------------------------------------- */}
-          {/* `evidence` is where every review note, grant, split record, gate
-              verdict and denial reason has always been written, and it was
-              rendered nowhere: every answer the operator had ever given a
-              ticket was invisible on the ticket. */}
-          {evidence.length > 0 && (
-            <section>
-              <SectionLabel icon={<History aria-hidden />}>Activity</SectionLabel>
-              <Card>
-                <Stack gap="sm">
-                  {evidence.map((e, i) => (
-                    <Row key={`${e.ts ?? ""}:${i}`} wrap
-                         style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-                      {e.kind && <Badge>{String(e.kind)}</Badge>}
-                      <span className="ws-wrap" style={{ flex: "1 1 16rem", minWidth: 0, fontSize: "var(--fs-sm)" }}>
-                        {String(e.ref ?? "")}
-                      </span>
-                      {e.ts && (
-                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}
-                              title={fmtTs(String(e.ts))}>{ago(String(e.ts))}</span>
-                      )}
-                    </Row>
-                  ))}
-                </Stack>
-              </Card>
-            </section>
-          )}
-        </Stack>
       )}
 
-      {runOpen && (
-        <ConfirmDialog
-          open
-          onCancel={() => setRunOpen(false)}
-          title="Run this ticket now?"
-          body={
-            <>
-              This launches a worker against this ticket immediately, in{" "}
-              <strong>{scopeLabel(scope)}</strong>. The run appears in the Runs section above.
-              The ticket keeps its current status until the run finishes.
-            </>
-          }
-          confirmLabel="Run"
-          busy={running}
-          onConfirm={runTask}
+      {err && !task && (
+        <StateBlock
+          variant="error"
+          title="Couldn't load this ticket"
+          hint={<><code>/api/tasks/{scope}/{id}</code> ({err})</>}
+          action={<Button size="sm" onClick={load}>Retry</Button>}
         />
       )}
 
-      {confirmDelete && (
-        <ConfirmDialog
-          open
-          onCancel={() => setConfirmDelete(false)}
-          title="Delete this ticket?"
-          body={<>Ticket history is preserved in the Runs feed, but the ticket record is removed. This cannot be undone.</>}
-          confirmLabel="Delete"
-          onConfirm={deleteTask}
-        />
+      {task && (
+        <Row wrap>
+          <Stack gap="lg" style={{ flex: "1 1 420px", minWidth: 0 }}>
+            {details}
+            {blockCard}
+            {commentsCard}
+            {runsCard}
+            {activityCard}
+          </Stack>
+          <div style={{ flex: "0 0 260px", minWidth: 240 }}>{rail}</div>
+        </Row>
       )}
 
       <ConfirmDialog
-        open={confirmDeny}
-        onCancel={() => setConfirmDeny(false)}
-        onConfirm={() => { setConfirmDeny(false); review("deny"); }}
-        title="Deny this ticket?"
-        body={<>This cancels the ticket. It can't be undone; the work will not happen. Run history and evidence are kept.</>}
-        confirmLabel="Deny and cancel"
+        open={confirmDelete}
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={() => { setConfirmDelete(false); deleteTask(); }}
+        title="Delete this ticket?"
+        body="The ticket and its history are removed. This cannot be undone."
+        confirmLabel="Delete"
+        danger
       />
-
-      {reviewDialog === "grant" && awaiting?.proposal && (
-        <GrantDialog
-          proposal={awaiting.proposal}
-          count={1}
-          onClose={() => setReviewDialog(null)}
-          onSubmit={(fields) => { setReviewDialog(null); review("grant-and-continue", fields); }}
-        />
-      )}
-      {reviewDialog === "rule" && (
-        <RuleDialog
-          ask={awaiting?.ask || awaiting?.question || ""}
-          scope={scope}
-          onClose={() => setReviewDialog(null)}
-          onSubmit={(fields) => { setReviewDialog(null); review("mint-rule", fields); }}
-        />
-      )}
-
-      {/* The dialog CARRIES the target picker. It used to be gated on
-          `deployOpen && deployPick`, with deployPick set only by a Select
-          further down the page, so the header's Deploy button opened nothing at
-          all until the operator had already chosen a target somewhere else.
-          That second Select is gone: it was a duplicate of this button. */}
-      {deployOpen && (
-        <Modal
-          open
-          onClose={() => setDeployOpen(false)}
-          title="Kick a deploy for this ticket?"
-          actions={
-            <>
-              <Button onClick={() => setDeployOpen(false)}>Cancel</Button>
-              <Button
-                variant="primary"
-                disabled={!deployPick || deployBusy}
-                loading={deployBusy}
-                onClick={kickDeploy}
-              >
-                <Rocket aria-hidden /> Deploy
-              </Button>
-            </>
-          }
-        >
-          <Stack gap="lg">
-            <Field label="Target" htmlFor="ticket-deploy-target">
-              <Select
-                id="ticket-deploy-target"
-                value={deployPick}
-                onChange={(e) => setDeployPick(e.target.value)}
-                data-autofocus
-              >
-                <option value="">Pick a target</option>
-                {(deploys || []).map((d) => (
-                  <option key={d.id} value={d.id}>{d.name} · {d.target.kind}</option>
-                ))}
-              </Select>
-            </Field>
-            <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>
-              The deploy Run appears in this ticket's Runs list and in the project's Deploys panel.
-              The ticket status is unchanged.
-            </p>
-          </Stack>
-        </Modal>
-      )}
     </div>
   );
 }

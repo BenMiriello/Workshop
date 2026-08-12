@@ -36,6 +36,7 @@ const DeployDetail = lazyPage(() => import("./pages/DeployDetail"));
 const StoreDetail = lazyPage(() => import("./pages/StoreDetail"));
 const Stores = lazyPage(() => import("./pages/Stores"));
 const MemoryPage = lazyPage(() => import("./pages/Memory"));
+const Runs = lazyPage(() => import("./pages/Runs"));
 const RunDetail = lazyPage(() => import("./pages/RunDetail"));
 const Usage = lazyPage(() => import("./pages/Usage"));
 const Settings = lazyPage(() => import("./pages/Settings"));
@@ -110,6 +111,7 @@ export default function App() {
               findable. This one is Memory (it is what agents read and write
               and what promotion in the memory design operates on). */}
           <Route path="/memory" element={<MemoryPage />} />
+          <Route path="/runs" element={<Runs />} />
           <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/agents/new" element={<AgentDetail />} />
@@ -141,14 +143,15 @@ export default function App() {
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />
           <Route path="/settings" element={<Settings />} />
           {/* Retired surfaces. Services/Events moved into Settings > System and
-              their page files are deleted. "Jobs" was the legacy noun for a Run
-              (entity model section 5) and had its own list page that rendered
-              the SAME JobsFeed component as Work's Runs tab — one surface at two
-              addresses. The list is Work's Runs tab; the detail is /runs/:id. */}
+              their page files are deleted. "Jobs" is the legacy noun for a Run
+              (entity model section 5). The Runs feed was a tab on the ticket
+              list until 2026-08-12; it is /runs now, because a run belongs to
+              the ticket that produced it and the standalone feed is the
+              leftovers, not a peer of the ticket list. */}
           <Route path="/activity" element={<Navigate to="/" replace />} />
           <Route path="/services" element={<Navigate to="/settings" replace />} />
           <Route path="/events" element={<Navigate to="/settings" replace />} />
-          <Route path="/jobs" element={<Navigate to="/work?tab=runs" replace />} />
+          <Route path="/jobs" element={<Navigate to="/runs" replace />} />
           <Route path="/jobs/:id" element={<JobIdRedirect />} />
           <Route path="/notes" element={<Navigate to="/memory" replace />} />
           {/* Old /location web-geolocation page removed. Owntracks iOS now

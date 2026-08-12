@@ -2,7 +2,7 @@
 they are both about a write returning the wrong thing.
 
 1. A mutating route returned an UNPROJECTED record. `patch_one`, `/approve`,
-   `/split` and `/duplicate-of` each hand-built `dict(task) + scope + latitude`
+   `/duplicate-of` hand-built `dict(task) + scope + latitude`
    and stopped, so the record they returned had no `state_type`, `ready`,
    `blocked_by`, `links`, `readiness` or `origin` — all of which the detail GET
    puts there. `TicketDetail.saveEdits` does `setTask(await r.json())`, so the
@@ -106,22 +106,6 @@ def test_approve_returns_the_detail_shape(client, roots):
     # The route's own top-level readiness report is still there.
     assert "readiness" in body
     _assert_is_a_detail_record(body["task"], client, "workshop")
-
-
-def test_split_returns_the_detail_shape_for_the_parent(client, roots):
-    t = tasks.add(roots["workshop"], title="Too big")
-    out = client.post(f"/api/tasks/workshop/{t['id']}/split", json={"subtickets": [
-        {"title": "Part one"}, {"title": "Part two"}]})
-    assert out.status_code == 200, out.text
-    body = out.json()
-    assert len(body["subtickets"]) == 2
-    parent = body["parent"]
-    assert parent["state_type"] == "backlog"
-    # The children exist NOW, so a parent record built from the pre-split store
-    # would report none of them.
-    assert sorted(c["title"] for c in parent["links"]["children"]) == \
-        ["Part one", "Part two"]
-    _assert_is_a_detail_record(parent, client, "workshop")
 
 
 def test_duplicate_of_returns_the_detail_shape(client, roots):
