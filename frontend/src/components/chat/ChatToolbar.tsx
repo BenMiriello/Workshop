@@ -1,37 +1,23 @@
 import {
-  Bell, Blocks, Bot, ChevronLeft, CodeXml, FolderGit2, Home, ListPlus, ListTodo,
-  Maximize2, MessagesSquare, MoreVertical, PanelsTopLeft, Plus, Ticket, Trash2,
+  Bell, ChevronLeft, ListPlus, ListTodo, Maximize2, MessagesSquare, MoreVertical,
+  PanelsTopLeft, Pencil, Plus, Ticket, Trash2,
 } from "lucide-react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator, Toggle } from "@workshop/ui";
-import type { Provider } from "../../lib/chat";
+import type { Provider, ThreadSummary } from "../../lib/chat";
 import {
   SCOPE_GROUPS, scopeKind, scopeLabel, scopeName,
-  type ChatMode, type ChatVariant, type ScopeKind,
+  type ChatMode, type ChatVariant,
 } from "./chatScope";
 import type { ChatDrawer } from "./drawers";
 import { chatModeDef, type ChatModeId } from "./chatModes";
 import { keepFocusOnTap } from "./keepFocus";
-
-// One icon per scope KIND, not per scope: the icon says what kind of place a
-// row is, and the name says which one. Sixteen project rows all carrying the
-// same folder is the point — that is how you see the group at a glance.
-function ScopeIcon({ kind }: { kind: ScopeKind }) {
-  // Development is the source of the Workshop itself, so it takes the code
-  // icon rather than a second house — the point of the row is that it is a
-  // different KIND of place from the root scope, not another root.
-  if (kind === "development") return <CodeXml size={14} aria-hidden />;
-  if (kind === "project") return <FolderGit2 size={14} aria-hidden />;
-  if (kind === "app") return <Blocks size={14} aria-hidden />;
-  if (kind === "agent") return <Bot size={14} aria-hidden />;
-  return <Home size={14} aria-hidden />;
-}
+import RecentChatsMenu from "./RecentChatsMenu";
+import ScopeIcon from "./ScopeIcon";
 
 // The chat header: where you are on the left, what you can do on the right.
 //
 // WHAT IS DELIBERATELY NOT HERE:
 //
-//  - The conversation picker. It duplicated the chat list you reach with back or
-//    "All chats", and its one unique job — starting a new chat — is the + button.
 //  - The model picker. That is a PER-TURN knob and lives in the composer with
 //    the other per-turn controls. The one picker that belongs here is the scope
 //    picker, because changing it changes what the chat can see and which thread
@@ -55,10 +41,11 @@ function ScopeIcon({ kind }: { kind: ScopeKind }) {
 export default function ChatToolbar({
   variant, mode, slug, hideExpand,
   activeId, activeThreadTitle,
-  showProviderPicker, providers, activeProvider, onChooseProvider,
+  showProviderPicker, providers, activeProvider, onChooseProvider, runActive,
   chatMode, onChooseChatMode,
   drawer, onSetDrawer, inboxCount, taskScope, openTaskCount,
-  onBack, onOpenWorkbench, onFileTicket, onEditTitle, onNewChat, onDelete, onPopOut, onNavigate,
+  onBack, onOpenWorkbench, onFileTicket, onEditTitle, onOpenThread,
+  onNewChat, onDelete, onPopOut, onNavigate,
 }: {
   variant: ChatVariant;
   mode: ChatMode;
@@ -74,6 +61,10 @@ export default function ChatToolbar({
   providers: Provider[];
   activeProvider: string;
   onChooseProvider: (key: string) => void;
+  // A turn is live. Rescope drops the session it's speaking through, so every
+  // OTHER row is disabled (not hidden — the picker still shows where you'd go)
+  // rather than left selectable and refused after the fact.
+  runActive: boolean;
   // A ChatModeId (see chatModes). Absent handler hides the control — a chat
   // with no thread yet has nothing to set it on.
   chatMode?: string;
@@ -87,6 +78,9 @@ export default function ChatToolbar({
   onOpenWorkbench: () => void;
   onFileTicket: () => void;
   onEditTitle: () => void;
+  /** Switch to another conversation from the name menu. It may live under a
+   *  different scope, so the caller routes rather than setting local state. */
+  onOpenThread: (t: ThreadSummary) => void;
   onNewChat: () => void;
   onDelete: (id: string) => void;
   onPopOut: () => void;
@@ -142,16 +136,22 @@ export default function ChatToolbar({
             if (!inGroup.length) return [];
             return [
               label ? <MenuLabel key={`h:${kind}`}>{label}</MenuLabel> : null,
-              ...inGroup.map((p) => (
-                <MenuItem
-                  key={p.key}
-                  icon={<ScopeIcon kind={kind} />}
-                  checked={p.key === activeProvider}
-                  onSelect={() => onChooseProvider(p.key)}
-                >
-                  {scopeName(p.key)}
-                </MenuItem>
-              )),
+              ...inGroup.map((p) => {
+                const isCurrent = p.key === activeProvider;
+                const locked = runActive && !isCurrent;
+                return (
+                  <MenuItem
+                    key={p.key}
+                    icon={<ScopeIcon kind={kind} />}
+                    checked={isCurrent}
+                    disabled={locked}
+                    title={locked ? "Scope cannot be changed mid-turn." : undefined}
+                    onSelect={() => onChooseProvider(p.key)}
+                  >
+                    {scopeName(p.key)}
+                  </MenuItem>
+                );
+              }),
             ];
           })}
         </Menu>
@@ -164,13 +164,32 @@ export default function ChatToolbar({
         </span>
       ) : null}
 
-      {/* Which conversation you are in — tap to rename it. Shown on mobile too
-          now that the scope name and the mode picker no longer compete with
-          it for room, and the one thing that shrinks when the row is tight. */}
+      {/* Which conversation you are in, and the way back to the others. Shown on
+          mobile too now that the scope name and the mode picker no longer
+          compete with it for room, and the one thing that shrinks when the row
+          is tight.
+
+          The name OPENS THE RECENT LIST; the pencil renames. It used to be one
+          button doing the rename, which put the rarer of the two verbs on the
+          bigger target and left switching chats to a round trip through /chats.
+          Two controls, the common one first. */}
       {activeThreadTitle && (
-        <button className="chat-tb__title" onClick={onEditTitle} title="Rename chat">
-          {activeThreadTitle}
-        </button>
+        <>
+          <RecentChatsMenu
+            title={activeThreadTitle}
+            activeId={activeId}
+            onOpenThread={onOpenThread}
+            onSeeAll={() => onNavigate("/chats")}
+          />
+          <button
+            className="chat-tb__btn chat-tb__rename"
+            onClick={onEditTitle}
+            title="Rename chat"
+            aria-label="Rename chat"
+          >
+            <Pencil size={14} aria-hidden />
+          </button>
+        </>
       )}
       {/* Pushes the actions right on desktop; on a narrow viewport the title
           just left of it has already given up the room instead. */}

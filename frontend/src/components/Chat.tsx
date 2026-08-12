@@ -24,22 +24,21 @@ import {
   deriveMode, buildSlug, taskScopeFor, composerPlaceholder, scopeName,
   isEgressFailure, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
-import { useMessageQueue, type SendOutcome } from "./chat/useMessageQueue";
 import { useLogScroll } from "./chat/useLogScroll";
 import { useVoiceSettle } from "./chat/useVoiceSettle";
 import { useTurnStream } from "./chat/useTurnStream";
 import { useThreadLog } from "./chat/useThreadLog";
+import { useSendOutbox, type SendOutbox } from "./chat/useSendOutbox";
 import { useChatScope } from "./chat/useChatScope";
 import { useChatThread } from "./chat/useChatThread";
 import { useSendPipeline, wasFirstExchange } from "./chat/useSendPipeline";
-import { canDrainQueue } from "./chat/sendPlan";
 import { logPlaceholder } from "./chat/chatLogState";
 import { placementFor, type ChatProblem } from "./chat/chatProblem";
 import { scopeSwitch } from "./chat/scopeSwitch";
 import { staleNoticeText } from "./chat/staleNotice";
 import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
 import {
-  committedClientIds, committedMessages, withStaleFailures, withoutCommitted,
+  committedClientIds, committedMessages, withoutCommitted,
   withScopeNotes, type ScopeNote,
 } from "./chat/transcriptBlocks";
 import { lastSeq } from "./chat/threadStore";
@@ -58,7 +57,7 @@ import { type UiCardCtx } from "./chat/uiCardActions";
 //   useChatScope      which provider/scope this mount is in, and which model
 //   useChatThread     which conversation is open and its settings
 //   useSendPipeline   what happens to a message the operator hit enter on
-//   useMessageQueue   type-ahead, and its five durability invariants
+//   useSendOutbox     durability for sends the server has not taken
 //   useCompaction     /compact and /clear, both one server call and no turn
 //   useLogScroll      following the conversation, and jump-to-latest
 //   useVoiceMode      voice as a mode of this chat, not a separate screen
@@ -145,48 +144,22 @@ export default function Chat({
     scope, selectedModel, setSelectedModel, setSelectedEffort, setSelectedPermissionMode,
   } = scopeState;
 
-  // The queue must know how to send, and the sender must know the queue. One of
-  // the two has to be reached through a ref; the send side is the one that
-  // changes identity, so it is the ref.
-  const sendBatchRef = useRef<
-    (
-      text: string,
-      parts: { text: string; sentAt: string; clientId: string }[],
-      opts?: { fromQueue?: boolean },
-    ) => Promise<SendOutcome>
-  >(async () => ({ ok: false, error: "The chat is still starting up." }));
   const [compacting, setCompacting] = useState(false);
-  // "May the queue send now" is computed near the bottom of this component, from
-  // state that is only available once the store and the send pipeline exist. The
-  // boolean is relayed as state (so a change re-triggers the queue's drain) and
-  // the ref carries the value as of THIS render (so the drain cannot act on a
-  // stale `true`). See useMessageQueue.
-  const [canDrain, setCanDrain] = useState(false);
-  const canDrainRef = useRef(false);
-  // Stop hands the wheel back, so the queue stops draining ITSELF until the
-  // operator sends again. Without this the queue's self-drain (it fires the
-  // moment nothing is running, and a stop makes that moment) would send
-  // everything they had typed ahead the instant they stopped the turn. Nothing
-  // is dropped: the messages stay queued and on screen. See canDrainQueue.
-  //
-  // The hold belongs to the QUEUE, stored beside it and keyed by thread, so it
-  // is exactly as durable as the messages it is holding. It was component state
-  // for an hour and in that hour a reload or a thread switch dropped the hold,
-  // kept the queue, and fired the lot as an unattended turn.
-  const queue = useMessageQueue({
-    scope,
-    canDrain,
-    canDrainNow: () => canDrainRef.current,
-    // `fromQueue`: these messages are still in the queue's durable storage, and
-    // the queue takes them back if the server refuses them.
-    send: (t, parts) => sendBatchRef.current(t, parts, { fromQueue: true }),
+
+  // The outbox needs the store, and the thread loader needs the outbox (it is
+  // what points storage at the conversation being opened). The store is built
+  // below, from `activeId`, so one of the three has to be reached through a
+  // ref: this one, because it is the only handle whose identity is stable for
+  // the life of the component.
+  const outboxRef = useRef<SendOutbox>({
+    bind: () => {}, carryToThread: () => {}, resetToBlank: () => {}, forget: () => {},
   });
 
   const thread = useChatThread({
     scope,
     providersReady: scopeState.providersReady,
     variant,
-    queue,
+    outboxRef,
     startNewRef,
     linkedThreadRef,
     initialThreadId,
@@ -202,6 +175,12 @@ export default function Chat({
   // The conversation itself: one store, fed by one endpoint from a cursor.
   const log = useThreadLog({ threadId: activeId, onError: setErr });
   const { state, stateRef, dispatch, transcript, sync, runActive, hydrated, staleSince } = log;
+  // Sends this browser has made that the server has not taken. The ONLY chat
+  // state the browser still owns on its own, and it owns it because the server
+  // has never heard of it: a request that did not land. Everything else — the
+  // transcript, the run in flight, the queue of messages waiting on it — is
+  // read from the server. See useSendOutbox.
+  outboxRef.current = useSendOutbox({ scope, state, dispatch });
   const runActiveRef = useRef(runActive);
   runActiveRef.current = runActive;
 
@@ -300,7 +279,6 @@ export default function Chat({
       if (msgs[msgs.length - 1]?.meta?.notes?.length) onAction?.();
     },
     onError: setErr,
-    onDrainQueue: () => queue.dispatch(),
   });
 
   // STOP ENDS THE RUN. It used to close this tab's socket and nothing else: the
@@ -317,9 +295,14 @@ export default function Chat({
   const onStopTurn = useCallback(async () => {
     const runId = stateRef.current.activeRun?.runId ?? null;
     // Claim the ending before the request goes out: the `done` frame arrives
-    // mid-flight and its handler would retire the turn and drain the queue.
+    // mid-flight and its handler would retire the turn.
+    //
+    // THE HOLD IS THE SERVER'S. Stopping ends the run, and the server drains
+    // the thread's queue whenever a run ends — so the stop endpoint holds the
+    // queue in the same request, and the operator's next send releases it.
+    // Holding it here as well would be a second owner of the same fact, and
+    // this one would not survive a reload.
     beginStop();
-    queue.hold();
     try {
       if (runId) await chatApi.stopTurn(runId);
     } catch (e) {
@@ -330,7 +313,7 @@ export default function Chat({
     } finally {
       stopWatching();
     }
-  }, [beginStop, stateRef, stopWatching, queue]);
+  }, [beginStop, stateRef, stopWatching]);
 
   // /compact reaches BOTH homes of a chat's context, server-side and without a
   // turn of its own. See useCompaction.
@@ -392,7 +375,7 @@ export default function Chat({
     input,
     inputFocused,
     expanded: inputExpanded,
-    followDeps: [transcript, queue.items, vsnap.state, vsnap.sentences, vsnap.lastUser],
+    followDeps: [transcript, state.queued, vsnap.state, vsnap.sentences, vsnap.lastUser],
     hasContent: transcript.length > 0,
     // Restore the scroll position per thread when returning to it.
     //
@@ -413,7 +396,7 @@ export default function Chat({
     selectedPermissionMode: scopeState.selectedPermissionMode,
     chatModeRef: thread.chatModeRef, activeIdRef,
     adoptThread: thread.adoptThread,
-    stateRef, dispatch, sync, queue,
+    stateRef, dispatch, sync, draftKey,
     compacting,
     // Typed `/compact` and `/clear` ask as well. One rule for the action, not
     // one for the button and another for the keystroke.
@@ -425,8 +408,6 @@ export default function Chat({
       // stale, so it goes with the error it sits beside.
       setNotice(null);
       followLatest();
-      // They are driving again, so the queue may resume draining itself.
-      queue.release();
       // A scope flip not yet acted on settles here: this send is the "next
       // thing" that decides it stuck, so it freezes at the position the log is
       // at right now rather than staying a tail-only preview.
@@ -439,16 +420,6 @@ export default function Chat({
     // abandoning the conversation on a four-character keystroke.
     onNewChat: () => thread.setConfirmNew(true),
   });
-  sendBatchRef.current = pipeline.sendBatch;
-
-  // ONE answer to "may the queue send now", shared by the queue and the send
-  // path so they cannot disagree about whether the chat is busy.
-  const drainable = canDrainQueue({
-    compacting, starting: pipeline.starting, runActive, loadingThread: thread.loadingThreads,
-    heldByStop: queue.held,
-  });
-  canDrainRef.current = drainable;
-  useEffect(() => { setCanDrain(drainable); }, [drainable]);
 
   // RE-ATTACH, in one place. If the server says a run is in flight on this
   // thread and this tab has no socket for it, open one. That covers every way a
@@ -829,6 +800,14 @@ export default function Chat({
       onOpenWorkbench={() => navigate(`/agents/${slug}/chat`)}
       onFileTicket={() => setTicketsOpen(true)}
       onEditTitle={() => thread.setRenameOpen(true)}
+      // Route rather than select in place. The chat you picked can be bound to
+      // any scope, and the loader already reads `?thread=` as a link to fetch by
+      // id from wherever it lives (useChatThread, the `linked` branch), so this
+      // one path is correct for a chat in this scope and one in another. Same
+      // destination the /chats list navigates to.
+      onOpenThread={(t) => navigate(
+        `/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`,
+      )}
       onNewChat={() => thread.setConfirmNew(true)}
       onDelete={thread.setConfirmDeleteId}
       onPopOut={popOut}
@@ -903,31 +882,18 @@ export default function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [state.byId, state.order, state.idBySeq],
   );
-  const queuedForDisplay = useMemo(
+  // WAITING TO BE SENT, as the SERVER reports it. Not this browser's list: the
+  // queue is on the thread, so it is the same on every device and it is still
+  // there after a reload, a crash, or a change of laptop. Anything the log has
+  // since committed is filtered out for the one poll where both can name it.
+  const queuedWaiting = useMemo(
     () => withoutCommitted(
-      queue.items.filter((q) => !state.pending[q.clientId]),
+      state.queued.map((q) => ({
+        clientId: q.client_id, text: q.text, sentAt: q.ts, attachments: q.attachments,
+      })),
       committedIds,
     ),
-    [queue.items, state.pending, committedIds],
-  );
-  // `queuedForDisplay` mixes two different things the queue holds: text typed
-  // ahead that has not been sent AT ALL (genuinely belongs after everything,
-  // including a live run), and a PAST send the server refused, durable only
-  // because this tab's `pending` copy did not survive whatever happened since
-  // (a reload, a thread switch). The second kind is stale, not upcoming — see
-  // withStaleFailures for why it cannot render after a run that started later
-  // than it did.
-  const queuedWaiting = useMemo(
-    () => queuedForDisplay.filter((q) => !q.failed),
-    [queuedForDisplay],
-  );
-  const queuedStaleFailed = useMemo(
-    () => queuedForDisplay.filter((q) => q.failed),
-    [queuedForDisplay],
-  );
-  const blocksWithStaleFailures = useMemo(
-    () => withStaleFailures(transcript, queuedStaleFailed),
-    [transcript, queuedStaleFailed],
+    [state.queued, committedIds],
   );
   // Settled scope changes, spliced back in at the seq they happened at.
   // `scopeAnnounce` (not sent past yet) deliberately renders NOTHING here — a
@@ -935,22 +901,9 @@ export default function Chat({
   // about the picker. It exists purely so `onSend` above knows what to freeze
   // if and when a message actually follows it.
   const blocksWithScopeNotes = useMemo(
-    () => withScopeNotes(blocksWithStaleFailures, scopeNotes),
-    [blocksWithStaleFailures, scopeNotes],
+    () => withScopeNotes(transcript, scopeNotes),
+    [transcript, scopeNotes],
   );
-  // Filtering the ghost out of the render is not enough: the entry is in
-  // localStorage, so every future load would rebuild it and it would outlive
-  // the tab, the thread switch and the reload. Once the log carries the id, the
-  // durable copy has no job left — drop it for real.
-  useEffect(() => {
-    if (!committedIds.size) return;
-    for (const q of queue.items) {
-      if (committedIds.has(q.clientId)) queue.drop(q.clientId);
-    }
-  }, [committedIds, queue]);
-  // A merged-in stale failure has no `pending` entry for `pipeline.retry` to
-  // find (that is exactly why it fell to the durable queue) — route it to the
-  // queue's own retry instead of failing silently.
   //
   // THIS CALLBACK'S IDENTITY IS LOAD-BEARING. It is passed down to MessageList,
   // which is memoized so a keystroke does not re-render the transcript; every
@@ -965,10 +918,36 @@ export default function Chat({
   // ref means this does not depend on that staying true.
   const retryRef = useRef(pipeline.retry);
   retryRef.current = pipeline.retry;
+  // ONE RETRY PATH. A failed send is a `pending` entry and nothing else now —
+  // the durable copy IS that entry, mirrored to storage — so there is no second
+  // kind of failure with a second way to re-send it.
   const onRetryAny = useCallback((clientId: string) => {
-    if (stateRef.current.pending[clientId]) retryRef.current(clientId);
-    else queue.retryFailed(clientId);
-  }, [stateRef, queue]);
+    retryRef.current(clientId);
+  }, []);
+
+  // Taking a queued message back out, and telling a stopped queue to go. Both
+  // are writes to the SERVER's queue: this browser has no copy to fix up, and
+  // the sync brings back whatever actually happened.
+  const cancelQueued = useCallback((clientId: string) => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    void chatApi.cancelQueued(id, clientId)
+      .then(() => sync())
+      .catch((e) => setErr({
+        text: `Could not unsend that message: ${e}. It is still queued.`,
+        endpoint: `/api/chat/threads/${id}/queued/${clientId}/cancel`,
+      }));
+  }, [activeIdRef, sync, setErr]);
+  const releaseQueue = useCallback(() => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    void chatApi.releaseQueue(id)
+      .then(() => sync())
+      .catch((e) => setErr({
+        text: `Could not send the waiting messages: ${e}. They are still queued.`,
+        endpoint: `/api/chat/threads/${id}/queued/release`,
+      }));
+  }, [activeIdRef, sync, setErr]);
 
   const logLoading = thread.loadingThreads || !hydrated;
   // EXACTLY ONE OF THE TWO renders a given failure. The log owns the error one
@@ -995,7 +974,10 @@ export default function Chat({
       selectedModel={selectedModel}
       cardCtx={cardCtx}
       onRetry={onRetryAny}
-      onRetryQueued={queue.retryFailed}
+      onCancelQueued={cancelQueued}
+      onReleaseQueue={releaseQueue}
+      queueHeld={state.queueHeld}
+      queueError={state.queueError}
       workingLabel={workingLabel}
       elapsed={elapsed}
       nowMs={nowMs}

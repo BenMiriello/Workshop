@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { AudioLines, ChevronDown, CornerDownLeft, Maximize2, Minimize2, PhoneOff, Square } from "lucide-react";
+import { AudioLines, BotMessageSquare, CornerDownLeft, Maximize2, Minimize2, PhoneOff, Square } from "lucide-react";
 import { Menu, MenuItem } from "@workshop/ui";
 import type { ChatMsg } from "../../lib/chat";
 import type { VoiceSnapshot, VoicePrefs } from "../../lib/voiceSession";
@@ -250,15 +250,21 @@ export default function ChatComposer({
         )}
 
         {/* Menu rather than <select>: the stock double-arrow was the loudest
-            element in a row of quiet icon buttons. */}
+            element in a row of quiet icon buttons.
+
+            LEADING ICON, NO CARET. The caret was the last of that double-arrow
+            idiom left in the row: effort and mode both open the same way and
+            neither draws one, so it marked this control as a different kind of
+            thing when it is not. The icon that replaces it sits where theirs
+            sit, so the three read as one set. */}
         {modelOptions.length > 1 ? (
           <Menu
             label="Model"
             side="top"
             trigger={
               <button className="chat-model" title="Model for this conversation">
+                <BotMessageSquare size={14} aria-hidden />
                 <span className="chat-model__val">{modelLabel(selectedModel)}</span>
-                <ChevronDown size={14} aria-hidden className="chat-model__caret" />
               </button>
             }
           >
@@ -270,6 +276,7 @@ export default function ChatComposer({
           </Menu>
         ) : modelOptions.length === 1 ? (
           <span className="chat-model is-static">
+            <BotMessageSquare size={14} aria-hidden />
             <span className="chat-model__val">{modelLabel(modelOptions[0])}</span>
           </span>
         ) : null}

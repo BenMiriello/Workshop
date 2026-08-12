@@ -12,6 +12,33 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.3.1 — 2026-08-12 — the focus ring is a shadow, so stop suppressing an outline
+
+**Fix.** An open `Menu` popover sometimes drew a hairline highlight where its
+elevation shadow should have been, and whether it did depended on whether the
+last thing you touched was the keyboard or the mouse. Same click, same control,
+different result.
+
+`.ws-root :focus-visible` indicates focus with `box-shadow`, deliberately, since
+an outline cannot follow a control's own radius. Two places tried to opt out of
+it with `outline: none`, which does nothing to a box-shadow: the ring stayed,
+and because `box-shadow` REPLACES rather than adds, the element also lost the
+shadow it already had. That is why it read as a border rather than a highlight.
+
+The ring is now scoped to `:focus-visible:not([tabindex="-1"])`. An element you
+cannot tab to was never navigated to by keyboard, so a keyboard-navigation cue
+on it is a contradiction; those elements (the `Menu` popover, `Stepper`'s
+buttons) are focused programmatically only so arrow keys have a starting point,
+and it is that programmatic focus whose `:focus-visible` match varies by input
+modality. Outline is still reset for everything.
+
+No API change. Consumers get the fix by upgrading; anything relying on a ring
+around a `tabindex="-1"` element will lose it, which is the intent.
+
+Also: `.ws-palette` now clears the ring with `box-shadow: none` rather than the
+no-op outline, so keyboard-focusing a scheme no longer draws a rectangle around
+the whole button in addition to the ring on its preview.
+
 ## 0.3.0 — 2026-08-11 — the agency axis: who did this, not just how it went
 
 **Breaking.** The palette answered one question, *is it healthy* (the status

@@ -31,7 +31,8 @@
 .ws-input, .ws-textarea, .ws-root [contenteditable="true"] { cursor: text; }
 .ws-btn[disabled], .ws-btn[aria-disabled="true"],
 .ws-toggle:has(input:disabled), .ws-check:has(input:disabled),
-.ws-input[disabled], .ws-input[readonly], .ws-select[disabled], .ws-textarea[disabled] {
+.ws-input[disabled], .ws-input[readonly], .ws-select[disabled], .ws-textarea[disabled],
+.ws-menu__item[disabled] {
   cursor: default;
 }
 
@@ -92,6 +93,27 @@
    indicates; it follows the element's own radius. */
 .ws-root :focus-visible {
   outline: none;
+}
+/* THE RING IS A BOX-SHADOW, NOT AN OUTLINE. Read that before suppressing it
+   anywhere: `outline: none` on a focused element does nothing here, and this
+   system has now shipped that no-op twice (.ws-menu__list, .ws-palette) while
+   the ring it was meant to remove stayed on screen.
+   Worse than an extra ring: setting box-shadow REPLACES whatever shadow the
+   element already had, so a focused popover lost its elevation and gained a
+   hairline. That is the "highlight looking border" the dropdowns were reported
+   with, and why it looked like a border rather than a shadow.
+
+   AN ELEMENT YOU CANNOT TAB TO NEVER GETS THE RING. `tabindex="-1"` means
+   exactly "not reachable by keyboard navigation", so a keyboard-navigation cue
+   on one is a contradiction: it was never navigated to. Those elements are
+   focused PROGRAMMATICALLY, as a place for arrow keys to start from (the Menu
+   popover, the Stepper's buttons) — and whether that programmatic focus matches
+   :focus-visible depends on the browser's last input modality, which is why the
+   ring appeared after typing and not after clicking. Same control, same click,
+   different result, no way for the operator to tell why.
+   Excluding them here fixes the class of bug in one place, and leaves their own
+   box-shadow alone rather than trading a stray ring for a missing elevation. */
+.ws-root :focus-visible:not([tabindex="-1"]) {
   box-shadow: var(--focus-ring);
 }
 
@@ -488,6 +510,55 @@ a.ws-btn { text-decoration: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+/* A linked ticket: a whole row that goes somewhere (parent, child, dependency).
+   Hierarchy from background on hover, not a border — the row is a link, and
+   bordering every one of them turns a short list into a stack of boxes. */
+.ws-ticket-link {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  margin-inline: calc(var(--space-2) * -1);
+  border-radius: var(--radius-sm);
+  color: inherit; text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.ws-ticket-link:hover { background: var(--card-hover); }
+.ws-ticket-link__title { flex: 1 1 8rem; min-width: 0; font-size: var(--fs-sm); }
+
+/* One comment in a ticket's discussion. Separated by space, not by a rule or a
+   card each: a thread of five is one block of text with authorship, not five
+   nested containers. */
+.ws-comment { padding-block: var(--space-1); }
+.ws-comment + .ws-comment { margin-top: var(--space-3); }
+
+/* ---- BOARD --------------------------------------------------------------- */
+/* Fixed lanes side by side. Scrolls horizontally rather than squeezing: four
+   lanes at a readable width do not fit a phone, and a lane narrow enough to fit
+   shows nothing but truncation. */
+.ws-board {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(260px, 1fr);
+  gap: var(--space-3);
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
+}
+.ws-board__lane { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.ws-board__head {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  padding-bottom: var(--space-1);
+}
+.ws-board__count { color: var(--muted); font-size: var(--fs-xs); }
+.ws-board__items {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  list-style: none; padding: 0; margin: 0; min-width: 0;
+}
+.ws-board__items > li { display: flex; min-width: 0; }
+.ws-board__items > li > * { flex: 1 1 auto; min-width: 0; }
+.ws-board__empty {
+  color: var(--muted); font-size: var(--fs-xs);
+  padding: var(--space-3) var(--space-2);
+}
+
 /* Build-agent card cell: the card body links to the chat; a corner button opens
    the full workbench. The button is a sibling of the card link (valid HTML), so
    the cell is the positioning context and reserves room so the button never sits
@@ -867,6 +938,8 @@ a.ws-btn { text-decoration: none; }
 .ws-menu__item.is-active .ws-menu__icon { color: var(--accent); }
 .ws-menu__item--danger { color: var(--danger); }
 .ws-menu__item--danger:hover { background: var(--danger-soft); }
+.ws-menu__item[disabled] { opacity: 0.5; }
+.ws-menu__item[disabled]:hover { background: transparent; }
 .ws-menu__icon {
   flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
   width: 1rem; height: 1rem; color: var(--muted);
@@ -876,8 +949,11 @@ a.ws-btn { text-decoration: none; }
   flex: 0 0 auto; display: inline-flex; align-items: center;
   color: var(--accent);
 }
-/* No ring on the popover itself — it is focused on open only so the arrow keys
-   have somewhere to start from. */
+/* No ring on the popover itself: it is focused on open only so the arrow keys
+   have somewhere to start from, and it carries tabindex="-1", which the global
+   focus rule now excludes. These two lines are the outline half of that, and
+   they are NOT what removes the ring — see the note on .ws-root :focus-visible
+   before adding a third suppression here. */
 .ws-menu__list:focus { outline: none; }
 .ws-menu__list:focus-visible { outline: none; }
 /* The row is the NAME of the thing you are choosing, and it gets the whole row.
@@ -1135,7 +1211,13 @@ a.ws-btn { text-decoration: none; }
 }
 .ws-palette:hover { color: var(--fg); }
 .ws-palette.is-selected { color: var(--fg); }
-.ws-palette:focus-visible { outline: none; }
+/* The ring goes on the PREVIEW below, not on the button, so the button has to
+   turn the global one off — and turning it off means box-shadow, not outline.
+   The outline line was a no-op, so keyboard-focusing a scheme drew a rectangle
+   around the whole button (preview plus its label) as well as the ring it meant
+   to draw. `none` is safe here specifically because .ws-palette carries no
+   shadow of its own. */
+.ws-palette:focus-visible { outline: none; box-shadow: none; }
 .ws-palette__preview {
   width: 76px; height: 54px; padding: 5px; border-radius: var(--radius-md);
   background: var(--bg); box-shadow: inset 0 0 0 1px var(--border);
@@ -1720,6 +1802,32 @@ a.ws-btn { text-decoration: none; }
   :root { --page-pad-x: var(--space-4); }
   .ws-topnav { gap: var(--space-3); }
   .ws-app .ws-app__body > main { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); padding-top: var(--space-4); }
+
+  /* A ticket card's pill row is `nowrap; overflow: hidden` so a grid of cards
+     keeps one height. On a phone the card is full width and there is only ever
+     one card per row, so the height argument does not apply — and the clip did,
+     chopping "Project: some-long-slug" mid-word with no ellipsis. Let it wrap. */
+  .ws-ticket-card__pills { flex-wrap: wrap; overflow: visible; }
+
+  /* A segmented control is inline-flex with no wrap and no scroller, so a
+     five-option filter (the Runs tab's) simply overflowed the viewport and
+     pushed the whole page wider. Scroll the control instead of the page. */
+  .ws-segmented {
+    display: flex;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .ws-segmented::-webkit-scrollbar { display: none; }
+  .ws-segmented button { flex: 0 0 auto; }
+  /* The sliding thumb is absolutely positioned against the control. Once the
+     control scrolls, the thumb's offset no longer tracks the visible row, so
+     the pressed state carries the background itself. */
+  .ws-segmented__thumb { display: none; }
+  .ws-segmented button[aria-pressed="true"] { background: var(--card); box-shadow: var(--shadow-sm); }
+
+  /* One lane at a time, swiped. Four lanes crushed into 360px is not a board. */
+  .ws-board { grid-auto-columns: minmax(85%, 1fr); }
 }
 
 /* Auth / login screen — a single centered card on a full-height surface. */
@@ -1759,7 +1867,19 @@ a.ws-btn { text-decoration: none; }
 .ws-voice-setting--row { flex-direction: row; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .ws-voice-hintline { font-size: var(--fs-xs); color: var(--muted); }
 .ws-voice-rangeends { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--faint); }
-.ws-range { accent-color: var(--accent); width: 100%; }
+/* touch-action IS THE SLIDER, on a phone. Without it the browser claims a
+   horizontal drag for panning before the range input ever sees it, so dragging
+   the thumb scrolled the sheet sideways and the value did not move. `pan-y`
+   gives horizontal movement to the control and leaves vertical scrolling to the
+   page, which is the split a horizontal slider wants.
+   The padding is the other half: a 4px track is not a touch target, so the input
+   is given a full row of height to be grabbed in. */
+.ws-range {
+  accent-color: var(--accent); width: 100%;
+  touch-action: pan-y;
+  padding: var(--space-2) 0; margin: 0; background: none;
+}
+.ws-range:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm); }
 /* Diagnostics readout: label/value pairs, values right-aligned and monospaced so
    a changing measurement doesn't reflow the column. */
 .ws-voice-diag {
@@ -1792,7 +1912,29 @@ a.ws-btn { text-decoration: none; }
 .ws-disclosure__summary:hover { color: var(--fg); }
 .ws-disclosure__chevron { transition: transform var(--dur-fast) var(--ease-out); }
 .ws-disclosure[data-open="true"] .ws-disclosure__chevron { transform: rotate(180deg); }
-.ws-disclosure__body { display: flex; flex-direction: column; gap: var(--space-2); }
+.ws-disclosure__body { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+
+/* A segmented control in this sheet WRAPS; it does not scroll sideways.
+   The global mobile rule turns every segmented into a horizontal scroller, which
+   is right for a page-level filter row and wrong inside a settings sheet: the
+   Advanced section's engine pickers ("Auto (Browser)" / "Local" / "Browser") ran
+   past the edge and had to be swiped to be read, which is what the operator saw
+   as "the Advanced section is too wide". A sheet has vertical room; spend that
+   instead of a swipe. */
+.ws-voice-settings .ws-segmented-field,
+.ws-voice-settings .ws-segmented { max-width: 100%; min-width: 0; }
+.ws-voice-settings .ws-segmented {
+  display: flex; flex-wrap: wrap; overflow-x: visible;
+}
+.ws-voice-settings .ws-segmented button { flex: 1 1 auto; min-width: 0; }
+/* The sliding thumb is absolutely positioned against a single row, so once the
+   control wraps its offset no longer tracks the pressed button. The pressed
+   state carries its own background instead (the same trade the mobile rule
+   makes for the scrolling case). */
+.ws-voice-settings .ws-segmented__thumb { display: none; }
+.ws-voice-settings .ws-segmented button[aria-pressed="true"] {
+  background: var(--card); box-shadow: var(--shadow-sm);
+}
 
 /* The voice cluster: orb + mic-mute + reply-mute + gear share a subtle pill so
    they read as one group, distinct from the exit toggle and Send outside it. */
@@ -1852,12 +1994,13 @@ a.ws-btn { text-decoration: none; }
   display: inline-flex; align-items: center; gap: 0.35rem;
   flex: 1 1 auto; min-width: 0;
 }
+/* The strip carries STATUS ONLY, and is one line by construction. It used to
+   also carry the live transcript, which cost twice: `white-space: nowrap` with
+   an ellipsis meant a long utterance showed its FIRST few words and never the
+   latest ones, and because the strip sits inside the composer, anything that
+   grew in it pushed the action row down. The transcript is a bubble at the foot
+   of the log now (.chat-bubble--speaking); the strip stays fixed. */
 .chat-voice-strip__state { color: var(--muted); }
-.chat-voice-strip__label { color: var(--faint); flex: none; }
-.chat-voice-strip__partial {
-  color: var(--fg); font-style: italic; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .chat-voice-strip__icon { flex: none; }
 .chat-voice-strip.is-error { color: var(--danger); }
 .chat-voice-strip.is-error .chat-voice-strip__msg { color: var(--danger); white-space: normal; }

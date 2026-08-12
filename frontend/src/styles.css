@@ -370,6 +370,19 @@ input[type="range"].grad::-moz-range-thumb {
   border-radius: var(--radius-sm);
 }
 .chat-tb__title:hover { color: var(--fg); background: var(--card-hover); }
+/* Open state reads like every other quiet trigger in the chat (.chat-model,
+   .chat-effort): background carries it, no border. */
+.chat-tb__title[aria-expanded="true"] { color: var(--fg); background: var(--card-hover); }
+/* The title is wrapped in a Menu now, and .ws-menu is flex: 0 0 auto. The
+   toolbar's whole fits-one-row rule depends on the title being the element that
+   gives up room, so the shrink moves out to the wrapper. */
+.chat-tb__titlemenu { flex: 0 1 auto; min-width: 0; }
+/* Rename sits immediately right of the name, so it is smaller than the action
+   buttons at the far end of the bar: it belongs to the title, not to the row of
+   things you do to the chat. It also must not be what gives up room when the
+   bar is tight — the NAME shrinks, and a 1.5rem button next to a shrinking name
+   is the pair that stays legible longest. */
+.chat-tb__rename { flex: 0 0 auto; width: 1.5rem; height: 1.5rem; margin-left: -0.1rem; }
 .chat-tb__spacer { flex: 1 1 var(--space-2); min-width: 0; }
 .chat-tb__btn {
   flex: 0 0 auto; position: relative;
@@ -417,6 +430,15 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-unsent {
   display: flex; align-items: center; gap: 0.4rem;
   margin-top: 0.35rem; font-size: 0.72rem; color: var(--warn-solid);
+}
+
+/* Messages the SERVER is holding to send next, and what they are waiting for.
+   Muted, not warn: nothing has gone wrong. They are saved and they will be
+   sent. The warn-coloured `.chat-unsent` is for the other case, where this
+   browser is the only place the text exists. */
+.chat-queued-note {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin: 0.2rem 0 var(--space-2); font-size: 0.72rem; color: var(--muted);
 }
 
 /* Positions the floating jump-to-latest pill against the log rather than the
@@ -943,7 +965,9 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
      The old 4.5rem floor was a workaround for the wrapper collapsing to zero;
      the primitive is `flex: 0 0 auto` now, so the floor just padded it out. */
   flex: 0 0 auto; min-width: 0; max-width: 8rem;
-  display: inline-flex; align-items: center; gap: 0.2rem;
+  /* Same icon-to-label gap as .chat-mode. It was 0.2rem when the trailing item
+     was a caret, which is a different spacing problem to a leading icon. */
+  display: inline-flex; align-items: center; gap: 0.3rem;
   height: 2.1rem; padding: 0 0.5rem;
   font: inherit; font-size: var(--fs-sm); line-height: 1;
   color: var(--muted); background: transparent;
@@ -956,7 +980,9 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 .chat-model.is-static { cursor: default; }
 .chat-model.is-static:hover { color: var(--muted); background: transparent; }
 .chat-model__val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-model__caret { flex: 0 0 auto; }
+/* The label may shrink and ellipsise on a narrow row; the icon beside it never
+   does, the same way .chat-mode's does not. */
+.chat-model > svg { flex: 0 0 auto; }
 /* Effort meter: a ladder of bars, filled to the level in use, sitting just left
    of the model picker. Same quiet trigger language as .chat-model (transparent,
    2.1rem tall, background carries hover and open) — it is the same kind of
