@@ -118,6 +118,14 @@ The plan's own "if only three things get done" list, with the current state:
 After that, the plan's phase order. Phase 0 is "stop lying" and is all
 deletions of controls that do nothing.
 
+**Phase 1 was reordered on 2026-08-13** after a second review re-measured the
+queue. Its first two items are now "get the 14 SEC tickets out of the build
+queue" and "one scope vocabulary", because until both land, `development` has
+exactly ONE ticket that passes readiness and phase 2 cannot draw five watched
+runs from it. The plan's new §1 subsections ("The queue is ordered worst-first"
+and "There is almost no ready work in the scope phase 4 targets") are the
+evidence; read those two before starting phase 1.
+
 ---
 
 ## 3. The two fixes most likely to be misunderstood or undone
@@ -189,6 +197,25 @@ the obvious next move:
    verdict flips 13.6% of the time. A clean-context judging model is worth
    having as ADVISORY findings, never as the gate.
 
+**Three more from the second pass (2026-08-13), all verified in code:**
+
+5. **Do NOT give the queue triager an mtime watermark.** The note triager uses
+   one (`triager.py:166-187`), and copying it is an infinite loop:
+   `tasks.update` sets `updated = now()` on every write (`tasks.py:1808`), so
+   the triager writing `awaiting` re-selects the ticket it just judged, forever.
+   The note triager is safe only because it cannot write notes. Use a per-ticket
+   content hash over title/body/`depends_on`/`effort`.
+6. **Do NOT key `awaiting` expiry on a denylist of permanent kinds.**
+   `_normalize_awaiting` defaults `kind` to `"input"`, and legacy
+   `{question, since}` records read as `input` too. Since `input` is the kind
+   that times out, a denylist means every unlabelled block silently becomes
+   auto-resolvable. Allowlist the three expiring kinds; everything else waits.
+7. **Do NOT assume readiness is the unattended-selection predicate.** It reads
+   the ticket's TEXT. `[SEC-C3]` is well-formed and undoable, because the worker
+   is not root. The missing field is `execution: code | judgement | external`,
+   and it moved from phase 5 to phase 1 because phase 4's first selection needs
+   it.
+
 ---
 
 ## 5. Environment traps that cost time this session
@@ -251,7 +278,11 @@ Carried forward, not invented here:
   that phases 0 to 3 are worth doing under either.
 - What happens to the 34 open tickets, several of which are stale July design
   work? Nothing in the model expresses "this ticket replaces that one".
-- Per-scope budget before any unattended running. The ledger exists; no budget
-  is set.
+- ~~Per-scope budget before any unattended running. The ledger exists; no budget
+  is set.~~ **Corrected 2026-08-13.** A budget IS set: `app_total` 5,000,000,
+  `nominal_task_tokens` 150,000, the ~0.65 interactive reserve enforced, and
+  `can_admit('development')` returns `(True, 'ok')`. Only the per-scope `ceil`
+  is missing, and it is now a phase-4 line item in the plan. The genuinely
+  unmetered spend is the reviewer's and the distiller's.
 - Execution isolation (SEC-A1 / SEC-A2, both open). This is the hard
   prerequisite for phase 5 and cannot be solved by design in the plan doc.
