@@ -1182,7 +1182,8 @@ def begin_run(thread_id: str, run_id: str, model: str | None = None,
     )
 
 
-def update_run(thread_id: str, run_id: str, segments: list[dict], content: str) -> None:
+def update_run(thread_id: str, run_id: str, segments: list[dict], content: str,
+               cut_head: list[str] | None = None) -> None:
     """Overwrite the running turn's live snapshot. No-op if it is not the active
     run any more (it finished, or something took the thread over).
 
@@ -1208,7 +1209,12 @@ def update_run(thread_id: str, run_id: str, segments: list[dict], content: str) 
         "content": content,
         # `turn_id` rides inside `meta` because that is the shape `_live_view`
         # renders and the client already reads.
-        "meta": {"segments": segments, "turn_id": run_id},
+        # `cut_head` names the messages that arrived before this turn had
+        # emitted anything. It rides in `meta` beside the segments because the
+        # two are read together and a reader that has one without the other
+        # cannot place those messages. See docs/decisions/0018.
+        "meta": {"segments": segments, "turn_id": run_id,
+                 **({"cut_head": list(cut_head)} if cut_head else {})},
     })
 
 
@@ -1224,6 +1230,7 @@ def commit_run(
     stopped: str | None = None,
     agent: str | None = None,
     state: str = "finished",
+    cut_head: list[str] | None = None,
 ) -> dict | None:
     """Commit a run: one assistant message at the TAIL, one `run` marker, done.
 
@@ -1255,6 +1262,11 @@ def commit_run(
     meta: dict = {"turn_id": run_id, "streaming": False, "ended_at": _now_iso()}
     if segments:
         meta["segments"] = segments
+    # Where messages that beat this turn's first output belong. Stored even when
+    # there are no segments: "the operator spoke before it said anything" is
+    # exactly the case with none. See docs/decisions/0018.
+    if cut_head:
+        meta["cut_head"] = list(cut_head)
     live = stored.get("live_message")
     if isinstance(live, dict):
         base = live.get("meta") or {}

@@ -66,10 +66,10 @@ class TestUnitCount:
         turn = _turn()
         _launch_agent(turn)
         build_streaming._agent_step(turn, "toolu_1", {"t": "tool", "name": "Read", "input": "a"})
-        first = build_streaming.cut_here(turn)
+        first = build_streaming.cut_here(turn, "m1")
         for _ in range(3):
             build_streaming._agent_step(turn, "toolu_1", {"t": "tool", "name": "Read", "input": "b"})
-        second = build_streaming.cut_here(turn)
+        second = build_streaming.cut_here(turn, "m2")
         assert first == 2
         assert second == 5
         assert second > first
@@ -85,7 +85,7 @@ class TestSealing:
         segment "AB" by commit time, and the message renders below both."""
         turn = _turn()
         build_streaming._seg_text(turn, "A")
-        at = build_streaming.cut_here(turn)
+        at = build_streaming.cut_here(turn, "m1")
         build_streaming._seg_text(turn, "B")
         assert at == 1
         assert [s["text"] for s in turn.segments] == ["A", "B"]
@@ -94,7 +94,7 @@ class TestSealing:
         turn = _turn()
         _launch_agent(turn)
         build_streaming._agent_step(turn, "toolu_1", {"t": "text", "text": "A"})
-        build_streaming.cut_here(turn)
+        build_streaming.cut_here(turn, "m1")
         build_streaming._agent_step(turn, "toolu_1", {"t": "text", "text": "B"})
         steps = turn.segments[0]["steps"]
         assert [s["text"] for s in steps] == ["A", "B"]
@@ -110,9 +110,98 @@ class TestSealing:
 
     def test_sealing_an_empty_turn_is_harmless(self):
         turn = _turn()
-        assert build_streaming.cut_here(turn) == 0
+        assert build_streaming.cut_here(turn, "m1") == 0
         build_streaming._seg_text(turn, "later")
         assert turn.segments[0]["text"] == "later"
+
+
+class TestTheCutIsRecordedAsAPosition:
+    """A POSITION, NOT A COUNT. See docs/decisions/0018.
+
+    Everything above measures the unit COORDINATE, which is still written for
+    the transcripts already on disk. These measure the thing that replaced it:
+    a token written onto the segment the message arrived after, which cannot
+    move when anything else in the turn grows.
+    """
+
+    def test_the_cut_lands_on_the_segment_it_arrived_after(self):
+        turn = _turn()
+        build_streaming._seg_text(turn, "A")
+        build_streaming._seg_tool(turn, "Read", "a.py")
+        build_streaming.cut_here(turn, "m1")
+        assert turn.segments[-1]["cut_after"] == ["m1"]
+        assert turn.segments[0].get("cut_after") is None
+        assert turn.cut_head == []
+
+    def test_a_message_that_beat_the_first_output_goes_to_the_head(self):
+        """`at_unit` says 0 here, and 0 is an index that renders as nothing. The
+        head list says the same thing as a position, which can be drawn."""
+        turn = _turn()
+        build_streaming.cut_here(turn, "m1")
+        assert turn.cut_head == ["m1"]
+        build_streaming._seg_text(turn, "written after")
+        assert turn.segments[0].get("cut_after") is None
+
+    def test_two_messages_at_the_same_point_keep_their_order(self):
+        turn = _turn()
+        build_streaming._seg_text(turn, "A")
+        build_streaming.cut_here(turn, "m1")
+        build_streaming.cut_here(turn, "m2")
+        assert turn.segments[-1]["cut_after"] == ["m1", "m2"]
+
+    def test_a_growing_delegation_cannot_move_a_recorded_cut(self):
+        """THE MEASURED REGRESSION. Two delegates run at once; a message is sent
+        after both were launched. The first delegate keeps working.
+
+        Under the unit coordinate the recorded index slid into delegate A,
+        snapped to A's end, and delegate B fell BELOW a message typed after B was
+        launched. Nothing about B had changed. The recorded position cannot do
+        that: the cut is ON B."""
+        turn = _turn()
+        _launch_agent(turn, "A")
+        _launch_agent(turn, "B")
+        build_streaming._agent_step(turn, "A", {"t": "tool", "name": "Read", "input": "1"})
+        build_streaming._agent_step(turn, "B", {"t": "tool", "name": "Read", "input": "2"})
+        at = build_streaming.cut_here(turn, "m1")
+
+        # A keeps going, long after the message landed.
+        for i in range(20):
+            build_streaming._agent_step(turn, "A", {"t": "tool", "name": "Read", "input": str(i)})
+
+        # The unit index no longer names the same boundary...
+        assert build_streaming.unit_count(turn.segments) != at
+        # ...but the position does, and it is still on B.
+        assert turn.segments[1]["id"] == "B"
+        assert turn.segments[1]["cut_after"] == ["m1"]
+        assert turn.segments[0].get("cut_after") is None
+
+
+class TestARewriteCarriesItsCutsForward:
+    """A cut lives on a segment, so a segment carrying one may not be dropped
+    without carrying it. This is the invariant decision 0018 says is the way it
+    would silently rot, so it is measured rather than trusted."""
+
+    def test_cuts_move_to_the_last_survivor(self):
+        dropped = [{"t": "text", "text": "x", "cut_after": ["m1"]}]
+        survivors = [{"t": "tool", "name": "Read", "input": ""}]
+        head: list[str] = []
+        build_streaming.carry_cuts(dropped, survivors, head)
+        assert survivors[-1]["cut_after"] == ["m1"]
+        assert head == []
+
+    def test_cuts_fall_back_to_the_head_when_nothing_survives(self):
+        head: list[str] = []
+        build_streaming.carry_cuts([{"t": "text", "text": "x", "cut_after": ["m1"]}], [], head)
+        assert head == ["m1"]
+
+    def test_the_compact_strip_keeps_a_cut(self):
+        segs = [{"t": "tool", "name": "Read", "input": ""},
+                {"t": "text", "text": "dump", "cut_after": ["m1"]}]
+        head: list[str] = []
+        out = build_streaming._drop_text_segments(segs, head)
+        assert [s["t"] for s in out] == ["tool"]
+        assert out[-1]["cut_after"] == ["m1"]
+        assert head == []
 
 
 class TestACommandTurnCannotBeSpokenTo:

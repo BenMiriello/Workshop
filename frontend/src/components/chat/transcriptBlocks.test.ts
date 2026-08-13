@@ -310,6 +310,111 @@ describe("the live turn", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// THE RECORDED POSITION. Everything above this point drives the LEGACY path
+// (`at_unit`), and it still passes, which is the point: transcripts on disk must
+// not shift. These drive what replaced it. See docs/decisions/0018.
+// ---------------------------------------------------------------------------
+describe("a cut the server recorded", () => {
+  const agentSeg = (id: string, steps: number, cut?: string): ChatSegment => ({
+    t: "agent", name: id, input: id, id, done: false, result: "",
+    steps: Array.from({ length: steps }, (_, i) => text(`${id}${i}`)),
+    ...(cut ? { cut_after: [cut] } : {}),
+  });
+
+  it("splits the reply where the token says, not where an index says", () => {
+    const s = stateOf([
+      user("go"),
+      user("wait", { during_run: "r1", cut_id: "c1", at_unit: 999 }),
+      reply("done", {
+        turn_id: "r1",
+        segments: [{ ...text("before"), cut_after: ["c1"] }, text("after")],
+      }),
+    ]);
+    // at_unit says 999 (below everything). The recorded token outranks it.
+    expect(shape(selectTranscript(s)))
+      .toEqual(["user:go", "assistant:before", "user:wait", "assistant:after"]);
+  });
+
+  it("puts a message that beat the first output above the whole reply", () => {
+    const s = stateOf([
+      user("go"),
+      user("wait", { during_run: "r1", cut_id: "c1" }),
+      reply("done", { turn_id: "r1", cut_head: ["c1"], segments: [text("all of it")] }),
+    ]);
+    expect(shape(selectTranscript(s)))
+      .toEqual(["user:go", "user:wait", "assistant:all of it"]);
+  });
+
+  // THE MEASURED REGRESSION, from the client side. Two delegations open at
+  // once; the message was sent after both were launched, so both stay above it.
+  // Under the unit index, A growing slid the cut into A and dropped B below the
+  // message. A recorded position cannot move.
+  it("holds its place while an earlier delegation keeps growing", () => {
+    const withA = (steps: number) => stateOf([
+      user("go"),
+      user("wait", { during_run: "r1", cut_id: "c1", at_unit: 5 }),
+      reply("done", {
+        turn_id: "r1",
+        segments: [agentSeg("A", steps), agentSeg("B", 1, "c1"), text("after")],
+      }),
+    ]);
+    const atSend = ["user:go", "assistant:[agent][agent]", "user:wait", "assistant:after"];
+    expect(shape(selectTranscript(withA(1)))).toEqual(atSend);
+    // A gains twenty steps. Nothing about B changed, so nothing may move.
+    expect(shape(selectTranscript(withA(21)))).toEqual(atSend);
+  });
+
+  it("puts a message whose token is nowhere at the end, rather than guessing", () => {
+    const s = stateOf([
+      user("go"),
+      user("wait", { during_run: "r1", cut_id: "gone" }),
+      reply("done", {
+        turn_id: "r1",
+        segments: [{ ...text("work"), cut_after: ["other"] }],
+      }),
+    ]);
+    expect(shape(selectTranscript(s)))
+      .toEqual(["user:go", "assistant:work", "user:wait"]);
+  });
+
+  it("keeps the working indicator above a message that beat the first output", () => {
+    let s = stateOf([user("go"), user("wait", { during_run: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
+    expect(shape(selectTranscript(s))).toEqual(["user:go", "live:*", "user:wait"]);
+  });
+
+  it("hands the indicator back to the bottom once work arrives after it", () => {
+    let s = stateOf([user("go"), user("wait", { during_run: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "ok" } });
+    expect(shape(selectTranscript(s))).toEqual(["user:go", "user:wait", "live:ok*"]);
+  });
+
+  it("records a live cut against the segment it arrived after", () => {
+    let s = stateOf([user("go"), user("wait", { during_run: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "A" } });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "B" } });
+    expect(shape(selectTranscript(s))).toEqual(["user:go", "live:A", "user:wait", "live:B*"]);
+  });
+
+  // The stream is replayed from offset 0 on every re-attach, so every cut
+  // arrives again. Recording it twice would put the message in two places.
+  it("is idempotent across the replay a re-attach causes", () => {
+    let s = stateOf([user("go"), user("wait", { during_run: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "A" } });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
+    const once = shape(selectTranscript(s));
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
+    expect(shape(selectTranscript(s))).toEqual(once);
+  });
+});
+
 describe("pending sends and the context cut", () => {
 
   it("renders pending sends last, below even the live turn", () => {

@@ -32,7 +32,13 @@ export type StreamEvent =
     }
   // An answer landed (from this client or another tab), or the turn ended with
   // requests still open — `stale` resolves every one of them at once.
-  | { kind: "permission_resolved"; id?: string; state?: string; stale?: boolean };
+  | { kind: "permission_resolved"; id?: string; state?: string; stale?: boolean }
+  // A MESSAGE LANDED HERE. `ref` is its cut token, and the position it names is
+  // the segment this arrives after. Handled by the reducer rather than by
+  // applyStreamEvent, because the one position with no segment to sit on (the
+  // turn has emitted nothing yet) lives on the run, not in the segment list.
+  // See docs/decisions/0018.
+  | { kind: "cut"; ref?: string };
 
 const isAgent = (s: ChatSegment): s is Extract<ChatSegment, { t: "agent" }> => s.t === "agent";
 
@@ -172,6 +178,12 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
     }
     return [...segs, step];
   }
+  // A CUT IS A POSITION, NOT CONTENT, so it is not folded into the segments
+  // here. The reducer records it, because the one position with no segment to
+  // sit on (the turn has emitted nothing yet) lives on the run rather than in
+  // this list. Returning `segs` unchanged is what tells the reducer's identity
+  // check that nothing was folded. See threadStore's runDelta.
+  if (ev.kind === "cut") return segs;
   // tool_result: a subagent's result is RENDERED (it is the report the chip
   // opens onto). Every other result closes its own step without being shown —
   // what it contributes is the outcome and the duration, which is what lets a

@@ -36,6 +36,9 @@ export type ActiveRun = {
   // False when the run takes no input at all (a slash command, a voice turn).
   // The send path reads this to queue rather than inject; see sendPlan.
   acceptsInput?: boolean;
+  // Messages that arrived before this run emitted ANYTHING, by cut token. The
+  // one recorded cut position with no segment to sit on. See docs/decisions/0018.
+  cutHead?: string[];
   // Epoch ms at which THIS TAB dispatched `runStarted`, if it did. Not a display
   // value: it is what lets a sync response be dated against the run, so an
   // answer computed before the run existed cannot erase it. Absent on a run
@@ -263,6 +266,11 @@ function adoptRun(
       ...prev,
       startedSeq: payload.started_seq ?? prev.startedSeq,
       segments: snapshotAhead(serverSegs, prev.segments) ? serverSegs : prev.segments,
+      // Same rule as the segments: take the server's only when it is ahead. The
+      // streaming tab learns these from the `cut` event first, and the snapshot
+      // is written on a throttle, so an older one must not shorten the list.
+      cutHead: (live.meta?.cut_head?.length ?? 0) > (prev.cutHead?.length ?? 0)
+        ? live.meta?.cut_head : prev.cutHead,
       startedMs: Number.isFinite(startedMs) ? startedMs : prev.startedMs,
       model: live.meta?.model ?? prev.model,
       agent: live.meta?.agent ?? prev.agent,
@@ -273,6 +281,7 @@ function adoptRun(
     runId: payload.run_id,
     startedSeq: payload.started_seq ?? null,
     segments: serverSegs,
+    cutHead: live.meta?.cut_head,
     startedMs: Number.isFinite(startedMs) ? startedMs : Date.now(),
     model: live.meta?.model,
     agent: live.meta?.agent,
@@ -505,6 +514,28 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       // A delta for a run we are not showing is not ours to fold in. It arrives
       // when a stream outlives the turn it belonged to.
       if (!run || run.runId !== action.runId) return state;
+      // A CUT IS A POSITION, not content, so it is recorded rather than folded.
+      // Sealing first is what makes the boundary real: text streamed afterwards
+      // must start a new segment instead of merging back above the message. The
+      // server does exactly this to its own copy, in one call; see
+      // build_streaming.cut_here.
+      if (action.event.kind === "cut") {
+        const ref = action.event.ref || "";
+        // The replay on re-attach re-delivers every event from offset 0, so
+        // this has to be idempotent or a reconnect doubles every cut.
+        if (!ref) return state;
+        const sealed = sealTrailingText(run.segments);
+        const last = sealed[sealed.length - 1];
+        if (!last) {
+          if (run.cutHead?.includes(ref)) return state;
+          return { ...state, activeRun: { ...run, cutHead: [...(run.cutHead || []), ref] } };
+        }
+        if (last.cut_after?.includes(ref)) return state;
+        return { ...state, activeRun: { ...run, segments: [
+          ...sealed.slice(0, -1),
+          { ...last, cut_after: [...(last.cut_after || []), ref] },
+        ] } };
+      }
       const segments = applyStreamEvent(run.segments, action.event);
       if (segments === run.segments) return state;
       return { ...state, activeRun: { ...run, segments } };
@@ -518,6 +549,10 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         activeRun: {
           ...run,
           segments: [],
+          // The head cuts came from the same replayed stream and are re-sent
+          // with it. Left behind, a re-attach would keep a message pinned above
+          // work the replay puts back above it.
+          cutHead: [],
           // Re-stamped so `adoptRun` treats a sync ISSUED BEFORE this rewind as
           // what it is: an answer about a live view that no longer exists.
           // Without it, an in-flight poll could land between the rewind and the

@@ -9,20 +9,32 @@
 // its interim text never joins the answer. The backend builds the same shape
 // (build_streaming._segment_ingest) so a live turn and a reloaded one render
 // identically.
+/** A recorded cut position: the messages that arrived immediately AFTER this
+ *  segment, by their cut token (`meta.cut_id`).
+ *
+ *  THE POSITION IS RECORDED, NOT DERIVED. It used to be an index into the
+ *  reply's stream, carried on the message, and re-resolved at render time
+ *  against a segment list that had grown since. An index cannot survive that:
+ *  with two delegations running at once, the first one gaining steps slid the
+ *  index into it, snapped it to that delegation's end, and dropped the SECOND
+ *  delegation below a message typed after it was launched. "After this segment"
+ *  cannot move. See docs/decisions/0018. */
+type CutAfter = { cut_after?: string[] };
+
 export type ChatSegment =
   // `sealed` marks a text run that a mid-turn message closed. Streamed text
   // normally merges into the trailing text segment, so without this "A", a
   // message, then "B" would be one segment "AB" by the time the reply is cut,
   // and the message would render below text written after it. A sealed segment
   // never absorbs more text; the next character starts a new segment.
-  | { t: "text"; text: string; sealed?: boolean }
+  | ({ t: "text"; text: string; sealed?: boolean } & CutAfter)
   // A tool call, and how it went. The last four fields are what let a settled
   // turn distinguish its steps at all: before them every step rendered
   // identically, so a command that failed looked exactly like a file that was
   // read. All four are ABSENT on turns recorded before they existed, and on a
   // step whose turn ended before its result arrived, and neither case is a
   // failure. See components/chat/grouping.ts.
-  | {
+  | ({
       t: "tool";
       name: string;
       input: string;
@@ -33,11 +45,11 @@ export type ChatSegment =
       ok?: boolean;            // absent = outcome unknown, not failure
       ms?: number;             // how long it took, once it finished
       error?: string;          // the failure text, kept only when ok === false
-    }
+    } & CutAfter)
   // The turn is BLOCKED, asking to use a tool. A segment rather than a transient
   // event because the process stays blocked across a page reload, and the reload
   // must not lose the only control that can unblock it.
-  | {
+  | ({
       t: "approval";
       id: string;            // the CLI's request_id; answering names it
       tool: string;          // "Write", "Bash", "ExitPlanMode"
@@ -49,8 +61,8 @@ export type ChatSegment =
       suggestions: { type?: string; mode?: string; destination?: string }[];
       // stale = the turn ended without an answer, so answering can do nothing.
       state: "pending" | "allowed" | "denied" | "stale";
-    }
-  | {
+    } & CutAfter)
+  | ({
       t: "agent";
       name: string;          // the subagent: a frontmatter name, or general-purpose
       // ONE LINE: the task, not the instructions. The collapsed chip shows this
@@ -71,7 +83,7 @@ export type ChatSegment =
       // stopped and a turn lost to a restart both leave one of these behind.
       outcome?: "" | "stopped" | "lost" | "unfinished";
       result: string;        // what it reported back
-    };
+    } & CutAfter);
 
 // Progress on something a message kicked off. `busy` is still-happening, and is
 // what earns the animated dots.
@@ -162,6 +174,15 @@ export type ChatMsg = {
     // Absent on messages recorded before 2026-08-10, which keep their original
     // placement via at_segment rather than shifting under the operator.
     at_unit?: number;
+    // THE RECORDED POSITION, and the one the client reads when it is there.
+    // Both numbers above are indexes re-resolved at render time; this is a
+    // token the SERVER also wrote onto the segment the message arrived after
+    // (`cut_after`), or into the reply's `cut_head` when the turn had emitted
+    // nothing yet. Matching two tokens is exact; resolving an index is not.
+    // Absent on every message recorded before 2026-08-12 and on the degraded
+    // path where this process does not hold the live turn, both of which fall
+    // back to at_unit. See docs/decisions/0018.
+    cut_id?: string;
     // The browser's own id for this send. Present on messages this client sent;
     // it is what an optimistic bubble is reconciled against, never the text.
     client_id?: string;
@@ -183,6 +204,11 @@ export type ChatMsg = {
     status?: MsgStatus;
     // Ordered text/tool segments (assistant turns). Absent on plain messages.
     segments?: ChatSegment[];
+    // Messages that arrived before this turn emitted ANYTHING, by cut token.
+    // The one cut position with no segment to sit on, named rather than left as
+    // the index 0 (which renders as nothing, and floated the message above the
+    // working indicator that was on screen before it was typed).
+    cut_head?: string[];
     // True while the turn is still streaming; turn_id lets a reload reconnect
     // to the live SSE channel and keep rendering.
     streaming?: boolean;
@@ -310,7 +336,14 @@ export type ActiveRunPayload = {
     run_id?: string;
     content?: string;
     ts?: string;
-    meta?: { segments?: ChatSegment[]; model?: string; agent?: string; turn_id?: string };
+    meta?: {
+      segments?: ChatSegment[]; model?: string; agent?: string; turn_id?: string;
+      // Messages that beat this run's first output. Carried on the live
+      // snapshot as well as on the commit, because a run that has produced
+      // nothing is exactly when it matters and is exactly when there are no
+      // segments to carry it.
+      cut_head?: string[];
+    };
   } | null;
 } | null;
 

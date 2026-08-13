@@ -23,22 +23,30 @@ import { cutPointOf, splitAtUnits } from "./transcriptUnits";
 // that interrupted it. Five messages sent during a long turn produce up to six
 // assistant blocks, each sitting where its work actually happened.
 //
-// `meta.at_unit` — recorded by the server when the message was filed, read off
-// the LIVE run rather than its throttled snapshot — is the cut point: the index
-// into the reply's stream of RENDERED UNITS at which the message arrived.
-// Splitting there puts the message AFTER work already emitted and BEFORE work
-// not yet emitted, which is the only placement that is true.
+// WHERE THE CUT IS, IS RECORDED. NOT DERIVED. The server writes the message's
+// cut token onto the segment it arrived after (`seg.cut_after`), or onto the
+// reply's `cut_head` when the turn had emitted nothing yet, and it does so in
+// the same call that seals the open text so the anchor cannot move between the
+// two. The client matches tokens. There is no index to resolve, nothing to
+// clamp, and nothing that moves when a segment elsewhere in the turn grows.
 //
-// It counts units and not top-level segments because a subagent's steps nest
-// inside one segment, so a segment count stands still for the whole of a
-// delegation — the operator reported the resulting misplacement three times
-// before it was measured. See transcriptUnits.ts for the numbers.
+// That last clause is the whole reason it changed. The cut used to be
+// `meta.at_unit`, an index into the reply's stream of rendered units, resolved
+// here against a segment list that had grown since. With two delegations
+// running at once, the first one gaining steps slid the index into it, snapped
+// it to that delegation's end, and dropped the SECOND delegation below a
+// message typed after it was launched. Measured 2026-08-12; the fixture is in
+// transcriptBlocks.test.ts. `legacyPieces` still resolves the index, for the
+// transcripts already on disk and for nothing else.
 //
 // A RUN ALREADY IN FLIGHT IS ITSELF SOMETHING THAT HAPPENED FIRST. The cut says
 // where a message sits among the work; it does not license the message to sit
 // above the run's own start. A turn announced itself before the operator typed,
 // so the announcement stays above what he typed even when the turn has emitted
-// nothing else yet. `workingSliceIndex` is the whole of that rule.
+// nothing else yet. `workingPieceIndex` is the whole of that rule, and it is now
+// the ONLY placement rule here that is not "render them in recorded order".
+//
+// See docs/decisions/0018.
 //
 // WHY THE OLD RULE SAID THE OPPOSITE. An earlier scheme also cut the reply open,
 // and it was wrong: it placed the message ABOVE work that had already begun (in
@@ -78,12 +86,91 @@ export type TranscriptBlock =
   // every device — none of which was true when it was React state.
   | { kind: "scope"; key: string; to: string };
 
-/** Split a segment list at the cut points of the messages that interrupted it.
- *  The coordinate is a UNIT index, not a segment index — see transcriptUnits.ts
- *  for why counting top-level segments alone froze the coordinate for the whole
- *  of a subagent delegation. */
-function cutReply(segments: ChatSegment[], interrupts: LogEvent[]): ChatSegment[][] {
-  return splitAtUnits(segments, interrupts.map((m) => cutPointOf(m.meta, segments)));
+/** One stretch of a reply, or one message that ended a stretch.
+ *
+ *  The list ALWAYS starts and ends with a `work` piece, so "the stretch still
+ *  being written" and "the stretch before the first message" are always
+ *  addressable even when empty. */
+type Piece = { work: ChatSegment[] } | { msg: LogEvent };
+
+const isWork = (p: Piece): p is { work: ChatSegment[] } => "work" in p;
+
+/** Split a reply at the positions the SERVER RECORDED while it was writing.
+ *
+ *  Each message carries a cut token (`meta.cut_id`) and the server wrote that
+ *  same token onto the segment the message arrived after (`seg.cut_after`), or
+ *  onto the reply's `cut_head` when nothing had been emitted yet. Matching two
+ *  tokens is exact. There is no index to resolve, nothing to clamp, and nothing
+ *  that can move when a segment elsewhere in the turn grows.
+ *
+ *  A message whose token is nowhere in the reply goes last. That is the honest
+ *  answer to "we do not know where this landed", and it is what the old
+ *  coordinate did too when a message carried none.
+ *
+ *  Falls back to the unit index for replies recorded before 2026-08-12, which
+ *  have no tokens. See `legacyPieces`, and docs/decisions/0018. */
+function cutPieces(
+  segments: ChatSegment[], interrupts: LogEvent[], cutHead?: string[],
+): Piece[] {
+  const byToken = new Map<string, LogEvent>();
+  for (const m of interrupts) {
+    const id = m.meta?.cut_id;
+    if (id) byToken.set(id, m);
+  }
+  const recorded = !!cutHead?.length || segments.some((s) => s.cut_after?.length);
+  if (!recorded || !byToken.size) return legacyPieces(segments, interrupts);
+
+  const out: Piece[] = [];
+  const placed = new Set<LogEvent>();
+  let work: ChatSegment[] = [];
+  const flush = () => { out.push({ work }); work = []; };
+  const emit = (refs: readonly string[]) => {
+    for (const r of refs) {
+      const m = byToken.get(r);
+      if (m && !placed.has(m)) { placed.add(m); out.push({ msg: m }); }
+    }
+  };
+
+  // The head, and ONLY when something is there: an unconditional empty stretch
+  // would put two `work` pieces next to each other with no message between.
+  if (cutHead?.some((r) => byToken.has(r))) {
+    flush();
+    emit(cutHead);
+  }
+  for (const seg of segments) {
+    work.push(seg);
+    const refs = seg.cut_after?.filter((r) => {
+      const m = byToken.get(r);
+      return !!m && !placed.has(m);
+    });
+    if (refs?.length) { flush(); emit(refs); }
+  }
+  flush();
+
+  const stray = interrupts.filter((m) => !placed.has(m));
+  if (stray.length) {
+    for (const m of stray) out.push({ msg: m });
+    // Re-open a stretch after them, so a live run's indicator still has a place
+    // BELOW a message it could not place. See workingPiece.
+    out.push({ work: [] });
+  }
+  return out;
+}
+
+/** THE LEGACY PATH, for replies recorded before the position was written down.
+ *
+ *  Resolves `at_unit` against the final segment list. Everything wrong with
+ *  that is in docs/decisions/0018; it is kept because those transcripts are on
+ *  disk and must not shift under the operator, and it is quarantined here with
+ *  one caller so it can be deleted outright when they age out. */
+function legacyPieces(segments: ChatSegment[], interrupts: LogEvent[]): Piece[] {
+  const parts = splitAtUnits(segments, interrupts.map((m) => cutPointOf(m.meta, segments)));
+  const out: Piece[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    out.push({ work: parts[i] });
+    if (i < interrupts.length) out.push({ msg: interrupts[i] });
+  }
+  return out;
 }
 
 function msgFromEvent(ev: LogEvent): ChatMsg {
@@ -110,7 +197,7 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
     return [{ kind: "message", key: ev.id, seq: ev.seq, msg }];
   }
   const segments = msg.meta?.segments || [];
-  const parts = cutReply(segments, interrupts);
+  const pieces = cutPieces(segments, interrupts, msg.meta?.cut_head);
   const out: TranscriptBlock[] = [];
   let emitted = 0;
   // HOW THE TURN ENDED GOES ON THE LAST BLOCK THAT EXISTS, not on the last
@@ -124,15 +211,25 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
   // errored reply rendered as an ordinary one and "Stopped by operator" never
   // appeared.
   let lastPart = -1;
-  for (let i = 0; i < parts.length; i++) if (parts[i].length) lastPart = i;
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i];
-    if (part.length) {
+  pieces.forEach((p, i) => { if (isWork(p) && p.work.length) lastPart = i; });
+  for (let i = 0; i < pieces.length; i++) {
+    const piece = pieces[i];
+    if (!isWork(piece)) {
+      const m = piece.msg;
+      out.push({ kind: "message", key: m.id, seq: m.seq, msg: msgFromEvent(m) });
+      continue;
+    }
+    {
+      const part = piece.work;
+      if (!part.length) continue;
       // Only the final block carries how the TURN ended (its notes, its timeout
       // or interrupted tag, when it finished). Those describe the end of the
       // run, not the end of every stretch of work inside it.
       const tail = i === lastPart;
       const meta = { ...msg.meta, segments: part };
+      // A cut position is a fact about the WHOLE reply, and this block is one
+      // stretch of it. Left on, every stretch would claim the head messages.
+      delete meta.cut_head;
       // NO TOTAL ON A SPLIT REPLY. A duration is a property of the whole turn
       // and every block here carries the same `started_at`, so pairing it with
       // a summary counting only THIS block's steps printed things like
@@ -165,10 +262,6 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
       });
       emitted++;
     }
-    if (i < interrupts.length) {
-      const m = interrupts[i];
-      out.push({ kind: "message", key: m.id, seq: m.seq, msg: msgFromEvent(m) });
-    }
   }
   if (!emitted) {
     // Nothing had streamed when the messages landed, so every slice is empty and
@@ -198,8 +291,10 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
  *  So: the last slice, unless the run has emitted nothing, in which case slice
  *  zero — the run's own start, which precedes every message sent during it.
  *  Nothing else can express "this turn was already running when you typed". */
-export function workingSliceIndex(parts: ChatSegment[][]): number {
-  return parts.some((p) => p.length) ? parts.length - 1 : 0;
+export function workingPieceIndex(pieces: Piece[]): number {
+  const work = pieces.map((p, i) => (isWork(p) ? i : -1)).filter((i) => i >= 0);
+  const any = pieces.some((p) => isWork(p) && p.work.length);
+  return any ? work[work.length - 1] : work[0];
 }
 
 /** The run in flight, cut the same way. One slice carries the working
@@ -207,23 +302,26 @@ export function workingSliceIndex(parts: ChatSegment[][]): number {
  *  has produced nothing yet" still has to be visible. */
 function liveBlocks(
   runId: string, segments: ChatSegment[], interrupts: LogEvent[],
+  cutHead?: string[],
 ): TranscriptBlock[] {
-  const parts = cutReply(segments, interrupts);
+  const pieces = cutPieces(segments, interrupts, cutHead);
   const out: TranscriptBlock[] = [];
-  const workingAt = workingSliceIndex(parts);
-  for (let i = 0; i < parts.length; i++) {
-    if (parts[i].length || i === workingAt) {
+  const workingAt = workingPieceIndex(pieces);
+  for (let i = 0; i < pieces.length; i++) {
+    const piece = pieces[i];
+    if (!isWork(piece)) {
+      const m = piece.msg;
+      out.push({ kind: "message", key: m.id, seq: m.seq, msg: msgFromEvent(m) });
+      continue;
+    }
+    if (piece.work.length || i === workingAt) {
       out.push({
         kind: "live",
         key: `${runId}:${i}`,
         runId,
-        segments: parts[i],
+        segments: piece.work,
         working: i === workingAt,
       });
-    }
-    if (i < interrupts.length) {
-      const m = interrupts[i];
-      out.push({ kind: "message", key: m.id, seq: m.seq, msg: msgFromEvent(m) });
     }
   }
   return out;
@@ -421,6 +519,7 @@ export function composeTranscript(
   if (state.activeRun && committed.liveRunId === state.activeRun.runId) {
     out.push(...liveBlocks(
       state.activeRun.runId, state.activeRun.segments, committed.heldForActiveRun,
+      state.activeRun.cutHead,
     ));
   }
   out.push(...atTail);

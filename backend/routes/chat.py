@@ -3122,23 +3122,35 @@ def _snapshot_segments(run_id: str, thread_id: str) -> list[dict]:
     return ((snap.get("meta") or {}).get("segments")) or []
 
 
-def _cut_point(run_id: str, thread_id: str) -> tuple[int, int]:
-    """Where a message landed in the running reply, as (segment, unit).
+def _cut_point(run_id: str, thread_id: str) -> tuple[int, int, str]:
+    """Where a message landed in the running reply: (segment, unit, cut token).
 
-    BOTH, and the unit one is the answer. `at_segment` counts top-level segments
-    and freezes for the whole of a subagent delegation, so every message sent
-    during one recorded the same index and rendered above work that had already
-    happened. `at_unit` counts steps too (build_streaming.unit_count) and moves
-    with the work. The old key is still written because messages already on disk
-    carry only that, and a client reading a transcript must not have two rules.
+    THE TOKEN IS THE ANSWER; the two numbers are kept for what is already on
+    disk. `cut_here` writes the token onto the segment the message arrived
+    after, so the position is RECORDED rather than re-derived from an index into
+    a buffer that keeps growing. See docs/decisions/0018 for the measured way an
+    index drifts (two parallel delegations, and the second falls below a message
+    typed after it was launched).
 
-    Sealing happens here as well, on the live turn: the cut is only real if text
-    written afterwards cannot merge back above it."""
+    `at_segment` counts top-level segments and freezes for the whole of a
+    subagent delegation. `at_unit` counts nested steps too and moves with the
+    work, but moves under a recorded coordinate as well. Both are still written:
+    every message already on disk carries them and nothing may re-render an old
+    transcript differently.
+
+    Sealing happens inside `cut_here`, in the same call: the cut is only real if
+    text written afterwards cannot merge back above it, and it must not be
+    possible for the anchor to move between the two.
+
+    The snapshot branch is the degraded path, for a run this process does not
+    hold. It cannot record a position (there is no live buffer to record it on),
+    so it returns an empty token and the client falls back to the index."""
     live = build_streaming.get_turn(run_id)
     if live is not None:
-        return len(live.segments), build_streaming.cut_here(live)
+        ref = chat_log.new_ulid()
+        return len(live.segments), build_streaming.cut_here(live, ref), ref
     segs = _snapshot_segments(run_id, thread_id)
-    return len(segs), build_streaming.unit_count(segs)
+    return len(segs), build_streaming.unit_count(segs), ""
 
 
 def _file_during_run(thread_id: str, run_id: str, content: str,
@@ -3155,9 +3167,11 @@ def _file_during_run(thread_id: str, run_id: str, content: str,
     Persist first and the transcript can only ever be AHEAD of what the model
     saw, which is the recoverable direction. Returns `at_segment`, which the
     caller also reports to the client."""
-    at_segment, at_unit = _cut_point(run_id, thread_id)
+    at_segment, at_unit, cut_id = _cut_point(run_id, thread_id)
     meta = {"injected": True, "during_run": run_id,
             "at_segment": at_segment, "at_unit": at_unit}
+    if cut_id:
+        meta["cut_id"] = cut_id
     if attachments:
         meta["attachments"] = attachments
     chat_store.append_message_during_turn(

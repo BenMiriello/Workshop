@@ -249,6 +249,12 @@ class Turn:
     # Ordered text/tool segments, persisted incrementally so a reload mid-turn
     # reconstructs the interleaving (text → tool → text …).
     segments: list[dict] = field(default_factory=list)
+    # Messages that arrived BEFORE this turn had emitted anything, by cut token.
+    # Every other arrival is recorded as `cut_after` on the segment it followed;
+    # this is the one position that has no segment to hang on, and it needs a
+    # name of its own rather than the integer 0 standing in for it. See
+    # docs/decisions/0018.
+    cut_head: list[str] = field(default_factory=list)
     # Can a message be handed to this turn while it runs? False for two kinds:
     #
     #   A SLASH COMMAND (`/compact`, `/clear`, `/model`) runs, reports, and exits
@@ -799,15 +805,61 @@ def seal_open_text(turn: "Turn") -> None:
             steps[-1]["sealed"] = True
 
 
-def cut_here(turn: "Turn") -> int:
-    """Record where a mid-turn message landed, and make the boundary hold.
+def cut_here(turn: "Turn", ref: str) -> int:
+    """Record WHERE a mid-turn message landed, as a position rather than a count.
 
-    One call, because the two halves are one fact: this is the point in the
-    reply the operator's message arrived at, and nothing produced after it may
-    drift above it."""
+    `ref` is the message's cut token. It is written onto the segment the message
+    arrived after, or onto `cut_head` when the turn has emitted nothing yet. The
+    client splits the reply on those tokens and does no arithmetic.
+
+    A POSITION CANNOT DRIFT AND A COUNT CAN, which is the whole reason this
+    changed. `at`, still returned and still stored on the message, is a unit
+    index into a buffer that keeps growing: when two subagents run at once (this
+    system launches parallel delegates routinely) and the FIRST one gains steps
+    after the message arrives, the recorded index slides into it, snaps to its
+    end, and the second delegation falls BELOW a message that was typed after it
+    was launched. Measured 2026-08-12. `cut_after` is immune: "after this
+    segment" stays true however much anything else grows.
+
+    One call, because the three parts are one fact. Sealing open text is what
+    stops the next character merging backwards into text that was already on
+    screen, and it has to happen in the same breath as recording the position or
+    there is a window between them in which the anchor moves. See
+    docs/decisions/0018."""
     at = unit_count(turn.segments)
     seal_open_text(turn)
+    if turn.segments:
+        turn.segments[-1].setdefault("cut_after", []).append(ref)
+    else:
+        turn.cut_head.append(ref)
+    # AND ON THE WIRE, because the tab that is streaming builds its own copy of
+    # the segments from these events and never sees the server's list until the
+    # commit. Without this the live view would have to fall back to the index
+    # for exactly the case the operator watches happen: the message he just
+    # sent, into the turn he is watching run.
+    _push(turn, "cut", {"ref": ref})
     return at
+
+
+def carry_cuts(dropped: list[dict], survivors: list[dict], head: list[str]) -> None:
+    """Move any recorded cut positions off segments that are being removed.
+
+    A CUT LIVES ON A SEGMENT, SO A SEGMENT CARRYING ONE MAY NOT BE DROPPED OR
+    REPLACED WITHOUT CARRYING IT FORWARD. Two paths rewrite a turn's segment
+    list after the fact (the trailing-text replacement below, and the `/compact`
+    text strip), and this is the invariant that keeps them honest. It is the way
+    decision 0018 would silently rot, so it is one shared function rather than
+    two open-coded loops.
+
+    Cuts land on the last survivor, or on `head` if nothing survives. Both are
+    the nearest true position once the segment they named no longer exists."""
+    carried = [r for s in dropped if isinstance(s, dict) for r in (s.get("cut_after") or ())]
+    if not carried:
+        return
+    if survivors:
+        survivors[-1].setdefault("cut_after", []).extend(carried)
+    else:
+        head.extend(carried)
 
 
 def _seg_text(turn: "Turn", s: str) -> None:
@@ -1304,7 +1356,8 @@ def _did_visible_work(segments: list[dict]) -> bool:
     return False
 
 
-def _drop_text_segments(segments: list[dict]) -> list[dict]:
+def _drop_text_segments(segments: list[dict],
+                        cut_head: list[str] | None = None) -> list[dict]:
     """The same turn with the model's prose removed and its work left alone.
 
     For the one turn whose prose is replaced wholesale rather than shown: an
@@ -1317,9 +1370,18 @@ def _drop_text_segments(segments: list[dict]) -> list[dict]:
 
     Tool and agent segments survive on purpose. `/compact` is a local command
     and never has any, but dropping work that did happen would be a worse lie
-    than the dump this removes."""
-    return [s for s in segments or []
+    than the dump this removes.
+
+    `cut_head` is threaded through because a dropped text segment may have been
+    the anchor for a mid-run message. A command turn refuses input, so it should
+    never have one, but "should never" is what the invariant in carry_cuts
+    exists to stop relying on."""
+    kept = [s for s in segments or []
             if not (isinstance(s, dict) and s.get("t") == "text")]
+    dropped = [s for s in segments or []
+               if isinstance(s, dict) and s.get("t") == "text"]
+    carry_cuts(dropped, kept, cut_head if cut_head is not None else [])
+    return kept
 
 
 def _clean_exit_text(segments: list[dict], *, unread: bool = False) -> str:
@@ -1886,7 +1948,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         # this is the copy a reload reads; the record gets one write, at commit.
         try:
             chat_store.update_run(
-                turn.thread_id, turn.id, turn.segments, _turn_content(turn))
+                turn.thread_id, turn.id, turn.segments, _turn_content(turn),
+                turn.cut_head)
         except Exception as e:  # pragma: no cover — defensive
             log.debug("turn %s: incremental persist failed: %s", turn.id, e)
 
@@ -2265,7 +2328,8 @@ def resolve_permission(turn_id: str, request_id: str, allow: bool,
         seg["state"] = state
         _push(turn, "permission_resolved", {"id": request_id, "state": state})
         try:
-            chat_store.update_run(turn.thread_id, turn.id, turn.segments, _turn_content(turn))
+            chat_store.update_run(turn.thread_id, turn.id, turn.segments,
+                                  _turn_content(turn), turn.cut_head)
         except Exception as e:  # pragma: no cover — defensive
             log.debug("turn %s: approval persist failed: %s", turn_id, e)
     return True, state
@@ -2402,7 +2466,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         is_error = False
         # The dump lives in the SEGMENTS too, and segments are what the
         # transcript draws. Replacing `text` alone left it fully on screen.
-        turn.segments = _drop_text_segments(turn.segments)
+        turn.segments = _drop_text_segments(turn.segments, turn.cut_head)
     elif over_memory:
         # ABOVE final_text on purpose. A turn killed at the memory ceiling may
         # already have written a perfectly ordinary-looking reply, and showing
@@ -2570,7 +2634,13 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
                 cut = len(turn.segments)
                 while cut > 0 and turn.segments[cut - 1].get("t") == "text":
                     cut -= 1
-                turn.segments = turn.segments[:cut] + ([{"t": "text", "text": text}] if text else [])
+                kept = turn.segments[:cut]
+                tail = [{"t": "text", "text": text}] if text else []
+                # The dropped text may have been the anchor for a message that
+                # arrived while it was being written. Move the position rather
+                # than losing it; see carry_cuts.
+                carry_cuts(turn.segments[cut:], kept + tail, turn.cut_head)
+                turn.segments = kept + tail
         except Exception as e:
             log.warning("turn %s: provider apply_actions failed: %s", turn.id, e)
     # THE COMMIT. One message, appended at the tail, whether or not a client is
@@ -2581,6 +2651,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         turn.committed = chat_store.commit_run(
             turn.thread_id, turn.id, turn.segments, text,
             error=is_error, timed_out=timed_out, notes=notes, receipts=turn_receipts,
+            cut_head=turn.cut_head,
             agent=meta.get("speaker"), state=("lost" if lost else "finished"),
             # A stopped run is FINISHED, not lost: it produced what it produced
             # and nothing is coming later. `stopped` is what tells the operator
