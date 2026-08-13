@@ -74,9 +74,9 @@
    whose rows are different heights because of how long a sentence happened to be
    does not scan.
 
-   nowrap + text-overflow, not `-webkit-line-clamp`: it is what the rest of the
-   app's card titles already use (.ws-job-card__bind > span), it does not depend
-   on the webkit box model, and it cannot wrap at any width. Always pair it with
+   nowrap + text-overflow, not `-webkit-line-clamp`: it is what every list row
+   in the app uses (.ws-listrow__title), it does not depend on the webkit box
+   model, and it cannot wrap at any width. Always pair it with
    `title=` so the full text is one hover away, and with a detail view that shows
    it whole.
 
@@ -310,18 +310,6 @@ a.ws-btn { text-decoration: none; }
 .ws-card-grid--dense > li { display: flex; min-width: 0; }
 .ws-card-grid--dense > li > * { flex: 1 1 auto; min-width: 0; }
 
-/* Jobs page grid: same uniform-height treatment as the dense home grid, at
-   the page's normal (non-dense) track width. */
-.ws-jobs-grid { grid-auto-rows: 1fr; }
-
-/* Tickets grid: wider tracks than the 280px default, because a ticket title is
-   a sentence and its card holds it on ONE line. At 280px a compact card shows
-   roughly 35 characters before the ellipsis; at 380 it shows enough to tell two
-   tickets apart, which is the entire job of a list. Still collapses to a single
-   full-width column on a phone. */
-.ws-jobs-grid > li { display: flex; min-width: 0; }
-.ws-jobs-grid > li > * { flex: 1 1 auto; min-width: 0; }
-
 /* Agents grid: uniform card heights regardless of content length. Every card
    has the same row structure (title / id / link / timestamp); the variable
    lines clamp to one line with an ellipsis so nothing wraps a card taller than
@@ -439,96 +427,80 @@ a.ws-btn { text-decoration: none; }
   min-height: calc(var(--lh-tight, 1.4) * 2em);
 }
 
-/* Job/binding list cards (Home "Needs attention" + "Recent jobs", the Jobs
-   page): one fixed-height binding row (icon + id, ellipsized, never wraps),
-   then a pill row that always holds the status pill first so it never lands
-   on the title row in one card and a second row in another. The pill row
-   itself never wraps — extra pills clip via overflow instead of pushing the
-   card taller. An optional single-line meta row (timestamp/duration/etc.)
-   closes out the card at the same fixed height every time. */
-.ws-job-card { display: flex; flex-direction: column; height: 100%; }
-.ws-job-card__bind { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.ws-job-card__bind > span {
-  min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.ws-job-card__sub {
-  display: flex; align-items: center; gap: var(--space-2);
-  margin-top: var(--space-1); min-width: 0;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  font-size: var(--fs-xs);
-}
-.ws-job-card__sub > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.ws-job-card__chat {
-  display: inline-flex; align-items: center; gap: var(--space-1);
-  flex: 0 0 auto; cursor: pointer; color: var(--accent);
-}
-.ws-job-card__chat > svg { width: 12px; height: 12px; }
-.ws-job-card__pills {
-  display: flex; align-items: center; gap: var(--space-2);
-  margin-top: var(--space-2);
-  flex-wrap: nowrap; overflow: hidden;
-}
-.ws-job-card__pills > * { flex: 0 0 auto; }
-.ws-job-card__meta {
-  display: block; margin-top: var(--space-2);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-
-/* ---- TICKET LIST --------------------------------------------------------- */
-/* A ticket is a ROW, not a card and not a table cell (operator, 2026-08-12).
+/* ---- LIST ROW ------------------------------------------------------------ */
+/* The one row shape for every list in the app: tickets and runs today. It is a
+   ROW, not a card and not a table cell (operator, 2026-08-12).
    The table this replaces carried `min-width: 520px` inside a horizontal
    scroller, so on a phone the list was a narrow window onto a wide grid: you
    scrolled sideways to read a title, and the columns that did fit were too
    tight for their contents and wrapped. Both complaints are the same cause,
    which is that a four-column grid does not fit 390px and cannot be made to.
 
-   So: one row per ticket, and it NEVER scrolls sideways at any width. Below
+   So: one row per item, and it NEVER scrolls sideways at any width. Below
    720px the row is two lines (title, then meta); above it the same row is one
    line with the meta trailing. One component, one breakpoint, no separate
    mobile implementation to keep in sync. */
-.ws-tickets {
+.ws-list {
   display: flex; flex-direction: column;
   list-style: none; margin: 0; padding: 0; min-width: 0;
 }
-.ws-ticket-row {
-  display: flex; flex-direction: column;
-  gap: var(--space-1);
+/* A grid, not a flex column, so the leading status mark sits in its own column
+   and the title and the meta line share the second one. Two rows on a phone,
+   one row from 720px, with no second markup path. */
+.ws-listrow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: var(--space-2); row-gap: 2px;
   width: 100%; min-width: 0;
   padding: var(--space-3);
   border: 0; border-radius: var(--radius-sm);
   background: transparent; color: inherit; text-align: left;
-  font: inherit; cursor: pointer;
-  text-decoration: none;
+  font: inherit; cursor: pointer; text-decoration: none;
   transition: background var(--dur-fast) var(--ease-out);
 }
-.ws-ticket-row:hover { background: var(--card-hover); }
-/* ONE line, always. A title is free text up to 80 characters, and a list whose
-   rows are different heights does not scan. The whole title is on the ticket. */
-.ws-ticket-row__title {
+.ws-listrow:hover { background: var(--card-hover); }
+/* The status mark is a DOT and nothing else: no label, no pill, no border.
+   There are five states and a list is read by scanning, so the word next to the
+   dot is read once and then never again while the color carries it. Labelling
+   every row also gave every row two chip-shaped objects (status and scope),
+   which is what made the list read as chip soup rather than as a list.
+   The accessible name rides on the wrapper's title/aria-label. */
+.ws-listrow__mark { display: inline-flex; align-self: baseline; }
+.ws-listrow__title {
   min-width: 0;
   font-size: var(--fs-sm);
-  font-weight: var(--fw-semi);
   line-height: var(--lh-tight);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* The meta line also never wraps: it clips. A status, a scope and a timestamp
-   are each short, and letting them wrap is what turned rows into blocks. */
-.ws-ticket-row__meta {
-  display: flex; align-items: center; gap: var(--space-2);
+/* Plain muted text, not tags. Scope and age are things you read once you are
+   already looking at a row; a chip is for something you scan FOR. Spending the
+   chip treatment on both is what stops the one mark that matters (a blocked
+   ticket) from standing out at all. */
+.ws-listrow__meta {
+  grid-column: 2;
+  display: flex; align-items: baseline; gap: var(--space-2);
   min-width: 0; flex-wrap: nowrap; overflow: hidden;
   color: var(--muted); font-size: var(--fs-xs);
 }
-.ws-ticket-row__meta > * { flex: 0 0 auto; }
-.ws-ticket-row__time { margin-left: auto; padding-left: var(--space-2); }
+.ws-listrow__meta > * { flex: 0 0 auto; }
+.ws-listrow__scope { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ws-listrow__time { margin-left: auto; padding-left: var(--space-2); }
 
 @media (min-width: 720px) {
-  .ws-ticket-row {
-    flex-direction: row; align-items: center; gap: var(--space-3);
+  .ws-listrow {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
     padding-block: var(--space-2);
   }
-  .ws-ticket-row__title { flex: 1 1 auto; }
-  .ws-ticket-row__meta { flex: 0 0 auto; }
+  .ws-listrow__meta { grid-column: 3; grid-row: 1; }
+  .ws-listrow__time { margin-left: 0; }
 }
+
+/* Child rows under a parent row (a sweep and the runs it spawned). Indented by
+   space, not by a rule down the left: the nesting is one level and the indent
+   already says it. */
+.ws-list__children { list-style: none; margin: 0; padding-left: var(--space-6); }
 
 /* The filter bar. Bare controls, no `Field label inline` per control: that is a
    `minmax(120px, 0.4fr) 1fr` grid EACH, so four labelled controls could not fit

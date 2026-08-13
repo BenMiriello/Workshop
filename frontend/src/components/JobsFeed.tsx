@@ -1,39 +1,20 @@
 import { useCallback, useState } from "react";
 import { usePoll } from "../lib/usePoll";
-import { useNavigate } from "react-router-dom";
-import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronRight, ChevronDown, ListTodo } from "lucide-react";
+import { Link } from "react-router-dom";
+import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronRight, ChevronDown } from "lucide-react";
 import {
   Button,
   Card,
-  CardGrid,
   Row,
   Stack,
   Skeleton,
   StateBlock,
-  StatusPill,
   StatusDot,
   Segmented,
-  AgencyChip,
-  AgencyDot,
   agencyFor,
   type SegmentedOption,
 } from "@workshop/ui";
 import { type Job, jobStatusKind as statusKind } from "../lib/jobs";
-import { DEVELOPMENT_SCOPE } from "../lib/devMode";
-
-// The task-store scope a job worked in, for a "View task" deep-link into Work.
-// Mirrors routes/jobs._scope_root_for_job: project_slug wins, else an agent id.
-function scopeForJob(job: Job): string | null {
-  // "workshop" is the pre-ADR-0014 project_slug for a platform-repo sweep; the
-  // tickets it worked did not move, the queue was renamed, so it resolves to
-  // Development or a year of run history loses its ticket link.
-  if (job.project_slug === "workshop" || job.project_slug === DEVELOPMENT_SCOPE) {
-    return DEVELOPMENT_SCOPE;
-  }
-  if (job.project_slug) return `project:${job.project_slug}`;
-  if (job.agent_id && job.agent_id.startsWith("agent:")) return job.agent_id;
-  return null;
-}
 
 // The Jobs feed: one list for every bounded execution (cron task, drained
 // event, project sweep, supervisor heartbeat, manual run). Reads /api/jobs
@@ -56,10 +37,22 @@ const FILTERS: SegmentedOption<StatusFilter>[] = [
   { value: "failed", label: "Failed" },
 ];
 
-function fmtTs(ts?: string): string {
-  if (!ts) return "";
-  const d = new Date(ts);
-  return isNaN(d.getTime()) ? "" : d.toLocaleString();
+// Relative time for the meta line, matching the ticket list.
+function ago(iso?: string | null): string {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "";
+  const secs = Math.max(0, (Date.now() - t) / 1000);
+  if (secs < 60) return "now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo`;
+  return `${Math.floor(months / 12)}y`;
 }
 
 function duration(job: Job): string {
@@ -72,18 +65,6 @@ function duration(job: Job): string {
   const m = Math.floor(secs / 60);
   const s = secs % 60;
   return s ? `${m}m ${s}s` : `${m}m`;
-}
-
-// Single fixed-height meta line: everything that used to be its own row
-// (duration, exit code, task counts, started-at) joined into one ellipsized
-// string, so a card's height never depends on which of these are present.
-function metaLine(job: Job, dur: string): string {
-  const parts = [fmtTs(job.started_at)];
-  if (dur) parts.push(dur);
-  if (typeof job.exit_code === "number") parts.push(`exit ${job.exit_code}`);
-  if (typeof job.tasks_done === "number") parts.push(`${job.tasks_done} done`);
-  if (typeof job.tasks_failed === "number" && job.tasks_failed > 0) parts.push(`${job.tasks_failed} failed`);
-  return parts.filter(Boolean).join(" · ") || " ";
 }
 
 // Icon + human name for the job's binding. Prefers the enriched agent_name over
@@ -105,7 +86,6 @@ function bindingLabel(job: Job): { icon: JSX.Element; text: string } {
 // and always passed it, and /jobs is a redirect to that tab. The prop and the
 // header went with it, along with the only read of `data.count`.
 export default function JobsFeed() {
-  const nav = useNavigate();
   const [data, setData] = useState<JobsResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -167,17 +147,11 @@ export default function JobsFeed() {
     );
   } else if (!data) {
     body = (
-      <CardGrid>
-        {[0, 1, 2, 3].map((i) => (
-          <Card key={i}>
-            <Stack gap="sm">
-              <Skeleton width="55%" />
-              <Skeleton width="40%" />
-              <Skeleton width="30%" />
-            </Stack>
-          </Card>
-        ))}
-      </CardGrid>
+      <Card>
+        <Stack gap="sm">
+          {[0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} width="100%" />)}
+        </Stack>
+      </Card>
     );
   } else if (jobs.length === 0) {
     body = (
@@ -209,128 +183,96 @@ export default function JobsFeed() {
     }
     const topLevel = jobs.filter((j) => !(j.parent_id && parentIds.has(j.parent_id)));
 
-    const childRow = (child: Job) => {
-      const cscope = scopeForJob(child);
-      return (
-        <li key={child.id} style={{ listStyle: "none" }}>
-          <div
-            role="link"
-            tabIndex={0}
-            data-agency={agencyFor(child.trigger) ?? undefined}
-            onClick={() => nav(`/runs/${encodeURIComponent(child.id)}`)}
-            style={{
-              display: "flex", alignItems: "baseline", gap: "var(--space-2)",
-              padding: "var(--space-2) 0", cursor: "pointer",
-              borderBottom: "1px solid var(--border)",
-            }}
+    const childRow = (child: Job) => (
+      <li key={child.id}>
+        <Link
+          className="ws-listrow"
+          to={`/runs/${encodeURIComponent(child.id)}`}
+          data-agency={agencyFor(child.trigger) ?? undefined}
+        >
+          <span
+            className="ws-listrow__mark"
+            title={child.status ?? "unknown"}
+            aria-label={child.status ?? "unknown"}
           >
-            <StatusDot status={statusKind(child.status)}>{child.status ?? "unknown"}</StatusDot>
-            <span style={{ flex: "1 1 8rem", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {child.title || child.task_text || child.id}
-            </span>
-            {cscope && (
-              <span
-                role="link"
-                tabIndex={0}
-                className="ws-bc__link"
-                title="View this task in Work"
-                onClick={(e) => { e.stopPropagation(); nav(`/work?scope=${encodeURIComponent(cscope)}`); }}
-                style={{ fontSize: "var(--fs-xs)", display: "inline-flex", alignItems: "center", gap: "var(--space-1)" }}
-              >
-                <ListTodo aria-hidden size={12} /> task
-              </span>
-            )}
-          </div>
-        </li>
-      );
-    };
+            <StatusDot status={statusKind(child.status)}>{null}</StatusDot>
+          </span>
+          <span className="ws-listrow__title">
+            {child.title || child.task_text || child.id}
+          </span>
+          <span className="ws-listrow__meta">
+            <span className="ws-listrow__time">{ago(child.started_at)}</span>
+          </span>
+        </Link>
+      </li>
+    );
 
     body = (
-      <CardGrid className="ws-jobs-grid">
-        {topLevel.map((job) => {
-          const bind = bindingLabel(job);
-          const dur = duration(job);
-          const kids = childrenByParent.get(job.id);
-          const isOpen = expanded.has(job.id);
-          return (
-            <li key={job.id} style={kids ? { flexDirection: "column" } : undefined}>
-              <Card
-                interactive
-                compact
-                className="ws-job-card"
-                data-agency={agencyFor(job.trigger) ?? undefined}
-                onClick={() => nav(`/runs/${encodeURIComponent(job.id)}`)}
-                style={{ cursor: "pointer" }}
-              >
-                <div className="ws-job-card__bind">
-                  {/* The identity dot says WHO started this run; the state chip
-                      at the other end says how it went. They never take the
-                      same slot, and only a live run's dot pulses. A run whose
-                      record never stored a trigger gets NO dot: half the run
-                      history predates the field, and a guessed provenance mark
-                      is worse than none. */}
-                  {agencyFor(job.trigger) && (
-                    <AgencyDot tier={agencyFor(job.trigger)!} active={job.status === "running"} />
-                  )}
-                  {bind.icon}
-                  <span>{job.title || bind.text}</span>
-                </div>
-                {job.title && (job.project_slug || job.agent_name || job.chat_id) && (
-                  <div className="ws-job-card__sub ws-muted">
+      <Card pad0>
+        <ul className="ws-list">
+          {topLevel.map((job) => {
+            const bind = bindingLabel(job);
+            const dur = duration(job);
+            const kids = childrenByParent.get(job.id);
+            const isOpen = expanded.has(job.id);
+            return (
+              <li key={job.id}>
+                {/* One row per run, the same shape the ticket list uses. This
+                    was a card with four bands and three chips: a StatusPill, an
+                    AgencyChip repeating the trigger the AgencyDot already
+                    marked, and a child-runs button. Provenance is still here,
+                    as the trigger WORD in the meta line: it is a fact you read,
+                    not one you scan a list for. */}
+                <Link
+                  className="ws-listrow"
+                  to={`/runs/${encodeURIComponent(job.id)}`}
+                  data-agency={agencyFor(job.trigger) ?? undefined}
+                >
+                  <span
+                    className="ws-listrow__mark"
+                    title={job.status ?? "unknown"}
+                    aria-label={job.status ?? "unknown"}
+                  >
+                    <StatusDot status={statusKind(job.status)}>{null}</StatusDot>
+                  </span>
+                  <span className="ws-listrow__title">{job.title || bind.text}</span>
+                  <span className="ws-listrow__meta">
+                    {(job.trigger_label || job.trigger) && (
+                      <span>{job.trigger_label || job.trigger}</span>
+                    )}
                     {(job.project_slug || job.agent_name) && (
                       <span>{job.project_slug || job.agent_name}</span>
                     )}
-                    {job.chat_id && (
-                      <span
-                        className="ws-job-card__chat"
-                        role="link"
-                        tabIndex={0}
-                        title={`Open chat: ${job.chat_title || job.chat_id}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (job.chat_context_key)
-                            nav(`/chat/${encodeURIComponent(job.chat_context_key)}?thread=${encodeURIComponent(job.chat_id!)}`);
-                        }}
-                      >
-                        <MessageSquare aria-hidden /> {job.chat_title || "chat"}
-                      </span>
-                    )}
-                  </div>
-                )}
-                <div className="ws-job-card__pills">
-                  <StatusPill status={statusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
-                  {agencyFor(job.trigger) && (
-                    <AgencyChip tier={agencyFor(job.trigger)!}>{job.trigger_label || job.trigger}</AgencyChip>
-                  )}
-                  {kids && (
-                    <button
-                      type="button"
-                      className="ws-bc__link"
+                    {dur && <span>{dur}</span>}
+                    <span className="ws-listrow__time">{ago(job.started_at)}</span>
+                  </span>
+                </Link>
+                {kids && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       aria-expanded={isOpen}
-                      title={isOpen ? "Hide child runs" : "Show child runs"}
-                      onClick={(e) => { e.stopPropagation(); toggleExpanded(job.id); }}
-                      style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--fs-xs)" }}
+                      onClick={() => toggleExpanded(job.id)}
                     >
-                      {isOpen ? <ChevronDown aria-hidden size={14} /> : <ChevronRight aria-hidden size={14} />}
+                      {isOpen ? <ChevronDown aria-hidden /> : <ChevronRight aria-hidden />}
                       {kids.length} child {kids.length === 1 ? "run" : "runs"}
-                    </button>
-                  )}
-                </div>
-                <span className="ws-job-card__meta ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                  {job.error || metaLine(job, dur)}
-                </span>
-              </Card>
-              {kids && isOpen && (
-                <ul style={{ listStyle: "none", margin: "var(--space-2) 0 0", padding: "0 0 0 var(--space-3)", borderLeft: "1px solid var(--border)" }}>
-                  {kids.map((child) => childRow(child))}
-                </ul>
-              )}
-            </li>
-          );
-        })}
-      </CardGrid>
+                    </Button>
+                    {isOpen && (
+                      <ul className="ws-list ws-list__children">
+                        {kids.map((child) => childRow(child))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </Card>
     );
   }
+
 
   return (
     <div>

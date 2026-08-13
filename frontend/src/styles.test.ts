@@ -87,16 +87,16 @@ describe("the app shell cannot scroll its own chrome away", () => {
   });
 });
 
-describe("the ticket list never scrolls sideways", () => {
+describe("a list row never scrolls sideways", () => {
   // The table it replaced set `min-width: 520px` inside a horizontal scroller,
   // which on a phone is a narrow window onto a wide grid.
-  it("gives ticket rows no minimum width", () => {
-    expect(kitRule(".ws-ticket-row")).toContain("min-width: 0");
+  it("gives list rows no minimum width", () => {
+    expect(kitRule(".ws-listrow")).toContain("min-width: 0");
   });
 
   it("clips the title and the meta line rather than wrapping them", () => {
-    expect(kitRule(".ws-ticket-row__title")).toContain("white-space: nowrap");
-    const meta = kitRule(".ws-ticket-row__meta");
+    expect(kitRule(".ws-listrow__title")).toContain("white-space: nowrap");
+    const meta = kitRule(".ws-listrow__meta");
     expect(meta).toContain("flex-wrap: nowrap");
     expect(meta).toContain("overflow: hidden");
   });

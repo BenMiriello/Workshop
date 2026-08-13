@@ -44,8 +44,6 @@ import {
   StateBlock,
   Skeleton,
   StatusDot,
-  Tag,
-  catFor,
 } from "@workshop/ui";
 import {
   type Task,
@@ -258,22 +256,30 @@ export default function Work() {
     body = (
       <>
         <Card pad0>
-          <ul className="ws-tickets">
+          <ul className="ws-list">
             {rows.map((t) => (
               <li key={`${t.scope}:${t.id}`}>
                 {/* A link, not a row with an onClick: it opens in a new tab on
                     a middle click, it is reachable by keyboard, and a phone
                     gives it the native tap treatment. */}
-                <Link className="ws-ticket-row" to={ticketHref(t.scope ?? "workshop", t.id)}>
-                  <span className="ws-ticket-row__title" title={taskTitle(t)}>
+                <Link className="ws-listrow" to={ticketHref(t.scope ?? "workshop", t.id)}>
+                  <span
+                    className="ws-listrow__mark"
+                    title={taskStatusLabel(t.status)}
+                    aria-label={taskStatusLabel(t.status)}
+                  >
+                    <StatusDot status={taskStatusKind(t.status)}>{null}</StatusDot>
+                  </span>
+                  <span className="ws-listrow__title" title={taskTitle(t)}>
                     {taskTitle(t) || "(untitled)"}
                   </span>
-                  <span className="ws-ticket-row__meta">
-                    <StatusDot status={taskStatusKind(t.status)}>
-                      {taskStatusLabel(t.status)}
-                    </StatusDot>
-                    <Tag hue={catFor(t.scope || "workshop")}>{scopeLabel(t.scope)}</Tag>
-                    <span className="ws-ticket-row__time">{ago(t.updated)}</span>
+                  <span className="ws-listrow__meta">
+                    {/* Only when the list spans scopes. Filtered to one, the
+                        column repeats the filter on every row. */}
+                    {scope === ALL_SCOPES && (
+                      <span className="ws-listrow__scope">{scopeLabel(t.scope)}</span>
+                    )}
+                    <span className="ws-listrow__time" title={t.updated}>{ago(t.updated)}</span>
                   </span>
                 </Link>
               </li>

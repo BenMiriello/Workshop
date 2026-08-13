@@ -397,7 +397,10 @@ export function scopeLabel(scope?: string): string {
   // Work ON the Workshop: the platform repo and this installation's host. The
   // only name that resolves there, and only in a developer build (ADR 0014).
   if (scope === DEVELOPMENT_SCOPE) return "Development";
-  if (scope === "workshop") return "Workshop root";
+  // "Workshop", not "Workshop root". The word `root` is the implementation
+  // detail that this scope's store lives at the top of the tree; to a reader it
+  // reads as a second, more important Workshop somewhere. Operator, 2026-08-12.
+  if (scope === "workshop") return "Workshop";
   const [kind, slug] = scope.split(":", 2);
   if (!slug) return scope;
   const kindLabel = kind === "project" ? "Project" : kind === "agent" ? "Agent" : kind === "build" ? "Build" : kind;

@@ -12,6 +12,32 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.0 — 2026-08-12 — one list row, and status stops being a labelled chip
+
+**Breaking (CSS).** `.ws-tickets` and `.ws-ticket-row*` are renamed
+`.ws-list` and `.ws-listrow*`: the shape is used by the ticket list AND the run
+feed now, so it is not a ticket thing. Removed `.ws-job-card*` and
+`.ws-jobs-grid` with the card layout they styled. Added `.ws-listrow__mark`,
+`.ws-listrow__scope` and `.ws-list__children`. No exported component changed.
+
+**Why the chips went.** Operator, 2026-08-12: "why does all info have to be a
+pill and all has a color dot". A ticket row carried a `StatusDot` with its label
+and a coloured `Tag` for scope; a run card carried a `StatusPill`, an
+`AgencyChip` repeating the trigger its `AgencyDot` had already marked, and a
+child-runs button, over four bands. Two or three chip-shaped objects per row,
+which is exactly how you stop any of them being scannable.
+
+The rule now: **a chip is for something you scan a list FOR; plain text is for
+something you read once you are already looking at the row.** So status is a
+bare dot with no label (five states, learned once, and the accessible name is on
+the wrapper), scope and trigger and duration are muted text, and the ticket
+list drops the scope entirely when it is already filtered to one scope. The
+status vocabulary is unchanged: same five kinds, same colours, same pulse on
+`running`. Only the mark got smaller.
+
+`.ws-listrow` is a two-column grid (mark, then content) so the same markup is
+two lines on a phone and one line from 720px.
+
 ## 0.4.0 — 2026-08-12 — the shell can no longer scroll its own toolbar away
 
 **Breaking (CSS).** Removed `.ws-board*`, `.ws-ticket-card*` and

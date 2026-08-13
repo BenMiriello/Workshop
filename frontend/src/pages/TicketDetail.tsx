@@ -33,8 +33,7 @@ import {
 } from "lucide-react";
 import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
-  Tag, Skeleton, Field, Input, Select, ConfirmDialog, Textarea,
-  catFor,
+  Skeleton, Field, Input, Select, ConfirmDialog, Textarea,
 } from "@workshop/ui";
 import { Markdown } from "@workshop/ui/markdown";
 import {
@@ -101,9 +100,13 @@ function runDuration(r: JobRec): string {
 function LinkRow({ link }: { link: TaskLink }) {
   return (
     <Row>
-      <StatusDot status={taskStatusKind(link.status)}>{taskStatusLabel(link.status)}</StatusDot>
+      {/* The dot alone. A dependency row is three facts, and giving two of them
+          chip treatment left nothing for the eye to land on. */}
+      <span title={taskStatusLabel(link.status)} aria-label={taskStatusLabel(link.status)}>
+        <StatusDot status={taskStatusKind(link.status)}>{null}</StatusDot>
+      </span>
       <Link to={ticketHref(link.scope, link.id)} className="ws-truncate">{link.title || link.id}</Link>
-      <Tag hue={catFor(link.scope)}>{scopeLabel(link.scope)}</Tag>
+      <span className="ws-muted">{scopeLabel(link.scope)}</span>
     </Row>
   );
 }
@@ -498,11 +501,11 @@ export default function TicketDetail() {
             </StatusPill>
           </Field>
           <Field label="Scope">
-            {/* Not every scope has a page. An unlinkable one renders as the tag
-                alone rather than as a link to nowhere. */}
+            {/* Plain text, or a link when the scope has a page. A scope is read
+                once here; it is not something you scan a detail page FOR. */}
             {scopeLink
-              ? <Link to={scopeLink}><Tag hue={catFor(scope || "workshop")}>{scopeLabel(scope)}</Tag></Link>
-              : <Tag hue={catFor(scope || "workshop")}>{scopeLabel(scope)}</Tag>}
+              ? <Link to={scopeLink}>{scopeLabel(scope)}</Link>
+              : <span>{scopeLabel(scope)}</span>}
           </Field>
           {typeof task.priority === "number" && task.priority !== 0 && (
             <Field label="Priority"><span>{task.priority}</span></Field>
