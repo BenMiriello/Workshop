@@ -115,24 +115,10 @@ export function contextSlices(
   }));
 }
 
-/** What is left. The bar's last segment, and deliberately NOT a category: free
- *  space is not a thing filling the window, it is the absence of one. */
-export function freeFraction(d: ContextDetail): number {
-  if (d.window_tokens <= 0) return 0;
-  return Math.max(0, Math.min(1, 1 - d.used_tokens / d.window_tokens));
-}
-
 /** One line for the panel's header: "440k of 1M used". */
 export function contextHeadline(d: ContextDetail): string {
   if (d.window_tokens <= 0) return `${formatTokens(d.used_tokens)} used`;
   return `${formatTokens(d.used_tokens)} of ${formatTokens(d.window_tokens)} used`;
-}
-
-/** Every MCP server's share, largest first, with its own total. The one line in
- *  the panel the operator can actually act on: a server's tools are a standing
- *  tax on every turn, paid whether or not they are ever called. */
-export function mcpTotal(d: ContextDetail): number {
-  return (d.mcp ?? []).reduce((a, s) => a + s.tokens, 0);
 }
 
 /**

@@ -80,8 +80,3 @@ export function permissionModeDef(id: string | undefined): PermissionModeDef {
   if (id && DEFS[id]) return DEFS[id];
   return { id: id || "auto", label: id || "Auto", hint: "", Icon: Zap };
 }
-
-/** Plan is a ONE-TURN posture: approving the plan leaves it, which is what the
- *  CLI's own setMode suggestion says to do. Callers use this to avoid treating a
- *  plan-mode chat as permanently in plan mode. */
-export const ONE_TURN_MODES = ["plan"];

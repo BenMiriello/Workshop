@@ -18,15 +18,6 @@ export function buildSlug(contextKey: string): string | null {
   return contextKey.startsWith("build:") ? contextKey.slice("build:".length) : null;
 }
 
-// The project slug this chat is bound to (if any). Used by the /deploy slash
-// command to jump straight to that project's Deploys panel; general chat and app
-// docks fall through to the /deploys index.
-export function projectSlugFor(contextKey: string): string | null {
-  if (contextKey.startsWith("project:")) return contextKey.slice("project:".length);
-  if (contextKey.startsWith("build:")) return contextKey.slice("build:".length);
-  return null;
-}
-
 // ---- What a scope key MEANS ------------------------------------------------
 // A chat's contextKey is its scope: the place the conversation lives, which
 // decides the thread list you are in and where its work files. These two

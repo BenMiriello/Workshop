@@ -30,15 +30,3 @@ export function logPlaceholder(input: {
   if (input.inFlight) return null;
   return "empty";
 }
-
-/** The chat's one error line, bounded.
- *
- *  This was `String(err).slice(0, 240)` in two places, which cut mid-word and
- *  gave no sign that it had cut — so a long message read as a sentence that
- *  simply stopped making sense. The bound exists for a pathological body (a
- *  gateway's HTML error page), not as a summary: every writer of this slot now
- *  passes a sentence, so it should not fire at all. When it does, it says so. */
-export function clampError(err: unknown, max = 400): string {
-  const s = String(err ?? "").trim();
-  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
-}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampError, logPlaceholder } from "./chatLogState";
+import { logPlaceholder } from "./chatLogState";
 
 const base = { empty: true, loading: false, error: false, inFlight: false };
 
@@ -35,20 +35,3 @@ describe("logPlaceholder", () => {
   });
 });
 
-describe("the chat's one error line", () => {
-  it("passes a sentence through untouched", () => {
-    const s = "Couldn't delete this conversation: 500. It is still here; try again.";
-    expect(clampError(s)).toBe(s);
-  });
-
-  it("marks a body it had to cut, instead of just stopping mid-word", () => {
-    const out = clampError("x".repeat(5000));
-    expect(out.length).toBe(400);
-    expect(out.endsWith("…")).toBe(true);
-  });
-
-  it("renders nothing for nothing", () => {
-    expect(clampError(null)).toBe("");
-    expect(clampError(undefined)).toBe("");
-  });
-});

@@ -107,7 +107,7 @@ export default function ContextMeter({
           style={{ strokeDasharray: `${reading.fraction * RING_C} ${RING_C}` }}
         />
       </svg>
-      <span className="chat-context-meter__pct">{contextLabel(reading, source)}</span>
+      <span className="chat-context-meter__pct">{contextLabel(reading)}</span>
     </>
   );
   const title = contextTooltip(ctx.used, ctx.win, source);

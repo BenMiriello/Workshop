@@ -40,13 +40,12 @@ describe("contextReading", () => {
 describe("where the number came from", () => {
   const r = contextReading(120_000, 1_000_000)!;
 
-  // The label is a plain percent regardless of source; the tilde that used to
-  // mark an estimate was clutter on every new chat (operator, 2026-08-11). The
-  // measured-vs-guessed distinction lives in the tooltip, asserted below.
-  it("renders a plain percent for every source", () => {
-    expect(contextLabel(r, "server")).toBe("12%");
-    expect(contextLabel(r, "estimate")).toBe("12%");
-    expect(contextLabel(r, "unavailable")).toBe("12%");
+  // The label is a plain percent and does not vary by source at all; the tilde
+  // that used to mark an estimate was clutter on every new chat (operator,
+  // 2026-08-11). It no longer even takes the source: the measured-vs-guessed
+  // distinction lives in the tooltip, asserted below.
+  it("renders a plain percent", () => {
+    expect(contextLabel(r)).toBe("12%");
   });
 
   it("says the server counted it only when the server did", () => {

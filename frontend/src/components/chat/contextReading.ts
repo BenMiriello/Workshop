@@ -53,7 +53,7 @@ export function contextReading(used: number, win: number): ContextReading | null
 // the tooltip and the meter's own marking; it no longer decorates the number.
 export type ContextSource = "server" | "estimate" | "unavailable";
 
-export function contextLabel(reading: ContextReading, _source: ContextSource): string {
+export function contextLabel(reading: ContextReading): string {
   return reading.label;
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  contextHeadline, contextSlices, formatPct, formatTokens, freeFraction, mcpTotal,
+  contextHeadline, contextSlices, formatPct, formatTokens,
   refreshedLabel,
   type ContextDetail,
 } from "./contextBreakdown";
@@ -86,23 +86,9 @@ describe("contextSlices", () => {
   });
 });
 
-describe("freeFraction", () => {
-  it("is what is left", () => {
-    expect(freeFraction(detail())).toBeCloseTo(0.9, 5);
-  });
-
-  it("never goes negative on an over-full window", () => {
-    expect(freeFraction(detail({ used_tokens: 2_000_000 }))).toBe(0);
-  });
-});
-
-describe("the header and the MCP total", () => {
+describe("the header", () => {
   it("says both numbers, so the percentage is checkable", () => {
     expect(contextHeadline(detail())).toBe("100k of 1.0M used");
-  });
-
-  it("totals what the MCP servers cost every turn", () => {
-    expect(mcpTotal(detail())).toBe(5_000);
   });
 });
 

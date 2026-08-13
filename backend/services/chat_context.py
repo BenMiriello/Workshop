@@ -1052,13 +1052,29 @@ def learnings_context(provider: "ContextProvider") -> str:
         scope = provider.knowledge_scope()
     except Exception:
         scope = "workshop"
-    if scope not in (learnings.GLOBAL, "workshop"):
+    # `workshop` used to be excluded here alongside `global`, on the reading
+    # that a general chat is already covered by the workspace guardrails. It is
+    # not: `global` and `workshop` are DIFFERENT stores, and `workshop` is where
+    # every preference captured from a chat lands, because
+    # `task_scope.apply_learning_note` defaults a learning-note fence to
+    # `knowledge.scope_for_context("general")`, which is `workshop`.
+    #
+    # So the capture path reported success and wrote to a store nothing read.
+    # Measured 2026-08-12: 11 records, written between 2026-07-18 and that day,
+    # none ever retrieved. The worker does not read it either (project_ralph
+    # only ever passes `project:*` or `agent:*`), so those eleven operator
+    # corrections reached nothing at all.
+    #
+    # Only `global` stays excluded, and that one is right: it is already the
+    # first block.
+    if scope != learnings.GLOBAL:
         try:
             m = learnings.memory_block(scope)
         except Exception:
             m = ""
         if m:
-            parts.append(f"=== AGENT MEMORY (scope: {scope}) ===\n" + m)
+            label = "OPERATOR PREFERENCES" if scope == "workshop" else f"AGENT MEMORY (scope: {scope})"
+            parts.append(f"=== {label} ===\n" + m)
     return "\n\n".join(parts)
 
 
