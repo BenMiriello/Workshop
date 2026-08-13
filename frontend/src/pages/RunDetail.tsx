@@ -613,6 +613,22 @@ export default function JobDetail() {
                   <span>{job.tasks_done ?? 0} done{job.tasks_failed ? `, ${job.tasks_failed} failed` : ""}</span>
                 </Row>
               )}
+              {/* From the usage ledger, not from the worker's own receipt. The
+                  receipt line below reports what the worker said it spent and
+                  only exists when there is a receipt; this is what was actually
+                  billed, and it includes the child runs. A coordinator sweep
+                  spends almost nothing itself, so its own figure alone would
+                  read as "this sweep was free". */}
+              {typeof job.tokens === "number" && job.tokens > 0 && (
+                <Row between wrap>
+                  <span className="ws-muted">Tokens</span>
+                  <span title={typeof job.tokens_own === "number" && job.tokens_own !== job.tokens
+                    ? `${job.tokens_own.toLocaleString()} in this run, the rest in its child runs`
+                    : undefined}>
+                    {job.tokens.toLocaleString()}
+                  </span>
+                </Row>
+              )}
             </Stack>
           </Card>
         </section>

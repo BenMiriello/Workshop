@@ -17,6 +17,12 @@ export type Job = {
   exit_code?: number;
   tasks_done?: number;
   tasks_failed?: number;
+  // What the run cost, from the usage ledger rather than from the worker's own
+  // receipt. `tokens` includes the child runs, because a coordinator sweep
+  // spends almost nothing itself; `tokens_own` is this record alone. Both are
+  // null when nothing was billed against the job id.
+  tokens?: number | null;
+  tokens_own?: number | null;
   parent_id?: string;
   task_id?: string;
   evidence?: unknown;
