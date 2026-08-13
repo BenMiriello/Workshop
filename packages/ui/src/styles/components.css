@@ -1025,6 +1025,44 @@ a.ws-btn { text-decoration: none; }
 .ws-state--error { border-style: solid; border-color: var(--danger-soft); }
 .ws-state--error .ws-state__icon { color: var(--danger); }
 
+/* ---- NOTICE: one line, beside content that is still there ----------------
+   The other half of rule 9, and the half that was missing. `.ws-state` is a
+   REGION: it stands in for a list that could not load, so it is centred, tall
+   and bordered because it occupies the space that content would have. Used for
+   something that merely went wrong NEXT to content that is fine, it turns a
+   sentence into a 120px dashed panel. That is what a dropped connection looked
+   like in the chat on 2026-08-12, and the operator's word for it was "huge and
+   blocky".
+
+   So: a line. Icon, sentence, optional action, no border, no fill, no centring,
+   nothing taller than the text it carries. It is the shape the chat had already
+   converged on by hand (.chat-unsent, .chat-queued-note), promoted here so the
+   rest of the app stops reaching for the region when it means a line.
+
+   Neutral ink, per "What color is for": the sentence is `--fg`, its detail is
+   `--muted`, and the only hue is the icon, which is the outcome mark and the
+   whole reason the line reads as a problem at a glance. */
+.ws-notice {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-2) 0;
+  font-size: var(--fs-sm); line-height: 1.45; color: var(--fg);
+}
+.ws-notice__icon { flex: 0 0 auto; color: var(--faint); margin-top: 0.15em; }
+.ws-notice__icon svg { width: 14px; height: 14px; stroke-width: 1.8; display: block; }
+.ws-notice--error .ws-notice__icon { color: var(--danger); }
+.ws-notice--warn .ws-notice__icon { color: var(--warn-solid); }
+.ws-notice__body { flex: 1 1 auto; min-width: 0; }
+/* The cause reads as part of the same sentence, not as a second paragraph: it
+   is one thought and it should cost one line whenever it fits. */
+.ws-notice__detail { color: var(--muted); }
+.ws-notice__where {
+  font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--faint);
+  overflow-wrap: anywhere;
+}
+/* The action sits on the text's first line rather than centred against a body
+   that may have wrapped to three. */
+.ws-notice__action { flex: 0 0 auto; }
+
 /* skeleton shimmer for loading rows */
 .ws-skeleton { background: linear-gradient(90deg, var(--bg-inset) 25%, var(--card-hover) 37%, var(--bg-inset) 63%); background-size: 400% 100%; border-radius: var(--radius-sm); animation: ws-shimmer 1.4s ease infinite; height: 0.9rem; }
 @keyframes ws-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }

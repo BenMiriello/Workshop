@@ -3,6 +3,7 @@ import { ChevronRight, RefreshCw, Trash2, Check } from "lucide-react";
 import {
   Modal, Button, Stack, Row, Tag, Badge, Field, Input, Textarea,
   StateBlock, Skeleton, catFor,
+  Notice,
 } from "@workshop/ui";
 import { scopeLabel } from "../../lib/tasks";
 
@@ -193,12 +194,13 @@ export default function TicketDraftsDialog({
         )}
 
         {err && (
-          <StateBlock
-            variant="error"
-            title="Something went wrong"
-            hint={<span>{err}</span>}
+          <Notice
+            tone="error"
+            detail={err}
             action={<Button size="sm" variant="ghost" onClick={() => void propose()}>Try again</Button>}
-          />
+          >
+            Couldn't draft tickets from this chat.
+          </Notice>
         )}
 
         {proposing ? (

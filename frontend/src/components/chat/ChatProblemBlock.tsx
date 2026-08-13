@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Button, StateBlock } from "@workshop/ui";
+import { Button, Notice, StateBlock } from "@workshop/ui";
 import { problemBlock, type ChatProblem } from "./chatProblem";
 
 // A FAILURE OF THE WHOLE CHAT, said one way.
@@ -11,22 +11,52 @@ import { problemBlock, type ChatProblem } from "./chatProblem";
 // message, this thread, or the backend. It is gone, and everything that used it
 // renders here.
 //
-// This is rule 9 of frontend/CLAUDE.md for the chat: the error state is a
-// `StateBlock variant="error"`, it names the endpoint that failed, and it
-// carries a retry when retrying is a real action. Failures that belong to one
-// message do NOT come here — see chatProblem for the routing rule.
+// TWO SHAPES, and the difference is whether there is a transcript on screen:
+//
+//   "line"   the default, and what sits above the composer. The chat is full of
+//            valid history and one thing went wrong beside it, so it costs one
+//            line. Consolidating on the region made a dropped poll render as a
+//            tall centred dashed panel over the composer; the operator's words,
+//            2026-08-12, were "huge and blocky in the chat", and he was right.
+//   "region" ONLY where this stands in for the log itself: the log's error
+//            state, an empty drawer, an inbox that would not load. Nothing else
+//            is on screen, so the block is filling space rather than taking it.
+//
+// Failures that belong to one message do NOT come here — see chatProblem for
+// the routing rule.
 
 export default function ChatProblemBlock({
-  problem, icon, className,
+  problem, icon, shape = "line", className,
 }: {
   problem: ChatProblem;
   /** Overrides the default alert triangle when the failure has a more specific
    *  shape (a dropped connection, a blocked network). */
   icon?: ReactNode;
+  /** "region" only when nothing else is on screen. See above. */
+  shape?: "line" | "region";
   className?: string;
 }) {
   const { title, detail } = problemBlock(problem);
   const endpoint = problem.endpoint || null;
+  const retry = problem.retry
+    ? <Button size="sm" variant="ghost" onClick={problem.retry}>Retry</Button>
+    : undefined;
+
+  if (shape === "line") {
+    return (
+      <Notice
+        tone="error"
+        icon={icon}
+        detail={detail}
+        where={endpoint}
+        action={retry}
+        className={className ? `chat-problem ${className}` : "chat-problem"}
+      >
+        {title}
+      </Notice>
+    );
+  }
+
   return (
     <div className={className ? `chat-problem ${className}` : "chat-problem"}>
       <StateBlock
@@ -45,11 +75,7 @@ export default function ChatProblemBlock({
             </>
           ) : undefined
         }
-        action={
-          problem.retry
-            ? <Button size="sm" variant="ghost" onClick={problem.retry}>Retry</Button>
-            : undefined
-        }
+        action={retry}
       />
     </div>
   );

@@ -7,6 +7,7 @@ import {
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill,
   Badge, Tag, Skeleton, Field, Input, Select, Modal, ConfirmDialog, type StatusKind,
+  Notice,
 } from "@workshop/ui";
 
 // Deploys panel — per-project target bindings.
@@ -536,7 +537,7 @@ function AddTargetModal({
             Set these in the Environment panel below.
           </p>
         )}
-        {err && <StateBlock variant="error" title="Couldn't create target" hint={<code>{err}</code>} />}
+        {err && <Notice tone="error" detail={err}>Couldn't create the target.</Notice>}
         <Row style={{ gap: "var(--space-2)", justifyContent: "flex-end" }}>
           <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
           <Button variant="primary" onClick={submit} loading={saving} disabled={saving || !name || !providerKind}>

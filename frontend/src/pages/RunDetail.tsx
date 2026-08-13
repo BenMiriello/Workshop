@@ -13,6 +13,7 @@ import {
   StateBlock,
   StatusPill,
   StatusDot,
+  Notice,
 } from "@workshop/ui";
 import type { StatusKind } from "@workshop/ui";
 import { type Job, jobIsLive, jobStatusKind } from "../lib/jobs";
@@ -368,7 +369,7 @@ export default function JobDetail() {
                   : "It is not bound to any project or agent, so there is nothing to resolve in place (a malformed or orphaned run). Dismiss it to clear this alert."}
               </p>
               {actErr && (
-                <StateBlock variant="error" title="Action failed" hint={actErr} />
+                <Notice tone="error" detail={actErr}>That action failed.</Notice>
               )}
               <Row wrap style={{ gap: "var(--space-2)" }}>
                 <Button

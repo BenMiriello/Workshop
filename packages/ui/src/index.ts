@@ -48,7 +48,7 @@ export { Stepper } from "./Stepper";
 export { Modal, ConfirmDialog } from "./Modal";
 export { OverlayHost, useOverlayHost } from "./OverlayHost";
 export { Menu, MenuItem, MenuSeparator, MenuLabel } from "./Menu";
-export { StateBlock, Skeleton, ActionBar, CopyButton, RevealField } from "./feedback";
+export { StateBlock, Notice, Skeleton, ActionBar, CopyButton, RevealField } from "./feedback";
 export { TableScroll, Table, NumCell, TimeCell } from "./Table";
 export { ChartFrame, ChartTooltip, CHART_SERIES, CHART_TARGET } from "./chart";
 export { useEditMode, type EditMode } from "./useEditMode";

@@ -4,6 +4,7 @@ import { Check, ChevronRight, Pencil, RefreshCw } from "lucide-react";
 import {
   ActionBar, Button, Modal, SectionLabel, Skeleton, StackedBar, StateBlock,
   StatusDot, StatusPill, Toggle, catFor, useEditMode,
+  Notice,
 } from "@workshop/ui";
 import {
   contextHeadline, contextSlices, formatPct, formatTokens, refreshedLabel,
@@ -447,12 +448,13 @@ export default function ContextModal({
           )}
 
           {saveFailed && (
-            <StateBlock
-              variant="error"
-              title="Couldn't save the server selection"
-              hint={saveFailed}
-              action={<Button variant="ghost" onClick={() => void edit.save()}>Try again</Button>}
-            />
+            <Notice
+              tone="error"
+              detail={saveFailed}
+              action={<Button size="sm" variant="ghost" onClick={() => void edit.save()}>Try again</Button>}
+            >
+              Couldn't save the server selection.
+            </Notice>
           )}
 
           {!edit.editing && switchable.length > 0 && (

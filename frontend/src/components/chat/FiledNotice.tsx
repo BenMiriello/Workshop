@@ -21,6 +21,10 @@ import { scopeLabel } from "../../lib/tasks";
 //    two placements, neither of them this bar: under the message that caused
 //    them, or as the chat's `StateBlock` (see chat/chatProblem).
 //
+// It is NOT the general one-line notice, which is the kit's `Notice`; this
+// bar's whole job is the pointer out of the chat. Renamed from `NoticeBar` for
+// exactly that reason.
+//
 // So: one kind, one meaning, one placement. If some new note wants this bar, the
 // question to settle first is whether it points out of the chat. If it doesn't,
 // it goes in the log.
@@ -31,7 +35,7 @@ export type FiledNotice = {
   runError?: string;
 };
 
-export function NoticeBar({ notice, onDismiss }: { notice: FiledNotice; onDismiss: () => void }) {
+export function FiledBar({ notice, onDismiss }: { notice: FiledNotice; onDismiss: () => void }) {
   return (
     <div className="chat-spawn-note" role="status">
       <span className="chat-spawn-note__body">

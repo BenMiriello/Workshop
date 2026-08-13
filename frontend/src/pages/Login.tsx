@@ -5,7 +5,7 @@
 import { useState, type FormEvent } from "react";
 import { Hexagon } from "lucide-react";
 
-import { Button, Card, Field, Input, PageHeader, Stack, StateBlock } from "@workshop/ui";
+import { Button, Card, Field, Input, Notice, PageHeader, Stack } from "@workshop/ui";
 import { useAuth } from "../auth/AuthProvider";
 import { AuthError } from "../lib/auth";
 
@@ -106,7 +106,9 @@ export default function Login() {
                 />
               </Field>
 
-              {error && <StateBlock variant="error" title={error} />}
+              {/* A line under the field it is about, not a dashed panel between
+                  the password box and the button. */}
+              {error && <Notice tone="error">{error}</Notice>}
 
               <Button
                 type="submit"

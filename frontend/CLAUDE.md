@@ -22,7 +22,7 @@ Both stylesheets are imported in `src/main.tsx` **before** `styles.css`. `styles
 6. **Hierarchy from position, scale, weight, color — not borders.** `PageHeader` (one per screen) → status band → content grouped under `SectionLabel` (the uppercase motif). Cards float on shadow (light) / a faint ring (dark). 4px spacing grid (`--space-1..8`); use the steps, never invent `13px`.
 7. **Editability model, not tap-to-edit.** Anything that writes config or money uses `useEditMode` + a sticky `ActionBar` (Save primary / Cancel ghost, "unsaved" pill while dirty). View prefs (theme, filters, reveal/hide, source `<select>`) commit **on change**. Config/money commit **on explicit Save**. See "When does a control commit?" below.
 8. **Destructive actions get `ConfirmDialog`.** `danger` treatment + a dialog naming the consequence and that it can't be undone. Never bare red text, never one-tap delete.
-9. **Every list/page ships four states.** loading (`Skeleton`), empty (`StateBlock` — always with an instructional hint, e.g. "POST to `/api/events/<source>` to populate"), error (`StateBlock variant="error"` with the failing endpoint + retry), overflow (paginate / `TableScroll`).
+9. **Every list/page ships four states.** loading (`Skeleton`), empty (`StateBlock` — always with an instructional hint, e.g. "POST to `/api/events/<source>` to populate"), error (`StateBlock variant="error"` with the failing endpoint + retry), overflow (paginate / `TableScroll`). **`StateBlock` is a REGION and belongs only where content is absent** — see "A region or a line" below; a failure beside content that is still on screen is a `Notice`.
 10. **Accessibility + motion.** WCAG AA contrast both themes; visible focus ring via `:focus-visible` (handled by `components.css`); dialogs trap focus + Esc + restore (handled by `Modal`); cursors are `default`/`pointer`/`text` only — never `not-allowed`/`wait`; everything respects `prefers-reduced-motion`.
 
 11. **Copy: no em-dashes, ever. Direct, clear, concise.** No `—` in any string a
@@ -36,6 +36,39 @@ Both stylesheets are imported in `src/main.tsx` **before** `styles.css`. `styles
     to "continue where you left off". `check_design.sh` fails on an em-dash in a
     changed `.tsx` string, the same as it does on inline hex and emoji. Code
     comments are exempt; they are not copy.
+
+## A region or a line: where a failure is said
+
+**Two shapes, and the question that picks one is whether the content is still on
+screen.** Not how bad it was, not whether it is an error at all.
+
+| | `StateBlock` | `Notice` |
+|---|---|---|
+| what it is | a REGION: centred, tall, bordered | a LINE: icon, sentence, action |
+| when | the content is **not there** — a list that failed to load, an empty page, a body that could not be read | the content **is** there and one thing went wrong beside it |
+| examples | "Couldn't load agents" filling the page, an empty inbox | a save that was rejected, a form submit that failed, a dropped poll under a full transcript, a `<Select>` whose options would not load |
+
+`StateBlock` used to be the only error shape the kit had, so it got used for
+both, and a one-sentence problem rendered as a 120px dashed panel in the middle
+of a working page. Reported 2026-08-12 against the chat, where a dropped poll
+put one over the composer: "why is this message so huge and blocky... i hate
+this format". It was in roughly twenty places.
+
+The test: **would this space be empty if the failure had not happened?** Yes,
+it is a region. No, it is a line.
+
+Rules that fall out:
+
+- **A dialog or a form never gets a region for a rejected submit.** The form is
+  right there. `Notice` above the buttons.
+- **A field-sized slot gets a line.** A dashed panel where a dropdown belongs is
+  the shape saying the whole section died, which is not what happened.
+- **Name the endpoint where naming it helps someone act** (`where`), leave it off
+  where the only move is Retry. The stale-chat notice carried
+  `/api/chat/threads/<40 hex chars>/events` and that was two thirds of its
+  length.
+- **A notice states an outcome, so it is neutral ink with one hue on the icon.**
+  See "What color is for". Never a tinted panel.
 
 ## When does a control commit?
 

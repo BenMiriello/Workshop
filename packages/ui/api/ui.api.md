@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.5.0
+Version: 0.5.1
 
 ## @workshop/ui
 
@@ -46,6 +46,7 @@ Source: `src/index.ts`
 - MenuLabel
 - MenuSeparator
 - Modal
+- Notice
 - NumCell
 - OverlayHost
 - PageHeader

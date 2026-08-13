@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePoll } from "../lib/usePoll";
 import { useNavigate } from "react-router-dom";
 import { WifiOff, ArrowDown, Paperclip, Unplug } from "lucide-react";
-import { StateBlock } from "@workshop/ui";
+import { Notice } from "@workshop/ui";
 import WorkDrawer from "./chat/WorkDrawer";
-import { NoticeBar, type FiledNotice } from "./chat/FiledNotice";
+import { FiledBar, type FiledNotice } from "./chat/FiledNotice";
 import ChatComposer from "./chat/ChatComposer";
 import { useAttachments, dragHasFiles, filesFromTransfer } from "./chat/useAttachments";
 import { canSendWith } from "./chat/attachments";
@@ -34,7 +34,7 @@ import { useSendPipeline, wasFirstExchange } from "./chat/useSendPipeline";
 import { logPlaceholder } from "./chat/chatLogState";
 import { placementFor, type ChatProblem } from "./chat/chatProblem";
 import { scopeSwitch } from "./chat/scopeSwitch";
-import { staleNoticeText } from "./chat/staleNotice";
+import { STALE_TEXT } from "./chat/staleNotice";
 import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
 import {
   committedClientIds, committedMessages, withoutCommitted,
@@ -175,7 +175,7 @@ export default function Chat({
 
   // The conversation itself: one store, fed by one endpoint from a cursor.
   const log = useThreadLog({ threadId: activeId, onError: setErr });
-  const { state, stateRef, dispatch, transcript, sync, runActive, hydrated, staleSince } = log;
+  const { state, stateRef, dispatch, transcript, sync, runActive, hydrated, stale } = log;
   // Sends this browser has made that the server has not taken. The ONLY chat
   // state the browser still owns on its own, and it owns it because the server
   // has never heard of it: a request that did not land. Everything else — the
@@ -745,40 +745,32 @@ export default function Chat({
   const chatProblem: ChatProblem | null =
     err && showEgressBanner && egressDetail === err.text ? null : err;
 
-  // Re-read on every render rather than on a timer: the chat re-renders often
-  // enough that the elapsed figure stays honest, and a timer whose only job is
-  // to age a string is a subscription that outlives the condition it describes.
-  const staleNote = staleNoticeText(staleSince, Date.now());
-  const staleProblem: ChatProblem | null = staleNote
-    ? {
-      text: staleNote,
-      endpoint: activeId
-        ? `/api/chat/threads/${activeId}/events`
-        : "/api/chat/threads",
-      retry: () => { void sync(); },
-    }
+  // No endpoint on this one, deliberately. Rule 9 wants the failing path named
+  // where naming it helps someone act; here the only move is Retry, and the
+  // path was two thirds of the notice's length. It was part of what made this
+  // read as a wall of text over the composer.
+  const staleProblem: ChatProblem | null = stale
+    ? { text: STALE_TEXT, retry: () => { void sync(); } }
     : null;
 
+  // A line, like every other failure that sits over a working transcript. It
+  // was a StateBlock: a centred dashed panel with a 28px icon and an open
+  // details block, above the composer, for as long as a blocked-network reply
+  // stayed in the log. The raw output is the one part worth keeping behind a
+  // disclosure, so it stays there and the rest costs one line.
   const egressBanner = showEgressBanner ? (
-    <div className="chat-egress">
-      <StateBlock
-        variant="error"
-        icon={<WifiOff aria-hidden />}
-        title="External network is blocked in this environment."
-        hint={
-          <>
-            <span>
-              Run network commands (git clone / npm install) in your own terminal, or
-              approve the host in Settings.
-            </span>
-            <details className="chat-egress__details">
-              <summary className="ws-card__meta">Details</summary>
-              <pre className="ws-mono chat-egress__pre">{egressDetail}</pre>
-            </details>
-          </>
-        }
-      />
-    </div>
+    <Notice
+      tone="error"
+      icon={<WifiOff aria-hidden />}
+      className="chat-egress"
+      detail="Run network commands (git clone / npm install) in your own terminal, or approve the host in Settings."
+    >
+      External network is blocked in this environment.
+      <details className="chat-egress__details">
+        <summary className="ws-card__meta">Details</summary>
+        <pre className="ws-mono chat-egress__pre">{egressDetail}</pre>
+      </details>
+    </Notice>
   ) : null;
 
   // ---- In-chat cards -------------------------------------------------------
@@ -1143,7 +1135,7 @@ export default function Chat({
         </div>
       ) : (
       <>
-      {notice && <NoticeBar notice={notice} onDismiss={() => setNotice(null)} />}
+      {notice && <FiledBar notice={notice} onDismiss={() => setNotice(null)} />}
       <div className="chat-log-wrap">
         {/* Floats over the top of the log instead of pushing it down — it used
             to sit in flow and shove the whole transcript downward every time an

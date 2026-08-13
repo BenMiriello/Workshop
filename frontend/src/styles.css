@@ -998,14 +998,16 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 .chat-spawn-note a:hover { text-decoration: underline; }
 
 /* A chat-scoped failure, wherever it lands: the slot above the composer, the
-   log's own error state, or the inbox panel. Layout only — the block itself is
-   the shared `StateBlock variant="error"` (see chat/ChatProblemBlock). It
-   replaced a bare red line that carried no endpoint and no retry. */
-.chat-problem { padding: var(--space-2) var(--space-3); }
+   log's own error state, or the inbox panel. Layout only — the thing inside is
+   the kit's `Notice` (a line, the default) or `StateBlock variant="error"` (a
+   region, only where it stands in for the log). See chat/ChatProblemBlock.
+   Horizontal padding only: a line brings its own vertical rhythm, and doubling
+   it is half of how this came to read as a slab over the composer. */
+.chat-problem { padding-inline: var(--space-3); }
 .chat-problem__endpoint { margin-top: var(--space-1); }
 
 /* Egress notice (build only). */
-.chat-egress { padding: var(--space-2) var(--space-3); }
+.chat-egress { padding-inline: var(--space-3); }
 .chat-egress__details { margin-top: var(--space-2); }
 .chat-egress__details summary { cursor: pointer; }
 .chat-egress__pre { margin-top: var(--space-2); white-space: pre-wrap; font-size: var(--fs-xs); max-height: 12vh; overflow: auto; }

@@ -127,7 +127,11 @@ export default function ChatLog({
         // It used to say "Couldn't load threads." in front of the real message,
         // which was a guess: the same slot carried a failed poll, a failed model
         // list and a failed delete, and only one of those was about threads.
-        <ChatProblemBlock problem={error} />
+        // The region shape, and one of the two places in the chat that earns
+        // it: this IS the log's four-states error, standing where the
+        // transcript would be. Everywhere else the transcript is fine and the
+        // failure costs a line.
+        <ChatProblemBlock problem={error} shape="region" />
       ) : placeholder === "empty" ? (
         <div className="chat-empty">
           {isBuild ? "Tell the agent what to build..." : "Ask anything, or tell me to change the plan."}

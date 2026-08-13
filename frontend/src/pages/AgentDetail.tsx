@@ -11,6 +11,7 @@ import {
   ConfirmDialog,
   Field,
   Input,
+  Notice,
   PageHeader,
   Row,
   SectionLabel,
@@ -334,9 +335,7 @@ function CreateAgent() {
     <div>
       <PageHeader title="New agent" sub="Pick a role. Everything else is defaulted; you can tune later." />
       {err && (
-        <div style={{ marginBottom: "var(--space-4)" }}>
-          <StateBlock variant="error" title="Couldn't create agent" hint={<code>{err}</code>} />
-        </div>
+        <Notice tone="error" detail={err}>Couldn't create the agent.</Notice>
       )}
       <Stack>
         <div>
@@ -739,9 +738,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
       />
 
       {err && (
-        <div style={{ marginBottom: "var(--space-4)" }}>
-          <StateBlock variant="error" title="Save error" hint={<code>{err}</code>} />
-        </div>
+        <Notice tone="error" detail={err}>Couldn't save this agent.</Notice>
       )}
 
       <Stack>

@@ -25,7 +25,7 @@ import {
   Select,
   Skeleton,
   Stack,
-  StateBlock,
+  Notice,
   StatusPill,
   Textarea,
   type SegmentedOption,
@@ -146,14 +146,15 @@ function TemplateField({
   if (err) {
     return (
       <Field label={label}>
-        <StateBlock
-          variant="error"
-          title="Couldn't load templates."
-          hint={<span className="ws-mono">GET /api/projects/templates</span>}
-          action={
-            <Button size="sm" variant="ghost" onClick={() => setReloadKey((k) => k + 1)}>Retry</Button>
-          }
-        />
+        {/* Stands in for a <Select>, so it is a line. A region here put a
+            120px dashed panel where a dropdown belongs. */}
+        <Notice
+          tone="error"
+          where="GET /api/projects/templates"
+          action={<Button size="sm" variant="ghost" onClick={() => setReloadKey((k) => k + 1)}>Retry</Button>}
+        >
+          Couldn't load templates.
+        </Notice>
       </Field>
     );
   }
@@ -215,12 +216,13 @@ function TaskScopeField({
   if (err) {
     return (
       <Field label={label}>
-        <StateBlock
-          variant="error"
-          title="Couldn't load scopes."
-          hint={<span className="ws-mono">GET /api/tasks/scopes</span>}
+        <Notice
+          tone="error"
+          where="GET /api/tasks/scopes"
           action={<Button size="sm" variant="ghost" onClick={() => setReloadKey((k) => k + 1)}>Retry</Button>}
-        />
+        >
+          Couldn't load scopes.
+        </Notice>
       </Field>
     );
   }
@@ -583,7 +585,7 @@ export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: strin
   };
 
   const errorBlock = error ? (
-    <StateBlock variant="error" title="That action failed." hint={<code>{error}</code>} />
+    <Notice tone="error" detail={error}>That action failed.</Notice>
   ) : null;
 
   // Inert fallback: malformed JSON or an unknown kind. Read-only, no live

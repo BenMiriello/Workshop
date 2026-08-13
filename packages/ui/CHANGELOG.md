@@ -12,6 +12,24 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.1 — 2026-08-12 — a failure beside content is a line, not a region
+
+**Additive.** New primitive `Notice`, plus `.ws-notice*` in `components.css`.
+Nothing removed, nothing renamed.
+
+`StateBlock` is a REGION: centred, tall, dashed, sized to stand in for a list
+that could not load. It was the kit's only error shape, so it also got used for
+every failure that happened NEXT to content that was fine, and a one-sentence
+problem rendered as a 120px panel in the middle of a working page. In the chat
+that meant a dropped poll put a dashed slab over the composer; the operator's
+words on 2026-08-12 were "huge and blocky", and roughly twenty call sites across
+the app had the same shape.
+
+`Notice` is the other half of rule 9: one line, an icon, an optional cause, an
+optional endpoint, an optional action. No border, no fill, no centring. Use it
+whenever the screen still has its content; keep `StateBlock` for the empty
+region.
+
 ## 0.5.0 — 2026-08-12 — one list row, and status stops being a labelled chip
 
 **Breaking (CSS).** `.ws-tickets` and `.ws-ticket-row*` are renamed

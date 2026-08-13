@@ -16,6 +16,7 @@ import {
   StatusPill,
   type SegmentedOption,
   type StatusKind,
+  Notice,
 } from "@workshop/ui";
 
 const SENS_OPTIONS: SegmentedOption<ProjectSensitivity>[] = [
@@ -115,9 +116,7 @@ function ImportFromGitModal({
         <Segmented options={SENS_OPTIONS} value={sensitivity} onChange={setSensitivity} ariaLabel="Sensitivity" />
       </Field>
       {err && (
-        <div style={{ marginTop: "var(--space-3)" }}>
-          <StateBlock variant="error" title="Couldn't import" hint={<code>{err}</code>} />
-        </div>
+        <Notice tone="error" detail={err}>Couldn't import that project.</Notice>
       )}
     </Modal>
   );

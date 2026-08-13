@@ -37,6 +37,7 @@ import {
   Input,
   Skeleton,
   StateBlock,
+  Notice,
   type SegmentedOption,
   type ThemeMode,
 } from "@workshop/ui";
@@ -673,12 +674,12 @@ function ChatSection() {
         )}
       </Row>
 
+      {/* A line, not a region: the settings it failed to save are still on
+          screen right above it. */}
       {saveErr && (
-        <StateBlock
-          variant="error"
-          title="Couldn't save chat settings"
-          hint={`POST /api/chat/prefs failed: ${saveErr}`}
-        />
+        <Notice tone="error" detail={saveErr} where="POST /api/chat/prefs">
+          Couldn't save chat settings.
+        </Notice>
       )}
 
       {/* Direct children of the card, not a Row: the action bar is sticky and
@@ -767,12 +768,14 @@ function AgentsSection() {
           and the host's memory. */}
       <Row label="agent runs at once">
         {concErr ? (
-          <StateBlock
-            variant="error"
-            title="Couldn't read the concurrency limits"
-            hint={`GET /api/concurrency failed: ${concErr}`}
+          <Notice
+            tone="error"
+            detail={concErr}
+            where="GET /api/concurrency"
             action={<Button size="sm" variant="ghost" onClick={loadConc}>Retry</Button>}
-          />
+          >
+            Couldn't read the concurrency limits.
+          </Notice>
         ) : conc == null ? (
           <Skeleton />
         ) : edit.editing ? (
@@ -810,11 +813,9 @@ function AgentsSection() {
         </span>
       </Row>
       {saveErr && (
-        <StateBlock
-          variant="error"
-          title="Couldn't save the concurrency limits"
-          hint={saveErr}
-        />
+        <Notice tone="error" detail={saveErr}>
+          Couldn't save the concurrency limits.
+        </Notice>
       )}
       {conc != null && !concErr && (edit.editing ? (
         <ActionBar flash={edit.flash ? "Saved" : undefined}>

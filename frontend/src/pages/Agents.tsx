@@ -24,6 +24,7 @@ import {
   Tag,
   catFor,
   type StatusKind,
+  Notice,
 } from "@workshop/ui";
 import DelegatesSection from "../components/DelegatesSection";
 import { triggerSummary, nextScheduled, agentAgency, type UnifiedAgent } from "../lib/agentTriggers";
@@ -238,7 +239,7 @@ function FromTemplateModal({
             ))}
           </Select>
         </Field>
-        {err && <StateBlock variant="error" title="Couldn't create from template" hint={<code>{err}</code>} />}
+        {err && <Notice tone="error" detail={err}>Couldn't create from that template.</Notice>}
         <Row end>
           <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
           <Button variant="primary" onClick={submit} disabled={busy || !pick} loading={busy}>

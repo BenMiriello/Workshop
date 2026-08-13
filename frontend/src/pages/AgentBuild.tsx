@@ -23,6 +23,7 @@ import {
   Textarea,
   type SegmentedOption,
   type StatusKind,
+  Notice,
 } from "@workshop/ui";
 import Chat from "../components/Chat";
 import { useCrumbLabel } from "../components/appNav";
@@ -1061,7 +1062,7 @@ export default function AgentBuild() {
             />
           </Field>
           {renameErr && (
-            <StateBlock variant="error" title="Couldn't rename" hint={<code>{renameErr}</code>} />
+            <Notice tone="error" detail={renameErr}>Couldn't rename this agent.</Notice>
           )}
           <Row end>
             <Button variant="ghost" onClick={() => setRenameOpen(false)} disabled={renameBusy}>Cancel</Button>

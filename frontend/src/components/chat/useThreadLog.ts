@@ -6,6 +6,7 @@ import {
 } from "./threadStore";
 import { selectCommitted, composeTranscript, type TranscriptBlock } from "./transcriptBlocks";
 import type { ChatProblem } from "./chatProblem";
+import { isStale } from "./staleNotice";
 
 // The client's copy of one thread's log, kept current from ONE endpoint.
 //
@@ -34,11 +35,10 @@ import type { ChatProblem } from "./chatProblem";
 // arrived up to ten seconds late on every other device.
 const POLL_MS = 60_000;
 
-// How many polls in a row must fail before the chat says it has gone quiet.
-// Three at POLL_MS is half a minute of silence — long enough that a single
-// dropped request never cries wolf, short enough that the operator is not left
-// talking to a frozen transcript.
-const STALE_AFTER_FAILURES = 3;
+// When the chat says it has gone quiet lives in `staleNotice`: a run of
+// failures AND real elapsed silence. Counting failures alone was not enough —
+// sync runs on stream events and on writes too, not only on the poll, so three
+// of them can fail inside three seconds and did.
 
 export type ThreadLog = {
   state: ThreadState;
@@ -60,10 +60,10 @@ export type ThreadLog = {
    *  which is BEFORE this fetch is even issued. Without this, every chat open
    *  flashed the empty state for a round trip. */
   hydrated: boolean;
-  /** When this browser stopped hearing from the backend, or null while it is
-   *  current. Epoch ms of the FIRST failure in the run, so the UI can say how
-   *  long it has been rather than just that it happened. */
-  staleSince: number | null;
+  /** Has this browser stopped hearing from the backend? The decision is made
+   *  here rather than at render time on purpose: it turns on a clock, and a
+   *  chat whose backend has gone away has nothing else left to re-render it. */
+  stale: boolean;
 };
 
 export function useThreadLog({
@@ -91,11 +91,14 @@ export function useThreadLog({
   const [hydratedId, setHydratedId] = useState<string | null>(null);
   const hydrated = !threadId || hydratedId === threadId;
 
-  // Consecutive failed polls, and when the run of them began. Two of these is a
-  // hiccup; the threshold is what separates a blip from a chat that has stopped
-  // hearing the backend.
+  // Consecutive failures, and when a request last landed. Both are needed: a
+  // burst of failures says nothing on its own (the first thing a dropped
+  // connection does is fail several times quickly), and elapsed time says
+  // nothing on its own either, since a quiet chat legitimately goes a minute
+  // between polls. See staleNotice.
   const failuresRef = useRef(0);
-  const [staleSince, setStaleSince] = useState<number | null>(null);
+  const lastOkRef = useRef(Date.now());
+  const [stale, setStale] = useState(false);
 
   const sync = useCallback(async () => {
     const id = threadIdRef.current;
@@ -122,7 +125,8 @@ export function useThreadLog({
       });
       // A poll landed, so whatever this chat is showing is current.
       failuresRef.current = 0;
-      setStaleSince((prev) => (prev === null ? prev : null));
+      lastOkRef.current = Date.now();
+      setStale((prev) => (prev ? false : prev));
     } catch (e) {
       // Transient by nature (this runs on a timer), and ONE failure says
       // nothing: a hiccup between two polls is not worth a word.
@@ -134,8 +138,8 @@ export function useThreadLog({
       // "it is still thinking" from "this browser stopped hearing minutes ago",
       // which is a large share of what "the chat is stuck" has meant.
       failuresRef.current += 1;
-      if (failuresRef.current >= STALE_AFTER_FAILURES) {
-        setStaleSince((prev) => prev ?? Date.now());
+      if (isStale(failuresRef.current, lastOkRef.current, Date.now())) {
+        setStale((prev) => (prev ? prev : true));
       }
       if (stateRef.current.order.length === 0) {
         onErrorRef.current({
@@ -156,7 +160,8 @@ export function useThreadLog({
     // A new thread starts from a clean slate: the previous chat's stale run says
     // nothing about this one.
     failuresRef.current = 0;
-    setStaleSince(null);
+    lastOkRef.current = Date.now();
+    setStale(false);
     if (!threadId) return;
     let cancelled = false;
     const requestedAt = Date.now();
@@ -268,5 +273,5 @@ export function useThreadLog({
   );
 
   return { state, stateRef, dispatch, transcript, sync, runActive: !!state.activeRun,
-           hydrated, staleSince };
+           hydrated, stale };
 }
