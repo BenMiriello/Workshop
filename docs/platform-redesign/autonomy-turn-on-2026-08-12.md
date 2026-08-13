@@ -561,6 +561,13 @@ label that is false.
   the four-field body format that already exists.
 - Target: the pass rate goes from 26% toward 80% on newly filed tickets. Do not
   gate on it yet. Measure it for a week.
+- **Fix the preference path** (§5). Eleven captured operator corrections are
+  currently written to a scope nothing reads, under a reply that says they were
+  captured. This belongs in the same phase as "stop lying" and only missed it
+  because it is a data-flow bug rather than a UI one.
+- **Give the search tool to the worker and the triager** (§5). One allowlist
+  change, and it is what lets everything downstream reason from the same
+  picture as the chat.
 - **One scope vocabulary** (§5). Everything after this compounds on it: the
   triager's decisions, the digest, the search tool and the inbox all key on
   scope, and three key spaces means three of everything.
@@ -582,11 +589,11 @@ label that is false.
   which the operator approves. Depth cap 2, filing cap 5 per pass.
 - Run it manually first. Read every decision it makes for a week before giving
   it a cron trigger.
-- **One search tool, in every allowlist** (§5). The triager is the first
-  consumer that genuinely needs it: deciding whether a ticket is a duplicate,
-  or already answered by a note, is a retrieval question. Build it here rather
-  than speculatively earlier, and give the chat the same tool in the same pass
-  so both reason from one picture.
+- **Rebuild the index automatically and index every knowledge directory**
+  (§5). The triager is the first consumer that genuinely depends on retrieval:
+  deciding whether a ticket duplicates another, or is already answered by a
+  note, is a search question, and today it would be searching a hand-built
+  index that covers one directory and is hours stale.
 
 **Split `awaiting` into two states while doing this.** They are different
 questions and they must expire differently:
