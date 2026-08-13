@@ -300,6 +300,85 @@ wiring, because the shell does not know what a role does.
 
 ---
 
+## 5. Shared context: what chats and agents know about each other
+
+This is not a side feature. In the architecture already chosen, **shared state
+IS the coordination mechanism.** No agent addresses another agent; they
+coordinate by reading and writing the same stores. So the quality of the shared
+knowledge layer is the ceiling on how well anything coordinates, and a note
+nobody can find is a note that was never written.
+
+### The rule that decides every question below
+
+**Push a little, pull the rest.** Everything injected into a turn is paid for
+on every turn, invalidates the prompt cache when it changes, and competes with
+the actual task for attention. Everything retrievable is paid for only when it
+is wanted. So:
+
+- **Push**: the operator's standing preferences, the scope's own rules, and a
+  short digest of what is live in this scope. Small, ranked, capped.
+- **Pull**: everything else, through a tool, on demand, with the query the
+  model actually has rather than the guess the injector made.
+
+This is already a lesson learned here rather than a theory: the ambient
+cross-chat digest had to be moved out of the cache-stable prefix and capped,
+because it changed on every task state change and so invalidated every chat's
+cache while injecting topically-related distractors.
+
+### What has to exist for pull to work
+
+1. **One scope vocabulary.** Chat scope, learnings scope and preference scope
+   are three different key spaces today, with translation in the middle. A note
+   written in one is unreachable from another. This is the single highest-value
+   fix in this section, and it is unglamorous: pick the chat-scope vocabulary
+   (`workshop | project:<slug> | app:<name> | agent:<slug>`), make everything
+   else a projection of it, and delete the translators.
+2. **An index, not a filesystem scan.** Retrieval today is largely a directory
+   walk plus substring matching. That is fine at 20 notes and useless at 500.
+   What it needs is the cheapest thing that answers "what do we know about X in
+   this scope": a title-and-tag index over notes, tickets, and run receipts,
+   with the existing embedding seam (`WORKSHOP_TEXT_EMBED_URL`, nomic-embed via
+   the local Ollama) for the paraphrase case. The dedupe path already proved
+   the lexical vectorizer undershoots on paraphrase; the same fix applies here.
+3. **One discovery tool, in every allowlist.** A chat, a maker run, and a
+   triager pass should all reach the same `search(scope, query, kinds)` and get
+   back typed hits: note, ticket, run, chat, decision. Today the chat and the
+   worker have different tool surfaces, which means they can reach different
+   knowledge and reason from different pictures of the same scope.
+4. **Provenance on every hit.** Where did this come from, when, and is it still
+   true? A stale fact confidently retrieved is worse than a gap, and this repo
+   has already been bitten by memories that named files that no longer exist.
+
+### What is shared, and what is deliberately not
+
+| | shared in a scope | why |
+|---|---|---|
+| tickets and their state | yes | it is the blackboard |
+| run receipts and verdicts | yes | what was tried, and what happened |
+| scoped notes | yes | the durable facts of the place |
+| decisions (ADRs) | yes, workshop-wide | they bind everything |
+| operator preferences | yes, everywhere | they are about the operator, not the place |
+| a chat's raw transcript | **no** | it is long, it is mostly process, and its conclusions belong in a note. Chats share CONCLUSIONS, not context windows. |
+| another agent's working memory | **no** | that is agent-to-agent messaging wearing a hat |
+
+The last two rows are the load-bearing restraint. "Let every chat see every
+other chat" sounds like sharing and is actually the lossy-compression failure
+the research warns about: an inter-agent message is a compressed, decontextualised
+summary, and piping raw transcripts around multiplies that. **The interface
+between chats is the note and the ticket, both of which are written
+deliberately, and both of which the operator can read.**
+
+### The one new mechanism worth building
+
+**A scope digest that is derived, capped and cheap**: for a given scope, the
+open tickets, the runs in flight, the last N decisions, and the notes changed
+since the reader last looked. Computed server-side, injected small, and
+expandable through the search tool. That is what makes a second chat in the
+same scope useful instead of merely allowed, and it is roughly the same
+computation the inbox already needs.
+
+---
+
 ## 6. The sequence
 
 Ordered so that each step is observable before the next one is trusted. The
@@ -328,6 +407,9 @@ label that is false.
   the four-field body format that already exists.
 - Target: the pass rate goes from 26% toward 80% on newly filed tickets. Do not
   gate on it yet. Measure it for a week.
+- **One scope vocabulary** (§5). Everything after this compounds on it: the
+  triager's decisions, the digest, the search tool and the inbox all key on
+  scope, and three key spaces means three of everything.
 
 ### Phase 2: one watched run, end to end (a day)
 
@@ -346,6 +428,11 @@ label that is false.
   which the operator approves. Depth cap 2, filing cap 5 per pass.
 - Run it manually first. Read every decision it makes for a week before giving
   it a cron trigger.
+- **One search tool, in every allowlist** (§5). The triager is the first
+  consumer that genuinely needs it: deciding whether a ticket is a duplicate,
+  or already answered by a note, is a retrieval question. Build it here rather
+  than speculatively earlier, and give the chat the same tool in the same pass
+  so both reason from one picture.
 
 **Split `awaiting` into two states while doing this.** They are different
 questions and they must expire differently:
@@ -478,7 +565,7 @@ they cut against building more of this:
 
 ---
 
-## 9. Evidence
+## 8. Evidence
 
 Measured findings this plan leans on, so a later reader can check the ground
 rather than the assertion. **[M]** measured, **[D]** a design decision whose
