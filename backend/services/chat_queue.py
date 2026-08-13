@@ -160,18 +160,6 @@ def read(thread_id: str) -> list[dict]:
     return sorted(_read_raw(thread_id)["entries"], key=_order_key)
 
 
-def is_held(thread_id: str) -> bool:
-    """Is the queue holding?
-
-    Stop hands the wheel back: the queue stops draining itself until the
-    operator sends again. Held here rather than in the browser for the same
-    reason as the entries themselves. When this lived in component state beside
-    a localStorage queue, a reload dropped the hold and kept the queue, and
-    everything typed ahead fired as a turn with nobody watching.
-    """
-    return bool(_read_raw(thread_id)["held"])
-
-
 def state(thread_id: str) -> dict:
     """`{queued, queue_held, queue_error}` for the wire. One read, every fact.
 

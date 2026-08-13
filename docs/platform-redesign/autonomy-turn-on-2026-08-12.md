@@ -12,6 +12,23 @@ shortest honest path from here to autonomous ticket execution.
 > not design. The gap is that nothing runs, and that several shipped controls
 > do nothing.
 
+## 0. The one paragraph that should decide the order of work
+
+The largest measured intervention anywhere in the 2025-2026 literature on
+agent systems is not a topology, a role set, a critic, or a memory
+architecture. It is **a human answering a question**. Magentic-UI measured
+autonomous task completion at 30.3%, and 51.9% when a simulated user with side
+information could answer, **with help requested on only 10% of tasks**. Nothing
+else in the corpus comes close to +71% relative for that little.
+
+Meanwhile, six independent 2026 replications that hold compute constant find
+that most multi-agent architectures **lose** to a single agent given the same
+token budget, by 2.6 to 11.3 points.
+
+So the order is: **make asking work, make the ticket say enough, and only then
+add machinery.** Everything in this plan is arranged around that, and anything
+that looks like more agents should be read with suspicion.
+
 ---
 
 ## 1. What is actually true today (measured 2026-08-12)
@@ -272,17 +289,47 @@ periodically (the same paper measured that re-injecting the plan every ~5 steps
 improves both compliance and success). The triager's scope pass exists to catch
 tickets that cannot support a plan at all, and to ask, not to plan for them.
 
-**And the reviewer stays deterministic, independent, and unable to approve.**
-Three measured findings converge on the shape `reviewer.sh` already has: models
-cannot reliably self-correct without external feedback (ICLR 2024); LLM judges
-show a measured linear correlation between self-recognition and self-preference,
-so a worker grading itself launders confidence; and Anthropic's shipped code
-review runs finders and then a **separate verification pass** to kill false
-positives, and still refuses to approve a PR, because "that's still a human
-call". One change worth making: **size-gate it.** Their published numbers show
-a 1,000-line PR yields findings 84% of the time and a sub-50-line PR 31% of the
-time, at ~20 minutes and $15-25 per review. A judgement pass on a three-line
-diff is mostly latency.
+**And the reviewer stays deterministic and external. Do not add an LLM gate.**
+
+This is the recommendation I changed while writing, so the reasoning is worth
+keeping. The obvious next move is "add a reviewer agent that judges whether the
+work is right". The evidence says do not, at least not as a gate:
+
+- **Self-critique without an external signal makes things worse.** Blocksworld,
+  GPT-4 as its own verifier: 40% alone, **55%** with self-critique, **88%** with
+  a sound external verifier. And the self-verifier produced 38 false positives
+  out of 45 negatives; it approves broken plans.
+- **A stronger generator makes errors that are harder to verify.** Measured
+  true-negative rate fell 0.68 to 0.17 as the generator got stronger. A judge
+  helps most where you need it least.
+- **A single LLM verdict is too noisy to gate on.** Pairwise preferences flip
+  13.6% of the time on average; ~11 repeated trials are needed for a majority
+  to be stable. Gating a queue on one coin-flippy verdict is worse than gating
+  on nothing.
+- **A judgement pass is usually the biggest line item.** Code review was 59.4%
+  of ChatDev's total tokens. A pre-registered experiment where the authors
+  expected their multi-agent reviewer to win found a **single frontier-model
+  pass beat it, at roughly one thirtieth of the tokens**.
+
+`reviewer.sh` is already the good shape: it IS the external verifier, because
+typecheck, tests and a real diff are ground truth, not opinion. Keep it,
+deterministic, and keep it unable to approve.
+
+Where a judging model DOES earn its place, on the same evidence:
+
+- **As a reviewer with a CLEAN context, advisory, not gating.** Cognition runs
+  exactly this in production (Devin Review, no shared context with the writer,
+  ~2 bugs per PR, ~58% severe) and the mechanism is that a fresh context is not
+  biased by the specification the writer was working from. Anthropic's shipped
+  review is the same shape: independent finders, then a separate verification
+  pass to kill false positives, and it still will not approve.
+- **As a critic that SHORTENS work rather than appending to it.** The one
+  measured case where a critic was both more accurate and cheaper (25.2% vs
+  20.8%, $0.04 vs $0.11) worked by cutting trajectories short, not by adding a
+  pass at the end.
+
+So: advisory findings on the run page, never a gate, and only above a diff-size
+floor.
 
 ### Centralized or decentralized
 
@@ -293,6 +340,29 @@ other only through the ticket store and the knowledge store. The reasoning is
 recorded across several docs and it is the same in each: parallel writers make
 conflicting implicit decisions, every inter-agent message is lossy compression,
 and at ten agents a peer mesh has 45 edges nobody can test.
+
+**The outside evidence is now much stronger than when that was written, and it
+converges from three directions.** The read/write asymmetry was reached
+independently by Cognition, LangChain and Anthropic: parallelise reads freely,
+serialise writes. Two production systems then found the failure mode directly.
+Cursor, running hundreds of concurrent agents on a million-line codebase, tried
+a shared coordination file with locks and measured **twenty agents dropping to
+the effective throughput of two or three**; what worked was workers on
+independent repo copies with no real-time coordination. Anthropic's 16-agent C
+compiler used a shared git repo with lock files successfully for two weeks, and
+then hit the same wall on the Linux kernel, where "every agent would hit the
+same bug, fix that bug, and then overwrite each other's changes."
+
+Two consequences for this system:
+
+1. **Concurrency, whenever it comes, arrives as worktree isolation, not as a
+   smarter lock.** That work is already ticketed here (C3: worktree mode is
+   built and correct, but its success path publishes a PR, so it cannot be used
+   on a tree with no remote). Fixing the local-merge path is the prerequisite
+   for every form of parallel execution.
+2. **Until then, one writer, and that is not a limitation to apologise for.**
+   Six compute-matched replications in 2026 found most multi-agent
+   architectures losing to a single agent at equal token budget.
 
 A user adding their own agent therefore adds: a slug, a persona body, a role
 from the closed five, a trigger, and an autonomy mode. Nothing else, and no new
@@ -307,6 +377,58 @@ IS the coordination mechanism.** No agent addresses another agent; they
 coordinate by reading and writing the same stores. So the quality of the shared
 knowledge layer is the ceiling on how well anything coordinates, and a note
 nobody can find is a note that was never written.
+
+### Measured first, because the state here is worse than it looks
+
+Eleven durable stores exist. The headline numbers, taken from the live tree:
+
+| store | live volume | who can read it |
+|---|---|---|
+| knowledge notes | **21 notes** (18 `workshop`, 1 `development`, 1 `role:reviewer`, 1 `project:commute`) | every chat gets TITLES only; bodies need a search call |
+| learnings | 25 records (14 `global`, **11 `workshop`**) | `global` only |
+| chat transcripts | 69 threads, 1270 messages | own thread; others only via search, general chat only |
+| tickets | 193 across 26 stores | 6 lines of 90 characters, in a digest |
+| docs/ | 151 files | search only, general chat only |
+| semantic index | **3417 chunks** (doc 2601, chat 762, note 54) | one tool, one caller |
+| Obsidian vault | **965 files** | **nothing. Excluded from the index entirely.** |
+
+**Three findings that make the rest of this section urgent.**
+
+**1. The "capture a preference" path is a no-op.** When the operator states a
+durable preference in a general chat, the model emits a learning-note fence,
+`apply_learning_note` defaults its scope to `workshop`, the chat replies
+"Captured a preference", and then `chat_context.py:1055` explicitly excludes
+`workshop` from injection, while the worker only ever asks for `project:*` or
+`agent:*`. **All 11 records in that store have never been read by anything.**
+Every one lacks the `retrieval_count` field the store writes on retrieval. The
+newest was written an hour before this audit. That is not a gap in coverage, it
+is a mechanism that reports success and does nothing, which is worse than
+having no mechanism.
+
+**2. The one rule that matters most is silently over budget.** The injected
+learnings block is capped at 700 tokens. Rendering it today drops one entry:
+the Design System rule, which is 168 tokens, 24% of the budget. It has been
+excluded for roughly 25 days, and the ranking is self-reinforcing, because
+being dropped lowers the retrieval score that decides whether it is dropped.
+
+**3. Only ONE surface in the system can search the workshop's own writing.**
+`mcp__workshop__search` is in the general chat's allowlist and nowhere else. A
+project or build chat cannot call it. A registry agent cannot. An @-mentioned
+agent gets `Read/Grep/Glob` and no MCP at all. A ralph worker receives the
+ticket text plus a learnings block, and nothing else: no notes, no docs, no
+chat, no prior run. **The delegate is the one that needs the context, and the
+delegate is the one denied the tool.**
+
+Three more, briefly, because they are cheap to fix and currently mislead:
+
+- **Nothing rebuilds the index.** It was built once, by hand, on 2026-08-12.
+  75 chat files and 9 notes have been written since and are unfindable.
+- **The indexer only walks `shared/knowledge`.** Notes under `projects/*`,
+  `apps/*`, `.runtime/agents/*` and `roles/*` are never indexed. Measurably: 21
+  of 21 indexed note refs come from one directory.
+- **A 25-day-old snapshot presents as current.** `consolidated-memory.md` is in
+  every prompt's knowledge block and was last written 2026-07-18, when the
+  keeper's cron line was commented out.
 
 ### The rule that decides every question below
 
@@ -325,29 +447,42 @@ cross-chat digest had to be moved out of the cache-stable prefix and capped,
 because it changed on every task state change and so invalidated every chat's
 cache while injecting topically-related distractors.
 
+The push side is also where the cheapest measured win in this whole area sits.
+Anthropic reported that letting an agent DISCOVER tool definitions by listing a
+directory, instead of loading them all up front, took a context from 150,000
+tokens to 2,000: **a 98.7% reduction**. The same shape applies to knowledge.
+An index of titles is a directory listing; the bodies are the files.
+
 ### What has to exist for pull to work
 
-1. **One scope vocabulary.** Chat scope, learnings scope and preference scope
-   are three different key spaces today, with translation in the middle. A note
-   written in one is unreachable from another. This is the single highest-value
-   fix in this section, and it is unglamorous: pick the chat-scope vocabulary
-   (`workshop | project:<slug> | app:<name> | agent:<slug>`), make everything
-   else a projection of it, and delete the translators.
-2. **An index, not a filesystem scan.** Retrieval today is largely a directory
-   walk plus substring matching. That is fine at 20 notes and useless at 500.
-   What it needs is the cheapest thing that answers "what do we know about X in
-   this scope": a title-and-tag index over notes, tickets, and run receipts,
-   with the existing embedding seam (`WORKSHOP_TEXT_EMBED_URL`, nomic-embed via
-   the local Ollama) for the paraphrase case. The dedupe path already proved
-   the lexical vectorizer undershoots on paraphrase; the same fix applies here.
-3. **One discovery tool, in every allowlist.** A chat, a maker run, and a
-   triager pass should all reach the same `search(scope, query, kinds)` and get
-   back typed hits: note, ticket, run, chat, decision. Today the chat and the
-   worker have different tool surfaces, which means they can reach different
-   knowledge and reason from different pictures of the same scope.
-4. **Provenance on every hit.** Where did this come from, when, and is it still
-   true? A stale fact confidently retrieved is worse than a gap, and this repo
-   has already been bitten by memories that named files that no longer exist.
+In the order that unblocks the most, given the measurements above.
+
+1. **Give the tool to everyone who needs it.** `mcp__workshop__search` exists,
+   works, and is reachable from exactly one surface. Put it in the worker's
+   context, the triager's, and every agent's. This is the highest-value item in
+   this section and it is mostly allowlist plumbing.
+2. **Fix the preference path so what it captures is actually read.** Either
+   inject `workshop`-scope learnings, or write operator preferences to a scope
+   that is injected. Eleven captured corrections currently go nowhere. Until
+   this is fixed, every "Captured a preference" reply is a false receipt.
+3. **Rebuild the index automatically**, on write or on a timer, and **walk
+   every knowledge directory**, not just `shared/knowledge`. Both are small
+   changes to code that already exists and works.
+4. **One scope vocabulary.** There are three key spaces, and two of them use
+   the same words for different places: for TICKETS, `workshop` means
+   `shared/queue` (14 tickets) while `development` means the platform repo (93
+   tickets); for NOTES, `workshop` means `shared/knowledge` and `development`
+   is a subdirectory of it. Two top-level scopes that read as one thing to a
+   human, and resolve to four different directories. Pick the chat-scope
+   vocabulary, make the others projections of it, delete the translators.
+5. **Budget the injected block by IMPORTANCE, not by recency-weighted
+   retrieval count.** The current ranking silently drops the most important
+   standing rule and then keeps dropping it. A rule the operator stated should
+   not have to compete with mechanical worker noise for the same 700 tokens.
+6. **Provenance and staleness on every hit.** Where did this come from, when,
+   and is it still true? A 25-day-old consolidation currently presents as
+   current fact in every prompt, and this repo has already been bitten by
+   memories naming files that no longer exist.
 
 ### What is shared, and what is deliberately not
 
@@ -376,6 +511,25 @@ since the reader last looked. Computed server-side, injected small, and
 expandable through the search tool. That is what makes a second chat in the
 same scope useful instead of merely allowed, and it is roughly the same
 computation the inbox already needs.
+
+Half of it already exists and is well judged: a resumed turn gets a one-line
+**pointer** when another chat or agent changed the scope's notes since that
+turn last ran, rather than the content itself. That is the right instinct
+(point, do not paste) and the digest should extend it rather than replace it.
+
+### What to delete while doing this
+
+The audit found more dead knowledge machinery than live: eleven `letta_tools`
+with zero callers, `memory_tree` with two routes and no client, two
+`/knowledge/*` routes with no callers, `promotion_candidates` and
+`mark_promoted` with no callers, `merge_duplicates` and `prune_stale` that have
+never run, and a `memory_promotion` clusterer that **cannot ever fire** because
+it matches notes by id and every id carries a unique millisecond suffix. Also a
+persona that tells the model it has filesystem tools the allowlist does not
+grant it.
+
+None of that is a design problem. It is the cost of having designed more than
+was wired, and clearing it is what makes the remaining half legible.
 
 ---
 

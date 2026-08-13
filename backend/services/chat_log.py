@@ -885,11 +885,6 @@ def patch_meta_sync(thread_id: str, **fields: object) -> dict | None:
     return meta
 
 
-async def patch_meta(thread_id: str, **fields: object) -> dict | None:
-    async with lock_for(thread_id):
-        return patch_meta_sync(thread_id, **fields)
-
-
 # ---- the running turn's draft ----------------------------------------------
 #
 # THE DRAFT IS NOT THE RECORD, AND IT DOES NOT LIVE IN THE RECORD'S FILE.

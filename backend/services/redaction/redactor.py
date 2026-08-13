@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from services.llm_router import call_local, OllamaUnavailable
+from services.llm_router import call_local, OllamaUnavailable, OLLAMA_REDACTION_TIMEOUT_S
 from .patterns import regex_redact
 
 
@@ -68,7 +68,9 @@ def _ollama_pass(text: str, start_idx: int) -> tuple[str, dict[str, str]]:
     the input unchanged + empty mapping. Caller checks ollama_used flag."""
     prompt = _OLLAMA_REDACTION_PROMPT.replace("{start_idx}", str(start_idx)).replace("{text}", text)
     try:
-        r = call_local(prompt, json_mode=True, timeout_s=180, purpose="redaction")
+        r = call_local(prompt, json_mode=True,
+                      timeout_s=OLLAMA_REDACTION_TIMEOUT_S,
+                      purpose="redaction")
     except OllamaUnavailable as e:
         log.info("redaction: ollama unavailable, skipping contextual pass: %s", e)
         return text, {}

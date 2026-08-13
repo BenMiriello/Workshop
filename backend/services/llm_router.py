@@ -96,7 +96,6 @@ OLLAMA_HEALTH_TIMEOUT_S = 3
 OLLAMA_REQUEST_TIMEOUT_S = 60
 OLLAMA_REDACTION_TIMEOUT_S = 180
 GPU_BUSY_UTIL_PCT = 85
-GPU_BUSY_SAMPLES = 2     # consecutive samples >threshold = treat as busy
 
 # Auto-cooldown after consecutive failures: after N back-to-back Ollama errors,
 # stop trying for COOLDOWN_S to give the system a chance to recover.

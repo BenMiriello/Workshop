@@ -62,14 +62,6 @@ def _now_iso() -> str:
 DEFAULT_CHAT_MODEL = llm_router.TIER_HAIKU
 
 
-def provider_models() -> dict[str, str]:
-    """app_id -> model id, for installed apps that declared a tier."""
-    from services import app_registry
-
-    return {
-        app_id: llm_router.TIERS.get(tier, DEFAULT_CHAT_MODEL)
-        for app_id, tier in app_registry.installed_chat_model_tiers().items()
-    }
 # Per-provider tool policy: providers define allowed_tools + mcp_servers
 # (see chat_context.ContextProvider). The narrow-tool path in
 # call_cloud honors these — built-in tools (Bash/Read/Edit) stay off
@@ -131,10 +123,6 @@ class CreateThread(BaseModel):
     # was chosen before the first message, which is the whole point of showing
     # the control on a blank chat.
     mode: str | None = None
-
-
-class ParticipantIn(BaseModel):
-    slug: str
 
 
 class PostMessage(BaseModel):
@@ -311,11 +299,6 @@ class DraftPut(BaseModel):
     attachments: list[AttachmentRefIn] | None = None
 
 
-@router.get("/drafts")
-async def list_drafts():
-    return draft_store.get_all()
-
-
 @router.get("/drafts/{key:path}")
 async def read_draft(key: str):
     return draft_store.get_draft(key)
@@ -401,27 +384,6 @@ async def set_chat_prefs(body: ChatPrefs):
         except ValueError as e:
             raise HTTPException(400, str(e))
     return _prefs_payload()
-
-
-@router.post("/threads/{thread_id}/participants")
-async def add_participant(thread_id: str, body: ParticipantIn):
-    """Add an agent to an existing chat as a participant (P1). Idempotent:
-    already-present is a no-op. The slug is namespaced to `agent:<slug>` if
-    bare; other participant kinds are not defined yet."""
-    t = chat_store.add_thread_participant(thread_id, body.slug)
-    if t is None:
-        raise HTTPException(404, "thread not found")
-    return t
-
-
-@router.delete("/threads/{thread_id}/participants/{slug}")
-async def remove_participant(thread_id: str, slug: str):
-    """Remove an agent from an existing chat (P1). Idempotent: missing is a
-    no-op. The `agent:` prefix is optional on the URL."""
-    t = chat_store.remove_thread_participant(thread_id, slug)
-    if t is None:
-        raise HTTPException(404, "thread not found")
-    return t
 
 
 @router.get("/threads/{thread_id}")
@@ -3196,23 +3158,6 @@ def _file_during_run(thread_id: str, run_id: str, content: str,
     return at_segment
 
 
-async def _deliver_or_take_over(thread_id: str, run_id: str, content: str,
-                                client_id: str | None = None) -> dict | None:
-    """Persist the message, hand it to the running run, and say what happened.
-
-    Returns the response for a successful delivery, or None meaning "the run
-    would not take it; start a fresh one for this message, which is ALREADY IN
-    THE LOG". The caller must not record it a second time."""
-    at_segment = _file_during_run(thread_id, run_id, content, client_id=client_id)
-    if build_streaming.inject(run_id, content, client_id=client_id):
-        return {"turn_id": run_id, "injected": True, "at_segment": at_segment}
-    # It refused input: finishing, wedged, or its process is gone. Take the
-    # thread back so the message it is holding can get a run of its own.
-    log.info("thread %s: run %s refused a delivery; taking the thread over",
-             thread_id, run_id)
-    return None
-
-
 @router.post("/threads/{thread_id}/inject")
 async def inject_into_thread(thread_id: str, body: InjectMessage):
     """Hand a message to whatever run is going on this thread.
@@ -3271,46 +3216,6 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
         "turn_id": run_id,
         "at_segment": at_segment,
         "reason": "" if delivered else "the running turn refused input; started a new turn",
-    }
-
-
-@router.post("/turns/{turn_id}/inject")
-async def inject_into_turn(turn_id: str, body: InjectMessage):
-    """Hand a message to a run that is already going, addressed by run id.
-
-    A new message never interrupts the work in flight — only Stop does that. It
-    is handed to the running turn, and the agent picks it up when it reaches the
-    end of its current plan (measured; see the audit doc §2 — NOT "within a step
-    or two", which is what this docstring used to claim).
-
-    `delivered: false` is not an error. It means the run finished between the
-    operator hitting enter and this request landing, and the client should queue
-    the message as the next turn instead. The message is never dropped: it is
-    written to the log before delivery is tried."""
-    content = (body.content or "").strip()
-    if not content:
-        raise HTTPException(400, "empty message")
-    turn = build_streaming.get_turn(turn_id)
-    if turn is None or turn.complete:
-        return {"delivered": False, "reason": "turn is no longer running"}
-    if not turn.accepts_input:
-        # A command turn, or a voice turn. It will never read this, and recording
-        # it against that run is how one was lost. See _send.
-        return {"delivered": False, "deferred": True,
-                "reason": "this turn takes no input; send it after"}
-    # THE BROWSER'S ID IS CARRIED THROUGH. The model accepted `client_id` and
-    # dropped it on the floor, so a retry after a lost response would have landed
-    # as a second copy of the same message rather than reconciling against the
-    # first. Nothing calls this route today, which is exactly why it was able to
-    # sit wrong.
-    at_segment = _file_during_run(turn.thread_id, turn_id, content,
-                                  client_id=body.client_id)
-    delivered = build_streaming.inject(turn_id, content, client_id=body.client_id)
-    return {
-        "delivered": delivered,
-        "queued_for_turn": delivered,
-        "at_segment": at_segment,
-        "reason": "" if delivered else "turn is no longer accepting input",
     }
 
 

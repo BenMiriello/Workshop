@@ -93,11 +93,6 @@ def _prune(data: dict) -> bool:
     return bool(dead)
 
 
-def get_all() -> dict:
-    return {k: v for k, v in _load().items()
-            if (v or {}).get("text") or (v or {}).get("attachments")}
-
-
 def get_draft(key: str) -> dict:
     entry = _load().get(key)
     if not entry:

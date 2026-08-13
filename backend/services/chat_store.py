@@ -724,52 +724,10 @@ def _scope_from_context_key(context_key: str) -> str:
     return f"app:{context_key}"
 
 
-def set_thread_scope(thread_id: str, scope: str, *, scope_locked: bool | None = None) -> dict | None:
-    """Re-scope a chat. Optionally toggles scope_locked. Returns updated thread
-    or None. C11 gate for rescope; the UI must confirm before calling."""
-    fields: dict = {"scope": scope}
-    if scope_locked is not None:
-        fields["scope_locked"] = bool(scope_locked)
-    return _patch(thread_id, **fields)
-
-
 def set_thread_mode(thread_id: str, mode: str) -> dict | None:
     """Set the per-thread interaction mode. `mode` must be one of CHAT_MODES;
     anything else clamps to DEFAULT_CHAT_MODE."""
     return _patch(thread_id, mode=_clamp_mode(mode))
-
-
-def set_thread_participants(thread_id: str, participants: list[str]) -> dict | None:
-    """Overwrite the participants list. Normalized on write; empty list is a
-    valid "no agent in this chat" state. C11/P1: agents are participants of a
-    chat, not the chat's home. Returns updated thread or None if missing."""
-    return _patch(thread_id, participants=_normalize_participants(participants))
-
-
-def add_thread_participant(thread_id: str, participant: str) -> dict | None:
-    """Add one participant to a thread. Idempotent (already-present is a no-op).
-    Namespaces a bare slug to `agent:<slug>` for consistency with the store."""
-    t = get_thread(thread_id)
-    if t is None:
-        return None
-    parts = _normalize_participants(t.get("participants") or [])
-    for c in _normalize_participants([participant]):
-        if c not in parts:
-            parts.append(c)
-    return _patch(thread_id, participants=parts)
-
-
-def remove_thread_participant(thread_id: str, participant: str) -> dict | None:
-    """Remove one participant. Idempotent (missing is a no-op)."""
-    t = get_thread(thread_id)
-    if t is None:
-        return None
-    canon = _normalize_participants([participant])
-    if not canon:
-        return t
-    target = canon[0]
-    kept = [p for p in _normalize_participants(t.get("participants") or []) if p != target]
-    return _patch(thread_id, participants=kept)
 
 
 def set_thread_model(thread_id: str, model: str | None) -> dict | None:

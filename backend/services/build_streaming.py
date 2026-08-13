@@ -33,13 +33,6 @@ log = logging.getLogger("workshop.build_streaming")
 
 CLAUDE_CLI = llm_router.CLAUDE_CLI
 
-# Max bytes for a single stdout line (one stream-json event) before asyncio's
-# StreamReader raises LimitOverrunError. Default is 64 KiB — far too small for
-# events carrying file contents / large tool results. 64 MiB is generous and
-# still memory-bounded.
-STREAM_LINE_LIMIT = 64 * 1024 * 1024
-
-
 def _stdin_fifo(turn_id: str) -> Path:
     """The turn's realtime input channel.
 
@@ -2849,16 +2842,6 @@ def reconcile_threads() -> None:
                 ownership.set_current_owner(prior)
     except Exception as e:  # pragma: no cover — never block startup
         log.warning("reconcile_threads failed: %s", e)
-
-
-def _first_user_text(thread_id: str) -> str:
-    t = chat_store.get_thread(thread_id)
-    if not t:
-        return ""
-    for m in t.get("messages", []):
-        if m.get("role") == "user":
-            return m.get("content", "")
-    return ""
 
 
 def get_turn(turn_id: str) -> Turn | None:
