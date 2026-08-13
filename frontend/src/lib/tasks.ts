@@ -179,6 +179,36 @@ const LATITUDE_DESC: Record<Latitude, string> = {
 export const latitudeDesc = (v?: string): string =>
   LATITUDE_DESC[(v ?? "") as Latitude] ?? "";
 
+// ---- execution: can a machine do this at all --------------------------------
+// A SPEC field (backend services/tasks.py, autonomy-implementation-2026-08-13
+// §1.1), stored flat beside `effort` and `priority`. It answers one question:
+// is this ticket the kind of thing a worker can execute, or does it need a
+// person?
+//
+//   code       a change to a tree a worker can write. Eligible for the sweep.
+//   judgement  the output is a decision, a design or an audit. Never swept.
+//   external   needs root, another host user, a vendor console or a secret.
+//   null       not classified yet. Never swept: the sweep must not guess.
+//
+// null is NOT code. The absence of a classification fails closed, which is why
+// the rail says "not classified" rather than leaving the row out.
+export type TaskExecution = "code" | "judgement" | "external";
+
+export const TASK_EXECUTIONS: TaskExecution[] = ["code", "judgement", "external"];
+
+// The one place a stored value becomes display text. The words are the stored
+// values because they already say the thing; what they MEAN is carried by the
+// editor's help text, where a reader who does not know the field is looking.
+export const EXECUTION_LABEL: Record<TaskExecution, string> = {
+  code: "code",
+  judgement: "judgement",
+  external: "external",
+};
+
+// An unset (or unrecognised) value reads as unclassified, never as `code`.
+export const executionLabel = (v?: string | null): string =>
+  EXECUTION_LABEL[(v ?? "") as TaskExecution] ?? "not classified";
+
 // Where an effective latitude came from. This travels WITH the value everywhere
 // it is shown: null means inherit, so a value rendered without its source is how
 // an inherited setting gets mistaken for a deliberate one.
@@ -239,6 +269,8 @@ export type Task = {
   parent?: string | null;
   priority?: number;
   effort?: string | null;
+  // Can a machine do this at all (see TaskExecution). null = not classified.
+  execution?: TaskExecution | null;
   // The ticket's OWN override. null/absent = inherit from the scope; it is NOT
   // "standard". Read `effective_latitude` to know what a run would actually use.
   latitude?: Latitude | null;
@@ -385,11 +417,139 @@ export function cleanTitle(titleLine: string): string {
 // because 0 of 40 live tickets passed every check when this shipped and a full
 // gate would have stopped the queue rather than improved it. Attached by
 // GET /api/tasks/{scope}/{id}.
+export type ReadinessGap = { check: string; why: string };
+
 export type TicketReadiness = {
   ok: boolean;
-  missing: { check: string; why: string }[];
+  missing: ReadinessGap[];
   warnings: string[];
 };
+
+// ---- the readiness line -----------------------------------------------------
+// ONE line of prose, never a checklist. A readiness checklist was deleted from
+// the ticket page on 2026-08-12 as a nag panel, and rebuilding it with different
+// markup would be the same mistake.
+//
+// THE CHECKER OWNS THE WORDING. Every phrase below is DERIVED from the `why`
+// strings `ticket_readiness.check` already returns (backend
+// services/ticket_readiness.py), by stripping the subject and, in a list, the
+// verb. Nothing here invents a second vocabulary for a gap: a second set of
+// wordings is how the format and its checker drifted apart the last time, and
+// that is written up at the top of services/ticket_format.py.
+//
+// The subjects a `why` opens with. Dropping one leaves a clause that can take
+// the subject the sentence needs ("Does not say ...", "..., or ...").
+const READINESS_SUBJECTS = ["the ticket ", "the body ", "it "];
+
+// The verb a clause opens with, dropped so the clause can be LISTED as a thing
+// rather than read as a sentence: "does not say what done looks like" becomes
+// "what done looks like", "names no file, ..." becomes "no file, ...".
+const READINESS_VERBS = ["does not say ", "has ", "names "];
+
+function readinessClause(why: string): string {
+  const s = (why ?? "").trim();
+  for (const p of READINESS_SUBJECTS) if (s.startsWith(p)) return s.slice(p.length);
+  return s;
+}
+
+function readinessItem(why: string): string {
+  const c = readinessClause(why);
+  for (const v of READINESS_VERBS) if (c.startsWith(v)) return c.slice(v.length);
+  return c;
+}
+
+// Two gaps usually open the same way ("does not say ..."), and repeating that
+// opener is what turns a line into a list. Dropped only when the run of shared
+// words is long enough to be a real opener rather than a coincidental "the".
+function withoutSharedOpener(clause: string, previous: string): string {
+  const a = previous.split(" ");
+  const b = clause.split(" ");
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i >= 2 ? b.slice(i).join(" ") : clause;
+}
+
+const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
+// The whole readiness report as one sentence. Pure: no DOM, no fetch, so the
+// wording is unit tested rather than eyeballed.
+//
+//   1 gap   "Does not say what done looks like."
+//   2 gaps  "Does not say what done looks like, or which files it may change."
+//   3 gaps  "Three things are unspecified: a, b, and c."
+//   4+      the first two, then "and N more."
+//
+// Empty for no gaps, so a caller can render on truthiness.
+export function readinessLine(gaps: ReadinessGap[] | undefined | null): string {
+  const list = (gaps ?? []).filter((g) => (g?.why ?? "").trim());
+  if (list.length === 0) return "";
+  const first = readinessClause(list[0].why);
+  if (list.length === 1) return `${capitalize(first)}.`;
+  if (list.length === 3) {
+    const [a, b, c] = list.map((g) => readinessItem(g.why));
+    return `Three things are unspecified: ${a}, ${b}, and ${c}.`;
+  }
+  const second = withoutSharedOpener(readinessClause(list[1].why), first);
+  const head = `${capitalize(first)}, or ${second}`;
+  return list.length === 2 ? `${head}.` : `${head}, and ${list.length - 2} more.`;
+}
+
+// ---- readiness for a ticket that does not exist yet -------------------------
+// The chat's file-a-ticket card is where a gap is cheapest to close: the fields
+// are on screen and nothing has been filed. There is no server report to read
+// at that point, so the four advisory checks are evaluated against the card's
+// own fields here.
+//
+// This is NOT a second checker. The card carries one field per labelled section
+// (Objective / Output / Start from / Boundaries), so "does the body state this
+// field" collapses to "is this field filled" and no label matching is needed.
+// The `why` strings are the checker's own, copied verbatim; if one changes in
+// services/ticket_readiness.py, change it here.
+const READINESS_WHY = {
+  title: "the ticket has no title",
+  objective: "the body does not say what this is trying to achieve",
+  acceptance: "the ticket does not say what done looks like",
+  entry_points: "the body names no file, command or symbol to start from",
+  boundaries: "the ticket does not say which files it may change",
+} as const;
+
+// The checker's `_ENTRY_POINT`, ported: a repo-relative path, an inline-code
+// span, a fenced block, or a shell-looking line all count as somewhere to
+// begin. Kept in step with services/ticket_readiness.py.
+const ENTRY_POINT_RE =
+  /(?:[\w.\-/]+\/[\w.\-]+\.\w+)|(?:`[^`\n]+`)|(?:^\s{0,3}```)|(?:\b(?:run|npm|pytest|python3?|bash|curl|git|make)\s+\S+)/m;
+
+export type TicketProposal = {
+  title?: string;
+  objective?: string;
+  output?: string;
+  entry_points?: string;
+  boundaries?: string;
+  effort?: string;
+  // The unstructured fallback body, for a proposal that carries no sections.
+  text?: string;
+};
+
+export function proposalGaps(v: TicketProposal): ReadinessGap[] {
+  const val = (k: keyof TicketProposal): string => (v[k] ?? "").trim();
+  const gaps: ReadinessGap[] = [];
+  const add = (check: keyof typeof READINESS_WHY) =>
+    gaps.push({ check, why: READINESS_WHY[check] });
+
+  const body = [val("objective"), val("output"), val("entry_points"),
+    val("boundaries"), val("text")].filter(Boolean).join("\n");
+
+  if (!val("title") && !val("text")) add("title");
+  // The checker also passes a body of 40 characters or more without the label.
+  if (!val("objective") && body.length < 40) add("objective");
+  if (!val("output")) add("acceptance");
+  // A one-edit ticket does not have to name its entry points.
+  if (val("effort") !== "quick" && !val("entry_points") && !ENTRY_POINT_RE.test(body)) {
+    add("entry_points");
+  }
+  if (!val("boundaries")) add("boundaries");
+  return gaps;
+}
 
 // A friendly label for a scope key, for filters and the scope link.
 export function scopeLabel(scope?: string): string {

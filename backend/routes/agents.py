@@ -175,8 +175,6 @@ async def list_agents():
             "role": a.get("role"),
             "mentionable": bool(a.get("mentionable")),
             "delegatable": bool(a.get("delegatable")),
-            "depth": a.get("depth") or "standard",
-            "fanout": a.get("fanout") or "read-only",
             # null = inherit, and it must stay null over the wire: defaulting it
             # here would make an unset agent look like a deliberate `standard`.
             "latitude": a.get("latitude"),
@@ -945,8 +943,6 @@ class AgentDefinitionUpdate(BaseModel):
     capabilities: list[str] | None = None
     role: str | None = None            # closed enum: maker|reviewer|triager|keeper|broker
                                        # ("" clears it; unknown -> 400)
-    depth: str | None = None           # effort tier: quick | standard | deep
-    fanout: str | None = None          # off | read-only
     latitude: str | None = None        # decision rights: strict | standard | open
                                        # ("" or "standard" clears it to inherit;
                                        # unknown -> 400)
@@ -980,8 +976,6 @@ async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
             limits=body.limits,
             capabilities=body.capabilities,
             role=body.role,
-            depth=body.depth,
-            fanout=body.fanout,
             latitude=body.latitude,
             autonomy=body.autonomy,
             mentionable=body.mentionable,

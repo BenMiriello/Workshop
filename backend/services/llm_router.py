@@ -887,3 +887,102 @@ def status() -> dict:
             "subscription_auth": "ANTHROPIC_API_KEY" not in os.environ,
         },
     }
+
+
+# -------------------------------------------------------------- mcp-config CLI
+#
+# `python -m services.llm_router mcp-config --server workshop` writes a
+# `--mcp-config` file and prints its path.
+#
+# WHO THIS IS FOR. Shell callers that spawn `claude -p` THEMSELVES rather than
+# through `call_cloud` — scripts/ralph.sh is the one that matters. It ran with no
+# MCP flags at all, so the unattended worker had no `mcp__workshop__search` while
+# every chat surface did. The launch specs live in Python (app_registry), so the
+# only way for a bash caller to get a correct one is to ask Python for it; a
+# second copy in the shell is a copy that will be wrong.
+#
+# THE OWNER IS THE WHOLE POINT, and it is the way this ships broken while every
+# smoke test passes. The workshop MCP server is OWNER-SCOPED
+# (backend/mcp/workshop_query_server.py `_pin_owner`): the semantic index, the
+# chat logs and the knowledge root all resolve under `.runtime/users/<owner>/`.
+# A worker running as the service user with no owner pinned reaches an EMPTY
+# index, and an empty index is not an error — the tool answers "nothing has been
+# written about it", the run succeeds, and nothing anywhere says the search saw
+# no data. So the owner is resolved HERE, where auth_store can answer, and
+# written into the spec's env as `WORKSHOP_QUERY_OWNER`.
+#
+# NOT `--strict-mcp-config`. That flag belongs to callers building a closed
+# subset. The worker is full-agentic by design, and strict mode would silently
+# drop every other server the tree legitimately configures. The emitted file is
+# ADDITIVE: `--mcp-config <path>` on its own merges with the CLI's own
+# configuration.
+
+def mcp_config_json(servers: list[str] | None = None,
+                    *, owner_id: int | None = None) -> str:
+    """The `--mcp-config` document for `servers`, with the owner pinned.
+
+    `servers=None` means every installed server. An unknown name is an error
+    rather than a silent omission: a caller asking for `workshop` and getting an
+    empty config back would spawn a worker with no search and no complaint.
+    """
+    from services import app_registry, auth_store, ownership
+
+    # Pin BEFORE building the specs. `_platform_mcp_servers` reads
+    # `ownership.owner_or_none()` to fill WORKSHOP_QUERY_OWNER, and in a CLI
+    # process nothing has set it, so without this the env var is simply absent.
+    oid = owner_id if owner_id is not None else auth_store.operator_id()
+    if oid is not None:
+        ownership.set_current_owner(int(oid))
+    available = app_registry.installed_mcp_servers()
+    if servers is None:
+        chosen = dict(available)
+    else:
+        missing = [s for s in servers if s not in available]
+        if missing:
+            raise KeyError(f"no MCP launch spec for: {', '.join(missing)}")
+        chosen = {s: available[s] for s in servers}
+    return json.dumps({"mcpServers": chosen}, indent=2)
+
+
+def _main(argv: list[str]) -> int:
+    import argparse
+    import tempfile
+
+    ap = argparse.ArgumentParser(prog="llm_router")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sp = sub.add_parser("mcp-config",
+                        help="write a --mcp-config file and print its path")
+    sp.add_argument("--server", action="append", dest="servers", default=None,
+                    help="server name; repeatable. Default: every installed one.")
+    sp.add_argument("--owner", type=int, default=None,
+                    help="app user id whose data the servers see. "
+                         "Default: the operator, which is correct for a "
+                         "background loop (see services/ownership).")
+    sp.add_argument("--stdout", action="store_true",
+                    help="print the JSON itself instead of a path to it")
+    args = ap.parse_args(argv)
+
+    doc = mcp_config_json(args.servers, owner_id=args.owner)
+    if args.stdout:
+        print(doc)
+        return 0
+    # A real file, not a JSON string argument: `--mcp-config` is variadic, and a
+    # brace-laden argv element is the shape that broke a caller before (see
+    # strict_mcp_flags). The caller owns the cleanup; these are small and land in
+    # the system temp dir.
+    fd = tempfile.NamedTemporaryFile("w", prefix="workshop-mcp-", suffix=".json",
+                                     delete=False)
+    with fd:
+        fd.write(doc)
+    print(fd.name)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path as _Path
+
+    _BACKEND = str(_Path(__file__).resolve().parent.parent)
+    if _BACKEND not in sys.path:
+        sys.path.insert(0, _BACKEND)
+    raise SystemExit(_main(sys.argv[1:]))

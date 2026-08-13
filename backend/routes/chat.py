@@ -2222,6 +2222,12 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     # An explicit `tools:` on the definition may narrow this, never widen it.
     agent_tools = agent_authority.narrow_tools(role, rec.get("tools"))
     tools_active = bool(agent_tools)
+    # The servers those tools live in. This used to be the literal `[]`, which is
+    # why an agent could be granted `mcp__workshop__search` and still have no
+    # search: `tool_flags` builds its strict MCP config from THIS list, so a tool
+    # whose server is absent is filtered straight back out of the allowlist.
+    # Derived from the granted toolset so the grant and the spawn cannot disagree.
+    agent_mcp = agent_authority.mcp_servers_for(agent_tools)
     # Reversibility gate. A mention is a manual invocation — the operator is
     # right there — so nothing is denied here; the list is non-empty only for a
     # run nobody is watching. Passed explicitly rather than defaulted so the
@@ -2286,7 +2292,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
             thread_id=thread_id, agent_slug=slug, prompt="\n\n".join(resumed), model=model,
             cwd=cwd, session_id=sid, resume=True, timeout_s=CHAT_TIMEOUT_S,
             allowed_tools=agent_tools, disallowed_tools=agent_denied,
-            mcp_servers=[], tools_disabled=not tools_active,
+            mcp_servers=agent_mcp, tools_disabled=not tools_active,
             speaker=slug, run_id=run_id, effort=effort,
             permission_mode=permission_mode, origin=sends,
         )
@@ -2338,7 +2344,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         thread_id=thread_id, agent_slug=slug, prompt=prompt, model=model,
         cwd=cwd, session_id=sid, resume=False, timeout_s=CHAT_TIMEOUT_S,
         allowed_tools=agent_tools, disallowed_tools=agent_denied,
-        mcp_servers=[], tools_disabled=not tools_active,
+        mcp_servers=agent_mcp, tools_disabled=not tools_active,
         speaker=slug, run_id=run_id, effort=effort,
         permission_mode=permission_mode, attachments=attachments, origin=sends,
     )

@@ -1,8 +1,8 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePoll } from "../lib/usePoll";
-import { Power, Cpu } from "lucide-react";
-import { Button, ConfirmDialog, StatusDot } from "@workshop/ui";
-import { autonomyIsLive, describeAutonomy } from "../lib/autonomy";
+import { Power, Cpu, Play, Square } from "lucide-react";
+import { Button, ConfirmDialog, Notice, Select, StatusDot, Toggle } from "@workshop/ui";
+import { describeAutonomy } from "../lib/autonomy";
 import { SettingsSection, SettingsRow as Row } from "./AppSettings";
 
 // Autonomy & GPU controls. The global cron-autonomy pause (AUTONOMY_DISABLED)
@@ -11,11 +11,15 @@ import { SettingsSection, SettingsRow as Row } from "./AppSettings";
 // AUTONOMY_DISABLED switch is operationally load-bearing and must stay
 // reachable — this component is that home.
 //
-// Two independent off-switches:
-//   - Cron autonomy (the Ralph loop, via the AUTONOMY_DISABLED flag file)
+// Three independent controls, and keeping them independent is the point:
+//   - The BRAKE: whether unattended work is permitted at all. A policy, so a
+//     Toggle. Instant and reversible, so no dialog.
+//   - The RUNNER: a resident worker process in one named tree. A process, so a
+//     Button plus the tree to run it in. Stopping it gets a dialog.
 //   - Ollama GPU residency (unload resident models to free VRAM; Ollama keeps
-//     running, this only evicts the resident model)
-// Plus a single "Stop all" that disables the cron loop and frees the GPU.
+//     running, this only evicts the resident model).
+// Plus a single "Stop all" that does all three at once, which is the one place
+// they are allowed to move together because the dialog says so.
 
 type AutonomyStatus = {
   cron_autonomy: {
@@ -37,8 +41,15 @@ type AutonomyStatus = {
     running: boolean;
     pid: number | null;
     enabled: boolean;
+    dir?: string;
   };
 };
+
+// A tree the runner may be pointed at. ADR 0014: a run target is NAMED, never
+// defaulted, so this list is what the operator names one from. The platform
+// repo is in it only when developer mode is on, because the gate would refuse
+// it otherwise and an option that always fails is not an option.
+type RunTarget = { key: string; label: string; dir: string };
 
 type LoadedModel = {
   name: string;
@@ -97,8 +108,17 @@ export default function AutonomyControls() {
   const [bro, setBro] = useState<BrokerStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmStopAll, setConfirmStopAll] = useState(false);
+  const [confirmStopRunner, setConfirmStopRunner] = useState(false);
   const [confirmUnload, setConfirmUnload] = useState(false);
   const [confirmReserve, setConfirmReserve] = useState(false);
+  const [targets, setTargets] = useState<RunTarget[] | null>(null);
+  const [targetsFailed, setTargetsFailed] = useState(false);
+  const [scope, setScope] = useState("");
+  const [runnerError, setRunnerError] = useState<string | null>(null);
+  // The runner's flock is per TREE, so "is one resident" is only answerable once
+  // a tree is named. Null until then, and the row says so rather than reporting
+  // the platform repo's lock as if it were the answer for every scope.
+  const [scopeRunning, setScopeRunning] = useState<boolean | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -113,9 +133,39 @@ export default function AutonomyControls() {
     } catch {
       // keep prior state
     }
+    try {
+      const r = await fetch("/api/queue/runner/targets");
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json();
+      setTargets((j.targets || []) as RunTarget[]);
+      setTargetsFailed(false);
+    } catch {
+      setTargetsFailed(true);
+    }
   }, []);
 
+  // Whether a worker is resident IN THE SELECTED TREE. Separate from `load`
+  // because it depends on the picker, and because probing every registered
+  // tree on a 15s poll to answer a question about one of them is waste.
+  const loadScope = useCallback(async () => {
+    if (!scope) {
+      setScopeRunning(null);
+      return;
+    }
+    try {
+      const r = await fetch(`/api/queue/runner?dir=${encodeURIComponent(scope)}`);
+      setScopeRunning(r.ok ? !!(await r.json()).running : null);
+    } catch {
+      setScopeRunning(null);
+    }
+  }, [scope]);
+
   usePoll(load, 15_000);
+  usePoll(loadScope, 15_000);
+  // usePoll reads its callback through a ref, so it does not re-run when the
+  // picker moves. Picking a tree has to answer "is one running there" now, not
+  // in fifteen seconds.
+  useEffect(() => { void loadScope(); }, [loadScope]);
 
   const cronDisabled = !!auto?.cron_autonomy.disabled;
   const runnerRunning = !!auto?.queue_runner?.running;
@@ -123,36 +173,75 @@ export default function AutonomyControls() {
   // permitted); `running` is a flock probe (a worker is resident). The summary
   // used to be `allStopped = cronDisabled`, which reported "running" whenever
   // the flag was merely clear.
-  const pair = { running: runnerRunning, enabled: !cronDisabled };
+  //
+  // The flock is per TREE, so `running` is only ever about one tree: the picked
+  // one when there is one, the platform repo otherwise. There is no single
+  // system-wide "is a worker resident" to report and inventing one would be the
+  // same collapse in a new place.
+  const pair = { running: scopeRunning ?? runnerRunning, enabled: !cronDisabled };
   const view = describeAutonomy(pair);
-  const live = autonomyIsLive(pair);
 
-  // Stop all / Start all act on the RUNNER, not just the flag. They used to
-  // POST and DELETE the override alone, so "Start all" started nothing: it
-  // permitted work that no resident process existed to do. /queue/runner/start
-  // clears the override and ensures a runner (via the idempotent watchdog);
-  // /queue/runner/stop engages it and signals the runner, whose lease/reclaim
-  // path returns a half-worked ticket to the queue.
+  // "Stop all" is the panic button and the ONLY control that moves both things
+  // at once, because that is what the operator asked for and the dialog names
+  // both. Everywhere else the brake and the runner are separate: starting a
+  // worker and permitting unattended work are two decisions, and one button
+  // doing both is how the global brake got cleared by someone starting a runner
+  // (autonomy-implementation-2026-08-13 section 2.2).
   const onStopAll = async () => {
     setBusy("stop-all");
     try {
       // Stop the loop FIRST so nothing reloads a model right after we unload it.
-      await fetch("/api/queue/runner/stop", { method: "POST" });
+      await fetch("/api/agents/autonomy/override", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "Stop all, from Settings" }),
+      });
+      await fetch(
+        scope ? `/api/queue/runner/stop?dir=${encodeURIComponent(scope)}` : "/api/queue/runner/stop",
+        { method: "POST" },
+      );
       await fetch("/api/ollama/unload", { method: "POST" });
       await load();
+      await loadScope();
     } finally {
       setBusy(null);
       setConfirmStopAll(false);
     }
   };
 
-  const onStartAll = async () => {
-    setBusy("start-all");
+  const onStartRunner = async () => {
+    if (!scope) return;
+    setBusy("start-runner");
+    setRunnerError(null);
     try {
-      await fetch("/api/queue/runner/start", { method: "POST" });
+      const r = await fetch("/api/queue/runner/start", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dir: scope }),
+      });
+      if (!r.ok) {
+        // The backend hands back the run-target gate's own words, which are the
+        // same words cron writes into queue-runner.log. Show them verbatim.
+        const j = await r.json().catch(() => null);
+        setRunnerError((j && (j.detail as string)) || `start failed (${r.status})`);
+      }
       await load();
+      await loadScope();
     } finally {
       setBusy(null);
+    }
+  };
+
+  const onStopRunner = async () => {
+    setBusy("stop-runner");
+    setRunnerError(null);
+    try {
+      await fetch(`/api/queue/runner/stop?dir=${encodeURIComponent(scope)}`, { method: "POST" });
+      await load();
+      await loadScope();
+    } finally {
+      setBusy(null);
+      setConfirmStopRunner(false);
     }
   };
 
@@ -190,40 +279,34 @@ export default function AutonomyControls() {
             {/* The same rule the queue runner card uses (lib/autonomy), so this
                 card can no longer contradict itself between two of its rows. */}
             <StatusDot status={view.kind}>{view.hint}</StatusDot>
-            {live ? (
+            {/* Offered whenever there is something to stop: work permitted, a
+                resident worker, or both. `live` alone (running AND permitted)
+                hid it in the state where the brake is off and a worker is still
+                holding a tree, which is exactly when it is wanted. */}
+            {(!cronDisabled || pair.running) && (
               <Button size="sm" variant="danger-ghost" disabled={busy != null} onClick={() => setConfirmStopAll(true)}>
                 <Power aria-hidden /> Stop all
-              </Button>
-            ) : (
-              <Button size="sm" variant="primary" loading={busy === "start-all"} disabled={busy != null} onClick={onStartAll}>
-                Start all
               </Button>
             )}
           </span>
         )}
       </Row>
 
+      {/* A POLICY, so it is a Toggle: it says what is permitted, it starts
+          nothing, and it is instant and reversible so it gets no dialog. ONE
+          fact lives here, whether work is PERMITTED. Whether anything is doing
+          it is the runner row below, and this row must never speak to it. */}
       <Row label="unattended work">
         {auto == null ? "–" : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            {/* ONE fact: whether work is PERMITTED. Whether anything is doing it
-                is the row above, and this row must never speak to it. Saying
-                both here is how the card came to report two different answers to
-                one question. */}
-            <StatusDot status={cronDisabled ? "stopped" : "ok"}>
-              {cronDisabled ? "switched off" : "permitted"}
-            </StatusDot>
-            <Button
-              size="sm"
-              variant={cronDisabled ? "default" : "danger-ghost"}
+            <Toggle
+              checked={!cronDisabled}
               disabled={busy != null}
-              onClick={async () => {
-                // Legacy AUTONOMY_DISABLED (if present) stays for the shell-
-                // script maintenance convention; the operator surface only ever
-                // writes the JSON overlay.
-                setBusy(cronDisabled ? "enable" : "disable");
+              label="Allow unattended work"
+              onChange={async (next) => {
+                setBusy(next ? "enable" : "disable");
                 try {
-                  if (cronDisabled) {
+                  if (next) {
                     await fetch("/api/agents/autonomy/override", { method: "DELETE" });
                   } else {
                     await fetch("/api/agents/autonomy/override", {
@@ -237,11 +320,70 @@ export default function AutonomyControls() {
                   setBusy(null);
                 }
               }}
-            >
-              {busy === "enable" ? "enabling…" : busy === "disable" ? "disabling…" : cronDisabled ? "Enable" : "Disable"}
-            </Button>
+            />
+            <StatusDot status={cronDisabled ? "stopped" : "ok"}>
+              {cronDisabled ? "switched off" : "permitted"}
+            </StatusDot>
           </span>
         )}
+      </Row>
+
+      {/* A PROCESS, so it is a Button plus the tree it runs in. The tree is
+          required: ADR 0014 says a run target is named, and the watchdog exits 2
+          on an empty one. This control used to send no tree at all and also
+          cleared the brake, so it moved a global policy and started nothing. */}
+      <Row label="queue runner">
+        <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+          <StatusDot status={scopeRunning ? "running" : "stopped"}>
+            {scope === "" ? "pick a tree" : scopeRunning == null ? "unknown" : scopeRunning ? "resident" : "not running"}
+          </StatusDot>
+          <Select
+            aria-label="Tree to run in"
+            value={scope}
+            disabled={busy != null || targets == null || targets.length === 0}
+            onChange={(e) => { setScope(e.target.value); setRunnerError(null); }}
+          >
+            <option value="">
+              {targets == null ? "loading…" : targets.length === 0 ? "no trees registered" : "pick a tree"}
+            </option>
+            {(targets || []).map((t) => (
+              <option key={t.key} value={t.dir}>{t.label}</option>
+            ))}
+          </Select>
+          {scopeRunning ? (
+            <Button
+              size="sm"
+              variant="danger-ghost"
+              disabled={busy != null}
+              onClick={() => setConfirmStopRunner(true)}
+            >
+              <Square aria-hidden /> Stop runner
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="primary"
+              loading={busy === "start-runner"}
+              // Dims. Never a not-allowed cursor: the design system forbids it
+              // and check_design.sh fails on it.
+              disabled={busy != null || scope === ""}
+              onClick={onStartRunner}
+            >
+              <Play aria-hidden /> Start runner
+            </Button>
+          )}
+          {scope === "" && (
+            <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+              Pick the tree to work in first.
+            </span>
+          )}
+        </span>
+        {targetsFailed && (
+          <Notice tone="warn" where="/api/queue/runner/targets" action={<Button size="sm" variant="ghost" onClick={load}>Retry</Button>}>
+            Could not load the list of trees.
+          </Notice>
+        )}
+        {runnerError && <Notice tone="error">{runnerError}</Notice>}
       </Row>
 
       <Row label="gpu memory">
@@ -287,6 +429,15 @@ export default function AutonomyControls() {
         body="Stops the resident queue runner, switches unattended work off, and frees the GPU. A ticket half-worked when the runner stops goes back on the queue. Starting it again reloads the models, which takes about 20 seconds."
         confirmLabel="Stop all"
         busy={busy === "stop-all"}
+      />
+      <ConfirmDialog
+        open={confirmStopRunner}
+        onCancel={() => setConfirmStopRunner(false)}
+        onConfirm={onStopRunner}
+        title="Stop the queue runner?"
+        body="Stops the resident worker and any sweep in flight. A ticket half-worked when it stops goes back on the queue. Unattended work stays permitted; this only stops the worker."
+        confirmLabel="Stop runner"
+        busy={busy === "stop-runner"}
       />
       <ConfirmDialog
         open={confirmUnload}

@@ -73,7 +73,21 @@ _ROLE_WRITES: dict[str, frozenset[str]] = {
 # granted to everyone: reading is not a write, and an agent that cannot read
 # cannot do anything useful. Web tools are added by the caller's existing
 # policy, not here.
-_READ_TOOLS = ("Read", "Grep", "Glob")
+#
+# `mcp__workshop__search` is here, in the READ set, and deliberately not in a
+# per-role table. It reads the workshop's own writing (notes, docs, past chats)
+# by meaning, which is the same class of act as Grep over the tree, so it belongs
+# to whatever derivation already decides who may read.
+#
+# Putting it here inherits `tools_for_role`'s two exclusions for free, and both
+# are wanted. An agent with NO declared role stays inert rather than quietly able
+# to search the whole corpus. And `broker` — whose entire contract is that it
+# never reads the data it adjudicates — does not get a search tool over
+# everything, which is exactly what a "grant it to all five roles" reading of
+# this would have done. Do not widen it to a role with an empty write set.
+_READ_TOOLS = ("Read", "Grep", "Glob", "mcp__workshop__search")
+
+SEARCH_TOOL = "mcp__workshop__search"
 _TARGET_TOOLS: dict[str, tuple[str, ...]] = {
     # Bash rides with tree access: a maker runs tests and git. It is also the
     # widest grant here by far, which is exactly why it is tied to the one role
@@ -130,6 +144,26 @@ def tools_for_role(role: str | None) -> list[str]:
             if t not in granted:
                 granted.append(t)
     return granted
+
+
+def mcp_servers_for(tools: list[str] | None) -> list[str]:
+    """The MCP servers a granted toolset actually needs, in the CLI's naming.
+
+    Derived from the tool names (`mcp__<server>__<tool>`) rather than declared
+    beside them. A caller that grants `mcp__workshop__search` but forgets to
+    spawn `workshop` hands the CLI the name of a tool that cannot exist: the
+    model sees it in the allowlist, tries it, and gets nothing. That is the exact
+    shape of the bug this replaces (`mcp_servers=[]` was passed literally on the
+    mention path), so the two are computed from one value here.
+    """
+    out: list[str] = []
+    for t in tools or []:
+        if not t.startswith("mcp__"):
+            continue
+        parts = t.split("__")
+        if len(parts) >= 3 and parts[1] and parts[1] not in out:
+            out.append(parts[1])
+    return out
 
 
 def narrow_tools(role: str | None, requested: list[str] | None) -> list[str]:

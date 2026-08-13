@@ -44,6 +44,8 @@ QUEUE_RUNNER = WORKSHOP_ROOT / "scripts" / "queue_runner.sh"
 QUEUE_WATCHDOG = WORKSHOP_ROOT / "scripts" / "queue_runner_watchdog.sh"
 QUEUE_RUNNER_LOG = WORKSHOP_ROOT / ".runtime" / "queue-runner.log"
 QUEUE_RUNNER_PID = WORKSHOP_ROOT / ".runtime" / "queue-runner.pid"
+DEV_MODE_GATE = WORKSHOP_ROOT / "scripts" / "dev_mode_gate.sh"
+INSTANCE_LIB = WORKSHOP_ROOT / "scripts" / "lib" / "instance.sh"
 
 
 def _now_iso() -> str:
@@ -57,7 +59,7 @@ def _queue_lock_path(dir_str: str) -> Path:
     return Path(f"/tmp/workshop-queue-runner-{digest}.lock")
 
 
-def _queue_runner_state() -> dict:
+def _queue_runner_state(dir_str: str | None = None) -> dict:
     """Whether a worker loop is ACTUALLY resident, by probing the runner's flock
     rather than trusting a flag file. This is the distinction the old status
     endpoint missed: the AUTONOMY_DISABLED flag being absent says only that work
@@ -66,8 +68,14 @@ def _queue_runner_state() -> dict:
 
     `running` = a live process holds the lock. `enabled` = the off-switch is
     clear. Work only happens when BOTH are true, so the UI reports them
-    separately instead of collapsing them into one misleading label."""
-    lock = _queue_lock_path(str(WORKSHOP_ROOT))
+    separately instead of collapsing them into one misleading label.
+
+    The lock is PER TREE (`queue_runner.sh` derives it from `$DIR`), so the
+    answer is always about one named tree. `dir` says which one, because
+    "running" with no tree named is the same kind of lie this phase is deleting.
+    """
+    target = str(dir_str or WORKSHOP_ROOT)
+    lock = _queue_lock_path(target)
     running = False
     try:
         fd = os.open(str(lock), os.O_CREAT | os.O_RDWR, 0o644)
@@ -103,6 +111,7 @@ def _queue_runner_state() -> dict:
         "running": running,
         "pid": pid,
         "enabled": not autonomy_override.is_engaged(),
+        "dir": target,
         "lock_path": str(lock),
         "log_path": str(QUEUE_RUNNER_LOG),
         "last_line": last_line,
@@ -241,26 +250,108 @@ async def clear_autonomy_override():
 # ============================================================
 # Queue worker loop (B0)
 # ============================================================
-# Start/stop the resident loop that drains the task queue. "Start" clears the
-# off-switch AND ensures a runner is resident (via the watchdog, which is
-# idempotent thanks to the runner's flock); "Stop" sets the off-switch and
-# signals the runner, so a cron-restarted runner comes back idle rather than
-# immediately resuming work.
+# Start/stop the resident loop that drains the task queue, ON A NAMED TREE.
+#
+# THESE ENDPOINTS DO NOT TOUCH THE BRAKE, and that is the whole point of the
+# split (phase 0, docs/platform-redesign/autonomy-implementation-2026-08-13.md
+# §2.2). "Start" used to `autonomy_override.clear()` and then spawn the watchdog
+# with NO argument, which the watchdog refuses under ADR 0014 (`DIR="${1:-}"`,
+# then `assert_run_target "$DIR"`, exit 2). So one button cleared the global
+# brake and started nothing at all. Starting a worker and permitting unattended
+# work are two decisions; the brake keeps its own endpoints above
+# (POST/DELETE /agents/autonomy/override).
+
+
+class RunnerStart(BaseModel):
+    # REQUIRED, no default. ADR 0014: a run target must be NAMED. A default of
+    # $WORKSHOP is exactly how an always-on loop became a standing autonomous
+    # writer on the platform's own source.
+    dir: str
+
+
+def _validated_run_target(dir_str: str) -> str:
+    """Put `dir` through the SAME gate the watchdog uses, and return it.
+
+    Shelling out to `scripts/dev_mode_gate.sh` rather than reimplementing ADR
+    0014 in Python is deliberate: the refusal the operator reads in the UI is
+    byte-identical to the one cron writes into queue-runner.log, and there is
+    one place to change when the rule moves. `scripts/lib/instance.sh` is
+    sourced first for the same reason the watchdog does it, so both halves read
+    the same WORKSHOP_DEV_MODE.
+
+    Raises HTTPException(400) carrying the gate's own stderr.
+    """
+    target = (dir_str or "").strip()
+    if not DEV_MODE_GATE.exists():
+        raise HTTPException(500, f"gate missing: {DEV_MODE_GATE}")
+    script = (
+        f'source "{INSTANCE_LIB}"\n'
+        f'source "{DEV_MODE_GATE}"\n'
+        'assert_run_target "$1" "queue runner"\n'
+    )
+    proc = subprocess.run(
+        ["bash", "-c", script, "queue-runner-start", target],
+        cwd=str(WORKSHOP_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if proc.returncode != 0:
+        reason = (proc.stderr or "").strip() or "refused: not a permitted run target"
+        raise HTTPException(400, reason)
+    return target
 
 
 @router.get("/queue/runner")
-async def queue_runner_status():
-    """Real loop state: is a worker resident, and is work permitted."""
-    return _queue_runner_state()
+async def queue_runner_status(dir: str | None = None):
+    """Real loop state for one tree: is a worker resident, and is work
+    permitted. No `dir` reports on the platform repo's lock, which is what the
+    Settings summary has always shown."""
+    return _queue_runner_state(dir)
+
+
+@router.get("/queue/runner/targets")
+async def queue_runner_targets():
+    """The trees a runner may be pointed at, for the scope picker.
+
+    ADR 0014 says a target must be named, so the UI needs a list to name one
+    from. The platform repo appears only when developer mode is on: offering it
+    and then having the gate refuse it would be another control that lies.
+    """
+    from services import app_runner
+
+    out: list[dict] = []
+    if app_runner.dev_mode_on():
+        out.append({
+            "key": "development",
+            "label": "development (the Workshop itself)",
+            "dir": str(WORKSHOP_ROOT),
+        })
+    try:
+        import json as _json
+        data = _json.loads(paths.projects_registry().read_text())
+    except (OSError, ValueError):
+        data = {}
+    for slug, raw in sorted((data.get("projects") or {}).items()):
+        d = (raw or {}).get("dir")
+        if not d or app_runner.is_self_dir(d):
+            continue
+        out.append({
+            "key": slug,
+            "label": raw.get("title") or slug,
+            "dir": str(d),
+        })
+    return {"targets": out}
 
 
 @router.post("/queue/runner/start")
-async def queue_runner_start():
-    autonomy_override.clear()
+async def queue_runner_start(body: RunnerStart):
+    # The brake is NOT touched here. See the section comment above.
+    target = _validated_run_target(body.dir)
     if not QUEUE_WATCHDOG.exists():
         raise HTTPException(500, f"watchdog missing: {QUEUE_WATCHDOG}")
     subprocess.Popen(
-        ["bash", str(QUEUE_WATCHDOG)],
+        ["bash", str(QUEUE_WATCHDOG), target],
         cwd=str(WORKSHOP_ROOT),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.STDOUT,
@@ -269,16 +360,20 @@ async def queue_runner_start():
     # The watchdog spawns detached; give it a beat so the response reflects the
     # started runner rather than the pre-start state.
     await asyncio.sleep(1.5)
-    return _queue_runner_state()
+    return _queue_runner_state(target)
 
 
 @router.post("/queue/runner/stop")
-async def queue_runner_stop():
-    """Set the off-switch and stop the resident runner + any in-flight sweep.
-    The sweep's own lease/reclaim path returns a half-worked ticket to the queue,
-    so stopping mid-run loses no tickets."""
-    autonomy_override.engage("queue runner stopped from the API")
-    state = _queue_runner_state()
+async def queue_runner_stop(dir: str | None = None):
+    """Stop the resident runner + any in-flight sweep. The sweep's own
+    lease/reclaim path returns a half-worked ticket to the queue, so stopping
+    mid-run loses no tickets.
+
+    This no longer engages the brake either. Stopping the worker you started is
+    not a statement about whether unattended work is permitted, and conflating
+    them meant a Stop left a global policy flag set that nothing on screen
+    connected back to the button that set it."""
+    state = _queue_runner_state(dir)
     pid = state.get("pid")
     if pid:
         try:
@@ -289,7 +384,7 @@ async def queue_runner_stop():
             except (ProcessLookupError, PermissionError):
                 pass
     await asyncio.sleep(1.5)
-    return _queue_runner_state()
+    return _queue_runner_state(dir)
 
 
 def _jobs_summary(limit: int = 200) -> dict:

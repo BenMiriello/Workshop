@@ -69,4 +69,13 @@
 
 # ---- Task queue worker loop: ensure the resident runner is up (restart-on-death) ----
 # Disabled with the rest of autonomous work (see the top of this file).
-# */5 * * * * @WORKSHOP_ROOT@/scripts/queue_runner_watchdog.sh
+#
+# STAYS COMMENTED. Turning this on is the operator's decision and the last step
+# of the automation plan, not a side effect of fixing the line.
+#
+# The line was also WRONG, which is worth fixing while it is off so that
+# uncommenting it one day does the thing it says. queue_runner_watchdog.sh takes
+# the tree to supervise as $1 and refuses an empty target under ADR 0014, so as
+# written this entry would have exited 2 every five minutes and logged a refusal
+# rather than ever starting a runner.
+# */5 * * * * @WORKSHOP_ROOT@/scripts/queue_runner_watchdog.sh @WORKSHOP_ROOT@

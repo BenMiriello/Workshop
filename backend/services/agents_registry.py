@@ -116,39 +116,27 @@ _TEMPLATE_ONLY_FM = ("template", "template_version", "description")
 # disjointness and the claim fence.
 SINGLETON_ROLES = ("triager", "keeper")
 
-# Role taxonomy + per-agent effort/fan-out knobs (Phase O6/O7-config). All three
-# are optional frontmatter fields with safe defaults, surfaced in the parsed
-# record and re-serialized on write.
+# Role taxonomy (Phase O6/O7-config). An optional frontmatter field with a safe
+# default, surfaced in the parsed record and re-serialized on write.
 #
 # `role` TYPES an agent: it selects which HANDLER the dispatcher runs for it
 # (scripts/dispatch_triggers.sh ROLE_HANDLERS), it does not change how work is
 # assigned (assignment stays `assignee=agent:<slug>`). That one is live.
 #
-# `depth` and `fanout` ARE NOT. This comment used to read "`depth` is the effort
-# tier a sweep runs the agent at; `fanout` bounds native subagent use", and both
-# halves were aspirational: no executor reads either field. A sweep's effort tier
-# comes from the TICKET's `effort` (project_ralph.sh reads it to pick
-# RALPH_ITER_QUICK / _DEEP and the model tier), and nothing anywhere consults
-# `fanout` before a subagent is spawned. No agent definition in the tree declares
-# either one, so today they are parsed, echoed to the API, and dropped.
-#
-# They are kept because the ticket-level effort tier is the mechanism that works
-# and an agent-level default could route into it later. Until something reads
-# them, they must not be presented to the operator as controls that change a run.
-# The agent page does not offer them. AutonomyPanel still renders both at PROJECT
-# scope; that surface is honest only once a consumer exists.
-DEPTHS = ("quick", "standard", "deep")
-FANOUTS = ("off", "read-only")
-DEFAULT_DEPTH = "standard"
-DEFAULT_FANOUT = "read-only"
+# `depth` and `fanout` USED TO LIVE HERE AND ARE DELETED (phase 0,
+# docs/platform-redesign/autonomy-implementation-2026-08-13.md §2.1). Both were
+# aspirational: no executor ever read either field. A sweep's effort tier comes
+# from the TICKET's `effort` (project_ralph.sh reads it to pick
+# RALPH_ITER_QUICK / _DEEP and the model tier), and nothing anywhere consulted
+# `fanout` before a subagent was spawned. They were parsed, echoed to the API,
+# and dropped, which is a control that lies. Do not add them back without a
+# reader. A definition file that still carries `depth:` in its frontmatter keeps
+# working: unknown frontmatter keys are ignored, so no migration is needed.
 
 # `latitude` is decision rights, NOT effort — it is what the worker may do where
 # the ticket does not say (services/latitude.py owns the enum + the cascade).
-# Distinct from `depth`, which is the effort budget: `strict` + `deep` (think
-# hard, then ask) and `open` + `quick` (do the obvious thing, don't ask) are both
-# coherent. Unlike depth/fanout, the parsed record keeps None rather than
-# defaulting, because None means INHERIT: this agent scope is one level of the
-# cascade, not the bottom of it.
+# The parsed record keeps None rather than defaulting, because None means
+# INHERIT: this agent scope is one level of the cascade, not the bottom of it.
 LATITUDES = _latitude.LATITUDES
 DEFAULT_LATITUDE = _latitude.DEFAULT_LATITUDE
 
@@ -211,14 +199,6 @@ def _role_for_runtime(runtime: str) -> str | None:
     Assistants imply nothing; an assistant with no role is genuinely unroled.
     """
     return "maker" if runtime == "builder" else None
-
-
-def _coerce_depth(v: object) -> str:
-    return v if v in DEPTHS else DEFAULT_DEPTH
-
-
-def _coerce_fanout(v: object) -> str:
-    return v if v in FANOUTS else DEFAULT_FANOUT
 
 
 def _coerce_latitude(v: object) -> str | None:
@@ -472,8 +452,6 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         "permission_mode": _coerce_permission_mode(fm.get("permission_mode"), slug),
         "mentionable": _coerce_bool(fm.get("mentionable")),
         "delegatable": _coerce_bool(fm.get("delegatable")),
-        "depth": _coerce_depth(fm.get("depth")),
-        "fanout": _coerce_fanout(fm.get("fanout")),
         "latitude": _coerce_latitude(fm.get("latitude")),
         "autonomy": _coerce_autonomy(fm.get("autonomy")),
         "memory": fm.get("memory"),
@@ -816,8 +794,7 @@ def _path_for(slug: str, project_slug: str | None) -> Path:
 def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
               triggers_list: list, limits: dict, memory: Any,
               project_slug: str | None, letta_agent_id: str | None,
-              role: str | None = None, depth: str | None = None,
-              fanout: str | None = None, latitude: str | None = None,
+              role: str | None = None, latitude: str | None = None,
               autonomy: str | None = None, mentionable: bool = False,
               delegatable: bool = False,
               template: str | None = None, retired: bool = False) -> dict:
@@ -831,7 +808,7 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
         "memory": memory,
     }
     # Only emit the role-taxonomy fields when they carry non-default information,
-    # so a fresh definition file is not littered with `depth: standard` noise.
+    # so a fresh definition file is not littered with defaults spelled out.
     valid_role = _validate_role(role)
     if valid_role:
         fm["role"] = valid_role
@@ -840,10 +817,6 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
         fm["mentionable"] = True
     if delegatable:
         fm["delegatable"] = True
-    if depth is not None and _coerce_depth(depth) != DEFAULT_DEPTH:
-        fm["depth"] = depth
-    if fanout is not None and _coerce_fanout(fanout) != DEFAULT_FANOUT:
-        fm["fanout"] = fanout
     # Same emit-only-when-non-default rule, and here it is correctness rather
     # than tidiness: an emitted `latitude: standard` is indistinguishable from a
     # deliberate choice, so it would out-rank nothing but would read as set.
@@ -896,8 +869,7 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
            capabilities: list | None = None, triggers_list: list | None = None,
            limits: dict | None = None, memory: Any = None,
            project_slug: str | None = None, letta_agent_id: str | None = None,
-           role: str | None = None, depth: str | None = None,
-           fanout: str | None = None, latitude: str | None = None,
+           role: str | None = None, latitude: str | None = None,
            autonomy: str | None = None,
            template: str | None = None, body: str = "") -> dict:
     slug = slug.strip().lower()
@@ -913,7 +885,7 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
                    capabilities=capabilities or [], triggers_list=triggers_list or [],
                    limits=limits or dict(DEFAULT_LIMITS), memory=memory,
                    project_slug=project_slug, letta_agent_id=letta_agent_id,
-                   role=role, depth=depth, fanout=fanout, latitude=latitude,
+                   role=role, latitude=latitude,
                    autonomy=autonomy,
                    template=template)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -925,8 +897,7 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
 def update(slug: str, *, name: str | None = None, purpose: str | None = None,
            triggers_list: list | None = None, limits: dict | None = None,
            capabilities: list | None = None, memory: Any = None,
-           role: str | None = None, depth: str | None = None,
-           fanout: str | None = None, latitude: str | None = None,
+           role: str | None = None, latitude: str | None = None,
            autonomy: str | None = None, mentionable: bool | None = None,
            delegatable: bool | None = None,
            body: str | None = None) -> dict:
@@ -934,7 +905,7 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
     yet (e.g. a builder synthesized from build_agents.json), one is created from
     the current record. Regenerates the event-subscriptions file afterward.
 
-    role/depth/fanout/latitude follow the same convention as the other setters:
+    role/latitude follow the same convention as the other setters:
     None leaves the field untouched (so a plain triggers edit never disturbs a
     role), a value writes it."""
     rec = get(slug)
@@ -950,7 +921,7 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             capabilities=rec.get("capabilities") or [], triggers_list=rec.get("triggers") or [],
             limits=rec.get("limits") or dict(DEFAULT_LIMITS), memory=rec.get("memory"),
             project_slug=rec.get("project_slug"), letta_agent_id=rec.get("letta_agent_id"),
-            role=rec.get("role"), depth=rec.get("depth"), fanout=rec.get("fanout"),
+            role=rec.get("role"),
             latitude=rec.get("latitude"), autonomy=rec.get("autonomy"),
             mentionable=bool(rec.get("mentionable")), delegatable=bool(rec.get("delegatable")),
         )
@@ -980,16 +951,6 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             fm["role"] = valid_role
         else:
             fm.pop("role", None)
-    if depth is not None:
-        if _coerce_depth(depth) == DEFAULT_DEPTH:
-            fm.pop("depth", None)
-        else:
-            fm["depth"] = depth
-    if fanout is not None:
-        if _coerce_fanout(fanout) == DEFAULT_FANOUT:
-            fm.pop("fanout", None)
-        else:
-            fm["fanout"] = fanout
     if latitude is not None:
         # "" clears the scope's latitude (back to inherit); `standard` is never
         # emitted, so setting the default clears it too — a scope that stored its
@@ -1134,9 +1095,9 @@ def fork_from_template(template_slug: str, target_slug: str,
     afterward. The only trace is a `template: <slug>@<version>` frontmatter stamp,
     which is provenance for a human, not a pointer for a machine.
 
-    `overrides` may set any of name / purpose / triggers / limits / role / depth /
-    fanout / latitude / definition (the body). Everything it does not name comes
-    from the template verbatim.
+    `overrides` may set any of name / purpose / triggers / limits / role /
+    latitude / definition (the body). Everything it does not name comes from the
+    template verbatim.
     """
     path = _template_path(template_slug)
     if not path.exists():
@@ -1160,8 +1121,6 @@ def fork_from_template(template_slug: str, target_slug: str,
         memory=ov.get("memory") if ov.get("memory") is not None else fm.get("memory"),
         project_slug=project_slug,
         role=ov.get("role") if ov.get("role") is not None else fm.get("role"),
-        depth=ov.get("depth") if ov.get("depth") is not None else fm.get("depth"),
-        fanout=ov.get("fanout") if ov.get("fanout") is not None else fm.get("fanout"),
         latitude=ov.get("latitude") if ov.get("latitude") is not None else fm.get("latitude"),
         template=stamp,
         body=ov.get("definition") if ov.get("definition") is not None else body,

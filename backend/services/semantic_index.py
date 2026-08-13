@@ -229,18 +229,23 @@ def _first_heading(body: str, fallback: str) -> str:
 
 
 def collect_notes() -> list[Chunk]:
-    """Every knowledge note, across every scope directory that exists."""
+    """Every knowledge note, across every scope directory that exists.
+
+    The docstring said this already and the code did not. It walked the shared
+    root plus that directory's IMMEDIATE subdirectories, non-recursively, so
+    `projects/*/knowledge`, `apps/*/knowledge`, `.runtime/agents/*/knowledge` and
+    `roles/<role>/` were never reached: measured 2026-08-13, all 21 indexed note
+    refs came from one directory. `knowledge.all_scope_dirs()` is now the single
+    enumeration, and it is the inverse of `knowledge.scope_dir()` rather than a
+    second guess at the layout.
+    """
     from services import knowledge
     out: list[Chunk] = []
-    roots: list[tuple[str, Path]] = []
     try:
-        shared = knowledge._shared_knowledge_root()
-        roots.append(("workshop", shared))
-        for sub in sorted(p for p in shared.iterdir() if p.is_dir()):
-            if sub.name != "archive":
-                roots.append((sub.name, sub))
+        roots = knowledge.all_scope_dirs()
     except Exception as e:
-        log.warning("knowledge root unavailable: %s", e)
+        log.warning("knowledge scopes unavailable: %s", e)
+        roots = []
     for scope, d in roots:
         for f in sorted(d.glob("*.md")):
             try:
@@ -359,6 +364,10 @@ def _meta_path() -> Path:
     return index_dir() / "index.meta.jsonl"
 
 
+def _stale_path() -> Path:
+    return index_dir() / "index.stale"
+
+
 def _vecs_path() -> Path:
     return index_dir() / "index.vecs.npy"
 
@@ -395,6 +404,86 @@ def _save(meta: list[dict], vecs: np.ndarray) -> None:
     np.save(tmp_v, vecs)
     os.replace(tmp_m, mp)
     os.replace(tmp_v, vp)
+
+
+# -------------------------------------------------------------- staleness
+#
+# THE INDEX HEALS ITSELF, AND IT IS NOT ON A SCHEDULE. A note written today was
+# unfindable until somebody remembered to run the build by hand, which is the
+# same as unfindable. The fix is two small functions and no new process: a write
+# leaves a marker, and the next search that sees the marker rebuilds first.
+#
+# NOT A CRON ENTRY. The operator turned cron off deliberately
+# (infra/cron/workshop.crontab), and a scheduler is the wrong shape anyway: it
+# rebuilds when nothing changed and lags when something did. This costs nothing
+# when nothing was written and is exact when something was.
+#
+# The rebuild is INCREMENTAL by content digest (see `build`), so the common case
+# after one note is a handful of new chunks embedded locally, not a full re-embed
+# of the corpus.
+#
+# A MARKER FILE, not a module global. The writer is the backend process and the
+# reader is very often the MCP server, which is a separate stdio subprocess
+# spawned per turn. An in-memory flag would be invisible across that boundary,
+# which is the boundary that matters. It lives in the owner's index dir, so it is
+# per-owner exactly as the index is.
+
+def mark_stale(reason: str = "") -> None:
+    """Record that the corpus changed under the index. Never raises.
+
+    Best-effort on purpose: this is called from the tail of a write that has
+    already succeeded, and failing a note write because a marker could not be
+    touched would be a strictly worse outcome than a stale index.
+    """
+    try:
+        _stale_path().write_text((reason or "changed").strip() + "\n")
+    except Exception:
+        log.debug("could not mark the semantic index stale", exc_info=True)
+
+
+def is_stale() -> bool:
+    try:
+        return _stale_path().exists()
+    except Exception:
+        return False
+
+
+def _clear_stale() -> None:
+    try:
+        _stale_path().unlink(missing_ok=True)
+    except Exception:
+        log.debug("could not clear the semantic index stale marker", exc_info=True)
+
+
+def rebuild_kinds() -> tuple[str, ...]:
+    """Which kinds a self-healing rebuild must cover.
+
+    NOT the caller's `kinds` filter, and this is the trap. `build` REPLACES the
+    index with exactly what it collected, so rebuilding with the kinds of the
+    query in hand (`kinds=("note",)` from a note-only search) would delete every
+    doc and chat from the index as a side effect of one search. It is the
+    defaults, plus anything already indexed — so an opted-in `vault` survives a
+    rebuild it did not ask for.
+    """
+    present = {m.get("kind") for m in load()[0] if m.get("kind") in KINDS}
+    return tuple(k for k in KINDS if k in present or k in DEFAULT_KINDS)
+
+
+def rebuild_if_stale() -> dict | None:
+    """Rebuild when a write has marked the index stale. Returns the build result,
+    or None when there was nothing to do.
+
+    The marker is cleared by `build` on success only. A rebuild that fails
+    because the embedder is down leaves the marker in place, so the next search
+    tries again instead of silently accepting a stale index forever.
+    """
+    if not is_stale():
+        return None
+    log.info("semantic index is stale; rebuilding before this search")
+    res = build(rebuild_kinds())
+    if not res.get("ok"):
+        log.warning("stale semantic index could not be rebuilt: %s", res.get("error"))
+    return res
 
 
 # ---------------------------------------------------------------- build
@@ -441,12 +530,23 @@ def build(kinds: tuple[str, ...] | list[str] = DEFAULT_KINDS,
         for n, i in enumerate(todo):
             rows[i] = vecs[n]
 
+    # Cleared only once the index is actually on disk, and only by a build that
+    # covered every default kind: `build(("chat",))` re-collects no notes, so
+    # letting it clear a marker a note write left would lose that note until the
+    # next unrelated write. An `ok: False` return above (embedder down) never
+    # reaches here at all, so the marker survives and the next search retries.
+    covered = set(DEFAULT_KINDS).issubset(set(kinds))
+
     if not rows:
         _save([], np.zeros((0, 0), dtype=np.float32))
+        if covered:
+            _clear_stale()
         return {"ok": True, "chunks": 0, "embedded": 0, "reused": 0}
 
     matrix = np.vstack([r for r in rows if r is not None]).astype(np.float32)
     _save(meta, matrix)
+    if covered:
+        _clear_stale()
     return {"ok": True, "chunks": len(meta), "embedded": len(todo),
             "reused": len(meta) - len(todo), "dim": int(matrix.shape[1])}
 
@@ -464,6 +564,16 @@ def search(query: str, *, limit: int = 8,
     query = (query or "").strip()
     if not query:
         return []
+    # Self-healing: a note written since the last build has left a marker, so
+    # catch up before answering rather than confidently returning nothing. Costs
+    # one `exists()` in the overwhelmingly common case where nothing changed.
+    try:
+        rebuild_if_stale()
+    except Exception:
+        # A search must still answer from whatever is on disk if the rebuild
+        # raised. Degrading to a stale result beats failing the tool call.
+        log.warning("stale-index rebuild failed; searching the existing index",
+                    exc_info=True)
     meta, vecs = load()
     if not meta:
         return []

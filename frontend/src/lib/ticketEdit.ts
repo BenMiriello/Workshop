@@ -12,6 +12,7 @@
 //   - every field is optional; an ABSENT key leaves the stored value alone
 //   - latitude "" clears the ticket's override back to inherit (null does NOT)
 //   - effort "" clears the hint; assignee "" clears the assignment
+//   - execution "" clears the classification back to "not classified"
 //   - acceptance {kind: ""} clears the gate; a real kind is one of three
 //   - labels / depends_on / relates_to take a whole list, and [] clears it
 //   - max_attempts takes an int and has NO clear path, so a blank input leaves
@@ -21,10 +22,17 @@
 // Only CHANGED fields are sent. That keeps a title-only edit from re-pushing
 // labels and body to a linked tracker (the PATCH route write-throughs on those
 // three), and it keeps `assignee` out of a patch that is not about assignment.
-import { cleanTitle, description as descriptionOf, title as titleOf, type Task } from "./tasks";
+import {
+  cleanTitle, description as descriptionOf, title as titleOf,
+  TASK_EXECUTIONS, type Task,
+} from "./tasks";
 
 // The store's effort vocabulary (backend services/tasks.py EFFORTS).
 export const TICKET_EFFORTS = ["quick", "standard", "deep"] as const;
+
+// The store's execution vocabulary. Re-exported from lib/tasks so the editor and
+// every reader name the same closed set (backend services/tasks.py).
+export const TICKET_EXECUTIONS = TASK_EXECUTIONS;
 
 // The store's acceptance kinds (backend routes/tasks_all.py _ACCEPTANCE_KINDS).
 export const TICKET_ACCEPTANCE_KINDS = ["reviewer", "command", "operator"] as const;
@@ -42,6 +50,9 @@ export type TicketDraft = {
   priority: string;
   // "" = no effort hint.
   effort: string;
+  // "" = not classified. Otherwise one of TICKET_EXECUTIONS. Part of the spec a
+  // worker executes, so it commits on Save with the title and the body.
+  execution: string;
   // "" = unassigned. Otherwise "operator" or "agent:<slug>".
   assignee: string;
   // "" = no completion gate.
@@ -60,8 +71,8 @@ export type TicketDraft = {
 // one has, so this is only ever the initial state of the form.
 export const EMPTY_TICKET_DRAFT: TicketDraft = {
   title: "", body: "", status: "todo", latitude: LATITUDE_INHERIT,
-  priority: "0", effort: "", assignee: "", acceptanceKind: "", acceptanceSpec: "",
-  maxAttempts: "", labels: "", dependsOn: "", relatesTo: "",
+  priority: "0", effort: "", execution: "", assignee: "", acceptanceKind: "",
+  acceptanceSpec: "", maxAttempts: "", labels: "", dependsOn: "", relatesTo: "",
 };
 
 export function draftFromTask(t: Task): TicketDraft {
@@ -74,6 +85,7 @@ export function draftFromTask(t: Task): TicketDraft {
     latitude: t.latitude ?? LATITUDE_INHERIT,
     priority: String(t.priority ?? 0),
     effort: t.effort ?? "",
+    execution: t.execution ?? "",
     assignee: t.assignee ?? "",
     acceptanceKind: t.acceptance?.kind ?? "",
     acceptanceSpec: t.acceptance?.spec ?? "",
@@ -138,6 +150,10 @@ export function ticketPatch(draft: TicketDraft, base: TicketDraft): Record<strin
   if (priority !== (parseCount(base.priority) ?? 0)) out.priority = priority;
 
   if (draft.effort !== base.effort) out.effort = draft.effort;
+
+  // "" clears the classification back to null, the same way "" clears effort.
+  // null is not `code`: an unclassified ticket is never picked up unattended.
+  if (draft.execution !== base.execution) out.execution = draft.execution;
 
   const assignee = (draft.assignee ?? "").trim();
   if (assignee !== (base.assignee ?? "").trim()) out.assignee = assignee;

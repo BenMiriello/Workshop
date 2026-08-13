@@ -17,3 +17,10 @@ python-multipart==0.0.32
 # Cron-expression triggers (services/triggers.py). The import sits in a try, so
 # without it a cron-shaped trigger silently never fires rather than erroring.
 croniter==6.0.0
+
+# Semantic search (services/semantic_index.py) imports numpy at MODULE level, and
+# the search tool is handed to agents and to the unattended worker. This was
+# declared only in requirements-voice.txt, so a backend installed without the
+# voice extras raised ImportError on the first search call rather than degrading.
+# It is not a voice dependency; it is the storage and ranking layer of the index.
+numpy==2.5.1

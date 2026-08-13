@@ -28,6 +28,7 @@ describe("draftFromTask", () => {
     const d = draftFromTask(task({
       priority: 3,
       effort: "deep",
+      execution: "code",
       assignee: "agent:mole",
       acceptance: { kind: "command", spec: "npm test" },
       max_attempts: 4,
@@ -43,6 +44,7 @@ describe("draftFromTask", () => {
       latitude: "strict",
       priority: "3",
       effort: "deep",
+      execution: "code",
       assignee: "agent:mole",
       acceptanceKind: "command",
       acceptanceSpec: "npm test",
@@ -59,6 +61,7 @@ describe("draftFromTask", () => {
     expect(d.maxAttempts).toBe("");
     expect(d.priority).toBe("0");
     expect(d.effort).toBe("");
+    expect(d.execution).toBe("");
     expect(d.acceptanceKind).toBe("");
   });
 
@@ -109,6 +112,16 @@ describe("ticketPatch", () => {
 
   it("sends only the fields that changed", () => {
     expect(ticketPatch(change({ priority: "5" }), base)).toEqual({ priority: 5 });
+  });
+
+  it("round-trips execution through the draft and clears it with an empty string", () => {
+    expect(ticketPatch(change({ execution: "judgement" }), base))
+      .toEqual({ execution: "judgement" });
+    const classified = draftFromTask(task({ execution: "external" }));
+    expect(classified.execution).toBe("external");
+    expect(ticketPatch({ ...classified, execution: "" }, classified))
+      .toEqual({ execution: "" });
+    expect(ticketDirty(classified, classified)).toBe(false);
   });
 
   it("collapses a pasted multi-line title to one line", () => {

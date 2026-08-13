@@ -30,7 +30,7 @@ import {
   Textarea,
   type SegmentedOption,
 } from "@workshop/ui";
-import { scopeLabel, ticketHref } from "../../lib/tasks";
+import { proposalGaps, readinessLine, scopeLabel, ticketHref } from "../../lib/tasks";
 import { type Job, jobStatusKind } from "../../lib/jobs";
 import { pickupFor, pickupNote, type PickupMap } from "../../lib/scopePickup";
 import {
@@ -642,6 +642,13 @@ export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: strin
   }
 
   // Edit state.
+  //
+  // What the proposal does not yet say, as the SAME one line the ticket page
+  // shows. Here it is cheapest to act on: the fields are on screen and nothing
+  // has been filed, so closing a gap is one edit rather than a round trip
+  // through the ticket. Advisory only, exactly as on the ticket page: it never
+  // disables File.
+  const notReady = isTaskProposal ? readinessLine(proposalGaps(values)) : "";
   const pickup = isTaskProposal ? pickupFor(pickupMap, (values.scope || "workshop").trim()) : null;
   const pickupWarning = pickup ? pickupNote(pickup) : null;
   // Do not offer a run that cannot happen. The same rule TicketDraftsDialog
@@ -662,6 +669,7 @@ export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: strin
             <CardField key={f.name} field={f} value={values[f.name] ?? ""} onChange={(v) => setValue(f.name, v)} />
           ))}
         </Stack>
+        {notReady && <Notice tone="warn">{notReady}</Notice>}
         {pickupWarning && (
           <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{pickupWarning}</span>
         )}

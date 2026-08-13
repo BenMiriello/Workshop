@@ -198,6 +198,75 @@ def scope_dir(scope_key: str) -> Path:
     return d
 
 
+def all_scope_dirs() -> list[tuple[str, Path]]:
+    """Every knowledge directory that EXISTS, as `(scope_key, dir)`.
+
+    The inverse of `scope_dir`, and the thing a whole-corpus reader (the semantic
+    index) needs: `scope_dir` answers "where does THIS scope live", and nothing
+    answered "which scopes are there". `semantic_index.collect_notes` therefore
+    walked the shared root and its immediate subdirectories only, so
+    `projects/*/knowledge`, `apps/*/knowledge`, `.runtime/agents/*/knowledge` and
+    `roles/<role>/` were never indexed at all.
+
+    ENUMERATED OFF THE FILESYSTEM, never by calling `scope_dir` over a list of
+    candidate keys. `scope_dir` mkdirs what it is asked for, so a prober that
+    walked the app catalog would CREATE a `knowledge/` directory inside every
+    installed app in the tracked tree just by looking. Nothing here creates
+    anything.
+
+    `archive/` is excluded deliberately: `enforce_index_cap` demotes notes there
+    to get them out of the always-loaded index and out of the search corpus, and
+    re-indexing them would undo half of that.
+    """
+    out: list[tuple[str, Path]] = []
+    seen: set[Path] = set()
+
+    def add(key: str, d: Path) -> None:
+        try:
+            if not d.is_dir():
+                return
+            real = d.resolve()
+        except OSError:
+            return
+        if real in seen:
+            return
+        seen.add(real)
+        out.append((key, d))
+
+    def add_children(parent: Path, key_for, *, suffix: str = "") -> None:
+        try:
+            kids = sorted(p for p in parent.iterdir() if p.is_dir())
+        except OSError:
+            return
+        for kid in kids:
+            if kid.name in ("archive", "__pycache__") or kid.name.startswith("."):
+                continue
+            add(key_for(kid.name), kid / suffix if suffix else kid)
+
+    try:
+        shared = _shared_knowledge_root()
+    except Exception as e:  # no owner pinned, or no workspace yet
+        log.debug("shared knowledge root unavailable: %s", e)
+        return out
+
+    add("workshop", shared)
+    # `development` and `roles/<role>` ride on the shared root as subdirectories.
+    add("development", shared / "development")
+    add_children(shared / "roles", lambda n: f"role:{n.lower()}")
+    # Any OTHER subdirectory of the shared root keeps being read, unkeyed. It is
+    # not a scope this module can name, but it holds notes somebody wrote and
+    # dropping it would be a regression against the previous walk.
+    for sub in sorted(p for p in shared.iterdir() if p.is_dir()) if shared.is_dir() else []:
+        if sub.name in ("archive", "roles", "development") or sub.name.startswith("."):
+            continue
+        add(sub.name, sub)
+
+    add_children(paths.projects_root(), lambda n: f"project:{n}", suffix="knowledge")
+    add_children(_root() / "apps", lambda n: f"app:{n}", suffix="knowledge")
+    add_children(_runtime() / "agents", lambda n: f"agent:{n}", suffix="knowledge")
+    return out
+
+
 def _valid_note_id(note_id: str) -> str:
     if not note_id or not _NOTE_ID_RE.fullmatch(note_id):
         raise ValueError(f"invalid note_id: {note_id!r} (kebab/hex slug required)")
@@ -545,6 +614,20 @@ async def put_note(scope_key: str, note_id: str, title: str, content: str, hook:
         scope_version.bump(scope_key, "note", (title or note_id).strip())
     except Exception:
         log.debug("scope version bump skipped for %s", scope_key, exc_info=True)
+
+    # The semantic index has just gone out of date. Mark it, and let the next
+    # search rebuild (services/semantic_index.rebuild_if_stale). A note nobody
+    # can find until somebody remembers to run a build by hand is a note nobody
+    # can find, and the alternative — rebuilding HERE — would put a local
+    # embedding pass with an unbounded worst case in the middle of an HTTP write.
+    #
+    # Best-effort, like the two above: the note is already on disk and is the
+    # thing that mattered.
+    try:
+        from services import semantic_index
+        semantic_index.mark_stale(f"note {scope_key}/{note_id}")
+    except Exception:
+        log.debug("semantic index stale-mark skipped for %s", scope_key, exc_info=True)
 
     return {"scope": scope_key, "note_id": note_id}
 

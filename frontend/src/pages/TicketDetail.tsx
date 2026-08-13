@@ -40,10 +40,10 @@ import { Markdown } from "@workshop/ui/markdown";
 import {
   type Task, type TaskLink, TASK_STATUSES, taskStatusKind, taskStatusLabel,
   title as titleOf, description as descriptionOf, scopeLabel, scopeHref,
-  ticketHref,
+  ticketHref, executionLabel, readinessLine,
 } from "../lib/tasks";
 import {
-  EMPTY_TICKET_DRAFT, TICKET_EFFORTS,
+  EMPTY_TICKET_DRAFT, TICKET_EFFORTS, TICKET_EXECUTIONS,
   draftFromTask, ticketDirty, ticketPatch, ticketTitleMissing,
   unresolvedIds, type TicketDraft,
 } from "../lib/ticketEdit";
@@ -353,6 +353,10 @@ export default function TicketDetail() {
   const dirty = !!task && editing && ticketDirty(draft, saved);
   const titleMissing = editing && ticketTitleMissing(draft);
   const dependsMissing = unresolvedIds(task?.depends_on, links?.depends_on);
+  // What the ticket does not yet say. Advisory, and it stays advisory: nothing
+  // here touches `canRun`. Only `ticket_readiness.blocking()` refuses a run, and
+  // that refusal happens server-side where the launch is decided.
+  const gaps = task?.readiness?.missing ?? [];
 
   // ---- main column ----------------------------------------------------------
 
@@ -387,6 +391,21 @@ export default function TicketDetail() {
             <Select value={draft.effort} onChange={(e) => setField("effort", e.target.value)}>
               <option value="">Not set</option>
               {TICKET_EFFORTS.map((v) => <option key={v} value={v}>{v}</option>)}
+            </Select>
+          </Field>
+          {/* Behind Save, with the title and the body, because it is part of
+              the spec a worker executes. Not classified is not code: an
+              unclassified ticket is never picked up unattended. */}
+          <Field
+            label="Execution"
+            help="code: a worker can change a tree. judgement: the output is a decision. external: needs a host login or a vendor console."
+          >
+            <Select
+              value={draft.execution}
+              onChange={(e) => setField("execution", e.target.value)}
+            >
+              <option value="">Not classified</option>
+              {TICKET_EXECUTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
             </Select>
           </Field>
         </Row>
@@ -550,6 +569,16 @@ export default function TicketDetail() {
               <Prop label="Priority">{task.priority}</Prop>
             )}
             {task.effort && <Prop label="Effort">{task.effort}</Prop>}
+            {/* Always shown, unlike the rows above it, because "not classified"
+                is the value that matters: it is what keeps a ticket out of an
+                unattended sweep, and a row that disappears cannot say so. A
+                Prop, not a Badge: one record on a page is nothing to scan a
+                list for. */}
+            <Prop label="Execution">
+              {task.execution
+                ? executionLabel(task.execution)
+                : <span className="ws-muted">not classified</span>}
+            </Prop>
             <Prop label="Created"><span title={fmtTs(task.created)}>{ago(task.created)}</span></Prop>
             {originKey && (
               <Prop label="Filed from">
@@ -664,6 +693,21 @@ export default function TicketDetail() {
           )
         }
       />
+
+      {/* What the ticket does not say, under the Run button that would hand it
+          to a worker. ONE LINE OF PROSE. The checklist that used to live on
+          this page was deleted on 2026-08-12 as a nag panel, and a checklist in
+          different markup is the same panel.
+
+          A `Notice`, not a `StateBlock`: the ticket is right there, so this is
+          a line beside content, not a region where content is absent.
+
+          It NEVER blocks. `canRun` does not read it. Above the banner because
+          this is standing state and the banner is a transient reply; the other
+          order makes the advisory jump every time a save answers. */}
+      {gaps.length > 0 && (
+        <Notice tone="warn">{readinessLine(gaps)}</Notice>
+      )}
 
       {/* A LINE, not a region: the ticket is still on screen, and a rejected
           save is one sentence beside it (frontend/CLAUDE.md, "A region or a

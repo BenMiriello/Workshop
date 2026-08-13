@@ -434,6 +434,54 @@ else
   log "irreversible-action gate: NOT APPLIED (agent_authority produced no patterns)"
 fi
 
+# --- the search tool, for a worker that cannot ask anybody --------------------
+#
+# The worker gets `mcp__workshop__search`: semantic search over the workshop's
+# own notes, docs and past chats. It is the one tool that answers "have we
+# decided this before", and the unattended sweep is the run that most needs it,
+# because it has nobody to ask. Every chat surface had it and this one did not,
+# purely because ralph spawns `claude -p` itself and passed no MCP flags at all.
+#
+# The launch spec is emitted by Python (services.llm_router mcp-config) rather
+# than written out here. It is not a constant: it carries the venv path, the
+# server path, PYTHONPATH, and — the part that matters — WORKSHOP_QUERY_OWNER.
+# The server is OWNER-SCOPED, so an unpinned worker searches an empty index and
+# every run still succeeds. A copy of that spec in bash is a copy that goes stale
+# silently, and silently is the only way this failure ever presents.
+#
+# NO `--strict-mcp-config`. This is an ADDITIVE config: the worker is
+# full-agentic by design, and strict mode would drop every other server the tree
+# legitimately configures. Best-effort, like the deny gate above: if the emitter
+# fails the run proceeds without search rather than not proceeding, and the log
+# line below says which happened.
+MCP_CFG=$( (cd "$WORKSHOP/backend" && .venv/bin/python -m services.llm_router \
+  mcp-config --server workshop 2>>"$LOG") || true)
+MCP_FLAGS=()
+if [[ -n "$MCP_CFG" && -f "$MCP_CFG" ]]; then
+  MCP_FLAGS=(--mcp-config "$MCP_CFG")
+  # The emitter writes to the system temp dir and leaves cleanup to the caller.
+  trap 'rm -f "$MCP_CFG"' EXIT
+  log "workshop search tool: enabled (mcp-config $MCP_CFG)"
+  # Told to the model only when the tool is actually there. A prompt that
+  # describes a tool the CLI was never given is worse than silence: the model
+  # spends a turn calling it and reads the failure as its own mistake.
+  RALPH_INSTRUCTIONS="$RALPH_INSTRUCTIONS
+
+## The workshop's own memory
+You have \`mcp__workshop__search\`: semantic search over this workshop's own
+writing — knowledge notes, everything under docs/, and the full text of past
+chats. You never saw the conversation this ticket came out of, and this is the
+only way to read it.
+
+Use it BEFORE you design anything, and whenever the ticket assumes context you
+do not have: 'have we decided this before', 'why is this built this way', 'what
+did we say about X'. An empty result is a real answer, not a malfunction: it
+means there is no prior art here and you should proceed on the ticket alone.
+Do not re-run the same query hoping for a different result."
+else
+  log "workshop search tool: NOT APPLIED (llm_router emitted no mcp-config)"
+fi
+
 # The persona paragraph. Latitude is an INSTRUCTION about the residue the ticket
 # left unspecified. It is prompt text: it changes what the model is told to do,
 # and the only thing downstream that reads the value is the strict-and-ambiguous
@@ -619,6 +667,7 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   timeout "$PER_ITER_TIMEOUT" "$CLAUDE" "${RESUME_FLAG[@]}" -p "$ITER_PROMPT" \
     --output-format json \
     "${DENY_FLAGS[@]}" \
+    "${MCP_FLAGS[@]}" \
     "${TURN_CAP[@]}" \
     </dev/null >"$ITER_OUT" 2>&1
   CLAUDE_EXIT=$?

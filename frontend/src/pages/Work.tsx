@@ -55,6 +55,7 @@ import {
   cleanTitle,
   scopeLabel,
   ticketHref,
+  readinessLine,
 } from "../lib/tasks";
 import {
   DEFAULT_STATUS_FILTER,
@@ -257,39 +258,51 @@ export default function Work() {
       <>
         <Card pad0>
           <ul className="ws-list">
-            {rows.map((t) => (
-              <li key={`${t.scope}:${t.id}`}>
-                {/* A link, not a row with an onClick: it opens in a new tab on
-                    a middle click, it is reachable by keyboard, and a phone
-                    gives it the native tap treatment. */}
-                <Link className="ws-listrow" to={ticketHref(t.scope ?? "workshop", t.id)}>
-                  <span
-                    className="ws-listrow__mark"
-                    title={taskStatusLabel(t.status)}
-                    aria-label={taskStatusLabel(t.status)}
-                  >
-                    <StatusDot status={taskStatusKind(t.status)}>{null}</StatusDot>
-                  </span>
-                  <span className="ws-listrow__title" title={taskTitle(t)}>
-                    {taskTitle(t) || "(untitled)"}
-                  </span>
-                  <span className="ws-listrow__meta">
-                    {/* The state word, as plain text. The dot alone told you
-                        which of five colours it was and nothing more, and
-                        "which of blocked / to do / done is this" is exactly
-                        what the list is read for. A word, not a second chip:
-                        the dot beside the title already carries the colour. */}
-                    <span>{taskStatusLabel(t.status)}</span>
-                    {/* Only when the list spans scopes. Filtered to one, the
-                        column repeats the filter on every row. */}
-                    {scope === ALL_SCOPES && (
-                      <span className="ws-listrow__scope">{scopeLabel(t.scope)}</span>
-                    )}
-                    <span className="ws-listrow__time" title={t.updated}>{ago(t.updated)}</span>
-                  </span>
-                </Link>
-              </li>
-            ))}
+            {rows.map((t) => {
+              // What this ticket does not say, as ONE line. In a row it is the
+              // dot's `title` and nothing else: a sentence per row would wreck
+              // the rhythm the list is built on. The full line is on the ticket
+              // page and on the card that files one.
+              const notReady = readinessLine(t.readiness?.missing);
+              return (
+                <li key={`${t.scope}:${t.id}`}>
+                  {/* A link, not a row with an onClick: it opens in a new tab on
+                      a middle click, it is reachable by keyboard, and a phone
+                      gives it the native tap treatment. */}
+                  <Link className="ws-listrow" to={ticketHref(t.scope ?? "workshop", t.id)}>
+                    <span
+                      className="ws-listrow__mark"
+                      title={taskStatusLabel(t.status)}
+                      aria-label={taskStatusLabel(t.status)}
+                    >
+                      <StatusDot status={taskStatusKind(t.status)}>{null}</StatusDot>
+                    </span>
+                    <span className="ws-listrow__title" title={taskTitle(t)}>
+                      {taskTitle(t) || "(untitled)"}
+                    </span>
+                    <span className="ws-listrow__meta">
+                      {/* The state word, as plain text. The dot alone told you
+                          which of five colours it was and nothing more, and
+                          "which of blocked / to do / done is this" is exactly
+                          what the list is read for. A word, not a second chip:
+                          the dot beside the title already carries the colour. */}
+                      <span>{taskStatusLabel(t.status)}</span>
+                      {notReady && (
+                        <span className="ws-listrow__mark" title={notReady} aria-label={notReady}>
+                          <StatusDot status="warn">{null}</StatusDot>
+                        </span>
+                      )}
+                      {/* Only when the list spans scopes. Filtered to one, the
+                          column repeats the filter on every row. */}
+                      {scope === ALL_SCOPES && (
+                        <span className="ws-listrow__scope">{scopeLabel(t.scope)}</span>
+                      )}
+                      <span className="ws-listrow__time" title={t.updated}>{ago(t.updated)}</span>
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </Card>
         {rows.length < total && (
