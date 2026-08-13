@@ -238,3 +238,47 @@ class TestTheCutOnTheWire:
         chat_log.patch_meta_sync(chatty, cut_through=None, cut_mode=None)
         assert chat_store.backfill_cuts() >= 1
         assert chat_log.read_meta(chatty)["cut_through"] == expected
+
+
+class TestTheStopRuleSurvivesACompaction:
+    """A `/compact` drops the CLI session, so the turn after it re-assembles the
+    whole prompt instead of resuming. That path did not carry the turn contract.
+
+    The contract (`chat_context.turn_contract`) is the block that tells an agent
+    a text-only message ENDS its turn. `_resumed_prompt` has opened with it every
+    turn since a7faffa; `_assemble_full_prompt` never added it, so the rule was
+    present on every turn except the first one after a cut, which is where a long
+    piece of work is most likely to be mid-flight.
+
+    Measured on thread 65341b40 (2026-08-12): `/compact` at 23:05:58Z, then a
+    322,142-character prompt at 23:10:39Z with no contract in it. That turn ended
+    "Building it now." with `stop_reason: end_turn` and the work never happened.
+    The resumed prompts either side of it carry the contract and did not stop.
+    """
+
+    def test_the_full_assembly_carries_it(self, chatty):
+        assert "=== HOW THIS TURN ENDS" in _prompt(chatty)
+
+    def test_it_is_still_there_on_the_turn_after_a_compact(self, chatty):
+        chat_store.clear_thread_context(chatty)
+        assert "=== HOW THIS TURN ENDS" in _prompt(chatty)
+
+    def test_it_sits_near_the_operators_message_not_behind_the_transcript(self, chatty):
+        """Position is the point on this path. The resumed prompt is small and
+        leads with the rule; this one can run to hundreds of thousands of
+        characters, and a rule stated before all of that is a rule stated
+        nowhere."""
+        p = _prompt(chatty)
+        assert p.index("=== HOW THIS TURN ENDS") > p.index("=== CONVERSATION SO FAR ===")
+
+    def test_the_meter_and_the_turn_measure_the_same_prompt(self, chatty):
+        """`_context_estimate` has prepended the contract to its own copy of the
+        preamble since a7faffa, with a comment saying the first turn must not
+        differ from a resumed one. The meter measured a prompt containing the
+        rule while the turn ran without it; the two have to agree."""
+        from routes import chat as chat_routes
+        report = asyncio.run(chat_routes.thread_context(chatty))
+        assert report["source"] == "estimated" and report["used_tokens"] > 0
+        # Same content, so the same size: the estimate is not inflated by a block
+        # the real prompt lacks.
+        assert abs(report["used_tokens"] - round(len(_prompt(chatty)) / 4)) < 200
