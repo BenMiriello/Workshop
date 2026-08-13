@@ -175,7 +175,7 @@
       "id": "95628abf72774685a5d03701a14fd1e2",
       "title": "A sent message should not look already-read",
       "body": "Objective: a just-sent chat message renders in full colour immediately, so it is indistinguishable from one the server has accepted.\nOutput: an in-flight message is visibly distinct until the server confirms it, verified against a real send (not just in source).\nStart from: frontend/src/styles.css:1048 (.chat-bubble--inflight) and the send path in frontend/src/components/Chat.tsx / useSendPipeline.ts.\nContext: operator raised this three times on 2026-08-09 (\"i see it did not fix the issue as my 'testing - ignore' message showed\"). A .chat-bubble--inflight class was added and the symptom persisted; it was written off as environmental and never confirmed fixed. Re-verify whether the class is applied at all, and whether the optimistic message is committed too early.\nBoundaries: do not change send/queue semantics; this is a visual state bug.",
-      "status": "todo",
+      "status": "cancelled",
       "assignee": "operator",
       "parent": null,
       "priority": 3,
@@ -186,7 +186,7 @@
       ],
       "acceptance": null,
       "max_attempts": null,
-      "blocked_reason": null,
+      "blocked_reason": "moved to the development scope as d73229b45ff14f80a9be6b1b534b9408",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
@@ -194,7 +194,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "decision",
+          "ref": "re-filed into development as d73229b45ff14f80a9be6b1b534b9408: platform code work, and the workshop scope has no code tree",
+          "ts": "2026-08-13T07:19:24+00:00"
+        }
+      ],
       "comments": [
         {
           "id": "a9ecb6878f5b43dabd765dbc66eae9f8",
@@ -218,7 +224,7 @@
       "sync": null,
       "external_refs": [],
       "created": "2026-08-12T04:45:34+00:00",
-      "updated": "2026-08-13T07:17:27+00:00",
+      "updated": "2026-08-13T07:19:24+00:00",
       "owner": "operator",
       "text": "A sent message should not look already-read\nObjective: a just-sent chat message renders in full colour immediately, so it is indistinguishable from one the server has accepted.\nOutput: an in-flight message is visibly distinct until the server confirms it, verified against a real send (not just in source).\nStart from: frontend/src/styles.css:1048 (.chat-bubble--inflight) and the send path in frontend/src/components/Chat.tsx / useSendPipeline.ts.\nContext: operator raised this three times on 2026-08-09 (\"i see it did not fix the issue as my 'testing - ignore' message showed\"). A .chat-bubble--inflight class was added and the symptom persisted; it was written off as environmental and never confirmed fixed. Re-verify whether the class is applied at all, and whether the optimistic message is committed too early.\nBoundaries: do not change send/queue semantics; this is a visual state bug."
     },
@@ -460,7 +466,7 @@
       "id": "c62822ee728148fcbfb8d2c5bb51ef2e",
       "title": "Make the working-for-N-minutes note say what is happening",
       "body": "Objective: the elapsed note is one flat timer, but a turn is a series of different activities.\nOutput: the in-flight indicator reflects the current activity rather than only elapsed time.\nStart from: frontend/src/components/chat/turnStatus.ts (turnLabel, elapsedSeconds) and the activity region work in commit e23a2e1.\nContext: operator 2026-08-11: the elapsed note is \"not very nuanced... really it's a series of different things\".\nBoundaries: do not add a second status surface; this rides the existing indicator.",
-      "status": "todo",
+      "status": "cancelled",
       "assignee": "operator",
       "parent": null,
       "priority": 1,
@@ -471,7 +477,7 @@
       ],
       "acceptance": null,
       "max_attempts": null,
-      "blocked_reason": null,
+      "blocked_reason": "moved to the development scope as d2012fdcd1a34da4ad432fcc7420af68",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
@@ -479,7 +485,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "decision",
+          "ref": "re-filed into development as d2012fdcd1a34da4ad432fcc7420af68: platform code work, and the workshop scope has no code tree",
+          "ts": "2026-08-13T07:19:24+00:00"
+        }
+      ],
       "comments": [],
       "source": {
         "kind": "operator",
@@ -496,7 +508,7 @@
       "sync": null,
       "external_refs": [],
       "created": "2026-08-12T04:45:34+00:00",
-      "updated": "2026-08-13T07:17:27+00:00",
+      "updated": "2026-08-13T07:19:24+00:00",
       "owner": "operator",
       "text": "Make the working-for-N-minutes note say what is happening\nObjective: the elapsed note is one flat timer, but a turn is a series of different activities.\nOutput: the in-flight indicator reflects the current activity rather than only elapsed time.\nStart from: frontend/src/components/chat/turnStatus.ts (turnLabel, elapsedSeconds) and the activity region work in commit e23a2e1.\nContext: operator 2026-08-11: the elapsed note is \"not very nuanced... really it's a series of different things\".\nBoundaries: do not add a second status surface; this rides the existing indicator."
     },
@@ -504,7 +516,7 @@
       "id": "b67e585e4a0f413ab9624617e3d4d76e",
       "title": "Reduce empty turns: 26% of prompts return no assistant text",
       "body": "Objective: a quarter of turns commit with no top-level assistant text. Most are\nexplainable, but the operator experiences them as the chat not answering.\nOutput: each cause either eliminated or given copy that says what happened.\nMeasured 2026-08-12 over the last 80 sessions (275 prompts, 73 with no text):\n  33  slash-command turns. The CLI runs /context and /compact locally and never\n      calls the model. FIXED for the injected case in commit 9c49696; verify the\n      non-injected path also reads well.\n  16  operator stop. Deliberate: _commit_turn commits empty text and the tag\n      carries it. Probably correct, confirm the UI reads clearly.\n   5  synthetic placeholder was the whole output (subset of the slash-command\n      case). The placeholder itself is CLI resume repair emitted at turn START,\n      not a turn-ending filler; dropping it is correct.\n   1  model emitted tool_use with no closing text. Model behaviour.\nStart from: backend/services/build_streaming.py _commit_turn (the rc==0 branch),\n_clean_exit_text, and the is_command derivation.\nBoundaries: do not suppress the empty reply entirely; a turn that ran must still\nleave a record.",
-      "status": "todo",
+      "status": "cancelled",
       "assignee": "operator",
       "parent": null,
       "priority": 2,
@@ -515,7 +527,7 @@
       ],
       "acceptance": null,
       "max_attempts": null,
-      "blocked_reason": null,
+      "blocked_reason": "moved to the development scope as d0b2c6b459304df792877ef9235e0e52",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
@@ -523,7 +535,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "decision",
+          "ref": "re-filed into development as d0b2c6b459304df792877ef9235e0e52: platform code work, and the workshop scope has no code tree",
+          "ts": "2026-08-13T07:19:24+00:00"
+        }
+      ],
       "comments": [],
       "source": {
         "kind": "operator",
@@ -540,7 +558,7 @@
       "sync": null,
       "external_refs": [],
       "created": "2026-08-12T04:50:00+00:00",
-      "updated": "2026-08-13T07:17:27+00:00",
+      "updated": "2026-08-13T07:19:24+00:00",
       "owner": "operator",
       "text": "Reduce empty turns: 26% of prompts return no assistant text\nObjective: a quarter of turns commit with no top-level assistant text. Most are\nexplainable, but the operator experiences them as the chat not answering.\nOutput: each cause either eliminated or given copy that says what happened.\nMeasured 2026-08-12 over the last 80 sessions (275 prompts, 73 with no text):\n  33  slash-command turns. The CLI runs /context and /compact locally and never\n      calls the model. FIXED for the injected case in commit 9c49696; verify the\n      non-injected path also reads well.\n  16  operator stop. Deliberate: _commit_turn commits empty text and the tag\n      carries it. Probably correct, confirm the UI reads clearly.\n   5  synthetic placeholder was the whole output (subset of the slash-command\n      case). The placeholder itself is CLI resume repair emitted at turn START,\n      not a turn-ending filler; dropping it is correct.\n   1  model emitted tool_use with no closing text. Model behaviour.\nStart from: backend/services/build_streaming.py _commit_turn (the rc==0 branch),\n_clean_exit_text, and the is_command derivation.\nBoundaries: do not suppress the empty reply entirely; a turn that ran must still\nleave a record."
     },
@@ -548,7 +566,7 @@
       "id": "a01db08d9b8c497882a5d3e1e050f4a9",
       "title": "Chat auto-naming falls back to the raw first message, and the dev-scope default is racy",
       "body": "Operator, 2026-08-12: \"the system does not seem to be creating its own chat names when I would expect... And I'm not sure if it's really defaulting to the development scope when I am in the development environment.\"\n\nTWO PARTS, both observed.\n\n1. NAMING FALLS BACK SILENTLY. Most threads do get a generated title (\"Chat File Attachments\", \"Workshop UI Kit Versioning Issue\"), but the newest development thread (2026-08-12 10:17) is titled \"Hey, so how is the audio going?\", which is the raw first message, not a name. So the namer is failing intermittently and the seed title is standing in for it with no signal that naming ever ran.\n   Start from: services/chat_naming.py. `compute_title` counts CONTENT rejections against `_MAX_NAME_ATTEMPTS` (5) and then stops asking, keeping the seed. Nothing records that it gave up: no `name_attempts` key is persisted in meta.json (checked across 60 threads, the key does not exist), so the attempt counter's home and its durability need establishing before anything else. Find out whether the counter survives a restart at all; if it does not, a chat could be re-asking forever or giving up instantly and both look identical from outside.\n   Wanted: naming either succeeds or is visibly unnamed. A raw first message masquerading as a title is the failure mode to remove.\n\n2. DEV DEFAULT IS IMPLEMENTED BUT GATED ON A RACE. frontend/src/lib/chatSelection.ts:98 reads `devMode && known(DEVELOPMENT_SCOPE) ? DEVELOPMENT_SCOPE : DEFAULT_SCOPE`, where DEFAULT_SCOPE is \"general\". `known()` tests the loaded provider list, so if a new chat is opened before providers have loaded, the condition is false and it silently lands in `general`. That matches \"sometimes\".\n   Wanted: in developer mode a new chat lands in `development` deterministically, not depending on whether a fetch finished first.\n\nBoundaries: no new scope kinds, no change to the scope picker's model.",
-      "status": "todo",
+      "status": "cancelled",
       "assignee": "operator",
       "parent": null,
       "priority": 1,
@@ -559,7 +577,7 @@
       ],
       "acceptance": null,
       "max_attempts": null,
-      "blocked_reason": null,
+      "blocked_reason": "moved to the development scope as ac4827b4a9b648e189a2bd8f1b1e2dfa",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
@@ -567,7 +585,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "decision",
+          "ref": "re-filed into development as ac4827b4a9b648e189a2bd8f1b1e2dfa: platform code work, and the workshop scope has no code tree",
+          "ts": "2026-08-13T07:19:24+00:00"
+        }
+      ],
       "comments": [],
       "source": {
         "kind": "operator",
@@ -584,7 +608,7 @@
       "sync": null,
       "external_refs": [],
       "created": "2026-08-12T17:18:43+00:00",
-      "updated": "2026-08-13T07:17:27+00:00",
+      "updated": "2026-08-13T07:19:24+00:00",
       "owner": "operator",
       "text": "Chat auto-naming falls back to the raw first message, and the dev-scope default is racy\nOperator, 2026-08-12: \"the system does not seem to be creating its own chat names when I would expect... And I'm not sure if it's really defaulting to the development scope when I am in the development environment.\"\n\nTWO PARTS, both observed.\n\n1. NAMING FALLS BACK SILENTLY. Most threads do get a generated title (\"Chat File Attachments\", \"Workshop UI Kit Versioning Issue\"), but the newest development thread (2026-08-12 10:17) is titled \"Hey, so how is the audio going?\", which is the raw first message, not a name. So the namer is failing intermittently and the seed title is standing in for it with no signal that naming ever ran.\n   Start from: services/chat_naming.py. `compute_title` counts CONTENT rejections against `_MAX_NAME_ATTEMPTS` (5) and then stops asking, keeping the seed. Nothing records that it gave up: no `name_attempts` key is persisted in meta.json (checked across 60 threads, the key does not exist), so the attempt counter's home and its durability need establishing before anything else. Find out whether the counter survives a restart at all; if it does not, a chat could be re-asking forever or giving up instantly and both look identical from outside.\n   Wanted: naming either succeeds or is visibly unnamed. A raw first message masquerading as a title is the failure mode to remove.\n\n2. DEV DEFAULT IS IMPLEMENTED BUT GATED ON A RACE. frontend/src/lib/chatSelection.ts:98 reads `devMode && known(DEVELOPMENT_SCOPE) ? DEVELOPMENT_SCOPE : DEFAULT_SCOPE`, where DEFAULT_SCOPE is \"general\". `known()` tests the loaded provider list, so if a new chat is opened before providers have loaded, the condition is false and it silently lands in `general`. That matches \"sometimes\".\n   Wanted: in developer mode a new chat lands in `development` deterministically, not depending on whether a fetch finished first.\n\nBoundaries: no new scope kinds, no change to the scope picker's model."
     },
@@ -592,7 +616,7 @@
       "id": "e8ebc419b6c14cc685b154812a5a6067",
       "title": "Redesign the note receipt line under a reply: it does not read as a link and its destination is unclear",
       "body": "Operator, 2026-08-12: \"when the system message creates a note it has a little line at the bottom where it shows the document icon and then the title of the note, and it links to the note. This is honestly pretty good but it's a little bit unclear and not properly designed, it doesn't look like clickable text. It should probably be styled like a link, and I'm not sure exactly what it does or what it should do.\"\n\nCONFIRMED IN CSS. frontend/src/styles.css: `.chat-receipt` is `color: var(--muted)`, and `a.chat-receipt--link { text-decoration: none; }` with an underline applied on `:hover` only. On a touch screen there is no hover, so the affordance never appears at all: the link is permanently indistinguishable from the non-clickable receipts beside it (`.chat-receipt--ok`, `.chat-receipt--warn`), which are the same muted grey with the same icon-plus-text shape.\n\nThe comment in the stylesheet says a permanent underline was deliberate, so this is a real design decision being revisited, not an oversight. Read it before changing it.\n\nThe task is NOT just \"add an underline\". Settle the interaction first, then style to it:\n  - What should opening a receipt do? Open the note in the Notes app, open a drawer over the chat, or expand inline under the reply? A note written mid-conversation is most often wanted WITHOUT leaving the conversation, which argues against a navigation.\n  - Should a receipt be editable from there, or read-only with a way through to the editor?\n  - Which receipts are openable at all? Today `--link` is one variant among several identically-styled ones, so \"some of these are clickable and some are not, and they look the same\" is the actual defect.\n  - Whatever is chosen must have a non-hover affordance, since the operator is often on a phone.\n\nStart from: frontend/src/components/chat/receipts.ts (the typed model), the `.chat-receipt*` rules in styles.css, and services/build_streaming.build_receipts on the write side. Follow frontend/CLAUDE.md; use a kit primitive if one fits rather than another bespoke `.chat-*` rule.",
-      "status": "todo",
+      "status": "cancelled",
       "assignee": "operator",
       "parent": null,
       "priority": 1,
@@ -604,7 +628,7 @@
       ],
       "acceptance": null,
       "max_attempts": null,
-      "blocked_reason": null,
+      "blocked_reason": "moved to the development scope as 06e6bf9ee54f47459a4d863e30c5c429",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
@@ -612,7 +636,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "decision",
+          "ref": "re-filed into development as 06e6bf9ee54f47459a4d863e30c5c429: platform code work, and the workshop scope has no code tree",
+          "ts": "2026-08-13T07:19:24+00:00"
+        }
+      ],
       "comments": [],
       "source": {
         "kind": "operator",
@@ -629,7 +659,7 @@
       "sync": null,
       "external_refs": [],
       "created": "2026-08-12T17:18:43+00:00",
-      "updated": "2026-08-13T07:17:27+00:00",
+      "updated": "2026-08-13T07:19:24+00:00",
       "owner": "operator",
       "text": "Redesign the note receipt line under a reply: it does not read as a link and its destination is unclear\nOperator, 2026-08-12: \"when the system message creates a note it has a little line at the bottom where it shows the document icon and then the title of the note, and it links to the note. This is honestly pretty good but it's a little bit unclear and not properly designed, it doesn't look like clickable text. It should probably be styled like a link, and I'm not sure exactly what it does or what it should do.\"\n\nCONFIRMED IN CSS. frontend/src/styles.css: `.chat-receipt` is `color: var(--muted)`, and `a.chat-receipt--link { text-decoration: none; }` with an underline applied on `:hover` only. On a touch screen there is no hover, so the affordance never appears at all: the link is permanently indistinguishable from the non-clickable receipts beside it (`.chat-receipt--ok`, `.chat-receipt--warn`), which are the same muted grey with the same icon-plus-text shape.\n\nThe comment in the stylesheet says a permanent underline was deliberate, so this is a real design decision being revisited, not an oversight. Read it before changing it.\n\nThe task is NOT just \"add an underline\". Settle the interaction first, then style to it:\n  - What should opening a receipt do? Open the note in the Notes app, open a drawer over the chat, or expand inline under the reply? A note written mid-conversation is most often wanted WITHOUT leaving the conversation, which argues against a navigation.\n  - Should a receipt be editable from there, or read-only with a way through to the editor?\n  - Which receipts are openable at all? Today `--link` is one variant among several identically-styled ones, so \"some of these are clickable and some are not, and they look the same\" is the actual defect.\n  - Whatever is chosen must have a non-hover affordance, since the operator is often on a phone.\n\nStart from: frontend/src/components/chat/receipts.ts (the typed model), the `.chat-receipt*` rules in styles.css, and services/build_streaming.build_receipts on the write side. Follow frontend/CLAUDE.md; use a kit primitive if one fits rather than another bespoke `.chat-*` rule."
     },
@@ -667,17 +697,17 @@
       "touches": [],
       "discovered_from": null,
       "effort": null,
-      "execution": "code",
+      "execution": "judgement",
       "triage": null,
       "latitude": null,
       "scoped_by": "operator",
       "sync": null,
       "external_refs": [],
       "created": "2026-08-12T17:26:53+00:00",
-      "updated": "2026-08-13T07:17:27+00:00",
+      "updated": "2026-08-13T07:19:24+00:00",
       "owner": "operator",
       "text": "Redesign how memory, notes and documents are written: structure, scope, and when\nOperator, 2026-08-12, when approving the removal of automatic chat distillation:\n\"the concept of doing an automatic transcription or distillation of chats is not a bad idea and it's something that we want to implement properly later, but it's probably pretty far from being implemented well currently, so we can retain the existing things that have been written and saved and remove that functionality now, and make a ticket to re-implement it redesigned and properly. That is going to require a smarter proper design of how we structure memory and documents and notes, and when we create that, and how we scope it.\"\n\nWHAT WAS REMOVED, AND WHY (so this is re-buildable from here):\nAutomatic Haiku distillation of folded transcript into the scope's `chat-distilled` note. Removed 2026-08-12 along with server-side transcript folding, which was its only trigger. Everything already written stays on disk; nothing was deleted from the knowledge store.\nIt was removed rather than re-homed because:\n  - `chat-distilled.md` was the LARGEST file in its scope, and auto-recall ranked by raw term frequency with no stopwords, no IDF and no length normalisation, so it won nearly every recall. It was the biggest single polluter of retrieval.\n  - In `development` and `project` scopes auto-recall never ran, so every fact distilled there was write-only.\n  - The raw chat logs it summarised are now in the semantic index and directly searchable, and a lossy summary of a searchable corpus is worse than the corpus.\n\nWHAT THIS TICKET IS FOR. Not \"put distillation back\". The write side of memory as a whole, designed once:\n  - WHAT gets written durably, and what should stay in the transcript and be searched instead. The default should be \"search the transcript\", with durable notes reserved for things that are genuinely a conclusion rather than a record.\n  - WHO writes: the operator, an agent mid-turn via the fenced note block, or a background pass. Today all three write to the same undifferentiated store.\n  - WHEN: on demand, at a boundary, or on a schedule. The old trigger (a successful fold) was an accident of implementation, not a decision.\n  - SCOPE and provenance: every durable item should carry where it came from (thread id, timestamp, author, scope) so it is reconstructable later. The operator asked for this explicitly even where nothing reads it yet. The semantic index already records kind/ref/scope/ts per chunk; the write side should match that shape.\n  - STRUCTURE: `shared/knowledge/<scope>/` uses slug-plus-hash filenames and a hand-maintained MEMORY.md index that duplicates the filesystem. `.runtime/learnings/<scope>.jsonl` is a second agent-written store differing only by a `kind` tag. These two should almost certainly be one store. The operator's own Obsidian vault at `~/notes` is a third and stays separate (different owner, external editor).\n  - RETIREMENT: nothing currently retires. `enforce_index_cap`'s archive path was removed as unreachable. Decide what supersession means before rebuilding a mechanism for it.\n\nREAD FIRST: docs/memory-and-transcript-simplification-2026-08-12.md (the plan and its measurements) and docs/memory-stores-audit-2026-08-12.md (the nine-store map).\n\nBoundaries: DESIGN FIRST, as a doc under docs/, for the operator to react to. Do not restore automatic writing of any kind until that design is agreed. The stated goal is to draw complexity down and build back up from something simpler, so a proposal that re-adds a background organ needs to justify itself against not having one."
     }
   ],
-  "export_sha": "fa773e262456f994370262922e6faad84aa2601e5cd08a73dfbca82ca7cfd547"
+  "export_sha": "8a7fdac4ef12e5937cbb7b8c030d1cde8f8d16f2132765400064622bb1fcfba1"
 }

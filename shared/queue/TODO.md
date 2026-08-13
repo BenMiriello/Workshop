@@ -15,7 +15,7 @@
       Start from: the spawn path in backend/services/build_streaming.py (start_turn) and the systemd units under scripts/; `grep -rn MemoryMax scripts/ backend/` currently returns nothing.
       Context: concurrency was capped (commit b137615) but memory never was. Operator asked twice: "should we set a memory ceiling? research into it and suggest" then "make a plan then implement it".
       Boundaries: do not cap so low that a normal long turn is OOM-killed; measure first.
-- [ ] A sent message should not look already-read
+- [-] A sent message should not look already-read  (cancelled)
       Objective: a just-sent chat message renders in full colour immediately, so it is indistinguishable from one the server has accepted.
       Output: an in-flight message is visibly distinct until the server confirms it, verified against a real send (not just in source).
       Start from: frontend/src/styles.css:1048 (.chat-bubble--inflight) and the send path in frontend/src/components/Chat.tsx / useSendPipeline.ts.
@@ -50,13 +50,13 @@
       Start from: the tickets model in backend/services/tasks.py (note the `sync` field on add()) and the current tickets redesign docs.
       Context: long operator brief on 2026-08-10. The active tickets redesign covers schema and views only.
       Boundaries: design first, no integration code until the operator approves.
-- [ ] Make the working-for-N-minutes note say what is happening
+- [-] Make the working-for-N-minutes note say what is happening  (cancelled)
       Objective: the elapsed note is one flat timer, but a turn is a series of different activities.
       Output: the in-flight indicator reflects the current activity rather than only elapsed time.
       Start from: frontend/src/components/chat/turnStatus.ts (turnLabel, elapsedSeconds) and the activity region work in commit e23a2e1.
       Context: operator 2026-08-11: the elapsed note is "not very nuanced... really it's a series of different things".
       Boundaries: do not add a second status surface; this rides the existing indicator.
-- [ ] Reduce empty turns: 26% of prompts return no assistant text
+- [-] Reduce empty turns: 26% of prompts return no assistant text  (cancelled)
       Objective: a quarter of turns commit with no top-level assistant text. Most are
       explainable, but the operator experiences them as the chat not answering.
       Output: each cause either eliminated or given copy that says what happened.
@@ -74,7 +74,7 @@
       _clean_exit_text, and the is_command derivation.
       Boundaries: do not suppress the empty reply entirely; a turn that ran must still
       leave a record.
-- [ ] Chat auto-naming falls back to the raw first message, and the dev-scope default is racy
+- [-] Chat auto-naming falls back to the raw first message, and the dev-scope default is racy  (cancelled)
       Operator, 2026-08-12: "the system does not seem to be creating its own chat names when I would expect... And I'm not sure if it's really defaulting to the development scope when I am in the development environment."
 
       TWO PARTS, both observed.
@@ -87,7 +87,7 @@
          Wanted: in developer mode a new chat lands in `development` deterministically, not depending on whether a fetch finished first.
 
       Boundaries: no new scope kinds, no change to the scope picker's model.
-- [ ] Redesign the note receipt line under a reply: it does not read as a link and its destination is unclear
+- [-] Redesign the note receipt line under a reply: it does not read as a link and its destination is unclear  (cancelled)
       Operator, 2026-08-12: "when the system message creates a note it has a little line at the bottom where it shows the document icon and then the title of the note, and it links to the note. This is honestly pretty good but it's a little bit unclear and not properly designed, it doesn't look like clickable text. It should probably be styled like a link, and I'm not sure exactly what it does or what it should do."
 
       CONFIRMED IN CSS. frontend/src/styles.css: `.chat-receipt` is `color: var(--muted)`, and `a.chat-receipt--link { text-decoration: none; }` with an underline applied on `:hover` only. On a touch screen there is no hover, so the affordance never appears at all: the link is permanently indistinguishable from the non-clickable receipts beside it (`.chat-receipt--ok`, `.chat-receipt--warn`), which are the same muted grey with the same icon-plus-text shape.
