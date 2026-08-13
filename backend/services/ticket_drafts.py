@@ -94,8 +94,8 @@ not this conversation, not the operator, not you.
     a refactor nobody asked for, which is the single most expensive way a run
     goes wrong. Name the files, directories or systems that are off limits, and
     say what NOT to build. If the work genuinely has no boundary, write exactly
-    "none: this may touch anything the objective requires" — a stated "none" is
-    a decision, an empty field is an omission.
+    "none: this may touch anything the objective requires". A stated "none" is a
+    decision; an empty field is an omission.
 
 `entry_points` is nearly as important, and the honest answer counts: "the
 conversation named no files; start by grepping for <term>" is a real entry point

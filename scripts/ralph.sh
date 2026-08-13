@@ -469,7 +469,7 @@ if [[ -n "$MCP_CFG" && -f "$MCP_CFG" ]]; then
 
 ## The workshop's own memory
 You have \`mcp__workshop__search\`: semantic search over this workshop's own
-writing — knowledge notes, everything under docs/, and the full text of past
+writing: knowledge notes, everything under docs/, and the full text of past
 chats. You never saw the conversation this ticket came out of, and this is the
 only way to read it.
 
