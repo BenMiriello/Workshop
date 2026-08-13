@@ -800,10 +800,24 @@ input[type="range"].grad::-moz-range-thumb {
    stopped there. A step is now the same row whether it stands alone or sits
    inside an opened group. Hierarchy from position and indentation, not borders
    (design system rule 6). See the .chat-group note for the whole arrangement. */
+/* THE RAIL IS CENTRED UNDER THE CARET ABOVE IT. It is the mark that says "this
+   is inside that", so it has to line up with the control it belongs to; a few
+   pixels off reads as sloppy rather than as structure. Operator, 2026-08-12.
+
+   caret centre = head padding-left + caret/2
+   rail centre  = rail offset + rail-width/2
+   so           rail offset = head padding-left + (caret - rail-width)/2
+
+   The head padding is a variable so the two cannot drift apart: change the
+   padding and the rail follows. `--chat-rail-nudge` is (13px caret - 2px rail)
+   / 2; the caret size is set in Transcript.tsx as the lucide `size` prop. */
+.chat-group, .chat-tool, .chat-agent { --chat-rail-nudge: 5.5px; }
+.chat-group, .chat-tool { --chat-head-pad: 0.35rem; }
+.chat-agent { --chat-head-pad: 0.5rem; }
 .chat-tool { margin: 0; min-width: 0; border-radius: var(--radius-sm); }
 .chat-tool__head {
   display: flex; align-items: center; gap: 0.4rem;
-  width: 100%; min-width: 0; padding: 0.2rem 0.35rem;
+  width: 100%; min-width: 0; padding: 0.2rem var(--chat-head-pad);
   background: transparent; border: none; color: var(--muted);
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
   border-radius: var(--radius-sm);
@@ -822,7 +836,7 @@ input[type="range"].grad::-moz-range-thumb {
    collapsed row is zero-height and clips its child's content; a child's own
    margins are outside that clip and would leave a gap behind when closed. */
 .chat-tool__detail {
-  margin: 0 0 0 0.45rem;
+  margin: 0 0 0 calc(var(--chat-head-pad) + var(--chat-rail-nudge));
   padding: 0.1rem 0 0.3rem 0.6rem; border-left: 2px solid var(--border);
   font-size: var(--fs-xs); white-space: pre-wrap; word-break: break-word;
   max-height: 30vh; overflow: auto;
@@ -842,7 +856,7 @@ input[type="range"].grad::-moz-range-thumb {
 }
 .chat-agent__head {
   display: flex; align-items: center; gap: 0.4rem;
-  width: 100%; min-width: 0; padding: 0.3rem 0.5rem;
+  width: 100%; min-width: 0; padding: 0.3rem var(--chat-head-pad);
   background: transparent; border: none; color: var(--muted);
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
 }
@@ -864,11 +878,16 @@ input[type="range"].grad::-moz-range-thumb {
 /* The divider is on the SHOWN state only. A border is part of the border box
    and is not clipped by the element's own overflow, so on the collapsed reveal
    it would survive as a stray hairline under the header. */
-.chat-agent__body { padding: 0.35rem 0.5rem 0.4rem; }
+.chat-agent__body { padding: 0.35rem var(--chat-head-pad) 0.4rem; }
 .chat-reveal.is-shown > .chat-agent__body { border-top: 1px solid var(--border); }
 /* The delegate's own steps, one level in — a nested step must never read as a
    step the turn itself took. */
-.chat-agent__steps { padding-left: 0.6rem; border-left: 2px solid var(--border); }
+.chat-agent__steps {
+  /* Inside `__body`, whose padding-left is already the head padding, so only
+     the nudge onto the caret's centre is left to add. */
+  margin-left: var(--chat-rail-nudge);
+  padding-left: 0.6rem; border-left: 2px solid var(--border);
+}
 /* The brief the delegate was handed. First thing inside the opened chip,
    because it is what the one-line row is hiding — the steps and the report are
    what the delegate then did about it. */
@@ -896,7 +915,7 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-group { margin: 0.3rem 0; min-width: 0; }
 .chat-group__head {
   display: flex; align-items: center; gap: 0.4rem;
-  width: 100%; min-width: 0; padding: 0.2rem 0.35rem;
+  width: 100%; min-width: 0; padding: 0.2rem var(--chat-head-pad);
   background: transparent; border: none; color: var(--muted);
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
   border-radius: var(--radius-sm);
@@ -922,7 +941,7 @@ input[type="range"].grad::-moz-range-thumb {
 /* The steps, one level in, behind the rail. Vertical space is padding for the
    same reason as .chat-tool__detail: a margin would survive the collapse. */
 .chat-group__body {
-  margin: 0 0 0 0.45rem;
+  margin: 0 0 0 calc(var(--chat-head-pad) + var(--chat-rail-nudge));
   padding: 0.1rem 0 0.2rem 0.6rem; border-left: 2px solid var(--border);
 }
 /* Still working: motion means in-flight and nothing else, matching the

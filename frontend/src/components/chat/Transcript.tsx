@@ -5,7 +5,7 @@ import type { ChatSegment } from "../../lib/chat";
 import ApprovalBlock from "./ApprovalBlock";
 import { agentBrief, agentChipLine, agentSummary } from "./segments";
 import {
-  buildTurnBlocks, groupIsRunning, groupSummary, groupTools, hadErrorResult, isRunning,
+  buildTurnBlocks, groupSummary, groupTools, hadErrorResult, isRunning,
   runningSeconds, stepAlert, stepDuration, stoppedStepId, turnDuration, turnWorkSummary,
   type TurnItem,
 } from "./grouping";
@@ -123,27 +123,36 @@ function ToolChip({ seg, nowMs, stoppedId }: {
 // its provenance and anything automatic may only move a disclosure the machine
 // itself last moved. The rule is `disclosure.ts`, pure and tested there;
 // everything here is wiring.
-// WHY `current` AND NOT JUST "a step in here is running". Within one run of
-// tool calls there is a gap between a result landing and the next call being
-// issued, and in that gap no step is running. Closing on that alone would shut
-// the group and reopen it between every pair of calls, which is a flicker, not
-// a disclosure. A group is finished when the TURN HAS MOVED PAST IT: it is no
-// longer the last thing in a turn that is still streaming.
+// OPEN WHILE THE TURN IS INSIDE IT, SHUT THE MOMENT ANYTHING FOLLOWS IT.
+// `current` is exactly that: this group holds the turn's position, so nothing
+// outside it exists yet. A tool call joins the group and it stays open, because
+// that is still inside; prose, a delegation, an approval or the turn ending are
+// all outside, and any of them closes it at once. Operator's rule, 2026-08-12.
+//
+// WHY `current` AND NOT "a step in here is running". Within one run of tool
+// calls there is a gap between a result landing and the next call being issued,
+// and in that gap no step is running. Closing on that alone would shut the group
+// and reopen it between every pair of calls, which is a flicker, not a
+// disclosure. `groupIsRunning` used to be OR-ed in here and is gone: it could
+// only ever hold a group open after the turn had moved past it, which is the
+// one thing this rule is for. (Zero occurrences in the operator's history —
+// every tool call in 449 stored replies has its result — so removing it changes
+// nothing that ever happened, and removes a way for it to.)
 function GroupChip({ item, nowMs, defaultOpen, stoppedId, current }: {
   item: Extract<TurnItem, { t: "group" }>; nowMs: number; defaultOpen?: boolean;
   stoppedId?: string; current?: boolean;
 }) {
-  const live = groupIsRunning(item) || !!current;
-  const [disc, setDisc] = useState(() => openInitial(live, !!defaultOpen));
+  const live = !!current;
+  const [disc, setDisc] = useState(() => openInitial(live, !!defaultOpen, Date.now()));
   const open = disc.open;
   const id = useId();
-  useEffect(() => { setDisc((prev) => onLive(prev, live)); }, [live]);
+  useEffect(() => { setDisc((prev) => onLive(prev, live, Date.now())); }, [live]);
   return (
     <div className={`chat-group${open ? " is-open" : ""}${live ? " is-running" : ""}`}>
       <button
         type="button"
         className="chat-group__head"
-        onClick={() => setDisc(onToggle)}
+        onClick={() => setDisc((d) => onToggle(d, Date.now()))}
         aria-expanded={open}
         aria-controls={id}
       >
@@ -152,11 +161,12 @@ function GroupChip({ item, nowMs, defaultOpen, stoppedId, current }: {
         <span className="chat-group__name">{groupSummary(item, stoppedId)}</span>
         <span className="chat-group__preview">{groupTools(item)}</span>
       </button>
-      {/* Only the operator's own toggle animates. A group that opens because
-          work started, or closes because the turn moved on, is instant: a
-          re-attach replays the whole turn, and animating the machine's
-          transitions turned that replay into dozens of animations at once. */}
-      <Reveal open={open} id={id} className="chat-group__body" animate={disc.byUser}>
+      {/* A change animates if the state it is leaving was on screen long enough
+          to have been seen. So a group closing because the turn moved past it
+          animates, and the open-then-shut of a re-attach replay (milliseconds
+          apart, for every group in the turn at once) does not. See
+          disclosure.ts. */}
+      <Reveal open={open} id={id} className="chat-group__body" animate={disc.animate}>
         {item.steps.map((s, i) => (
           <ToolChip key={s.id || i} seg={s} nowMs={nowMs} stoppedId={stoppedId} />
         ))}
