@@ -482,3 +482,60 @@ class TestClientIdSurvivesTheApi:
         ev = chat_log.find_message_by_client_id(tid, "c-mid")
         assert ev is not None
         assert ev["meta"]["during_run"] == "run-1"
+
+
+class TestARunIsRecordedAfterTheMessageThatStartedIt:
+    """THE LOG'S ORDER MUST BE WHAT HAPPENED.
+
+    `begin_run` used to append the `run: started` marker while it took the
+    claim, and the claim is taken before the send path records the operator's
+    message. So the log said seq N `run started`, seq N+1 `the message that
+    started it`. Nothing renders run events positionally, so it never showed;
+    it was still a log that disagreed with the world. Operator, 2026-08-12.
+
+    The claim itself has NOT moved. It is still taken first, under the write
+    lock, with no await before the spawn, because that is what stops two POSTs
+    opening rival turns on one thread.
+    """
+
+    def test_the_claim_alone_writes_no_marker(self, thread):
+        from services import chat_log
+        tid = thread["id"]
+        chat_store.begin_run(tid, "run-1", announce=False)
+        assert [e["kind"] for e in chat_log.read_events(tid)] == []
+        # The claim is real even without the marker: a second send joins.
+        assert chat_store.active_run_id(tid) == "run-1"
+        # And `active_run` copes with the marker not being there yet.
+        assert chat_log.active_run(tid)["started_seq"] is None
+
+    def test_the_marker_lands_where_it_is_asked_to(self, thread):
+        from services import chat_log
+        tid = thread["id"]
+        chat_store.begin_run(tid, "run-1", announce=False)
+        chat_store.append_message(tid, "user", "go")
+        chat_store.mark_run_started(tid, "run-1")
+        evs = chat_log.read_events(tid)
+        assert [(e["kind"], e.get("role")) for e in evs] == [
+            ("message", "user"), ("run", None),
+        ]
+        assert chat_log.active_run(tid)["started_seq"] == evs[-1]["seq"]
+
+    def test_the_real_send_path_records_the_message_first(self, thread, monkeypatch):
+        """Not the mechanism: the actual `_run_for_message`, with only the
+        subprocess spawn stubbed out."""
+        import routes.chat as rc
+        from services import chat_log
+
+        async def _no_spawn(**kw):
+            return object()
+
+        monkeypatch.setattr(rc, "_start_assistant_turn", _no_spawn)
+        tid = thread["id"]
+        t = chat_store.get_thread(tid)
+        asyncio.run(rc._run_for_message(tid, t, "hello", None, None))
+
+        evs = chat_log.read_events(tid)
+        msg = next(e for e in evs if e["kind"] == "message")
+        run = next(e for e in evs if e["kind"] == "run" and e.get("state") == "started")
+        assert msg["content"] == "hello"
+        assert run["seq"] > msg["seq"], "the run was recorded as starting before its own message"

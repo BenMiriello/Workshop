@@ -31,10 +31,15 @@ event at the moment it ends.** Seq 61 is after both of the messages that were
 sent during it. The log therefore cannot express where seq 60 sits inside seq
 61, which is the only question the transcript has to answer.
 
-(Note in passing: seq 58 precedes seq 59, so the log also records a run as
+(Note in passing: seq 58 precedes seq 59, so the log also recorded a run as
 starting before the message that started it. Nothing renders `run` events
-positionally today, so it is invisible, but it is the same defect: the log's
-order is not a faithful record of what happened.)
+positionally, so it was invisible, but it was the same defect: the log's order
+was not a faithful record of what happened. **Fixed 2026-08-12**, by splitting
+the marker's append out of the claim: `chat_store.begin_run(announce=False)`
+takes the claim, and `mark_run_started` appends the marker after the send path
+has recorded the message. The claim itself did not move, because taking it
+first, under the write lock with no await before the spawn, is what stops two
+POSTs opening rival turns on one thread.)
 
 ### The compensation, and why it keeps failing
 
@@ -199,6 +204,24 @@ Doing the conversion at the client edge rather than as a data migration is
 deliberate: it rewrites nothing, it is reversible, and it keeps the transition
 safe on a live system where the frontend reloads on save and the backend does
 not restart until the end of a turn.
+
+## The same defect one layer down: what the MODEL reads
+
+The prompt's history was rendered flat, in log order
+(`routes/chat.py` `_build_prompt`), so it carried the identical error. It is
+worse there than on screen, because a reply's `content` is the join of its text
+segments and therefore includes anything narrated BEFORE the message arrived.
+Flat, the model reads its own earlier words as though they answered a message
+that had not been sent yet, and reads the message as answered when half the
+reply predates it. And it matters most exactly where it is least visible: a
+fresh CLI session, after a `/compact` or a `/clear`, is assembled from this and
+nothing else.
+
+`chat_context.interleave_history` cuts each reply at the same recorded positions
+and puts the messages back where they landed. It refuses rather than guesses:
+rebuilding the stretches must reproduce the reply's `content` exactly, and a
+reply that fails that check, or that carries no recorded positions (every
+transcript from before this change), is returned untouched.
 
 ## Consequences
 
