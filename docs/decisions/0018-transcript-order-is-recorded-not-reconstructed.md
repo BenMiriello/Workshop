@@ -143,6 +143,25 @@ both must honour it: `build_streaming`'s trailing-text replacement after
 one new invariant the design introduces, and it is stated here because it is the
 way this decision would silently rot.
 
+### It has to go over the wire too
+
+The tab that is watching a turn does not read the server's segment list. It
+builds its own from the turn's event stream, and only adopts the server's
+throttled snapshot when that snapshot is *ahead*. So a cut written server-side
+would not reach the one client that matters most: the one watching the turn it
+just spoke into.
+
+`cut_here` therefore also pushes a `{"kind": "cut", "ref": ...}` turn event, and
+the reducer records it exactly as the server does, sealing the trailing text in
+the same step. Two consequences worth stating:
+
+- It is handled in the reducer, not in `applyStreamEvent`, because the head
+  position lives on the run rather than in the segment list.
+- It must be idempotent. A re-attach replays the stream from offset 0 (the
+  EventSource carries no `Last-Event-ID`), so every cut arrives again; recording
+  it twice would put one message in two places. `runReattached` clears
+  `cutHead` for the same reason it clears the segments.
+
 ### What stays
 
 **The working indicator still needs one rule**, and only one: a live run whose
