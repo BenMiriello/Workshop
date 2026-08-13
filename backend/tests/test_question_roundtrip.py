@@ -251,3 +251,63 @@ def test_a_clarification_on_a_ticket_with_no_body(scope_root):
     assert out["title"] == "A ticket with no description"
     assert out["body"].startswith(tasks.CLARIFICATION_HEADING)
     assert "Because." in out["body"]
+
+
+# --- who spent the attempt, and who did not ---------------------------------
+# `POST /review` refunds an attempt on release, on the sound reasoning that an
+# ANSWERED question is not a failed attempt. That reasoning assumes a run was
+# claimed. The queue triager breaks the assumption: it raises `underspecified`
+# from a review pass with no run and no attempt spent, so an unconditional refund
+# CREDITS an attempt the ticket never had. It floors at zero, so nothing breaks
+# visibly — a ticket triaged and answered twice just quietly earns back two real
+# attempts against its park cap, and the cap stops meaning what it says.
+
+def _blocked_by(root, raised_by, attempts=2):
+    t = tasks.add(root, title="Bind a scope to a tracker",
+                  body="Objective: one binding per scope.")
+    for _ in range(attempts):
+        tasks.update(root, t["id"], bump_attempt=True)
+    tasks.update(root, t["id"], status="blocked", blocked_reason="needs a decision",
+                 awaiting={"ask": "What does done look like?", "kind": "missing-info",
+                           "raised_by": raised_by})
+    return tasks.get_task(root, t["id"])
+
+
+def test_answering_a_worker_raised_block_still_refunds(client, scope_root):
+    """The existing behaviour, pinned so the fix below cannot overreach."""
+    t = _blocked_by(scope_root, "worker")
+    assert t["attempts"] == 2
+    r = client.post(f"/api/tasks/workshop/{t['id']}/review",
+                    json={"action": "approve", "note": "Done means the route returns 200."})
+    assert r.status_code == 200
+    assert tasks.get_task(scope_root, t["id"])["attempts"] == 1
+
+
+def test_answering_a_triager_raised_block_does_not_refund(client, scope_root):
+    """No run was claimed, so there is no attempt to give back."""
+    t = _blocked_by(scope_root, "agent:queue-triager")
+    assert t["attempts"] == 2
+    r = client.post(f"/api/tasks/workshop/{t['id']}/review",
+                    json={"action": "approve", "note": "Done means the route returns 200."})
+    assert r.status_code == 200
+    assert tasks.get_task(scope_root, t["id"])["attempts"] == 2
+
+
+def test_a_block_with_no_raiser_still_refunds(client, scope_root):
+    """Legacy records carry no `raised_by`. They predate the triager, so they are
+    worker-raised by construction and must keep the old behaviour."""
+    t = _blocked_by(scope_root, "")
+    r = client.post(f"/api/tasks/workshop/{t['id']}/review",
+                    json={"action": "approve", "note": "An answer."})
+    assert r.status_code == 200
+    assert tasks.get_task(scope_root, t["id"])["attempts"] == 1
+
+
+def test_the_ticket_is_released_either_way(client, scope_root):
+    for raiser in ("worker", "agent:queue-triager"):
+        t = _blocked_by(scope_root, raiser)
+        client.post(f"/api/tasks/workshop/{t['id']}/review",
+                    json={"action": "approve", "note": "An answer."})
+        out = tasks.get_task(scope_root, t["id"])
+        assert out["status"] == "todo", raiser
+        assert out["awaiting"] is None, raiser

@@ -35,7 +35,6 @@ from pydantic import BaseModel, Field
 
 from services import (tasks, task_scope, task_dedup, jobs, build_agents, ownership,
                       knowledge, learnings, permissions, ticket_readiness,
-                      ticket_scope_review,
                       latitude as latitude_svc)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -393,6 +392,10 @@ class TaskCreateIn(BaseModel):
     labels: list[str] | None = None
     priority: int = 0
     effort: str | None = None  # s|m|l hint; set post-create, never a gate
+    # code|judgement|external, or null for "not yet classified". Unclassified is
+    # NOT eligible for unattended dispatch: the store fails it closed rather than
+    # guessing (tasks.EXECUTIONS).
+    execution: str | None = None
     # strict|standard|open, or null to inherit from the scope (latitude.py).
     latitude: str | None = None
 
@@ -429,10 +432,11 @@ async def create(body: TaskCreateIn) -> dict:
     # created task (not a merge, which would overwrite the existing one's).
     # `latitude` rides the same post-create stamp: an override belongs to the new
     # ticket, and a merge must not silently retune the ticket it merged into.
-    if task is not None and (body.effort or body.latitude) and \
+    if task is not None and (body.effort or body.latitude or body.execution) and \
             res.get("decision") not in ("exact", "merge"):
         try:
             updated = tasks.update(root, task["id"], effort=body.effort,
+                                   execution=body.execution,
                                    latitude=body.latitude)
             if updated:
                 task = dict(updated)
@@ -478,6 +482,9 @@ class TaskPatchIn(BaseModel):
     priority: int | None = None
     assignee: str | None = None
     effort: str | None = None
+    # "" clears back to "not yet classified", which is INELIGIBLE for unattended
+    # dispatch, not "code". An unrecognized value coerces to null in the store.
+    execution: str | None = None
     # "" clears the override back to inherit; an unknown value is a 400.
     latitude: str | None = None
     # Advanced fields tasks.update() already supports; None leaves each unchanged.
@@ -734,6 +741,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
             # with it. This route is the operator's, so it filters by nothing.
             set_assignee=body.assignee,
             effort=body.effort,
+            execution=body.execution,
             latitude=body.latitude,
             acceptance=acceptance_arg,
             max_attempts=body.max_attempts,
@@ -994,8 +1002,17 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
         # that stopped to ask a good question twice must not be parked as though it
         # had failed twice. Clearing `blocked_reason` and the request is what
         # `status=todo` already does (tasks.update).
-        updated = tasks.update(root, task_id, status="todo", blocked_reason="",
-                               restore_attempt=True)
+        #
+        # EXCEPT when no attempt was ever spent. The queue triager raises an
+        # `underspecified` block from a review pass, with no run claimed and no
+        # attempt consumed, so refunding one here would CREDIT an attempt the
+        # ticket never had. It floors at zero so nothing breaks visibly, but a
+        # ticket triaged and answered twice quietly earns back two real attempts
+        # against its park cap — the cap silently stops meaning what it says.
+        raised_by = str((request or {}).get("raised_by") or "")
+        updated = tasks.update(
+            root, task_id, status="todo", blocked_reason="",
+            restore_attempt=not raised_by.startswith("agent:queue-triager"))
 
     if updated is None:
         raise HTTPException(404, f"task not found: {task_id}")
