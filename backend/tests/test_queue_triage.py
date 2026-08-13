@@ -90,6 +90,15 @@ THIN = _reply(verdict="underspecified",
               blockers=["The ticket does not say what a passing run looks like."])
 
 
+# A body that answers every readiness check. The labels have to start a LINE:
+# `ticket_format.LABEL_RE` is line-anchored, so a one-line body states nothing
+# but its objective.
+READY = ("Objective: make the reporting page load faster.\n"
+         "Output: the page renders in under a second.\n"
+         "Start from: `backend/routes/reports.py`\n"
+         "Boundaries: do not touch the frontend.")
+
+
 def _thin_ticket(root: Path, n: int = 0) -> dict:
     """A ticket that fails the acceptance and boundaries readiness checks, which
     is what most of the live queue looks like."""
@@ -144,9 +153,9 @@ def test_every_decided_path_writes_the_mark(root: Path, monkeypatch) -> None:
         _reply(verdict="underspecified", reason="objected but named nothing")
         if "nothing to ask" in p else _reply()))
     ok = tasks.add(root, title="A fine ticket",
-                   body="Objective: x. Done: y. Start: `backend/main.py`. Do not touch: the frontend.")
+                   body=READY)
     quiet = tasks.add(root, title="nothing to ask",
-                      body="Objective: x. Done: y. Start: `backend/main.py`. Do not touch: the frontend.")
+                      body=READY)
 
     out = triager.run_queue_triage(SCOPE, dry_run=False)
     assert out["decided"] == 2
@@ -177,7 +186,7 @@ def test_the_look_cap_holds(root: Path, monkeypatch) -> None:
     _stub(monkeypatch, _reply())
     for i in range(25):
         tasks.add(root, title=f"Ticket {i:02d}",
-                  body="Objective: x. Done: y. Start: `backend/main.py`. Do not touch: the frontend.")
+                  body=READY)
 
     out = triager.run_queue_triage(SCOPE, dry_run=False)
     assert out["due"] == 25
@@ -399,7 +408,7 @@ def test_a_split_that_names_one_piece_is_not_a_split(root: Path, monkeypatch) ->
 
 def test_only_todo_tickets_are_selected(root: Path, monkeypatch) -> None:
     _stub(monkeypatch, _reply())
-    body = "Objective: x. Done: y. Start: `backend/main.py`. Do not touch: the frontend."
+    body = READY
     live = tasks.add(root, title="A live one", body=body)
     for status in ("draft", "doing", "in_review", "done", "parked"):
         t = tasks.add(root, title=f"A {status} one", body=body)
@@ -437,10 +446,11 @@ def test_the_mark_does_not_fence_a_running_worker(root: Path, monkeypatch) -> No
     the claim out from under anything mid-run."""
     _stub(monkeypatch, _reply())
     t = tasks.add(root, title="A fine ticket",
-                  body="Objective: x. Done: y. Start: `backend/main.py`. Do not touch: the frontend.")
-    claimed = tasks.claim(root, t["id"], "job-1")
-    token = claimed["claim_token"]
-    tasks.update(root, t["id"], status="todo")
+                  body=READY)
+    tasks.claim(root, t["id"], "job-1")
+    # Back to `todo` so the pass selects it; the token it is holding is whatever
+    # that left behind, and the triage mark must not move it.
+    token = tasks.update(root, t["id"], status="todo")["claim_token"]
 
     triager.run_queue_triage(SCOPE, dry_run=False)
     assert tasks.get_task(root, t["id"])["claim_token"] == token

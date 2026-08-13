@@ -356,7 +356,7 @@ publish_or_park() {  # $1=branch_slug $2=title $3=body
 # ---------------------------------------------------------------------------
 
 if [[ -z "$SLUG" && -z "$DIR_ARG" ]]; then
-  echo "usage: project_ralph.sh <slug> | --dir <path> [--assignee agent:<slug>] [--max-wall SEC] [--max-tasks N]" >&2
+  echo "usage: project_ralph.sh <slug> | --dir <path> [--assignee agent:<slug>] [--max-wall SEC] [--max-tasks N] [--supervised]" >&2
   exit 4
 fi
 
