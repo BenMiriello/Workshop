@@ -172,6 +172,62 @@ class TestTheFirstResultIsNotAlwaysTheEnd:
         assert d.retired is True
         assert chat_store.get_thread(thread["id"])["messages"][-1]["content"] == "the real answer"
 
+    def test_output_after_a_result_is_the_model_talking_not_the_turn_ending(
+            self, thread, monkeypatch):
+        """The guard above used to invert the moment the model opened its mouth.
+
+        Same resume case, one step further along: the CLI's own result has
+        landed, the balance is satisfied, and the ONLY thing holding the turn
+        open is that nothing had been produced. Then the model starts answering
+        our prompt. `produced` flipped True and the drive loop retired the
+        process mid-message.
+
+        Thread 65341b40, 2026-08-12T23:14:09Z: text at .775, SIGTERM at .816.
+        The CLI journal carries that message with no `stop_reason` and an
+        `interruptedByShutdown` row behind it. In the chat it read as the agent
+        writing "Doing the work now, in this turn." and stopping dead.
+        """
+        async def go():
+            d = Driver(thread["id"], monkeypatch, delivered=1)
+            d.write(_replay("do the thing"), _result())
+            task = asyncio.create_task(build_streaming._drive_turn(d.turn, d.meta, proc=d.proc))
+            await d.settle()
+            assert d.retired is False
+            # The model begins its answer. This must not be the kill signal.
+            d.write(_assistant("Doing the work now, in this turn."))
+            await d.settle()
+            assert d.retired is False, "killed the model mid-message"
+            d.write(_assistant("and here it is"), _result())
+            await asyncio.wait_for(task, 5)
+            return d
+        d = asyncio.run(go())
+        assert d.retired is True
+        text = chat_store.get_thread(thread["id"])["messages"][-1]["content"]
+        assert "and here it is" in text
+
+    def test_a_result_before_any_prompt_of_ours_was_read_is_not_ours(
+            self, thread, monkeypatch):
+        """The CLI answers its own `<task-notification>` before it reaches our
+        stdin at all, so the result arrives with `replays` still at zero. It
+        cannot be an answer to a prompt that has not been read, and counting it
+        let the balance agree against work that had not started."""
+        async def go():
+            d = Driver(thread["id"], monkeypatch, delivered=1)
+            d.write(_result())
+            task = asyncio.create_task(build_streaming._drive_turn(d.turn, d.meta, proc=d.proc))
+            await d.settle()
+            assert d.retired is False
+            d.write(_replay("do the thing"), _assistant("the real answer"))
+            await d.settle()
+            assert d.retired is False, "retired on a result that was never ours"
+            d.write(_result())
+            await asyncio.wait_for(task, 5)
+            return d
+        d = asyncio.run(go())
+        assert d.retired is True
+        assert chat_store.get_thread(thread["id"])["messages"][-1]["content"] == "the real answer"
+
+
 class TestAMessageTheCliNeverReadGoesBackOnTheQueue:
     """A message is the system's responsibility from the moment the server
     accepts it. Writing it into a FIFO that nothing ever reads is not delivery,
