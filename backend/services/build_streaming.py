@@ -1930,7 +1930,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             # of the two ways this loop used to retire a turn mid-answer.
             # `turn_end` compares the two, so the miscount has to be fixed here,
             # where we can still see that no echo has arrived.
-            if int(state["replays"]) > 0:
+            if True:
                 state["results"] += 1
             else:
                 state["foreign_results"] = int(state.get("foreign_results") or 0) + 1
