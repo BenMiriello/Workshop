@@ -28,7 +28,7 @@
 // A ticket IS a task; every identifier stays `task` (ADR 0001). The route stays
 // /work so existing links keep resolving.
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import {
   Button,
@@ -38,14 +38,12 @@ import {
   Stack,
   Select,
   Input,
-  Textarea,
   Field,
+  Textarea,
   Modal,
   StateBlock,
   Skeleton,
   StatusDot,
-  Table,
-  TableScroll,
   Tag,
   catFor,
 } from "@workshop/ui";
@@ -169,17 +167,21 @@ export default function Work() {
   const total = data?.total ?? 0;
   const filtered = status !== DEFAULT_STATUS_FILTER || scope !== ALL_SCOPES || !!debouncedQuery;
 
+  // Bare controls, no per-control label. Each `Field label inline` is its own
+  // `minmax(120px, 0.4fr) 1fr` grid, so four of them could not share a line at
+  // any phone width and the mobile rule stacked every one into a label row plus
+  // a control row: eight rows of chrome above the first ticket. A select shows
+  // its value, which is the label. New ticket moved into the page header.
   const controls = (
-    <Row wrap>
-      <Field label="Find" inline>
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search tickets"
-          aria-label="Search tickets"
-        />
-      </Field>
-      <Field label="Status" inline>
+    <div className="ws-tickets-bar">
+      <Input
+        className="ws-tickets-bar__search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search tickets"
+        aria-label="Search tickets"
+      />
+      <div className="ws-tickets-bar__filters">
         <Select
           value={status}
           onChange={(e) => setStatus(e.target.value as StatusFilter)}
@@ -189,8 +191,6 @@ export default function Work() {
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </Select>
-      </Field>
-      <Field label="Scope" inline>
         <Select
           value={scope}
           onChange={(e) => setScope(e.target.value)}
@@ -201,8 +201,6 @@ export default function Work() {
             <option key={s} value={s}>{scopeLabel(s)}</option>
           ))}
         </Select>
-      </Field>
-      <Field label="Sort" inline>
         <Select
           value={sort}
           onChange={(e) => setSort(e.target.value as TaskSort)}
@@ -212,11 +210,8 @@ export default function Work() {
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </Select>
-      </Field>
-      <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
-        <Plus aria-hidden /> New ticket
-      </Button>
-    </Row>
+      </div>
+    </div>
   );
 
   let body: React.ReactNode;
@@ -262,42 +257,29 @@ export default function Work() {
   } else {
     body = (
       <>
-        <TableScroll>
-          <Table>
-            <thead>
-              <tr>
-                <th scope="col">Status</th>
-                <th scope="col">Ticket</th>
-                <th scope="col">Scope</th>
-                <th scope="col">Updated</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((t) => (
-                <tr
-                  key={`${t.scope}:${t.id}`}
-                  onClick={() => nav(ticketHref(t.scope ?? "workshop", t.id))}
-                  style={{ cursor: "pointer" }}
-                >
-                  <td>
+        <Card pad0>
+          <ul className="ws-tickets">
+            {rows.map((t) => (
+              <li key={`${t.scope}:${t.id}`}>
+                {/* A link, not a row with an onClick: it opens in a new tab on
+                    a middle click, it is reachable by keyboard, and a phone
+                    gives it the native tap treatment. */}
+                <Link className="ws-ticket-row" to={ticketHref(t.scope ?? "workshop", t.id)}>
+                  <span className="ws-ticket-row__title" title={taskTitle(t)}>
+                    {taskTitle(t) || "(untitled)"}
+                  </span>
+                  <span className="ws-ticket-row__meta">
                     <StatusDot status={taskStatusKind(t.status)}>
                       {taskStatusLabel(t.status)}
                     </StatusDot>
-                  </td>
-                  <td>
-                    <span className="ws-truncate" title={taskTitle(t)}>
-                      {taskTitle(t) || "(untitled)"}
-                    </span>
-                  </td>
-                  <td>
                     <Tag hue={catFor(t.scope || "workshop")}>{scopeLabel(t.scope)}</Tag>
-                  </td>
-                  <td>{ago(t.updated)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        </TableScroll>
+                    <span className="ws-ticket-row__time">{ago(t.updated)}</span>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
         {rows.length < total && (
           <Row>
             <Button
@@ -315,7 +297,15 @@ export default function Work() {
 
   return (
     <div>
-      <PageHeader title="Tickets" sub="Work items and what is happening to them." />
+      <PageHeader
+        title="Tickets"
+        sub="Work items and what is happening to them."
+        actions={
+          <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
+            <Plus aria-hidden /> New ticket
+          </Button>
+        }
+      />
       <Stack>
         {controls}
         {body}

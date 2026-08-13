@@ -14,6 +14,15 @@
   -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
 }
+/* The ROOT ITSELF is included, not just its descendants. `.ws-root` and
+   `.ws-app` are the same element (App.tsx), and `.ws-app` sets
+   `height: 100dvh` with `padding-top: env(safe-area-inset-top)`. Under
+   content-box that padding ADDS to 100dvh, so on any device with a non-zero
+   notch inset the shell grew taller than the viewport, the document scrolled,
+   and the global toolbar scrolled off the top with it. It reproduced only on
+   phones and installed PWAs, which is why it read as a mobile-only bug.
+   Operator, 2026-08-12: the toolbar going missing is never allowed. */
+.ws-root,
 .ws-root *,
 .ws-root *::before,
 .ws-root *::after { box-sizing: border-box; }
@@ -310,12 +319,6 @@ a.ws-btn { text-decoration: none; }
    roughly 35 characters before the ellipsis; at 380 it shows enough to tell two
    tickets apart, which is the entire job of a list. Still collapses to a single
    full-width column on a phone. */
-.ws-ticket-grid {
-  grid-auto-rows: 1fr;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-}
-.ws-ticket-grid > li { display: flex; min-width: 0; }
-.ws-ticket-grid > li > * { flex: 1 1 auto; min-width: 0; }
 .ws-jobs-grid > li { display: flex; min-width: 0; }
 .ws-jobs-grid > li > * { flex: 1 1 auto; min-width: 0; }
 
@@ -471,44 +474,79 @@ a.ws-btn { text-decoration: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Ticket card (Work → Tickets), built to match its sibling tab's .ws-job-card:
-   strong line, muted line, pill row, meta line. Before this it was a bold title
-   and a row of chips and nothing else, so a card had no hierarchy — a title that
-   filled two lines simply WAS the card, and every card looked the same weight
-   and the same size regardless of what it said.
+/* ---- TICKET LIST --------------------------------------------------------- */
+/* A ticket is a ROW, not a card and not a table cell (operator, 2026-08-12).
+   The table this replaces carried `min-width: 520px` inside a horizontal
+   scroller, so on a phone the list was a narrow window onto a wide grid: you
+   scrolled sideways to read a title, and the columns that did fit were too
+   tight for their contents and wrapped. Both complaints are the same cause,
+   which is that a four-column grid does not fit 390px and cannot be made to.
 
-   `height: 100%` + `margin-top: auto` on the pills is what makes a grid of these
-   read as a grid: the pill rows line up along the bottom instead of floating
-   wherever each title happened to stop. */
-.ws-ticket-card { display: flex; flex-direction: column; height: 100%; gap: var(--space-2); }
-/* ONE line, always — see .ws-truncate on the span. A ticket title is free text
-   up to 80 characters, so at any card width some of them would wrap, and a list
-   whose rows are different heights does not scan. The full text is on hover and
-   whole on the detail page. */
-.ws-ticket-card__title {
+   So: one row per ticket, and it NEVER scrolls sideways at any width. Below
+   720px the row is two lines (title, then meta); above it the same row is one
+   line with the meta trailing. One component, one breakpoint, no separate
+   mobile implementation to keep in sync. */
+.ws-tickets {
+  display: flex; flex-direction: column;
+  list-style: none; margin: 0; padding: 0; min-width: 0;
+}
+.ws-ticket-row {
+  display: flex; flex-direction: column;
+  gap: var(--space-1);
+  width: 100%; min-width: 0;
+  padding: var(--space-3);
+  border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: inherit; text-align: left;
+  font: inherit; cursor: pointer;
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.ws-ticket-row:hover { background: var(--card-hover); }
+/* ONE line, always. A title is free text up to 80 characters, and a list whose
+   rows are different heights does not scan. The whole title is on the ticket. */
+.ws-ticket-row__title {
+  min-width: 0;
+  font-size: var(--fs-sm);
   font-weight: var(--fw-semi);
   line-height: var(--lh-tight);
-  letter-spacing: -0.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* The muted second line is what gives the title something to be stronger THAN.
-   It is also the only place a reader learns what a ticket is about when its
-   title had to be elided. */
-.ws-ticket-card__desc {
-  color: var(--muted); font-size: var(--fs-sm); line-height: var(--lh-tight);
-}
-.ws-ticket-card__pills {
+/* The meta line also never wraps: it clips. A status, a scope and a timestamp
+   are each short, and letting them wrap is what turned rows into blocks. */
+.ws-ticket-row__meta {
   display: flex; align-items: center; gap: var(--space-2);
-  margin-top: auto; padding-top: var(--space-1);
-  flex-wrap: nowrap; overflow: hidden;
-}
-.ws-ticket-card__pills > * { flex: 0 0 auto; }
-/* Priority and effort are ONE muted line, not two loose labels sitting next to
-   two pills. Four different visual weights in one row is what made the old row
-   read as unstyled. */
-.ws-ticket-card__meta {
+  min-width: 0; flex-wrap: nowrap; overflow: hidden;
   color: var(--muted); font-size: var(--fs-xs);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.ws-ticket-row__meta > * { flex: 0 0 auto; }
+.ws-ticket-row__time { margin-left: auto; padding-left: var(--space-2); }
+
+@media (min-width: 720px) {
+  .ws-ticket-row {
+    flex-direction: row; align-items: center; gap: var(--space-3);
+    padding-block: var(--space-2);
+  }
+  .ws-ticket-row__title { flex: 1 1 auto; }
+  .ws-ticket-row__meta { flex: 0 0 auto; }
+}
+
+/* The filter bar. Bare controls, no `Field label inline` per control: that is a
+   `minmax(120px, 0.4fr) 1fr` grid EACH, so four labelled controls could not fit
+   one line at any phone width and the mobile rule stacked every one of them into
+   a label row plus a control row. Eight rows of chrome above the first ticket.
+   A select shows its own value, which is the label. */
+.ws-tickets-bar {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-2); min-width: 0;
+}
+/* Wide enough to be worth typing in, and the first thing to take a line of its
+   own when the bar wraps. */
+.ws-tickets-bar__search { flex: 1 1 14rem; min-width: 0; }
+.ws-tickets-bar__filters {
+  display: flex; gap: var(--space-2); flex: 1 1 18rem; min-width: 0;
+}
+/* Equal thirds of whatever is left, so three selects always fit one line. */
+.ws-tickets-bar__filters > * { flex: 1 1 0; min-width: 0; }
 
 /* A linked ticket: a whole row that goes somewhere (parent, child, dependency).
    Hierarchy from background on hover, not a border — the row is a link, and
@@ -529,35 +567,6 @@ a.ws-btn { text-decoration: none; }
    nested containers. */
 .ws-comment { padding-block: var(--space-1); }
 .ws-comment + .ws-comment { margin-top: var(--space-3); }
-
-/* ---- BOARD --------------------------------------------------------------- */
-/* Fixed lanes side by side. Scrolls horizontally rather than squeezing: four
-   lanes at a readable width do not fit a phone, and a lane narrow enough to fit
-   shows nothing but truncation. */
-.ws-board {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(260px, 1fr);
-  gap: var(--space-3);
-  overflow-x: auto;
-  padding-bottom: var(--space-2);
-}
-.ws-board__lane { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
-.ws-board__head {
-  display: flex; align-items: baseline; gap: var(--space-2);
-  padding-bottom: var(--space-1);
-}
-.ws-board__count { color: var(--muted); font-size: var(--fs-xs); }
-.ws-board__items {
-  display: flex; flex-direction: column; gap: var(--space-2);
-  list-style: none; padding: 0; margin: 0; min-width: 0;
-}
-.ws-board__items > li { display: flex; min-width: 0; }
-.ws-board__items > li > * { flex: 1 1 auto; min-width: 0; }
-.ws-board__empty {
-  color: var(--muted); font-size: var(--fs-xs);
-  padding: var(--space-3) var(--space-2);
-}
 
 /* Build-agent card cell: the card body links to the chat; a corner button opens
    the full workbench. The button is a sibling of the card link (valid HTML), so
@@ -1069,6 +1078,14 @@ a.ws-btn { text-decoration: none; }
      also narrowed the toolbar. */
   width: 100%;
   height: 100dvh;
+  /* Belt and braces on the shell being exactly one viewport. `height` alone was
+     enough in theory and was not in practice (see the box-sizing note above),
+     and the consequence of getting it wrong is the whole app's chrome leaving
+     the screen. The shell CLIPS: nothing inside it can push it taller, so the
+     top nav is structurally unable to scroll away. The one scroller is <main>
+     below. */
+  max-height: 100dvh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   /* Clear the device notch when installed/standalone (viewport-fit=cover).
@@ -1803,12 +1820,6 @@ a.ws-btn { text-decoration: none; }
   .ws-topnav { gap: var(--space-3); }
   .ws-app .ws-app__body > main { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); padding-top: var(--space-4); }
 
-  /* A ticket card's pill row is `nowrap; overflow: hidden` so a grid of cards
-     keeps one height. On a phone the card is full width and there is only ever
-     one card per row, so the height argument does not apply — and the clip did,
-     chopping "Project: some-long-slug" mid-word with no ellipsis. Let it wrap. */
-  .ws-ticket-card__pills { flex-wrap: wrap; overflow: visible; }
-
   /* A segmented control is inline-flex with no wrap and no scroller, so a
      five-option filter (the Runs tab's) simply overflowed the viewport and
      pushed the whole page wider. Scroll the control instead of the page. */
@@ -1826,8 +1837,6 @@ a.ws-btn { text-decoration: none; }
   .ws-segmented__thumb { display: none; }
   .ws-segmented button[aria-pressed="true"] { background: var(--card); box-shadow: var(--shadow-sm); }
 
-  /* One lane at a time, swiped. Four lanes crushed into 360px is not a board. */
-  .ws-board { grid-auto-columns: minmax(85%, 1fr); }
 }
 
 /* Auth / login screen — a single centered card on a full-height surface. */

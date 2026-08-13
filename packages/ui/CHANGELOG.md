@@ -12,6 +12,33 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.4.0 — 2026-08-12 — the shell can no longer scroll its own toolbar away
+
+**Breaking (CSS).** Removed `.ws-board*`, `.ws-ticket-card*` and
+`.ws-ticket-grid`: the board and the card grid they styled were deleted from the
+tickets surface. Added `.ws-tickets`, `.ws-ticket-row*` and `.ws-tickets-bar*`.
+No exported component changed, so the API snapshot is unmoved.
+
+**The fix that matters.** `.ws-root` and `.ws-app` are the same element in
+`App.tsx`, and the box-sizing reset read `.ws-root *` — descendants only. So the
+shell itself was `content-box`, and `.ws-app`'s `height: 100dvh` plus
+`padding-top: env(safe-area-inset-top)` resolved TALLER than the viewport
+wherever the notch inset is non-zero. The document scrolled, and the global
+toolbar scrolled off the top with it. It reproduced on phones and installed
+PWAs only, so it read as a mobile layout bug rather than a broken invariant.
+
+The reset now covers the root itself, and `.ws-app` adds `max-height: 100dvh`
+and `overflow: hidden` so nothing inside can push the shell at all. `<main>`
+remains the single scroller. `src/styles/shell.test.ts` pins all of it, and the
+consuming app pins the matching `html, body { height: 100%; overflow: hidden }`.
+
+**The ticket row.** The list was a `.ws-table` with `min-width: 520px` inside a
+horizontal scroller, which on a phone is a narrow window onto a wide grid: you
+scrolled sideways to read a title, and the columns that did fit were too tight
+and wrapped. `.ws-ticket-row` is one row per ticket that never scrolls sideways
+at any width: two lines below 720px, one line above it, title and meta both
+clipped rather than wrapped.
+
 ## 0.3.2 — 2026-08-12 — two chevrons that never rotated
 
 Patch. No API change; the snapshot is unmoved.

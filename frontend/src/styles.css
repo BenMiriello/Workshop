@@ -13,10 +13,20 @@
    than the screen, scrolling revealed the bare <html> paint (the dark flash-bg
    set in index.html) beneath it. min-height:100vh on a non-capped body, plus
    the theme bg on <html> itself, removes that bleed. */
+/* The DOCUMENT never scrolls. The app shell is exactly one viewport tall and
+   <main> is the only scroller, so a page whose content overflows scrolls inside
+   the chrome rather than moving it. Without this the body was free to scroll and
+   took the global toolbar off the top of the screen, which the operator hit on
+   2026-08-12 and which is never allowed. `overscroll-behavior` also kills the
+   iOS rubber-band that shows the page edge under the shell. */
 html, body, #root { margin: 0; }
+html, body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
 html { background: var(--bg); }
 body {
-  min-height: 100vh;
   font-family: var(--font-sans);
   background: var(--bg);
   color: var(--fg);
