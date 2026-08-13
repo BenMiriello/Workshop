@@ -311,3 +311,36 @@ def test_the_ticket_is_released_either_way(client, scope_root):
         out = tasks.get_task(scope_root, t["id"])
         assert out["status"] == "todo", raiser
         assert out["awaiting"] is None, raiser
+
+
+def test_the_refund_rule_and_the_triager_agree_on_the_raiser():
+    """A STRING MATCH ACROSS TWO MODULES, pinned because it fails silently.
+
+    `POST /review` decides whether to refund an attempt by testing
+    `raised_by.startswith("agent:queue-triager")`. The triager stamps that value
+    from its own constant. If either side is renamed, nothing raises: the refund
+    quietly comes back for triager-raised blocks and the park cap goes back to
+    meaning something other than what it says.
+    """
+    from services import triager
+    rec = triager._awaiting_record("development", "acceptance", "What?", "why")
+    assert rec["raised_by"] == triager.QUEUE_RAISED_BY
+    assert rec["raised_by"].startswith("agent:queue-triager")
+    assert rec["kind"] in tasks.EXPIRING_AWAITING_KINDS or rec["kind"] == "missing-info"
+
+
+def test_a_real_triager_block_is_not_refunded_end_to_end(client, scope_root):
+    """The same coupling, exercised rather than asserted: build the block with
+    the TRIAGER's own record shape, answer it through the real endpoint."""
+    from services import triager
+    t = tasks.add(scope_root, title="Bind a scope to a tracker",
+                  body="Objective: one binding per scope.")
+    tasks.update(scope_root, t["id"], bump_attempt=True)
+    tasks.update(scope_root, t["id"], bump_attempt=True)
+    tasks.update(scope_root, t["id"], status="blocked",
+                 awaiting=triager._awaiting_record(
+                     "development", "acceptance", "What does done look like?", "no acceptance"))
+    r = client.post(f"/api/tasks/workshop/{t['id']}/review",
+                    json={"action": "approve", "note": "Done means the route returns 200."})
+    assert r.status_code == 200, r.text
+    assert tasks.get_task(scope_root, t["id"])["attempts"] == 2
