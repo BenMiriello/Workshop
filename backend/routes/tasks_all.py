@@ -146,6 +146,15 @@ def _with_triage(rec: dict, by_id: dict[str, dict],
     rec["state_type"] = tasks.state_type(rec.get("status"))
     rec["ready"] = tasks.is_ready(rec, by_id)
     rec["blocked_by"] = _blocked_by(rec, index)
+    # What this ticket does not yet say — the same report `_detail` attaches, so a
+    # row and the page it opens agree. It used to ride only the detail GET, which
+    # meant a list could not show a readiness marker at all without refetching
+    # every row. `by_id` is the ticket's own scope, which is the right set for the
+    # dependency check: a cross-scope dependency is invisible to the SCHEDULER
+    # too, so resolving it here would make a row claim a blocker the queue does
+    # not act on. Pure and in-memory (no store read), so it costs one regex pass
+    # per row on a list that is already loaded.
+    rec["readiness"] = ticket_readiness.check(rec, known_ids=set(by_id))
     return rec
 
 
@@ -688,7 +697,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
     root = _require_root(scope)
     if all(v is None for v in (
         body.status, body.title, body.body, body.text, body.labels,
-        body.priority, body.assignee, body.effort,
+        body.priority, body.assignee, body.effort, body.execution,
         body.latitude, body.acceptance, body.max_attempts, body.depends_on,
         body.relates_to, body.reason,
     )):

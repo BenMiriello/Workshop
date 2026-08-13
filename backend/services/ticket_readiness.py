@@ -73,7 +73,15 @@ def check(task: dict, *, known_ids: set[str] | None = None) -> dict:
     # `effort` is canonicalized by the store, so one value to compare.
     if task.get("effort") != "quick":
         if not (_ENTRY_POINT.search(body) or ticket_format.states(body, "entry_points")):
-            fail("entry_points", "the body names no file, command or symbol to start from")
+            # Phrased as "does not say ..." like its siblings, deliberately. The
+            # UI composes one line of prose out of these strings rather than
+            # keeping a second set of wordings, so a `why` that reads fine alone
+            # ("the body names no file, command or symbol to start from") but
+            # ungrammatically in a list ("... and no file, command or symbol to
+            # start from") forces the UI to invent its own phrasing, which is the
+            # divergence this module exists to prevent. One vocabulary, and it
+            # has to read well in both places.
+            fail("entry_points", "the body does not say where to start")
 
     if not (task.get("touches") or task.get("latitude") == "open"
             or ticket_format.states(body, "boundaries")):
