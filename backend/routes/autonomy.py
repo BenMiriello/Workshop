@@ -43,7 +43,6 @@ WORKSHOP_ROOT = paths.workshop_root()
 QUEUE_RUNNER = WORKSHOP_ROOT / "scripts" / "queue_runner.sh"
 QUEUE_WATCHDOG = WORKSHOP_ROOT / "scripts" / "queue_runner_watchdog.sh"
 QUEUE_RUNNER_LOG = WORKSHOP_ROOT / ".runtime" / "queue-runner.log"
-QUEUE_RUNNER_PID = WORKSHOP_ROOT / ".runtime" / "queue-runner.pid"
 DEV_MODE_GATE = WORKSHOP_ROOT / "scripts" / "dev_mode_gate.sh"
 INSTANCE_LIB = WORKSHOP_ROOT / "scripts" / "lib" / "instance.sh"
 
@@ -55,8 +54,23 @@ def _now_iso() -> str:
 def _queue_lock_path(dir_str: str) -> Path:
     """The lock queue_runner.sh holds for a tree. Mirrors the shell derivation
     exactly: md5 of `printf '%s\\n' "$DIR"`, first 12 hex chars."""
-    digest = hashlib.md5((dir_str + "\n").encode()).hexdigest()[:12]
-    return Path(f"/tmp/workshop-queue-runner-{digest}.lock")
+    return Path(f"/tmp/workshop-queue-runner-{_queue_key(dir_str)}.lock")
+
+
+def _queue_key(dir_str: str) -> str:
+    """The per-tree key both the lock and the pidfile are named after. Mirrors
+    the shell derivation exactly: md5 of `printf '%s\\n' "$DIR"`, first 12 hex."""
+    return hashlib.md5((dir_str + "\n").encode()).hexdigest()[:12]
+
+
+def _queue_pid_path(dir_str: str) -> Path:
+    """The pidfile for a tree's runner.
+
+    PER TREE, like the lock. It used to be one shared file while the lock was
+    already per-tree, so two runners on two trees both ran but the second
+    clobbered the first's pid: Stop then killed whichever started last, whatever
+    tree it was asked about, and left the other one unstoppable from the UI."""
+    return WORKSHOP_ROOT / ".runtime" / f"queue-runner-{_queue_key(dir_str)}.pid"
 
 
 def _queue_runner_state(dir_str: str | None = None) -> dict:
@@ -92,7 +106,7 @@ def _queue_runner_state(dir_str: str | None = None) -> dict:
 
     pid = None
     try:
-        pid = int(QUEUE_RUNNER_PID.read_text().strip())
+        pid = int(_queue_pid_path(target).read_text().strip())
     except (OSError, ValueError):
         pid = None
     # A pidfile outlives a SIGKILLed runner (the EXIT trap never fires), so it is

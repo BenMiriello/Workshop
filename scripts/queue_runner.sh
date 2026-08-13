@@ -78,7 +78,16 @@ source "$WORKSHOP/scripts/dev_mode_gate.sh"
 assert_run_target "$DIR" "queue_runner.sh" || exit 2
 
 LOG="$WORKSHOP/.runtime/queue-runner.log"
-PIDFILE="$WORKSHOP/.runtime/queue-runner.pid"
+# One key per tree, used by BOTH the lock and the pidfile below.
+#
+# The lock was already per-tree and the pidfile was not, which is a real bug now
+# that the UI starts a runner against a NAMED tree: two runners on two trees both
+# hold their own lock and both run, but the second overwrites the first's pid, so
+# Stop kills whichever started last regardless of which tree it was asked about,
+# and the other runner becomes unstoppable from the UI. A per-tree Start with a
+# global Stop is worse than either.
+RUNNER_KEY="$(printf '%s\n' "$DIR" | md5sum | cut -c1-12)"
+PIDFILE="$WORKSHOP/.runtime/queue-runner-$RUNNER_KEY.pid"
 # One switch, read through services/autonomy_override. Fails closed.
 source "$WORKSHOP/scripts/autonomy_gate.sh"
 AUTONOMY_OVERRIDE="$WORKSHOP/.runtime/autonomy-override.json"
@@ -108,7 +117,7 @@ log() { echo "[$(ts)] [queue-runner] $*" >> "$LOG"; }
 
 # Single runner per tree. Keyed on DIR so a per-project runner can coexist with
 # the root one. Non-blocking: losing the lock means one is already up.
-LOCK="/tmp/workshop-queue-runner-$(printf '%s\n' "$DIR" | md5sum | cut -c1-12).lock"
+LOCK="/tmp/workshop-queue-runner-$RUNNER_KEY.lock"
 exec 9>"$LOCK"
 if ! flock -n 9; then
   echo "[$(ts)] [queue-runner] already running for $DIR; nothing to do" >> "$LOG"
