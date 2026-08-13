@@ -81,12 +81,16 @@ page" and the chat-ordering rules.
 | **A rule the operator wrote outranks a worker's incident report** (see §3.2) | checkpoint `00d49a9` |
 | The plan doc itself | `58d3056`, `9ae58ac`, `ea2dae3`, `08e1bc6`, `5ab8006` |
 
-### Armed, not confirmed
+### Restart: confirmed, not merely armed
 
-- **A deferred backend restart was fired at the end of the 2026-08-12 session.**
-  Verify it landed before trusting anything in §3: check backend uptime AND
-  that a general chat's prompt now contains an `OPERATOR PREFERENCES` block.
-  Per the standing memory, never trust the restart's own success line.
+The deferred backend restart fired and landed at **2026-08-12 21:32 PDT
+(04:32Z)**, verified three ways rather than by trusting the success line
+(standing memory says never do that): the unit's `ActiveEnterTimestamp` is
+after the arming, the running pid is that young, and the live process's
+`chat_context.learnings_context` source contains both `if scope !=
+learnings.GLOBAL` and `OPERATOR PREFERENCES`.
+
+So everything in §3 is live, not pending.
 
 ### Not done, and not started
 
