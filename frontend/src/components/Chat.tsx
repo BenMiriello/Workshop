@@ -763,9 +763,15 @@ export default function Chat({
       tone="error"
       icon={<WifiOff aria-hidden />}
       className="chat-egress"
-      detail="Run network commands (git clone / npm install) in your own terminal, or approve the host in Settings."
     >
-      External network is blocked in this environment.
+      {/* Both sentences in the body, and the disclosure after them: `detail`
+          renders after `children`, so putting the advice there would have left
+          the Details toggle sitting between the problem and what to do. */}
+      External network is blocked in this environment.{" "}
+      <span className="ws-notice__detail">
+        Run network commands (git clone / npm install) in your own terminal, or
+        approve the host in Settings.
+      </span>
       <details className="chat-egress__details">
         <summary className="ws-card__meta">Details</summary>
         <pre className="ws-mono chat-egress__pre">{egressDetail}</pre>
