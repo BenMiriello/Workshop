@@ -743,7 +743,58 @@ they cut against building more of this:
 
 ---
 
-## 8. Evidence
+## 8. Critique of this plan
+
+Written after the plan, deliberately, and kept rather than fixed silently.
+
+**It is bigger than it reads.** Six phases plus six items in §5 is weeks, not
+the "a day" some phases claim. Those estimates are for the EDIT, and they omit
+the watching, which is the part that cannot be compressed: phase 3 says "read
+every decision it makes for a week", and that is the real cost.
+
+**If only three things get done, do these**, in order. Each is small, each is
+independently useful, and each is currently a mechanism that lies:
+
+1. **Fix the preference path.** Eleven captured operator corrections go
+   nowhere under a reply that says they were captured.
+2. **Un-drop the Design System rule** from the injected block, and stop
+   ranking standing operator rules against mechanical worker noise for the
+   same 700 tokens.
+3. **Give `mcp__workshop__search` to the worker and to agents.** One allowlist
+   change, and it ends the state where the only surface that can search the
+   workshop's own writing is the chat, not the thing doing the work.
+
+None of those three turn autonomy on. That is the point.
+
+**The goal itself deserves a challenge.** This plan assumes autonomous ticket
+execution is worth reaching. The evidence is more equivocal than the ambition:
+a controlled trial measured experienced developers 19% SLOWER on mature repos
+while believing they were faster; verified session success sits around 30% even
+for experts; and the single largest measured improvement anywhere is a human
+answering a question on 10% of tasks. A defensible alternative reading is:
+**make the attended path excellent and keep autonomy narrow**, restricted to
+tickets that are small, well specified and machine-verifiable, which is roughly
+9 of the 34 open ones today. This plan is compatible with that reading, and
+phases 0 to 3 are worth doing under either.
+
+**Three things it does not answer.**
+
+- **The 34 open tickets.** Some are from July, some are design work that is not
+  executable at all, and nothing today expresses "this ticket replaced that
+  one". Turning a runner loose on that backlog would work stale tickets against
+  a tree that has moved. Triage before dispatch, and the queue triager's first
+  pass is exactly that job.
+- **Cost.** A supervised loop working several tickets a day is real money at
+  frontier rates, and the reviewer plus distiller spend is the part nobody
+  meters. The ledger exists; a per-scope budget should be set before phase 4,
+  not after the first surprising week.
+- **Isolation.** Named in phase 5 as a hard prerequisite, and out of scope
+  here. It is the one item on this list that cannot be solved by better design
+  in this document.
+
+---
+
+## 9. Evidence
 
 Measured findings this plan leans on, so a later reader can check the ground
 rather than the assertion. **[M]** measured, **[D]** a design decision whose
