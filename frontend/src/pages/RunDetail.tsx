@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePoll } from "../lib/usePoll";
-import { useParams, useNavigate } from "react-router-dom";
-import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft, HelpCircle, ListTodo, ListChecks, ArrowUpRight } from "lucide-react";
+import { Link, useParams, useNavigate } from "react-router-dom";
+import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft, HelpCircle, ListChecks } from "lucide-react";
 import {
   Button,
   Card,
@@ -12,14 +12,11 @@ import {
   Skeleton,
   StateBlock,
   StatusPill,
-  Tag,
-  catFor,
+  StatusDot,
 } from "@workshop/ui";
 import type { StatusKind } from "@workshop/ui";
 import { type Job, jobIsLive, jobStatusKind } from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
-import { DEVELOPMENT_SCOPE } from "../lib/devMode";
-import { nextWorkParams } from "../lib/workParams";
 
 // One RUN's detail: its binding, trigger, timing, outcome, and freeform
 // evidence. Linked from Work's Runs tab, Home attention cards, and an agent's
@@ -69,19 +66,6 @@ function ranSummary(job: Job): string {
 }
 
 const statusKind = jobStatusKind;
-
-// The task-store scope a job worked in, for a "View task" deep-link into Work.
-function scopeForJob(job: Job): string | null {
-  // "workshop" is the pre-ADR-0014 project_slug for a platform-repo sweep; the
-  // tickets it worked did not move, the queue was renamed, so it resolves to
-  // Development or a year of run history loses its ticket link.
-  if (job.project_slug === "workshop" || job.project_slug === DEVELOPMENT_SCOPE) {
-    return DEVELOPMENT_SCOPE;
-  }
-  if (job.project_slug) return `project:${job.project_slug}`;
-  if (job.agent_id && job.agent_id.startsWith("agent:")) return job.agent_id;
-  return null;
-}
 
 function fmtTs(ts?: string): string {
   if (!ts) return "";
@@ -465,8 +449,12 @@ export default function JobDetail() {
             <Stack gap="sm">
               <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
                 <StatusPill status={statusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
+                {/* Plain text. This was `<Tag hue={catFor(job.trigger)}>`, which
+                    the design system explicitly forbids: a run's trigger is
+                    AGENCY, and catFor is the categorical scale. It was also the
+                    second chip in a row that already had the status pill. */}
                 {(job.trigger_label || job.trigger) && (
-                  <Tag hue={catFor(job.trigger || "")}>{job.trigger_label || job.trigger}</Tag>
+                  <span className="ws-muted">{job.trigger_label || job.trigger}</span>
                 )}
                 {dur && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{dur}</span>}
                 {typeof job.exit_code === "number" && (
@@ -529,54 +517,27 @@ export default function JobDetail() {
         {children && children.length > 0 && (
           <section>
             <SectionLabel>Child runs</SectionLabel>
-            <Card style={{ padding: "var(--space-3)" }}>
-              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                {children.map((c) => {
-                  const cscope = scopeForJob(c);
-                  return (
-                    <li key={c.id} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}>
-                      <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-                        <StatusPill status={statusKind(c.status)}>{c.status ?? "unknown"}</StatusPill>
-                        <span style={{ flex: "1 1 12rem", wordBreak: "break-word" }}>{c.title || c.task_text || c.id}</span>
-                        {/* A button labelled "task" has to go to THAT task. This
-                            went to a filtered list while c.task_id sat unused
-                            beside it, which is the same mistake the "Linked
-                            ticket" row above already avoids via ticketHref. The
-                            scope-filtered list is still offered when there is no
-                            task id, but it is then labelled as a list. */}
-                        {c.task_id ? (
-                          <button
-                            type="button"
-                            className="ws-bc__link"
-                            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--fs-xs)" }}
-                            onClick={() => nav(ticketHref(cscope || runTicketScope(c), c.task_id!))}
-                          >
-                            <ListTodo aria-hidden size={12} /> ticket
-                          </button>
-                        ) : cscope ? (
-                          <button
-                            type="button"
-                            className="ws-bc__link"
-                            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--fs-xs)" }}
-                            onClick={() =>
-                              nav(`/work?${nextWorkParams(new URLSearchParams(), { scope: cscope })}`)
-                            }
-                          >
-                            <ListTodo aria-hidden size={12} /> tickets in scope
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className="ws-bc__link"
-                          style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--fs-xs)" }}
-                          onClick={() => nav(`/runs/${encodeURIComponent(c.id)}`)}
-                        >
-                          View run <ArrowUpRight aria-hidden size={12} />
-                        </button>
-                      </Row>
-                    </li>
-                  );
-                })}
+            <Card pad0>
+              <ul className="ws-list">
+                {children.map((c) => (
+                  <li key={c.id}>
+                    <Link className="ws-listrow" to={`/runs/${encodeURIComponent(c.id)}`}>
+                      <span
+                        className="ws-listrow__mark"
+                        title={c.status ?? "unknown"}
+                        aria-label={c.status ?? "unknown"}
+                      >
+                        <StatusDot status={statusKind(c.status)}>{null}</StatusDot>
+                      </span>
+                      <span className="ws-listrow__title">
+                        {c.title || c.task_text || c.id}
+                      </span>
+                      <span className="ws-listrow__meta">
+                        <span className="ws-listrow__time">{c.status ?? ""}</span>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
               </ul>
             </Card>
           </section>
