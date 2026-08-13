@@ -1678,6 +1678,28 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
         if meta.get("allowed_tools") is None and not meta.get("tools_disabled"):
             cmd.extend(["--permission-mode", mode])
     else:
+        # FULL AGENTIC, NO SELECTION: give it the workshop search server.
+        #
+        # This branch sends no MCP flags at all and inherits whatever the CLI's
+        # own configuration provides — and the workshop server is in neither
+        # `~/.claude.json` nor a `<cwd>/.mcp.json`, because it is spawned by us
+        # rather than installed. So a project or build chat, the turn with the
+        # WIDEST tool surface in the system, was the one that could not search
+        # the workshop's own notes, tickets and chats.
+        #
+        # Additive, never strict: `--strict-mcp-config` would drop every other
+        # server the tree legitimately configures. And emitted BEFORE
+        # `--permission-mode` because `--mcp-config` is variadic and keeps
+        # eating following NON-flag tokens (2026-08-10: `--mcp-config '{...}' hi`
+        # sent the CLI looking for a config file called `hi`); a flag right
+        # after it terminates the group.
+        #
+        # Never fatal. A missing launch spec means this turn runs without search,
+        # exactly as it did before, rather than failing to start at all.
+        try:
+            cmd.extend(["--mcp-config", llm_router.mcp_config_json(["workshop"])])
+        except Exception as e:  # noqa: BLE001 - a search tool is not worth a dead turn
+            log.warning("workshop MCP config unavailable for this turn: %s", e)
         cmd.extend(["--permission-mode", mode])
     # THE COUPLING THAT MATTERS. Every mode except bypass can stop and ask, and
     # without a channel to ask ON the CLI accepts the mode and then silently

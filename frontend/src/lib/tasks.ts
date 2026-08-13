@@ -209,6 +209,34 @@ export const EXECUTION_LABEL: Record<TaskExecution, string> = {
 export const executionLabel = (v?: string | null): string =>
   EXECUTION_LABEL[(v ?? "") as TaskExecution] ?? "not classified";
 
+// ---- the queue triager's mark -----------------------------------------------
+// What a triage pass decided about this ticket's SPEC. Not a status and not a
+// gate: `underspecified` means it also raised a question, which shows up as the
+// ticket's block, and that is the thing worth acting on. This row exists so a
+// ticket can say it has been looked at, which is the difference between "nobody
+// has reviewed this" and "reviewed, nothing to do".
+export type TriageDecision = "ok" | "split" | "underspecified" | "none";
+
+export type TicketTriage = {
+  at?: string | null;
+  decision?: TriageDecision | string | null;
+  reason?: string | null;
+  spec_hash?: string | null;
+};
+
+const TRIAGE_LABEL: Record<TriageDecision, string> = {
+  ok: "reviewed, specified well enough",
+  split: "reviewed, proposed splitting it",
+  underspecified: "reviewed, asked a question",
+  none: "reviewed, nothing to do",
+};
+
+// Phrased as an outcome rather than as a verdict word. "ok" alone reads as a
+// status the ticket does not have; "reviewed, specified well enough" says who
+// did what.
+export const triageLabel = (v?: string | null): string =>
+  TRIAGE_LABEL[(v ?? "") as TriageDecision] ?? "reviewed";
+
 // Where an effective latitude came from. This travels WITH the value everywhere
 // it is shown: null means inherit, so a value rendered without its source is how
 // an inherited setting gets mistaken for a deliberate one.
@@ -271,6 +299,11 @@ export type Task = {
   effort?: string | null;
   // Can a machine do this at all (see TaskExecution). null = not classified.
   execution?: TaskExecution | null;
+  // The queue triager's mark: what it decided and against which version of the
+  // spec. Stored flat AND projected under `exec`; read it flat, like every other
+  // execution field. `spec_hash` is deliberately not surfaced in the UI — it is
+  // the triager's own bookkeeping, and showing a hash to a person says nothing.
+  triage?: TicketTriage | null;
   // The ticket's OWN override. null/absent = inherit from the scope; it is NOT
   // "standard". Read `effective_latitude` to know what a run would actually use.
   latitude?: Latitude | null;

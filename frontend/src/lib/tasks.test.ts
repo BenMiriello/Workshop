@@ -6,7 +6,7 @@
 // line is DERIVED from those strings, so a test that made up its own wording
 // would prove nothing.
 import { describe, expect, it } from "vitest";
-import { executionLabel, proposalGaps, readinessLine } from "./tasks";
+import { executionLabel, proposalGaps, readinessLine, triageLabel } from "./tasks";
 
 const WHY = {
   title: "the ticket has no title",
@@ -143,5 +143,24 @@ describe("executionLabel", () => {
     expect(executionLabel(undefined)).toBe("not classified");
     expect(executionLabel("")).toBe("not classified");
     expect(executionLabel("codeish")).toBe("not classified");
+  });
+});
+
+describe("triageLabel", () => {
+  // Phrased as an outcome, not as a verdict word: "ok" alone reads as a status
+  // the ticket does not have.
+  it("says what the pass did, not just what it decided", () => {
+    expect(triageLabel("ok")).toBe("reviewed, specified well enough");
+    expect(triageLabel("split")).toBe("reviewed, proposed splitting it");
+    expect(triageLabel("underspecified")).toBe("reviewed, asked a question");
+    expect(triageLabel("none")).toBe("reviewed, nothing to do");
+  });
+
+  it("still says it was reviewed for a decision it does not know", () => {
+    // The store degrades an unknown decision to `none` rather than dropping the
+    // mark, so the UI must not render an empty row for one either.
+    expect(triageLabel("something-new")).toBe("reviewed");
+    expect(triageLabel(null)).toBe("reviewed");
+    expect(triageLabel(undefined)).toBe("reviewed");
   });
 });

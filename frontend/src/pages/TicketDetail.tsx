@@ -40,7 +40,7 @@ import { Markdown } from "@workshop/ui/markdown";
 import {
   type Task, type TaskLink, TASK_STATUSES, taskStatusKind, taskStatusLabel,
   title as titleOf, description as descriptionOf, scopeLabel, scopeHref,
-  ticketHref, executionLabel, readinessLine,
+  ticketHref, executionLabel, readinessLine, triageLabel,
 } from "../lib/tasks";
 import {
   EMPTY_TICKET_DRAFT, TICKET_EFFORTS, TICKET_EXECUTIONS,
@@ -579,6 +579,16 @@ export default function TicketDetail() {
                 ? executionLabel(task.execution)
                 : <span className="ws-muted">not classified</span>}
             </Prop>
+            {/* Only when a pass has actually run. Unlike Execution above, the
+                absence of a triage mark is not a fact worth a row: it means
+                nobody has looked yet, which is the default for every ticket. */}
+            {task.triage?.decision && (
+              <Prop label="Triage">
+                <span title={task.triage.reason || fmtTs(task.triage.at)}>
+                  {triageLabel(task.triage.decision)}
+                </span>
+              </Prop>
+            )}
             <Prop label="Created"><span title={fmtTs(task.created)}>{ago(task.created)}</span></Prop>
             {originKey && (
               <Prop label="Filed from">
