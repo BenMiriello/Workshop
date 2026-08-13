@@ -17,6 +17,7 @@ success message, and a store on disk filling up with exactly the right content.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -69,6 +70,49 @@ def test_global_is_not_injected_twice(tmp_path, monkeypatch):
 
     out = chat_context.learnings_context(_Provider(learnings.GLOBAL))
     assert out.count("A global guardrail.") == 1
+
+
+def test_a_standing_rule_outranks_incident_noise_under_the_budget(tmp_path, monkeypatch):
+    """The other half of the same failure.
+
+    The `global` block held 795 tokens against a 700 budget, and the entry the
+    budget dropped was the LONGEST one, which here meant the most important: the
+    Design System rule, absent from every prompt for ~25 days. It lost on three
+    terms at once (old, one provenance entry, and never retrieved BECAUSE it was
+    never selected), while thirteen mechanical `[ralph]` incident lines rendered
+    every turn.
+
+    So authorship is ranked above everything else. This builds the same shape at
+    a tight budget: one long authored rule against short mechanical ones.
+    """
+    _isolate(tmp_path, monkeypatch)
+    # Written by hand rather than through `record()`, because the whole point is
+    # the entry that is OLD, unreinforced and never retrieved. `record()` stamps
+    # everything as new, and a test built with it passes on recency alone,
+    # whichever way the ranking is wired. It did, until this comment.
+    store = tmp_path / "global.jsonl"
+    rows = [
+        {
+            "id": f"r{i}", "hash": f"r{i}", "scope": "global", "source": "ralph",
+            "text": f"Ralph rejected: failure mode {i}.",
+            "created_at": "2026-08-12T00:00:00Z",
+            "retrieval_count": 9,
+            "provenance": [{"source": "ralph", "at": "2026-08-12T00:00:00Z"}] * 5,
+        }
+        for i in range(8)
+    ]
+    rows.append({
+        "id": "rule", "hash": "rule", "scope": "global", "source": "legacy-md",
+        "text": "DO NOT write UI without following the Design System. " + ("Detail. " * 40),
+        "created_at": "2026-07-01T00:00:00Z",   # oldest
+        "provenance": [{"source": "legacy-md", "at": "2026-07-01T00:00:00Z"}],
+    })
+    store.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+
+    block = learnings.memory_block(learnings.GLOBAL, max_tokens=120, track=False)
+    assert "following the Design System" in block, (
+        "the long authored rule was dropped in favour of short incident lines"
+    )
 
 
 def test_the_operator_block_is_named_for_what_it_holds(tmp_path, monkeypatch):

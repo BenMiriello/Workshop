@@ -59,7 +59,13 @@ _MAX_BLOCK_ENTRIES = int(os.environ.get("LEARNINGS_BLOCK_MAX_ENTRIES", "60"))
 # token (_approx_tokens). This is the anti-rot cap: no matter how many long
 # learnings a scope accumulates, the injected block cannot exceed this, so it
 # cannot bloat and rot the prompt. Env-overridable.
-_BLOCK_TOKEN_BUDGET = int(os.environ.get("LEARNINGS_BLOCK_TOKEN_BUDGET", "700"))
+# 900, not 700. The `global` block measured 795 tokens on 2026-08-12, so the
+# old budget was dropping one entry every turn on a store this size, and the
+# one it dropped was the longest, which here meant the most important (see
+# `_entry_value`). Ordering alone fixes WHICH entry is dropped; this is what
+# makes today's store fit whole. Ranking still matters, because the store only
+# grows.
+_BLOCK_TOKEN_BUDGET = int(os.environ.get("LEARNINGS_BLOCK_TOKEN_BUDGET", "900"))
 
 # Retrieval tracking is throttled so per-render bookkeeping stays disk-light: an
 # entry's retrieval_count is persisted at most once per this window per scope
@@ -185,10 +191,40 @@ def _recency_ts(e: dict) -> float:
     return _parse_ts(e.get("last_retrieved") or e.get("created_at") or "")
 
 
+# Sources that are STANDING RULES rather than incident reports. A curated
+# guardrail and a note that one worker forgot a sentinel are not the same kind
+# of thing, and ranking them on one scale is what produced the failure below.
+_AUTHORED_SOURCES = ("legacy-md", "operator", "chat")
+_AUTHORED_PREFIXES = ("review:",)
+
+
+def _is_authored(e: dict) -> bool:
+    src = str(e.get("source") or "").strip().lower()
+    return src in _AUTHORED_SOURCES or src.startswith(_AUTHORED_PREFIXES)
+
+
 def _entry_value(e: dict, newest_ts: float, oldest_ts: float) -> float:
-    """Rank score in ~[0, 3.5]: recency + reinforcement + severity + retrieval.
-    Most-recent, most-reinforced, highest-severity entries score highest and so
-    survive the token budget; the rest are dropped into the "+N more" remainder."""
+    """Rank score: authorship + recency + reinforcement + severity + retrieval.
+    Highest scorers survive the token budget; the rest collapse into the
+    "+N more" remainder.
+
+    AUTHORSHIP DOMINATES, and it has to. Measured 2026-08-12: the `global`
+    block held 795 tokens against a 700 budget, and the single entry the budget
+    dropped was the longest one, the Workshop Design System rule at 168 tokens.
+    Three things ganged up on it: it is old, so recency scored it low; it has
+    one provenance entry, so reinforcement scored it low; and being dropped
+    meant it was never retrieved, which lowered the retrieval term that decides
+    whether it is dropped. It had been silently absent for roughly 25 days,
+    while thirteen mechanical `[ralph]` incident lines rendered every turn.
+
+    A rule the operator wrote must not have to out-compete worker noise on
+    recency, so authorship is a separate TIER rather than a bonus term: see
+    `_entry_rank`. A bonus does not work, and trying it is instructive. The
+    first attempt added 2.0 for authorship, described as "above the maximum any
+    other term can reach". It is not: the other four terms SUM to 3.5, and a
+    fresh, five-times-reinforced, recently-retrieved incident line scores 2.45
+    against an old unreinforced rule's 2.2. The rule still lost.
+    """
     span = (newest_ts - oldest_ts) or 1.0
     recency = (_recency_ts(e) - oldest_ts) / span  # 0..1, newer is higher
     prov = len(e.get("provenance") or [])
@@ -196,6 +232,11 @@ def _entry_value(e: dict, newest_ts: float, oldest_ts: float) -> float:
     severity = _severity_num(e.get("severity"))     # 0..1
     retr = min(int(e.get("retrieval_count", 0) or 0), 10) / 10.0  # 0..1
     return recency + reinforce + severity + 0.5 * retr
+
+
+def _entry_rank(e: dict, newest_ts: float, oldest_ts: float) -> tuple[int, float]:
+    """Sort key: authored rules first, then value within each tier."""
+    return (1 if _is_authored(e) else 0, _entry_value(e, newest_ts, oldest_ts))
 
 
 # --- IO ----------------------------------------------------------------------
@@ -632,7 +673,7 @@ def memory_block(
 
     ranked = sorted(
         entries,
-        key=lambda e: (_entry_value(e, newest_ts, oldest_ts), order[id(e)]),
+        key=lambda e: (*_entry_rank(e, newest_ts, oldest_ts), order[id(e)]),
         reverse=True,
     )
 
