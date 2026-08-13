@@ -148,3 +148,33 @@ class TestItRefusesToGuess:
                   segments=[text("A", cut=["c1"]), text("", cut=["c2"]), text("B")]),
         ]
         assert shape(h) == ["assistant:A", "user:one", "user:two", "assistant:B"]
+
+
+class TestEveryPathThatShowsTheModelAHistory:
+    """THREE READERS, ONE ORDER. `_build_prompt` was the one found first; the
+    other two carry the identical defect and one of them bakes it in.
+
+    The compaction summarizer is the worst of the three: its output REPLACES the
+    messages it folded, so a wrong order there is not re-derived on the next
+    turn, it is the history from then on.
+    """
+
+    HISTORY = [
+        user("go"),
+        user("also do Y", during_run="r1", cut_id="c1"),
+        reply("I'll look into X.Done both.", turn_id="r1",
+              segments=[text("I'll look into X.", cut=["c1"]), text("Done both.")]),
+    ]
+
+    def test_the_summarizer_folds_the_true_order(self):
+        from routes.chat import _fmt_for_summary
+        out = _fmt_for_summary(self.HISTORY)
+        assert out.index("I'll look into X.") < out.index("also do Y") < out.index("Done both.")
+
+    def test_the_voice_path_reads_the_true_order(self, monkeypatch):
+        from services import chat_store, voice_worker
+        monkeypatch.setattr(
+            chat_store, "get_thread",
+            lambda _tid: {"messages": self.HISTORY, "cleared_through": 0})
+        out = voice_worker._thread_seed("t")
+        assert out.index("I'll look into X.") < out.index("also do Y") < out.index("Done both.")

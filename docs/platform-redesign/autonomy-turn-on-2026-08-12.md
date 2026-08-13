@@ -215,7 +215,7 @@ permission.
 
 The role enum is settled and correct: **maker, reviewer, triager, keeper,
 broker**, closed in code, free-form in the body. The definition that makes it
-work is `primitive-roles-2026-07-18.md:18` — "a role is the set of writes an
+work is `primitive-roles-2026-07-18.md:18`, "a role is the set of writes an
 agent is permitted to make". Everything else about an agent (what it reads,
 when it wakes, how it judges) is a field, not a new role. That is why planner,
 watcher, researcher, scribe, critic and conductor were each rejected with a
@@ -306,7 +306,7 @@ Ordered so that each step is observable before the next one is trusted. The
 rule for the whole sequence: **nothing runs unattended until the thing before
 it has run attended, and been watched.**
 
-### Phase 0 — stop lying (a day)
+### Phase 0: stop lying (a day)
 
 No new capability. Every item here removes a control that does nothing or a
 label that is false.
@@ -319,7 +319,7 @@ label that is false.
 - Re-wire `ticket_scope_review.py` or delete it. A 189-line engine behind a
   dangling import is the worst of both.
 
-### Phase 1 — make readiness visible where it is decided (a day)
+### Phase 1: make readiness visible where it is decided (a day)
 
 - Show the readiness line on the ticket page and in the chat's file-a-ticket
   card, at the moment of filing, not only at approval.
@@ -329,7 +329,7 @@ label that is false.
 - Target: the pass rate goes from 26% toward 80% on newly filed tickets. Do not
   gate on it yet. Measure it for a week.
 
-### Phase 2 — one watched run, end to end (a day)
+### Phase 2: one watched run, end to end (a day)
 
 - Run one real ticket with `POST /run` and watch the whole path: claim, worker,
   reviewer, commit, receipt, status.
@@ -337,7 +337,7 @@ label that is false.
   ticket page shows the run, and that the run page links back to the chat.
 - Fix what that surfaces. Do not proceed while anything about it is surprising.
 
-### Phase 3 — the queue triager, attended (two days)
+### Phase 3: the queue triager, attended (two days)
 
 - Add the queue trigger to the triager: for each `todo` ticket not yet
   reviewed, emit `ok` / `split` / `underspecified` / `none`.
@@ -372,7 +372,7 @@ shipped product:
   only counts when it is written into the ticket body. Same rule, and it should
   be stated once rather than twice.
 
-### Phase 4 — supervised unattended execution (a week)
+### Phase 4: supervised unattended execution (a week)
 
 - Restore the queue runner, one scope, `supervised`: runs land in `in_review`
   rather than committing to `done`.
@@ -389,12 +389,12 @@ shipped product:
   ×3, or an alternating A,B,A,B pattern ×6. Two additions from
   `opencode-anti-loop`: count **steps without a write**, and reset the counters
   on a real file write. Advisory first, block second.
-  **Detection without a resume path is worse than none** — the documented
+  **Detection without a resume path is worse than none**. The documented
   failure of every implementation of this is killing an agent that was
   legitimately polling something slow. A stuck run must end `parked` with a
   reason and a resumable id, not `failed`.
 
-### Phase 5 — autonomous, per scope (when phase 4 is boring)
+### Phase 5: autonomous, per scope (when phase 4 is boring)
 
 - Flip one scope from `supervised` to `autonomous`. The reviewer gate and the
   commit gate stay exactly as they are.
@@ -407,6 +407,26 @@ shipped product:
 
 **Do not skip to phase 5.** That instruction is already written into
 `continuation-2026-07-31.md` and it was right.
+
+### The precondition nobody has met yet
+
+Phases 0 to 4 are all attended or supervised, and they are safe in the sense
+that a human sees every result before it counts. **Phase 5 is the first one
+where the blast radius matters, and the execution boundary is currently open.**
+
+An autonomous turn runs `claude -p` as the same Linux user as the interactive
+session, in the docker group, with no sandbox and full read/write over the
+tree. That is SEC-A1, open. It can rewrite `.tasks.json`, `agents/*.md` and its
+own guardrail files, which is SEC-A2, also open. The industry answer to
+exactly this is unanimous and it is not more prompting: **contain at the
+environment layer first, then steer at the model layer**, at which point you
+can relax the oversight. Sandboxing is measured to cut permission prompts 84%
+precisely because the prompt stops being the safety mechanism.
+
+So phase 5 has one hard prerequisite that is not in this document's scope:
+either a lower-privilege execution identity for the loop, or a sandbox. Until
+one exists, "autonomous" should mean **supervised with a shorter leash**, not
+unattended commits.
 
 ---
 
