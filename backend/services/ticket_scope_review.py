@@ -133,7 +133,13 @@ def _ticket_text(task: dict) -> str:
 
 
 def _clean(value, limit: int = 400) -> str:
-    return " ".join(str(value or "").split())[:limit]
+    # Every string this module returns is read by the operator: a reason on a
+    # ticket, a question in the inbox, the body of a child draft. Em-dashes are
+    # stripped the same way `ticket_drafts` and the chat title path strip them,
+    # which is enforcement rather than prose. A first live pass over the
+    # development queue put one in 6 of 19 reasons, so asking the prompt nicely
+    # is not enough.
+    return " ".join(str(value or "").replace("—", ", ").split())[:limit]
 
 
 def _parse(raw: str) -> dict:

@@ -12,7 +12,11 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from services import jobs, tasks, task_scope, agents_registry
+import logging
+
+from services import jobs, tasks, task_scope, agents_registry, usage_ledger
+
+log = logging.getLogger("workshop.routes.jobs")
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -258,7 +262,24 @@ async def get_job(job_id: str) -> dict:
     rec = jobs.get(job_id)
     if rec is None:
         raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
-    return _enrich(rec, _name_map())
+    out = _enrich(rec, _name_map())
+    # What this run cost. The ledger has carried `job_id` on every row since it
+    # was written and nothing ever read them back that way, so answering it
+    # meant grepping usage.jsonl. It is the number a watched run is judged on
+    # (autonomy-turn-on-2026-08-12 phase 2), and a number nobody can see does
+    # not get used.
+    #
+    # Includes the CHILDREN, because a coordinator sweep spends almost nothing
+    # itself and its per-task children spend all of it. A total that excluded
+    # them would read as "this sweep was free".
+    try:
+        kids = [c.get("id") for c in jobs.read(parent_id=job_id, limit=200)]
+        totals = usage_ledger.usage_for_jobs([job_id, *kids])
+        out["tokens"] = sum(totals.values()) or None
+        out["tokens_own"] = totals.get(job_id) or None
+    except Exception as e:  # noqa: BLE001 - a cost line is not worth a 500
+        log.warning("usage lookup failed for job %s: %s", job_id, e)
+    return out
 
 
 class JobTaskAction(BaseModel):

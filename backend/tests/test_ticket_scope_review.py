@@ -113,6 +113,18 @@ def test_the_review_never_returns_the_marks_fourth_word(monkeypatch):
     assert asyncio.run(sr.review({"title": "A ticket"}))["verdict"] == "ok"
 
 
+def test_em_dashes_never_reach_the_operator(monkeypatch):
+    """Everything this returns is read by a person: a reason on a ticket, a
+    question in the inbox, a child draft's body. A live pass over the
+    development queue put an em-dash in 6 of 19 reasons."""
+    _stub(monkeypatch,
+          '{"verdict":"underspecified","reason":"It needs root \\u2014 nobody said so.",'
+          '"blockers":["The interface \\u2014 wired or wifi \\u2014 is not named."]}')
+    out = asyncio.run(sr.review({"title": "A ticket"}))
+    assert "—" not in out["reason"]
+    assert "—" not in out["blockers"][0]
+
+
 def test_the_review_writes_nothing(monkeypatch):
     """It takes a dict and returns a dict. There is no store in its signature and
     no store in its imports, which is what makes it safe to call from a pass that

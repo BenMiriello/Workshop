@@ -149,6 +149,33 @@ def _read_entries() -> list[dict]:
     return out
 
 
+def usage_for_jobs(job_ids: list[str] | set[str]) -> dict[str, int]:
+    """Total tokens recorded against each of `job_ids`.
+
+    The rows have carried `job_id` since the ledger was written; nothing read
+    them back that way, so answering "what did this run cost" meant grepping
+    usage.jsonl by hand. That is the one number phase 2 of the automation plan
+    needs per watched run, and a number nobody can see does not get used.
+
+    Whole-ledger scan, which is the same read `window_usage` already does on
+    every admission check, and the file is one line per model call. Batched by
+    id rather than offering a single-job lookup so a run page showing a
+    coordinator and its children costs one read, not N.
+    """
+    wanted = {str(j) for j in job_ids if j}
+    if not wanted:
+        return {}
+    out: dict[str, int] = {j: 0 for j in wanted}
+    for e in _read_entries():
+        jid = str(e.get("job_id") or "")
+        if jid in wanted:
+            try:
+                out[jid] += int(e.get("tokens") or 0)
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
 def window_usage(now: datetime | None = None, window_s: int = WINDOW_S,
                  exclude_roles: Iterable[str] | None = None) -> dict:
     """Token usage over the trailing window: app-wide total + per-project.
