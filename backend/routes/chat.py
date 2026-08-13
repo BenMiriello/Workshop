@@ -2515,7 +2515,11 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
     run_id = build_streaming.new_run_id()
     joined = await build_streaming.claim_run(
         thread_id, run_id, model=model, agent=speaker, force=bool(take_over),
-        accepts_input=not _is_raw_command(content))
+        accepts_input=not _is_raw_command(content),
+        # The claim is taken now; the LOG MARKER waits until the message that
+        # caused this run is recorded, just below. Otherwise the log says a run
+        # began before the message that began it. See chat_store.mark_run_started.
+        announce=False)
     if joined is not None:
         raise build_streaming.RunInFlight(joined)
 
@@ -2523,6 +2527,7 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
         if not already_recorded:
             _record_user_turn(thread_id, content, parts, client_id=client_id,
                               attachments=attachments)
+        chat_store.mark_run_started(thread_id, run_id)
         # ---- @mention: this message is addressed to an AGENT, not the assistant.
         # The agent answers in the chat, attributed to it, and the ordinary
         # assistant stays out of it. Resolution is scope-bounded and opt-in

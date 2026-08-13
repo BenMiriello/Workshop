@@ -1144,9 +1144,37 @@ def active_run_id(thread_id: str) -> str | None:
     return (meta or {}).get("active_run_id") or None
 
 
+def mark_run_started(thread_id: str, run_id: str) -> None:
+    """Append this run's `started` marker, AFTER the message that caused it.
+
+    THE MARKER IS A RECORD; THE CLAIM IS `active_run_id`. They were one call, so
+    the marker was appended while the thread was being claimed, which is BEFORE
+    the send path records the message that started the run. The log therefore
+    said a run began before the message that began it. Nothing renders run
+    events positionally, so it was invisible, but a log whose order is not what
+    happened is the same defect the transcript spent a week on. Operator,
+    2026-08-12. See docs/decisions/0018.
+
+    Split rather than reordered on purpose: `begin_run` still takes the claim
+    first, under the caller's write lock, with no await between claiming and
+    spawning. That ordering is what stops two POSTs opening rival turns on one
+    thread, and it is not what was wrong.
+
+    A run whose marker never lands degrades softly: `active_run` falls back to
+    scanning for it, finds none, and reports `started_seq: None`, which no
+    reader uses for anything."""
+    started = chat_log.append_sync(
+        thread_id, {"kind": "run", "run_id": run_id, "state": "started"})
+    chat_log.patch_meta_sync(thread_id, active_run_seq=started.get("seq"))
+
+
 def begin_run(thread_id: str, run_id: str, model: str | None = None,
-              agent: str | None = None) -> None:
+              agent: str | None = None, announce: bool = True) -> None:
     """Open a run on this thread: a `run: started` marker and `active_run_id`.
+
+    `announce=False` takes the claim and leaves the marker to `mark_run_started`,
+    so the send path can record the operator's message first and the log reads in
+    the order things happened.
 
     Nothing is written to the transcript. The caller MUST hold this thread's
     write lock (`chat_log.lock_for`) across its own check-and-act, which is what
@@ -1168,7 +1196,7 @@ def begin_run(thread_id: str, run_id: str, model: str | None = None,
     if agent:
         meta["agent"] = agent
     started = chat_log.append_sync(
-        thread_id, {"kind": "run", "run_id": run_id, "state": "started"})
+        thread_id, {"kind": "run", "run_id": run_id, "state": "started"}) if announce else None
     chat_log.patch_meta_sync(
         thread_id, active_run_id=run_id,
         # WHERE THE RUN STARTED, recorded rather than searched for. It is the one
@@ -1177,7 +1205,7 @@ def begin_run(thread_id: str, run_id: str, model: str | None = None,
         # tab. The writer knows the answer for free. Threads written before this
         # existed have no such field, and `active_run` still falls back to the
         # scan for them, so nothing has to be migrated.
-        active_run_seq=started.get("seq"),
+        active_run_seq=(started.get("seq") if started else None),
         live_message={"run_id": run_id, "content": "", "meta": meta, "ts": _now_iso()},
     )
 

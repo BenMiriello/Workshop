@@ -461,7 +461,7 @@ def run_is_ending(run_id: str | None) -> bool:
 
 async def claim_run(thread_id: str, run_id: str, *, model: str | None = None,
                     agent: str | None = None, force: bool = False,
-                    accepts_input: bool = True) -> str | None:
+                    accepts_input: bool = True, announce: bool = True) -> str | None:
     """Take this thread for `run_id`. Returns the run that already owns it (join
     that one), or None when the claim succeeded.
 
@@ -485,7 +485,8 @@ async def claim_run(thread_id: str, run_id: str, *, model: str | None = None,
                 return active
             if active not in TURNS:
                 chat_store.lose_run(thread_id, active)
-        chat_store.begin_run(thread_id, run_id, model=model, agent=agent)
+        chat_store.begin_run(thread_id, run_id, model=model, agent=agent,
+                             announce=announce)
         # Register the run BEFORE returning. Prompt assembly awaits, and until
         # the run is in TURNS a message arriving during that window would see an
         # `active_run_id` naming a run nothing is driving and take the thread
