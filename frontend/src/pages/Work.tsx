@@ -297,9 +297,11 @@ export default function Work() {
 
   return (
     <div>
+      {/* No `sub`. On a phone the header already wraps the action below the
+          title, and a subtitle restating what a ticket list is added a third
+          row of chrome above the first ticket. */}
       <PageHeader
         title="Tickets"
-        sub="Work items and what is happening to them."
         actions={
           <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
             <Plus aria-hidden /> New ticket
