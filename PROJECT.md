@@ -91,3 +91,16 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   `in_review`, a stuck run park instead of fail, and set the per-scope budget
   ceiling. NOT turned on: the crontab runner line stays commented (operator's
   call) and the queue triager is manual, dry-run by default, as the plan asks.
+- 2026-08-13 — Operator: applying a change (restart backend / frontend / rebuild
+  the public bundle) is a re-derived ordeal every time and agents often decide it
+  is unsafe and skip it. Investigated; plan at
+  `docs/applying-changes-plan-2026-08-13.md`. Root cause is not timidity: the
+  deferred backend restart re-invokes itself WITHOUT `--force`
+  (`restart_backend.sh:129`), hits its own live-turn guard, and exits 2 after
+  reporting success (measured 61 restarts, 14 silent refusals). Separately the
+  runtime briefing at `chat_context.py:934-948` tells every in-app agent frontend
+  changes need no build, contradicting the settled 2026-08-11 public-origin
+  decision. Instructions are spread over ~30 files with six live contradictions.
+  Plan: fix the restart lie, add one drift-based idempotent `scripts/apply.sh`,
+  collapse instructions to one canonical doc, surface an apply receipt. NOT
+  implemented; awaiting operator approval.
