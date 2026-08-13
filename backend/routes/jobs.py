@@ -130,16 +130,24 @@ def _task_context(job: dict, cache: dict) -> dict:
         out["task_status"] = t.get("status")
     src = t.get("source") or {}
     if src.get("kind") == "chat" and src.get("ref"):
-        out["chat_id"] = src["ref"]
-        try:
-            from services import chat_store
-            th = chat_store.get_thread(src["ref"])
-            if th:
-                out["chat_title"] = th.get("title") or "Chat"
-                if th.get("context_key"):
-                    out["chat_context_key"] = th.get("context_key")
-        except Exception:
-            pass
+        out.update(_chat_display(src["ref"]))
+    return out
+
+
+def _chat_display(chat_id: str) -> dict:
+    """A chat id plus what a link to it needs: its title, and the context key the
+    route is built from. Never raises; a chat that has been deleted still leaves
+    the id, which is better than dropping the provenance entirely."""
+    out: dict = {"chat_id": chat_id}
+    try:
+        from services import chat_store
+        th = chat_store.get_thread(chat_id)
+        if th:
+            out["chat_title"] = th.get("title") or "Chat"
+            if th.get("context_key"):
+                out["chat_context_key"] = th.get("context_key")
+    except Exception:
+        pass
     return out
 
 
@@ -173,6 +181,15 @@ def _enrich(job: dict, names: dict[str, str], cache: dict | None = None) -> dict
     if agent_disp:
         j["agent_name"] = agent_disp
     tctx = _task_context(job, cache)
+    # The TICKET's originating chat must not overwrite the RUN's own. They are
+    # different facts: the ticket's source says who FILED it, `job.chat_id` says
+    # who LAUNCHED this run, and when they differ the launcher is the one the
+    # run page's "open the chat" action means. The task-derived value remains the
+    # fallback for every run recorded before that field was ever written (which,
+    # measured 2026-08-12, is all 2753 of them).
+    own_chat = job.get("chat_id")
+    if own_chat and tctx.get("chat_id") and tctx["chat_id"] != own_chat:
+        tctx.update(_chat_display(own_chat))
     j.update(tctx)  # task_text, task_status, chat_id, chat_title
     ev = job.get("evidence")
     receipt = ev if isinstance(ev, dict) and ev.get("kind") == "receipt" else None

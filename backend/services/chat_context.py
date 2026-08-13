@@ -1079,6 +1079,146 @@ def ambient_digest(provider: "ContextProvider") -> str:
     return "=== ONGOING WORK (ambient, across chats) ===\n" + body
 
 
+# ------------------------------------------------------- history in the true order
+
+def _split_reply(reply: dict, interrupts: list[dict]) -> list[dict] | None:
+    """One reply, cut open at the messages that landed inside it.
+
+    Returns the pieces in true order (stretches of the reply, with the messages
+    between them), or None when the reply cannot be split faithfully — in which
+    case the caller leaves everything exactly where it was. Guessing here is
+    worse than the flat order, because the flat order is at least honest about
+    being flat.
+
+    The cut positions are the ones the server recorded while it was writing:
+    `cut_after` on the segment a message arrived after, `cut_head` for one that
+    beat the first output. See docs/decisions/0018.
+    """
+    meta = reply.get("meta") or {}
+    segments = [s for s in (meta.get("segments") or []) if isinstance(s, dict)]
+    by_token: dict[str, dict] = {}
+    for m in interrupts:
+        token = (m.get("meta") or {}).get("cut_id")
+        if token:
+            by_token[token] = m
+    if not by_token:
+        return None
+    head = [t for t in (meta.get("cut_head") or []) if t in by_token]
+    if not head and not any(s.get("cut_after") for s in segments):
+        return None
+
+    items: list[tuple[str, object]] = []
+    buf: list[str] = []
+    seen: set[str] = set()
+
+    def flush() -> None:
+        items.append(("text", "".join(buf)))
+        buf.clear()
+
+    def take(refs) -> None:
+        for r in refs:
+            m = by_token.get(r)
+            if m is not None and r not in seen:
+                seen.add(r)
+                items.append(("msg", m))
+
+    if head:
+        # An empty leading stretch: the message beat the first word of the reply.
+        flush()
+        take(head)
+    for s in segments:
+        if s.get("t") == "text":
+            buf.append(s.get("text") or "")
+        refs = [r for r in (s.get("cut_after") or ()) if r in by_token and r not in seen]
+        if refs:
+            flush()
+            take(refs)
+    flush()
+    # A message whose token is nowhere in the reply goes after it, which is the
+    # same answer the transcript gives: we do not know where it landed.
+    for m in interrupts:
+        token = (m.get("meta") or {}).get("cut_id")
+        if not token or token not in seen:
+            items.append(("msg", m))
+
+    # THE FIDELITY GUARD. `content` is the join of the reply's top-level text
+    # segments (build_streaming._turn_content), so reassembling the stretches
+    # must give it back exactly. If it does not, something rewrote one and the
+    # split would put words in the wrong place or drop them: bail out instead.
+    rebuilt = "".join(v for kind, v in items if kind == "text")  # type: ignore[misc]
+    if rebuilt.strip() != (reply.get("content") or "").strip():
+        return None
+
+    out: list[dict] = []
+    for kind, value in items:
+        if kind == "msg":
+            out.append(value)  # type: ignore[arg-type]
+        elif str(value).strip():
+            out.append({**reply, "content": value})
+    return out
+
+
+def interleave_history(history: list[dict]) -> list[dict]:
+    """History in the order things actually happened, for the prompt.
+
+    THE MODEL WAS READING THE SAME WRONG ORDER THE TRANSCRIPT USED TO. A message
+    sent while a reply was being written is appended to the log when it arrives,
+    so it carries a LOWER seq than that reply, which is committed at the end. Sort
+    by seq and it sits above the whole reply.
+
+    That is not a display quirk here. A reply's `content` is the join of its text
+    segments, which includes anything the model narrated BEFORE the message
+    arrived. Flat, the model reads its own earlier words as though they answered
+    a message that had not been sent yet, and reads the message as answered when
+    half the reply predates it. It matters most exactly when it is least visible:
+    a fresh CLI session, after a `/compact` or a `/clear`, is assembled from this
+    and nothing else.
+
+    So each reply is cut open at its recorded positions and the messages are put
+    back where they landed. A reply nobody interrupted, and any reply that cannot
+    be split faithfully, are returned untouched.
+    """
+    by_run: dict[str, list[int]] = {}
+    for i, m in enumerate(history):
+        meta = m.get("meta") or {}
+        if m.get("role") == "user" and meta.get("during_run"):
+            by_run.setdefault(meta["during_run"], []).append(i)
+    if not by_run:
+        return history
+
+    # TWO PASSES, because a message is consumed by a reply that comes AFTER it.
+    # One pass emits the message at its own index before ever reaching the reply
+    # that claims it, and then again inside that reply.
+    placed: set[int] = set()
+    pieces_at: dict[int, list[dict]] = {}
+    for i, m in enumerate(history):
+        if m.get("role") != "assistant":
+            continue
+        run_id = (m.get("meta") or {}).get("turn_id")
+        if not run_id:
+            continue
+        # Only the messages that arrived BEFORE this reply was committed, which
+        # is what `j < i` says: one filed against a run whose reply is already in
+        # the log belongs where it is.
+        idxs = [j for j in by_run.get(run_id, ()) if j < i and j not in placed]
+        if not idxs:
+            continue
+        pieces = _split_reply(m, [history[j] for j in idxs])
+        if pieces is None:
+            continue
+        placed.update(idxs)
+        pieces_at[i] = pieces
+    if not placed:
+        return history
+
+    out: list[dict] = []
+    for i, m in enumerate(history):
+        if i in placed:
+            continue
+        out.extend(pieces_at.get(i) or [m])
+    return out
+
+
 # ---------------------------------------------------------------- base / general
 
 
