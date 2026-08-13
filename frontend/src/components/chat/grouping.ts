@@ -101,31 +101,61 @@ export function hadErrorResult(seg: ChatSegment): boolean {
 const DENIED =
   /no such tool available|is disabled|permission denied|not permitted|requires approval|user (?:rejected|doesn't want|refused)|operation not permitted|blocked by/i;
 
-export type StepAlert = "blocked" | "stopped";
+export type StepAlert = "blocked";
 
-/** The id of the step a turn STOPPED on, if it stopped on one.
- *
- *  Positional and free: the last thing in a turn's work, when that thing came
- *  back on the error channel. Nothing followed it, so the turn either died
- *  there or gave up and went straight to explaining itself. Both are worth
- *  saying. Currently zero occurrences in the operator's whole history, which is
- *  the point: this should be rare, and loud when it happens.
- *
- *  Undefined for a step with no id (every turn stored before ids existed), so
- *  legacy history shows no mark rather than a guessed one. */
-export function stoppedStepId(work: ChatSegment[]): string | undefined {
-  const last = work[work.length - 1];
-  if (!last || last.t !== "tool" || last.ok !== false) return undefined;
-  return last.id;
+// THE "STOPPED HERE" MARK IS GONE, AND SO IS THE IDEA BEHIND IT.
+//
+// There used to be a second alert, `stopped`, in DANGER, meaning "the turn ended
+// on this step". It was derived positionally: the last segment of the work, when
+// that segment came back on the error channel. Three things were wrong with it,
+// in increasing order of how badly:
+//
+//  1. IT IS NOT A FACT ABOUT THE STEP. "Nothing followed this" describes the
+//     shape of the whole turn. A row asserting it reads as that row being
+//     broken, which is why the operator's report was that it was unclear and
+//     odd rather than merely wrong.
+//
+//  2. IT WAS EVALUATED ON LIVE TURNS. `Transcript` computed it every render with
+//     no `streaming` guard, and mid-turn "nothing followed it" only means
+//     "nothing has followed it YET". So every failed call was transiently
+//     marked, in red, for the gap between its result landing and the next call
+//     being issued. A refusal is exactly when the model pauses to reconsider, so
+//     the widest red window landed on the one event that is not a failure at
+//     all. That is the bug the operator actually saw.
+//
+//  3. AND THE SIGNAL CANNOT CARRY THE MEANING ANYWAY. This is what killed the
+//     idea rather than just the mark. `turnWorkSummary` and the transcript
+//     receive `work` with the trailing answer ALREADY SPLIT OFF, so "the work
+//     ends on a failed tool" is the completely ordinary case of a command
+//     failing and the model then explaining it. That is ~90% of all failures by
+//     this file's own measurements (`git status` exits 1 to say there are
+//     changes) and is precisely what the rest of this file exists to stop
+//     shouting about. There is no positional test that separates "the turn died
+//     here" from "this failed and it was handled".
+//
+// A turn that genuinely ended badly is reported from data that actually knows:
+// the error and timeout bubbles, and `stopReason.ts`. Nothing here needs to
+// guess at it from where a segment happens to sit.
+
+/** Does this step deserve a mark. There is exactly ONE, it is never danger, and
+ *  it means: the harness refused, and you are the remedy. */
+export function stepAlert(seg: ChatSegment): StepAlert | null {
+  if (seg.t !== "tool" || seg.ok !== false) return null;
+  return DENIED.test(seg.error || "") ? "blocked" : null;
 }
 
-/** Does this step deserve a mark, and which one. `stoppedId` comes from
- *  `stoppedStepId` over the same turn's work. */
-export function stepAlert(seg: ChatSegment, stoppedId?: string): StepAlert | null {
-  if (seg.t !== "tool" || seg.ok !== false) return null;
-  if (DENIED.test(seg.error || "")) return "blocked";
-  if (stoppedId && seg.id && seg.id === stoppedId) return "stopped";
-  return null;
+/** NAME THE REMEDY, NOT THE STATE. "blocked" says something is wrong and
+ *  nothing about what to do about it, and the whole reason this category exists
+ *  is that the operator is the one who can act. The refusal text already
+ *  distinguishes the cases, so the row says which one it is in two words.
+ *
+ *  Returns "" for a step with no mark, so the caller renders nothing. */
+export function blockedLabel(seg: ChatSegment): string {
+  if (!stepAlert(seg)) return "";
+  const e = seg.t === "tool" ? seg.error || "" : "";
+  if (/requires approval|user (?:rejected|doesn't want|refused)/i.test(e)) return "needs approval";
+  if (/no such tool available|is disabled/i.test(e)) return "tool disabled";
+  return "denied";
 }
 
 export type TurnItem =
@@ -153,9 +183,21 @@ export function buildTurnBlocks(work: ChatSegment[]): TurnBlock[] {
 
   const closeGroup = () => {
     if (!open.length) return;
-    // A group of one is not a group. One tool call renders as the row it
-    // already is, rather than as a count of itself that hides its own name.
-    run.push(open.length === 1 ? { t: "step", seg: open[0] } : { t: "group", steps: open });
+    // A RUN OF TOOL CALLS IS ALWAYS A GROUP, EVEN A RUN OF ONE, and that is
+    // about identity rather than about how it looks. A group of one still
+    // RENDERS as a bare row with no header (GroupChip drops its own chrome at
+    // one step), so the rule "a group of one is not a group" is intact on
+    // screen; what changed is that it is the same ELEMENT either way.
+    //
+    // It used to emit `{t:"step"}` at one and `{t:"group"}` at two, so the
+    // instant a second adjacent call arrived, the row the operator was watching
+    // was a different component with a different key: React tore down the
+    // ToolChip and built a GroupChip in its place. Mid-stream that happens on
+    // every second call, and it discards whatever the torn-down row was holding
+    // (its open state, any animation in flight) while the thing you were reading
+    // is replaced by a count. Operator, 2026-08-13: "the way system nested tool
+    // calls update is odd."
+    run.push({ t: "group", steps: open });
     open = [];
   };
   const closeRun = () => {
@@ -188,15 +230,11 @@ export function buildTurnBlocks(work: ChatSegment[]): TurnBlock[] {
  *  hid. It used to append "N failed" off the raw is_error flag, which on this
  *  history would have shouted about 37 nonzero exit codes and 2 real denials in
  *  the same voice. */
-export function groupSummary(
-  item: Extract<TurnItem, { t: "group" }>, stoppedId?: string,
-): string {
+export function groupSummary(item: Extract<TurnItem, { t: "group" }>): string {
   const n = item.steps.length;
-  const alerts = item.steps.map((s) => stepAlert(s, stoppedId));
-  const blocked = alerts.filter((a) => a === "blocked").length;
+  const blocked = item.steps.filter((s) => stepAlert(s)).length;
   const parts = [`${n} step${n === 1 ? "" : "s"}`];
   if (blocked) parts.push(`${blocked} blocked`);
-  if (alerts.some((a) => a === "stopped")) parts.push("stopped here");
   return parts.join(", ");
 }
 
@@ -227,10 +265,8 @@ export function groupIsRunning(item: Extract<TurnItem, { t: "group" }>): boolean
  *  thread: today an old turn shows exactly one line for all of its work, and
  *  that is the right amount for something the reader has already read. */
 export function turnWorkSummary(work: ChatSegment[]): string {
-  const stoppedId = stoppedStepId(work);
   let steps = 0;
   let blocked = 0;
-  let stopped = false;
   let agents = 0;
   let asked = 0;
   for (const s of work) {
@@ -241,9 +277,7 @@ export function turnWorkSummary(work: ChatSegment[]): string {
     if (s.t === "approval") { asked++; steps++; continue; }
     if (s.t !== "tool") continue;
     steps++;
-    const alert = stepAlert(s, stoppedId);
-    if (alert === "blocked") blocked++;
-    else if (alert === "stopped") stopped = true;
+    if (stepAlert(s)) blocked++;
   }
   // "" only when there is genuinely nothing to count. A turn's work never
   // consists of prose alone (the trailing text run is split off as the answer
@@ -256,7 +290,6 @@ export function turnWorkSummary(work: ChatSegment[]): string {
   // Named in the collapsed line, because a turn that hit one of these is the
   // turn worth opening. A nonzero exit code is not one of them.
   if (blocked) parts.push(`${blocked} blocked`);
-  if (stopped) parts.push("stopped here");
   return parts.join(" · ");
 }
 

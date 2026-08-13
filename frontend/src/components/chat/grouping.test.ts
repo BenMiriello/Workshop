@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { ChatSegment } from "../../lib/chat";
 import {
   buildTurnBlocks, groupSummary, groupTools, groupIsRunning, turnWorkSummary,
-  isRunning, hadErrorResult, stepAlert, stoppedStepId, stepDuration,
+  isRunning, hadErrorResult, stepAlert, blockedLabel, stepDuration,
   runningSeconds, turnDuration, type TurnItem, type TurnBlock,
 } from "./grouping";
 
@@ -46,10 +46,33 @@ describe("buildTurnBlocks: adjacent coalescing by part type", () => {
     expect(g.steps.map((s) => s.input)).toEqual(["1", "2", "3", "4", "5"]);
   });
 
-  it("a group of one collapses back to a plain step", () => {
-    const got = items(buildTurnBlocks([read("only.ts")]));
-    expect(got).toHaveLength(1);
-    expect(got[0].t).toBe("step");
+  // IDENTITY IS STABLE ACROSS THE 1 -> 2 BOUNDARY. This used to emit `step` at
+  // one call and `group` at two, so the row the operator was watching became a
+  // different component with a different key the instant a second adjacent call
+  // arrived: React tore the ToolChip down and built a GroupChip in its place,
+  // discarding its open state and any animation in flight. Mid-stream that
+  // happens on every second call. A run of tool calls is now always a group, and
+  // GroupChip drops its own header at one step so it still LOOKS like the bare
+  // row it always did.
+  it("a run of one tool call is still a group, so the element survives a second", () => {
+    const one = items(buildTurnBlocks([read("only.ts")]));
+    expect(one).toHaveLength(1);
+    expect(one[0].t).toBe("group");
+    expect((one[0] as Extract<TurnItem, { t: "group" }>).steps).toHaveLength(1);
+
+    // The same first step, so the group's key (steps[0].id) does not move when
+    // the second call lands. That is what makes the identity stable.
+    const two = items(buildTurnBlocks([read("only.ts", { id: "s1" }), bash("ls")]));
+    const twoFirst = items(buildTurnBlocks([read("only.ts", { id: "s1" })]));
+    expect(two[0].t).toBe("group");
+    expect((two[0] as Extract<TurnItem, { t: "group" }>).steps[0].id)
+      .toBe((twoFirst[0] as Extract<TurnItem, { t: "group" }>).steps[0].id);
+  });
+
+  it("a delegation and an approval are still their own rows, not groups", () => {
+    // `step` now means exactly these two: the things that were never tool calls.
+    expect(items(buildTurnBlocks([agent("Explore")]))[0].t).toBe("step");
+    expect(items(buildTurnBlocks([approval("pending")]))[0].t).toBe("step");
   });
 
   it("is total on empty input", () => {
@@ -198,18 +221,33 @@ describe("what deserves a mark", () => {
     expect(stepAlert(err("The user rejected this tool call"))).toBe("blocked");
   });
 
-  it("marks the step a turn STOPPED on", () => {
+  // POSITION IS NOT A SIGNAL. The old `stopped` mark fired on "this failed step
+  // is the last thing in the work", which mid-turn only means "nothing has
+  // followed it YET" (so every transient failure of a live turn flashed red),
+  // and on a settled turn only means "a command failed and the model then
+  // explained it", because the answer is split off before this ever sees the
+  // work. Neither reading justifies a mark, so there is no longer one.
+  it("never marks a step for its position, first, last or otherwise", () => {
     const last = err("Exit code 1 something", { id: "s9" });
-    const work: ChatSegment[] = [read("a"), last];
-    expect(stoppedStepId(work)).toBe("s9");
-    expect(stepAlert(last, stoppedStepId(work))).toBe("stopped");
+    expect(stepAlert(last)).toBeNull();
+    expect(turnWorkSummary([read("a"), last])).toBe("2 steps");
+    const mid = err("Exit code 1 something", { id: "s9" });
+    expect(stepAlert(mid)).toBeNull();
+    expect(turnWorkSummary([mid, read("b")])).toBe("2 steps");
   });
 
-  it("does not call it stopped when the turn carried on working", () => {
-    const mid = err("Exit code 1 something", { id: "s9" });
-    const work: ChatSegment[] = [mid, read("b")];
-    expect(stoppedStepId(work)).toBeUndefined();
-    expect(stepAlert(mid, stoppedStepId(work))).toBeNull();
+  it("a refused step is marked wherever it sits, and names the remedy", () => {
+    const disabled = err("Bash is disabled for this session");
+    const approval = err("This tool requires approval");
+    const rejected = err("The user rejected this tool call");
+    const other = err("permission denied");
+    expect(blockedLabel(disabled)).toBe("tool disabled");
+    expect(blockedLabel(approval)).toBe("needs approval");
+    expect(blockedLabel(rejected)).toBe("needs approval");
+    expect(blockedLabel(other)).toBe("denied");
+    // A step with no mark has no label to render.
+    expect(blockedLabel(err("Exit code 1 changes"))).toBe("");
+    expect(blockedLabel(read("a"))).toBe("");
   });
 
   it("never marks a step that succeeded, whatever its output said", () => {
@@ -221,7 +259,6 @@ describe("what deserves a mark", () => {
     // Segments predating both the outcome fields and step ids. An absent mark
     // is honest; an inferred one is not.
     expect(stepAlert({ t: "tool", name: "Bash", input: "x" })).toBeNull();
-    expect(stoppedStepId([{ t: "tool", name: "Bash", input: "x", ok: false }])).toBeUndefined();
   });
 });
 
@@ -238,10 +275,14 @@ describe("marks in the collapsed lines", () => {
     expect(groupSummary(g)).toBe("3 steps, 1 blocked");
   });
 
-  it("a group says so when the turn stopped inside it", () => {
+  // A GROUP DOES NOT SPEAK FOR THE TURN. It used to append "stopped here" when
+  // the turn's last failed step fell inside it, which is the same category error
+  // as the row-level mark: a group is a run of adjacent calls, not the turn.
+  it("a group stays quiet about how the turn ended", () => {
     const work: ChatSegment[] = [read("a"), { t: "tool", name: "Bash", input: "x", ok: false, id: "s9" }];
     const g = items(buildTurnBlocks(work))[0] as Extract<TurnItem, { t: "group" }>;
-    expect(groupSummary(g, stoppedStepId(work))).toBe("2 steps, stopped here");
+    expect(groupSummary(g)).toBe("2 steps");
+    expect(turnWorkSummary(work)).toBe("2 steps");
   });
 
   it("the turn line no longer shouts about a nonzero exit code", () => {
@@ -285,12 +326,15 @@ describe("turnWorkSummary", () => {
     expect(turnWorkSummary([read("a"), read("b"), edit("x.ts"), bash("make")])).toBe("4 steps");
   });
 
-  it("names the step a settled turn stopped on", () => {
-    // The one failure shape worth putting on the line that summarises a whole
-    // turn: it ended there. A mid-turn error result adds nothing here.
+  it("says nothing about a failure wherever it sits, including last", () => {
+    // This used to read "2 steps · stopped here" for the first shape. The work a
+    // turn summary sees has the ANSWER SPLIT OFF, so "the work ends on a failed
+    // tool" is just "a command failed and the model then explained it", which is
+    // the single most common thing in the log. Both shapes are the same fact and
+    // both now say the same thing.
     expect(turnWorkSummary([
       read("a"), { t: "tool", name: "Bash", input: "make", ok: false, id: "s2" },
-    ])).toBe("2 steps · stopped here");
+    ])).toBe("2 steps");
     expect(turnWorkSummary([
       read("a"), { t: "tool", name: "Bash", input: "make", ok: false, id: "s2" }, read("b"),
     ])).toBe("3 steps");

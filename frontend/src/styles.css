@@ -425,7 +425,11 @@ input[type="range"].grad::-moz-range-thumb {
   min-width: 1rem; height: 1rem; padding: 0 0.2rem;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 0.62rem; font-weight: var(--fw-semi); line-height: 1;
-  background: var(--accent); color: var(--accent-fg); border-radius: 999px;
+  /* An unread count is LIVE, not MINE: it answers "is something happening that
+     you have not seen", which is the standing half of LIVE by the design law's
+     own table. It used to take --accent (an alias of --you), which claimed the
+     unread messages were the operator's own. */
+  background: var(--live); color: var(--bg); border-radius: 999px;
 }
 /* Mobile: everything fits ONE row, full stop — a second row of icons was
    what made this bar unreadable before. Every fixed-size control here is
@@ -453,16 +457,20 @@ input[type="range"].grad::-moz-range-thumb {
   border-top: 1px dashed var(--border); padding-top: var(--space-2);
 }
 /* The same divider while the fold is still running: same shape, same place, so
-   the settled one replaces it without anything moving. It takes the system tone
-   because a fold is machine work inside a conversation you are present for, and
-   its dots (.chat-working__dots) are the only part that animates. */
+   the settled one replaces it without anything moving. It takes the LIVE tone,
+   and the code has been right about that while this comment said "the system
+   tone" (left over from the agency pass). It is live because it is still
+   running, which is the standing half of LIVE; the settled divider above is
+   neutral. Its dots (.chat-working__dots) are the only part that animates. */
 .chat-fold--live { color: var(--live); }
 
 /* A user message that never reached the server. It stays in the log (losing it
    is the bug) but must not look delivered. */
 .chat-unsent {
   display: flex; align-items: center; gap: 0.4rem;
-  margin-top: 0.35rem; font-size: 0.72rem; color: var(--warn-solid);
+  /* --warn, not --warn-solid: the `-solid` step is solved for 3:1 as a MARK
+     (a dot, a fill), and this is 0.72rem TEXT, which needs the 4.5:1 step. */
+  margin-top: 0.35rem; font-size: 0.72rem; color: var(--warn);
 }
 
 /* Messages the SERVER is holding to send next, and what they are waiting for.
@@ -531,6 +539,28 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-msg { display: flex; flex-direction: column; max-width: 88%; min-width: 0; }
 .chat-msg.user { align-self: flex-end; align-items: flex-end; }
 .chat-msg.assistant { align-self: flex-start; align-items: flex-start; max-width: 94%; }
+/* A NEW LINE TRANSFORMS INTO PLACE INSTEAD OF BLINKING INTO IT. Operator ask,
+   2026-08-13. Same shape as the kit's `ws-pop` (which existed and was spent only
+   on modals and menus): a short rise plus a fade, nothing that draws attention
+   to itself.
+
+   TRANSFORM AND OPACITY ONLY, deliberately. They do not affect layout, so the
+   log's bottom-follower cannot fight them; an animated height or margin would
+   change scrollHeight every frame while `useLogScroll` is trying to hold the
+   view, which is how an enter animation turns into a scroll jitter. `.chat-log`
+   is `overflow-x: hidden`, so this rises rather than sliding in from the side.
+
+   Gated on `arrived` (the message is newer than this list's mount), NEVER on
+   mount. On mount, opening a thread would animate every message in it at once,
+   and a streaming turn would replay the animation at the moment it commits,
+   because the live block's key changes and React remounts the node. */
+@keyframes chat-msg-enter {
+  from { opacity: 0; transform: translateY(6px); }
+}
+.chat-msg--enter { animation: chat-msg-enter var(--dur-base) var(--ease-out) 1; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-msg--enter { animation: none; }
+}
 .chat-bubble {
   /* max-width caps the bubble at the message column so a nowrap tool preview
      truncates inside it instead of pushing the bubble past the viewport. */
@@ -642,10 +672,23 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-bubble .ws-md pre,
 .chat-bubble .ws-md table { max-width: 100%; }
 .chat-bubble .ws-md { overflow-wrap: anywhere; }
+/* ...EXCEPT INSIDE A TABLE CELL, and the difference between the two keywords is
+   the whole bug. `anywhere` is the only one that also SHRINKS the intrinsic
+   min-content width, which is exactly what a bubble's prose needs (a 200-char
+   URL must not widen the chat) and exactly what a table must never have: with
+   it, the columns are allowed to collapse below their natural minimum, so the
+   table always "fits" by breaking every word mid-character instead of
+   scrolling. That is the shredded-columns effect the operator reported.
+   `break-word` still wraps long tokens but leaves min-content alone, so a cell
+   keeps its natural width and the table falls back to the horizontal scroll
+   `.ws-md table` already asks for (display:block; overflow-x:auto). */
+.chat-bubble .ws-md th,
+.chat-bubble .ws-md td { overflow-wrap: break-word; }
 .chat-timeout-tag {
   display: inline-flex; align-items: center; gap: 0.3rem;
   margin-bottom: 0.35rem; font-size: 0.72rem; font-weight: var(--fw-semi);
-  color: var(--warn-solid); text-transform: uppercase; letter-spacing: 0.03em;
+  /* Text, so the 4.5:1 step. See .chat-unsent. */
+  color: var(--warn); text-transform: uppercase; letter-spacing: 0.03em;
 }
 /* A turn that produced no text says so, in words. See noReplyText in
    chat/MessageList: an empty bubble reads as a rendering fault, not as a turn
@@ -754,6 +797,14 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-reveal {
   display: grid; grid-template-rows: 0fr;
   transition: grid-template-rows var(--dur-base) var(--ease-in-out);
+  /* THE LAST FEW PIXELS USED TO POP. The inner is `box-sizing: border-box` and
+     the panels that use this carry padding (.chat-group__body is 0.1rem top +
+     0.2rem bottom), and a border-box element cannot shrink below its own
+     padding. So the row bottomed out around 4.8px instead of 0, and that
+     remainder disappeared in one frame when the children unmounted, which reads
+     as the collapse jumping at the end rather than finishing. Clipping it here
+     costs nothing: the inner already hides its own overflow. */
+  overflow: hidden;
 }
 .chat-reveal.is-shown { grid-template-rows: 1fr; }
 .chat-reveal__inner { overflow: hidden; min-height: 0; }
@@ -814,6 +865,25 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-tool.is-open .chat-tool__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-tool__chev { transition: none; } }
 .chat-tool__icon { flex: 0 0 auto; }
+/* ARRIVAL FLASH, the transient half of LIVE, on a step that was issued while you
+   were watching. Neutral at rest, live for one second, then neutral again, so it
+   says "a new call just started" and then stops saying it.
+
+   A COLOUR animation, not the background one `.ws-arrive` does: a 12px icon
+   given a background tint reads as a smudge, and the icon's own stroke is the
+   mark here. `currentColor` is what lucide strokes with, so animating `color` is
+   the whole implementation. It lands on `inherit` rather than a named token so
+   the row keeps whatever ink it would otherwise have had (muted, or --fg while
+   the head is hovered) instead of being pinned to one of them for good. */
+@keyframes chat-tool-arrive {
+  from { color: var(--live); }
+  to   { color: inherit; }
+}
+.chat-tool__icon--arrive { animation: chat-tool-arrive 1s var(--ease-out) 1; }
+@media (prefers-reduced-motion: reduce) {
+  /* Land settled: no flash, and nothing left tinted. */
+  .chat-tool__icon--arrive { animation: none; }
+}
 .chat-tool__name { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--fg); }
 .chat-tool__preview { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; }
 /* The opened output, behind the same rail every other disclosure uses. Not an
@@ -900,6 +970,13 @@ input[type="range"].grad::-moz-range-thumb {
    than as two competing treatments. Hierarchy from position and indentation,
    not from borders (design system rule 6). */
 .chat-group { margin: 0.3rem 0; min-width: 0; }
+/* A GROUP OF ONE IS INVISIBLE AS A GROUP. Every run of tool calls is a group now
+   (see grouping.closeGroup: it is what keeps a row from being rebuilt as a
+   different component the moment a second call lands beside it), so a lone step
+   is wrapped in one. It must look exactly like the bare row it used to be: no
+   header, no rail, and none of the group's own vertical margin, since the list's
+   0.2rem gap is the only spacing a single step ever had. */
+.chat-group.is-bare { margin: 0; }
 .chat-group__head {
   display: flex; align-items: center; gap: 0.4rem;
   width: 100%; min-width: 0; padding: 0.2rem var(--chat-head-pad);
@@ -942,21 +1019,26 @@ input[type="range"].grad::-moz-range-thumb {
    not shift the row it sits on. */
 .chat-tool__time { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.75; }
 .chat-tool.is-running .chat-tool__time { color: var(--live); }
-/* A step that needs the operator, and ONLY that. Two kinds, both rare:
-   `blocked` (the harness refused the capability, so the operator is the remedy)
-   and `stopped` (the turn ended on it). An ordinary error result gets no mark
-   at all; see grouping.ts `stepAlert` for why and for the numbers.
+/* A step that needs the operator, and ONLY that. ONE kind now: the harness
+   refused the capability, so the operator is the remedy. An ordinary error
+   result gets no mark at all; see grouping.ts `stepAlert` for why and for the
+   numbers.
 
-   Warn for blocked: something needs attention, nothing is broken. Danger for
-   stopped: the turn did not finish what it was doing. Colour and weight, not a
-   border, which is design system rule 6 and also all a bare row has. */
-.chat-tool__alert { flex: 0 0 auto; font-weight: var(--fw-semi); }
-/* THE STATE WORD CARRIES THE OUTCOME, THE NAME NEVER DOES. `Write` is what the
-   step is; `blocked` is how it went. Tinting both made the loudest thing in the
-   row the one word that had not changed, and it read as though the tool itself
-   were the problem. */
-.chat-tool.is-blocked .chat-tool__alert { color: var(--warn); }
-.chat-tool.is-stopped .chat-tool__alert { color: var(--danger); }
+   NEVER DANGER ON A STEP ROW. There used to be a second kind, `stopped`, in
+   danger, meaning "the turn ended on this". It was wrong twice over: red says
+   broken, and this is not broken but waiting on you; and "the turn ended here"
+   is a fact about the TURN that a row has no standing to assert, which on top of
+   everything could not be derived reliably (see grouping.ts). Warn is the whole
+   vocabulary a step row has left: something needs attention, nothing is broken.
+
+   Colour and weight, not a border, which is design system rule 6 and also all a
+   bare row has. */
+.chat-tool__alert { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--warn); }
+/* THE WORD NAMES THE REMEDY, AND THE NAME NEVER CARRIES IT. `Write` is what the
+   step is; `needs approval` is what you can do about it. Tinting both made the
+   loudest thing in the row the one word that had not changed, and it read as
+   though the tool itself were the problem. */
+
 
 /* ---- Receipts: what the turn changed outside the chat ----
    One row per turn, outside every fold. Quiet by default: a receipt records
@@ -977,7 +1059,9 @@ input[type="range"].grad::-moz-range-thumb {
    on every note written turns the quiet row into a wall of links. */
 a.chat-receipt--link { text-decoration: none; }
 a.chat-receipt--link:hover { color: var(--fg); text-decoration: underline; }
-a.chat-receipt--link:hover > svg { color: var(--accent); }
+/* The icon follows its label. It used to go --accent while the text beside it
+   went --fg, so one hover split a single control into two tones. */
+a.chat-receipt--link:hover > svg { color: var(--fg); }
 
 /* How a turn ENDED, which is not a receipt: nothing changed, the run just
    stopped. One quiet line, no card, no accent. */

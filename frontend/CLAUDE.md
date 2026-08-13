@@ -151,7 +151,7 @@ That is not hypothetical: the first pass at this coloured "machine work", which 
 
 | hue | question it answers | treatment | where |
 |---|---|---|---|
-| **MINE** `--you` | is this mine? | filled / tinted / ring | your bubble, primary action, checked control, selection, focus, links, active nav |
+| **MINE** `--you` | is this mine? | filled / tinted / ring | your bubble, primary action, checked control, selection, focus, active nav, **link hover** |
 | **LIVE** `--live` | is this happening? | the ONLY hue that moves | working dots, a running row's clock, a run in flight, an unread count |
 | **ORIGIN** `--sys` | whose work is this? | filled chip, **only where origins mix** | the runs feed, and nowhere else |
 | **OUTCOME** status | how did it end? | outlined chip / one state word | non-default outcomes only |
@@ -161,6 +161,28 @@ That is not hypothetical: the first pass at this coloured "machine work", which 
 1. **If this were neutral, what could the reader no longer tell apart, or stop noticing in time?** No answer, no hue.
 2. **Does the thing it marks actually vary on this screen?** A constant is not a signal.
 3. **Is something else already saying it?** Then do not say it twice. (A row's identity dot already says who, so its running chip must not also say who.)
+
+### A link is underlined, not tinted
+
+**This entry used to read "links" under MINE, and that was wrong.** `--accent` is
+a literal alias of `--you`, and `--you` fills the operator's own message bubble,
+so every link the assistant wrote was painted in the exact tone that means "you
+typed this". Reported 2026-08-13: "it uses the user message color for links which
+is wrong."
+
+Apply the three tests and the answer falls out. If a link were neutral, could the
+reader still tell it apart? **Yes, the underline says it**, at any size, in any
+theme. So the hue was never carrying the information and does not earn a place.
+
+- **At rest: `color: inherit` plus an underline** at ~45% opacity of the current
+  ink. Inheriting is what makes the hard case free: a link inside a `--you`-filled
+  bubble is legible with no special case, because it is written in whatever ink
+  that surface already uses.
+- **On hover: `--you`.** The *act of interacting* is genuinely yours, so the tone
+  arrives on the pointer instead of sitting on the text permanently. On a `--you`
+  fill it inverts to `--you-fg`, since the tier tone would vanish into it.
+- **There is no `--link` token and there should not be one.** A hue that only
+  ever restates an underline is a hue spent on nothing.
 
 ### A control is not content
 

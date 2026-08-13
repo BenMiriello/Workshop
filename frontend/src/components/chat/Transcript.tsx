@@ -5,8 +5,8 @@ import type { ChatSegment } from "../../lib/chat";
 import ApprovalBlock from "./ApprovalBlock";
 import { agentBrief, agentChipLine, agentSummary } from "./segments";
 import {
-  buildTurnBlocks, groupSummary, groupTools, hadErrorResult, isRunning,
-  runningSeconds, stepAlert, stepDuration, stoppedStepId, turnDuration, turnWorkSummary,
+  blockedLabel, buildTurnBlocks, groupSummary, groupTools, hadErrorResult, isRunning,
+  runningSeconds, stepAlert, stepDuration, turnDuration, turnWorkSummary,
   type TurnItem,
 } from "./grouping";
 import { openInitial, onLive, onToggle } from "./disclosure";
@@ -37,10 +37,15 @@ import { modelDisplay, type ModelDisplay } from "./models";
 // A MARK MEANS YOU HAVE TO DO SOMETHING, so most error results carry none.
 // Operator, 2026-08-12: the old mark fired on the API's is_error flag, which on
 // his real history was 90% nonzero exit codes (`git status` exiting 1 to say
-// there are changes) and 100% recovered from. Only two things are marked now,
-// `blocked` and `stopped here`; see grouping.ts `stepAlert` for the rule and
-// the numbers. Everything else keeps its error text, visible on opening the
-// row, and says nothing in the collapsed line.
+// there are changes) and 100% recovered from. Exactly ONE thing is marked now:
+// the harness REFUSED the capability, so the operator is the remedy. Everything
+// else keeps its error text, visible on opening the row, and says nothing in the
+// collapsed line.
+//
+// AND THE MARK IS NEVER RED. It names the remedy ("needs approval", "tool
+// disabled", "denied") in warn, because this is waiting on you, not broken. The
+// red "stopped here" that used to sit beside it is gone entirely; see
+// grouping.ts for why the idea behind it could not be made to work.
 //
 // AND IT IS MARKED, NOT EXPANDED. This used to auto-open, which is the rule
 // GitHub Actions and VS Code both follow. Wrong here: a turn routinely carries
@@ -49,10 +54,12 @@ import { modelDisplay, type ModelDisplay } from "./models";
 //
 // A step still running says how long it has been going, but only past the 10s
 // attention limit, so a fast call never flickers a counter. See grouping.ts.
-function ToolChip({ seg, nowMs, stoppedId }: {
-  seg: Extract<ChatSegment, { t: "tool" }>; nowMs: number; stoppedId?: string;
+function ToolChip({ seg, nowMs, arrived }: {
+  seg: Extract<ChatSegment, { t: "tool" }>; nowMs: number;
+  /** Issued while the reader was already looking: earns the one-second flash. */
+  arrived?: boolean;
 }) {
-  const alert = stepAlert(seg, stoppedId);
+  const alert = stepAlert(seg);
   const running = isRunning(seg);
   const [open, setOpen] = useState(false);
   const panelId = useId();
@@ -74,7 +81,17 @@ function ToolChip({ seg, nowMs, stoppedId }: {
         title={hasDetail ? detail : seg.name}
       >
         {hasDetail && <ChevronRight size={13} aria-hidden className="chat-tool__chev" />}
-        <Wrench size={12} aria-hidden className="chat-tool__icon" />
+        {/* THE ARRIVAL FLASH, on the icon. LIVE-transient: this call was issued
+            while you were watching, so the icon carries the live tone for one
+            second and settles to neutral. It does not violate "a control is not
+            content" (which bans an IDENTITY hue on an affordance): the icon is
+            neutral at rest and this is the transient half of LIVE, which the
+            design system already defines. Gated on time, never on mount, for the
+            same reason `.ws-arrive` is: a re-attach replays the turn from offset
+            0 and opening a settled group mounts every step at once, and a
+            mount-gated flash strobes in both cases. */}
+        <Wrench size={12} aria-hidden
+                className={`chat-tool__icon${arrived ? " chat-tool__icon--arrive" : ""}`} />
         <span className="chat-tool__name">{seg.name}</span>
         {!!seg.input && <span className="chat-tool__preview ws-mono">{seg.input}</span>}
         {/* The clock rides on the STEP, not the turn. A single total for the
@@ -83,17 +100,30 @@ function ToolChip({ seg, nowMs, stoppedId }: {
             stuck. */}
         {secs > 0 && <span className="chat-tool__time">{secs}s</span>}
         {!running && !!took && <span className="chat-tool__time">{took}</span>}
-        {alert && (
-          <span className="chat-tool__alert">
-            {alert === "blocked" ? "blocked" : "stopped here"}
-          </span>
-        )}
+        {alert && <span className="chat-tool__alert">{blockedLabel(seg)}</span>}
       </button>
       <Reveal open={open && hasDetail} id={panelId}>
         <pre className="chat-tool__detail ws-mono">{detail}</pre>
       </Reveal>
     </div>
   );
+}
+
+/** WAS THIS STEP ISSUED WHILE THE READER WAS ALREADY LOOKING. The gate for the
+ *  tool icon's arrival flash, and the exact counterpart of
+ *  `useArrivedAfterMount` in MessageList.
+ *
+ *  It reads `seg.at`, which the backend sets when a call is issued and REMOVES
+ *  when its result lands (see lib/chat.ts). That makes the gate self-limiting in
+ *  a way a "new" flag would not be: a settled step carries no `at` at all, so
+ *  history physically cannot flash, and only a call that is still open can.
+ *  Comparing against mount time handles the rest: a call already running when
+ *  the reader arrived is not news to them, and a replay from offset 0 re-sends
+ *  calls whose start time is older than this mount. */
+function useArrivedSteps(): (seg: ChatSegment) => boolean {
+  const mountedAt = useRef(Date.now());
+  return (seg: ChatSegment) =>
+    seg.t === "tool" && typeof seg.at === "number" && seg.at * 1000 > mountedAt.current;
 }
 
 // A run of adjacent tool calls, behind one count.
@@ -138,37 +168,53 @@ function ToolChip({ seg, nowMs, stoppedId }: {
 // one thing this rule is for. (Zero occurrences in the operator's history —
 // every tool call in 449 stored replies has its result — so removing it changes
 // nothing that ever happened, and removes a way for it to.)
-function GroupChip({ item, nowMs, defaultOpen, stoppedId, current }: {
+function GroupChip({ item, nowMs, defaultOpen, arrived, current }: {
   item: Extract<TurnItem, { t: "group" }>; nowMs: number; defaultOpen?: boolean;
-  stoppedId?: string; current?: boolean;
+  arrived?: (seg: ChatSegment) => boolean; current?: boolean;
 }) {
   const live = !!current;
   const [disc, setDisc] = useState(() => openInitial(live, !!defaultOpen, Date.now()));
-  const open = disc.open;
   const id = useId();
   useEffect(() => { setDisc((prev) => onLive(prev, live, Date.now())); }, [live]);
+  // A GROUP OF ONE IS NOT A GROUP, ON SCREEN. It wears no header and no rail: it
+  // is just the row, exactly as before. What it does NOT do any more is become a
+  // different component when a second call lands beside it. See
+  // grouping.closeGroup for why that mattered.
+  //
+  // The steps therefore stay in one slot, inside this same Reveal, at every
+  // size. That is the whole point: moving them between parents would remount
+  // them just as surely as swapping the component did, and the row the operator
+  // is reading would still lose its place.
+  const bare = item.steps.length === 1;
+  const open = bare || disc.open;
   return (
-    <div className={`chat-group${open ? " is-open" : ""}${live ? " is-running" : ""}`}>
-      <button
-        type="button"
-        className="chat-group__head"
-        onClick={() => setDisc((d) => onToggle(d, Date.now()))}
-        aria-expanded={open}
-        aria-controls={id}
-      >
-        <ChevronRight size={13} aria-hidden className="chat-group__chev" />
-        <Wrench size={12} aria-hidden className="chat-group__icon" />
-        <span className="chat-group__name">{groupSummary(item, stoppedId)}</span>
-        <span className="chat-group__preview">{groupTools(item)}</span>
-      </button>
+    <div className={`chat-group${bare ? " is-bare" : ""}${open ? " is-open" : ""}${live ? " is-running" : ""}`}>
+      {!bare && (
+        <button
+          type="button"
+          className="chat-group__head"
+          onClick={() => setDisc((d) => onToggle(d, Date.now()))}
+          aria-expanded={disc.open}
+          aria-controls={id}
+        >
+          <ChevronRight size={13} aria-hidden className="chat-group__chev" />
+          <Wrench size={12} aria-hidden className="chat-group__icon" />
+          <span className="chat-group__name">{groupSummary(item)}</span>
+          <span className="chat-group__preview">{groupTools(item)}</span>
+        </button>
+      )}
       {/* A change animates if the state it is leaving was on screen long enough
           to have been seen. So a group closing because the turn moved past it
           animates, and the open-then-shut of a re-attach replay (milliseconds
           apart, for every group in the turn at once) does not. See
-          disclosure.ts. */}
-      <Reveal open={open} id={id} className="chat-group__body" animate={disc.animate}>
+          disclosure.ts.
+
+          A bare group has no control to animate and nothing to collapse into, so
+          it is always open and never animates. */}
+      <Reveal open={open} id={id} className={bare ? undefined : "chat-group__body"}
+              animate={!bare && disc.animate}>
         {item.steps.map((s, i) => (
-          <ToolChip key={s.id || i} seg={s} nowMs={nowMs} stoppedId={stoppedId} />
+          <ToolChip key={s.id || i} seg={s} nowMs={nowMs} arrived={arrived?.(s)} />
         ))}
       </Reveal>
     </div>
@@ -455,9 +501,9 @@ export type AnswerPermission = (a: {
 // approvals in it, and those are the things the reader wants to see. A second
 // truncation on top of the grouping would hide work for no gain and bring back
 // the pinning rules to stop it hiding the wrong work.
-function StepRun({ items, cfg, nowMs, openGroups, stoppedId, current, onAnswerPermission }: {
+function StepRun({ items, cfg, nowMs, openGroups, arrived, current, onAnswerPermission }: {
   items: TurnItem[]; cfg: ModelDisplay; nowMs: number; openGroups?: boolean;
-  stoppedId?: string;
+  arrived?: (seg: ChatSegment) => boolean;
   // This run is the trailing one of a turn still streaming, so its LAST item is
   // the work in progress.
   current?: boolean;
@@ -468,19 +514,21 @@ function StepRun({ items, cfg, nowMs, openGroups, stoppedId, current, onAnswerPe
   // read would hand its open state to whatever took its slot. Tool and approval
   // rows carry an id; a group takes its first step's id (a group only ever grows
   // at its tail) and a delegation has one of its own.
+  // A tool call never arrives as a bare `step` any more: every run of them is a
+  // group, including a run of one, which is what stops a row being rebuilt as a
+  // different component when a second call lands. `step` is now exactly the two
+  // things that were always their own row, a delegation and an approval.
   const renderItem = (item: TurnItem, i: number) =>
     item.t === "group"
       ? <GroupChip key={item.steps[0]?.id || `g${i}`} item={item} nowMs={nowMs}
-                   defaultOpen={openGroups} stoppedId={stoppedId}
+                   defaultOpen={openGroups} arrived={arrived}
                    current={current && i === items.length - 1} />
-      : item.seg.t === "tool"
-        ? <ToolChip key={item.seg.id || `s${i}`} seg={item.seg} nowMs={nowMs} stoppedId={stoppedId} />
-        : item.seg.t === "agent"
-          ? <AgentChip key={item.seg.id || `a${i}`} seg={item.seg} cfg={cfg} nowMs={nowMs} />
-          : item.seg.t === "approval"
-            ? <ApprovalBlock key={item.seg.id || `p${i}`} seg={item.seg}
-                             onAnswer={onAnswerPermission ?? (async () => {})} />
-            : null;
+      : item.seg.t === "agent"
+        ? <AgentChip key={item.seg.id || `a${i}`} seg={item.seg} cfg={cfg} nowMs={nowMs} />
+        : item.seg.t === "approval"
+          ? <ApprovalBlock key={item.seg.id || `p${i}`} seg={item.seg}
+                           onAnswer={onAnswerPermission ?? (async () => {})} />
+          : null;
   return (
     <div className="chat-work">
       <div className="chat-work__list">{items.map(renderItem)}</div>
@@ -556,10 +604,7 @@ function TurnWork({ work, cfg, nowMs, expanded, openGroups, streaming, onAnswerP
   streaming?: boolean;
   onAnswerPermission?: AnswerPermission;
 }) {
-  // Computed ONCE per turn, here, because "the turn stopped on this step" is a
-  // fact about the whole work stream and not about any single step. Passing the
-  // id down beats handing every row the entire turn.
-  const stoppedId = stoppedStepId(work);
+  const arrived = useArrivedSteps();
   const blocks = buildTurnBlocks(work);
   // The trailing run, which is where work in flight is. Not simply the last
   // block: a turn narrating as it goes ends on prose, and the run before that
@@ -577,7 +622,7 @@ function TurnWork({ work, cfg, nowMs, expanded, openGroups, streaming, onAnswerP
           // must not be a live control, and card outcomes persist server-side.
           ? <WorkText key={`p${i}`} text={b.text} cfg={cfg} expanded={expanded} />
           : <StepRun key={`r${i}`} items={b.items} cfg={cfg} nowMs={nowMs} openGroups={openGroups}
-                     stoppedId={stoppedId}
+                     arrived={arrived}
                      current={!!streaming && endsOnRun && i === lastRun}
                      onAnswerPermission={onAnswerPermission} />)}
     </>

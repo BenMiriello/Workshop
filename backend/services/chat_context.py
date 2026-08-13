@@ -392,10 +392,26 @@ def delegation_block(tools_active: bool) -> str:
 
 # Platform-wide reply style. The operator's standing rule: no em-dashes and no
 # emojis anywhere, including chat replies. Appended to every assistant preamble.
+#
+# THE COLUMN IS NARROW, AND THE MODEL CANNOT SEE IT. A reply renders inside a
+# chat bubble capped at --chat-max and often much narrower than that on a phone
+# or with the log docked beside a page. A four-column table authored for a wide
+# terminal arrives here as four shredded columns, because the only way to fit it
+# is to break the words. The CSS side of that is fixed (columns keep their
+# min-content width and the table scrolls), but a table that has to scroll is
+# still worse than the list it should have been, so the prompt asks for the
+# right shape rather than relying on the stylesheet to rescue the wrong one.
 _STYLE_RULE = (
     "=== STYLE ===\n"
     "Write plainly and directly. Never use em-dashes (rephrase with a comma, "
-    "period, colon, or parentheses) and never use emojis, in any reply."
+    "period, colon, or parentheses) and never use emojis, in any reply.\n"
+    "Your reply renders in a NARROW column, not a wide terminal. Do not use "
+    "formatting that assumes width. Prefer short paragraphs, headings, and "
+    "bullet lists. Avoid tables: a table is only for genuinely tabular data "
+    "that fits in two or three short columns, and anything else reads better "
+    "as a list. Never use a table merely to lay out label/value pairs or to "
+    "compare more than three things. Keep code blocks and inline code short "
+    "enough to read without horizontal scrolling."
 )
 
 

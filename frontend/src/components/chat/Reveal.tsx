@@ -23,9 +23,24 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 // mount on open and unmount one duration after close, once the collapse has
 // actually finished.
 
-/** Must match `--dur-base` in tokens.css. Only used to know when the collapse
- *  has finished and the children can go; the animation itself is pure CSS. */
-const REVEAL_MS = 200;
+/** Backstop only. The children go on `transitionend`, which is the event that
+ *  actually knows when the collapse finished; this exists so a Reveal whose
+ *  transition never fires (display:none in an ancestor, a browser that will not
+ *  interpolate the property, reduced motion zeroing the duration) still drops
+ *  its children instead of keeping them mounted for good.
+ *
+ *  It used to be the ONLY mechanism, at exactly `--dur-base`, so the unmount
+ *  fired on the same tick the collapse ended and raced it to the frame. Worse
+ *  under `prefers-reduced-motion`: tokens.css zeroes `--dur-base` to 0ms while
+ *  this number stayed 200, so an instant collapse still held its children for a
+ *  fifth of a second. Generous now, because being late costs nothing and being
+ *  early is the bug. */
+const REVEAL_BACKSTOP_MS = 400;
+
+/** How long `useToggleAnim` keeps its class on. This one DOES have to match
+ *  `--dur-base`, because the class it holds is what enables the transition at
+ *  all: drop it early and the animation is cut off mid-way. */
+const TOGGLE_ANIM_MS = 200;
 
 // ONLY WHAT THE OPERATOR DID ANIMATES. The machine's own opening and closing
 // is instant, and that is not a compromise, it is the fix for a real bug.
@@ -46,7 +61,9 @@ const REVEAL_MS = 200;
  *  open. They differ only during a collapse, which is the whole point.
  *
  *  `animate` false means jump straight there: no frames, no unmount delay. */
-export function useReveal(open: boolean, animate = true): { mounted: boolean; shown: boolean } {
+export function useReveal(
+  open: boolean, animate = true, el?: HTMLElement | null,
+): { mounted: boolean; shown: boolean } {
   const [mounted, setMounted] = useState(open);
   const [shown, setShown] = useState(open);
   useEffect(() => {
@@ -65,9 +82,19 @@ export function useReveal(open: boolean, animate = true): { mounted: boolean; sh
       return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
     }
     setShown(false);
-    const t = setTimeout(() => setMounted(false), REVEAL_MS);
-    return () => clearTimeout(t);
-  }, [open, animate]);
+    // Drop the children when the collapse ACTUALLY ends, not when a constant
+    // says it should have. `grid-template-rows` is the property being animated,
+    // and the event must come from this element rather than a descendant, or a
+    // transition inside the panel (a chevron, a hover tint) would cut the
+    // collapse short.
+    const done = () => { clearTimeout(t); setMounted(false); };
+    const onEnd = (e: TransitionEvent) => {
+      if (e.target === el && e.propertyName === "grid-template-rows") done();
+    };
+    const t = setTimeout(done, REVEAL_BACKSTOP_MS);
+    el?.addEventListener("transitionend", onEnd);
+    return () => { clearTimeout(t); el?.removeEventListener("transitionend", onEnd); };
+  }, [open, animate, el]);
   // Opening on first render is not an animation: a settled turn the reader
   // opened, or a group that mounts mid-flight, is already open when it appears
   // and must not slide in. Both states seed from `open`, so nothing moves.
@@ -87,12 +114,16 @@ export function Reveal({ open, id, className, animate, children }: {
   animate?: boolean;
   children: ReactNode;
 }) {
-  const { mounted, shown } = useReveal(open, animate);
+  // The element is state, not a ref read, because `useReveal` has to attach a
+  // listener to it in an effect and must re-run when it first exists.
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
+  const { mounted, shown } = useReveal(open, animate, el);
   return (
     // `is-instant` kills the CSS transition too. Setting the open state without
     // frames is not enough on its own: grid-template-rows would still animate
     // from whatever it was, which is the burst all over again.
     <div
+      ref={setEl}
       id={id}
       className={`chat-reveal${shown ? " is-shown" : ""}${animate === false ? " is-instant" : ""}`}
       aria-hidden={!shown || undefined}
@@ -128,7 +159,7 @@ export function useToggleAnim(value: unknown): boolean {
   useEffect(() => {
     if (first.current) { first.current = false; return; }
     setAnim(true);
-    const t = setTimeout(() => setAnim(false), REVEAL_MS);
+    const t = setTimeout(() => setAnim(false), TOGGLE_ANIM_MS);
     return () => clearTimeout(t);
   }, [value]);
   return anim;

@@ -12,6 +12,28 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.3 — 2026-08-13 — a link is underlined, not tinted
+
+**Compatible (styles only, no surface change).** Four colour corrections, all of
+them a token that was saying the wrong thing:
+
+- **`.ws-md a` no longer takes `--accent`.** `--accent` is an alias of `--you`,
+  which fills the operator's own message bubble, so every link in every rendered
+  markdown body was painted "this is yours". Links are now `color: inherit` with
+  the underline carrying the affordance, and `--you` on hover, where the MINE
+  tone actually belongs. Reported against the chat, 2026-08-13. The rationale is
+  in `frontend/CLAUDE.md` under "A link is underlined, not tinted".
+- **`.chat-voice-orb.is-speaking`** moves `--ok` → `--running`. Speaking is
+  liveness, not an outcome, and it now matches its `is-listening` sibling.
+- **`.chat-voice-orb.is-idle`** moves `--danger` → `--stopped`. Idle is not a
+  failure; `--stopped` exists for exactly this and was unused.
+- **`.chat-voice-now`** moves `--accent` → `--live`. The words being spoken right
+  now are live, not owned.
+
+Consumers who relied on links being accent-coloured should set `.ws-md a { color:
+var(--you) }` locally, but read the CLAUDE.md entry first: the underline was
+always doing the work.
+
 ## 0.5.2 — 2026-08-12 — a record page is not a list page
 
 **Additive.** `PageHeader` gains `back`, `meta` and `variant`; new primitives

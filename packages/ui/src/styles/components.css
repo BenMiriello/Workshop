@@ -1912,8 +1912,37 @@ a.ws-btn { text-decoration: none; }
 .ws-md em { font-style: italic; }
 .ws-md del { color: var(--muted); }
 
-.ws-md a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
-.ws-md a:hover { color: var(--accent-hover); }
+/* A LINK IS NOT YOURS, SO IT DOES NOT WEAR THE MINE TONE.
+   `--accent` is a literal alias of `--you` (palettes.css), and `--you` is what
+   fills the operator's own message bubble. So every link the assistant wrote was
+   painted in the exact tone that means "you typed this", which is how it read:
+   "it uses the user message color for links, which is wrong" (operator,
+   2026-08-13). The design law listed links under MINE; that entry was wrong and
+   has been corrected in frontend/CLAUDE.md.
+
+   Apply the three tests. If this were neutral, could the reader still tell a
+   link apart? Yes: the UNDERLINE already says it, unambiguously and at any size.
+   So the hue was never carrying the information, and by rule 1 it does not earn
+   a place.
+
+   `currentColor` rather than a named token, because it makes the one hard case
+   free: a link inside a user bubble sits on a --you FILL, where any fixed ink
+   would have to be special-cased for contrast. Inheriting means a link is always
+   legible against whatever it is written on, in prose, in a bubble, in a note,
+   in a caption.
+
+   Hover is where MINE legitimately belongs: the act of interacting is yours, so
+   the tone arrives on the pointer rather than sitting on the text for good. */
+.ws-md a {
+  color: inherit; text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklab, currentColor, transparent 55%);
+  transition: color var(--dur-fast) var(--ease-out),
+              text-decoration-color var(--dur-fast) var(--ease-out);
+}
+.ws-md a:hover { color: var(--you); text-decoration-color: currentColor; }
+/* On a --you fill the hover tone would vanish into the background, so there it
+   goes the other way: full-strength foreground instead. */
+.chat-msg.user .ws-md a:hover { color: var(--you-fg); }
 
 .ws-md code {
   font-family: var(--font-mono);
@@ -2156,18 +2185,32 @@ a.ws-btn { text-decoration: none; }
   color: var(--running); border-color: var(--running);
   box-shadow: 0 0 0 1px var(--running), 0 0 calc(3px + var(--vlevel, 0) * 14px) var(--running-soft);
 }
-.chat-voice-orb.is-speaking { color: var(--ok); border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok); }
+/* Speaking is LIVENESS, not an outcome, so it takes the same family as
+   is-listening above. It used to take --ok, which is a green "it went well" tone
+   spent on "a voice is coming out of this right now". */
+.chat-voice-orb.is-speaking {
+  color: var(--running); border-color: var(--running); box-shadow: 0 0 0 1px var(--running);
+}
 .chat-voice-orb.is-thinking,
 .chat-voice-orb.is-connecting { color: var(--muted); }
-/* Error / idle-unexpectedly: the AlertTriangle tint. Placed last so it wins over
-   is-listening etc. when both classes are present. */
-.chat-voice-orb.is-error,
-.chat-voice-orb.is-idle { color: var(--danger); border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+/* Error: the AlertTriangle tint. Placed last so it wins over is-listening etc.
+   when both classes are present.
+
+   IDLE IS NOT A FAILURE, and it used to be painted as one. `--stopped` is the
+   token that exists for exactly this (a thing that is simply not running) and
+   the chat did not use it anywhere. Danger on an idle mic said something had
+   broken every time voice mode was merely off. */
+.chat-voice-orb.is-error {
+  color: var(--danger); border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger);
+}
+.chat-voice-orb.is-idle { color: var(--stopped); border-color: var(--stopped); }
 
 /* Live spoken-turn caption cues, inside a normal assistant bubble. */
 .chat-voice-live { display: inline; }
 .chat-voice-heard { color: inherit; }
-.chat-voice-now { color: var(--accent); font-weight: var(--fw-medium); }
+/* The words being spoken RIGHT NOW: liveness, not ownership. --accent (an alias
+   of --you) claimed the assistant's speech was the operator's. */
+.chat-voice-now { color: var(--live); font-weight: var(--fw-medium); }
 .chat-voice-pending { color: var(--muted); }
 
 /* Voice status strip above the composer: the single voice status surface. Shows

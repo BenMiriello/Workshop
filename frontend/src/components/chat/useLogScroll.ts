@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  FOLLOW_SLOP, restoresToBottom, type ScrollPos as ScrollPosRule,
+} from "./scrollRestore";
 
 // Following the conversation: when the log sticks to the bottom, and when it
 // must not.
@@ -45,7 +48,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 //    parked above where it belongs.
 
 const SCROLL_STORE_PREFIX = "ws-chat-scroll:";
-type ScrollPos = { top: number; atBottom: boolean };
+// The two thresholds and the rule that picks between them live in their own
+// module, pure and tested. See scrollRestore.ts for why they are two numbers.
+type ScrollPos = ScrollPosRule;
 
 function loadScrollPos(key: string): ScrollPos | null {
   try {
@@ -168,7 +173,7 @@ export function useLogScroll({
     const el = scrollRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const atBottom = distance < 80;
+    const atBottom = distance < FOLLOW_SLOP;
     atBottomRef.current = atBottom;
     // Remember where this thread is left. Skipped while a restore is settling —
     // those are our own programmatic scrolls converging on the target, not the
@@ -205,18 +210,35 @@ export function useLogScroll({
     let lastH = -1;
     let stableFrames = 0;
     const start = performance.now();
+    // Decided ONCE, from the saved position, not re-derived per frame: the
+    // half-viewport test reads clientHeight and scrollHeight, and scrollHeight is
+    // exactly what is still moving during a restore. Sampling it mid-settle would
+    // let the answer flip frame to frame.
+    const el0 = scrollRef.current;
+    const toBottom = !el0
+      || restoresToBottom(targetRef.current, el0.scrollHeight, el0.clientHeight);
     const step = () => {
       const el = scrollRef.current;
       if (!el) { restoringRef.current = false; return; }
       const t = targetRef.current;
       const max = el.scrollHeight - el.clientHeight;
-      el.scrollTop = !t || t.atBottom ? max : Math.min(t.top, max);
+      el.scrollTop = toBottom || !t ? max : Math.min(t.top, max);
       const h = el.scrollHeight;
       stableFrames = h === lastH ? stableFrames + 1 : 0;
       lastH = h;
       if (stableFrames >= 2 || performance.now() - start > 800) {
         restoringRef.current = false;
-        atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        // PRESERVE THE INTENT, DO NOT RE-MEASURE IT. This used to recompute
+        // `atBottom` from geometry at the moment the loop gave up, and on a long
+        // thread still growing at the 800ms cap that computes false. Every
+        // re-pin below is gated on this flag, so a thread the operator left at
+        // the very bottom stopped following and stranded him mid-thread. That is
+        // the "it loads to the middle, and not where I was either" report:
+        // the target was the bottom, and the geometry answered for the frame
+        // rather than for the intent. If we asked for the bottom, we are at the
+        // bottom, and we keep following until he scrolls away from it.
+        atBottomRef.current = toBottom
+          || el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_SLOP;
         setShowJumpToLatest(!atBottomRef.current);
         return;
       }
