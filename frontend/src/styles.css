@@ -335,14 +335,7 @@ input[type="range"].grad::-moz-range-thumb {
      valve now instead. */
   flex-wrap: wrap; row-gap: var(--space-2);
 }
-/* Used by the inline "add agent" field. The three stock <select>s that used to
-   share this class are gone — see .chat-tb__picker / .chat-model. */
-.chat-tb__select {
-  height: 2rem; min-width: 0; padding: 0 0.45rem;
-  font-size: var(--fs-sm); line-height: 1;
-  background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: var(--radius-md);
-}
+
 /* Scope picker: a quiet text trigger, not a boxed select. It reads as a label
    you can change, which is what it is. No caret — nothing else on this bar
    carries one (the Tickets trigger doesn't either), so the icon + label is
@@ -425,8 +418,6 @@ input[type="range"].grad::-moz-range-thumb {
   cursor: pointer;
 }
 /* Participant tags carry a slug, so they size to their text. */
-.chat-tb__btn--wide { width: auto; padding: 0 0.4rem; }
-.chat-tb__btn-text { font-size: var(--fs-xs); }
 .chat-tb__btn:hover { color: var(--fg); background: var(--card-hover); }
 .chat-tb__btn.is-active { color: var(--accent); background: var(--accent-soft); }
 .chat-tb__badge {
@@ -536,7 +527,6 @@ input[type="range"].grad::-moz-range-thumb {
   display: flex; flex-direction: column; gap: 0.6rem;
 }
 .chat-empty { color: var(--muted); font-size: 0.85rem; text-align: center; margin: auto 0; }
-.chat-empty--note { font-size: var(--fs-xs); margin: 0 0 0.4rem; }
 
 .chat-msg { display: flex; flex-direction: column; max-width: 88%; min-width: 0; }
 .chat-msg.user { align-self: flex-end; align-items: flex-end; }
@@ -661,9 +651,6 @@ input[type="range"].grad::-moz-range-thumb {
    chat/MessageList: an empty bubble reads as a rendering fault, not as a turn
    that ended early, and the operator can't tell which without being told. */
 .chat-noreply { color: var(--muted); }
-.chat-typing { display: inline-block; color: var(--muted); letter-spacing: 0.15em; animation: chat-typing-pulse 1.2s ease-in-out infinite; }
-@keyframes chat-typing-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .chat-typing { animation: none; } }
 
 /* Live "working" indicator — a spinner + label (+ elapsed) shown for the whole
    duration of a running turn (build stream or data reply), so it's always clear
@@ -1609,24 +1596,6 @@ button.chat-attach {
    Same "hasn't landed yet" opacity as --queued/--inflight, and it wraps like any
    other bubble, which is the whole point: the strip it replaced was one clipped
    line that showed the first few words and never the latest ones. */
-.chat-bubble--speaking { opacity: 0.55; white-space: pre-wrap; }
-/* A live transcription pass is still catching up with the speech. Three dots
-   after the text, so a pause in the caption reads as "still listening" rather
-   than "stopped hearing you". */
-.chat-voice-catchup {
-  display: inline-block; margin-left: 0.15rem; vertical-align: baseline;
-  width: 1.6em; height: 1em;
-  background:
-    radial-gradient(circle 2px at 0.3em 0.72em, currentColor 99%, transparent) 0 0/1.6em 1em no-repeat,
-    radial-gradient(circle 2px at 0.8em 0.72em, currentColor 99%, transparent) 0 0/1.6em 1em no-repeat,
-    radial-gradient(circle 2px at 1.3em 0.72em, currentColor 99%, transparent) 0 0/1.6em 1em no-repeat;
-  animation: chat-voice-catchup 1.2s ease-in-out infinite;
-}
-@keyframes chat-voice-catchup { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.9; } }
-@media (prefers-reduced-motion: reduce) {
-  .chat-voice-catchup { animation: none; opacity: 0.6; }
-}
-
 /* ---- Per-agent task drawer (build chats only) ----
    Opened from the toolbar Tasks button; the list scrolls so it never crowds. */
 .chat-tasks { border-bottom: 1px solid var(--border); }
@@ -1640,16 +1609,6 @@ button.chat-attach {
   display: flex; flex-direction: column; gap: var(--space-1);
   max-height: 30vh; overflow-y: auto;
 }
-.chat-task {
-  display: flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-1) 0;
-}
-.chat-task__text {
-  flex: 1; min-width: 0; font-size: var(--fs-sm); line-height: 1.35;
-  word-break: break-word;
-}
-.chat-task--done .chat-task__text { color: var(--muted); text-decoration: line-through; }
-.chat-task__status { flex: 0 0 auto; width: auto; font-size: var(--fs-xs); }
 .chat-tasks__add { display: flex; gap: var(--space-2); align-items: center; }
 .chat-tasks__add .ws-input { font-size: 1rem; }
 

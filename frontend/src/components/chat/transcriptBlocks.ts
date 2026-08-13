@@ -347,6 +347,12 @@ export type CommittedTranscript = {
  * including the live turn, because that is the truthful place for something not
  * yet sent.
  */
+// KEPT DELIBERATELY, AND ONLY THE TESTS CALL IT. Production splits the two
+// halves apart for the memo boundaries in useThreadLog, so nothing there calls
+// this. It stays because it is the single named definition of "the whole
+// transcript", it is exactly the composition production performs, and it is
+// three lines that cannot drift from them. The alternative is sixty test call
+// sites open-coding the composition, which is how they would drift.
 export function selectTranscript(state: ThreadState): TranscriptBlock[] {
   return composeTranscript(selectCommitted(state), state);
 }

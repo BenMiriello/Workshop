@@ -755,8 +755,11 @@ every decision it makes for a week", and that is the real cost.
 **If only three things get done, do these**, in order. Each is small, each is
 independently useful, and each is currently a mechanism that lies:
 
-1. **Fix the preference path.** Eleven captured operator corrections go
-   nowhere under a reply that says they were captured.
+1. ~~**Fix the preference path.**~~ **Done 2026-08-12.** The `workshop` block
+   is injected now, labelled `OPERATOR PREFERENCES` rather than `AGENT MEMORY`,
+   because what it holds is the operator's own corrections and the label is
+   what tells the model how to weigh it against mechanical worker noise. Pinned
+   by a test that fails against the old condition.
 2. **Un-drop the Design System rule** from the injected block, and stop
    ranking standing operator rules against mechanical worker noise for the
    same 700 tokens.
