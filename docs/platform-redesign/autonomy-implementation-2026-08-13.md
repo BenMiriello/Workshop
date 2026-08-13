@@ -19,6 +19,104 @@ specify.
 
 ---
 
+## 0. Built, and what the build found (2026-08-13, second pass)
+
+Phases 0 to 4 are implemented. Two independent adversarial reviews then ran over
+the plan and the code. **These corrections supersede the sections they name.**
+
+### The gate in §4 does not survive its own arithmetic
+
+K=5 with a pass/fail per ticket, against the 28-33% verified session success the
+plan's own evidence table cites, gives:
+
+| true rate | P(4-5) proceed | P(2-3) fix | P(0-1) stop |
+|---|---|---|---|
+| 0.30 | 3% | 44% | 53% |
+| 0.50 | 19% | 62% | 19% |
+| 0.80 | 74% | 26% | 1% |
+
+So at the rate the plan expects, the most likely outcome is "stop", the chance of
+reaching phase 3 is 3%, and a genuinely even loop is certified "works" 19% of the
+time. The plan rejects a single LLM verdict for exactly this reason ("~11
+repeated trials are needed for a majority to be stable") and then gates itself on
+five unrepeated binary trials. It also hand-picks the five from the only
+buildable tickets, so the sample cannot speak to the queue phase 4 will run.
+
+**And "a run that raised a sensible block counts as a pass" contradicts the
+sentence before it** ("pass means reviewer passed AND a real commit landed AND
+acceptance holds"): a run that blocked landed no commit. Unqualified, a worker
+that asks about everything scores 5/5 and commits nothing, "sensible" is judged
+post hoc by the party who wants phase 3, and a `strict` latitude turns an
+ambiguous reviewer verdict into a block, which is to say into a pass.
+
+**Correction, and it is small:** score three buckets, completed / blocked /
+failed. Gate on completed, plus blocked-then-completed-after-an-answer. Report
+blocked separately and never as a pass on its own. That keeps the intent (do not
+teach a worker to guess) without letting asking substitute for finishing. Treat
+K=5 as a smoke test, not evidence, and say so.
+
+### §6.1's predicate rests on two checks that were written for a human reader
+
+`ticket_readiness` passes the boundaries check when `touches` is non-empty OR
+`latitude == "open"`. §6.1 makes `check(t)["ok"]` a selection predicate for
+unattended dispatch, so **setting the loosest latitude value on a ticket now
+promotes it into the unattended queue.** The plan separately declares `touches`
+inert and drops its enforcement, while a non-empty `touches` satisfies the same
+check. Readiness's own docstring says it "is not a quality judgement and it
+cannot be"; phase 4 made it one without auditing the clauses. Not yet fixed:
+this needs the two escape hatches reconsidered, and it is the strongest
+outstanding argument against widening phase 4.
+
+### §1.1's fail-closed property is weaker than it reads
+
+"`None` is not `code`, because the sweep should not guess" is true of the store.
+But §3.1 writes `code` as the RESIDUAL of two regexes, so after `--apply` the
+eligibility claim on 13 tickets is a script's guess rather than a verification.
+The operator reviewing the table is the only thing between the residual and the
+sweep, and that is a procedure, not a property.
+
+### §5.2 never said what a cap does to the mark, and that hole became a bug
+
+Both readings are broken (mark-and-suppress buries tickets 6..N forever;
+don't-mark leaves them due), and the implementation's don't-mark choice produced
+a starvation wall: blocked and errored tickets stayed due, sorted oldest-first,
+and consumed the 20-ticket look budget permanently. **Fixed:** blocked tickets
+are filtered out of the candidate list before the slice rather than skipped
+inside the loop, and they are reported without spending a look slot. The
+triager's own writes build that state, so this was reachable in four passes.
+
+### Corrected in this pass
+
+- §7's table said `Notice kind="warn"`; §3.3 correctly says `tone`. Fixed here.
+- The readiness line is now `tone="error"` for a gap that actually refuses the
+  run (title, dependencies) and `warn` for advice. They rendered identically, so
+  nothing said which sentence meant the Run button would 400.
+- §3.1's stated acceptance ("the head of `next_ready` stops being a root
+  ticket") was false for a day: the six `external` tickets were tagged and not
+  parked. Now parked; the human head is a code ticket.
+- §5.4 shipped a constant and a helper with **no production caller**. The rest of
+  the ladder does not exist, so expiry does not exist. Read that section as
+  "constant landed, policy unbuilt".
+- §6.4 landed only its disposition (`parked`, never `failed`, with a resumable
+  id). None of the four OpenHands rules shipped, and `ralph.sh` states that three
+  of them are unbuildable under `--output-format json`. Re-scope it or change the
+  output format; do not read it as done.
+- §3.6 is wired on all three surfaces and PROVEN on the worker (a run log with 16
+  real `mcp__workshop__search` calls). The @-mentioned-agent surface has no live
+  run behind it.
+
+### §9 is not the whole exclusion list
+
+It names 6 deliberate exclusions and silently omits at least these, which the
+plan says should exist: **dial 2, the per-scope autonomy setting** (§6.3 consumes
+`supervised` and nothing in this spec creates the setting, its values, or its
+editor, so phase 4's headline depends on a control that does not exist), Re-run,
+a scope-review action on the ticket page, stale-question escalation, the scope
+digest, provenance and staleness on every hit, the clean-context advisory
+reviewer, and the delete list. Do not read §9 as complete.
+
+---
+
 ## 1. Schema: two new ticket fields, and nothing else
 
 Every phase below depends on these, so they land first, in one change, with
@@ -726,7 +824,7 @@ surfaces.
 
 | surface | primitives | phase |
 |---|---|---|
-| readiness line, ticket page | `Notice kind="warn"` | 1 |
+| readiness line, ticket page | `Notice tone="warn"` (`tone="error"` when a gap blocks) | 1 |
 | readiness dot, list row | `StatusDot` with `title` | 1 |
 | `execution` rail row | `Prop` | 1 |
 | `execution` editor | `Select` inside Edit mode | 1 |

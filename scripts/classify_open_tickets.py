@@ -214,7 +214,12 @@ def main() -> int:
     for _, _, ex, _, _ in rows:
         counts[ex] = counts.get(ex, 0) + 1
     print("\n  " + "   ".join(f"{k}: {v}" for k, v in sorted(counts.items())))
-    parkable = [r for r in rows if r[2] == "external" and r[4]]
+    # Parking is decided on the ticket's CLASSIFICATION, not on whether this run
+    # is the one that wrote it. It used to require `fresh`, so `--apply --no-park`
+    # followed by a plain `--apply` parked nothing at all: every ticket was
+    # already classified, so every row was skipped. Tagging and parking are two
+    # decisions and the second has to remain available after the first.
+    parkable = [r for r in rows if r[2] == "external" and r[1].get("status") == "todo"]
     print(f"  would park: {len(parkable)}"
           + ("  (--no-park to skip)" if parkable and not args.no_park else ""))
 
@@ -223,21 +228,23 @@ def main() -> int:
         return 0
 
     wrote = parked = 0
+    roots = dict(stores)
     for key, t, ex, why, fresh in rows:
-        if not fresh:
-            continue
-        root = dict(stores).get(key)
+        root = roots.get(key)
         if root is None:
             continue
-        park = (ex == "external" and not args.no_park)
+        park = (ex == "external" and t.get("status") == "todo" and not args.no_park)
+        if not fresh and not park:
+            continue
         try:
-            tasks.update(root, t["id"], execution=ex,
+            tasks.update(root, t["id"],
+                         **({"execution": ex} if fresh else {}),
                          **({"status": "parked", "blocked_reason": PARK_REASON}
                             if park else {}))
         except ValueError as e:
             print(f"  ! {t['id']}: {e}", file=sys.stderr)
             continue
-        wrote += 1
+        wrote += bool(fresh)
         parked += bool(park)
     print(f"\nclassified {wrote}, parked {parked}.\n")
     return 0
