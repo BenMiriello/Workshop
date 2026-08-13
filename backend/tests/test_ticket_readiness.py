@@ -149,3 +149,31 @@ def test_the_detail_response_reports_readiness(client):
     got = c.get(f"/api/tasks/development/{t['id']}").json()
     assert got["readiness"]["ok"] is False
     assert {m["check"] for m in got["readiness"]["missing"]} >= {"objective", "acceptance"}
+
+
+# --- and the LIST reports it too --------------------------------------------
+# It used to ride only the detail GET, so a list could not show a readiness
+# marker at all without refetching every row. The plan asks for a warn dot on
+# each row; without this the dot renders nothing and looks like "all clear".
+
+def test_the_list_response_reports_readiness(client):
+    c, root = client
+    tasks.add(root, title="Fix the thing")
+    rows = c.get("/api/tasks?scope=development").json()["tasks"]
+    assert rows, "no rows came back"
+    assert all("readiness" in r for r in rows), "a row arrived with no readiness"
+    bad = [r for r in rows if r["readiness"]["ok"] is False]
+    assert bad and {m["check"] for m in bad[0]["readiness"]["missing"]} >= {"objective"}
+
+
+def test_a_row_and_its_page_agree(client):
+    """Two code paths compute this. If they disagree, a row says ready and the
+    page it opens says otherwise, which is worse than showing neither."""
+    c, root = client
+    t = tasks.add(root, **WELL_SPECIFIED)
+    row = next(r for r in c.get("/api/tasks?scope=development").json()["tasks"]
+               if r["id"] == t["id"])
+    page = c.get(f"/api/tasks/development/{t['id']}").json()
+    assert row["readiness"]["ok"] == page["readiness"]["ok"]
+    assert ({m["check"] for m in row["readiness"]["missing"]}
+            == {m["check"] for m in page["readiness"]["missing"]})
