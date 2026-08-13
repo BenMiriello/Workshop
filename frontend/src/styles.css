@@ -1187,7 +1187,10 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 .chat-effort__bar:nth-child(3) { height: 0.8rem; }
 .chat-effort__bar:nth-child(4) { height: 0.95rem; }
 .chat-effort__bar:nth-child(5) { height: 1.1rem; }
-.chat-effort__bar.is-on { background: var(--accent); }
+/* Same reason as the context ring: an effort level is a readout, not the
+   operator's authorship, so it is neutral. Filled bars take --fg against the
+   --border of the empty ones. */
+.chat-effort__bar.is-on { background: var(--fg); }
 /* A model with no effort control. Present so the control is discoverable, dimmed
    so it does not read as a level of zero, and `default`-cursor because there is
    nothing to click (never `not-allowed` — see the design system's rule 10). */
@@ -1284,8 +1287,14 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 .chat-send:disabled { opacity: 0.4; cursor: default; }
 
 /* Context-usage meter: a small circular ring under the composer showing how full
-   the chat's context is, with the % to its right. Single accent tone — it does
-   not shift to amber/red as it fills. */
+   the chat's context is, with the % to its right. One neutral tone: it does not
+   shift to amber/red as it fills, and it does not take a hue.
+
+   NEUTRAL BECAUSE IT IS A READOUT. A hue has to answer one of four questions
+   (mine / live / origin / outcome) and this answers none of them: how full the
+   context is was not authored by the operator, so wearing the `you` tone said
+   it was. Operator, 2026-08-12. The arc takes --fg against the --border track,
+   so the reading is the emphasis and the number beside it stays --muted. */
 .chat-context-meter {
   /* Yields first: of everything in this row it is the only thing that is pure
      information, so it is what gives way when space runs out. */
@@ -1301,7 +1310,7 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
   fill: none; stroke: var(--border); stroke-width: 2;
 }
 .chat-context-meter__ring .chat-context-meter__arc {
-  fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round;
+  fill: none; stroke: var(--fg); stroke-width: 2; stroke-linecap: round;
   transition: stroke-dasharray 180ms ease;
 }
 .chat-context-meter__pct {
