@@ -627,7 +627,7 @@ Ordered so that each step is observable before the next one is trusted. The
 rule for the whole sequence: **nothing runs unattended until the thing before
 it has run attended, and been watched.**
 
-### Phase 0: stop lying (a day)
+### Phase 0: stop lying (a day of edits)
 
 No new capability. Every item here removes a control that does nothing or a
 label that is false.
@@ -643,7 +643,7 @@ label that is false.
   is actually decided. Deleting it in phase 0 would only mean rewriting it in
   phase 3.
 
-### Phase 1: make readiness visible where it is decided (a day)
+### Phase 1: make readiness visible where it is decided (a day of edits, a week of measuring)
 
 - Show the readiness line on the ticket page and in the chat's file-a-ticket
   card, at the moment of filing, not only at approval.
@@ -757,7 +757,7 @@ best-specified escalation contract in a shipped product:
   only counts when it is written into the ticket body. Same rule, and it should
   be stated once rather than twice.
 
-### Phase 4: supervised unattended execution (a week)
+### Phase 4: supervised unattended execution (a week at least, and the runner is the operator's call)
 
 - Bring back the queue runner, one scope, `supervised`: runs land in
   `in_review` rather than committing to `done`.
