@@ -296,6 +296,27 @@ def _validated_run_target(dir_str: str) -> str:
     Raises HTTPException(400) carrying the gate's own stderr.
     """
     target = (dir_str or "").strip()
+    # A SHAPE CHECK BEFORE THE POLICY GATE. `assert_run_target` answers "is this
+    # tree PERMITTED", and it correctly says nothing about whether the path is a
+    # working tree at all. But `dir` is free text from a form, and the first
+    # thing a sweep does with it is `tasks.next_ready(dir)`, which CREATES
+    # `.tasks.json` and `TODO.md` in whatever directory it is handed. So a typo
+    # started a sweep against an arbitrary path and left two files there.
+    #
+    # This is not an allowlist and it is not a permission (single-operator
+    # system): it refuses a path that is not a directory, and one that is
+    # neither an existing task store nor a git worktree, because neither can be
+    # a tree anyone meant to name.
+    if not target:
+        raise HTTPException(400, "no working tree named")
+    p = Path(target)
+    if not p.is_dir():
+        raise HTTPException(400, f"not a directory: {target}")
+    if not ((p / ".tasks.json").exists() or (p / ".git").exists()):
+        raise HTTPException(
+            400, f"{target} is neither a task store nor a git worktree, so it is "
+                 "not a tree to sweep. Starting one here would create a task "
+                 "store in it.")
     if not DEV_MODE_GATE.exists():
         raise HTTPException(500, f"gate missing: {DEV_MODE_GATE}")
     script = (
@@ -386,7 +407,21 @@ async def queue_runner_stop(dir: str | None = None):
     This no longer engages the brake either. Stopping the worker you started is
     not a statement about whether unattended work is permitted, and conflating
     them meant a Stop left a global policy flag set that nothing on screen
-    connected back to the button that set it."""
+    connected back to the button that set it.
+
+    `dir` IS REQUIRED IN PRACTICE even though the parameter is optional, and it
+    is refused rather than defaulted. Runners are per tree: the lock and the
+    pidfile are both keyed on it. A missing `dir` used to resolve to
+    WORKSHOP_ROOT, so a caller who had started a runner on `projects/birds` and
+    then stopped without naming it killed the PLATFORM repo's runner (or nothing
+    at all) and got a "stopped" answer back. Start requires a named tree; a
+    per-tree Start with a Stop that guesses is worse than either.
+    """
+    if not (dir or "").strip():
+        raise HTTPException(
+            400, "name the tree to stop: runners are per tree, and stopping "
+                 "an unnamed one would target whichever tree happens to be the "
+                 "default rather than the one you started")
     state = _queue_runner_state(dir)
     pid = state.get("pid")
     if pid:

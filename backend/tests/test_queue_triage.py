@@ -468,9 +468,15 @@ def test_every_ticket_is_reported_as_it_is_decided(root: Path, monkeypatch) -> N
 
     seen: list[dict] = []
     out = triager.run_queue_triage(SCOPE, dry_run=True, progress=seen.append)
-    assert len(seen) == out["looked_at"] == 4
+    # Everything CONSIDERED reports, including the blocked one...
+    assert len(seen) == 4
     assert [r["decision"] for r in seen].count("skipped") == 1
     assert all(r.get("title") for r in seen)
+    # ...but `looked_at` is the MODEL-CALL budget, and a blocked ticket costs no
+    # call. These two used to be asserted equal, which is exactly the conflation
+    # that let permanently-blocked tickets eat the per-pass budget forever.
+    assert out["looked_at"] == 3
+    assert out["already_blocked"] == 1
 
 
 def test_the_queue_vocabulary_matches_the_stores(root: Path) -> None:
@@ -478,3 +484,56 @@ def test_the_queue_vocabulary_matches_the_stores(root: Path) -> None:
     assert triager.MAX_QUEUE_TICKETS_PER_PASS == 20
     assert triager.MAX_SPLIT_PER_PASS == 5
     assert triager.MAX_UNDERSPECIFIED_PER_PASS == 5
+
+
+# --- the starvation wall ------------------------------------------------------
+# A blocked ticket is deliberately left UNMARKED (a second question would clobber
+# the first), so it stays `triage_due` forever. While it was skipped INSIDE the
+# loop it still consumed one of the twenty look slots, and candidates sort
+# oldest-first, so the permanent ones sorted to the front. Once twenty `todo`
+# tickets carried an unanswered block, every later pass decided nothing, for
+# good, and a ticket filed after the wall formed was never reached.
+#
+# The triager builds that wall by itself: it writes `awaiting` on a `todo` ticket
+# without changing status, five per pass.
+
+def test_blocked_tickets_do_not_consume_the_look_budget(root: Path, monkeypatch) -> None:
+    _stub(monkeypatch, THIN)
+    blocked = [_thin_ticket(root, i) for i in range(triager.MAX_QUEUE_TICKETS_PER_PASS)]
+    for t in blocked:
+        tasks.update(root, t["id"], awaiting={"ask": "Which one?", "kind": "missing-info"})
+    fresh = _thin_ticket(root, 99)
+
+    out = triager.run_queue_triage(SCOPE, dry_run=True)
+    assert out["already_blocked"] == triager.MAX_QUEUE_TICKETS_PER_PASS
+    assert out["looked_at"] == 1, "the wall ate the budget"
+    assert [d["id"] for d in out["decisions"] if d["decision"] != "skipped"] == [fresh["id"]]
+
+
+def test_a_wall_of_blocked_tickets_never_starves_a_later_arrival(root: Path, monkeypatch) -> None:
+    """The reproduction, end to end: build the wall, then file work behind it."""
+    _stub(monkeypatch, THIN)
+    for i in range(triager.MAX_QUEUE_TICKETS_PER_PASS + 5):
+        t = _thin_ticket(root, i)
+        tasks.update(root, t["id"], awaiting={"ask": "Which one?", "kind": "missing-info"})
+    later = _thin_ticket(root, 500)
+    out = triager.run_queue_triage(SCOPE, dry_run=False)
+    assert out["decided"] == 1
+    assert tasks.triage_due(tasks.get_task(root, later["id"])) is False
+
+
+def test_answering_a_block_brings_the_ticket_back(root: Path, monkeypatch) -> None:
+    """Clearing `awaiting` is what re-admits it. Editing the body alone does NOT,
+    even though it moves the spec hash: that was the escape the old comment
+    claimed and the store does not provide."""
+    _stub(monkeypatch, THIN)
+    t = _thin_ticket(root, 1)
+    tasks.update(root, t["id"], awaiting={"ask": "Which one?", "kind": "missing-info"})
+    assert triager.run_queue_triage(SCOPE, dry_run=True)["looked_at"] == 0
+
+    tasks.update(root, t["id"], body="Objective: rewritten entirely, still blocked.")
+    assert triager.run_queue_triage(SCOPE, dry_run=True)["looked_at"] == 0, \
+        "a body edit must not re-admit a ticket that is still waiting on a person"
+
+    tasks.update(root, t["id"], awaiting={})
+    assert triager.run_queue_triage(SCOPE, dry_run=True)["looked_at"] == 1

@@ -136,7 +136,7 @@ class TestTheAgenticArgvActuallyDenies:
         assert set(mcp_json(cmd)) == {"plaid"}
         assert cmd.count("--permission-mode") == 1
 
-    def test_never_chosen_still_inherits_rather_than_pinning(self, host_servers):
+    def test_never_chosen_still_inherits_rather_than_pinning(self, two_users, host_servers):
         # This used to assert "no MCP flags at all", as byte-identical proof that
         # the non-operator gate had not moved the operator's own chats. It now
         # asserts the property that actually mattered in that claim.
@@ -152,7 +152,13 @@ class TestTheAgenticArgvActuallyDenies:
         # --strict-mcp-config, so the CLI still INHERITS the operator's other
         # servers rather than being pinned to a list; and the config we add
         # hands out nothing else.
-        cmd, _env = build_streaming._build_cmd(_agentic_meta(str(host_servers)))
+        # An owner must be pinned, as auth does on a real turn: an UNOWNED turn
+        # deliberately gets no server at all (see the next test).
+        ownership.set_current_owner(two_users["op"]["id"])
+        try:
+            cmd, _env = build_streaming._build_cmd(_agentic_meta(str(host_servers)))
+        finally:
+            ownership.clear_current_owner()
         assert "--strict-mcp-config" not in cmd
         assert set(mcp_json(cmd)) == {"workshop"}, (
             "the additive config must carry the search server and nothing else; "
@@ -180,3 +186,15 @@ class TestTheAgenticArgvActuallyDenies:
         meta.pop("mcp_selection", None)
         cmd, _env = build_streaming._build_cmd(meta)
         assert "--strict-mcp-config" not in cmd
+
+    def test_an_unowned_turn_gets_no_search_server_at_all(self, two_users, host_servers):
+        """The workshop server is OWNER-SCOPED and the config builder's default
+        owner is the operator, so a turn with nothing pinned would be handed the
+        operator's notes, tickets and chats — and pinning it as a side effect
+        would turn ownership's documented fail-closed OwnerUnset into a silent
+        read of those stores for the rest of the context. No owner, no server."""
+        ownership.clear_current_owner()
+        cmd, _env = build_streaming._build_cmd(_agentic_meta(str(host_servers)))
+        assert "--mcp-config" not in cmd
+        assert ownership.owner_or_none() is None, "building a config pinned an owner"
+        assert "--permission-mode" in cmd

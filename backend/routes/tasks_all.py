@@ -154,7 +154,12 @@ def _with_triage(rec: dict, by_id: dict[str, dict],
     # too, so resolving it here would make a row claim a blocker the queue does
     # not act on. Pure and in-memory (no store read), so it costs one regex pass
     # per row on a list that is already loaded.
-    rec["readiness"] = ticket_readiness.check(rec, known_ids=set(by_id))
+    # `by_id.keys()` rather than `set(by_id)`: this runs per ROW, so building a
+    # fresh set of every id in the scope each time is O(n^2) on a polled
+    # endpoint. Measured at 98 tickets it costs 0.09ms, so this is tidiness
+    # rather than a fix, but the shape is the kind that only ever gets worse.
+    # `check` only does membership tests on it, and a KeysView supports those.
+    rec["readiness"] = ticket_readiness.check(rec, known_ids=by_id.keys())
     return rec
 
 

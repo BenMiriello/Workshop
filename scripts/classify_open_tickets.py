@@ -23,6 +23,12 @@ existing dead-letter semantics; `next_ready` already ignores it; `state_type`
 already maps it to `backlog`; and it is reversible with one click. The tickets
 stay visible and stay findable.
 
+WHAT IT DOES NOT COVER, so nobody has to discover it later:
+  * Only `status == "todo"`. A `draft` approved into `todo` later carries
+    `execution: None` and is therefore never picked up unattended, and nothing
+    re-runs this script for it. Re-run it after approving drafts.
+  * Only the `workshop` and dev scopes (see `_stores`), not `project:*`/`app:*`.
+
 THIS IS AN OPERATION, NOT A SERVICE, and not an autonomous one. It PRINTS by
 default and writes only under `--apply`, because the operator reviews the table
 first. The heuristic is deliberately biased toward `external` and `judgement`:
@@ -54,21 +60,48 @@ PARK_REASON = "host administration; not agent-executable"
 # worker does not have and cannot acquire. Word-boundary matched so "rootdir" or
 # a passing mention of "password reset" in prose does not trip it.
 #
-# `root` carries a negative lookbehind for "non-": the phrase "run it as a
-# non-root user" is the OPPOSITE of needing root, and it appears in exactly the
-# container-hardening tickets that are ordinary code work. Without it, SEC-A6
-# ("add a non-root user to generated compose files", a one-file change to
-# `compose_gen.py`) classified as external and would have been parked.
+# PHRASES, NOT THE BARE WORD `root`. This started as `\broot\b` with a
+# negative lookbehind for "non-", and that was far too broad: "root" is everyday
+# engineering vocabulary. Measured misclassifications, every one of them ordinary
+# code work that `--apply` would have PARKED with a false blocked_reason:
+#
+#     "Fix the root cause of the duplicate-chat bug"
+#     "Move the project root resolution into paths.py"
+#     "Serve the doc root from dist"
+#     "the store root is counted twice by a glob"
+#     "Fix chown handling in the installer"
+#
+# This repo's own knowledge index has a note titled "Chat bugs need root-cause
+# fixes"; a ticket quoting it would have been parked as host administration.
+#
+# THE TWO DIRECTIONS ARE NOT SYMMETRIC, which is why this one gets the precision.
+# A missed `external` costs one wasted unattended run that fails and releases. A
+# false `external` mutates status to `parked`, writes a reason that is not true,
+# and (because `tasks.update` clears `awaiting` on any status outside
+# blocked/in_review) silently discards a pending question. So `root` now has to
+# appear in a phrase that actually means the privilege.
 _EXTERNAL_BODY = re.compile(
-    r"\b(sudo|(?<!non-)(?<!non)root|ip6?tables|ufw|systemctl\s+(?:enable|disable)|"
-    r"chmod\s+\d|chown|gpasswd|usermod|"
-    r"needs?\s+(?:root|the\s+operator|an?\s+operator\s+secret)|"
-    r"another\s+host\s+user|vendor\s+console|stack\s+owner)\b",
+    r"(?:"
+    r"\bsudo\b"
+    r"|\bas\s+root\b|\bneeds?\s+root\b|\brequires?\s+root\b|\broot\s+access\b"
+    r"|\broot\s+privileges?\b|\broot-?only\b|\broot\s+password\b|\bbecome\s+root\b"
+    r"|\brun\s+as\s+root\b|\broot\s+shell\b"
+    r"|\bip6?tables\b|\bufw\b|\bgpasswd\b|\busermod\b|\bsudoers\b"
+    r"|\bsystemctl\s+(?:enable|disable)\b"
+    r"|\bsudo\s+cho(?:wn|wn)\b"
+    r"|\bneeds?\s+the\s+operator\b|\ban?\s+operator\s+secret\b"
+    r"|\banother\s+host\s+user\b|\bvendor\s+console\b|\bstack\s+owner\b"
+    r")",
     re.IGNORECASE,
 )
-# A title that ENDS in a parenthetical privilege note, the convention the
-# security audit used: "[SEC-M3] sshd: disable password authentication (root)".
-_EXTERNAL_TITLE = re.compile(r"\((?:root|operator|manual)\)\s*$", re.IGNORECASE)
+# A parenthetical privilege note ANYWHERE in the title, the convention the
+# security audit used. Both of these are real and only one ends the line:
+#   "[SEC-M3] sshd: disable password authentication (root)"
+#   "[SEC-L5] Hygiene (root): Samba restrict anonymous ..."
+# This was end-anchored, which missed the second and let a genuinely
+# root-requiring ticket read as `code`. A bare "(root)" in a title is not
+# ambiguous the way the loose word `root` in a body is, so it needs no context.
+_EXTERNAL_TITLE = re.compile(r"\((?:root|operator|manual)\)", re.IGNORECASE)
 
 # The output is a decision, a design or an audit: there is no diff that finishes
 # it, so a reviewer gate cannot tell whether it is done.
@@ -104,7 +137,15 @@ def classify(task: dict) -> tuple[str, str]:
 
 
 def _stores(only: str | None) -> list[tuple[str, Path]]:
-    """Every non-scratch store, deduplicated by RESOLVED path.
+    """`workshop` plus every dev scope, deduplicated by RESOLVED path.
+
+    NOT every store in the tree, which is what this used to claim. It is
+    `["workshop"] + task_scope.dev_scopes()`, which today resolves to exactly two
+    directories: `shared/queue` and the repo root. A `project:*` or `app:*` store
+    is NOT classified, so its tickets keep `execution: None` and are invisible to
+    unattended dispatch. That is the fail-closed direction, and it is correct
+    behaviour rather than a bug, but it is not what "every non-scratch store"
+    told a reader.
 
     Deduplication is not cosmetic. An earlier count of this same queue reported
     50 open tickets at 20% readiness, which read as the backlog degrading; it was

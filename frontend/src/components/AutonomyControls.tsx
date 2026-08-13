@@ -25,12 +25,15 @@ type AutonomyStatus = {
   cron_autonomy: {
     disabled: boolean;
     disabled_at: string | null;
-    flag_path: string;
+    // Optional because the server STOPPED SENDING IT. `autonomy_status` reads
+    // only `autonomy_override.read()` now; there is no second flag file to
+    // report a path for. It was declared required here, so the type asserted a
+    // field that never arrives and TypeScript could not see the lie.
+    flag_path?: string;
   };
   // 2026-07-18 canonical off-switch: JSON overlay at .runtime/autonomy-override.json.
-  // The `disabled` boolean above is truthy if EITHER the legacy AUTONOMY_DISABLED
-  // flag file OR the overlay says engaged, so the row below stays a single truth
-  // for the operator; the toggle only ever writes to the overlay endpoint.
+  // `disabled` above IS that overlay, and nothing else: the legacy
+  // AUTONOMY_DISABLED flag file is gone and the endpoint no longer unions it in.
   override?: {
     engaged: boolean;
     reason?: string | null;
@@ -119,6 +122,12 @@ export default function AutonomyControls() {
   // a tree is named. Null until then, and the row says so rather than reporting
   // the platform repo's lock as if it were the answer for every scope.
   const [scopeRunning, setScopeRunning] = useState<boolean | null>(null);
+  // A FAILED PROBE IS NOT "NOT RUNNING". Both used to collapse into
+  // `scopeRunning = null`, which renders the Start button, so a resident worker
+  // whose probe merely failed offered no way to stop it, the dot painted
+  // `stopped`, and the word beside it said `unknown`. Two answers to one
+  // question, in one element, and no error on screen.
+  const [scopeProbeFailed, setScopeProbeFailed] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -150,13 +159,17 @@ export default function AutonomyControls() {
   const loadScope = useCallback(async () => {
     if (!scope) {
       setScopeRunning(null);
+      setScopeProbeFailed(false);
       return;
     }
     try {
       const r = await fetch(`/api/queue/runner?dir=${encodeURIComponent(scope)}`);
-      setScopeRunning(r.ok ? !!(await r.json()).running : null);
+      if (!r.ok) throw new Error(String(r.status));
+      setScopeRunning(!!(await r.json()).running);
+      setScopeProbeFailed(false);
     } catch {
       setScopeRunning(null);
+      setScopeProbeFailed(true);
     }
   }, [scope]);
 
@@ -196,10 +209,19 @@ export default function AutonomyControls() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ reason: "Stop all, from Settings" }),
       });
-      await fetch(
-        scope ? `/api/queue/runner/stop?dir=${encodeURIComponent(scope)}` : "/api/queue/runner/stop",
-        { method: "POST" },
-      );
+      // ONLY A NAMED TREE. Runners are per tree, and an unnamed stop used to
+      // resolve server-side to the platform repo: start a runner on
+      // `projects/birds`, reload the page (which clears the picker), hit Stop
+      // all, and the brake engaged, the GPU unloaded, the birds runner kept
+      // working, and the panel reported it stopped. A control that lies,
+      // shipped by the change whose whole purpose is deleting controls that lie.
+      //
+      // The brake still goes on, which is what actually stops the NEXT sweep
+      // anywhere. The dialog says which half happened.
+      if (scope) {
+        await fetch(`/api/queue/runner/stop?dir=${encodeURIComponent(scope)}`,
+          { method: "POST" });
+      }
       await fetch("/api/ollama/unload", { method: "POST" });
       await load();
       await loadScope();
@@ -334,8 +356,12 @@ export default function AutonomyControls() {
           cleared the brake, so it moved a global policy and started nothing. */}
       <Row label="queue runner">
         <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-          <StatusDot status={scopeRunning ? "running" : "stopped"}>
-            {scope === "" ? "pick a tree" : scopeRunning == null ? "unknown" : scopeRunning ? "resident" : "not running"}
+          {/* `warn` when the probe failed: the dot must not claim `stopped`
+              while the word beside it says the answer is unknown. */}
+          <StatusDot status={scopeRunning ? "running" : scopeProbeFailed ? "warn" : "stopped"}>
+            {scope === "" ? "pick a tree"
+              : scopeProbeFailed ? "unknown"
+              : scopeRunning ? "resident" : "not running"}
           </StatusDot>
           <Select
             aria-label="Tree to run in"
@@ -344,13 +370,18 @@ export default function AutonomyControls() {
             onChange={(e) => { setScope(e.target.value); setRunnerError(null); }}
           >
             <option value="">
-              {targets == null ? "loading…" : targets.length === 0 ? "no trees registered" : "pick a tree"}
+              {targetsFailed ? "could not load"
+                : targets == null ? "loading…"
+                : targets.length === 0 ? "no trees registered" : "pick a tree"}
             </option>
             {(targets || []).map((t) => (
               <option key={t.key} value={t.dir}>{t.label}</option>
             ))}
           </Select>
-          {scopeRunning ? (
+          {/* Stop is offered when a runner IS resident, and also when we could
+              not find out. Showing Start for a tree that may well have a live
+              worker leaves no way to stop it. */}
+          {(scopeRunning || (scopeProbeFailed && scope !== "")) ? (
             <Button
               size="sm"
               variant="danger-ghost"
@@ -391,6 +422,15 @@ export default function AutonomyControls() {
           action={<Button size="sm" variant="ghost" onClick={load}>Retry</Button>}
         >
           Could not load the list of trees.
+        </Notice>
+      )}
+      {scopeProbeFailed && (
+        <Notice
+          tone="warn"
+          where="/api/queue/runner"
+          action={<Button size="sm" variant="ghost" onClick={loadScope}>Retry</Button>}
+        >
+          Could not tell whether a runner is resident in that tree.
         </Notice>
       )}
       {runnerError && <Notice tone="error">{runnerError}</Notice>}
@@ -435,7 +475,9 @@ export default function AutonomyControls() {
         onCancel={() => setConfirmStopAll(false)}
         onConfirm={onStopAll}
         title="Stop all autonomy and free GPU?"
-        body="Stops the resident queue runner, switches unattended work off, and frees the GPU. A ticket half-worked when the runner stops goes back on the queue. Starting it again reloads the models, which takes about 20 seconds."
+        body={scope
+          ? "Stops the runner in the selected tree, switches unattended work off, and frees the GPU. A ticket half-worked when the runner stops goes back on the queue. Starting it again reloads the models, which takes about 20 seconds."
+          : "Switches unattended work off and frees the GPU. No tree is selected, so no resident runner is stopped: pick one first if a worker is running. Starting the models again takes about 20 seconds."}
         confirmLabel="Stop all"
         busy={busy === "stop-all"}
       />

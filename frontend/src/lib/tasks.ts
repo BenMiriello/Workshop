@@ -362,8 +362,10 @@ export type Task = {
   // to a non-empty `blocked_by`. That is the documented scheduler gap
   // (ticket-system-consolidation-2026-08-12 §3.2), not a contradiction.
   blocked_by?: TaskLink[];
-  // Attached by the ticket detail endpoint only (it needs the scope's id set to
-  // resolve dependencies), so it is absent on list rows.
+  // On BOTH the detail response and every list row (`_with_triage`). It used to
+  // be detail-only, which is why the list could not show a readiness marker
+  // without refetching each row. Dependencies resolve against the ticket's OWN
+  // scope in both places, so a row and the page it opens always agree.
   readiness?: TicketReadiness;
   // Also detail-only: the graph edges resolved to real, linkable tickets.
   links?: TaskLinks;
@@ -508,15 +510,46 @@ function readinessItem(why: string): string {
 }
 
 // Two gaps usually open the same way ("does not say ..."), and repeating that
-// opener is what turns a line into a list. Dropped only when the run of shared
-// words is long enough to be a real opener rather than a coincidental "the".
+// opener is what turns a line into a list.
+//
+// THE SHARED PART IS THE VERB, NOT WHATEVER WORDS HAPPEN TO MATCH. This used to
+// strip the longest common word prefix, gated on "two or more words is a real
+// opener". `objective` and `acceptance` share FOUR:
+//
+//   does not say what this is trying to achieve
+//   does not say what done looks like
+//
+// so the second was cut to "done looks like" and the line read "Does not say
+// what this is trying to achieve, or done looks like." Those two are the most
+// common pair the checker emits, and it is the first sentence a task-proposal
+// card shows. Matching on the verb list can only ever remove a verb.
 function withoutSharedOpener(clause: string, previous: string): string {
-  const a = previous.split(" ");
-  const b = clause.split(" ");
-  let i = 0;
-  while (i < a.length && i < b.length && a[i] === b[i]) i++;
-  return i >= 2 ? b.slice(i).join(" ") : clause;
+  for (const v of READINESS_VERBS) {
+    if (previous.startsWith(v) && clause.startsWith(v)) return clause.slice(v.length);
+  }
+  return clause;
 }
+
+// The checks that REFUSE a run, mirroring `ticket_readiness.BLOCKING`. Everything
+// else is advice. They are separated here because they are a different kind of
+// statement and reading them as one was wrong twice over:
+//
+//  1. Grammar. The dependencies `why` is "it depends on a ticket that does not
+//     exist: <id>" — it has no strippable verb, so listing it produced "Three
+//     things are unspecified: what done looks like, ... and depends on a ticket
+//     that does not exist: T-4821."
+//  2. Signal. `POST /run` returns 400 on these two and on nothing else, so
+//     rendering them in the same ink as five advisory sentences told the
+//     operator nothing about which one stops the button.
+const READINESS_BLOCKING = ["title", "dependencies"];
+
+export const readinessBlockers = (gaps: ReadinessGap[] | undefined | null) =>
+  (gaps ?? []).filter((g) => READINESS_BLOCKING.includes(g?.check));
+
+// `error` when a gap actually refuses the run, `warn` when it is advice. Feeds
+// `Notice tone=`, which is a different vocabulary from the five status kinds.
+export const readinessTone = (gaps: ReadinessGap[] | undefined | null):
+  "warn" | "error" => (readinessBlockers(gaps).length > 0 ? "error" : "warn");
 
 const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -530,8 +563,22 @@ const capitalize = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
 //
 // Empty for no gaps, so a caller can render on truthiness.
 export function readinessLine(gaps: ReadinessGap[] | undefined | null): string {
-  const list = (gaps ?? []).filter((g) => (g?.why ?? "").trim());
-  if (list.length === 0) return "";
+  const all = (gaps ?? []).filter((g) => (g?.why ?? "").trim());
+  if (all.length === 0) return "";
+
+  // A blocking gap leads, as its own sentence, and says that it blocks. Its
+  // `why` is already a full clause with a subject ("the ticket has no title",
+  // "it depends on a ticket that does not exist: T-4821"), so it reads after a
+  // colon and does not survive being cut into a list of noun phrases.
+  const blocking = readinessBlockers(all);
+  if (blocking.length > 0) {
+    const lead = `Cannot run yet: ${blocking[0].why.trim()}.`;
+    const rest = all.length - 1;
+    if (rest === 0) return lead;
+    return `${lead} ${rest} other thing${rest === 1 ? "" : "s"} unspecified.`;
+  }
+
+  const list = all;
   const first = readinessClause(list[0].why);
   if (list.length === 1) return `${capitalize(first)}.`;
   if (list.length === 3) {

@@ -56,6 +56,7 @@ import {
   scopeLabel,
   ticketHref,
   readinessLine,
+  readinessTone,
 } from "../lib/tasks";
 import {
   DEFAULT_STATUS_FILTER,
@@ -263,7 +264,12 @@ export default function Work() {
               // dot's `title` and nothing else: a sentence per row would wreck
               // the rhythm the list is built on. The full line is on the ticket
               // page and on the card that files one.
-              const notReady = readinessLine(t.readiness?.missing);
+              // Only while the ticket is still work. Readiness is advice about
+              // handing it to a worker; on a done, cancelled or parked row it
+              // is a warn dot on history, and 74% of the store fails the
+              // acceptance check.
+              const openRow = !["done", "cancelled", "parked"].includes(t.status ?? "");
+              const notReady = openRow ? readinessLine(t.readiness?.missing) : "";
               return (
                 <li key={`${t.scope}:${t.id}`}>
                   {/* A link, not a row with an onClick: it opens in a new tab on
@@ -286,12 +292,33 @@ export default function Work() {
                           "which of blocked / to do / done is this" is exactly
                           what the list is read for. A word, not a second chip:
                           the dot beside the title already carries the colour. */}
-                      <span>{taskStatusLabel(t.status)}</span>
-                      {notReady && (
-                        <span className="ws-listrow__mark" title={notReady} aria-label={notReady}>
-                          <StatusDot status="warn">{null}</StatusDot>
-                        </span>
-                      )}
+                      {/* The readiness mark rides INSIDE the state word's span,
+                          not beside it as a second meta child. Every `> * + *`
+                          in this line takes a middot separator, so a sibling
+                          rendered "todo · ·● · workshop" — a middot immediately
+                          left of a dot. It is a mark ON the state, not another
+                          fact, so this is also what it means.
+
+                          `title` carries the sentence for the pointer; the
+                          aria-label is SHORT on purpose. The full line as an
+                          aria-label appends 60+ characters of prose to the row
+                          link's accessible name on every unready row. The name
+                          says a gap exists; the page says what it is. */}
+                      <span>
+                        {taskStatusLabel(t.status)}
+                        {notReady && (
+                          <span
+                            className="ws-listrow__mark"
+                            style={{ marginLeft: "var(--space-1)" }}
+                            title={notReady}
+                            aria-label={readinessTone(t.readiness?.missing) === "error"
+                              ? "cannot run yet" : "not fully specified"}
+                          >
+                            <StatusDot status={readinessTone(t.readiness?.missing) === "error"
+                              ? "danger" : "warn"}>{null}</StatusDot>
+                          </span>
+                        )}
+                      </span>
                       {/* Only when the list spans scopes. Filtered to one, the
                           column repeats the filter on every row. */}
                       {scope === ALL_SCOPES && (

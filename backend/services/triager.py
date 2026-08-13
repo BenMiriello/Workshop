@@ -674,7 +674,19 @@ def _one_question(blockers: list[str], check: str) -> str:
     if "?" in s:
         return s[: s.index("?") + 1][:400]
     head = _SENTENCE_END.split(s)[0].rstrip(". ")
-    return f"{head}. {fallback}"[:400]
+    # BUDGET THE CONTEXT, NOT THE RESULT. Truncating the joined string at 400
+    # dropped the fallback entirely when `head` was long, leaving an ask that is
+    # a mid-word fragment with NO question mark in it — and that string is what
+    # the operator's inbox renders. `_clean` already caps a blocker at 400, so
+    # one unbroken sentence reaches exactly that case. The question is the part
+    # that has to survive, so it is reserved first and the context takes what is
+    # left.
+    room = 400 - len(fallback) - 2  # ". " between them
+    if room < 40:
+        return fallback  # no room for useful context; ask the plain question
+    if len(head) > room:
+        head = head[:room].rsplit(" ", 1)[0].rstrip(",;: ")
+    return f"{head}. {fallback}" if head else fallback
 
 
 def _awaiting_record(scope_key: str, check: str, ask: str, why: str) -> dict:
@@ -729,10 +741,36 @@ def run_queue_triage(scope_key: str, *, dry_run: bool = True,
         summary["skipped"] = "no task store for this scope"
         return summary
 
+    def _waiting_on_a_person(t: dict) -> bool:
+        block = t.get("awaiting") or {}
+        return bool(block) and not block.get("dismissed")
+
     all_tasks = tasks.list_tasks(root)
     known_ids = {t["id"] for t in all_tasks}
-    candidates = [t for t in all_tasks
-                  if t.get("status") == "todo" and tasks.triage_due(t)]
+    due = [t for t in all_tasks
+           if t.get("status") == "todo" and tasks.triage_due(t)]
+
+    # A ticket already waiting on an unanswered question is NOT A CANDIDATE, and
+    # it is filtered HERE rather than skipped inside the loop. That ordering is
+    # the whole fix.
+    #
+    # THE BUG THIS PREVENTS. Such a ticket is deliberately left unmarked (a
+    # second question would clobber the first), so it stays `triage_due`
+    # forever. Skipping it inside the loop meant it still consumed one of the
+    # twenty look slots, and because candidates sort oldest-first, the permanent
+    # ones sort to the front. Once twenty `todo` tickets carried an unanswered
+    # block the pass decided NOTHING, every pass, for good; a ticket filed after
+    # the wall formed was never reached. The triager manufactures that state by
+    # itself: it writes `awaiting` on a `todo` ticket WITHOUT changing status,
+    # five per pass, so four passes over a 21-ticket queue is enough.
+    #
+    # Answering is what brings one back: `POST /review` clears `awaiting`. Note
+    # that editing the body alone does NOT, even though it moves the spec hash,
+    # which is why "it comes back when the answer lands" was not an escape.
+    blocked = [t for t in due if _waiting_on_a_person(t)]
+    candidates = [t for t in due if not _waiting_on_a_person(t)]
+    summary["already_blocked"] = len(blocked)
+
     # Oldest first, so a capped pass always makes the same kind of progress and
     # a ticket can never be starved by newer arrivals.
     candidates.sort(key=lambda t: (str(t.get("created") or ""), t["id"]))
@@ -740,7 +778,6 @@ def run_queue_triage(scope_key: str, *, dry_run: bool = True,
     summary["due"] = len(candidates)
     summary["looked_at"] = len(looked_at)
     summary["deferred"] = len(candidates) - len(looked_at)
-
     review = reviewer or _review_ticket
     split_filed = 0
     asked = 0
@@ -749,18 +786,27 @@ def run_queue_triage(scope_key: str, *, dry_run: bool = True,
         if progress is not None:
             progress(rec)
 
+    # Reported so a pass that looks idle can be told apart from a queue that is
+    # waiting on the operator. Without this the dry run just says "decided 0".
+    # They are reported but NOT looked at: `looked_at` is the model-call budget,
+    # and the whole point of the filter above is that these do not spend it.
+    for t in blocked:
+        skipped = {"id": t["id"], "title": str(t.get("title") or "")[:100],
+                   "decision": "skipped",
+                   "reason": "already waiting on an unanswered question"}
+        summary["decisions"].append(skipped)
+        note(skipped)
+
     for task in looked_at:
         tid = task["id"]
         title = str(task.get("title") or "")
         rec = {"id": tid, "title": title[:100]}
 
-        # Already waiting on a person. A second question would overwrite the
-        # first one, so this is a no-op with no mark: when the answer lands in
-        # the body (which is where an answer has to go to reach the next
-        # attempt) the spec hash moves and the ticket comes back due.
-        block = task.get("awaiting") or {}
-        if block and not block.get("dismissed"):
-            summary["already_blocked"] += 1
+        # Belt to the selection filter's braces. `looked_at` cannot contain a
+        # blocked ticket any more, so this only fires if the store changed under
+        # us mid-pass. It costs nothing and it must NOT consume a look slot,
+        # which is why the real filter is upstream.
+        if _waiting_on_a_person(task):
             rec.update(decision="skipped",
                        reason="already waiting on an unanswered question")
             note(rec)
@@ -825,26 +871,62 @@ def run_queue_triage(scope_key: str, *, dry_run: bool = True,
 
         child_ids: list[str] = []
         if not dry_run:
-            if awaiting is not None:
-                tasks.update(root, tid, awaiting=awaiting)
-            if verdict == "split":
-                for sub in subs:
-                    child = tasks.add(
-                        root, title=sub["title"], body=sub.get("body") or "",
-                        status="draft", parent=tid,
-                        # The request still traces to wherever the parent came
-                        # from; only the SPEC of the child was written here.
-                        source=task.get("source") or None,
-                        scoped_by=QUEUE_RAISED_BY,
-                    )
-                    child_ids.append(child["id"])
-                    known_ids.add(child["id"])
-                tasks.update(root, tid, evidence={
-                    "kind": "split",
-                    "ref": f"queue triage proposed {len(child_ids)} sub-tickets: "
-                           + ", ".join(child_ids),
-                })
-            tasks.update(root, tid, triage=mark)
+            # ALL-OR-NOTHING PER TICKET. The three writes below (children, the
+            # evidence line, the mark) are not one transaction, and the mark is
+            # last. A failure after the children land leaves the parent unmarked,
+            # so the next pass re-splits it and files a SECOND set of children —
+            # `tasks.add` is called directly here, so `task_dedup` never sees
+            # them and nothing else would catch it. An unhandled raise also
+            # escaped the whole function, so one bad ticket lost the summary and
+            # skipped every remaining ticket in the pass.
+            #
+            # So: roll the children back on any failure, record the ticket as an
+            # error (which leaves it due, correctly), and keep going.
+            try:
+                if awaiting is not None:
+                    tasks.update(root, tid, awaiting=awaiting)
+                if verdict == "split":
+                    for sub in subs:
+                        sub_title = str(sub.get("title") or "").strip()
+                        if not sub_title:
+                            # The engine guarantees a title; the injectable
+                            # `reviewer=` seam does not. Skip rather than raise.
+                            continue
+                        child = tasks.add(
+                            root, title=sub_title, body=sub.get("body") or "",
+                            status="draft", parent=tid,
+                            # The request still traces to wherever the parent came
+                            # from; only the SPEC of the child was written here.
+                            source=task.get("source") or None,
+                            scoped_by=QUEUE_RAISED_BY,
+                        )
+                        child_ids.append(child["id"])
+                        known_ids.add(child["id"])
+                    if len(child_ids) < 2:
+                        # Fewer than two survivors is not a split. Undo and treat
+                        # the ticket as `ok`, which is what the engine's own
+                        # downgrade would have done.
+                        for cid in child_ids:
+                            tasks.remove(root, cid)
+                        child_ids, verdict, subs = [], "ok", []
+                        mark["decision"] = "ok"
+                    else:
+                        tasks.update(root, tid, evidence={
+                            "kind": "split",
+                            "ref": f"queue triage proposed {len(child_ids)} sub-tickets: "
+                                   + ", ".join(child_ids),
+                        })
+                tasks.update(root, tid, triage=mark)
+            except Exception as e:  # noqa: BLE001 - one ticket must not lose the pass
+                for cid in child_ids:
+                    try:
+                        tasks.remove(root, cid)
+                    except Exception:  # noqa: BLE001 - best effort unwind
+                        pass
+                summary["errors"].append({"id": tid, "error": f"write failed: {str(e)[:180]}"})
+                rec.update(decision="error", reason=f"write failed: {str(e)[:180]}")
+                note(rec)
+                continue
 
         if verdict == "split":
             split_filed += 1

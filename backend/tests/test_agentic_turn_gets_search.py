@@ -25,7 +25,20 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import build_streaming as bs, paths  # noqa: E402
+from services import auth_store, build_streaming as bs, ownership, paths  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def owner():
+    """A turn has an owner pinned by auth. Without one the server is
+    deliberately NOT attached (see test_no_owner_gets_no_server), so every
+    other case here has to establish one."""
+    oid = auth_store.operator_id()
+    if oid is None:
+        pytest.skip("no operator bootstrapped on this instance")
+    ownership.set_current_owner(oid)
+    yield oid
+    ownership.clear_current_owner()
 
 
 def _meta(**over) -> dict:
@@ -94,3 +107,21 @@ def test_an_unavailable_server_does_not_kill_the_turn(monkeypatch) -> None:
     cmd, _ = bs._build_cmd(_meta())
     assert "--mcp-config" not in cmd
     assert "--permission-mode" in cmd
+
+
+def test_no_owner_gets_no_server() -> None:
+    """THE CROSS-ACCOUNT GUARD. The server is owner-scoped, and the config
+    builder's default owner is the OPERATOR. An unowned turn that fell back to
+    that default would be handed the operator's notes, tickets and chats, and
+    would silently pin the operator for the rest of the context. A turn with no
+    owner gets no search tool instead."""
+    ownership.clear_current_owner()
+    cmd, _ = bs._build_cmd(_meta())
+    assert "--mcp-config" not in cmd
+    assert "--permission-mode" in cmd, "the turn must still be runnable"
+
+
+def test_the_pinned_owner_is_the_caller(owner: int) -> None:
+    doc = _config_of(bs._build_cmd(_meta())[0])
+    env = (doc["mcpServers"]["workshop"].get("env") or {})
+    assert env.get("WORKSHOP_QUERY_OWNER") == str(owner)

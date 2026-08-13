@@ -6,7 +6,10 @@
 // line is DERIVED from those strings, so a test that made up its own wording
 // would prove nothing.
 import { describe, expect, it } from "vitest";
-import { executionLabel, proposalGaps, readinessLine, triageLabel } from "./tasks";
+import {
+  executionLabel, proposalGaps, readinessBlockers, readinessLine,
+  readinessTone, triageLabel,
+} from "./tasks";
 
 const WHY = {
   title: "the ticket has no title",
@@ -14,9 +17,22 @@ const WHY = {
   acceptance: "the ticket does not say what done looks like",
   entry_points: "the body does not say where to start",
   boundaries: "the ticket does not say which files it may change",
+  dependencies: "it depends on a ticket that does not exist: T-4821",
 };
 
+// The order `ticket_readiness.check` ACTUALLY appends gaps in. The first version
+// of this file passed gaps in a hand-picked order that the checker never emits,
+// which is why it never saw the objective+acceptance defect: those two share
+// four opening words and were the pair most likely to be produced together.
+const EMIT_ORDER: (keyof typeof WHY)[] = [
+  "title", "objective", "acceptance", "entry_points", "boundaries", "dependencies",
+];
+
 const gap = (check: keyof typeof WHY) => ({ check, why: WHY[check] });
+
+// Build a gap list the way the checker would, whatever order the caller lists.
+const gaps = (...checks: (keyof typeof WHY)[]) =>
+  EMIT_ORDER.filter((c) => checks.includes(c)).map(gap);
 
 describe("readinessLine", () => {
   it("is empty for a ready ticket", () => {
@@ -26,43 +42,80 @@ describe("readinessLine", () => {
   });
 
   it("says one gap as one sentence", () => {
-    expect(readinessLine([gap("acceptance")]))
+    expect(readinessLine(gaps("acceptance")))
       .toBe("Does not say what done looks like.");
   });
 
-  it("keeps the subject off a gap that does not open with one", () => {
-    expect(readinessLine([gap("title")])).toBe("Has no title.");
-  });
-
   it("joins two gaps without repeating the opener", () => {
-    expect(readinessLine([gap("acceptance"), gap("boundaries")]))
+    expect(readinessLine(gaps("acceptance", "boundaries")))
       .toBe("Does not say what done looks like, or which files it may change.");
   });
 
-  it("keeps the second clause whole when the two do not share an opener", () => {
-    expect(readinessLine([gap("title"), gap("acceptance")]))
-      .toBe("Has no title, or does not say what done looks like.");
+  it("drops only the shared VERB, never a shared object clause", () => {
+    // THE REGRESSION. objective and acceptance share four opening words
+    // ("does not say what"), and the old longest-common-prefix rule cut the
+    // second to "done looks like", producing "Does not say what this is trying
+    // to achieve, or done looks like." They are the pair the checker emits most
+    // often, and the first sentence a task-proposal card renders.
+    expect(readinessLine(gaps("objective", "acceptance")))
+      .toBe("Does not say what this is trying to achieve, "
+        + "or what done looks like.");
   });
 
   it("lists three gaps as things rather than as sentences", () => {
-    expect(readinessLine([gap("acceptance"), gap("boundaries"), gap("entry_points")]))
+    expect(readinessLine(gaps("acceptance", "entry_points", "boundaries")))
       .toBe("Three things are unspecified: what done looks like, "
-        + "which files it may change, and where to start.");
+        + "where to start, and which files it may change.");
   });
 
   it("counts the tail past two gaps", () => {
-    expect(readinessLine([
-      gap("acceptance"), gap("boundaries"), gap("entry_points"), gap("objective"),
-    ])).toBe("Does not say what done looks like, or which files it may change, and 2 more.");
+    expect(readinessLine(gaps("objective", "acceptance", "entry_points", "boundaries")))
+      .toBe("Does not say what this is trying to achieve, "
+        + "or what done looks like, and 2 more.");
+  });
+});
+
+describe("readinessLine, blocking gaps", () => {
+  // `title` and `dependencies` are the only two checks that REFUSE a run
+  // (ticket_readiness.BLOCKING; POST /run returns 400 on them and nothing else).
+  // They lead, they say they block, and they keep their own subject: the
+  // dependencies why has no strippable verb, so listing it as a noun phrase
+  // produced "Three things are unspecified: ... and depends on a ticket that
+  // does not exist: T-4821."
+  it("leads with a missing title and says it blocks", () => {
+    expect(readinessLine(gaps("title")))
+      .toBe("Cannot run yet: the ticket has no title.");
   });
 
-  it("counts every gap past the first two, not just the fourth", () => {
-    expect(readinessLine([
-      gap("acceptance"), gap("boundaries"), gap("entry_points"),
-      gap("objective"), gap("title"),
-    ])).toBe("Does not say what done looks like, or which files it may change, and 3 more.");
+  it("keeps the dependency id readable instead of listing it as a thing", () => {
+    expect(readinessLine(gaps("dependencies")))
+      .toBe("Cannot run yet: it depends on a ticket that does not exist: T-4821.");
   });
 
+  it("counts the advisory gaps after the blocking sentence", () => {
+    expect(readinessLine(gaps("acceptance", "boundaries", "dependencies")))
+      .toBe("Cannot run yet: it depends on a ticket that does not exist: T-4821."
+        + " 2 other things unspecified.");
+    expect(readinessLine(gaps("acceptance", "dependencies")))
+      .toBe("Cannot run yet: it depends on a ticket that does not exist: T-4821."
+        + " 1 other thing unspecified.");
+  });
+
+  it("reports the tone the caller should render", () => {
+    expect(readinessTone(gaps("acceptance", "boundaries"))).toBe("warn");
+    expect(readinessTone(gaps("dependencies"))).toBe("error");
+    expect(readinessTone(gaps("title", "acceptance"))).toBe("error");
+    expect(readinessTone([])).toBe("warn");
+  });
+
+  it("names which gaps actually block", () => {
+    expect(readinessBlockers(gaps("acceptance", "boundaries"))).toEqual([]);
+    expect(readinessBlockers(gaps("title", "acceptance")).map((g) => g.check))
+      .toEqual(["title"]);
+  });
+});
+
+describe("readinessLine, edges", () => {
   it("ignores a gap with no reason rather than emitting a bare period", () => {
     expect(readinessLine([{ check: "mystery", why: "  " }])).toBe("");
     expect(readinessLine([{ check: "mystery", why: "" }, gap("acceptance")]))

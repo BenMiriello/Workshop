@@ -1622,9 +1622,16 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
 def _build_cmd(meta: dict) -> tuple[list[str], dict]:
     """The claude argv for one turn, plus any env the tool surface needs.
 
-    Pure and total so the one coupling that cannot be got wrong — a permission
-    mode that can ask, sent without the channel to ask on — is testable without
-    spawning anything (tests/test_permission_channel.py)."""
+    Total, and CHEAP, but no longer pure. It used to say "pure and total"; the
+    full-agentic branch now builds the workshop MCP config, which reads the auth
+    db and scans the app catalog (measured: 220ms cold, 0.31ms warm). It still
+    spawns nothing and still returns the same argv for the same inputs, which is
+    what `tests/test_permission_channel.py` actually leans on: the one coupling
+    that cannot be got wrong, a permission mode that can ask sent without the
+    channel to ask on, stays testable without a process.
+
+    The one caller-visible precondition: the full-agentic branch attaches the
+    search server only when an owner is pinned. See that branch for why."""
     cmd: list[str] = [
         CLAUDE_CLI, "-p",
         "--model", meta["model"],
@@ -1696,20 +1703,31 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
         #
         # Never fatal. A missing launch spec means this turn runs without search,
         # exactly as it did before, rather than failing to start at all.
-        # The owner is pinned to THIS CALLER, not to the operator. The server is
-        # owner-scoped, and `mcp_config_json` defaults to the operator when given
-        # nothing — right for a background worker, wrong here. A non-operator is
-        # already routed away from this branch (routes/chat.py forces an empty
-        # `mcp_selection` for them), so this is belt-and-braces rather than the
-        # only thing standing between two accounts; but "handed the operator's
-        # index" is the exact failure this file's sibling test exists to catch,
-        # and it should not depend on a gate two modules away.
-        try:
-            from services import ownership
-            cmd.extend(["--mcp-config", llm_router.mcp_config_json(
-                ["workshop"], owner_id=ownership.owner_or_none())])
-        except Exception as e:  # noqa: BLE001 - a search tool is not worth a dead turn
-            log.warning("workshop MCP config unavailable for this turn: %s", e)
+        # The owner is pinned to THIS CALLER, and when there is no caller the
+        # server is simply not attached.
+        #
+        # This passed `owner_id=ownership.owner_or_none()` and claimed to pin the
+        # caller, which was false in exactly the case it was guarding: `None`
+        # means "use the default", and `mcp_config_json`'s default is
+        # `auth_store.operator_id()`. So an unowned turn got a server scoped to
+        # the OPERATOR's notes, tickets and chats, and `mcp_config_json` then
+        # called `set_current_owner` as a side effect, converting the documented
+        # fail-closed `OwnerUnset` into a silent read of the operator's stores
+        # for the rest of that context.
+        #
+        # A turn with no owner pinned does not get a search tool. That is the
+        # only answer that cannot serve one account's data to another, and the
+        # cost of being wrong is a turn without search, not a leak.
+        from services import ownership
+        _owner = ownership.owner_or_none()
+        if _owner is None:
+            log.debug("no owner pinned for this turn; not attaching the workshop server")
+        else:
+            try:
+                cmd.extend(["--mcp-config", llm_router.mcp_config_json(
+                    ["workshop"], owner_id=_owner)])
+            except Exception as e:  # noqa: BLE001 - a search tool is not worth a dead turn
+                log.warning("workshop MCP config unavailable for this turn: %s", e)
         cmd.extend(["--permission-mode", mode])
     # THE COUPLING THAT MATTERS. Every mode except bypass can stop and ask, and
     # without a channel to ask ON the CLI accepts the mode and then silently

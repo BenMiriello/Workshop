@@ -76,9 +76,16 @@ def client(tmp_path, monkeypatch):
 @pytest.fixture
 def tree(tmp_path):
     """An ordinary working tree: not the platform repo, so the gate permits it
-    whatever developer mode says."""
+    whatever developer mode says.
+
+    It carries a task store because the endpoint now requires the target to be
+    one (or a git worktree) before it will start anything. A bare directory is
+    refused: the first thing a sweep does is `tasks.next_ready(dir)`, which
+    CREATES `.tasks.json` and `TODO.md` in whatever it is handed, so a typo used
+    to start a sweep against an arbitrary path and leave two files in it."""
     d = tmp_path / "some-project"
     d.mkdir()
+    (d / ".tasks.json").write_text('{"version": 2, "tasks": []}')
     return str(d)
 
 
@@ -193,3 +200,49 @@ def test_the_key_matches_the_shell_derivation() -> None:
     # what is under test, not the tree.
     d = "/srv/some/tree"
     assert autonomy_routes._queue_key(d) == hashlib.md5((d + "\n").encode()).hexdigest()[:12]
+
+
+# --- the target has to be a tree ---------------------------------------------
+# `assert_run_target` answers "is this tree PERMITTED" and correctly says nothing
+# about whether the path is a working tree at all. But `dir` is free text from a
+# form, and a sweep's first act is `tasks.next_ready(dir)`, which CREATES a task
+# store in whatever directory it is handed. A typo therefore started a sweep
+# against an arbitrary path and left `.tasks.json` and `TODO.md` behind in it.
+
+class TestTheTargetMustBeATree:
+    def test_a_bare_directory_is_refused(self, client, spawned, tmp_path):
+        bare = tmp_path / "not-a-tree"
+        bare.mkdir()
+        r = client.post("/api/queue/runner/start", json={"dir": str(bare)})
+        assert r.status_code == 400
+        assert "task store" in r.text or "git worktree" in r.text
+        assert not spawned, "refused, but a watchdog was spawned anyway"
+        assert not (bare / ".tasks.json").exists(), "the refusal still created a store"
+
+    def test_a_path_that_is_not_a_directory_is_refused(self, client, tmp_path):
+        f = tmp_path / "a-file"
+        f.write_text("x")
+        r = client.post("/api/queue/runner/start", json={"dir": str(f)})
+        assert r.status_code == 400
+        assert "not a directory" in r.text
+
+    def test_a_git_worktree_with_no_store_yet_is_allowed(self, client, spawned, tmp_path):
+        """A fresh project bound to a repo has no `.tasks.json` until its first
+        ticket. Refusing it would be wrong."""
+        d = tmp_path / "fresh-repo"
+        (d / ".git").mkdir(parents=True)
+        r = client.post("/api/queue/runner/start", json={"dir": str(d)})
+        assert r.status_code == 200, r.text
+
+
+class TestStopNamesItsTree:
+    def test_stop_without_a_dir_is_refused(self, client):
+        """Runners are per tree. A missing `dir` used to resolve to the platform
+        repo, so stopping a `projects/birds` runner without naming it killed the
+        wrong one and reported success."""
+        r = client.post("/api/queue/runner/stop")
+        assert r.status_code == 400
+        assert "per tree" in r.text
+
+    def test_stop_with_a_dir_is_accepted(self, client, tree):
+        assert client.post(f"/api/queue/runner/stop?dir={tree}").status_code == 200

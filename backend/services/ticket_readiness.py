@@ -21,6 +21,7 @@ cannot be resolved is not underspecified, it is broken.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 
 from services import tasks, ticket_format
 
@@ -46,11 +47,14 @@ _ENTRY_POINT = re.compile(
 BLOCKING = ("title", "dependencies")
 
 
-def check(task: dict, *, known_ids: set[str] | None = None) -> dict:
+def check(task: dict, *, known_ids: Collection[str] | None = None) -> dict:
     """``{"ok": bool, "missing": [{"check", "why"}], "warnings": [str]}``.
 
     ``known_ids`` lets the dependency check resolve ids; omit it to skip that
-    check rather than fail it (a caller without the ticket list cannot know).
+    check rather than fail it. Only membership is tested, so a `dict.keys()`
+    view is fine and is what the LIST path passes: it runs per row, and
+    materialising a fresh set of the whole scope each time is O(n^2). Omitting
+    it entirely is also fine: a caller without the ticket list cannot know.
     """
     title = str(task.get("title") or "").strip()
     body = str(task.get("body") or "").strip()

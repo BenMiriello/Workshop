@@ -40,7 +40,7 @@ import { Markdown } from "@workshop/ui/markdown";
 import {
   type Task, type TaskLink, TASK_STATUSES, taskStatusKind, taskStatusLabel,
   title as titleOf, description as descriptionOf, scopeLabel, scopeHref,
-  ticketHref, executionLabel, readinessLine, triageLabel,
+  ticketHref, executionLabel, readinessLine, readinessTone, triageLabel,
 } from "../lib/tasks";
 import {
   EMPTY_TICKET_DRAFT, TICKET_EFFORTS, TICKET_EXECUTIONS,
@@ -349,6 +349,11 @@ export default function TicketDetail() {
   usePoll(load, 5000, { enabled: !!liveRunId, immediate: false });
 
   const statusRunnable = RUNNABLE_STATUSES.has(task?.status ?? "");
+  // Is this still work? Readiness is advice about handing the ticket to a
+  // worker, so on a finished or abandoned one it is not advice, it is a warn
+  // banner on history. Deliberately wider than RUNNABLE_STATUSES: a `blocked`
+  // or `in_review` ticket is still live work and the gap still matters.
+  const stillOpen = !["done", "cancelled", "parked"].includes(task?.status ?? "");
   const canRun = !!task && !saving && !running && !liveRunId && statusRunnable;
   const dirty = !!task && editing && ticketDirty(draft, saved);
   const titleMissing = editing && ticketTitleMissing(draft);
@@ -714,9 +719,21 @@ export default function TicketDetail() {
 
           It NEVER blocks. `canRun` does not read it. Above the banner because
           this is standing state and the banner is a transient reply; the other
-          order makes the advisory jump every time a save answers. */}
-      {gaps.length > 0 && (
-        <Notice tone="warn">{readinessLine(gaps)}</Notice>
+          order makes the advisory jump every time a save answers.
+
+          ONLY WHILE THE TICKET IS STILL WORK. It is advice under the Run button
+          about handing this to a worker, so on a done, cancelled or parked
+          ticket it is not advice, it is a warn banner on history. 74% of the
+          store fails the acceptance check, so without this gate most archived
+          pages carry one, which is the 2026-08-12 nag panel wearing a smaller
+          footprint.
+
+          `tone` follows the gap: `error` when one of them actually refuses the
+          run (title, dependencies), `warn` when it is advice. They used to look
+          identical, so nothing on screen said which sentence meant the button
+          would 400. */}
+      {gaps.length > 0 && stillOpen && (
+        <Notice tone={readinessTone(gaps)}>{readinessLine(gaps)}</Notice>
       )}
 
       {/* A LINE, not a region: the ticket is still on screen, and a rejected
