@@ -1,5 +1,14 @@
 """Triager — the note-triage runner (final-plan P4 / roles report 3.3 + 4.5).
 
+TWO PASSES LIVE HERE, and they share only the admission and the caps.
+`run_triage` is the NOTE pass, described below and unchanged. `run_queue_triage`
+(bottom of the file, autonomy-implementation 2026-08-13 §5.2) is the QUEUE pass:
+it reads `todo` TICKETS, asks `ticket_scope_review` whether each is the right
+size and shape, and records the answer. They are kept apart on purpose, because
+the one thing that makes the note pass safe (it cannot write notes, so it cannot
+change its own trigger input) is exactly the thing the queue pass cannot have.
+See the section header above `QUEUE_DECISIONS` for what replaces it.
+
 A `triager` reads the notes in ONE knowledge scope and decides, per note, exactly
 one of four things. That closed set is the whole role::
 
@@ -537,17 +546,329 @@ def run_triage(scope_key: str, *, dry_run: bool = False, rules_body: str = "",
     }
 
 
+# =============================================================================
+# The QUEUE triager (autonomy-implementation 2026-08-13 §5.2/§5.3)
+# =============================================================================
+#
+# A different role from everything above, in the same module because it shares
+# the admission and the cap discipline and nothing else. The note triager reads
+# notes and writes tickets. This reads TICKETS and writes to the same store it
+# read, which is the whole reason it cannot borrow the mtime watermark above:
+# `tasks.update()` stamps `updated` on every write, so a frontier keyed on it
+# re-selects every ticket the triager itself just wrote to, forever. The
+# frontier here is `tasks.triage_due` (a content hash over title/body/
+# depends_on/effort only) and the terminator is the mark, written on EVERY
+# decided path including the ones that change nothing.
+#
+# It does not judge the ticket itself. `ticket_scope_review.review()` is the
+# engine (§5.1); this is the runner that selects, caps, writes and stops.
+
+QUEUE_DECISIONS = ("ok", "split", "underspecified", "none")
+
+# Three caps, and the two write caps are the ones that matter. 25 of the 34 open
+# tickets fail the acceptance check, so an uncapped first pass files roughly 25
+# newly blocked tickets and 25 questions in one morning. That is not a review,
+# it is a wall, and the operator would answer none of it.
+MAX_QUEUE_TICKETS_PER_PASS = 20     # how many to LOOK at
+MAX_SPLIT_PER_PASS = 5              # how many may file children
+MAX_UNDERSPECIFIED_PER_PASS = 5     # how many may raise a question
+
+# The exact string `routes/tasks_all.py` keys the attempt-refund suppression on
+# (§5.5): a triager-raised block was never a claimed run, so answering it must
+# not hand the ticket back an attempt it never spent. Spelled once.
+QUEUE_RAISED_BY = "agent:queue-triager"
+
+# Which readiness gap to ask about when several are open, worst first. A worker
+# gets the ticket text and nothing else, so the order is "how much of a run does
+# this cost if it is missing": a dangling dependency means it cannot start, no
+# acceptance means it cannot tell when it is done, no boundaries means the
+# touches gate blocks whatever it writes.
+_CHECK_PRIORITY = ("title", "dependencies", "acceptance", "boundaries",
+                   "entry_points", "objective")
+
+# What an answer would let the worker DO. The operator is being asked to spend
+# attention, so the record says what the attention buys.
+_CHECK_UNBLOCKS = {
+    "title": "the ticket can be identified at all",
+    "dependencies": "the dependency resolves and the ticket can become ready",
+    "acceptance": "the worker can tell when it is finished and the reviewer can judge it",
+    "boundaries": "the worker knows which files it may change, so the touches gate can pass",
+    "entry_points": "the worker can start without searching the tree first",
+    "objective": "the worker knows which outcome it is aiming at",
+    "scope": "the review's objection is settled and the ticket can go to a worker",
+}
+
+# The question to ask when the engine named no blocker that matches the gap. One
+# question, phrased so an inbox answer is usable as-is.
+_CHECK_FALLBACK_ASK = {
+    "title": "What should this ticket be called?",
+    "dependencies": "Which ticket does this actually depend on?",
+    "acceptance": "What does done look like for this ticket?",
+    "boundaries": "Which files may this ticket change?",
+    "entry_points": "Which file or command should the worker start from?",
+    "objective": "What is this ticket trying to achieve?",
+    "scope": "What does this ticket need before a worker can start?",
+}
+
+# Used to pick WHICH of the engine's blockers answers the chosen gap.
+_CHECK_KEYWORDS = {
+    "dependencies": ("depend", "blocked by", "prerequisite", "must land", "first"),
+    "acceptance": ("done", "acceptance", "accept", "success", "pass", "verify", "test"),
+    "boundaries": ("touch", "file", "scope", "boundary", "boundaries", "change"),
+    "entry_points": ("where", "which file", "start", "entry", "path", "module"),
+    "objective": ("unclear", "not say", "does not say", "ambiguous", "goal", "objective"),
+    "title": ("title", "name"),
+}
+
+_SENTENCE_END = re.compile(r"(?<=[.!])\s+")
+
+
+def _review_ticket(task: dict) -> dict:
+    """One engine call for one ticket, synchronously.
+
+    `review()` is async only because it pushes the blocking model call onto a
+    thread; there is no event loop in this runner and no route calls it, so
+    `asyncio.run` is the honest bridge rather than making the whole pass async.
+    """
+    import asyncio
+
+    from services import ticket_scope_review
+    return asyncio.run(ticket_scope_review.review(task))
+
+
+def _worst_gap(task: dict, known_ids: set[str]) -> tuple[str, str] | None:
+    """The highest-cost failing readiness check as ``(check, why)``, or None when
+    the ticket passes every one of them."""
+    from services import ticket_readiness
+
+    missing = {m["check"]: m["why"]
+               for m in ticket_readiness.check(task, known_ids=known_ids)["missing"]}
+    for name in _CHECK_PRIORITY:
+        if name in missing:
+            return name, missing[name]
+    return None
+
+
+def _one_question(blockers: list[str], check: str) -> str:
+    """ONE question, out of the engine's LIST of blockers.
+
+    The engine happily returns eight of them. Eight questions in one inbox card
+    is not a question, it is a form, and the operator answers none of it. So:
+    take the blocker that speaks to the worst readiness gap, discard the rest,
+    and keep at most one question mark. A blocker phrased as a statement (the
+    common case) keeps its first sentence as context and borrows the gap's own
+    question, which is why a compound blocker still yields a single ask.
+    """
+    fallback = _CHECK_FALLBACK_ASK.get(check) or _CHECK_FALLBACK_ASK["scope"]
+    words = _CHECK_KEYWORDS.get(check, ())
+    chosen = ""
+    for b in blockers:
+        if any(w in b.lower() for w in words):
+            chosen = b
+            break
+    if not chosen and blockers:
+        chosen = blockers[0]
+    if not chosen:
+        return fallback
+    s = " ".join(chosen.split())
+    if "?" in s:
+        return s[: s.index("?") + 1][:400]
+    head = _SENTENCE_END.split(s)[0].rstrip(". ")
+    return f"{head}. {fallback}"[:400]
+
+
+def _awaiting_record(scope_key: str, check: str, ask: str, why: str) -> dict:
+    """The block the queue triager raises. `kind` is EXPLICIT: `_normalize_
+    awaiting` defaults it to `input`, and `input` is an expiring kind, so a
+    record that leaned on the default would be auto-resolvable rather than
+    waiting for the answer it asked for."""
+    return {
+        "kind": "missing-info",
+        "ask": ask,
+        "why": why,
+        "unblocks_if": _CHECK_UNBLOCKS.get(check) or _CHECK_UNBLOCKS["scope"],
+        "raised_by": QUEUE_RAISED_BY,
+        # Groups a mass-block: ten tickets missing acceptance share one key and
+        # are answerable as one gesture rather than ten.
+        "dedupe_key": f"triage:{scope_key}:{check}",
+    }
+
+
+def run_queue_triage(scope_key: str, *, dry_run: bool = True,
+                     reviewer=None) -> dict:
+    """One queue-triage pass over one scope's `todo` tickets.
+
+    ``dry_run`` defaults to TRUE, the opposite of `run_triage`. This role writes
+    into the operator's queue, the trigger is manual on purpose (§5.6), and the
+    plan is to read a week of previews before it is ever fired automatically. A
+    pass that files by accident is the failure worth defaulting against.
+
+    ``reviewer`` swaps the engine call for offline probes; it must return the
+    same `{verdict, reason, subtickets, blockers, stages}` shape.
+
+    Termination, in one place so it can be checked: selection is
+    ``status == "todo" and tasks.triage_due(t)``, and every ticket this pass
+    DECIDES gets the mark. A ticket it skipped (a cap, an engine failure, an
+    unanswered question already on it) gets no mark and stays due, which is the
+    same commit-only-if-decided rule the note pass uses for its watermark.
+    """
+    scope_key = (scope_key or "workshop").strip()
+    started = _now_iso()
+    root = _task_root(scope_key)
+    summary = {
+        "scope": scope_key, "mode": "queue", "dry_run": dry_run, "at": started,
+        "due": 0, "looked_at": 0, "decided": 0, "deferred": 0,
+        "capped": 0, "already_blocked": 0,
+        "counts": {k: 0 for k in QUEUE_DECISIONS},
+        "decisions": [], "errors": [],
+    }
+    if root is None:
+        summary["skipped"] = "no task store for this scope"
+        return summary
+
+    all_tasks = tasks.list_tasks(root)
+    known_ids = {t["id"] for t in all_tasks}
+    candidates = [t for t in all_tasks
+                  if t.get("status") == "todo" and tasks.triage_due(t)]
+    # Oldest first, so a capped pass always makes the same kind of progress and
+    # a ticket can never be starved by newer arrivals.
+    candidates.sort(key=lambda t: (str(t.get("created") or ""), t["id"]))
+    looked_at = candidates[:MAX_QUEUE_TICKETS_PER_PASS]
+    summary["due"] = len(candidates)
+    summary["looked_at"] = len(looked_at)
+    summary["deferred"] = len(candidates) - len(looked_at)
+
+    review = reviewer or _review_ticket
+    split_filed = 0
+    asked = 0
+
+    for task in looked_at:
+        tid = task["id"]
+        title = str(task.get("title") or "")
+        rec = {"id": tid, "title": title[:100]}
+
+        # Already waiting on a person. A second question would overwrite the
+        # first one, so this is a no-op with no mark: when the answer lands in
+        # the body (which is where an answer has to go to reach the next
+        # attempt) the spec hash moves and the ticket comes back due.
+        block = task.get("awaiting") or {}
+        if block and not block.get("dismissed"):
+            summary["already_blocked"] += 1
+            continue
+
+        try:
+            out = review(task)
+        except Exception as e:  # the engine is a model call; it can just fail
+            # No mark. An unanswered ticket must stay due, not be recorded as a
+            # deliberate no-op because the model was down.
+            summary["errors"].append({"id": tid, "error": str(e)[:200]})
+            continue
+
+        verdict = str(out.get("verdict") or "ok")
+        reason = str(out.get("reason") or "").strip()
+        subs = list(out.get("subtickets") or [])
+        blockers = [str(b) for b in (out.get("blockers") or []) if str(b).strip()]
+
+        # A "split" the engine already emptied (fewer than two children, or a
+        # ticket that has a parent) never reaches here as a split; this is the
+        # belt to that braces.
+        if verdict == "split" and len(subs) < 2:
+            verdict, subs = "ok", []
+
+        # Write caps. A capped ticket is SKIPPED, not downgraded: recording
+        # `none` on a split we declined to file would lose the split for good.
+        if verdict == "split" and split_filed >= MAX_SPLIT_PER_PASS:
+            summary["capped"] += 1
+            rec.update(decision="deferred", reason="split cap reached this pass")
+            summary["decisions"].append(rec)
+            continue
+        if verdict == "underspecified" and asked >= MAX_UNDERSPECIFIED_PER_PASS:
+            summary["capped"] += 1
+            rec.update(decision="deferred", reason="question cap reached this pass")
+            summary["decisions"].append(rec)
+            continue
+
+        awaiting = None
+        if verdict == "underspecified":
+            gap = _worst_gap(task, known_ids)
+            if gap is None and not blockers:
+                # The review objected and then named nothing anyone can answer.
+                # This is the one place `none` comes from: looked at, nothing to
+                # do. See ticket_scope_review's vocabulary note.
+                verdict = "none"
+                reason = reason or "the review raised no answerable question"
+            else:
+                check, why = gap if gap else ("scope", reason or "the review objected to the scope")
+                awaiting = _awaiting_record(
+                    scope_key, check, _one_question(blockers, check), why)
+                rec["check"] = check
+                rec["ask"] = awaiting["ask"]
+
+        # THE MARK IS WRITTEN ON EVERY DECIDED PATH, including `ok` and `none`,
+        # which change nothing else. That is what makes the pass terminate.
+        mark = {"decision": verdict, "spec_hash": tasks.spec_hash(task),
+                "reason": reason or None}
+
+        child_ids: list[str] = []
+        if not dry_run:
+            if awaiting is not None:
+                tasks.update(root, tid, awaiting=awaiting)
+            if verdict == "split":
+                for sub in subs:
+                    child = tasks.add(
+                        root, title=sub["title"], body=sub.get("body") or "",
+                        status="draft", parent=tid,
+                        # The request still traces to wherever the parent came
+                        # from; only the SPEC of the child was written here.
+                        source=task.get("source") or None,
+                        scoped_by=QUEUE_RAISED_BY,
+                    )
+                    child_ids.append(child["id"])
+                    known_ids.add(child["id"])
+                tasks.update(root, tid, evidence={
+                    "kind": "split",
+                    "ref": f"queue triage proposed {len(child_ids)} sub-tickets: "
+                           + ", ".join(child_ids),
+                })
+            tasks.update(root, tid, triage=mark)
+
+        if verdict == "split":
+            split_filed += 1
+            rec["subtickets"] = [s["title"] for s in subs]
+            if child_ids:
+                rec["child_ids"] = child_ids
+        elif verdict == "underspecified":
+            asked += 1
+
+        rec["decision"] = verdict
+        rec["reason"] = reason
+        summary["counts"][verdict] = summary["counts"].get(verdict, 0) + 1
+        summary["decided"] += 1
+        summary["decisions"].append(rec)
+
+    return summary
+
+
 if __name__ == "__main__":
     import argparse
 
     ap = argparse.ArgumentParser(prog="services.triager")
     ap.add_argument("scope", nargs="?", default="workshop")
+    ap.add_argument("--queue", action="store_true",
+                    help="triage the ticket QUEUE (scope review) instead of notes")
     ap.add_argument("--agent", default=None, help="agent slug whose body carries the rules")
     ap.add_argument("--job", default=None, help="job id to stamp on filed tasks (source.ref)")
     grp = ap.add_mutually_exclusive_group()
     grp.add_argument("--apply", action="store_true", help="run for real and write")
     grp.add_argument("--dry-run", action="store_true", help="preview only (the default)")
     args = ap.parse_args()
+
+    if args.queue:
+        # The queue pass defaults to a preview even without --dry-run: the
+        # trigger is manual on purpose and --apply is the only way to write.
+        print(json.dumps(run_queue_triage(
+            args.scope, dry_run=not args.apply), indent=2))
+        raise SystemExit(0)
 
     body = ""
     if args.agent:

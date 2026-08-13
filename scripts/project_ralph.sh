@@ -73,6 +73,14 @@ GRANT_TOKEN=""       # --grant-token: the in-scope resource grant the dispatcher
                      # is an `agent` identity, not the operator, so its reach is
                      # handed to it rather than ambient. Empty for a manual run:
                      # the operator's own Run-now is the operator, never gated.
+# --supervised: land a passing task in `in_review` instead of `done`.
+#
+# This is the autonomy enum's ONLY machine-visible consequence, and it is what
+# makes unattended execution safe to try at all: the reviewer gate and the
+# committed-work gate are unchanged and still have to pass, but the last step is
+# the operator's rather than the sweep's. Env-settable so the resident runner can
+# default to it without every call site growing a flag.
+SUPERVISED="${WORKSHOP_SWEEP_SUPERVISED:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -84,6 +92,7 @@ while [[ $# -gt 0 ]]; do
     --task-id)     TASK_ID_ARG="$2"; shift 2 ;;
     --grant-token) GRANT_TOKEN="$2"; shift 2 ;;
     --force)       FORCE=1; shift ;;
+    --supervised)  SUPERVISED=1; shift ;;
     *)             SLUG="$1"; shift ;;
   esac
 done
@@ -535,6 +544,20 @@ if [[ -z "$DIR" || ! -d "$DIR" ]]; then
   echo "[project_ralph] project not found or no dir: ${SLUG:-$DIR_ARG}" >&2
   exit 2
 fi
+
+# A project registered as `supervised` supervises every sweep of it, however the
+# sweep was started. The flag and the env var can turn supervision ON for a --dir
+# sweep (which has no registry entry and no slug), but nothing here turns it OFF:
+# a scope the operator marked supervised must not become unsupervised because a
+# caller forgot a flag.
+[[ "$MODE" == "supervised" ]] && SUPERVISED=1
+
+# The terminal status of a task whose gates all passed. `in_review` under
+# supervision, `done` otherwise. Both writes are otherwise identical: the
+# reviewer gate, the committed-work gate and the acceptance criteria have all
+# already passed by the time either is reached.
+terminal_status() { if [[ "$SUPERVISED" == "1" ]]; then echo "in_review"; else echo "done"; fi; }
+terminal_label()  { if [[ "$SUPERVISED" == "1" ]]; then echo "IN_REVIEW (supervised)"; else echo "DONE"; fi; }
 
 # GitHub binding (Phase G2/G3). A project bound to a remote carries a `repo`
 # field (with a tracked default_branch) and an opt-in `concurrent_worktrees`
@@ -994,9 +1017,10 @@ print(len(crit))
         if (( ACC_RC == 0 )); then
           if publish_or_park "$WT_BRANCH_SLUG" "$PR_TITLE" "$PR_BODY"; then
             python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance passed: $ACC_SPEC" --kind acceptance >/dev/null 2>>"$LOG"
-            if ptasks_tx set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}"; then
+            if ptasks_tx set-status "$DIR" "$TASK_ID" "$(terminal_status)" --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}"; then
               note_receipt_ref
-              DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE (command acceptance ok)"
+              if [[ "$SUPERVISED" == "1" ]]; then IN_REVIEW=$((IN_REVIEW+1)); else DONE=$((DONE+1)); fi
+              job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID $(terminal_label) (command acceptance ok)"
             else
               job_finish_child "$CHILD_JOB" cancelled "$RC" "$EVIDENCE"; log "task=$TASK_ID done write fenced (claim displaced); left as operator/reclaim set it"
             fi
@@ -1018,9 +1042,10 @@ print(len(crit))
         fi
       else
         if publish_or_park "$WT_BRANCH_SLUG" "$PR_TITLE" "$PR_BODY"; then
-          if ptasks_tx set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}"; then
+          if ptasks_tx set-status "$DIR" "$TASK_ID" "$(terminal_status)" --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}"; then
             note_receipt_ref
-            DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE"
+            if [[ "$SUPERVISED" == "1" ]]; then IN_REVIEW=$((IN_REVIEW+1)); else DONE=$((DONE+1)); fi
+            job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID $(terminal_label)"
           else
             job_finish_child "$CHILD_JOB" cancelled "$RC" "$EVIDENCE"; log "task=$TASK_ID done write fenced (claim displaced); left as operator/reclaim set it"
           fi
@@ -1045,9 +1070,26 @@ print(len(crit))
       # it was churning without progress (same reviewer rejection or a near-identical
       # diff repeated, or the per-run token budget was blown). Release/block with a
       # human reason so the Work UI shows WHY it stopped rather than a bare failure.
-      python3 "$PTASKS" note "$DIR" "$TASK_ID" "no progress within the run (repeated rejection / near-identical diff, or run token budget exceeded); stopped mid-run" --kind acceptance >/dev/null 2>>"$LOG"
-      if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "no progress (thrash) within the run")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
-      job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
+      # PARKED, not failed, and not released for another go. A thrashing run did
+      # not produce wrong work; it produced no work, and the next attempt on an
+      # unchanged ticket thrashes the same way, which is how a stuck run turns
+      # into a burnt attempt cap and then a blocked ticket whose stated reason is
+      # a lie ("failed 3 times" when it never got started). Parking says the true
+      # thing: stopped, nothing committed, needs a look. It is already the
+      # dead-letter for attempt-cap exhaustion, already maps to `backlog`, and is
+      # already visible in the Work UI.
+      #
+      # The reason names the child job so the run is findable, which is the
+      # "resumable id" half: un-parking the ticket is one click and the operator
+      # can read what the run actually did first.
+      python3 "$PTASKS" note "$DIR" "$TASK_ID" "no progress within the run (repeated rejection / near-identical diff, or run token budget exceeded); parked mid-run, nothing committed. Run: $CHILD_JOB" --kind acceptance >/dev/null 2>>"$LOG"
+      ptasks_tx set-status "$DIR" "$TASK_ID" parked --expect-claim-token "${CLAIM_TOKEN:-}" || true
+      PARKED=$((PARKED+1))
+      # The child job is `failed` to match the other park sites (publish_or_park):
+      # the RUN did not complete, whatever the ticket's disposition. Only the
+      # TASK's status carries the "never failed" rule.
+      job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"
+      log "task=$TASK_ID PARKED (no progress within the run); resume from job $CHILD_JOB" ;;
     7)
       # rc=7 (block-for-decision): a `strict` sweep whose gate could not establish
       # completeness (reviewer.sh). Strict means ask rather than assume, so this

@@ -51,15 +51,25 @@ ONCE=0
 # them. One number, both sides.
 PER_TASK_WALL="${PER_TASK_WALL:-1200}"
 
+# SUPERVISED BY DEFAULT, and deliberately so. This loop is the unattended path:
+# nobody is watching the run, so the last step is the operator's. A passing task
+# lands `in_review` rather than `done`; every gate before that (the reviewer, the
+# committed-work check, the acceptance criteria) is unchanged and still has to
+# pass. `--unsupervised` is the opt-out, and it is a thing the operator turns on
+# after reading a week of in_review results, not a default anyone inherits.
+SUPERVISED=1
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dir)       DIR="$2"; shift 2 ;;
-    --poll)      POLL="$2"; shift 2 ;;
-    --max-tasks) MAX_TASKS="$2"; shift 2 ;;
-    --once)      ONCE=1; shift ;;
-    *) echo "usage: queue_runner.sh --dir PATH [--poll SEC] [--max-tasks N] [--once]" >&2; exit 2 ;;
+    --dir)          DIR="$2"; shift 2 ;;
+    --poll)         POLL="$2"; shift 2 ;;
+    --max-tasks)    MAX_TASKS="$2"; shift 2 ;;
+    --once)         ONCE=1; shift ;;
+    --unsupervised) SUPERVISED=0; shift ;;
+    *) echo "usage: queue_runner.sh --dir PATH [--poll SEC] [--max-tasks N] [--once] [--unsupervised]" >&2; exit 2 ;;
   esac
 done
+SUPERVISED_FLAG=(); (( SUPERVISED == 1 )) && SUPERVISED_FLAG=(--supervised)
 
 # Developer-mode gate (ADR 0014): the target must be named, and the platform
 # repo is permitted only under WORKSHOP_DEV_MODE=1. Checked before the flock so
@@ -140,7 +150,8 @@ while :; do
       # take minutes and did not.
       local_wall=$(( MAX_TASKS * PER_TASK_WALL + 120 ))
       RALPH_MAX_WALL="$PER_TASK_WALL" \
-        bash "$RALPH" --dir "$DIR" --max-tasks "$MAX_TASKS" --max-wall "$local_wall" >> "$LOG" 2>&1 || true
+        bash "$RALPH" --dir "$DIR" --max-tasks "$MAX_TASKS" --max-wall "$local_wall" \
+             "${SUPERVISED_FLAG[@]}" >> "$LOG" 2>&1 || true
     else
       log "paused by pause_guard; idling"
     fi

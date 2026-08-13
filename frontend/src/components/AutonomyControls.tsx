@@ -378,13 +378,22 @@ export default function AutonomyControls() {
             </span>
           )}
         </span>
-        {targetsFailed && (
-          <Notice tone="warn" where="/api/queue/runner/targets" action={<Button size="sm" variant="ghost" onClick={load}>Retry</Button>}>
-            Could not load the list of trees.
-          </Notice>
-        )}
-        {runnerError && <Notice tone="error">{runnerError}</Notice>}
       </Row>
+
+      {/* Lines, not regions: the controls are still on screen and one thing
+          beside them went wrong. Siblings of the Row rather than children of it
+          because a SettingsRow wraps its children in a span and Notice is a
+          div. */}
+      {targetsFailed && (
+        <Notice
+          tone="warn"
+          where="/api/queue/runner/targets"
+          action={<Button size="sm" variant="ghost" onClick={load}>Retry</Button>}
+        >
+          Could not load the list of trees.
+        </Notice>
+      )}
+      {runnerError && <Notice tone="error">{runnerError}</Notice>}
 
       <Row label="gpu memory">
         {oll == null || !oll.gpu.available ? (

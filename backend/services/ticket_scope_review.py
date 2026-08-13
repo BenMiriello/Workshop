@@ -12,9 +12,16 @@ This is the judgement pass. It reads the ticket and says one of:
     underspecified something load-bearing is missing or unknowable from the text
 
 plus the blockers it can see and, when the work is genuinely sequential, the
-stages. It runs on demand against a DRAFT, before the operator approves — which
-is the moment the answer is worth anything, because after approval a worker is
-about to spend money on it.
+stages.
+
+THIS MODULE IS THE ENGINE, NOT A RUNNER (autonomy-implementation 2026-08-13 §5.1).
+It decides and returns; it writes nothing, reads no store and knows no scope.
+Two callers drive it:
+
+  * on demand against a DRAFT, before the operator approves, which is the moment
+    the answer is worth most because after approval a worker spends money on it;
+  * `triager.run_queue_triage`, once per `todo` ticket whose spec has changed
+    since it was last judged.
 
 IT ONLY PROPOSES. Applying a split creates child drafts, and those need approving
 like any other proposal. The review never queues work and never edits the ticket's
@@ -23,6 +30,25 @@ scope, which is the thing the operator asked to be able to trust.
 
 Sub-ticket depth is capped at two levels (entity-model 2026-07-18), so a ticket
 that already has a parent cannot be split again.
+
+TWO VOCABULARIES, AND WHY THEY DIFFER BY EXACTLY ONE WORD
+---------------------------------------------------------
+`VERDICTS` here is three long; `tasks.TRIAGE_DECISIONS` (the mark the queue
+triager stores) is four, adding `"none"`. That is deliberate and the extra word
+is NOT an engine verdict:
+
+    ok | split | underspecified   what the REVIEW concluded about the ticket
+    none                          what the TRIAGER did, when the review's
+                                  conclusion was not actionable
+
+A model is never asked for `none` and `_parse` will never return it, so the
+prompt keeps three options and the closed set here stays three. `none` is the
+runner's own outcome for "I looked at this and there was nothing to do": the
+review said `underspecified` but named no blocker anyone could answer, or the
+ticket is already waiting on an unanswered question and a second one would
+clobber it. Widening `VERDICTS` to four would put a word in the prompt that the
+model must never choose, and a fourth option a model can see is a fourth option
+a model will eventually pick.
 """
 from __future__ import annotations
 
