@@ -12,7 +12,7 @@ const WHY = {
   title: "the ticket has no title",
   objective: "the body does not say what this is trying to achieve",
   acceptance: "the ticket does not say what done looks like",
-  entry_points: "the body names no file, command or symbol to start from",
+  entry_points: "the body does not say where to start",
   boundaries: "the ticket does not say which files it may change",
 };
 
@@ -47,7 +47,7 @@ describe("readinessLine", () => {
   it("lists three gaps as things rather than as sentences", () => {
     expect(readinessLine([gap("acceptance"), gap("boundaries"), gap("entry_points")]))
       .toBe("Three things are unspecified: what done looks like, "
-        + "which files it may change, and no file, command or symbol to start from.");
+        + "which files it may change, and where to start.");
   });
 
   it("counts the tail past two gaps", () => {

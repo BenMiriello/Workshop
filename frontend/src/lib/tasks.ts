@@ -443,7 +443,16 @@ const READINESS_SUBJECTS = ["the ticket ", "the body ", "it "];
 
 // The verb a clause opens with, dropped so the clause can be LISTED as a thing
 // rather than read as a sentence: "does not say what done looks like" becomes
-// "what done looks like", "names no file, ..." becomes "no file, ...".
+// "what done looks like".
+//
+// `names` is still here on purpose even though no current check uses it. The
+// entry-points check USED to say "the body names no file, command or symbol to
+// start from", which strips to "no file, command or symbol to start from" and
+// then reads as nonsense in a list: "... and no file, command or symbol to
+// start from." Rather than special-case it here (a second vocabulary, which is
+// exactly what this module must not grow), the CHECKER was reworded to "the
+// body does not say where to start". Keep the verb listed so a future `why`
+// that opens with it degrades to a clause instead of a sentence fragment.
 const READINESS_VERBS = ["does not say ", "has ", "names "];
 
 function readinessClause(why: string): string {
@@ -509,7 +518,7 @@ const READINESS_WHY = {
   title: "the ticket has no title",
   objective: "the body does not say what this is trying to achieve",
   acceptance: "the ticket does not say what done looks like",
-  entry_points: "the body names no file, command or symbol to start from",
+  entry_points: "the body does not say where to start",
   boundaries: "the ticket does not say which files it may change",
 } as const;
 
