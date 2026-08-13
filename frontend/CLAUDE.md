@@ -70,6 +70,49 @@ Rules that fall out:
 - **A notice states an outcome, so it is neutral ink with one hue on the icon.**
   See "What color is for". Never a tinted panel.
 
+## A record page is not a list page
+
+**A page whose title is a NAME and a page whose title is CONTENT are different
+shapes, and the kit now says so.** `PageHeader` takes `variant="entity"`, plus
+`back` and `meta` slots, and `DetailLayout` arranges the body. Reported
+2026-08-12 against the ticket page; every detail page in the app had the same
+four faults, because the pattern was copy-pasted rather than shared.
+
+| do | not |
+|---|---|
+| `back={<Link to="/work"><ChevronLeft/> Tickets</Link>}` | a bare `<ArrowLeft/>` inside the `title` slot |
+| `variant="entity"` (17px, wraps) | the 24px page-name size on a sentence |
+| nothing where a decorative icon was | a ticket glyph on the ticket route |
+| `meta={...}` — one muted line of plain text | a rack of `Badge`/`Tag`/`StatusPill` in `sub` |
+| `Props`/`Prop` for read-only fields | a column of `Field`s (form ink on read-only values) |
+| `DetailLayout` | a `Row wrap` with a `flex: 0 0 260px` rail |
+
+Why each one:
+
+- **An unstyled icon in the `h1` inherits the h1.** `24px`, and a router `Link`
+  also takes the MINE hue, so the way OUT of the page outweighed the record on
+  it. Back is chrome: muted at rest, `--fg` on hover, and it NAMES its
+  destination.
+- **A constant is not a signal.** The same rule that governs hue governs icons.
+  Every record on `/work/:scope/:id` is a ticket.
+- **One record means nothing to scan for**, so nothing on a detail page earns
+  chip treatment by default. The status word keeps its tone in the meta line and
+  drops the pill. Two exceptions on the ticket page, both earned: the run-in-
+  flight pill (LIVE) and the pass/fail check chips on a run (you scan those).
+- **`DetailLayout` puts the rail FIRST in the DOM** and moves it right at 900px.
+  A rail stacked after the main column lands under the comments, the runs and
+  the activity feed, which is how the properties ended up "hidden at the bottom"
+  on a phone. Do not re-order it back.
+- **Long body text is clamped** (`Clamp`), so a page opens on its own controls
+  rather than on paragraph nine of a distilled spec.
+
+The list side of the same complaint: a row's status DOT is not enough on its
+own. The word goes in the meta line as plain text ("to do · workshop · 2h"),
+because "is this blocked or just queued" is what a ticket list is read for and a
+colour answers that only for someone who has already learned the five hues.
+
+Pinned in `frontend/src/styles.test.ts`.
+
 ## When does a control commit?
 
 | Commit on… | Controls | Why |

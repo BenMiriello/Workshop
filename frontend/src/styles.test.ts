@@ -107,3 +107,40 @@ describe("a list row never scrolls sideways", () => {
     expect(kit).not.toContain(".ws-ticket-grid");
   });
 });
+
+// A record page (one ticket, one run, one store) is not a list page, and the
+// three ways that went wrong are all invisible in a diff.
+describe("a detail page reads as a record, not as a banner", () => {
+  it("sets an entity title at reading size, not the page-name size", () => {
+    const title = kitRule(".ws-page-header--entity .ws-page-header__title");
+    expect(title).toContain("font-size: var(--fs-lg)");
+    // --fs-xl is 24px: right for "Tickets", a banner for one ticket's sentence.
+    expect(title).not.toContain("--fs-xl");
+  });
+
+  it("keeps the way out of the page quieter than the page", () => {
+    // A router Link takes the MINE hue by default and a bare icon inherits the
+    // h1's 24px. Back is chrome, so it is muted with its own icon size.
+    const back = kitRule(".ws-page-header__back a");
+    expect(back).toContain("color: var(--muted)");
+    expect(kit).toContain(".ws-page-header__back svg { width: 14px");
+  });
+
+  it("puts the properties rail FIRST in the DOM and moves it right with grid", () => {
+    // This is the whole reason the narrow layout is correct: source order is
+    // rail, then main, so a phone shows properties under the header instead of
+    // below the comments. Only the wide breakpoint reorders.
+    const at = kit.indexOf(".ws-detail { display: grid");
+    expect(at, "no .ws-detail rule").toBeGreaterThan(-1);
+    const wide = kit.slice(kit.indexOf("@media (min-width: 900px)", at));
+    expect(wide.slice(0, wide.indexOf("\n}\n"))).toContain(".ws-detail__rail { grid-column: 2; grid-row: 1; }");
+  });
+
+  it("labels a read-only value in muted ink, not in form-label ink", () => {
+    // `Field`'s label is --fg at medium weight, which is what made every rail
+    // look like a disabled form.
+    const label = kitRule(".ws-props__label");
+    expect(label).toContain("color: var(--muted)");
+    expect(label).not.toContain("--fw-medium");
+  });
+});

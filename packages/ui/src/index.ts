@@ -26,7 +26,10 @@ export {
   AgencyChip, AgencyDot, agencyFor, agencyProps, AGENCY_LABEL, type AgencyTier,
 } from "./agency";
 
-export { Stack, Row, Spacer, SectionLabel, PageHeader, Toolbar, Card, CardGrid, Stat, Divider, ProgressBar, StackedBar } from "./layout";
+export {
+  Stack, Row, Spacer, SectionLabel, PageHeader, DetailLayout, Props, Prop, Clamp,
+  Toolbar, Card, CardGrid, Stat, Divider, ProgressBar, StackedBar,
+} from "./layout";
 export {
   Button,
   Field,

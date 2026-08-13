@@ -28,12 +28,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePoll } from "../lib/usePoll";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  Ticket as TicketIcon, ArrowLeft, RefreshCw, Trash2, ExternalLink,
+  ChevronLeft, RefreshCw, Trash2, ExternalLink, MoreHorizontal,
   Play, CheckCheck, ScrollText, MessageSquare, History, Link2, Send,
 } from "lucide-react";
 import {
-  Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
-  Skeleton, Field, Input, Select, ConfirmDialog, Textarea,
+  Button, Card, Row, Stack, PageHeader, DetailLayout, Props, Prop, Clamp,
+  SectionLabel, StateBlock, Notice, StatusDot, StatusPill,
+  Skeleton, Field, Input, Select, ConfirmDialog, Textarea, Menu, MenuItem,
 } from "@workshop/ui";
 import { Markdown } from "@workshop/ui/markdown";
 import {
@@ -377,7 +378,12 @@ export default function TicketDetail() {
   ) : (
     <Card>
       {description
-        ? <Markdown>{description}</Markdown>
+        // Cut to a readable height. A ticket body written by the distiller runs
+        // to Objective / Output / Start from / Boundaries, which is four
+        // paragraphs, and at full height it pushed the comments, the runs and
+        // the activity feed off the bottom of the page. The toggle only appears
+        // when there is more to see.
+        ? <Clamp max={280}><Markdown>{description}</Markdown></Clamp>
         : <span className="ws-muted">No description.</span>}
     </Card>
   );
@@ -387,7 +393,9 @@ export default function TicketDetail() {
       <SectionLabel>Stuck</SectionLabel>
       <Card>
         <Stack>
-          <span>{task.blocked_reason || task.awaiting?.question || "This ticket stopped and has not said why."}</span>
+          <Notice tone="warn">
+            {task.blocked_reason || task.awaiting?.question || "This ticket stopped and has not said why."}
+          </Notice>
           <Field label="Your answer" help="It is written into the ticket, so the next attempt reads it.">
             <Textarea rows={4} value={answer} onChange={(e) => setAnswer(e.target.value)} />
           </Field>
@@ -421,17 +429,20 @@ export default function TicketDetail() {
               <span className="ws-wrap">{c.text}</span>
             </Stack>
           ))}
-          <Field label="Add a comment">
-            <Textarea
-              rows={3}
-              value={commentDraft}
-              onChange={(e) => setCommentDraft(e.target.value)}
-            />
-          </Field>
+          {/* The placeholder is the label. A `Field label` here spent a whole
+              row saying what the button beneath it already says. */}
+          <Textarea
+            rows={3}
+            value={commentDraft}
+            placeholder="Add a comment"
+            aria-label="Add a comment"
+            onChange={(e) => setCommentDraft(e.target.value)}
+          />
           <Row>
             <Button
               size="sm"
               loading={commentBusy}
+              disabled={!commentDraft.trim()}
               onClick={postComment}
             >
               <Send aria-hidden /> Comment
@@ -477,8 +488,10 @@ export default function TicketDetail() {
         <Stack gap="sm">
           {evidence.map((e, i) => (
             <Row between key={i}>
+              {/* No bold on the kind: it is a machine token, and weight here
+                  made every activity row shout its least interesting word. */}
               <span className="ws-wrap">
-                <strong>{e.kind}</strong>{e.ref ? ` ${e.ref}` : ""}
+                {e.kind}{e.ref ? <> <code className="ws-mono ws-muted">{e.ref}</code></> : null}
               </span>
               <span className="ws-muted">{ago(e.ts)}</span>
             </Row>
@@ -490,37 +503,33 @@ export default function TicketDetail() {
 
   // ---- rail -----------------------------------------------------------------
 
+  // Read-only record fields, as a property list rather than a column of
+  // `Field`s. `Field`'s label is form furniture (13px, --fg, medium) and a rail
+  // built out of them reads as a disabled form sitting under the real page,
+  // which is exactly how it looked.
+  //
+  // Status, scope and "updated" are NOT repeated here: they are in the header's
+  // meta line, where they are visible before any scrolling. One canonical place
+  // per fact (docs/decisions single-canonical-status-source).
   const rail = task ? (
     <Stack gap="sm">
-      <SectionLabel>Properties</SectionLabel>
+      <SectionLabel>Details</SectionLabel>
       <Card>
-        <Stack>
-          <Field label="Status">
-            <StatusPill status={taskStatusKind(task.status)}>
-              {taskStatusLabel(task.status)}
-            </StatusPill>
-          </Field>
-          <Field label="Scope">
-            {/* Plain text, or a link when the scope has a page. A scope is read
-                once here; it is not something you scan a detail page FOR. */}
-            {scopeLink
-              ? <Link to={scopeLink}>{scopeLabel(scope)}</Link>
-              : <span>{scopeLabel(scope)}</span>}
-          </Field>
+        <Props>
           {typeof task.priority === "number" && task.priority !== 0 && (
-            <Field label="Priority"><span>{task.priority}</span></Field>
+            <Prop label="Priority">{task.priority}</Prop>
           )}
-          {task.effort && <Field label="Effort"><span>{task.effort}</span></Field>}
-          <Field label="Created"><span title={fmtTs(task.created)}>{ago(task.created)}</span></Field>
-          <Field label="Updated"><span title={fmtTs(task.updated)}>{ago(task.updated)}</span></Field>
+          {task.effort && <Prop label="Effort">{task.effort}</Prop>}
+          <Prop label="Created"><span title={fmtTs(task.created)}>{ago(task.created)}</span></Prop>
           {originKey && (
-            <Field label="Filed from">
+            <Prop label="Filed from">
               <Link to={`/chat/${encodeURIComponent(originKey)}`}>
-                {task.origin?.title || "the chat"} <ExternalLink aria-hidden />
+                {task.origin?.title || "the chat"} <ExternalLink size={12} aria-hidden />
               </Link>
-            </Field>
+            </Prop>
           )}
-        </Stack>
+          <Prop label="Ticket id"><code className="ws-mono">{task.id}</code></Prop>
+        </Props>
       </Card>
       {(dependsOn.length > 0 || dependsMissing.length > 0) && (
         <>
@@ -542,24 +551,31 @@ export default function TicketDetail() {
 
   return (
     <div>
+      {/* An entity header: no ticket icon (every record on this route is a
+          ticket, so a constant mark says nothing), a titled back link instead
+          of a bare arrow, and the facts that used to be in the rail on one
+          muted line under the title. */}
       <PageHeader
-        title={
-          <Row>
-            <Link to={workHref} aria-label="Back to tickets">
-              <ArrowLeft aria-hidden />
-            </Link>
-            <TicketIcon aria-hidden />
-            <span className="ws-wrap">{loading ? "Ticket" : titleOf(task as Task) || id}</span>
-          </Row>
-        }
+        variant="entity"
+        back={<Link to={workHref}><ChevronLeft aria-hidden /> Tickets</Link>}
+        title={loading ? "Ticket" : titleOf(task as Task) || id}
+        meta={task && (
+          <>
+            {/* The status word, not a pill. The operator reads "to do" here and
+                nowhere else on the page, so it is a fact in a sentence rather
+                than a badge competing with the title. */}
+            <StatusDot status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusDot>
+            {scopeLink
+              ? <Link to={scopeLink}>{scopeLabel(scope)}</Link>
+              : <span>{scopeLabel(scope)}</span>}
+            <span title={fmtTs(task.updated)}>updated {ago(task.updated)}</span>
+          </>
+        )}
         actions={
           task && (
             <Row wrap>
               {liveRunId && <StatusPill status="running">run in flight</StatusPill>}
-              {!editing && (
-                <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>Edit</Button>
-              )}
-              {editing && (
+              {editing ? (
                 <>
                   <Button size="sm" variant="ghost" onClick={() => { setEditing(false); setDraft(saved); }}>
                     Cancel
@@ -568,39 +584,53 @@ export default function TicketDetail() {
                     Save
                   </Button>
                 </>
+              ) : (
+                <>
+                  {task.status === "draft" && (
+                    <Button size="sm" variant="primary" loading={approving} onClick={approve}>
+                      <CheckCheck aria-hidden /> Approve
+                    </Button>
+                  )}
+                  {canRun && (
+                    <Button size="sm" loading={running} onClick={runTask}>
+                      <Play aria-hidden /> Run
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>Edit</Button>
+                  {/* Refresh and Delete are not turn-by-turn actions. In a row
+                      of five buttons they wrapped onto a second line on a phone
+                      and put Delete beside Run. */}
+                  <Menu
+                    label="More actions"
+                    trigger={
+                      <Button size="sm" variant="ghost" aria-label="More actions">
+                        <MoreHorizontal aria-hidden />
+                      </Button>
+                    }
+                  >
+                    <MenuItem icon={<RefreshCw aria-hidden />} onSelect={load}>Refresh</MenuItem>
+                    <MenuItem danger icon={<Trash2 aria-hidden />} onSelect={() => setConfirmDelete(true)}>
+                      Delete ticket
+                    </MenuItem>
+                  </Menu>
+                </>
               )}
-              {task.status === "draft" && (
-                <Button size="sm" variant="primary" loading={approving} onClick={approve}>
-                  <CheckCheck aria-hidden /> Approve
-                </Button>
-              )}
-              {canRun && (
-                <Button size="sm" loading={running} onClick={runTask}>
-                  <Play aria-hidden /> Run
-                </Button>
-              )}
-              <Button size="sm" variant="ghost" onClick={load} aria-label="Refresh">
-                <RefreshCw aria-hidden />
-              </Button>
-              <Button
-                size="sm"
-                variant="danger-ghost"
-                onClick={() => setConfirmDelete(true)}
-                aria-label="Delete ticket"
-              >
-                <Trash2 aria-hidden />
-              </Button>
             </Row>
           )
         }
       />
 
+      {/* A LINE, not a region: the ticket is still on screen, and a rejected
+          save is one sentence beside it (frontend/CLAUDE.md, "A region or a
+          line"). This was a 120px dashed panel wedged between the header and
+          the body. */}
       {banner && (
-        <StateBlock
-          variant={bannerErr ? "error" : undefined}
-          title={banner}
-          action={<Button size="sm" onClick={() => setBanner(null)}>Dismiss</Button>}
-        />
+        <Notice
+          tone={bannerErr ? "error" : "info"}
+          action={<Button size="sm" variant="ghost" onClick={() => setBanner(null)}>Dismiss</Button>}
+        >
+          {banner}
+        </Notice>
       )}
 
       {loading && !task && (
@@ -617,16 +647,18 @@ export default function TicketDetail() {
       )}
 
       {task && (
-        <Row wrap>
-          <Stack gap="lg" style={{ flex: "1 1 420px", minWidth: 0 }}>
-            {details}
-            {blockCard}
-            {commentsCard}
-            {runsCard}
-            {activityCard}
-          </Stack>
-          <div style={{ flex: "0 0 260px", minWidth: 240 }}>{rail}</div>
-        </Row>
+        <DetailLayout
+          rail={rail}
+          main={
+            <Stack gap="lg">
+              {details}
+              {blockCard}
+              {commentsCard}
+              {runsCard}
+              {activityCard}
+            </Stack>
+          }
+        />
       )}
 
       <ConfirmDialog

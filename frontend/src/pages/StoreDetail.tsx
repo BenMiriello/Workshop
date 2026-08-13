@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-  Database, ArrowLeft, RefreshCw, Download, KeyRound, Shield, ExternalLink,
+  ChevronLeft, RefreshCw, Download, KeyRound, Shield, ExternalLink,
 } from "lucide-react";
 import {
-  Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot,
+  Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot,
   Badge, Tag, Skeleton, Field, Input, Textarea,
 } from "@workshop/ui";
 
@@ -134,29 +134,26 @@ export default function StoreDetail() {
 
   return (
     <div>
+      {/* Same entity header as every other record page: a named back link, no
+          decorative icon (everything on this route is a store), and the facts
+          as one muted line instead of four chips. */}
       <PageHeader
-        title={
-          <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>
-            <Link to="/stores" style={{ display: "inline-flex", alignItems: "center" }} aria-label="Back">
-              <ArrowLeft aria-hidden />
-            </Link>
-            <Database aria-hidden />
-            <span>{storeId}</span>
-          </Row>
-        }
-        sub={
+        variant="entity"
+        back={<Link to="/stores"><ChevronLeft aria-hidden /> Stores</Link>}
+        title={storeId}
+        meta={
           store && (
-            <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-              <StatusDot status={tierKind}>tier: {store.tier || "unknown"}</StatusDot>
-              {store.type && <Badge>{store.type}</Badge>}
-              <Badge>owner app: {store.owner_app}</Badge>
+            <>
+              <StatusDot status={tierKind}>{store.tier || "unknown"} tier</StatusDot>
+              {store.type && <span>{store.type}</span>}
+              <span>owned by {store.owner_app}</span>
               {store.host_project && (
                 <Link to={`/projects/${encodeURIComponent(store.host_project)}`}>
-                  <Tag hue="indigo">project: {store.host_project}</Tag>
+                  {store.host_project}
                 </Link>
               )}
-              <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{store.uri}</span>
-            </Row>
+              <span className="ws-mono">{store.uri}</span>
+            </>
           )
         }
         actions={
@@ -170,14 +167,9 @@ export default function StoreDetail() {
       />
 
       {banner && (
-        <div style={{ marginBottom: "var(--space-4)" }}>
-          <Card>
-            <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>
-              <span style={{ flex: 1 }}>{banner}</span>
-              <Button size="sm" variant="ghost" onClick={() => setBanner(null)}>Dismiss</Button>
-            </Row>
-          </Card>
-        </div>
+        <Notice action={<Button size="sm" variant="ghost" onClick={() => setBanner(null)}>Dismiss</Button>}>
+          {banner}
+        </Notice>
       )}
 
       {loading ? (

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Archive, ArchiveRestore, ArrowLeft, MessagesSquare, Plus, Trash2 } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Archive, ArchiveRestore, ChevronLeft, MessagesSquare, Plus, Trash2 } from "lucide-react";
 import {
   Button,
   Card,
@@ -320,7 +320,6 @@ export default function Chats() {
  * chats and then deleting them. Separate mounts cannot show each other's data.
  */
 export function ChatsArchived() {
-  const nav = useNavigate();
   const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [q, setQ] = useState("");
@@ -388,12 +387,8 @@ export function ChatsArchived() {
   return (
     <div>
       <PageHeader
+        back={<Link to="/chats"><ChevronLeft aria-hidden /> Chats</Link>}
         title="Archived chats"
-        actions={
-          <Button onClick={() => nav("/chats")}>
-            <ArrowLeft aria-hidden /> Chats
-          </Button>
-        }
       />
 
       <div style={{ flex: "1 1 260px", maxWidth: 420, marginBottom: "var(--space-4)" }}>

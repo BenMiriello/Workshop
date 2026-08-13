@@ -297,23 +297,26 @@ export default function JobDetail() {
     }
   }, [id, nav]);
 
-  const back = (
-    <Button size="sm" variant="ghost" onClick={() => nav("/runs")}>
-      <ChevronLeft aria-hidden /> Jobs
-    </Button>
-  );
-
+  // Back is navigation, so it sits above the title as a named link, not as a
+  // button in the action row where it competed with Refresh. "Runs", not
+  // "Jobs": the route is /runs and `job` is the code noun only (ADR 0001).
   const header = (
     <PageHeader
+      variant="entity"
+      back={<Link to="/runs"><ChevronLeft aria-hidden /> Runs</Link>}
       title={job?.title || "Run"}
-      sub={<code className="ws-mono">{id}</code>}
+      meta={job && (
+        <>
+          <StatusDot status={jobStatusKind(job.status)}>{job.status}</StatusDot>
+          {job.started_at && <span>started {fmtTs(job.started_at)}</span>}
+          {duration(job) && <span>{duration(job)}</span>}
+          <code className="ws-mono">{id}</code>
+        </>
+      )}
       actions={
-        <Row wrap style={{ gap: "var(--space-2)" }}>
-          {back}
-          <Button size="sm" onClick={() => void refresh()} loading={loading}>
-            <RefreshCw aria-hidden /> Refresh
-          </Button>
-        </Row>
+        <Button size="sm" onClick={() => void refresh()} loading={loading}>
+          <RefreshCw aria-hidden /> Refresh
+        </Button>
       }
     />
   );

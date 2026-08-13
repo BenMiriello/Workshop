@@ -12,6 +12,49 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.2 — 2026-08-12 — a record page is not a list page
+
+**Additive.** `PageHeader` gains `back`, `meta` and `variant`; new primitives
+`DetailLayout`, `Props`/`Prop` and `Clamp`, with `.ws-page-header--entity`,
+`.ws-page-header__back`, `.ws-page-header__meta`, `.ws-detail*`, `.ws-props*`
+and `.ws-clamp*` in `components.css`. Nothing removed, nothing renamed: the
+existing `PageHeader({title, sub, actions})` call is unchanged and stays the
+default (`variant="page"`).
+
+Every detail page in the app had hand-rolled the same header inside the `title`
+slot, and it was wrong the same way four times:
+
+- **A bare lucide arrow inside the `h1`.** An icon with no size rule inherits
+  the h1's `font-size`, so the arrow rendered at 24px, and a router `Link`
+  takes the MINE hue, so it was also the only coloured thing up there. The way
+  OUT of a page outweighed the record on it. `back` renders a named link above
+  the title in muted ink, per "a control is not content".
+- **A page-name title carrying content.** `--fs-xl` (24px) is right for
+  "Tickets" and wrong for one ticket's sentence, which wraps to three lines and
+  becomes a banner. `variant="entity"` sets the title at reading size and lets
+  it wrap.
+- **A decorative entity icon.** A ticket glyph on the ticket route marks
+  nothing: it is constant, and a constant is not a signal (same rule as hue).
+- **`sub` as a chip rack.** Four `Badge`/`Tag`/`StatusPill` objects in a row,
+  none of which the reader scans for, because there is exactly one record on
+  the page. `meta` is one muted line of plain text with the status word keeping
+  its tone.
+
+`Props`/`Prop` exist because the rails were built out of `Field`, whose label is
+13px `--fg` medium — correct beside an input, wrong beside a value that is only
+read, so every rail looked like a disabled form. Its columns auto-fill: one
+column in a 260px rail, two or three across a phone, with no media query at the
+call site.
+
+`DetailLayout` puts the rail FIRST in the DOM and moves it right at 900px, which
+is what makes the narrow layout right. Stacking a rail after the main column
+buried the properties under the comments, the runs and the activity feed;
+reported 2026-08-12 as "you've HIDDEN properties down at the bottom".
+
+`Clamp` cuts long body text to a height and reveals the toggle only when the
+content actually overflows (it measures; a line count says nothing about how
+tall a code block or an image is).
+
 ## 0.5.1 — 2026-08-12 — a failure beside content is a line, not a region
 
 **Additive.** New primitive `Notice`, plus `.ws-notice*` in `components.css`.

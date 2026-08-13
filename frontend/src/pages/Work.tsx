@@ -274,6 +274,12 @@ export default function Work() {
                     {taskTitle(t) || "(untitled)"}
                   </span>
                   <span className="ws-listrow__meta">
+                    {/* The state word, as plain text. The dot alone told you
+                        which of five colours it was and nothing more, and
+                        "which of blocked / to do / done is this" is exactly
+                        what the list is read for. A word, not a second chip:
+                        the dot beside the title already carries the colour. */}
+                    <span>{taskStatusLabel(t.status)}</span>
                     {/* Only when the list spans scopes. Filtered to one, the
                         column repeats the filter on every row. */}
                     {scope === ALL_SCOPES && (

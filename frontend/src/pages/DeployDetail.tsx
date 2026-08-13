@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  Rocket, ArrowLeft, RefreshCw, ExternalLink, Trash2, RotateCcw, ScrollText, TriangleAlert,
-  Play,
+  ChevronLeft, MoreHorizontal, RefreshCw, ExternalLink, Trash2, RotateCcw, ScrollText,
+  TriangleAlert, Play,
 } from "lucide-react";
 import {
-  Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
-  Badge, Tag, Skeleton, Field, Input, Select, ConfirmDialog, Modal, type StatusKind,
+  Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot,
+  Badge, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Menu, MenuItem, type StatusKind,
 } from "@workshop/ui";
 
 
@@ -221,72 +221,69 @@ export default function DeployDetail() {
   return (
     <div>
       <PageHeader
-        title={
-          <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>
-            <Link to="/deploys" style={{ display: "inline-flex", alignItems: "center" }} aria-label="Back to deploys">
-              <ArrowLeft aria-hidden />
-            </Link>
-            <Rocket aria-hidden />
-            <span>{deploy ? `${deploy.name} · ${deploy.project_slug}` : "Deploy"}</span>
-          </Row>
-        }
-        sub={
+        variant="entity"
+        back={<Link to="/deploys"><ChevronLeft aria-hidden /> Deploys</Link>}
+        title={deploy ? deploy.name : "Deploy"}
+        meta={
           deploy && (
-            <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-              <StatusPill status={lastStatus}>{runs[0]?.status || (deploy.current ? "live" : "never deployed")}</StatusPill>
-              <Badge>{deploy.target.kind}</Badge>
-              <Tag hue="indigo">branch: {deploy.source.branch || "HEAD"}</Tag>
-              <Badge>autonomy: {deploy.autonomy}</Badge>
+            <>
+              <StatusDot status={lastStatus}>
+                {runs[0]?.status || (deploy.current ? "live" : "never deployed")}
+              </StatusDot>
+              <Link to={`/projects/${encodeURIComponent(deploy.project_slug)}`}>{deploy.project_slug}</Link>
+              <span>{deploy.target.kind}</span>
+              <span>branch {deploy.source.branch || "HEAD"}</span>
+              <span>autonomy {deploy.autonomy}</span>
               {deploy.current?.url && (
-                <a href={deploy.current.url} target="_blank" rel="noreferrer"
-                   style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  {deploy.current.url.replace(/^https?:\/\//, "")}
-                  <ExternalLink size={12} aria-hidden />
+                <a href={deploy.current.url} target="_blank" rel="noreferrer">
+                  {deploy.current.url.replace(/^https?:\/\//, "")} <ExternalLink size={12} aria-hidden />
                 </a>
               )}
-            </Row>
+            </>
           )
         }
         actions={
-          <Row wrap style={{ gap: "var(--space-2)" }}>
-            <Button size="sm" variant="ghost" onClick={load}><RefreshCw aria-hidden /> Refresh</Button>
+          // One primary action, the rest behind the overflow. The project link
+          // left this row entirely: it is a fact about the deploy, so it is in
+          // the meta line above, not a button competing with Deploy.
+          <Row wrap>
             <Button size="sm" variant="primary" onClick={() => setConfirmDeploy(true)} disabled={!deploy || busy}>
               <Play aria-hidden /> Deploy
             </Button>
-            <Link to={deploy ? `/projects/${encodeURIComponent(deploy.project_slug)}` : "/deploys"} style={{ textDecoration: "none" }}>
-              <Button size="sm" variant="ghost">Project</Button>
-            </Link>
-            <Button size="sm" variant="danger-ghost" onClick={() => setConfirmDelete(true)} disabled={!deploy}>
-              <Trash2 aria-hidden />
-            </Button>
+            <Menu
+              label="More actions"
+              trigger={
+                <Button size="sm" variant="ghost" aria-label="More actions">
+                  <MoreHorizontal aria-hidden />
+                </Button>
+              }
+            >
+              <MenuItem icon={<RefreshCw aria-hidden />} onSelect={load}>Refresh</MenuItem>
+              <MenuItem
+                danger
+                icon={<Trash2 aria-hidden />}
+                disabled={!deploy}
+                onSelect={() => setConfirmDelete(true)}
+              >
+                Delete deploy
+              </MenuItem>
+            </Menu>
           </Row>
         }
       />
 
       {banner && (
-        <div style={{ marginBottom: "var(--space-3)" }}>
-          <Card>
-            <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>
-              <span style={{ flex: 1 }}>{banner}</span>
-              <Button size="sm" variant="ghost" onClick={() => setBanner(null)}>Dismiss</Button>
-            </Row>
-          </Card>
-        </div>
+        <Notice action={<Button size="sm" variant="ghost" onClick={() => setBanner(null)}>Dismiss</Button>}>
+          {banner}
+        </Notice>
       )}
 
       {notice && !notice.none && notice.remote_sha && (
-        <div style={{ marginBottom: "var(--space-3)" }}>
-          <Card>
-            <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>
-              <TriangleAlert aria-hidden />
-              <span style={{ flex: 1 }}>
-                Change detected at <code>{short(notice.remote_sha)}</code> on{" "}
-                <code>{notice.branch}</code>, paused ({notice.reason}).
-                {notice.detected_at ? ` Noticed ${ago(notice.detected_at)}.` : ""}
-              </span>
-            </Row>
-          </Card>
-        </div>
+        <Notice tone="warn" icon={<TriangleAlert aria-hidden />}>
+          Change detected at <code>{short(notice.remote_sha)}</code> on{" "}
+          <code>{notice.branch}</code>, paused ({notice.reason}).
+          {notice.detected_at ? ` Noticed ${ago(notice.detected_at)}.` : ""}
+        </Notice>
       )}
 
       {loading ? (

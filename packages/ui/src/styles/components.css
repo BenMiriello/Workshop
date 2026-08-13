@@ -177,9 +177,96 @@
   flex-wrap: wrap;
   margin-bottom: var(--space-6);
 }
+.ws-page-header__main { min-width: 0; flex: 1 1 16rem; }
 .ws-page-header__title { margin: 0; font-size: var(--fs-xl); font-weight: var(--fw-semi); letter-spacing: -0.015em; line-height: var(--lh-tight); }
 .ws-page-header__sub { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--fs-sm); }
 .ws-page-header__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+
+/* An ENTITY title is content, not a page name: one ticket's sentence, one
+   store's id. It wraps, and it is set at reading size. At --fs-xl a sentence
+   became a three-line banner that owned the whole first screen, and every
+   detail page had one. */
+.ws-page-header--entity .ws-page-header__title {
+  font-size: var(--fs-lg);
+  line-height: var(--lh-snug);
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+/* THE WAY OUT OF A PAGE IS NOT THE LOUDEST THING ON IT. This was a bare lucide
+   arrow inside the h1: it inherited the 24px title size and the link hue, so a
+   navigation control outweighed the record it sat above. Back is chrome, so it
+   follows the control rule — muted at rest, --fg on hover — and it names its
+   destination, because an unlabelled arrow does not say where it goes. */
+.ws-page-header__back { display: flex; align-items: center; margin-bottom: var(--space-2); font-size: var(--fs-xs); }
+.ws-page-header__back a {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  color: var(--muted); text-decoration: none;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.ws-page-header__back a:hover { color: var(--fg); }
+.ws-page-header__back svg { width: 14px; height: 14px; stroke-width: 1.8; flex: none; }
+
+/* The facts you read once, on one line under the title. Muted ink, no chips:
+   a pill is for something you scan a LIST for, and there is one record here. */
+.ws-page-header__meta {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-2);
+  color: var(--muted); font-size: var(--fs-xs);
+}
+.ws-page-header__meta a { color: inherit; text-decoration: none; }
+.ws-page-header__meta a:hover { color: var(--fg); text-decoration: underline; }
+/* The status word keeps its tone here (it is the one varying fact in the line)
+   but drops to the line's own size and weight, so it reads as a word rather
+   than as a badge that lost its border. */
+.ws-page-header__meta .ws-dot { font-size: inherit; font-weight: var(--fw-medium); gap: var(--space-2); }
+
+/* ---- DETAIL LAYOUT ------------------------------------------------------- */
+/* Main column plus properties rail. The rail is first in the DOM so a phone
+   shows it directly under the header; the grid moves it right when there is
+   room. Nothing here is duplicated between the two layouts. */
+.ws-detail { display: grid; gap: var(--space-6); align-items: start; }
+.ws-detail__main, .ws-detail__rail { min-width: 0; }
+@media (min-width: 900px) {
+  .ws-detail { grid-template-columns: minmax(0, 1fr) 260px; column-gap: var(--space-6); }
+  .ws-detail__main { grid-column: 1; grid-row: 1; }
+  .ws-detail__rail { grid-column: 2; grid-row: 1; }
+}
+
+/* ---- PROPS (read-only record fields) ------------------------------------- */
+/* Label above value, columns that auto-fill: one column in a 260px rail, two
+   or three across a phone, with no media query at the call site. Not `Field`,
+   whose label weight belongs beside an input. */
+.ws-props {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: var(--space-3) var(--space-4);
+  margin: 0;
+}
+.ws-props__row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ws-props__label { color: var(--muted); font-size: var(--fs-xs); line-height: var(--lh-tight); }
+.ws-props__value { margin: 0; min-width: 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.ws-props__value a { color: inherit; }
+
+/* ---- CLAMP --------------------------------------------------------------- */
+/* Long body text cut to a readable height, with the toggle rendered only when
+   there is something to reveal (layout.tsx measures rather than counting
+   lines). The fade says the cut is a cut and not the end of the text. */
+.ws-clamp { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); --_clamp-bg: var(--card); }
+.ws-clamp__body { width: 100%; min-width: 0; }
+.ws-clamp__body.is-clamped { overflow: hidden; position: relative; }
+.ws-clamp__body.is-faded::after {
+  content: ""; position: absolute; inset: auto 0 0 0; height: 3rem;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--_clamp-bg), transparent 100%), var(--_clamp-bg));
+  pointer-events: none;
+}
+.ws-clamp__toggle {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  color: var(--muted); font: inherit; font-size: var(--fs-xs);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.ws-clamp__toggle:hover { color: var(--fg); }
 
 /* ---- TOOLBAR ------------------------------------------------------------- */
 .ws-toolbar {
@@ -460,12 +547,13 @@ a.ws-btn { text-decoration: none; }
   transition: background var(--dur-fast) var(--ease-out);
 }
 .ws-listrow:hover { background: var(--card-hover); }
-/* The status mark is a DOT and nothing else: no label, no pill, no border.
-   There are five states and a list is read by scanning, so the word next to the
-   dot is read once and then never again while the color carries it. Labelling
-   every row also gave every row two chip-shaped objects (status and scope),
+/* The status mark is a DOT: no pill, no border, no word beside the title.
+   Labelling it there gave every row two chip-shaped objects (status and scope),
    which is what made the list read as chip soup rather than as a list.
-   The accessible name rides on the wrapper's title/aria-label. */
+   The WORD still has to be somewhere, though — "is this blocked or is it just
+   to do" is what a ticket list is read for, and a colour alone answers that
+   only for someone who has already learned the five hues. It goes in the meta
+   line as plain text, where it costs one word and no shape. */
 .ws-listrow__mark { display: inline-flex; align-self: baseline; }
 .ws-listrow__title {
   min-width: 0;
@@ -486,6 +574,13 @@ a.ws-btn { text-decoration: none; }
 .ws-listrow__meta > * { flex: 0 0 auto; }
 .ws-listrow__scope { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ws-listrow__time { margin-left: auto; padding-left: var(--space-2); }
+/* Separators between meta facts, so "to do workshop 2h ago" reads as three
+   things. Not on the time while it is pushed to the far right by margin-left:
+   the separator travels with the item, and a middot alone against the right
+   edge is a mark with nothing on its left. */
+.ws-listrow__meta > * + *:not(.ws-listrow__time)::before {
+  content: "·"; margin-right: var(--space-2); color: var(--faint);
+}
 
 @media (min-width: 720px) {
   .ws-listrow {
@@ -494,7 +589,12 @@ a.ws-btn { text-decoration: none; }
     padding-block: var(--space-2);
   }
   .ws-listrow__meta { grid-column: 3; grid-row: 1; }
+  /* No longer pushed apart, so the whole meta line is one trailing group and
+     every gap in it takes the same separator. */
   .ws-listrow__time { margin-left: 0; }
+  .ws-listrow__meta > * + *::before {
+    content: "·"; margin-right: var(--space-2); color: var(--faint);
+  }
 }
 
 /* Child rows under a parent row (a sweep and the runs it spawned). Indented by
