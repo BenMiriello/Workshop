@@ -1,29 +1,52 @@
 # The automation loop: what exists, what is dead, and the plan to turn it on
 
 **Status: PLAN. Written 2026-08-12 against the live tree, not against the docs.**
-Supersedes nothing. It is deliberately not another design: the design is done,
-and this says which parts of it are real, which are decoration, and the
-shortest honest path from here to autonomous ticket execution.
+This says which parts of the existing design are real, which are decoration,
+and the shortest honest path from here to autonomous ticket execution.
 
-> **Read this first if you are about to write design doc number thirty-two.**
-> There are already ~30 design docs across `docs/platform-redesign/`. The role
-> model, the autonomy model, latitude, the `awaiting` shape and the triage
-> decision set are all decided AND largely shipped in the backend. The gap is
-> not design. The gap is that nothing runs, and that several shipped controls
-> do nothing.
+**What it supersedes**, since an earlier draft claimed "supersedes nothing" and
+that was not true:
+
+- `ticket-lifecycle-and-integration-2026-08-10.md:229`, which records "scope
+  review: split / blockers / stages" as shipped. Its routes were deleted
+  2026-08-12; the engine survives unreferenced, and phase 3 decides its fate.
+- The `touches`-enforcement precondition in `continuation-2026-07-31.md:303`
+  and `latitude-model-2026-07-18.md:177`. Dropped here, with the reason stated
+  at phase 5.
+- Nothing else. Where this plan and a ratified decision disagree anywhere else,
+  the ratified decision wins and this document is wrong.
+
+> **This IS design doc number thirty-two, and it should have been shorter.**
+> There are already ~30 across `docs/platform-redesign/`. The role model, the
+> autonomy model, latitude, the `awaiting` shape and the triage decision set
+> are all decided AND largely shipped. The gap is not design: it is that
+> nothing runs, and that several shipped controls do nothing.
+>
+> An adversarial review of this document's first draft found it proposing a
+> `awaiting` state split that reversed a decision recorded in code, a per-scope
+> autonomy field with unnamed values, a rebuild of an inbox producer that
+> already exists and works, and a first supervised sweep pointed at the one
+> scope the operator ruled out as a build target. All four are corrected below,
+> in place and named, because the failure mode this document is about is
+> exactly that: adding to a design that was already finished.
 
 ## 0. The one paragraph that should decide the order of work
 
 The largest measured intervention anywhere in the 2025-2026 literature on
 agent systems is not a topology, a role set, a critic, or a memory
-architecture. It is **a human answering a question**. Magentic-UI measured
-autonomous task completion at 30.3%, and 51.9% when a simulated user with side
-information could answer, **with help requested on only 10% of tasks**. Nothing
-else in the corpus comes close to +71% relative for that little.
+architecture. It is **a human answering a question**. Magentic-UI
+([arXiv 2507.22358](https://arxiv.org/abs/2507.22358)) measured 162 GAIA
+validation tasks at 30.3% autonomous and **51.9%** when a simulated user with
+side information could answer, **with help requested on only 10% of tasks**.
+Nothing else in the corpus comes close to +71% relative for that little.
 
-Meanwhile, six independent 2026 replications that hold compute constant find
-that most multi-agent architectures **lose** to a single agent given the same
-token budget, by 2.6 to 11.3 points.
+Meanwhile, replications that hold compute constant find that most multi-agent
+architectures **lose** to a single agent at the same token budget: "Do More
+Agents Help?" ([arXiv 2606.05670](https://arxiv.org/abs/2606.05670), GPT-4.1,
+10 benchmarks) found at most one of six tested systems beating a matched
+single-agent anchor, the other five trailing by **2.6 to 11.3 points**; Tran
+and Kiela ([arXiv 2604.02460](https://arxiv.org/abs/2604.02460)) found the same
+holding reasoning tokens constant.
 
 So the order is: **make asking work, make the ticket say enough, and only then
 add machinery.** Everything in this plan is arranged around that, and anything
@@ -46,16 +69,22 @@ Every number here came from the live stores and the running host.
 | Runs in the log | 2753, of which **0 are non-terminal**; most recent start 2026-08-05 |
 
 The path itself works: `POST /api/tasks/{scope}/{id}/run` opens a Job and
-`Popen`s a detached `project_ralph.sh --task-id`, which claims the ticket,
-resolves an effort tier, and hands `title + body` to `claude -p` in a loop
-bounded by `scripts/reviewer.sh`. That is the whole executor. There is no
-runner agent, no queue daemon, and nothing that starts a run except the API.
+`Popen`s a detached `project_ralph.sh --task-id` (1168 lines), which claims the
+ticket, resolves an effort tier, and fires `scripts/ralph.sh` (1022 lines) per
+task. `ralph.sh` is what actually invokes `claude -p`, in a loop bounded by
+`scripts/reviewer.sh`, and it is also where the one real containment control
+lives: the irreversible-action deny list, built from
+`agent_authority denied --unattended` and passed as `--disallowedTools`.
+There is no runner agent, no queue daemon, and nothing that starts a run
+except the API.
+
+Naming those line counts matters, because phases 4 and 5 modify both files.
 
 ### The agent layer is disjoint from the system that runs
 
-- 10 agent definitions exist (3 live: `masini`, `masini-commute`,
-  `memory-keeper`; 7 retired builders). **All 8 build agents are `retired`,
-  last active mid-July.**
+- `list_agents()` returns **3** (`masini`, `masini-commute`, `memory-keeper`).
+  `build_agents.json` holds **8**, every one `state: retired`, last active
+  mid-July. There are 4 more definitions under `agents/apps/`.
 - **Zero registry agents have ever produced a job record.** The 7 `agent_id`
   values in the job log are Letta UUIDs belonging to per-channel Discord
   agents, which the registry explicitly excludes.
@@ -85,8 +114,11 @@ Measured across all 34 open tickets in every scope right now:
 | objective | 1 (3%) |
 | **pass every check** | **9 (26%)** |
 
-That 26% is up from "1 of 40" when the checker shipped, so ticket quality is
-improving. It is still not a number you can gate on without wedging the queue.
+The checker shipped against **0 of 40** passing. 26% now looks like
+improvement and may be, but the two populations are not the same tickets:
+most of the original 40 are closed, so the delta is confounded by which ones
+got worked. Treat it as "still not a number you can gate on", which is the only
+claim this plan needs.
 
 There WAS an LLM scope reviewer: `POST /scope-review` returned
 `{verdict: ok|split|underspecified, reason, subtickets, blockers}` and `/split`
@@ -122,9 +154,9 @@ Naming these is half the plan, because each one is a lie the UI currently tells.
 | control | reality |
 |---|---|
 | `latitude` (strict/standard/open) | **prompt text.** One machine-visible consequence: reviewer rc=7 blocks instead of retrying. Zero tickets and zero projects set it. |
-| `touches` | an **after-the-fact audit on the committed diff**, not a write barrier. No ticket sets it. |
-| `depth` / `fanout` on an agent | **no executor reads either.** Parsed, echoed to the API, dropped. Still rendered in `AutonomyPanel`. |
-| Settings → start the queue runner | **cannot work.** `POST /queue/runner/start` Popens the watchdog with no directory; the watchdog refuses an empty dir (ADR 0014) and exits 2. |
+| `touches` | an **after-the-fact audit on the committed diff**, not a write barrier. 35 tickets set it, none of them open. |
+| `depth` / `fanout` on an agent | **no executor reads either.** Parsed, echoed to the API, dropped. Already removed from the UI; only the registry parse remains. |
+| Settings, "Start all" | **cannot start a runner.** `POST /queue/runner/start` Popens the watchdog with no directory; the watchdog refuses an empty dir (ADR 0014) and exits 2. It DOES clear the global brake, which is the half that works. |
 | `assignee` | `"operator"` on all 93 platform tickets. `--assignee agent:<slug>` would select nothing. |
 | `broker` role | in the enum, no handler, no agent declares it. |
 
@@ -169,7 +201,13 @@ happened when it ran. Every control on the page should serve one of those.
 **What is deliberately absent:** a Deploy button (that is `/deploys`), an
 assignee picker (one value in the entire store), a latitude editor (0% set, and
 the field is advisory), an attempt-cap editor (0% set), and a readiness nag
-panel (approve already reports the gaps in one line).
+panel with checkboxes.
+
+Note what that last one does NOT justify. An earlier draft excused the missing
+readiness line by saying "approve already reports the gaps". Approve only fires
+on a `draft`, and **1 ticket in 179 is a draft**: 38 are `todo`, filed
+directly. The approve path reports gaps for about 3% of tickets, which is an
+argument FOR the line in the next list, not against it.
 
 **What is missing and should exist**, in the order the loop needs it:
 
@@ -192,21 +230,36 @@ panel (approve already reports the gaps in one line).
 
 ## 3. Autonomy, boiled down to three dials
 
-There are eight autonomy-adjacent controls today. Four do nothing. A control
-that does nothing is worse than a missing one, because the operator reasons
-with it. The proposal is to keep three, delete or hide the rest, and make each
-one answer a different question.
+Six autonomy-adjacent controls are listed in §1 and none of the six does what
+its label implies. A control that does nothing is worse than a missing one,
+because the operator reasons with it. The proposal is to keep three real dials,
+delete or relabel the rest, and make each dial answer a different question.
 
 | dial | question it answers | where it lives | today |
 |---|---|---|---|
-| **1. Is unattended work permitted at all?** | the brake | one global switch, `.runtime/autonomy-override.json` | **shipped and correct.** Missing file = clear, corrupt = engaged (fail closed). Keep exactly. |
+| **1. Is unattended work permitted at all?** | the brake | one global switch, `.runtime/autonomy-override.json` | **the file and its semantics are shipped and correct** (missing = clear, corrupt = engaged, fail closed). Its CONTROL is not: see below. |
 | **2. What may run unattended HERE?** | per scope | `autonomy.mode` on a project / scope | exists on one project, `manual`. Needs to be a real per-scope setting with three values. |
 | **3. What happens when a run finishes?** | per agent | the `autonomy` enum: `reactive` / `supervised` / `autonomous` | shipped in the registry, read by nothing, because nothing dispatches. |
 
 The three compose as one sentence the operator can read:
 
-> Unattended work is **on**; in **workshop** scope, tickets marked ready may run
+> Unattended work is **on**; in **development** scope, tickets marked ready may run
 > **supervised**; results land in **review** before they commit.
+
+`development`, not `workshop`, and the difference is a ratified operator
+decision rather than a preference: "`workshop` is not a build target... No
+builder sweep is dispatched against it; it has no code tree"
+(`dev-mode-and-development-scope-2026-08-09.md:211`). An earlier draft of this
+sentence used `workshop` and would have pointed the first supervised sweep at
+the one scope that cannot be built.
+
+**The brake needs its own control, because today it does not have one.**
+Settings has "Start all" and "Stop all", and those buttons are about the queue
+RUNNER, but `POST /queue/runner/start` also calls `autonomy_override.clear()`
+and `/stop` calls `autonomy_override.engage()`. So a per-runner button silently
+moves the global brake, and the runner half of it cannot work at all. Splitting
+them is part of dial 1: a switch that says what it does, and a runner control
+that starts a runner.
 
 Rules that fall out, and that the current design already decided:
 
@@ -243,9 +296,11 @@ Two structural rules from the same design that this plan keeps:
 - **No agent addresses another agent.** Coordination is through shared state:
   a ticket store and a knowledge store both sides read and write. No inbox, no
   handoff protocol, no message bus.
-- **The conductor is not an agent.** It is ~20 lines of deterministic Python
-  (today, `dispatch_triggers.sh`). No LLM runs to decide whether an LLM should
-  run.
+- **The conductor is not an agent.** The design describes it as ~20 lines of
+  deterministic Python; what shipped is `dispatch_triggers.sh`, 713 lines of
+  bash. The principle held (it is code, not a model); the size claim did not,
+  and anyone planning against "twenty lines" should know that. What matters is
+  the invariant: no LLM runs to decide whether an LLM should run.
 
 **The stock set for this installation, and what each is for:**
 
@@ -394,7 +449,13 @@ Eleven durable stores exist. The headline numbers, taken from the live tree:
 
 **Three findings that make the rest of this section urgent.**
 
-**1. The "capture a preference" path is a no-op.** When the operator states a
+**1. The "capture a preference" path was a no-op. Fixed 2026-08-12, mid-plan.**
+The description below is what the audit found; the code now reads
+`if scope != learnings.GLOBAL` and the block renders, labelled OPERATOR
+PREFERENCES. It is left here in full because the failure shape is the useful
+part, and because §8's "if only three things" list is written against it.
+
+When the operator states a
 durable preference in a general chat, the model emits a learning-note fence,
 `apply_learning_note` defaults its scope to `workshop`, the chat replies
 "Captured a preference", and then `chat_context.py:1055` reads
@@ -432,9 +493,16 @@ is the one the operator has had to restate by hand most often.
 `mcp__workshop__search` is in the general chat's allowlist and nowhere else. A
 project or build chat cannot call it. A registry agent cannot. An @-mentioned
 agent gets `Read/Grep/Glob` and no MCP at all. A ralph worker receives the
-ticket text plus a learnings block, and nothing else: no notes, no docs, no
-chat, no prior run. **The delegate is the one that needs the context, and the
-delegate is the one denied the tool.**
+ticket text and a learnings block, plus whatever the CLI loads for the tree it
+is `cd`'d into, which is the `CLAUDE.md` hierarchy: no knowledge notes, no
+docs, no chat, no prior run, and no way to look any of them up. **The delegate
+is the one that needs the context, and the delegate is the one denied the
+tool.**
+
+The `CLAUDE.md` correction matters for finding 2 below: the Design System rule
+dropped from the 700-token block is separately loaded from `frontend/CLAUDE.md`
+for any worker in this tree, so the worker was not blind to it. The CHAT was,
+and so was any worker in a tree without that file.
 
 Three more, briefly, because they are cheap to fix and currently mislead:
 
@@ -467,7 +535,10 @@ cache while injecting topically-related distractors.
 The push side is also where the cheapest measured win in this whole area sits.
 Anthropic reported that letting an agent DISCOVER tool definitions by listing a
 directory, instead of loading them all up front, took a context from 150,000
-tokens to 2,000: **a 98.7% reduction**. The same shape applies to knowledge.
+tokens to 2,000: **a 98.7% reduction** ([code execution with MCP][mcp-exec]; a
+demonstration rather than a benchmark). The same shape applies to knowledge.
+
+[mcp-exec]: https://www.anthropic.com/engineering/code-execution-with-mcp
 An index of titles is a directory listing; the bodies are the files.
 
 ### What has to exist for pull to work
@@ -561,13 +632,16 @@ it has run attended, and been watched.**
 No new capability. Every item here removes a control that does nothing or a
 label that is false.
 
-- Delete `depth` / `fanout` from the agent surface.
-- Fix or remove the queue-runner Start button. As written it cannot start a
-  runner.
+- Delete `depth` / `fanout` from the registry parse. They are already gone from
+  the UI; only the parse still echoes them to the API.
+- Split "Start all" into two honest controls: the global brake, and a runner
+  control that can actually start a runner. Today one button does both, and the
+  runner half cannot work.
 - Relabel `latitude` in the UI as what it is: what the worker decides when the
   ticket is silent. Remove any framing of `touches` / grants as a boundary.
-- Re-wire `ticket_scope_review.py` or delete it. A 189-line engine behind a
-  dangling import is the worst of both.
+- Leave `ticket_scope_review.py` alone until phase 3, which is where its fate
+  is actually decided. Deleting it in phase 0 would only mean rewriting it in
+  phase 3.
 
 ### Phase 1: make readiness visible where it is decided (a day)
 
@@ -577,7 +651,9 @@ label that is false.
   and 68% of open tickets fail. This is a prompt change in the distiller plus
   the four-field body format that already exists.
 - Target: the pass rate goes from 26% toward 80% on newly filed tickets. Do not
-  gate on it yet. Measure it for a week.
+  gate on it. Readiness reports; it does not veto, and that is a ratified
+  decision, not a phase-ordering convenience: the operator is the authority and
+  what the system owes them is the list.
 - **Fix the preference path** (§5). Eleven captured operator corrections are
   currently written to a scope nothing reads, under a reply that says they were
   captured. This belongs in the same phase as "stop lying" and only missed it
@@ -589,21 +665,45 @@ label that is false.
   triager's decisions, the digest, the search tool and the inbox all key on
   scope, and three key spaces means three of everything.
 
-### Phase 2: one watched run, end to end (a day)
+### Phase 2: K watched runs, and a number (days, not a day)
 
-- Run one real ticket with `POST /run` and watch the whole path: claim, worker,
-  reviewer, commit, receipt, status.
-- Confirm the run's links are now written (`task_id`, `chat_id`), that the
-  ticket page shows the run, and that the run page links back to the chat.
-- Fix what that surfaces. Do not proceed while anything about it is surprising.
+- Run real tickets with `POST /run`, one at a time, watching the whole path:
+  claim, worker, reviewer, commit, receipt, status.
+- Confirm the run's links are written (`task_id`, `chat_id`), that the ticket
+  page shows the run, and that the run page links back to the chat.
+- **Record the completion rate.** One run is not evidence: this plan's own
+  evidence table puts verified session success at 28-33% for experts, so a
+  single success sits inside the noise, and the operator's standing rule is
+  "until the automated ticket system completes several tickets end-to-end
+  reliably, default to manual work". K is small (five is enough to tell 20%
+  from 80%), and the number it produces is what phase 4 gates on, instead of
+  "nothing was surprising".
 
-### Phase 3: the queue triager, attended (two days)
+### Phase 3: the queue triager, attended (days, and a week of reading it)
 
 - Add the queue trigger to the triager: for each `todo` ticket not yet
-  reviewed, emit `ok` / `split` / `underspecified` / `none`.
+  reviewed, emit one decision from a closed set.
+- **This is more than "one new trigger", and an earlier draft of this plan
+  undersold it.** The note triager's decisions are `task | link | escalate |
+  none`; the surviving scope-review engine's verdicts are `ok | split |
+  underspecified`. They share no members, so this is a new decision vocabulary
+  and a new write (child tickets), not a re-pointing.
+  It also weakens a ratified safety argument: the note triager "cannot write
+  notes, so it cannot change its own trigger input", called out in
+  `primitive-roles-2026-07-18.md:310` as "a structural guarantee, not a prompt
+  instruction". A queue triager writes tickets and is triggered by tickets, so
+  that guarantee does not transfer. **Termination has to come from a mark**: a
+  ticket the triager has judged carries the judgement, and is not re-judged
+  until it changes. The caps below are a backstop, not the argument.
 - `underspecified` sets `awaiting` with ONE specific question and surfaces it in
   the inbox and in the originating chat. `split` files children as drafts,
-  which the operator approves. Depth cap 2, filing cap 5 per pass.
+  which the operator approves. Depth cap 2, and **a cap of 5 per pass on
+  `underspecified` as well as on `split`**: 25 of the 34 open tickets fail the
+  acceptance check, so an uncapped first pass produces roughly 25 newly blocked
+  tickets and 25 questions in one morning, which is not a review, it is a wall.
+- Decide the fate of `ticket_scope_review.py` HERE, not in phase 0. Rewiring or
+  deleting it is the same decision as building this, and phase 0 deleting it
+  would only mean phase 3 rewriting it.
 - Run it manually first. Read every decision it makes for a week before giving
   it a cron trigger.
 - **Rebuild the index automatically and index every knowledge directory**
@@ -612,21 +712,41 @@ label that is false.
   note, is a search question, and today it would be searching a hand-built
   index that covers one directory and is hours stale.
 
-**Split `awaiting` into two states while doing this.** They are different
-questions and they must expire differently:
+**Expire a stop by its `kind`. Do NOT add states.** A question and a permission
+request must expire differently, and the shape to express that already exists:
 
-| state | meaning | on no answer |
-|---|---|---|
-| `awaiting_input` | a QUESTION. "Which of these did you mean?" | may time out and let the run proceed on its own judgement, re-asking later |
-| `awaiting_approval` | an ACTION the operator must permit | **never auto-resolves.** Ever. |
+| `awaiting.kind` | on no answer |
+|---|---|
+| `input`, `decision`, `missing-info` | may time out, let the run proceed on its own judgement, and re-ask later |
+| `permission` | **never auto-resolves.** Ever. |
 
-That asymmetry is Claude Code's, and it is the most defensible rule anyone has
-shipped: questions time out, approvals do not. Today one `awaiting` field
-carries both, which means either questions block forever or approvals decay.
+The asymmetry is Claude Code's, and it is the most defensible rule anyone has
+shipped: questions time out, approvals do not.
 
-Two more shapes worth copying while the field is being reshaped, both from
-Linear's agent protocol, which is the best-specified escalation contract in a
-shipped product:
+**This corrects an earlier draft of this plan**, which proposed splitting
+`awaiting` into `awaiting_input` and `awaiting_approval` states. That was wrong
+three ways, and the review that caught it is the reason this section is short:
+
+1. `awaiting` is **not a status**. `tasks.py` `STATUSES` has no such member; it
+   is a structured field on a `blocked` ticket.
+2. The one-primitive decision is recorded in code (`tasks.py:57-89`): every
+   stop reason is "the SAME primitive, `awaiting`, widened in place rather than
+   given a sibling status or a parallel record", with `kind` deliberately an
+   OPEN slug set because "a closed set fails on the first unanticipated reason
+   to stop". Splitting it reverses that, under a masthead saying the `awaiting`
+   shape is already decided.
+3. **`awaiting_input` is already a live Job status** (`jobs.py:52`), with three
+   records carrying it, routes, a frontend filter and a status-kind map. Reusing
+   the token for a ticket state collides across the exact Ticket/Run seam that
+   ADR 0009 exists to keep straight.
+
+Expiry keyed on `kind` needs no schema change, no migration and no new state,
+and the auto-resolve ladder it plugs into was already ratified in
+`latitude-model-2026-07-18.md:158-167`, including "hard gates never auto-resolve
+at any latitude".
+
+Two shapes worth copying, both from Linear's agent protocol, which is the
+best-specified escalation contract in a shipped product:
 
 - **The blocked state is DERIVED from what the agent emitted, never set by
   hand.** An agent emits an elicitation; the session becomes `awaitingInput`
@@ -639,11 +759,23 @@ shipped product:
 
 ### Phase 4: supervised unattended execution (a week)
 
-- Restore the queue runner, one scope, `supervised`: runs land in `in_review`
-  rather than committing to `done`.
-- Add the missing inbox producer: a run that finishes or fails unattended
-  raises a `notify`. Today only blocked questions and memory promotions do,
-  which is why the inbox is empty.
+- Bring back the queue runner, one scope, `supervised`: runs land in
+  `in_review` rather than committing to `done`.
+
+  **This is the operator's call, not an edit.** The line in
+  `infra/cron/workshop.crontab:72` is commented out, it is missing the `--dir`
+  argument it now requires (so uncommenting it hits the same refusal as the
+  Start button), and the file carries an explicit instruction above it: "THIS
+  COMMENT STATE IS THE OPERATOR'S DECISION, NOT AN ACCIDENT OF EDITING... Do
+  not uncomment them to 'restore' anything." Fix the missing `--dir`; leave the
+  comment for him.
+- **The inbox producer already exists.** An earlier draft of this plan
+  scheduled building it and gave a false reason. `inbox.sweep_finished_runs`
+  raises `kind="notify"` for every terminal job whose trigger is autonomous,
+  it runs on every inbox read, and its watermark advanced today. The inbox
+  holds 9 items, 2 of them `notify`, one titled "Run finished". It finds little
+  because no autonomous-trigger run happens, which this phase changes by
+  itself. Nothing to build.
 - Add the stale-question escalation the docs name as unbuilt: a question that
   has sat unanswered for a day gets louder, rather than sitting silently.
 - Add stuck detection, because an unattended run that loops is the failure this
@@ -670,8 +802,30 @@ shipped product:
   the ticket, so a design ticket looks executable), and a dry run
   (`--plan`) so a sweep can say what it would do without doing it.
 
-**Do not skip to phase 5.** That instruction is already written into
-`continuation-2026-07-31.md` and it was right.
+**One earlier instruction, quoted properly, because an earlier draft of this
+plan misquoted it in its own favour.** `continuation-2026-07-31.md:306` says
+"Do not skip to 5." Its list is five ITEMS, not phases, and item 5 is "Run one
+ticket end to end, watched. Then a few. Then enable." That is **this plan's
+phase 2**, not phase 5. So the original instruction means: do not run a ticket
+end to end before items 2, 3 and 4, which are the `--plan` dry run, typing
+tickets executable-versus-judgement, and **enforcing `touches`**.
+
+This plan does not honour that ordering, and says so rather than quietly
+reordering it:
+
+- The dry run and ticket typing move to phase 5, three phases after the watched
+  run. The reason is that phase 2 is one ticket the operator is watching, which
+  is the cheapest way to learn what those two features actually need to do.
+- **`touches` enforcement is dropped entirely**, which is a real reversal of a
+  stated precondition. The justification is not that it stopped mattering: it is
+  that `touches` never was a boundary. It runs on the committed diff after the
+  run is over, and that was recorded in
+  `agent-governance-addendum-2026-08-04.md:47-52` after the precondition was
+  written. Confinement comes from execution identity or a sandbox, not from a
+  post-hoc audit, which is why it sits under phase 5's precondition instead.
+- `continuation:321` also says "Do not enable background autonomy as part of
+  any of the above". Phases 0 to 3 comply. Phase 4 is exactly that step, and it
+  is the operator's decision, not this plan's.
 
 ### The precondition nobody has met yet
 
@@ -685,13 +839,22 @@ tree. That is SEC-A1, open. It can rewrite `.tasks.json`, `agents/*.md` and its
 own guardrail files, which is SEC-A2, also open. The industry answer to
 exactly this is unanimous and it is not more prompting: **contain at the
 environment layer first, then steer at the model layer**, at which point you
-can relax the oversight. Sandboxing is measured to cut permission prompts 84%
+can relax the oversight. Sandboxing is measured to cut permission prompts by
+84% ([Claude Code sandboxing][cc-sandbox])
 precisely because the prompt stops being the safety mechanism.
 
 So phase 5 has one hard prerequisite that is not in this document's scope:
 either a lower-privilege execution identity for the loop, or a sandbox. Until
 one exists, "autonomous" should mean **supervised with a shorter leash**, not
 unattended commits.
+
+One control that DOES exist and deserves the credit: `ralph.sh` builds
+`--disallowedTools` from `agent_authority denied --unattended` and applies it
+unconditionally to every worker turn. It is a real deny list on irreversible
+actions, it is the only confinement in the loop today, and it is not what
+`touches`, `latitude` or grants pretend to be.
+
+[cc-sandbox]: https://www.anthropic.com/engineering/claude-code-sandboxing
 
 ---
 
@@ -704,13 +867,12 @@ three exist in some form today.
 | question | surface | state |
 |---|---|---|
 | what is happening right now | the run in flight, on the ticket and in the chat that launched it | shipped; the chat link was just made real |
-| what happened while I was away | the inbox | shipped, and **empty**, because no producer raises a `notify` when an unattended run finishes |
+| what happened while I was away | the inbox | shipped, with a working `notify` producer for unattended runs; nearly empty because no unattended run happens |
 | what did it cost | usage, per scope and per chat | ledger shipped; the by-chat view is an open ticket |
 
 The rule that keeps this honest: **a run that ends without a human watching
-must leave a receipt someone will see.** Today it leaves a receipt in the job
-record and nothing surfaces it. That single missing producer is the difference
-between an autonomy loop you can trust and one you have to go looking for.
+must leave a receipt someone will see.** That machinery is built and correct;
+what it lacks is unattended runs to report on.
 
 One more, from the audit rather than the design: **status must never be
 inferred in two places.** A ticket's state, a run's state and the inbox item
@@ -776,9 +938,13 @@ while believing they were faster; verified session success sits around 30% even
 for experts; and the single largest measured improvement anywhere is a human
 answering a question on 10% of tasks. A defensible alternative reading is:
 **make the attended path excellent and keep autonomy narrow**, restricted to
-tickets that are small, well specified and machine-verifiable, which is roughly
-9 of the 34 open ones today. This plan is compatible with that reading, and
-phases 0 to 3 are worth doing under either.
+tickets that are small, well specified and machine-verifiable. That is FEWER
+than the 9 that pass readiness: readiness is not a quality judgement and says
+so in its own docstring, and at least three of those 9 are `deep` judgement
+work (an audit, a sync-semantics definition, a "revisit these deferred items"),
+which is exactly the class phase 5 says there is no field to distinguish yet.
+This plan is compatible with that reading, and phases 0 to 3 are worth doing
+under either.
 
 **Three things it does not answer.**
 
