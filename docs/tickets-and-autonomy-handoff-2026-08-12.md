@@ -24,6 +24,7 @@ are enough.
 | # | doc | what it gives you |
 |---|---|---|
 | 1 | [`platform-redesign/autonomy-turn-on-2026-08-12.md`](platform-redesign/autonomy-turn-on-2026-08-12.md) | **The plan, and the authority for this work.** What is real, what is decoration, the phase order, the evidence table with sources. Written against the live tree, and carries its own self-critique in §8. |
+| 1b | [`platform-redesign/autonomy-implementation-2026-08-13.md`](platform-redesign/autonomy-implementation-2026-08-13.md) | **The HOW for phases 0 to 4**, and what you actually build from: the two schema fields, file-by-file changes, endpoint shapes, UI primitives per surface, and the test plan. Read it after the plan's §1 and §3.1, which are what make its phase 1 make sense. |
 | 2 | [`platform-redesign/entity-model-2026-07-18.md`](platform-redesign/entity-model-2026-07-18.md) | **The spine.** Chat / Ticket / Run / Agent: one word per concept, states, fields, cross-links. Ratified by ADR 0007. Its §9.2 tells you which 2026-07-16 docs are superseded, folded in, or preserved. When it and an older report disagree, it wins. |
 | 3 | [`platform-redesign/ticket-system-consolidation-2026-08-12.md`](platform-redesign/ticket-system-consolidation-2026-08-12.md) | The same-day ticket-surface consolidation this session's UI work sits on top of. Read it before changing the ticket list or page again. |
 | 4 | [`platform-redesign/system-audit-2026-07-18.md`](platform-redesign/system-audit-2026-07-18.md) | The blunt version of "the execution half is real, the orchestration half routes zero agents". Still true, and it is where the four-serializers finding comes from. |
@@ -110,10 +111,18 @@ The plan's own "if only three things get done" list, with the current state:
    (authorship is a sort tier in `learnings._entry_rank`; budget 700 to 900).
 3. **Give `mcp__workshop__search` to the worker and to agents.** NOT done, and
    it is now the highest-value remaining item. Today exactly one surface in the
-   system can search the workshop's own writing: the general chat. A ralph
-   worker, a registry agent and an @-mentioned agent all cannot. This is mostly
-   allowlist plumbing in `chat_context.effective_allowed_tools` and the agentic
-   MCP flags in `llm_router`.
+   system can search the workshop's own writing: the general chat
+   (`chat_context.py:1724`). A ralph worker, a registry agent and an @-mentioned
+   agent all cannot.
+
+   **It is three different mechanisms, not one allowlist change**, and the spec
+   breaks them out in §3.6: the mentioned agent goes through
+   `agent_authority._READ_TOOLS` (which correctly excludes `broker`, whose whole
+   contract is not reading what it adjudicates), project and build chats route
+   to the full-agentic branch, and the ralph worker calls `claude -p` directly
+   with no MCP flags at all, so it needs `--mcp-config`. The worker case also
+   has an owner-pinning trap that would let it ship broken and pass a smoke
+   test.
 
 After that, the plan's phase order. Phase 0 is "stop lying" and is all
 deletions of controls that do nothing.

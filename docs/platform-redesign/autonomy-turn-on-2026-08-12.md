@@ -766,6 +766,12 @@ Ordered so that each step is observable before the next one is trusted. The
 rule for the whole sequence: **nothing runs unattended until the thing before
 it has run attended, and been watched.**
 
+> **The file-by-file implementation of phases 0 to 4 is
+> [`autonomy-implementation-2026-08-13.md`](autonomy-implementation-2026-08-13.md).**
+> Schemas, endpoints, function signatures, UI primitives and the test plan live
+> there so this section can stay about ORDER. Phase 5 has no spec, because its
+> prerequisite is an execution boundary that does not exist.
+
 ### Phase 0: stop lying (a day of edits)
 
 No new capability. Every item here removes a control that does nothing or a
