@@ -25,11 +25,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import build_streaming as bs  # noqa: E402
+from services import build_streaming as bs, paths  # noqa: E402
 
 
 def _meta(**over) -> dict:
-    m = {"session_id": None, "resume": False, "cwd": "/home/clawd-a/workshop",
+    # Derived, never written out: check_no_hardcoding.sh fails the reviewer
+    # gate on an absolute home path in tracked source.
+    m = {"session_id": None, "resume": False, "cwd": str(paths.workshop_root()),
          "permission_mode": None, "allowed_tools": None, "tools_disabled": False,
          "mcp_selection": None, "model": None, "prompt": "hi"}
     m.update(over)

@@ -56,7 +56,8 @@
 
 # ---- Autonomy reinforcement (rebuild 2026-05-22) ----
 # Curriculum tick: refill the queue when [ ] count drops below threshold (hourly)
-# Daily autonomy report: dropped into notify-masini.txt at 7am PT
+# Daily autonomy report at 7am PT, dropped into the operator notify queue
+# ($WORKSHOP_NOTIFY_FILE, default .runtime/notify.txt) for the chat bridge.
 0 7 * * * @WORKSHOP_ROOT@/scripts/autonomy_report.sh
 
 # ---- Frontend watchdog (added 2026-06-06): restart Vite dev servers if they die ----

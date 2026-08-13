@@ -171,14 +171,14 @@ class TestARefusedTargetCarriesTheGatesReason:
 # tree it was asked about, and the other became unstoppable from the UI.
 
 def test_pid_path_is_per_tree() -> None:
-    a = autonomy_routes._queue_pid_path("/home/x/tree-a")
-    b = autonomy_routes._queue_pid_path("/home/x/tree-b")
+    a = autonomy_routes._queue_pid_path("/srv/tree-a")
+    b = autonomy_routes._queue_pid_path("/srv/tree-b")
     assert a != b
     assert a.parent == b.parent
 
 
 def test_pid_and_lock_share_one_tree_key() -> None:
-    d = "/home/x/tree-a"
+    d = "/srv/tree-a"
     key = autonomy_routes._queue_key(d)
     assert key in autonomy_routes._queue_pid_path(d).name
     assert key in autonomy_routes._queue_lock_path(d).name
@@ -188,5 +188,8 @@ def test_the_key_matches_the_shell_derivation() -> None:
     """`printf '%s\\n' "$DIR" | md5sum | cut -c1-12`. If the two ever disagree,
     the API reports a runner that is not there and cannot stop the one that is."""
     import hashlib
-    d = "/home/clawd-a/workshop"
+    # Any path. Not this checkout's: check_no_hardcoding.sh fails the reviewer
+    # gate on an absolute home path in tracked source, and the derivation is
+    # what is under test, not the tree.
+    d = "/srv/some/tree"
     assert autonomy_routes._queue_key(d) == hashlib.md5((d + "\n").encode()).hexdigest()[:12]
