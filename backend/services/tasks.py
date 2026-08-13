@@ -173,7 +173,7 @@ SYNCABLE_FIELDS = ("title", "body", "status", "labels", "assignee", "priority")
 # read-side projection, the same discipline `owner`/`blocked_request` follow.
 EXEC_FIELDS = ("touches", "latitude", "acceptance", "max_attempts", "attempts",
                "claim_token", "lease_until", "last_heartbeat", "claim_pid",
-               "job_ids", "evidence", "awaiting", "blocked_reason")
+               "job_ids", "evidence", "awaiting", "blocked_reason", "triage")
 
 # Self-healing (design 2d + Fix 2): a claim carries a lease so a crashed/killed
 # sweep never strands a task in `doing` forever, but a HEALTHY-but-slow worker must
@@ -662,6 +662,120 @@ def _normalize_effort(value) -> str | None:
 EFFORTS = ("quick", "standard", "deep")
 
 
+# --- execution: can a machine do this at all ---------------------------------
+# A SPEC field, not an exec field: it is a thing the operator sets about the work
+# itself, and an external tracker would legitimately want it. It is the selection
+# predicate for UNATTENDED dispatch (next_ready(unattended=True)) and nothing
+# else — it never narrows what a human may run.
+#
+#   code       a change to a tree this worker can write        eligible
+#   judgement  the output is a decision, a design or an audit  never
+#   external   needs root, another host user, a vendor console never
+#   None       not yet classified                              never (fail closed)
+#
+# None is NOT code. The queue is ordered priority-first and the head of it is a
+# root-requiring security ticket, so an unattended sweep that guessed would spend
+# its first five runs failing on work no agent can do.
+EXECUTIONS = ("code", "judgement", "external")
+
+
+def _normalize_execution(value) -> str | None:
+    """One of EXECUTIONS, or None when unset OR unrecognized. A typo coerces to
+    None (unclassified, ineligible) rather than to "code": the fail-closed
+    direction is the whole point of the field."""
+    key = str(value or "").strip().lower()
+    return key if key in EXECUTIONS else None
+
+
+# --- triage: the mark that stops the queue triager re-judging -----------------
+# An EXEC field (run metadata, never synced). The queue triager reads the store
+# it writes, so it cannot use the note triager's mtime watermark: `update()` sets
+# `updated` on EVERY write, so a frontier keyed on it re-selects every ticket the
+# triager itself just wrote to, forever. The note triager is safe from this only
+# because that role cannot write notes.
+#
+# The mark is therefore a hash of the fields a triage DECISION depends on, and
+# only those. `triage_due` compares the stored hash to the live one.
+TRIAGE_DECISIONS = ("ok", "split", "underspecified", "none")
+
+
+def _normalize_triage(payload) -> dict | None:
+    """Canonical triage mark, or None. An unrecognized decision reads as `none`
+    (looked at, nothing to do) rather than being dropped: losing the mark would
+    re-select the ticket, which is the failure mode this field exists to stop."""
+    if not isinstance(payload, dict):
+        return None
+    h = str(payload.get("spec_hash") or "").strip()
+    if not h:
+        return None
+    decision = str(payload.get("decision") or "").strip().lower()
+    return {
+        "at": str(payload.get("at") or _now()),
+        "decision": decision if decision in TRIAGE_DECISIONS else "none",
+        "spec_hash": h,
+        "reason": str(payload.get("reason") or "").strip() or None,
+    }
+
+
+def spec_hash(task: dict) -> str:
+    """Hash of the fields a triage decision depends on, and ONLY those.
+
+    Deliberately NOT `updated`: `update()` sets it on every write, so a frontier
+    keyed on it never terminates (see the section comment above). Also excluded,
+    each for its own reason:
+
+      status              todo -> doing -> todo is not a new question
+      awaiting            the triager's own `underspecified` write
+      evidence/job_ids/attempts   run history, not spec
+      execution/priority  change ROUTING, not whether the spec is adequate
+
+    `test_triage_mark.py` asserts this hash is stable across an `awaiting` write.
+    That test is the regression guard for the infinite loop and must fail if
+    `updated` is ever added to the payload below.
+    """
+    payload = json.dumps({
+        "title": str(task.get("title") or "").strip(),
+        "body": str(task.get("body") or "").strip(),
+        "depends_on": sorted(str(d) for d in (task.get("depends_on") or [])),
+        "effort": task.get("effort") or "",
+    }, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def triage_due(task: dict) -> bool:
+    """Has this ticket's SPEC changed since it was last triaged? No mark means
+    due. A rewritten body means due again, which is correct: the question
+    genuinely changed. The triager answering its own question does not."""
+    return (task.get("triage") or {}).get("spec_hash") != spec_hash(task)
+
+
+# Which `awaiting.kind` values a latitude-permitted auto-resolve may ever expire.
+#
+# AN ALLOWLIST, NOT A DENYLIST, AND THIS IS THE LOAD-BEARING DETAIL.
+# `_normalize_awaiting` defaults `kind` to "input", and its docstring notes that
+# a legacy `{question, since}` record also reads as `input`. `input` expires. So
+# a denylist of permanent kinds would make every unlabelled block and every
+# pre-existing block silently auto-resolvable on the day expiry ships.
+#
+# Anything outside this set waits for a human, forever, including `permission`
+# and including any future slug. `kind` stays an open set, which is exactly why
+# the default has to be the safe side of the line.
+EXPIRING_AWAITING_KINDS = frozenset({"input", "decision", "missing-info"})
+
+
+def awaiting_may_expire(task: dict) -> bool:
+    """Whether a block MAY be auto-resolved on timeout — the kind filter only.
+
+    The rest of the ladder (resolved latitude is standard|open, a non-null
+    `default`, the decision is reversible, the block was not raised by the
+    reviewer) is ratified in latitude-model-2026-07-18.md §158-167 and lives with
+    the caller that knows the resolved latitude. This adds no new policy."""
+    rec = task.get("awaiting") or {}
+    if not rec:
+        return False
+    return str(rec.get("kind") or "") in EXPIRING_AWAITING_KINDS
+
+
 def _norm_labels(raw) -> list[str]:
     """Labels as an ordered, deduped list of non-empty strings."""
     out: list[str] = []
@@ -787,6 +901,11 @@ def _normalize(task: dict) -> dict:
         "touches": [str(t) for t in (task.get("touches") or []) if t],
         "discovered_from": task.get("discovered_from") or None,
         "effort": _normalize_effort(task.get("effort")),
+        # execution: SPEC (see EXECUTIONS). Unclassified is None and is NOT
+        # eligible for unattended selection — fail closed, never guess.
+        "execution": _normalize_execution(task.get("execution")),
+        # triage: EXEC. The queue triager's own mark; see spec_hash().
+        "triage": _normalize_triage(task.get("triage")),
         # Round-trips as None (inherit) when unset OR when the stored value is
         # junk: coercing a typo to "standard" would look like a deliberate
         # per-task default and silently undo a strict scope (latitude.py).
@@ -1454,19 +1573,46 @@ def is_ready(task: dict, by_id: dict[str, dict]) -> bool:
     return True
 
 
-def next_ready(root: Path, *, assignee: str | None = None) -> dict | None:
+def next_ready(root: Path, *, assignee: str | None = None,
+               unattended: bool = False) -> dict | None:
     """The next task ready to run: status==todo AND every depends_on is
     done|cancelled, ordered by priority desc then created asc. Optionally scoped
     to an assignee (an agent claims only its own or unassigned tasks). Replaces
     'first todo'. Reconciles first so a task added by any route is seen, and
-    reclaims stale claims so a crashed sweep's task becomes ready again."""
+    reclaims stale claims so a crashed sweep's task becomes ready again.
+
+    ``unattended`` adds the two phase-4 selection rules, and is passed by the
+    SWEEP and by nothing else:
+
+        execution == "code"                  (a machine can do it at all)
+        ticket_readiness.check(t)["ok"]       (the spec is adequate)
+
+    It is an extra predicate rather than a change of meaning because this same
+    function is what a MANUAL run path consults, and readiness must never refuse
+    a human. That keeps two ratified statements true at once: readiness never
+    vetoes a person, and only tickets marked ready may run unattended.
+
+    Ordering is deliberately unchanged. `priority DESC` is why the head of this
+    queue was a root-requiring security ticket; the fix is `execution`, not a
+    re-sort, because a human running the queue by hand still wants the most
+    important thing first.
+    """
     reconcile(root)
     reclaim(root)
     tasks = _load(root)
     by_id = {t["id"]: t for t in tasks}
 
     def ready(t: dict) -> bool:
-        return is_ready(t, by_id)
+        if not is_ready(t, by_id):
+            return False
+        if not unattended:
+            return True
+        if t.get("execution") != "code":
+            return False
+        # Imported here, not at module scope: ticket_readiness reads this module
+        # for its status vocabulary, so a top-level import is a cycle.
+        from services import ticket_readiness
+        return bool(ticket_readiness.check(t).get("ok"))
 
     def in_scope(t: dict) -> bool:
         if assignee is None:
@@ -1499,6 +1645,7 @@ def add(
     touches: list[str] | None = None,
     discovered_from: str | None = None,
     effort: str | None = None,
+    execution: str | None = None,
     latitude: str | None = None,
     source: dict | None = None,
     provenance: str | None = None,
@@ -1550,6 +1697,7 @@ def add(
             "acceptance": acceptance,
             "max_attempts": max_attempts, "touches": touches or [],
             "discovered_from": discovered_from, "effort": effort,
+            "execution": execution,
             "latitude": latitude,
             "source": source or {"kind": "operator", "ref": None},
             "scoped_by": scoped_by, "sync": sync,
@@ -1582,6 +1730,8 @@ def update(
     acceptance: dict | None = None,
     max_attempts: int | None = None,
     effort: str | None = None,
+    execution: str | None = None,
+    triage: dict | None = None,
     latitude: str | None = None,
     job_id: str | None = None,
     evidence: dict | None = None,
@@ -1762,6 +1912,18 @@ def update(
         if effort is not None:
             # Additive: an empty string clears the hint back to None.
             found["effort"] = effort or None
+        if execution is not None:
+            # Additive: "" clears back to unclassified, which is INELIGIBLE for
+            # unattended dispatch, not "code". Deliberately absent from
+            # `_material_edit` above: retagging how a ticket is routed does not
+            # invalidate the work a holding worker is already doing, so it must
+            # not fence that worker out.
+            found["execution"] = _normalize_execution(execution)
+        if triage is not None:
+            # The triager's own mark. Also absent from `_material_edit`: the
+            # whole point is that recording a decision is not an edit to the
+            # ticket. An empty dict clears the mark, which makes it due again.
+            found["triage"] = _normalize_triage(triage)
         if latitude is not None:
             # Additive: an empty string clears the override back to None, which
             # means INHERIT from the scope — not "standard" (latitude.py).
@@ -1806,6 +1968,14 @@ def update(
         if expect_claim_token is None and _held_by_worker and _material_edit:
             found["claim_token"] = _as_int(found.get("claim_token"), 0) + 1
         found["updated"] = _now()
+        # Keep the `exec` projection true for THIS call's return value, the same
+        # discipline `owner`, `text` and `blocked_request` already follow above.
+        # `found` came from a normalized load, so without this line every EXEC
+        # field this call just wrote (touches, awaiting, attempts, triage) reads
+        # back at its PRE-update value in the returned record. The STORED record
+        # was always right — `exec` is stripped on write and re-derived on read —
+        # so this only ever affected the caller holding the return value.
+        found["exec"] = {k: found.get(k) for k in EXEC_FIELDS}
         _persist(root, tasks)
     # Outside the lock and after the write: a newly raised question goes to the
     # chat that filed the ticket, not only to the queue. Here rather than at each
@@ -1851,6 +2021,9 @@ def claim(root: Path, task_id: str, job_id: str, *, assignee: str | None = None,
         if job_id and job_id not in found["job_ids"]:
             found["job_ids"].append(job_id)
         found["updated"] = _now()
+        # As in `update()`: a claim writes six EXEC fields, so the projection has
+        # to be re-derived or the returned record reports the pre-claim lease.
+        found["exec"] = {k: found.get(k) for k in EXEC_FIELDS}
         _persist(root, tasks)
         return found
 

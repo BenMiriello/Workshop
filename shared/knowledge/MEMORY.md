@@ -9,6 +9,7 @@
 - [Chat send failures: the edge's connection pool, not the network](chat-send-failures-the-edge-s-connection-pool-no-19ff2daaac3.md)
 - [Claude Code permission modes need --permission-prompt-tool stdio or they silently deny](claude-code-permission-modes-need-permission-pro-19fe9598408.md)
 - [Consolidated memory](consolidated-memory.md) - memory-keeper consolidated facts
+- [Handoff: tickets surface + automation loop (2026-08-12)](handoff-tickets-surface-automation-loop-2026-08-19ff9747432.md)
 - [Where notes go: three tiers (scratch, scoped Notes, docs)](notes-and-docs-policy.md) - commit-or-not policy; never a flat per-project NOTES.md
 - [Orchestration-surface requirements (addendum): re-scope warning + main-thread scoping](orchestration-surface-requirements-addendum-re-s-19f74360f21.md)
 - [Orchestration-surface requirements addendum (re: shared scope + resilience + card links)](orchestration-surface-requirements-addendum-re-s-19f743cb2c2.md)
