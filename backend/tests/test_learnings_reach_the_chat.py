@@ -35,9 +35,27 @@ class _Provider:
         return self._scope
 
 
+def _isolate(tmp_path: Path, monkeypatch) -> None:
+    """Redirect BOTH stores a write touches.
+
+    `_dir()` alone is not enough, and finding that out cost a polluted repo:
+    `record()` also calls `_mirror_to_md`, which resolves through
+    `_legacy_md()` -> `knowledge._root()` and appends to the TRACKED
+    `shared/learnings.md`. The first run of this file put a line reading
+    "A global guardrail. [src:test]" into that file and into the live
+    `.runtime/learnings/global.jsonl`, where it would have ridden into every
+    prompt in the workspace. Both were removed by hand.
+
+    A test that writes a learning must redirect both paths, for the same reason
+    a test that authenticates as a real owner must redirect its storage.
+    """
+    monkeypatch.setattr(learnings, "_dir", lambda: tmp_path)
+    monkeypatch.setattr(learnings, "_legacy_md", lambda: tmp_path / "learnings.md")
+
+
 def test_workshop_scope_learnings_reach_the_prompt(tmp_path, monkeypatch):
     """The regression itself: a preference captured from a general chat renders."""
-    monkeypatch.setattr(learnings, "_dir", lambda: tmp_path)
+    _isolate(tmp_path, monkeypatch)
     learnings.record("Never use an em-dash in copy.", scope="workshop", source="test")
 
     out = chat_context.learnings_context(_Provider("workshop"))
@@ -46,7 +64,7 @@ def test_workshop_scope_learnings_reach_the_prompt(tmp_path, monkeypatch):
 
 def test_global_is_not_injected_twice(tmp_path, monkeypatch):
     """`global` stays excluded from the scoped block: it is already the first one."""
-    monkeypatch.setattr(learnings, "_dir", lambda: tmp_path)
+    _isolate(tmp_path, monkeypatch)
     learnings.record("A global guardrail.", scope=learnings.GLOBAL, source="test")
 
     out = chat_context.learnings_context(_Provider(learnings.GLOBAL))
@@ -57,7 +75,7 @@ def test_the_operator_block_is_named_for_what_it_holds(tmp_path, monkeypatch):
     """`workshop` holds the operator's own corrections, so it is not labelled
     "AGENT MEMORY". The label is what tells the model how much weight to give
     it against the mechanical worker noise in the other block."""
-    monkeypatch.setattr(learnings, "_dir", lambda: tmp_path)
+    _isolate(tmp_path, monkeypatch)
     learnings.record("Prefer rows to cards.", scope="workshop", source="test")
 
     out = chat_context.learnings_context(_Provider("workshop"))
