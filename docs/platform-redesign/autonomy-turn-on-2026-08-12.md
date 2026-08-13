@@ -29,6 +29,29 @@ that was not true:
 > scope the operator ruled out as a build target. All four are corrected below,
 > in place and named, because the failure mode this document is about is
 > exactly that: adding to a design that was already finished.
+>
+> **Second review pass, 2026-08-13, re-measured against the live tree.** §1's
+> numbers all reproduced exactly (34 open, 9 ready, 74%/68%), so the diagnosis
+> stood. Five things did not, and each was a defect that would have surfaced
+> during implementation rather than before it:
+>
+> 1. **The queue is ordered worst-first.** `next_ready` reads priority before
+>    anything else, and the ten highest-priority open tickets are a security
+>    cohort that needs root. The first unattended claim in phase 4 would have
+>    been `[SEC-C3]`. New in §1, resolved in §3.1 and phase 1.
+> 2. **Phase 4 had a work supply of one ticket.** 8 of the 9 ready tickets are
+>    stranded in a scope with no code tree. Scope vocabulary was the last item
+>    in phase 1 and is now the second.
+> 3. **Phase 3's "mark" is an infinite loop if implemented the obvious way.**
+>    `tasks.update` bumps `updated`, so an mtime watermark re-selects every
+>    ticket the triager writes to. Now specified as a content hash.
+> 4. **The `awaiting` expiry policy failed open.** `kind` defaults to `"input"`,
+>    which was the row that times out. Inverted to an allowlist.
+> 5. **"No budget is set" was false.** A 5M app-wide budget and a working
+>    admission reserve exist; only the per-scope ceiling is missing.
+>
+> Phase 5 is also relabelled: it is an entry condition, not a phase this plan
+> can schedule.
 
 ## 0. The one paragraph that should decide the order of work
 
@@ -128,6 +151,61 @@ been split, and no ticket carried a `parent`. That was the right call for a
 dead route and the wrong shape to leave the capability in:
 `backend/services/ticket_scope_review.py` still exists, 189 lines, reachable
 only through a dangling import. **The engine survived; only its button died.**
+
+### The queue is ordered worst-first, and this is the finding that reorders the plan
+
+`next_ready` sorts `priority DESC, created ASC` and consults readiness **not at
+all**. Running it right now against the platform repo returns, in order:
+
+| # | priority | ready | needs root | ticket |
+|---|---|---|---|---|
+| 1 | 100 | no | **yes** | `[SEC-C3]` Verify inbound IPv6 firewall policy (root) |
+| 2 | 80 | no | **yes** | `[SEC-H3]` Replace or drop the NOPASSWD sudo git |
+| 3 | 80 | no | **yes** | `[SEC-H4]` Loopback-bind ComfyUI |
+| 4 | 80 | no | **yes** | `[SEC-H7]` Loopback-bind Ollama |
+| 5 | 80 | no | no | `[SEC-A2]` Stop representing scope/touches as security |
+| 6-10 | 60 | no | 1 of 5 | the rest of the SEC cohort |
+
+**The entire head of the queue is host-administration work the worker cannot
+do.** 14 of the 34 open tickets are one security-audit cohort filed 2026-07-18;
+they carry the highest priorities in the store, because a human triaging
+security set them that way, and `next_ready` reads priority before anything
+else. At least six say "needs root" in their own body. The worker runs as
+`clawd-a` and has no root. Several others (`SEC-G1`, `SEC-A5`) are explicitly
+operator decisions that were deliberately not probed.
+
+This produces a bind the plan has to resolve rather than inherit:
+
+- **If unattended selection ignores readiness** (the current behaviour, and the
+  position "readiness reports, it does not veto" implies), the first five
+  unattended runs each claim a root ticket, fail, burn an attempt, and park.
+- **If unattended selection respects readiness**, all ten are skipped, which is
+  correct, but it means **priority inverts**: the sweep works the bottom of the
+  queue because the top is unready, and the operator's own prioritisation is
+  silently discarded.
+
+Neither branch is acceptable as written, and readiness is not the missing
+predicate: `SEC-C3` could be perfectly specified and still be undoable by this
+worker. See §3.1.
+
+### There is almost no ready work in the scope phase 4 targets
+
+Of the 9 tickets that pass every readiness check, **8 are in `shared/queue`
+(the `workshop` scope) and 1 is in the platform repo (`development`)**. Phase 4
+runs in `development`, correctly, because `workshop` is a ratified non-build
+target with no code tree. So phase 4's actual work supply, today, is **one
+ticket** ("Add a by-chat usage view"), and phase 2 draws its K watched runs from
+the same pool.
+
+And the 8 stranded ones are not workshop-shaped work. "A sent message should not
+look already-read", "Reduce empty turns: 26% of prompts return no assistant
+text", "Point `LETTA_URL` at the right instance" are all platform code changes,
+filed into a scope that cannot build code.
+
+That makes §5 item 4 (one scope vocabulary) **a prerequisite for phases 2 and 4
+having anything to run**, not the tidiness item it reads as. It is promoted
+accordingly.
+
 
 ### The linkage between tickets, runs, agents and chats is mostly unwritten
 
@@ -252,6 +330,53 @@ builder sweep is dispatched against it; it has no code tree"
 (`dev-mode-and-development-scope-2026-08-09.md:211`). An earlier draft of this
 sentence used `workshop` and would have pointed the first supervised sweep at
 the one scope that cannot be built.
+
+### 3.1 "Tickets marked ready may run" describes a predicate that does not exist
+
+That sentence is the plan's own summary of the three dials, and until §1's queue
+measurement it was quietly wrong twice.
+
+**First, nothing selects on readiness.** `next_ready` is `status == todo AND
+deps satisfied`, ordered by priority. `launch_task_run` checks only
+`ticket_readiness.blocking()`, which is `title` and `dependencies`, never
+acceptance or boundaries. So "marked ready" names a filter no code applies.
+
+**Second, it reads as a contradiction of a ratified decision** ("readiness
+reports; it does not veto"). It is not, and the distinction has to be stated
+because the two rules govern different actors:
+
+> **Readiness never refuses the operator. Readiness MAY select for a machine.**
+> A human pressing Run has judged the ticket; refusing them is the checklist
+> becoming an obstacle, which is the ratified decision and it stands. An
+> unattended sweep has no judgement to defer to, so *choosing* what it picks up
+> is not a veto. Nobody is being told no.
+
+**Third, and this is the part §1 forces: readiness is the wrong predicate
+anyway.** `SEC-C3` is a clear problem statement with a command to run, and it is
+undoable by this worker because the worker is not root. Readiness reads the
+ticket's TEXT. What unattended dispatch needs to know is whether this worker can
+act on it at all.
+
+So there is a missing field, and it is the "executable vs judgement" distinction
+the plan defers to phase 5. §1 shows it cannot wait that long, because the first
+unattended selection in phase 4 hits it. The cheapest useful form is a coarse
+`execution` tag, set by the ticket-maker and correctable by hand:
+
+| value | meaning | unattended sweep |
+|---|---|---|
+| `code` | a change to a tree this worker can write | eligible |
+| `judgement` | the output is a decision, a design or an audit | never |
+| `external` | needs root, another host user, a vendor console, or an operator secret | never |
+
+Three values, no scoring, and the failure mode is benign: mislabelling `code` as
+`judgement` means a human does it, which is the status quo.
+
+**The cheaper half of this needs no field at all.** 14 of the 34 open tickets
+are host-administration work sitting in the platform build queue because that is
+where the security audit filed them. They are not `development` tickets in any
+useful sense. Moving that cohort out of the build queue is one bulk operation
+and removes the entire hazard in §1 without waiting for a schema change. Do that
+first; add `execution` for what remains.
 
 **The brake needs its own control, because today it does not have one.**
 Settings has "Start all" and "Stop all", and those buttons are about the queue
@@ -435,7 +560,10 @@ nobody can find is a note that was never written.
 
 ### Measured first, because the state here is worse than it looks
 
-Eleven durable stores exist. The headline numbers, taken from the live tree:
+Seven durable stores carry real volume. The headline numbers, taken from the
+live tree (an earlier draft said "eleven" and then tabulated seven; the seven
+are the measured ones, and the count was carried over from a different tally in
+this section):
 
 | store | live volume | who can read it |
 |---|---|---|
@@ -549,24 +677,35 @@ In the order that unblocks the most, given the measurements above.
    works, and is reachable from exactly one surface. Put it in the worker's
    context, the triager's, and every agent's. This is the highest-value item in
    this section and it is mostly allowlist plumbing.
-2. **Fix the preference path so what it captures is actually read.** Either
-   inject `workshop`-scope learnings, or write operator preferences to a scope
-   that is injected. Eleven captured corrections currently go nowhere. Until
-   this is fixed, every "Captured a preference" reply is a false receipt.
+2. ~~**Fix the preference path so what it captures is actually read.**~~
+   **Done 2026-08-12.** The exclusion narrowed to `global` alone and the block
+   is labelled `OPERATOR PREFERENCES`. Pinned by a test that fails against the
+   old condition.
 3. **Rebuild the index automatically**, on write or on a timer, and **walk
    every knowledge directory**, not just `shared/knowledge`. Both are small
    changes to code that already exists and works.
-4. **One scope vocabulary.** There are three key spaces, and two of them use
-   the same words for different places: for TICKETS, `workshop` means
-   `shared/queue` (14 tickets) while `development` means the platform repo (93
-   tickets); for NOTES, `workshop` means `shared/knowledge` and `development`
-   is a subdirectory of it. Two top-level scopes that read as one thing to a
-   human, and resolve to four different directories. Pick the chat-scope
-   vocabulary, make the others projections of it, delete the translators.
-5. **Budget the injected block by IMPORTANCE, not by recency-weighted
-   retrieval count.** The current ranking silently drops the most important
-   standing rule and then keeps dropping it. A rule the operator stated should
-   not have to compete with mechanical worker noise for the same 700 tokens.
+4. **One scope vocabulary, and it is not a tidiness item.** There are three key
+   spaces, and two of them use the same words for different places: for TICKETS,
+   `workshop` means `shared/queue` (12 open) while `development` means the
+   platform repo (16 open); for NOTES, `workshop` means `shared/knowledge` and
+   `development` is a subdirectory of it. Two top-level scopes that read as one
+   thing to a human, and resolve to four different directories. Pick the
+   chat-scope vocabulary, make the others projections of it, delete the
+   translators.
+
+   **§1 upgraded this from cleanup to a blocker.** 8 of the 9 tickets that pass
+   readiness are in `workshop`, which has no code tree, and several of them are
+   plainly platform code work ("Reduce empty turns", "A sent message should not
+   look already-read"). They were filed to the scope whose name sounds right
+   rather than the one that can build. Until that is one vocabulary, phase 2
+   cannot find five watched runs and phase 4 has a single eligible ticket. It is
+   now the second item in phase 1.
+5. ~~**Budget the injected block by IMPORTANCE**~~ **Done 2026-08-12**, though
+   not by re-weighting: authorship became a sort TIER above the numeric score,
+   because a bonus large enough to win is a bonus large enough to invert
+   everything else. Budget 700 to 900. The remaining half of this item is
+   real and unstarted: the ranking still has no notion of a rule being
+   *important* as opposed to *recent and reinforced*.
 6. **Provenance and staleness on every hit.** Where did this come from, when,
    and is it still true? A 25-day-old consolidation currently presents as
    current fact in every prompt, and this repo has already been bitten by
@@ -643,8 +782,24 @@ label that is false.
   is actually decided. Deleting it in phase 0 would only mean rewriting it in
   phase 3.
 
-### Phase 1: make readiness visible where it is decided (a day of edits, a week of measuring)
+### Phase 1: make readiness visible, and give phases 2 and 4 something to run (several days, plus a week of measuring)
 
+Reordered after the §1 measurement. The first two items were previously last and
+read as tidiness; they are what stops phase 2 from having a work supply.
+
+- **Get the host-administration cohort out of the build queue.** 14 of 34 open
+  tickets are SEC-* items at the highest priorities in the store, most needing
+  root or another host user, and they sit at the head of `next_ready` in the one
+  scope phase 4 targets. They are real work and they are not agent work. Move
+  them to a scope no builder sweep reads, or park them with a reason. One bulk
+  operation, and it removes the §1 hazard outright.
+- **One scope vocabulary** (§5). Promoted to the front for the same reason:
+  8 of the 9 readiness-passing tickets are stranded in `workshop`, which has no
+  code tree, and several of them are plainly platform code work. Until the
+  vocabulary is one thing, `development` has a single ready ticket and phase 2
+  cannot draw five watched runs from it. Everything after this also compounds on
+  it: the triager's decisions, the digest, the search tool and the inbox all key
+  on scope.
 - Show the readiness line on the ticket page and in the chat's file-a-ticket
   card, at the moment of filing, not only at approval.
 - Make the ticket-maker fill `acceptance` and `boundaries`, the two checks 74%
@@ -661,9 +816,8 @@ label that is false.
 - **Give the search tool to the worker and the triager** (§5). One allowlist
   change, and it is what lets everything downstream reason from the same
   picture as the chat.
-- **One scope vocabulary** (§5). Everything after this compounds on it: the
-  triager's decisions, the digest, the search tool and the inbox all key on
-  scope, and three key spaces means three of everything.
+- Tag the remainder `code` / `judgement` / `external` (§3.1), once the bulk move
+  above has removed the easy 14. This is the field phase 4 selects on.
 
 ### Phase 2: K watched runs, and a number (days, not a day)
 
@@ -678,6 +832,20 @@ label that is false.
   reliably, default to manual work". K is small (five is enough to tell 20%
   from 80%), and the number it produces is what phase 4 gates on, instead of
   "nothing was surprising".
+- **And name the threshold, because a gate without one is not a gate.** An
+  earlier draft said "the number is what phase 4 gates on" and never said which
+  number, which makes it a ritual. Proposed, and the operator's to overrule:
+
+  | K=5 result | what it means | action |
+  |---|---|---|
+  | 4-5 reviewer-passing commits | works | proceed to phase 3 |
+  | 2-3 | works sometimes; the failures are the information | fix what they show, re-run K, do not proceed on the same code |
+  | 0-1 | the loop is not ready and phases 3-5 are premature | stop; the attended path is the product |
+
+  "Completes" means the reviewer gate passed AND a real commit landed AND the
+  ticket's acceptance holds, not that the run exited zero. Count a run that
+  raised a sensible block as a **pass**, not a failure: asking was the correct
+  outcome, and treating it as failure is what pushes a worker to guess.
 
 ### Phase 3: the queue triager, attended (days, and a week of reading it)
 
@@ -692,9 +860,34 @@ label that is false.
   notes, so it cannot change its own trigger input", called out in
   `primitive-roles-2026-07-18.md:310` as "a structural guarantee, not a prompt
   instruction". A queue triager writes tickets and is triggered by tickets, so
-  that guarantee does not transfer. **Termination has to come from a mark**: a
-  ticket the triager has judged carries the judgement, and is not re-judged
-  until it changes. The caps below are a backstop, not the argument.
+  that guarantee does not transfer. **Termination has to come from a mark.**
+
+  **And the obvious implementation of that mark is the broken one, so specify
+  it.** The note triager's state is an **mtime watermark**: `_due_notes` returns
+  notes with `mtime > watermark` and the watermark advances over decided notes
+  (`triager.py:166-187`, `:517-526`). Copying that shape to the queue is an
+  infinite loop, because `tasks.update` sets `found["updated"] = _now()` on
+  every write (`tasks.py:1808`), so the triager writing `awaiting` on a ticket
+  bumps the exact field the watermark reads, and the ticket is due again on the
+  next pass, forever. This is not a subtle risk; it is what happens the first
+  time it runs with the note triager's own state module.
+
+  The mark must therefore be **per-ticket and content-keyed, not a timestamp
+  frontier**:
+
+  ```
+  triage: { at: iso, decision: ok|split|underspecified|none, spec_hash: str }
+  ```
+
+  where `spec_hash` covers **only the fields a triage decision depends on**:
+  title, body, `depends_on`, `effort`. Deliberately not `updated`,
+  `status`, `awaiting`, `evidence` or `attempts`. A ticket is due when it has no
+  `triage` record, or when `spec_hash` no longer matches. Editing the spec
+  re-opens the question, which is right; the triager answering its own question
+  does not, which is the whole point. Store it under `exec`-style projected
+  keys, not as a stored status.
+
+  The caps below are then a backstop, not the argument.
 - `underspecified` sets `awaiting` with ONE specific question and surfaces it in
   the inbox and in the originating chat. `split` files children as drafts,
   which the operator approves. Depth cap 2, and **a cap of 5 per pass on
@@ -719,9 +912,35 @@ request must expire differently, and the shape to express that already exists:
 |---|---|
 | `input`, `decision`, `missing-info` | may time out, let the run proceed on its own judgement, and re-ask later |
 | `permission` | **never auto-resolves.** Ever. |
+| anything else, including absent | **never auto-resolves.** See below. |
 
 The asymmetry is Claude Code's, and it is the most defensible rule anyone has
 shipped: questions time out, approvals do not.
+
+**That third row is load-bearing, and without it this design fails open.**
+`kind` is deliberately an OPEN slug set, and `_normalize_awaiting` defaults it
+to `"input"` (`tasks.py`, `"kind": _slug_or(payload.get("kind"), "input")`),
+which is the row that times out and lets the run proceed on its own judgement.
+The same docstring notes that a legacy `{question, since}` record "reads as
+`input`". So on the day expiry ships, every block that predates it, and every
+future caller that omits `kind`, becomes silently auto-resolvable.
+
+The policy must therefore be an **explicit allowlist of expiring kinds**, not a
+denylist of permanent ones: the three named kinds time out, everything else
+waits for a human. That inverts the default without touching the schema, and it
+keeps the open-set property that made `kind` right in the first place. If a new
+stop reason should expire, someone adds it to three entries in one list and that
+edit is reviewable.
+
+**One accounting detail that follows.** `POST /review` releases a block with
+`restore_attempt=True` (`tasks_all.py:998`), on the sound reasoning that an
+answered question is not a failed attempt. A triager-raised `underspecified`
+block, though, is written **without any run having been claimed**, so answering
+it decrements an attempt the ticket never spent. It floors at zero
+(`max(0, ...)`), so nothing breaks, but a ticket that gets triaged and answered
+twice quietly earns back two real attempts against its park cap. Either skip
+`restore_attempt` when `awaiting.raised_by` is the triager, or only restore when
+`attempts` exceeds the count of recorded job ids. The first is one condition.
 
 **This corrects an earlier draft of this plan**, which proposed splitting
 `awaiting` into `awaiting_input` and `awaiting_approval` states. That was wrong
@@ -776,6 +995,20 @@ best-specified escalation contract in a shipped product:
   holds 9 items, 2 of them `notify`, one titled "Run finished". It finds little
   because no autonomous-trigger run happens, which this phase changes by
   itself. Nothing to build.
+- **Select on `execution: code` AND readiness, not on priority alone** (§3.1).
+  Without this the sweep's first claim is `[SEC-C3]`, which needs root. This is
+  the one new selection rule phase 4 adds, and phase 1 is where the tags come
+  from.
+- **Set a per-scope ceiling before the first unattended run, not after the
+  first surprising week.** A correction to an earlier draft and to the handoff,
+  both of which said "the ledger exists; no budget is set". A budget IS set and
+  admission works: `app_total` is 5,000,000 tokens, `nominal_task_tokens` is
+  150,000, and `can_admit('development')` returns `(True, 'ok')` today.
+  Autonomous work is already held to a reserved fraction (~0.65) so interactive
+  chat always has headroom, and a sweep already refuses to start on less than
+  one nominal task's worth. What is missing is only the per-scope `ceil` that
+  caps how much of the shared pool one scope may borrow. That is a config value,
+  not a feature, and it should be set in the same change that starts the runner.
 - Add the stale-question escalation the docs name as unbuilt: a question that
   has sat unanswered for a day gets louder, rather than sitting silently.
 - Add stuck detection, because an unattended run that loops is the failure this
@@ -791,16 +1024,23 @@ best-specified escalation contract in a shipped product:
   legitimately polling something slow. A stuck run must end `parked` with a
   reason and a resumable id, not `failed`.
 
-### Phase 5: autonomous, per scope (when phase 4 is boring)
+### Phase 5: autonomous, per scope. An entry condition, not a phase this plan can schedule
+
+Phases 0 to 4 are things this document can be executed against. Phase 5 is not,
+and calling it a phase overstates what is written here: its hard prerequisite is
+an execution boundary that does not exist and cannot be created by better design
+in this file (see below). It is recorded as the condition under which the
+question reopens.
 
 - Flip one scope from `supervised` to `autonomous`. The reviewer gate and the
   commit gate stay exactly as they are.
 - The prerequisites the earlier design named and this plan keeps: a
   `supersedes` edge (nothing today expresses "this replaces that", so a stale
-  ticket can be executed against a tree that moved on), a distinction between
-  executable tickets and judgement tickets (today `role` types the agent, not
-  the ticket, so a design ticket looks executable), and a dry run
+  ticket can be executed against a tree that moved on) and a dry run
   (`--plan`) so a sweep can say what it would do without doing it.
+- The third one the earlier design named, executable versus judgement tickets,
+  **has moved to phase 1** as the `execution` tag (§3.1). §1 showed it cannot
+  wait: the first unattended selection in phase 4 already needs it.
 
 **One earlier instruction, quoted properly, because an earlier draft of this
 plan misquoted it in its own favour.** `continuation-2026-07-31.md:306` says
@@ -922,12 +1162,17 @@ independently useful, and each is currently a mechanism that lies:
    because what it holds is the operator's own corrections and the label is
    what tells the model how to weigh it against mechanical worker noise. Pinned
    by a test that fails against the old condition.
-2. **Un-drop the Design System rule** from the injected block, and stop
-   ranking standing operator rules against mechanical worker noise for the
-   same 700 tokens.
+2. ~~**Un-drop the Design System rule**~~ **Done 2026-08-12.** Authorship is a
+   sort TIER in `learnings._entry_rank`, not a bonus competing on the same
+   scale, and the budget moved 700 to 900. The first attempt added a 2.0 bonus
+   and called it unbeatable; the other four ranking terms sum to 3.5, so a fresh
+   reinforced worker line still won. Keep the tier if you touch that function.
 3. **Give `mcp__workshop__search` to the worker and to agents.** One allowlist
    change, and it ends the state where the only surface that can search the
-   workshop's own writing is the chat, not the thing doing the work.
+   workshop's own writing is the chat, not the thing doing the work. **Still
+   the highest-value unstarted item**, and verified still true:
+   `chat_context.py:1724` `_general.allowed_tools` is the only grant in the
+   tree.
 
 None of those three turn autonomy on. That is the point.
 
@@ -948,15 +1193,22 @@ under either.
 
 **Three things it does not answer.**
 
-- **The 34 open tickets.** Some are from July, some are design work that is not
-  executable at all, and nothing today expresses "this ticket replaced that
-  one". Turning a runner loose on that backlog would work stale tickets against
-  a tree that has moved. Triage before dispatch, and the queue triager's first
-  pass is exactly that job.
+- **The 34 open tickets.** Partly answered now, and worse than this draft first
+  described. §1 measures it: 14 are one host-administration cohort that no
+  worker can execute and that sits at the HEAD of the queue, and only one ready
+  ticket exists in the scope phase 4 targets. Phase 1 now moves the cohort out
+  and unifies the scope vocabulary; §3.1 adds the `execution` tag for the rest.
+  What remains unanswered is the stale-design question: nothing expresses "this
+  ticket replaced that one", so the July cohort still has to be read by a human
+  before a runner sees it. `supersedes` stays a phase-5 prerequisite, but the
+  bulk move does not need it.
 - **Cost.** A supervised loop working several tickets a day is real money at
   frontier rates, and the reviewer plus distiller spend is the part nobody
-  meters. The ledger exists; a per-scope budget should be set before phase 4,
-  not after the first surprising week.
+  meters. **The "no budget is set" line in an earlier draft was wrong**:
+  `app_total` is 5,000,000, the ~0.65 interactive reserve is enforced, and
+  `can_admit` refuses a sweep that would start on a sliver. The real gap is the
+  per-scope `ceil`, which is now a phase-4 line item rather than a worry in a
+  critique section. The distiller and reviewer spend genuinely is unmetered.
 - **Isolation.** Named in phase 5 as a hard prerequisite, and out of scope
   here. It is the one item on this list that cannot be solved by better design
   in this document.
