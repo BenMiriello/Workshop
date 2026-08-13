@@ -63,6 +63,9 @@ log = logging.getLogger(__name__)
 VERDICTS = ("ok", "split", "underspecified")
 MAX_SUBTICKETS = 6
 
+# An em-dash and whatever space it is sitting in. Matching, not writing one.
+_EM_DASH = re.compile(r"\s*—\s*")
+
 PROMPT = """You are reviewing ONE work ticket before a human approves it and an autonomous
 worker is asked to do it. The worker will see the ticket text and nothing else:
 not this review, not the conversation the ticket came from.
@@ -135,11 +138,12 @@ def _ticket_text(task: dict) -> str:
 def _clean(value, limit: int = 400) -> str:
     # Every string this module returns is read by the operator: a reason on a
     # ticket, a question in the inbox, the body of a child draft. Em-dashes are
-    # stripped the same way `ticket_drafts` and the chat title path strip them,
-    # which is enforcement rather than prose. A first live pass over the
-    # development queue put one in 6 of 19 reasons, so asking the prompt nicely
-    # is not enough.
-    return " ".join(str(value or "").replace("—", ", ").split())[:limit]
+    # stripped the way `ticket_drafts` and the chat title path strip them, which
+    # is enforcement rather than prose. A first live pass over the development
+    # queue put one in 6 of 19 reasons, so asking the prompt nicely is not
+    # enough. The surrounding spaces go with it: a bare `.replace` leaves
+    # "attached , the worker", which is the same defect one character over.
+    return " ".join(_EM_DASH.sub(", ", str(value or "")).split())[:limit]
 
 
 def _parse(raw: str) -> dict:

@@ -121,8 +121,10 @@ def test_em_dashes_never_reach_the_operator(monkeypatch):
           '{"verdict":"underspecified","reason":"It needs root \\u2014 nobody said so.",'
           '"blockers":["The interface \\u2014 wired or wifi \\u2014 is not named."]}')
     out = asyncio.run(sr.review({"title": "A ticket"}))
-    assert "—" not in out["reason"]
-    assert "—" not in out["blockers"][0]
+    # And the space it was sitting in goes with it: a bare replace leaves
+    # "root ,  nobody", which is the same defect one character over.
+    assert out["reason"] == "It needs root, nobody said so."
+    assert out["blockers"] == ["The interface, wired or wifi, is not named."]
 
 
 def test_the_review_writes_nothing(monkeypatch):
