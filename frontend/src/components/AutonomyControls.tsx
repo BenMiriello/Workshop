@@ -364,8 +364,8 @@ export default function AutonomyControls() {
               size="sm"
               variant="primary"
               loading={busy === "start-runner"}
-              // Dims. Never a not-allowed cursor: the design system forbids it
-              // and check_design.sh fails on it.
+              // Dims, and keeps the pointer cursor. The design system allows
+              // only default / pointer / text, and check_design.sh enforces it.
               disabled={busy != null || scope === ""}
               onClick={onStartRunner}
             >

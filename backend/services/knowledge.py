@@ -647,6 +647,15 @@ async def delete_note(scope_key: str, note_id: str) -> dict:
     if idx.pop(note_id, None) is not None:
         _write_index(scope_key, idx)
 
+    # Same reason as `put_note`, in the direction that is worse: a search hit
+    # quoting a note that no longer exists reads as a live fact.
+    if existed:
+        try:
+            from services import semantic_index
+            semantic_index.mark_stale(f"deleted {scope_key}/{note_id}")
+        except Exception:
+            log.debug("semantic index stale-mark skipped for %s", scope_key, exc_info=True)
+
     return {"scope": scope_key, "note_id": note_id, "existed": existed}
 
 

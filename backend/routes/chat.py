@@ -17,6 +17,7 @@ import hashlib
 import json as _json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
@@ -40,6 +41,7 @@ from services import agent_authority
 from services import ownership
 from services import paths
 from services import ticket_drafts
+from services import ticket_format
 from services import knowledge
 from services import origin
 from services import skills
@@ -605,9 +607,50 @@ async def set_card_state(thread_id: str, body: CardState):
     return {"card_states": t.get("card_states", {})}
 
 
+_DISTILL_PROMPT = (
+    "From this conversation, write ONE self-contained ticket a background worker "
+    "can execute WITHOUT seeing the chat.\n\n"
+    "Return STRICT JSON, no prose, no code fence:\n\n"
+    '{"title": "short imperative line, under 80 characters",\n'
+    ' "objective": "the concrete outcome, one sentence",\n'
+    ' "output": "what done looks like: the artifact, or how it is judged",\n'
+    ' "entry_points": "the files, commands or symbols to read or run first",\n'
+    ' "boundaries": "what NOT to touch and what not to build"}\n\n'
+    "objective, output and boundaries are REQUIRED. Never return one of them "
+    "empty. The worker reads the title and the body and NOTHING ELSE: not this "
+    "conversation, not the operator, not you. Anything the ticket does not say is "
+    "guessed at or asked about, and both cost a run.\n"
+    "  - output is the finish line. Write the observable thing ('the endpoint "
+    "returns the new field and a test covers it'), never 'it works'. Without it "
+    "the worker picks its own finish line and is judged against a different one.\n"
+    "  - boundaries is what to leave alone: the files, directories or systems "
+    "that are off limits, and what NOT to build. Without it a one-file change "
+    "becomes a refactor nobody asked for. If the work genuinely has no boundary, "
+    "write 'none: may touch anything the objective requires'. A stated none is a "
+    "decision; an empty field is an omission.\n"
+    "  - entry_points: the honest answer counts. 'The chat named no files; start "
+    "by grepping for X' is a real entry point.\n\n"
+    "Do not invent a file path or an acceptance test the conversation never "
+    "established. No em-dashes anywhere.\n\n"
+    "=== CONVERSATION ===\n{convo}\n\n=== JSON ==="
+)
+
+
 async def _distill_task_from_thread(t: dict) -> str:
-    """Turn the recent conversation into ONE self-contained task a background
-    worker can execute without seeing the chat. Cheap Haiku call; best-effort."""
+    """Turn the recent conversation into ONE self-contained ticket a background
+    worker can execute without seeing the chat. Cheap Haiku call; best-effort.
+
+    Returns `title\\nbody`, the shape `tasks.add` splits on, with the body composed
+    through `ticket_format.compose()` so it carries the same four labelled fields
+    every other producer emits and `ticket_readiness` already looks for. This used
+    to ask for "one paragraph", which is why tickets filed from a chat failed the
+    acceptance and boundaries checks at 74% and 68%: a paragraph states an
+    objective and almost never states a finish line or an out-of-scope.
+
+    A model that returns something other than JSON is NOT discarded. The raw text
+    becomes the ticket, exactly as before, because a worse-specified ticket beats
+    a 422 at the moment the operator pressed the button.
+    """
     msgs = t.get("messages", [])[-12:]
     convo = "\n\n".join(
         f"{'Operator' if m.get('role') == 'user' else 'Assistant'}: {(m.get('content') or '').strip()}"
@@ -615,22 +658,54 @@ async def _distill_task_from_thread(t: dict) -> str:
     )
     if not convo.strip():
         return ""
-    prompt = (
-        "From this conversation, write ONE self-contained background task: a crisp, "
-        "actionable instruction a worker can execute WITHOUT seeing the chat. State the "
-        "concrete goal and any specifics decided (files, values, acceptance criteria). "
-        "Output ONLY the task text as one paragraph. No preamble, no heading, no "
-        "em-dashes.\n\n=== CONVERSATION ===\n" + convo + "\n\n=== TASK ==="
-    )
+    prompt = _DISTILL_PROMPT.replace("{convo}", convo)
     try:
         res = await asyncio.to_thread(llm_router.call_cloud, prompt, model=llm_router.TIER_HAIKU)
         # The prompt asks for no em-dashes, but enforce it: the operator's hard rule
         # is no em-dashes anywhere, and Haiku emits them anyway. (review L7)
         text = (res.get("text") or "").strip().replace("—", ", ")
-        return text[:2000]
     except Exception as e:
         log.warning("spawn-task distill failed: %s", e)
         return ""
+    return _distilled_text(text)[:2000]
+
+
+def _distilled_text(raw: str) -> str:
+    """`title\\nbody` out of the distiller's reply. Pure, so it is testable.
+
+    Tolerant on the way in for the same reason `ticket_drafts._parse` is: a fence
+    or a stray sentence around the JSON is a formatting slip, not a reason to
+    lose the ticket the operator just asked for.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    body = text
+    fence = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
+    if fence:
+        body = fence.group(1).strip()
+    brace = body.find("{")
+    if brace >= 0:
+        try:
+            data = _json.loads(body[brace:])
+        except _json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            def field(name: str, limit: int = 600) -> str:
+                return str(data.get(name) or "").strip().replace("—", ", ")[:limit]
+
+            title = field("title", 140)
+            composed = ticket_format.compose(
+                objective=field("objective"),
+                output=field("output"),
+                entry_points=field("entry_points"),
+                boundaries=field("boundaries"),
+            )
+            if title and composed:
+                return f"{title}\n{composed}"
+            # A JSON reply with no title is not a ticket; fall through to the raw
+            # text rather than filing a body with no first line to split off.
+    return text
 
 
 class DraftPatch(BaseModel):

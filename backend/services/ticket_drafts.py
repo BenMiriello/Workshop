@@ -75,17 +75,38 @@ Return STRICT JSON, no prose, no code fence:
     "objective": "the concrete outcome, one sentence",
     "output": "what done looks like: the artifact, or how it would be judged",
     "entry_points": "the files, commands or symbols to read or run first",
-    "boundaries": "what NOT to touch and what not to build; \"none\" if genuinely unbounded",
+    "boundaries": "what NOT to touch and what not to build",
     "confidence": "decided" | "likely" | "speculative"
   }
 ]}
 
-These four fields are what a worker needs and cannot get anywhere else, since it
-never sees this conversation. Fill in every one you can support from what was
-actually said. Do NOT invent a plausible-sounding file path or acceptance test:
-if the conversation did not establish it, write what IS known and leave the rest
-short. A ticket that admits it does not know where to start is useful; one that
-points confidently at a file nobody mentioned costs a wasted run.
+`output` AND `boundaries` ARE REQUIRED. Never return either one empty. They are
+the two fields tickets most often omit and they are the two a worker cannot
+proceed without, because a worker sees the title and the body and NOTHING ELSE:
+not this conversation, not the operator, not you.
+
+  - `output` is how anyone tells the work is finished. Without it the worker
+    picks its own finish line, and the run is judged against a different one.
+    Write the observable thing: "the endpoint returns 200 with the new field and
+    a test covers it", "the page renders the list on a cold load". Not "it
+    works", not "the bug is fixed".
+  - `boundaries` is what to leave alone. Without it a one-file change grows into
+    a refactor nobody asked for, which is the single most expensive way a run
+    goes wrong. Name the files, directories or systems that are off limits, and
+    say what NOT to build. If the work genuinely has no boundary, write exactly
+    "none: this may touch anything the objective requires" — a stated "none" is
+    a decision, an empty field is an omission.
+
+`entry_points` is nearly as important, and the honest answer counts: "the
+conversation named no files; start by grepping for <term>" is a real entry point
+and is better than silence.
+
+Do NOT invent a plausible-sounding file path or acceptance test. If the
+conversation did not establish something, say what IS known and say plainly what
+was not settled. A ticket that admits it does not know where to start is useful;
+one that points confidently at a file nobody mentioned costs a wasted run. That
+licence applies to how MUCH you can say in a field, never to leaving `output` or
+`boundaries` blank.
 
 `confidence` is your read of the conversation:
   decided      the operator explicitly asked for this or agreed to it
