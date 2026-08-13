@@ -19,12 +19,49 @@ svc="${2:-}"
 here="$(cd "$(dirname "$0")" && pwd)"
 base="http://127.0.0.1:8000/base-apps/run/${slug}"
 
-status="$(curl -s "${base}/status" 2>/dev/null || echo '{}')"
+repo_root="$(cd "${here}/.." && pwd)"
 
 # Self / platform project → deferred backend restart.
-if printf '%s' "$status" | grep -q '"self"[[:space:]]*:[[:space:]]*true'; then
+#
+# RESOLVED FROM DISK, NOT FROM THE API. This used to ask
+# `GET /base-apps/run/<slug>/status` for a `"self": true` flag — an
+# AUTHENTICATED endpoint. From a script it answers
+# `{"detail":"authentication required"}`, the grep finds no `self`, and the
+# platform falls through to the app-runner branch below, which prints
+# "no running services to restart" and exits 0 having restarted NOTHING.
+# The one tool documented as "apply your backend change" was a silent no-op on
+# the one project every agent uses it for, and the failure looks like success.
+#
+# The registry file has the same fact and needs no credentials.
+is_self() {
+  python3 - "$1" "$repo_root" <<'PY' 2>/dev/null
+import json, os, sys
+from pathlib import Path
+slug, root = sys.argv[1], Path(sys.argv[2]).resolve()
+reg = Path(os.environ.get("WORKSHOP_PROJECTS_REGISTRY",
+                          str(root / ".runtime" / "projects.json")))
+try:
+    projects = (json.loads(reg.read_text()).get("projects") or {})
+except Exception:
+    projects = {}
+p = projects.get(slug) or {}
+# Either the registry says so, or the project simply IS this checkout. The
+# second test is what makes an alias work: the platform is registered as
+# `development`, while the docs and every agent brief say `workshop`.
+if p.get("self") or (p.get("dir") and Path(p["dir"]).resolve() == root):
+    raise SystemExit(0)
+if not p and slug in ("workshop", "development", "platform"):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+if is_self "$slug"; then
+  echo "platform project (${slug}) → deferred backend restart"
   exec bash "${here}/restart_backend.sh" --deferred
 fi
+
+status="$(curl -s "${base}/status" 2>/dev/null || echo '{}')"
 
 restart_one() {
   local s="$1"
