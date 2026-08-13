@@ -75,3 +75,19 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   every field with no data in the live store removed along with its backend
   route. Deletions were chosen by measuring field occupancy across all 179
   tickets, not by judgement. Net -2431 lines.
+- 2026-08-13 — Operator: enact the tickets/autonomy plan in full. Built phases 0
+  to 4 of `docs/platform-redesign/autonomy-implementation-2026-08-13.md`. Two
+  schema fields carry it: `execution` (code|judgement|external|null, fail-closed)
+  and `triage` (a content hash over the spec fields only, NOT `updated`, which is
+  what lets a queue triager terminate). `next_ready(unattended=True)` adds
+  execution+readiness for the sweep and for nothing else, so readiness still
+  never vetoes a human. Measured after: the human head of `development` is still
+  the root-privileged SEC-C3, the unattended head is real code work.
+  Phase 0 deleted the dead controls and split the global brake from the runner
+  (the Start button used to clear the brake and start nothing). Phase 1
+  classified all 25 open tickets, re-filed five platform tickets out of the
+  `workshop` scope, put readiness on the page and on list rows, and gave the
+  worker and agents the search tool. Phase 4 made a supervised sweep land
+  `in_review`, a stuck run park instead of fail, and set the per-scope budget
+  ceiling. NOT turned on: the crontab runner line stays commented (operator's
+  call) and the queue triager is manual, dry-run by default, as the plan asks.
