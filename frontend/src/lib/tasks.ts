@@ -170,10 +170,17 @@ export type Latitude = "strict" | "standard" | "open";
 export const LATITUDES: Latitude[] = ["strict", "standard", "open"];
 export const DEFAULT_LATITUDE: Latitude = "standard";
 
+// Each line says what the worker DOES when the ticket is silent, and none of
+// them implies permission. That is the whole point of the rewording: the old
+// copy read as a privilege level ("decides freely", "blocks often"), which is
+// how a setting that only shapes whether a worker ASKS came to be described,
+// and then believed, as a limit on what it may reach.
+// `services/latitude.py` already retracted the "enforced floor" language in its
+// docstring; this is the UI agreeing with it.
 const LATITUDE_DESC: Record<Latitude, string> = {
-  strict: "Where the ticket does not say, ask. Blocks often.",
-  standard: "Decides reversible things and records them; blocks on irreversible ones.",
-  open: "Pursues the goal, decides freely, reports the decisions at the end.",
+  strict: "Asks when the ticket does not say.",
+  standard: "Decides reversible things, asks about the rest.",
+  open: "Decides and reports at the end.",
 };
 
 export const latitudeDesc = (v?: string): string =>
