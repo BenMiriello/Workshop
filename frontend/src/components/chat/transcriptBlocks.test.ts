@@ -270,6 +270,44 @@ describe("the live turn", () => {
     const live = selectTranscript(s).filter((b) => b.kind === "live");
     expect(live.map((b) => (b as { working: boolean }).working)).toEqual([false, true]);
   });
+
+  // THE REGRESSION THIS FILE EXISTS FOR, in its last remaining form. A turn that
+  // has announced itself and produced nothing is still a turn that started
+  // BEFORE the message, so the message can never be the first thing in the run.
+  it("keeps the working indicator above a message sent before anything streamed", () => {
+    let s = stateOf([user("go"), user("and also", { during_run: "r1", at_unit: 0 })]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    expect(shape(selectTranscript(s))).toEqual(["user:go", "live:*", "user:and also"]);
+  });
+
+  it("keeps it above every message when several land before anything streams", () => {
+    let s = stateOf([
+      user("go"),
+      user("one more", { during_run: "r1", at_unit: 0 }),
+      user("and another", { during_run: "r1", at_unit: 0 }),
+    ]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    expect(shape(selectTranscript(s)))
+      .toEqual(["user:go", "live:*", "user:one more", "user:and another"]);
+  });
+
+  // ...and it hands the indicator back to the bottom as soon as there is work
+  // to sit under, because that is where the turn is writing now.
+  it("moves the indicator below the message once work arrives after it", () => {
+    let s = stateOf([user("go"), user("and also", { during_run: "r1", at_unit: 0 })]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "ok" } });
+    expect(shape(selectTranscript(s))).toEqual(["user:go", "user:and also", "live:ok*"]);
+  });
+
+  // The common case must not move: work emitted before the message stays above
+  // it, and the still-running edge stays below it.
+  it("leaves work emitted before the message above it", () => {
+    let s = stateOf([user("go"), user("and also", { during_run: "r1", at_unit: 1 })]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "ok" } });
+    expect(shape(selectTranscript(s))).toEqual(["user:go", "live:ok", "user:and also", "live:*"]);
+  });
 });
 
 describe("pending sends and the context cut", () => {

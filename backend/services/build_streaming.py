@@ -1869,8 +1869,14 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     # `replays` and `results` are what turn_end reads: how many of the prompts we
     # handed over the CLI has acknowledged reading, and how many requests it has
     # finished. `activity_at` is the silence clock that bounds the wait.
+    # `seg_at_result` is the segment count as of the LATEST result. When it falls
+    # behind `len(turn.segments)` the model has produced something since that
+    # result, which means it is answering and must not be retired. -1 until the
+    # first result, where the count is not yet meaningful.
     state = {"compacted": False, "saw_result": False, "last_ctx": 0,
-             "replays": 0, "results": 0, "activity_at": time.time(), "seg_count": 0}
+             "replays": 0, "results": 0, "foreign_results": 0,
+             "seg_at_result": -1,
+             "activity_at": time.time(), "seg_count": 0}
     buf = ""
     offset = 0
     last_persist = 0.0
@@ -1915,7 +1921,22 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             state["spend_sum"] = int(state.get("spend_sum") or 0) + _spend_tokens_from_usage(payload.get("usage"))
         elif kind == "result":
             state["saw_result"] = True
-            state["results"] += 1
+            # A RESULT THAT LANDS BEFORE THE CLI HAS READ ANY PROMPT OF OURS IS
+            # NOT AN ANSWER TO ONE. It belongs to a prompt the CLI generated for
+            # itself — on `--resume`, a `<task-notification>` for a background
+            # agent left over from the previous process, delivered ahead of ours
+            # and answered within ~90ms of spawn. Counting it made `results`
+            # balance `replayed` against work that had not started, which is one
+            # of the two ways this loop used to retire a turn mid-answer.
+            # `turn_end` compares the two, so the miscount has to be fixed here,
+            # where we can still see that no echo has arrived.
+            if int(state["replays"]) > 0:
+                state["results"] += 1
+            else:
+                state["foreign_results"] = int(state.get("foreign_results") or 0) + 1
+            # NEW OUTPUT SINCE THE LATEST RESULT, cleared here and set by the
+            # segment counter in the drive loop. See services/turn_end.py.
+            state["seg_at_result"] = len(turn.segments)
             state["activity_at"] = time.time()
             state["result_subtype"] = payload.get("subtype") or ""
             # The result envelope's usage is the turn TOTAL across tool rounds.
@@ -2039,7 +2060,10 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 produced=bool(turn.segments),
                 is_command=(meta.get("prompt") or "").strip().startswith("/") or turn.injected_command,
                 idle_s=now - float(state["activity_at"]),
-                stopped=turn.stop_requested)):
+                stopped=turn.stop_requested,
+                produced_since_result=(
+                    int(state["seg_at_result"]) >= 0
+                    and len(turn.segments) > int(state["seg_at_result"])))):
             # THE FIRST RESULT IS NOT THE END OF THE TURN, only the end of one
             # request. Retiring on it killed whatever the CLI had started for a
             # second prompt — an injected message, or the task-notification the

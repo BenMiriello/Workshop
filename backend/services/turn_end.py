@@ -87,6 +87,11 @@ class TurnProgress:
     # The operator pressed Stop. Their decision ends the turn immediately;
     # nothing is owed to a run that was cancelled.
     stopped: bool = False
+    # A SEGMENT HAS ARRIVED SINCE THE LATEST RESULT. See `turn_is_over`: this is
+    # what says the model is talking RIGHT NOW, and nothing that is talking has
+    # finished. Defaults False so a caller that does not track it gets the old
+    # behaviour rather than a turn that never retires.
+    produced_since_result: bool = False
 
 
 def turn_is_over(p: TurnProgress) -> bool:
@@ -96,6 +101,29 @@ def turn_is_over(p: TurnProgress) -> bool:
     decide."""
     if p.stopped:
         return True
+    # A RESULT MUST BE THE LAST THING SEEN. Output that arrives AFTER a result is
+    # the model answering something, and whatever that something is, killing it
+    # mid-message destroys the answer. So the balance below is only consulted
+    # when the stream has produced nothing since the latest result; otherwise
+    # this waits for the next result, which the CLI always emits.
+    #
+    # Why this is not covered by the balance: the counts can agree while the
+    # model is still generating, and then `produced` TRIGGERS the kill instead of
+    # preventing it. Thread 65341b40 at 23:14:09.775Z (2026-08-12): a stale
+    # `<task-notification>` for a background agent killed by the previous turn
+    # had already landed its result, the balance was satisfied, and the guard
+    # below was holding the turn open only because nothing had been produced yet.
+    # The first text segment flipped `produced` to True and the drive loop
+    # retired the process 41ms later, mid-message. The CLI journal records that
+    # message with no `stop_reason` and an `interruptedByShutdown` marker behind
+    # it; from the chat it reads as the agent announcing work and stopping dead.
+    #
+    # The guard was written to wait for silence and instead waited for speech.
+    # This is the same intent, stated so that producing output can only ever
+    # DELAY retirement. Cost when the turn really is done: one more result, which
+    # the CLI emits immediately. The idle bound still catches a wedged turn.
+    if p.produced_since_result:
+        return p.idle_s >= STUCK_GRACE_S
     # Everything we handed over has been read, everything read has been
     # answered, and the turn said something. The ordinary turn takes this branch
     # on its first result and is retired exactly as promptly as before.

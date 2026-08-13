@@ -34,6 +34,12 @@ import { cutPointOf, splitAtUnits } from "./transcriptUnits";
 // delegation — the operator reported the resulting misplacement three times
 // before it was measured. See transcriptUnits.ts for the numbers.
 //
+// A RUN ALREADY IN FLIGHT IS ITSELF SOMETHING THAT HAPPENED FIRST. The cut says
+// where a message sits among the work; it does not license the message to sit
+// above the run's own start. A turn announced itself before the operator typed,
+// so the announcement stays above what he typed even when the turn has emitted
+// nothing else yet. `workingSliceIndex` is the whole of that rule.
+//
 // WHY THE OLD RULE SAID THE OPPOSITE. An earlier scheme also cut the reply open,
 // and it was wrong: it placed the message ABOVE work that had already begun (in
 // the worst case above the working indicator itself, when nothing had streamed
@@ -172,23 +178,47 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
   return out;
 }
 
-/** The run in flight, cut the same way. The last block is the live one: it is
- *  where the working indicator goes, and it is emitted even when empty, because
- *  "a turn is running and has produced nothing yet" still has to be visible. */
+/** Which slice of a live run carries the working indicator.
+ *
+ *  A RUN THAT WAS ALREADY IN FLIGHT RENDERS ABOVE THE MESSAGE THAT LANDED
+ *  DURING IT. That is the whole invariant, and the indicator is the only thing
+ *  that can hold it up when the run has produced nothing yet.
+ *
+ *  The indicator marks where the work is happening NOW, so it belongs on the
+ *  LAST slice: work emitted after a message was produced by a turn that had
+ *  been handed it. But when the run has emitted nothing at all, every slice is
+ *  empty, the last one renders as nothing, and the message floats to the top of
+ *  the run — above the "Working" line that had been on screen before it was
+ *  typed. Which is the exact reading transcriptBlocks exists to prevent, and it
+ *  is what the operator reported on 2026-08-12: "i see 'working...', i send
+ *  another message, and my new message shows ABOVE it. if it was already
+ *  working my new message could not be BEFORE it since it wouldn't have seen
+ *  it."
+ *
+ *  So: the last slice, unless the run has emitted nothing, in which case slice
+ *  zero — the run's own start, which precedes every message sent during it.
+ *  Nothing else can express "this turn was already running when you typed". */
+export function workingSliceIndex(parts: ChatSegment[][]): number {
+  return parts.some((p) => p.length) ? parts.length - 1 : 0;
+}
+
+/** The run in flight, cut the same way. One slice carries the working
+ *  indicator, and it is emitted even when empty, because "a turn is running and
+ *  has produced nothing yet" still has to be visible. */
 function liveBlocks(
   runId: string, segments: ChatSegment[], interrupts: LogEvent[],
 ): TranscriptBlock[] {
   const parts = cutReply(segments, interrupts);
   const out: TranscriptBlock[] = [];
-  const lastPart = parts.length - 1;
+  const workingAt = workingSliceIndex(parts);
   for (let i = 0; i < parts.length; i++) {
-    if (parts[i].length || i === lastPart) {
+    if (parts[i].length || i === workingAt) {
       out.push({
         kind: "live",
         key: `${runId}:${i}`,
         runId,
         segments: parts[i],
-        working: i === lastPart,
+        working: i === workingAt,
       });
     }
     if (i < interrupts.length) {

@@ -1797,6 +1797,27 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     # Stated after the persona so it can override the ticket protocols the
     # persona carries, in the direction that removes capability.
     prompt = prompt + "\n\n" + chat_context.chat_mode_block(t.get("mode"))
+    # THE STOP RULE GOES ON THIS PATH TOO, and until 2026-08-12 it went only on
+    # the resumed one. `_resumed_prompt` opens with it every turn; this assembly
+    # — a fresh chat, and every FIRST TURN AFTER A /compact or /clear, which
+    # drop the CLI session — sent the persona, the transcript and the mode block
+    # without it. So the rule that tells an agent how its turn ends was present
+    # on every turn except the one right after a compaction.
+    #
+    # Measured on thread 65341b40 (2026-08-12): /compact at 23:05:58, and the
+    # 322,142-character prompt at 23:10:39 carries no contract. That turn closed
+    # with "Building it now." and `stop_reason: end_turn`. The two resumed
+    # prompts either side of it carry it and did not stop.
+    #
+    # `_context_estimate` has prepended it to this same preamble since a7faffa,
+    # with a comment saying behaviour must not differ between a fresh chat and a
+    # continued one. The METER measured a prompt containing the rule while the
+    # turn ran without it. Keep the two paths together.
+    #
+    # It goes LAST here, not first as on the resumed path: this prompt ends with
+    # the operator's message, and the rule has to sit near it rather than
+    # 322k characters back behind the whole transcript.
+    prompt = prompt + "\n\n" + chat_context.turn_contract(CHAT_TIMEOUT_S)
     return prompt, is_build_mode
 
 
