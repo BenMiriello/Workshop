@@ -28,7 +28,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePoll } from "../lib/usePoll";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
-  ChevronLeft, RefreshCw, Trash2, ExternalLink, MoreHorizontal,
+  ChevronLeft, ChevronDown, RefreshCw, Trash2, ExternalLink, MoreHorizontal,
   Play, CheckCheck, ScrollText, MessageSquare, History, Link2, Send,
 } from "lucide-react";
 import {
@@ -135,6 +135,7 @@ export default function TicketDetail() {
   const [answerBusy, setAnswerBusy] = useState(false);
   const [commentDraft, setCommentDraft] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
+  const [statusBusy, setStatusBusy] = useState(false);
 
   // One banner, two meanings. A 409 used to land here as raw JSON.
   const say = useCallback((text: string) => { setBanner(text); setBannerErr(false); }, []);
@@ -199,6 +200,31 @@ export default function TicketDetail() {
       setSaving(false);
     }
   }, [draft, saved, scope, id, fail]);
+
+  // Status commits ON CHANGE, not behind Save, and it is the one field on this
+  // page that does. It is not config: it is where the work has got to, the same
+  // move as dragging a card between columns, and every tracker commits it in
+  // one interaction. Behind Edit mode it cost three (Edit, pick, Save) for the
+  // action the page exists to support. The rest of the ticket stays on the
+  // edit-mode model, because a title or a body is a spec a worker will execute.
+  const setStatus = useCallback(async (next: string) => {
+    if (!task || next === task.status) return;
+    setStatusBusy(true);
+    setBanner(null);
+    try {
+      const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: next }),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setTask(await r.json());
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStatusBusy(false);
+    }
+  }, [task, scope, id, fail]);
 
   // A draft is a suggestion the system made. Approving is the operator agreeing
   // to it, and it is the only thing that makes a ticket eligible to run.
@@ -345,14 +371,11 @@ export default function TicketDetail() {
             onChange={(e) => setField("body", e.target.value)}
           />
         </Field>
+        {/* No Status field here. It is one fact, so it gets one control, and
+            that control is the header's, which commits on change. Two writers
+            with different commit rules is how a Save silently reverts a status
+            the operator had already changed. */}
         <Row wrap>
-          <Field label="Status">
-            <Select value={draft.status} onChange={(e) => setField("status", e.target.value)}>
-              {TASK_STATUSES.map((s) => (
-                <option key={s} value={s}>{taskStatusLabel(s)}</option>
-              ))}
-            </Select>
-          </Field>
           <Field label="Priority" help="Higher runs first. 0 is the default.">
             <Input
               inputMode="numeric"
@@ -569,10 +592,24 @@ export default function TicketDetail() {
         title={loading ? "Ticket" : titleOf(task as Task) || id}
         meta={task && (
           <>
-            {/* The status word, not a pill. The operator reads "to do" here and
-                nowhere else on the page, so it is a fact in a sentence rather
-                than a badge competing with the title. */}
-            <StatusDot status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusDot>
+            {/* The status word, not a pill, and it is the control as well as
+                the readout: one click, one pick, committed. It reads as text
+                until you hover it. */}
+            <Menu
+              label="Set status"
+              trigger={
+                <button type="button" disabled={statusBusy} title="Change status">
+                  <StatusDot status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusDot>
+                  <ChevronDown aria-hidden />
+                </button>
+              }
+            >
+              {TASK_STATUSES.map((s) => (
+                <MenuItem key={s} checked={s === task.status} onSelect={() => setStatus(s)}>
+                  {taskStatusLabel(s)}
+                </MenuItem>
+              ))}
+            </Menu>
             {scopeLink
               ? <Link to={scopeLink}>{scopeLabel(scope)}</Link>
               : <span>{scopeLabel(scope)}</span>}

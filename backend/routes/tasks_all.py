@@ -1244,7 +1244,7 @@ def scope_pickup(scope: str | None) -> dict:
             "why": "no runner sweeps build agent trees; press Run to work this ticket"}
 
 
-def launch_task_run(scope: str, task_id: str) -> dict:
+def launch_task_run(scope: str, task_id: str, *, chat_id: str | None = None) -> dict:
     """Open a manual Job and Popen a detached single-task sweep against `scope`
     for exactly `task_id`. Shared by the /tasks run endpoint and the chat
     spawn-and-run path so the Popen pattern lives in one place.
@@ -1296,7 +1296,15 @@ def launch_task_run(scope: str, task_id: str) -> dict:
     if dir_str and _tree_busy(dir_str):
         raise HTTPException(409, f"a sweep is already running against {scope}; try again when it finishes")
 
+    # `chat_id` is the run's ORIGIN, and it was the one link in the job record
+    # that nothing ever wrote: 0 of 2753 job records carry one, measured
+    # 2026-08-12, even though the chat's "file and run" path calls this function
+    # with the thread id sitting in its own scope. Without it a run cannot say
+    # which conversation asked for it, which is the link the run page's "edit in
+    # the original chat" action needs.
     start_kwargs: dict = {"trigger": "manual", "status": "running", "task_id": task_id}
+    if chat_id:
+        start_kwargs["chat_id"] = chat_id
     if scope.startswith("project:"):
         slug = scope.split(":", 1)[1]
         start_kwargs["project_slug"] = slug

@@ -861,7 +861,10 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         if task_id and scope_key:
             from routes.tasks_all import launch_task_run
             try:
-                run_res = launch_task_run(scope_key, task_id)
+                # The thread is the run's origin. Recording it here is what
+                # makes the run navigable back to the conversation that asked
+                # for it; it was the only linkage field never written.
+                run_res = launch_task_run(scope_key, task_id, chat_id=thread_id)
             except HTTPException as e:
                 resp["run_error"] = e.detail
             else:
@@ -1146,7 +1149,11 @@ def _build_prompt(
         # own. The @mention path already did this correctly; this is the same
         # rule on the default path. See docs/decisions/0015 §8 case 1.
         convo = []
-        for m in history:
+        # IN THE ORDER THINGS HAPPENED, not in log order. A message sent while a
+        # reply was being written has a lower seq than that reply, so flat it
+        # sits above the whole thing — including the part of the reply written
+        # before it was sent. See chat_context.interleave_history.
+        for m in chat_context.interleave_history(history):
             who = origin.speaker_label(m["role"], m.get("meta"))
             convo.append(f"{who}: {origin.escape_markers(m['content'])}")
         parts.append("=== CONVERSATION SO FAR ===\n" + "\n\n".join(convo))

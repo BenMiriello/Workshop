@@ -221,6 +221,20 @@
    but drops to the line's own size and weight, so it reads as a word rather
    than as a badge that lost its border. */
 .ws-page-header__meta .ws-dot { font-size: inherit; font-weight: var(--fw-medium); gap: var(--space-2); }
+/* A meta fact that is ALSO a control (the status a click can change). It reads
+   as the line's own text until the pointer is on it, which is the control rule:
+   neutral at rest, --fg on hover. The negative margin means the hover surface
+   grows out of the line instead of pushing it around. */
+.ws-page-header__meta button {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  margin: -2px calc(var(--space-1) * -1);
+  padding: 2px var(--space-1);
+  border: 0; border-radius: var(--radius-sm);
+  background: none; color: inherit; font: inherit; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.ws-page-header__meta button:hover { background: var(--card-hover); }
+.ws-page-header__meta button svg { width: 12px; height: 12px; stroke-width: 1.8; color: var(--faint); }
 
 /* ---- DETAIL LAYOUT ------------------------------------------------------- */
 /* Main column plus properties rail. The rail is first in the DOM so a phone
