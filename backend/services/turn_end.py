@@ -122,7 +122,7 @@ def turn_is_over(p: TurnProgress) -> bool:
     # This is the same intent, stated so that producing output can only ever
     # DELAY retirement. Cost when the turn really is done: one more result, which
     # the CLI emits immediately. The idle bound still catches a wedged turn.
-    if False:
+    if p.produced_since_result:
         return p.idle_s >= STUCK_GRACE_S
     # Everything we handed over has been read, everything read has been
     # answered, and the turn said something. The ordinary turn takes this branch
