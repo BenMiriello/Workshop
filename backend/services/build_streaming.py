@@ -1177,7 +1177,7 @@ _STDERR_NOISE = (
 _STDERR_TAIL_CHARS = 600
 
 
-def _stderr_tail(turn_id: str, limit: int = _STDERR_TAIL_CHARS) -> str:
+def _stderr_tail(turn_id: str) -> str:
     """The last useful thing the CLI wrote to stderr for this turn, or "".
 
     WHY THIS IS READ AT ALL. The child's stderr has always been captured to
@@ -1200,6 +1200,7 @@ def _stderr_tail(turn_id: str, limit: int = _STDERR_TAIL_CHARS) -> str:
     Reads the tail only: a turn that spewed megabytes of stderr must not be read
     into memory to render one line.
     """
+    limit = _STDERR_TAIL_CHARS
     p = _journal_dir(turn_id) / "stream.err"
     try:
         size = p.stat().st_size

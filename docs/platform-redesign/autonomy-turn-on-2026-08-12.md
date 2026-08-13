@@ -397,19 +397,36 @@ Eleven durable stores exist. The headline numbers, taken from the live tree:
 **1. The "capture a preference" path is a no-op.** When the operator states a
 durable preference in a general chat, the model emits a learning-note fence,
 `apply_learning_note` defaults its scope to `workshop`, the chat replies
-"Captured a preference", and then `chat_context.py:1055` explicitly excludes
-`workshop` from injection, while the worker only ever asks for `project:*` or
-`agent:*`. **All 11 records in that store have never been read by anything.**
-Every one lacks the `retrieval_count` field the store writes on retrieval. The
-newest was written an hour before this audit. That is not a gap in coverage, it
-is a mechanism that reports success and does nothing, which is worse than
-having no mechanism.
+"Captured a preference", and then `chat_context.py:1055` reads
+`if scope not in (learnings.GLOBAL, "workshop")` before injecting a scope
+block. A general chat's knowledge scope IS `workshop`, so the block is skipped;
+only `global` is injected. The worker never asks for that scope either: it only
+ever passes `project:*` or `agent:*`.
+
+**Eleven records, written between 2026-07-18 and an hour before this audit, had
+never been read by anything.** The store stamps `last_retrieved` and
+`retrieval_count` on retrieval, and all eleven were unstamped.
+
+One correction, because it matters for anyone re-checking this: **verifying it
+changed it.** Calling `learnings.memory_block("workshop")` once to confirm the
+block was non-empty stamped ten of the eleven with `retrieval_count: 1` and
+`last_retrieved: 2026-08-13T04:08:49Z`. That timestamp is this audit, not the
+system. The eleventh is unstamped because it predates the field.
+
+This is not a gap in coverage. It is a mechanism that reports success and does
+nothing, which is worse than having no mechanism, because the operator stops
+repeating himself.
 
 **2. The one rule that matters most is silently over budget.** The injected
-learnings block is capped at 700 tokens. Rendering it today drops one entry:
-the Design System rule, which is 168 tokens, 24% of the budget. It has been
-excluded for roughly 25 days, and the ranking is self-reinforcing, because
-being dropped lowers the retrieval score that decides whether it is dropped.
+`global` learnings block is capped at 700 tokens. Rendering it right now gives
+2,483 characters ending in the literal line `- +1 more`, and the entry that
+line stands for is the Design System rule, at 168 tokens, 24% of the budget.
+It has been excluded for roughly 25 days, and the exclusion is
+self-reinforcing: being dropped means it is never retrieved, and the retrieval
+score is part of what decides whether it is dropped.
+
+That rule is the one every UI change in this repo is supposed to obey, and it
+is the one the operator has had to restate by hand most often.
 
 **3. Only ONE surface in the system can search the workshop's own writing.**
 `mcp__workshop__search` is in the general chat's allowlist and nowhere else. A

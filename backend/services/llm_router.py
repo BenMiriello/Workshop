@@ -29,7 +29,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -218,7 +218,6 @@ def _record_success() -> None:
 def call_local(
     prompt: str,
     *,
-    system: Optional[str] = None,
     model: str = OLLAMA_MODEL,
     json_mode: bool = False,
     timeout_s: float = OLLAMA_REQUEST_TIMEOUT_S,
@@ -240,8 +239,6 @@ def call_local(
         "stream": False,
         "options": {"num_ctx": 8192, "temperature": 0.2},
     }
-    if system:
-        payload["system"] = system
     if json_mode:
         payload["format"] = "json"
 
