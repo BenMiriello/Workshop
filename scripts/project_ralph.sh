@@ -98,6 +98,20 @@ while [[ $# -gt 0 ]]; do
 done
 ASSIGNEE_FLAG=(); [[ -n "$ASSIGNEE" ]] && ASSIGNEE_FLAG=(--assignee "$ASSIGNEE")
 
+# Unattended selection (phase 4). A background sweep additionally requires
+# `execution == "code"` and a passing readiness check; a --force sweep is the
+# operator saying "work the queue now", which is attended, so it selects exactly
+# as it always did. That split is what keeps BOTH ratified rules true: readiness
+# never vetoes a human, and only tickets marked ready run unattended.
+#
+# Fail-closed has a real consequence worth knowing: a store whose tickets carry
+# no `execution` yet has NOTHING unattended-ready, so a background sweep of it
+# does nothing until they are classified (scripts/classify_open_tickets.py).
+# That is the intended behaviour — the alternative is guessing — but it is the
+# reason a sweep can go quiet after this change rather than because it broke.
+UNATTENDED_FLAG=(); UNATTENDED_SELECT=0
+[[ "$FORCE" -ne 1 ]] && { UNATTENDED_FLAG=(--unattended); UNATTENDED_SELECT=1; }
+
 # The grant dies with the job. Its expiry caveat already bounds it, but a token
 # that outlives its sweep is reach nobody is using, so revoke on EVERY exit path
 # (including the early aborts above the main loop). Idempotent + best-effort.
@@ -776,7 +790,7 @@ while (( n < MAX_TASKS )); do
     fi
   else
     # Dependency-aware, assignee-scoped next task (reconciles the store first).
-    NEXT=$(python3 "$PTASKS" next-ready "$DIR" "${ASSIGNEE_FLAG[@]}" 2>>"$LOG")
+    NEXT=$(python3 "$PTASKS" next-ready "$DIR" "${ASSIGNEE_FLAG[@]}" "${UNATTENDED_FLAG[@]}" 2>>"$LOG")
   fi
   TASK_ID=$(jf "$NEXT" id)
   TASK_TEXT=$(jf "$NEXT" text)
@@ -1146,13 +1160,18 @@ DURATION=$(( $(date +%s) - START_EPOCH ))
 # and NONE are ready (every one is blocked / in_review), the sweep is waiting on
 # the operator: finish awaiting_input with evidence. Home's AttentionStrip + Job
 # detail surface it; the dispatcher skips an unchanged awaiting scope next tick.
-OUT=$(cd "$WORKSHOP" && python3 - "$DIR" "$ASSIGNEE" "${SLUG:-$DIR}" <<'PYEOF'
+OUT=$(cd "$WORKSHOP" && python3 - "$DIR" "$ASSIGNEE" "${SLUG:-$DIR}" "$UNATTENDED_SELECT" <<'PYEOF'
 import json, os, sys
 from pathlib import Path
 sys.path.insert(0, os.environ["WORKSHOP"] + "/backend")
 from services import tasks
 root = Path(sys.argv[1]); assignee = sys.argv[2] or None; scope = sys.argv[3]
-ready = tasks.next_ready(root, assignee=assignee)
+# Same predicate the sweep just selected with. If this said "ready" while the
+# sweep could not pick anything up, the scope would never report awaiting_input
+# and the operator would never be told the queue had stalled on unclassified or
+# underspecified tickets — it would just look idle.
+unattended = sys.argv[4] == "1"
+ready = tasks.next_ready(root, assignee=assignee, unattended=unattended)
 open_tasks = tasks.list_tasks(root, include_done=False)
 waiting = [t for t in open_tasks if t["status"] in ("blocked", "in_review")]
 

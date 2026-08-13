@@ -77,7 +77,7 @@ EOF
 [$who] refusing to start: $dir is the Workshop's own source tree.
   Developer mode is off, so the platform repo is not a permitted run target.
   Set WORKSHOP_DEV_MODE=1 to allow it. This is a safety interlock, not a
-  security boundary — see ADR 0014.
+  security boundary. See ADR 0014.
 EOF
     return 1
   fi

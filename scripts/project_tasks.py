@@ -125,6 +125,11 @@ def main(argv: list[str]) -> int:
 
     sp = sub.add_parser("next-open"); scope(sp); sp.add_argument("--assignee", default=None)
     sp = sub.add_parser("next-ready"); scope(sp); sp.add_argument("--assignee", default=None)
+    # --unattended adds the two phase-4 selection rules: execution == "code" and
+    # the readiness check passes. Passed by the SWEEP and by nothing else, so
+    # that "readiness never vetoes a human" and "only ready tickets run
+    # unattended" can both be true at once.
+    sp.add_argument("--unattended", action="store_true")
     sp = sub.add_parser("list-json"); scope(sp)
     sp.add_argument("--assignee", default=None); sp.add_argument("--include-done", action="store_true")
 
@@ -187,7 +192,9 @@ def main(argv: list[str]) -> int:
 
     try:
         if a.cmd in ("next-open", "next-ready"):
-            print(json.dumps(_slim(tasks.next_ready(root, assignee=a.assignee))))
+            print(json.dumps(_slim(tasks.next_ready(
+                root, assignee=a.assignee,
+                unattended=bool(getattr(a, "unattended", False))))))
             return 0
         if a.cmd == "list-json":
             print(json.dumps(tasks.list_tasks(root, include_done=a.include_done, owner=a.assignee)))
