@@ -162,3 +162,31 @@ class TestARefusedTargetCarriesTheGatesReason:
         r = client.post("/api/queue/runner/start", json={"dir": root})
         assert r.status_code == 200, r.text
         assert spawned and spawned[0][2] == root
+
+
+# --- the pidfile is per tree, like the lock ---------------------------------
+# Start names a tree, so Stop has to as well. While the lock was per-tree and the
+# pidfile was one shared file, two runners on two trees both ran but the second
+# clobbered the first's pid: Stop killed whichever started last regardless of the
+# tree it was asked about, and the other became unstoppable from the UI.
+
+def test_pid_path_is_per_tree() -> None:
+    a = autonomy_routes._queue_pid_path("/home/x/tree-a")
+    b = autonomy_routes._queue_pid_path("/home/x/tree-b")
+    assert a != b
+    assert a.parent == b.parent
+
+
+def test_pid_and_lock_share_one_tree_key() -> None:
+    d = "/home/x/tree-a"
+    key = autonomy_routes._queue_key(d)
+    assert key in autonomy_routes._queue_pid_path(d).name
+    assert key in autonomy_routes._queue_lock_path(d).name
+
+
+def test_the_key_matches_the_shell_derivation() -> None:
+    """`printf '%s\\n' "$DIR" | md5sum | cut -c1-12`. If the two ever disagree,
+    the API reports a runner that is not there and cannot stop the one that is."""
+    import hashlib
+    d = "/home/clawd-a/workshop"
+    assert autonomy_routes._queue_key(d) == hashlib.md5((d + "\n").encode()).hexdigest()[:12]
