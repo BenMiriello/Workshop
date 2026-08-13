@@ -1361,8 +1361,12 @@ _COMPACT_KEEP_TAIL = 6
 
 
 def _fmt_for_summary(messages: list[dict]) -> str:
+    # In the order things happened, for the same reason `_build_prompt` does it:
+    # a message sent mid-reply sits above that whole reply in the log. Here it
+    # matters more than anywhere, because this text BECOMES the history once the
+    # fold lands, so a wrong order is baked in rather than re-derived.
     out = []
-    for m in messages:
+    for m in chat_context.interleave_history(messages):
         who = origin.speaker_label(m.get("role", "user"), m.get("meta"))
         out.append(f"{who}: {m.get('content', '')}")
     return "\n\n".join(out)

@@ -160,6 +160,10 @@ panel (approve already reports the gaps in one line).
    ticket read. The page shows the count only at approval. One quiet line
    ("does not say what done looks like") next to the Run button turns a 74%
    failure rate into something the operator can fix in ten seconds.
+   The six checks are, near enough, the rubric GitHub publishes for handing an
+   issue to its coding agent: a clear problem statement, complete acceptance
+   criteria, and directions about which files to change. Keep them; they are
+   the right list, and they are already implemented.
 2. **Re-run.** A failed run leaves the ticket `todo` with no affordance except
    Run, which reads as "start", not "try again".
 3. **A scope-review action** that calls the surviving engine and proposes
@@ -251,6 +255,35 @@ before a run is spawned: the queue triager is the *unattended* fallback for
 tickets that were filed without that conversation, and its output is a question
 back to the operator, not a plan it executes.
 
+**The outside evidence says the same thing, and it is worth stating because it
+is the one place a "planner agent" would have been the obvious move.**
+"From Plan to Action" (2026, SWE-bench Verified + Pro, four models) measured
+that removing the plan lowers success for every model, that agents already
+follow an internalised plan without being told, and that **a bad or misaligned
+plan is worse than no plan at all**. The value is in plan QUALITY, not in a
+planner actor. Anthropic's own subagent guidance splits work by read-vs-write
+and says planning, implementation and testing share too much context to
+separate. The one measured win for a central planner (CAID, +25.6% on
+PaperBench) credits **git worktrees and executable tests**, not the planner's
+judgement.
+
+So: the plan belongs INSIDE the maker's prompt as a required phase, re-asserted
+periodically (the same paper measured that re-injecting the plan every ~5 steps
+improves both compliance and success). The triager's scope pass exists to catch
+tickets that cannot support a plan at all, and to ask, not to plan for them.
+
+**And the reviewer stays deterministic, independent, and unable to approve.**
+Three measured findings converge on the shape `reviewer.sh` already has: models
+cannot reliably self-correct without external feedback (ICLR 2024); LLM judges
+show a measured linear correlation between self-recognition and self-preference,
+so a worker grading itself launders confidence; and Anthropic's shipped code
+review runs finders and then a **separate verification pass** to kill false
+positives, and still refuses to approve a PR, because "that's still a human
+call". One change worth making: **size-gate it.** Their published numbers show
+a 1,000-line PR yields findings 84% of the time and a sub-50-line PR 31% of the
+time, at ~20 minutes and $15-25 per review. A judgement pass on a three-line
+diff is mostly latency.
+
 ### Centralized or decentralized
 
 Both, and the split is already decided: **execution is single-threaded and
@@ -314,6 +347,31 @@ label that is false.
 - Run it manually first. Read every decision it makes for a week before giving
   it a cron trigger.
 
+**Split `awaiting` into two states while doing this.** They are different
+questions and they must expire differently:
+
+| state | meaning | on no answer |
+|---|---|---|
+| `awaiting_input` | a QUESTION. "Which of these did you mean?" | may time out and let the run proceed on its own judgement, re-asking later |
+| `awaiting_approval` | an ACTION the operator must permit | **never auto-resolves.** Ever. |
+
+That asymmetry is Claude Code's, and it is the most defensible rule anyone has
+shipped: questions time out, approvals do not. Today one `awaiting` field
+carries both, which means either questions block forever or approvals decay.
+
+Two more shapes worth copying while the field is being reshaped, both from
+Linear's agent protocol, which is the best-specified escalation contract in a
+shipped product:
+
+- **The blocked state is DERIVED from what the agent emitted, never set by
+  hand.** An agent emits an elicitation; the session becomes `awaitingInput`
+  because of that, not because something remembered to write a status.
+- **The canonical history is frozen activity records, not editable comments.**
+  This repo already reached the same conclusion from the other direction: a
+  comment is deliberately not part of the spec a worker executes, and an answer
+  only counts when it is written into the ticket body. Same rule, and it should
+  be stated once rather than twice.
+
 ### Phase 4 — supervised unattended execution (a week)
 
 - Restore the queue runner, one scope, `supervised`: runs land in `in_review`
@@ -323,6 +381,18 @@ label that is false.
   which is why the inbox is empty.
 - Add the stale-question escalation the docs name as unbuilt: a question that
   has sat unanswered for a day gets louder, rather than sitting silently.
+- Add stuck detection, because an unattended run that loops is the failure this
+  phase invents. The published rule set worth copying is OpenHands': compare
+  actions and observations by **semantic** equality (strip ids, timestamps,
+  metrics, or nothing ever matches), anchor the window at the last human
+  message, and fire on same-action-same-observation ×4, same-action-same-error
+  ×3, or an alternating A,B,A,B pattern ×6. Two additions from
+  `opencode-anti-loop`: count **steps without a write**, and reset the counters
+  on a real file write. Advisory first, block second.
+  **Detection without a resume path is worse than none** — the documented
+  failure of every implementation of this is killing an agent that was
+  legitimately polling something slow. A stuck run must end `parked` with a
+  reason and a resumable id, not `failed`.
 
 ### Phase 5 — autonomous, per scope (when phase 4 is boring)
 
@@ -337,3 +407,91 @@ label that is false.
 
 **Do not skip to phase 5.** That instruction is already written into
 `continuation-2026-07-31.md` and it was right.
+
+---
+
+## 7. Visibility: what the operator has to be able to see
+
+Autonomy is only acceptable if the answer to "what is it doing, and what did it
+just do" is one glance. Three surfaces, each answering one question, and all
+three exist in some form today.
+
+| question | surface | state |
+|---|---|---|
+| what is happening right now | the run in flight, on the ticket and in the chat that launched it | shipped; the chat link was just made real |
+| what happened while I was away | the inbox | shipped, and **empty**, because no producer raises a `notify` when an unattended run finishes |
+| what did it cost | usage, per scope and per chat | ledger shipped; the by-chat view is an open ticket |
+
+The rule that keeps this honest: **a run that ends without a human watching
+must leave a receipt someone will see.** Today it leaves a receipt in the job
+record and nothing surfaces it. That single missing producer is the difference
+between an autonomy loop you can trust and one you have to go looking for.
+
+One more, from the audit rather than the design: **status must never be
+inferred in two places.** A ticket's state, a run's state and the inbox item
+that points at both are one fact each, computed once server-side. The
+`state_type` projection added on 2026-08-12 is the right shape: derived in the
+route layer, never persisted, because the alternative is a second source of
+truth in `.tasks.json`.
+
+**The shape the field converged on for a fleet view**, and the one to build when
+there is more than one run at a time: a roster row per run, carrying a status
+glyph, a **one-line summary of what it is doing right now generated by a cheap
+model**, its age, and a link to the artifact. Grouped by state with **needs
+input first**. Peek without attaching; answer a blocked run from the peek.
+Notify on "needs input", not on progress.
+
+Two cautions that belong in the same section, because they are measured and
+they cut against building more of this:
+
+- **A trace is not a live view.** A span is not exported until it ends, so a
+  45-minute turn emits nothing until it is over, and children arrive before
+  parents. Whatever answers "what is it doing now" has to be a separate live
+  channel, not the trace.
+- **Richer progress UI has not been shown to improve oversight, and has
+  coincided with less of it.** Humans intervened in 52% of agent-authored PRs
+  versus 84% of human-authored ones (MSR 2026); experienced agent users move
+  from per-action approval to monitor-and-pounce; and one controlled trial of
+  16 experienced developers on mature repos measured them **19% slower** with
+  AI while believing they were 20% faster. Build the roster because it makes a
+  stuck run findable, not because it will make anyone watch more carefully.
+
+---
+
+## 9. Evidence
+
+Measured findings this plan leans on, so a later reader can check the ground
+rather than the assertion. **[M]** measured, **[D]** a design decision whose
+evidence is that a vendor shipped it, **[O]** argument only.
+
+| claim used here | source |
+|---|---|
+| 41.8% of multi-agent failures are SPECIFICATION failures; "fail to ask for clarification" is a top-3 individual mode **[M]** | MAST, Cemri et al., 1,600+ traces, 7 frameworks, κ=0.88, [arXiv 2503.13657](https://arxiv.org/abs/2503.13657) |
+| Removing a plan lowers success in all 4 models; a MISALIGNED plan is worse than none; re-injecting every ~5 steps helps **[M]** | "From Plan to Action", [arXiv 2604.12147](https://arxiv.org/html/2604.12147v1) |
+| A central planner's win comes from git worktrees + executable tests, not from the planner **[M]** | CAID, [arXiv 2603.21489](https://arxiv.org/abs/2603.21489) |
+| LLMs cannot reliably self-correct without external feedback **[M]** | Huang et al., ICLR 2024, [arXiv 2310.01798](https://arxiv.org/abs/2310.01798) |
+| Self-recognition correlates linearly with self-preference in LLM judges **[M]** | Panickssery et al., [arXiv 2404.13076](https://arxiv.org/abs/2404.13076) |
+| Independent reviewers + a verification pass: 16%→54% review coverage, <1% findings wrong, still will not approve **[M/D]** | [claude.com/blog/code-review](https://claude.com/blog/code-review) |
+| Multi-agent beat single-agent by 90.2% on RESEARCH, at ~15x tokens, and is explicitly NOT recommended for coding or shared-context work **[M]** | [anthropic.com/engineering/multi-agent-research-system](https://www.anthropic.com/engineering/multi-agent-research-system) |
+| Parallel writers make conflicting implicit decisions; prefer single-threaded **[O]** | [cognition.com/blog/dont-build-multi-agents](https://cognition.com/blog/dont-build-multi-agents) |
+| Readiness rubric: problem statement, acceptance criteria, file pointers; do not assign ambiguous or open-ended work **[D]** | [GitHub Copilot coding agent best practices](https://docs.github.com/en/copilot/tutorials/coding-agent/best-practices) |
+| Mid-task scope additions make an agent worse; clear upfront scoping is the sweet spot **[M/D]** | [Devin 2025 performance review](https://cognition.com/blog/devin-annual-performance-review-2025) |
+| 58% of human interventions on agent PRs are guidance, not code; agent PRs get LESS scrutiny (52% vs 84%) **[M]** | MSR 2026, "Behind Agentic Pull Requests" |
+| 93% of permission prompts are approved; approval fatigue; contain at the environment layer first **[M]** | [anthropic.com/engineering/claude-code-auto-mode](https://www.anthropic.com/engineering/claude-code-auto-mode) |
+| Questions may auto-continue on a timeout; permission approvals never auto-resolve **[D]** | [Claude Code tools reference](https://code.claude.com/docs/en/tools-reference) |
+| Session states derived from emitted activities; frozen activities are canonical, comments are not **[D]** | [Linear agent best practices](https://linear.app/developers/agent-best-practices) |
+| Stuck detection by semantic equality, windowed at the last human message, 4/3/6 thresholds **[D]** | [OpenHands StuckDetector](https://docs.openhands.dev/sdk/guides/agent-stuck-detector) |
+| A span is not exported until it ends, so tracing cannot answer "what is it doing now" **[D]** | OTel spec [discussion #3732](https://github.com/open-telemetry/opentelemetry-specification/discussions/3732) |
+| 16 experienced devs on mature repos: 19% slower measured, 20% faster believed **[M, n=16]** | METR, [arXiv 2507.09089](https://arxiv.org/abs/2507.09089) |
+| Verified session success ~28-33% for experts, 15% for novices **[M]** | [anthropic.com/research/claude-code-expertise](https://www.anthropic.com/research/claude-code-expertise) |
+
+Two places the field genuinely disagrees, flagged rather than resolved:
+
+1. **Multi-agent on coding work.** Measured wins exist on read-only fan-out and
+   on genuinely independent modules; the case against is about parallel writes
+   to a shared artifact and is argument, not measurement. This plan takes the
+   conservative side: one writer per tree.
+2. **Mid-run steering.** Humans want it and mostly use it for guidance; the one
+   vendor with published numbers says mid-task additions make results worse.
+   Probably both: steering the APPROACH helps, adding SCOPE hurts. This plan
+   does not build mid-run steering yet.

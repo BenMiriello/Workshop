@@ -597,7 +597,11 @@ def _thread_seed(thread_id: str, exclude_client_id: str | None = None) -> str:
     if 0 < ct <= len(msgs):
         msgs = msgs[ct:]
     lines = []
-    for m in msgs:
+    # Voice reads the same conversation the text path does, so it reads it in
+    # the same order: a message sent while a reply was being written goes where
+    # it landed inside that reply, not above the whole of it. See
+    # chat_context.interleave_history.
+    for m in chat_context.interleave_history(msgs):
         body = (m.get("content") or "").strip()
         if not body:
             continue
