@@ -91,7 +91,27 @@ class TestLatitudeIsDescribedAsPromptText:
     def test_the_ui_copy_does_not_promise_a_floor_either(self):
         src = _text("frontend/src/lib/tasks.ts")
         assert "enforced floor" not in src
-        assert "decides freely, reports the decisions at the end" in src
+        # Was pinned to the literal string "decides freely, reports the decisions
+        # at the end". That phrasing was itself the problem: it describes a
+        # PRIVILEGE LEVEL, which is the reading this whole file exists to stop.
+        # Latitude only shapes whether a worker ASKS when the ticket is silent.
+        # So the assertion now pins the property instead of one sentence
+        # (autonomy-implementation-2026-08-13 2.3).
+        for line in ("Asks when the ticket does not say.",
+                     "Decides reversible things, asks about the rest.",
+                     "Decides and reports at the end."):
+            assert line in src, line
+
+    def test_the_latitude_copy_says_what_the_worker_does_not_what_it_may_do(self):
+        """Each description has to be about BEHAVIOUR. A word like "allowed" or
+        "restricted" turns a prompt hint back into a permission in the reader's
+        head, which is exactly how `touches` came to be trusted as a wall."""
+        src = _text("frontend/src/lib/tasks.ts")
+        start = src.index("const LATITUDE_DESC")
+        block = src[start:src.index("};", start)]
+        for word in ("allowed", "permitted", "may not", "cannot", "forbidden",
+                     "restricted", "blocked from", "limit"):
+            assert word not in block.lower(), f"{word!r} reads as permission"
 
 
 class TestRoleNarrowingIsDescribedWhereItApplies:

@@ -695,7 +695,7 @@ def _awaiting_record(scope_key: str, check: str, ask: str, why: str) -> dict:
 
 
 def run_queue_triage(scope_key: str, *, dry_run: bool = True,
-                     reviewer=None) -> dict:
+                     reviewer=None, progress=None) -> dict:
     """One queue-triage pass over one scope's `todo` tickets.
 
     ``dry_run`` defaults to TRUE, the opposite of `run_triage`. This role writes
@@ -704,7 +704,10 @@ def run_queue_triage(scope_key: str, *, dry_run: bool = True,
     pass that files by accident is the failure worth defaulting against.
 
     ``reviewer`` swaps the engine call for offline probes; it must return the
-    same `{verdict, reason, subtickets, blockers, stages}` shape.
+    same `{verdict, reason, subtickets, blockers, stages}` shape. ``progress``
+    is called with each decision record as it is made: one model call per ticket
+    at up to twenty tickets means a pass runs for a quarter of an hour, and a
+    manual preview that prints nothing until it is finished reads as hung.
 
     Termination, in one place so it can be checked: selection is
     ``status == "todo" and tasks.triage_due(t)``, and every ticket this pass
@@ -742,6 +745,10 @@ def run_queue_triage(scope_key: str, *, dry_run: bool = True,
     split_filed = 0
     asked = 0
 
+    def note(rec: dict) -> None:
+        if progress is not None:
+            progress(rec)
+
     for task in looked_at:
         tid = task["id"]
         title = str(task.get("title") or "")
@@ -754,6 +761,9 @@ def run_queue_triage(scope_key: str, *, dry_run: bool = True,
         block = task.get("awaiting") or {}
         if block and not block.get("dismissed"):
             summary["already_blocked"] += 1
+            rec.update(decision="skipped",
+                       reason="already waiting on an unanswered question")
+            note(rec)
             continue
 
         try:
@@ -762,6 +772,8 @@ def run_queue_triage(scope_key: str, *, dry_run: bool = True,
             # No mark. An unanswered ticket must stay due, not be recorded as a
             # deliberate no-op because the model was down.
             summary["errors"].append({"id": tid, "error": str(e)[:200]})
+            rec.update(decision="error", reason=str(e)[:200])
+            note(rec)
             continue
 
         verdict = str(out.get("verdict") or "ok")
@@ -781,11 +793,13 @@ def run_queue_triage(scope_key: str, *, dry_run: bool = True,
             summary["capped"] += 1
             rec.update(decision="deferred", reason="split cap reached this pass")
             summary["decisions"].append(rec)
+            note(rec)
             continue
         if verdict == "underspecified" and asked >= MAX_UNDERSPECIFIED_PER_PASS:
             summary["capped"] += 1
             rec.update(decision="deferred", reason="question cap reached this pass")
             summary["decisions"].append(rec)
+            note(rec)
             continue
 
         awaiting = None
@@ -845,6 +859,7 @@ def run_queue_triage(scope_key: str, *, dry_run: bool = True,
         summary["counts"][verdict] = summary["counts"].get(verdict, 0) + 1
         summary["decided"] += 1
         summary["decisions"].append(rec)
+        note(rec)
 
     return summary
 
@@ -864,10 +879,24 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     if args.queue:
+        import sys as _sys
+
+        # One model call per ticket at up to twenty tickets is a quarter of an
+        # hour. Every decision goes to stderr as it lands so the preview reads as
+        # working rather than hung; the JSON summary still goes to stdout whole,
+        # so a caller can pipe it.
+        def _tick(rec: dict) -> None:
+            line = f"  {rec.get('decision','?'):<15} {rec.get('title','')}"
+            if rec.get("ask"):
+                line += f"\n      ask [{rec.get('check')}]: {rec['ask']}"
+            for t in (rec.get("subtickets") or []):
+                line += f"\n      child: {t}"
+            print(line, file=_sys.stderr, flush=True)
+
         # The queue pass defaults to a preview even without --dry-run: the
         # trigger is manual on purpose and --apply is the only way to write.
         print(json.dumps(run_queue_triage(
-            args.scope, dry_run=not args.apply), indent=2))
+            args.scope, dry_run=not args.apply, progress=_tick), indent=2))
         raise SystemExit(0)
 
     body = ""

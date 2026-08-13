@@ -456,6 +456,23 @@ def test_the_mark_does_not_fence_a_running_worker(root: Path, monkeypatch) -> No
     assert tasks.get_task(root, t["id"])["claim_token"] == token
 
 
+def test_every_ticket_is_reported_as_it_is_decided(root: Path, monkeypatch) -> None:
+    """A pass is one model call per ticket, so a preview that prints only at the
+    end reads as hung for a quarter of an hour. Every ticket looked at reports,
+    including the ones that were skipped."""
+    _stub(monkeypatch, THIN)
+    for i in range(3):
+        _thin_ticket(root, i)
+    skipped = _thin_ticket(root, 9)
+    tasks.update(root, skipped["id"], awaiting={"ask": "Which one?", "kind": "decision"})
+
+    seen: list[dict] = []
+    out = triager.run_queue_triage(SCOPE, dry_run=True, progress=seen.append)
+    assert len(seen) == out["looked_at"] == 4
+    assert [r["decision"] for r in seen].count("skipped") == 1
+    assert all(r.get("title") for r in seen)
+
+
 def test_the_queue_vocabulary_matches_the_stores(root: Path) -> None:
     assert triager.QUEUE_DECISIONS == tasks.TRIAGE_DECISIONS
     assert triager.MAX_QUEUE_TICKETS_PER_PASS == 20

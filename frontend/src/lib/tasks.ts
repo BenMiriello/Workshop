@@ -175,8 +175,8 @@ export const DEFAULT_LATITUDE: Latitude = "standard";
 // copy read as a privilege level ("decides freely", "blocks often"), which is
 // how a setting that only shapes whether a worker ASKS came to be described,
 // and then believed, as a limit on what it may reach.
-// `services/latitude.py` already retracted the "enforced floor" language in its
-// docstring; this is the UI agreeing with it.
+// `services/latitude.py` already retracted the same claim in its docstring;
+// this is the UI agreeing with it.
 const LATITUDE_DESC: Record<Latitude, string> = {
   strict: "Asks when the ticket does not say.",
   standard: "Decides reversible things, asks about the rest.",

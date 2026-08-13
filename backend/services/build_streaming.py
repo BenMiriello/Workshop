@@ -1696,8 +1696,18 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
         #
         # Never fatal. A missing launch spec means this turn runs without search,
         # exactly as it did before, rather than failing to start at all.
+        # The owner is pinned to THIS CALLER, not to the operator. The server is
+        # owner-scoped, and `mcp_config_json` defaults to the operator when given
+        # nothing — right for a background worker, wrong here. A non-operator is
+        # already routed away from this branch (routes/chat.py forces an empty
+        # `mcp_selection` for them), so this is belt-and-braces rather than the
+        # only thing standing between two accounts; but "handed the operator's
+        # index" is the exact failure this file's sibling test exists to catch,
+        # and it should not depend on a gate two modules away.
         try:
-            cmd.extend(["--mcp-config", llm_router.mcp_config_json(["workshop"])])
+            from services import ownership
+            cmd.extend(["--mcp-config", llm_router.mcp_config_json(
+                ["workshop"], owner_id=ownership.owner_or_none())])
         except Exception as e:  # noqa: BLE001 - a search tool is not worth a dead turn
             log.warning("workshop MCP config unavailable for this turn: %s", e)
         cmd.extend(["--permission-mode", mode])

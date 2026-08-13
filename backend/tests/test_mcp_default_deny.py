@@ -136,12 +136,43 @@ class TestTheAgenticArgvActuallyDenies:
         assert set(mcp_json(cmd)) == {"plaid"}
         assert cmd.count("--permission-mode") == 1
 
-    def test_never_chosen_is_byte_identical_to_before_the_gate(self, host_servers):
-        # The operator's own chats are the overwhelming majority and must not
-        # move: no selection means no MCP flags, exactly as before.
+    def test_never_chosen_still_inherits_rather_than_pinning(self, host_servers):
+        # This used to assert "no MCP flags at all", as byte-identical proof that
+        # the non-operator gate had not moved the operator's own chats. It now
+        # asserts the property that actually mattered in that claim.
+        #
+        # WHAT CHANGED AND WHY. A full-agentic turn is handed the `workshop`
+        # search server explicitly (autonomy-implementation-2026-08-13 3.6b),
+        # because it is spawned by us rather than installed, so it is in neither
+        # ~/.claude.json nor a <cwd>/.mcp.json and inheritance alone never
+        # reaches it. That made this path the only one in the system that could
+        # not search the workshop's own notes and tickets.
+        #
+        # WHAT MUST NOT CHANGE, and is what this test now pins: no
+        # --strict-mcp-config, so the CLI still INHERITS the operator's other
+        # servers rather than being pinned to a list; and the config we add
+        # hands out nothing else.
         cmd, _env = build_streaming._build_cmd(_agentic_meta(str(host_servers)))
-        assert "--strict-mcp-config" not in cmd and "--mcp-config" not in cmd
+        assert "--strict-mcp-config" not in cmd
+        assert set(mcp_json(cmd)) == {"workshop"}, (
+            "the additive config must carry the search server and nothing else; "
+            "anything more is a credential this turn was not meant to get")
         assert cmd.count("--permission-mode") == 1
+
+    def test_a_non_operator_is_not_handed_the_search_server(self, two_users, host_servers):
+        # The sharp edge of the change above. The workshop server is
+        # OWNER-SCOPED, so handing it to a second account with the operator's id
+        # pinned would serve one user's notes, tickets and chats to another.
+        # A non-operator is routed to an explicit empty selection upstream
+        # (routes/chat.py), which lands on the strict branch instead.
+        ownership.set_current_owner(two_users["member"]["id"])
+        try:
+            cmd, _env = build_streaming._build_cmd(
+                _agentic_meta(str(host_servers), mcp_selection=[]))
+            assert mcp_json(cmd) == {}
+            assert "--strict-mcp-config" in cmd
+        finally:
+            ownership.clear_current_owner()
 
     def test_an_old_journal_with_no_key_reads_as_never_chosen(self, host_servers):
         # Restart-recovery replays meta written before `mcp_selection` existed.
