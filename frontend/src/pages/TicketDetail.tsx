@@ -333,7 +333,7 @@ export default function TicketDetail() {
   const description = task ? descriptionOf(task) : "";
 
   const details = editing ? (
-    <Card>
+    <Card compact>
       <Stack>
         <Field label="Title" error={titleMissing ? "A ticket needs a title." : undefined}>
           <Input value={draft.title} onChange={(e) => setField("title", e.target.value)} />
@@ -376,7 +376,7 @@ export default function TicketDetail() {
       </Stack>
     </Card>
   ) : (
-    <Card>
+    <Card compact>
       {description
         // Cut to a readable height. A ticket body written by the distiller runs
         // to Objective / Output / Start from / Boundaries, which is four
@@ -388,10 +388,16 @@ export default function TicketDetail() {
     </Card>
   );
 
+  // Every section on this page is <section> + SectionLabel + <Card compact>,
+  // which is what the run page next door does. It used to be a `Stack gap="sm"`
+  // around the label and the card, and SectionLabel already carries its own
+  // 12px bottom margin, so the stack's 8px was added to it: 20px under every
+  // label, on top of a 32px gap between sections and 24px of card padding.
+  // That is the chunk. Nothing here sets a padding value inline.
   const blockCard = blocked && task ? (
-    <Stack gap="sm">
+    <section>
       <SectionLabel>Stuck</SectionLabel>
-      <Card>
+      <Card compact>
         <Stack>
           <Notice tone="warn">
             {task.blocked_reason || task.awaiting?.question || "This ticket stopped and has not said why."}
@@ -411,13 +417,13 @@ export default function TicketDetail() {
           </Row>
         </Stack>
       </Card>
-    </Stack>
+    </section>
   ) : null;
 
   const commentsCard = (
-    <Stack gap="sm">
+    <section>
       <SectionLabel icon={<MessageSquare aria-hidden />}>Comments</SectionLabel>
-      <Card>
+      <Card compact>
         <Stack>
           {comments.length === 0 && <span className="ws-muted">No comments.</span>}
           {comments.map((c) => (
@@ -450,16 +456,16 @@ export default function TicketDetail() {
           </Row>
         </Stack>
       </Card>
-    </Stack>
+    </section>
   );
 
   const runsCard = (
-    <Stack gap="sm">
+    <section>
       <Row between>
         <SectionLabel icon={<ScrollText aria-hidden />}>Runs</SectionLabel>
         <Link to="/runs">All runs</Link>
       </Row>
-      <Card>
+      <Card compact>
         {(runs ?? []).length === 0
           ? <span className="ws-muted">No runs yet.</span>
           : (
@@ -478,13 +484,13 @@ export default function TicketDetail() {
             </Stack>
           )}
       </Card>
-    </Stack>
+    </section>
   );
 
   const activityCard = evidence.length > 0 ? (
-    <Stack gap="sm">
+    <section>
       <SectionLabel icon={<History aria-hidden />}>Activity</SectionLabel>
-      <Card>
+      <Card compact>
         <Stack gap="sm">
           {evidence.map((e, i) => (
             <Row between key={i}>
@@ -498,7 +504,7 @@ export default function TicketDetail() {
           ))}
         </Stack>
       </Card>
-    </Stack>
+    </section>
   ) : null;
 
   // ---- rail -----------------------------------------------------------------
@@ -512,29 +518,31 @@ export default function TicketDetail() {
   // meta line, where they are visible before any scrolling. One canonical place
   // per fact (docs/decisions single-canonical-status-source).
   const rail = task ? (
-    <Stack gap="sm">
-      <SectionLabel>Details</SectionLabel>
-      <Card>
-        <Props>
-          {typeof task.priority === "number" && task.priority !== 0 && (
-            <Prop label="Priority">{task.priority}</Prop>
-          )}
-          {task.effort && <Prop label="Effort">{task.effort}</Prop>}
-          <Prop label="Created"><span title={fmtTs(task.created)}>{ago(task.created)}</span></Prop>
-          {originKey && (
-            <Prop label="Filed from">
-              <Link to={`/chat/${encodeURIComponent(originKey)}`}>
-                {task.origin?.title || "the chat"} <ExternalLink size={12} aria-hidden />
-              </Link>
-            </Prop>
-          )}
-          <Prop label="Ticket id"><code className="ws-mono">{task.id}</code></Prop>
-        </Props>
-      </Card>
+    <Stack>
+      <section>
+        <SectionLabel>Details</SectionLabel>
+        <Card compact>
+          <Props>
+            {typeof task.priority === "number" && task.priority !== 0 && (
+              <Prop label="Priority">{task.priority}</Prop>
+            )}
+            {task.effort && <Prop label="Effort">{task.effort}</Prop>}
+            <Prop label="Created"><span title={fmtTs(task.created)}>{ago(task.created)}</span></Prop>
+            {originKey && (
+              <Prop label="Filed from">
+                <Link to={`/chat/${encodeURIComponent(originKey)}`}>
+                  {task.origin?.title || "the chat"} <ExternalLink size={12} aria-hidden />
+                </Link>
+              </Prop>
+            )}
+            <Prop label="Ticket id"><code className="ws-mono">{task.id}</code></Prop>
+          </Props>
+        </Card>
+      </section>
       {(dependsOn.length > 0 || dependsMissing.length > 0) && (
-        <>
+        <section>
           <SectionLabel icon={<Link2 aria-hidden />}>Depends on</SectionLabel>
-          <Card>
+          <Card compact>
             <Stack gap="sm">
               {dependsOn.map((l) => <LinkRow key={l.id} link={l} />)}
               {dependsMissing.map((mid) => (
@@ -542,7 +550,7 @@ export default function TicketDetail() {
               ))}
             </Stack>
           </Card>
-        </>
+        </section>
       )}
     </Stack>
   ) : null;
@@ -650,7 +658,10 @@ export default function TicketDetail() {
         <DetailLayout
           rail={rail}
           main={
-            <Stack gap="lg">
+            // Default gap (16px). "lg" is 32px, and with SectionLabel's own
+            // 12px under every heading it put ~44px of air between a card and
+            // the next section's first line.
+            <Stack>
               {details}
               {blockCard}
               {commentsCard}

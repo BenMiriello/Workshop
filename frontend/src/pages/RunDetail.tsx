@@ -144,7 +144,7 @@ function ReceiptView({ receipt }: { receipt: Receipt }) {
   return (
     <section>
       <SectionLabel>Work product</SectionLabel>
-      <Card style={{ padding: "var(--space-4)" }}>
+      <Card compact>
         <Stack gap="sm">
           <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
             {checks.map(([k, v]) => (
@@ -449,7 +449,7 @@ export default function JobDetail() {
         )}
         <section>
           <SectionLabel>Overview</SectionLabel>
-          <Card style={{ padding: "var(--space-4)" }}>
+          <Card compact>
             <Stack gap="sm">
               <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
                 <StatusPill status={statusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
@@ -595,7 +595,7 @@ export default function JobDetail() {
 
         <section>
           <SectionLabel>Timing</SectionLabel>
-          <Card style={{ padding: "var(--space-4)" }}>
+          <Card compact>
             <Stack gap="sm">
               <Row between wrap><span className="ws-muted">Started</span><span>{fmtTs(job.started_at) || "not started"}</span></Row>
               {/* Never the bare word "running": a run with no end time is
@@ -620,7 +620,7 @@ export default function JobDetail() {
         {budgetEntries.length > 0 && (
           <section>
             <SectionLabel>Budget</SectionLabel>
-            <Card style={{ padding: "var(--space-4)" }}>
+            <Card compact>
               <Stack gap="sm">
                 {budgetEntries.map(([k, v]) => (
                   <Row key={k} between wrap>
