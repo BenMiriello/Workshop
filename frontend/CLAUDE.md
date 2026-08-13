@@ -16,8 +16,8 @@ Both stylesheets are imported in `src/main.tsx` **before** `styles.css`. `styles
 
 1. **Use the primitives.** `Button, Field, Input, Select, Textarea, Card, PageHeader, SectionLabel, Stack, Row, Badge, StatusPill, StatusDot, AgencyChip, AgencyDot, Tag, Tabs, Toggle, Checkbox, Segmented, Modal, ConfirmDialog, Table/TableScroll, CopyButton, RevealField, StateBlock, Skeleton, ActionBar, Stat, ChartFrame, ChartTooltip` — all from `@workshop/ui` (the full list is `packages/ui/api/ui.api.md`). If you need something not covered, add a primitive to `packages/ui/src` + a `.ws-` rule to `components.css`, bump the kit's MINOR version and re-run `npm run api:snapshot`; don't one-off it inline.
 2. **No inline hex colors. Ever.** No `color:"#16a34a"`, no `#ef4444`, no `background:"#fff"`. Color comes from tokens (`var(--accent)`, `var(--muted)`, …) or, far better, from a primitive. `scripts/check_design.sh` fails the build on raw hex in `.tsx`.
-3. **Status = meaning, mapped to five kinds.** `ok | running | stopped | warn | danger` via `StatusPill` (standalone) or `StatusDot` (dense table rows). Never invent a status color. **Status is OUTLINE** (see the color-axes section): a hairline, never a fill. `running` is the only one that animates and the only one that is filled, because it is the only one that describes an actor.
-4. **Agency ≠ status, and both ≠ categorical.** Three vocabularies, three treatments. **Who did it** is `AgencyChip`/`AgencyDot`/`data-agency` (`you | system | autonomous`) and is FILLED. **How it went** is `StatusPill`/`StatusDot` and is OUTLINED. **Which one it is** (agents / sources / repos / chart series) is `Tag` with a `--cat-*` hue from `catFor(key)`, a rounded rect with a dot. A run's `trigger` is agency, not categorical: map it with `agencyFor()`, never with `catFor()`.
+3. **Neutral by default; a hue must earn its place.** See "What color is for". Four hues, four questions: MINE (`--you`), LIVE (`--live`), ORIGIN (`--sys`, only where origins mix), OUTCOME (status, outlined). Everything else is `--fg`/`--muted`/`--faint`, and that is most of every screen. A control is not content: carets and icons are neutral at rest.
+4. **Status = meaning, mapped to five kinds.** `ok | running | stopped | warn | danger` via `StatusPill` (standalone) or `StatusDot` (dense rows). Never invent a status color, and never put a status on a name: the state word carries it. `running` is the only filled, animated one, because it is liveness rather than an outcome. **Which one it is** (agents / sources / repos / chart series) is `Tag` with a `--cat-*` hue from `catFor(key)`. A run's `trigger` is origin, not categorical: `agencyFor()`, never `catFor()`.
 5. **lucide icons only — never emoji.** 14px in section labels/meta, 16px in buttons, 1.8 stroke. Every icon names the thing beside it. `check_design.sh` fails on emoji in `.tsx`.
 6. **Hierarchy from position, scale, weight, color — not borders.** `PageHeader` (one per screen) → status band → content grouped under `SectionLabel` (the uppercase motif). Cards float on shadow (light) / a faint ring (dark). 4px spacing grid (`--space-1..8`); use the steps, never invent `13px`.
 7. **Editability model, not tap-to-edit.** Anything that writes config or money uses `useEditMode` + a sticky `ActionBar` (Save primary / Cancel ghost, "unsaved" pill while dirty). View prefs (theme, filters, reveal/hide, source `<select>`) commit **on change**. Config/money commit **on explicit Save**. See "When does a control commit?" below.
@@ -65,32 +65,55 @@ Rules that still hold:
 - **Never add a `maxWidth` to a regular page wrapper.** `check_design.sh` fails on `maxWidth: >= 600` in `.tsx`. Small element caps (a 150px input, a 420px filter column) sit below the threshold and are fine. An app that owns its width does its capping through `.ws-page` or its own container, not an inline `maxWidth` on a Workshop page.
 - **`.ws-app--appfull` is not "a wider page".** It is the absence of the page cap, handed to an app. Do not put it on a regular Workshop page to make that page wider; that is the per-page-width instinct wearing a new name.
 
-## Two color axes: STATUS (how it went) and AGENCY (who did it)
+## What color is for
 
-**This is the part of the system most likely to be got wrong, so read it before touching a color.** Workshop runs work on its own. A palette that only answers *is it healthy* cannot answer the question that actually matters when you open the app in the morning: *did I do that, or did something move without me?*
+**Read this before painting anything.** A hue is information only when it VARIES. Paint a category that is constant inside a view and you have not labelled anything, you have only tinted the view, and the reader correctly learns to ignore it.
 
-### The agency tiers
+That is not hypothetical: the first pass at this coloured "machine work", which is ~90% of a chat log, so it said nothing while landing on chevrons and icons at random. Five different jobs were being done by hue with no rule about which element carried it. The operator's read was "we have ZERO concept of what these colors mean", and he was right.
 
-| tier | meaning | where it shows up |
-|---|---|---|
-| **you** | your hand on it: typed, clicked, confirmed | your chat bubble, primary buttons, focus ring, nav active state |
-| **system** | machine work inside a conversation you are present for | working dots, tool-call rows, "show N steps", a delegation chip |
-| **autonomous** | it moved with nobody watching | cron/sweep messages, agent cards, count badges, watchdog events |
+**Neutral ink is the language** (`--fg` / `--muted` / `--faint`). Most of every screen is neutral. Hue is an exception, and there are four:
 
-Each tier has a resting tone and an **active** one (`-up`). Active means *happening right now* — never read/unread, never severity, and it is the only tone allowed to animate.
+| hue | question it answers | treatment | where |
+|---|---|---|---|
+| **MINE** `--you` | is this mine? | filled / tinted / ring | your bubble, primary action, checked control, selection, focus, links, active nav |
+| **LIVE** `--live` | is this happening? | the ONLY hue that moves | working dots, a running row's clock, a run in flight, an unread count |
+| **ORIGIN** `--sys` | whose work is this? | filled chip, **only where origins mix** | the runs feed, and nowhere else |
+| **OUTCOME** status | how did it end? | outlined chip / one state word | non-default outcomes only |
 
-### The two rules that keep the vocabularies apart
+### Three tests before spending a hue
 
-1. **AGENCY IS FILLED. STATUS IS OUTLINE.** An agency chip (`AgencyChip`, `.ws-agency`) has a soft fill in its tier's tone and **no border**. A status chip (`StatusPill`) has a **transparent background and a hairline** in its own tone. Fill-vs-outline is the primary separator; hue is secondary, which is what lets an agency tone and a status tone share a hue in some scheme without either being misread. **Never give a status element a soft fill, and never give an agency element a bare outline.**
-2. **ONE AGENCY COLOR PER SURFACE.** A card is never both system and autonomous. If an autonomous agent calls a tool, the card stays autonomous: **provenance beats mechanism.** Set the tier once with `data-agency` on the container and everything inside it follows, including which tone `running` resolves to.
+1. **If this were neutral, what could the reader no longer tell apart, or stop noticing in time?** No answer, no hue.
+2. **Does the thing it marks actually vary on this screen?** A constant is not a signal.
+3. **Is something else already saying it?** Then do not say it twice. (A row's identity dot already says who, so its running chip must not also say who.)
 
-`running` is the single deliberate exception to rule 1: it is **filled**, and its tone comes from the initiating tier, because a run describes an ACTOR rather than an outcome. Terminal states (ok / warn / stopped / danger) never split by tier — an outcome has no actor.
+### A control is not content
 
-**The autonomous tier is the loudest claim in the system and is the easiest one to over-apply.** It says nobody was watching, so a false alarm on work the operator did himself teaches him to ignore the color. Use `agencyFor(trigger)` to map the platform's own vocabulary onto the axis and do not invent a second mapping; it is pinned in `agency.test.ts`. Three rules fall out of it:
+Chevrons, carets, icons, and text buttons are affordances: **neutral at rest, `--fg` on hover, and the MINE tone only when the control is ON.** Never give a caret an identity colour. The icons under the chat composer are the canonical case: at rest they are all neutral, because none of them is telling you anything yet.
 
-- **`agencyFor()` returns `null` when the record has no trigger, and a caller renders no mark at all.** Over half this box's run history predates the field. An absent provenance mark is honest; a guessed one is not. Never default a missing trigger to a tier.
-- **The surface work arrives on is not the tier.** A `discord`-triggered agent is answering YOU, with you present: that is `system`. Only self-starting work (`cron`, `event`, `loop`) is autonomous.
-- **Nothing decorative takes an agency tone.** It marks provenance or it is not used.
+Likewise: **a name never carries a state.** `Write` is what a step is, `blocked` is how it went, and only the second is coloured.
+
+### LIVE has two durations, and that is the whole idea
+
+- **standing** — still going, or still unseen. Holds the tone throughout: the working dots, a running step's elapsed clock, a run in flight.
+- **transient** — it just arrived. Flashes and settles to neutral within a second (`.ws-arrive`), so it says "look here" and then stops saying it.
+
+One learnable sentence falls out: **if it is coloured, it is yours or it is live; if it stays coloured, it is still going.**
+
+The flash is gated on the message's `ts` being newer than the moment the list mounted (`useArrivedAfterMount`). Never flash on first paint of a list, or every row lights at once and the signal is worth nothing. Your own messages never flash: what you just sent is not news to you. Under `prefers-reduced-motion` it lands settled, with no flash at all.
+
+### Agency: recorded everywhere, painted almost nowhere
+
+`data-agency` (`you | system | autonomous`) still records who a thing belongs to, and `agencyFor(trigger)` still maps the platform's `manual | cron | event | loop` vocabulary onto it. But **origin earns a hue only in a list where origins sit side by side and differ** — in practice, the runs feed. Inside one conversation every step has the same origin, so nothing there is painted for it.
+
+Provenance that must stay visible without varying is carried by **shape**: the unattended chat post keeps a rail and an uppercase label permanently, and its tint only on arrival. A cron report from last week is a fact about the past; a bubble still lit up a week later teaches the reader that the colour means nothing.
+
+**Mark the exception, not the default.** Only an agent that can start its own work wears a rail; the ordinary ask-and-it-runs agent gets nothing. Striping every card is how a roster ends up looking sorted by colour while saying nothing.
+
+### Status is outline, and `running` is the one exception
+
+A `StatusPill` is transparent with a hairline in its own tone; a filled chip means MINE or LIVE. `running` is filled because it is not an outcome at all, it is liveness — and it takes **one** live tone everywhere. It used to take the initiating tier's tone, which sounded right and was invisible in practice, because the identity dot beside it had already said who.
+
+`ok` / `warn` / `danger` are byte-identical in all eight schemes: meaning does not move when someone restyles.
 
 ### The attributes
 

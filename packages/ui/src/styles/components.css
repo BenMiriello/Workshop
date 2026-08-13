@@ -685,35 +685,82 @@ a.ws-btn { text-decoration: none; }
 .ws-status-running.ws-dot::before { animation: ws-pulse 1.8s var(--ease-in-out) infinite; }
 @keyframes ws-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-/* ---- AGENCY — who did this: you / system / autonomous ---------------------
-   The second axis of the color system. Status answers "is it healthy"; agency
-   answers "was that me, or something moving without me", which for a system
-   that runs sweeps and crons is the more important question.
+/* ============================================================================
+   WHAT COLOR IS FOR (read this before painting anything)
+   ----------------------------------------------------------------------------
+   A hue is information only when it VARIES. Paint a category that is constant
+   inside a view and you have not labelled anything, you have only tinted the
+   view, and the reader correctly learns to ignore it. That is exactly how the
+   first pass at this went wrong: "machine work" is ~90% of a chat log, so
+   coloring it said nothing, while landing on carets and icons at random.
 
-     you          your hand on it: typed, clicked, confirmed
-     system       machine work inside a conversation you are present for
-     autonomous   it moved with nobody watching
+   NEUTRAL INK IS THE LANGUAGE (--fg / --muted / --faint). Hue is an exception,
+   and there are only four. Each answers one question and owns one treatment:
 
-   AGENCY IS FILLED: a soft fill in the tier's tone and no border, the exact
-   inverse of the status chip above. ONE AGENCY COLOR PER SURFACE: if an
-   autonomous agent calls a tool, the surface stays autonomous, because
-   provenance beats mechanism.
+     MINE      --you      is this mine?          filled / tinted / ring
+     LIVE      --live     is this happening?     the ONLY hue that moves
+     ORIGIN    --sys      whose work is this?    only where origins MIX
+     OUTCOME   status     how did it end?        outlined chip, non-default only
 
-   The tier is set with `data-agency` on any element, which binds the three
-   local roles AND re-points `running` for anything inside it. That is what lets
-   a row say "this run belongs to a cron" once, and have its dot, its chip and
-   its progress bar all agree. */
+   Three tests before spending a hue:
+     1. If this were neutral, what could the reader no longer tell apart, or
+        stop noticing in time? No answer -> neutral.
+     2. Does the thing it marks actually vary on this screen? No -> neutral.
+     3. Is something else already saying it? Then do not say it twice.
+
+   A CONTROL IS NOT CONTENT. Carets, chevrons, icons and text buttons are
+   affordances: neutral at rest, --fg on hover, and the MINE tone only when the
+   control is ON. Never give a caret an identity color.
+
+   ---- LIVE, and the two durations it has ------------------------------------
+   `--live` is the loud one and the only one allowed to animate:
+
+     standing    still going, or still unseen. Holds the tone throughout:
+                 working dots, a running row's elapsed clock, an unread count.
+     transient   it just arrived. Flashes and settles to neutral inside a
+                 second (.ws-arrive), so it says "look here" and then stops.
+
+   ---- ORIGIN, and why it is nearly unused -----------------------------------
+   `data-agency` still records WHO a thing belongs to (you / system /
+   autonomous) and binds the local roles below. It earns a hue only in a list
+   where origins sit side by side and differ, which is the runs feed. Inside one
+   conversation every step has the same origin, so nothing there is painted for
+   it. Provenance that must stay visible without varying is carried by SHAPE: a
+   rail and a label, not a tint.
+   ========================================================================= */
 [data-agency="you"] {
   --_ag: var(--you); --_ag-soft: var(--you-soft); --_ag-up: var(--you);
-  --running: var(--you); --running-solid: var(--you); --running-soft: var(--you-soft);
 }
 [data-agency="system"] {
   --_ag: var(--sys); --_ag-soft: var(--sys-soft); --_ag-up: var(--sys-up);
-  --running: var(--sys-up); --running-solid: var(--sys-up); --running-soft: var(--sys-soft);
 }
 [data-agency="autonomous"] {
-  --_ag: var(--auto); --_ag-soft: var(--auto-soft); --_ag-up: var(--auto-up);
-  --running: var(--auto-up); --running-solid: var(--auto-up); --running-soft: var(--auto-soft);
+  --_ag: var(--live); --_ag-soft: var(--live-soft); --_ag-up: var(--live-up);
+}
+
+/* `running` does NOT vary by tier. It used to: the initiating tier re-pointed
+   it, which sounded right and was invisible in practice, because the row's
+   identity dot already said who and the chip then repeated it in a tone too
+   close to read as a second fact. Live is live, one tone, everywhere. */
+.ws-status-running {
+  --running: var(--live-up); --running-solid: var(--live-up); --running-soft: var(--live-soft);
+}
+
+/* ARRIVAL FLASH — the transient half of LIVE. One second, then gone.
+   A caller applies this ONLY to something that landed while the reader was
+   already looking (see MessageList: a message whose ts is newer than mount).
+   Never on the first paint of a list, or every row flashes at once and the
+   signal is worth nothing. */
+@keyframes ws-arrive {
+  0%   { background-color: var(--live-soft); }
+  /* Lands on whatever the element's resting background is, which is NOT always
+     transparent: a chat bubble settles onto --card. Ending on `transparent`
+     unconditionally left every flashed bubble permanently see-through. */
+  100% { background-color: var(--_arrive-to, transparent); }
+}
+.ws-arrive { animation: ws-arrive 1s var(--ease-out) 1; }
+@media (prefers-reduced-motion: reduce) {
+  .ws-arrive { animation: none; }   /* land settled: no flash, nothing tinted */
 }
 
 /* The chip: filled, no border, uppercase mono. Deliberately a different SHAPE

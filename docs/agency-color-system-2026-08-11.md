@@ -140,6 +140,48 @@ alarm on work you did yourself teaches the operator to ignore the color. So:
 
 The mapping is pinned in `packages/ui/src/agency.test.ts`.
 
+## Amendment, 2026-08-12: color marks CHANGE, not category
+
+The model above shipped and did not survive contact with the chat log. The
+operator's read, verbatim: "some things get the user color and others get system
+color... it just seems we have ZERO concept of what these colors mean."
+
+He was right, and the cause is nameable. **The first pass painted a taxonomy
+rather than a difference.** "Who did this" is nearly constant inside a
+conversation, so the system tone landed on ~90% of the log and discriminated
+nothing; meanwhile hue was doing five different jobs (identity, interactivity,
+liveness, severity, decoration) with no rule about WHICH element carried it. In
+one collapsed tool row it was on the chevron and the icon while the name, path
+and time were neutral; in a subagent row liveness moved to the meta; in a merged
+group it moved to the name.
+
+The amended theory keeps the same tokens and changes what they mean:
+
+| hue | question | duration |
+|---|---|---|
+| `--you` | is this mine? | steady, never animates |
+| `--live` | is this happening? | standing while it runs, transient for one second on arrival |
+| `--sys` | whose work is this? | only in a list where origins mix (the runs feed) |
+| status | how did it end? | outline, non-default outcomes only |
+
+`--live` is the third scheme hue under a truer name: it is authored per scheme as
+the AUTONOMOUS hue and still comes from there, but what it means on screen is
+LIVE. Unattended provenance is carried by SHAPE (a permanent rail and label);
+the tint is arrival-only, because a cron report from last week is not live and a
+bubble still lit a week later teaches the reader to ignore the colour.
+
+Three tests now govern every hue: could the reader still tell things apart
+without it; does the thing it marks vary on this screen; is something else
+already saying it. And two rules that come from specific mistakes: **a control
+is not content** (carets, icons and text buttons are neutral at rest), and **a
+name never carries a state** (`Write` is what the step is, `blocked` is how it
+went).
+
+Dropped in the amendment: `running` no longer takes the initiating tier's tone
+(the identity dot beside it already said who, so the chip repeated it in a tone
+too close to read), and agent cards only wear a rail if the agent can start its
+own work.
+
 ## The failure this shipped with, and the rule it produced
 
 Mid-build, the app went white and grey for the operator. `palettes.css` scoped

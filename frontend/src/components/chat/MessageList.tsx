@@ -1,4 +1,4 @@
-import { Fragment, memo, useState } from "react";
+import { Fragment, memo, useRef, useState } from "react";
 import { Archive, ArrowRightLeft, Bot, Clock, Eraser, FileText, Lightbulb, Radio, Ticket, TriangleAlert, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { chatApi, type ChatMsg } from "../../lib/chat";
@@ -187,6 +187,21 @@ function autonomousLabel(kind?: string): string {
   return "Autonomous";
 }
 
+// THE ARRIVAL FLASH is gated on this and nothing else: a message whose ts is
+// newer than the moment this list mounted. Without the gate, opening a thread
+// flashes every message in it at once, which is not a signal, it is a strobe.
+// Reading it off `ts` rather than a "new" flag keeps it honest across a
+// reconnect too: a message that landed in another tab an hour ago is not new to
+// this reader's eye, and it does not flash when the log reloads.
+function useArrivedAfterMount(): (ts?: string) => boolean {
+  const mountedAt = useRef(Date.now());
+  return (ts?: string) => {
+    if (!ts) return false;
+    const at = Date.parse(ts);
+    return Number.isFinite(at) && at > mountedAt.current;
+  };
+}
+
 // Memoized per message. The list memo above already covers typing; this one
 // covers a LIVE turn, where `elapsed` ticks once a second and re-renders the
 // list by design — without it, every historical message re-rendered on every
@@ -195,10 +210,12 @@ function autonomousLabel(kind?: string): string {
 // All five props are stable per message: `msg` comes from the memoized blocks
 // array, and the other four are shared and stable.
 const MessageBubble = memo(function MessageBubble({
-  msg, isLatest, selectedModel, cardCtx, answerPermission, nowMs,
+  msg, isLatest, selectedModel, cardCtx, answerPermission, nowMs, arrived,
 }: {
   msg: ChatMsg;
   isLatest: boolean;
+  /** Landed while the reader was already looking: earns the one-second flash. */
+  arrived?: boolean;
   selectedModel: string;
   cardCtx: UiCardCtx;
   answerPermission?: AnswerPermissionFor;
@@ -224,7 +241,7 @@ const MessageBubble = memo(function MessageBubble({
       {/* --copyable reserves the inline room the copy button occupies, so the
           button never lands on top of the last line of text. It is only set
           when there IS something to copy. */}
-      {body && <div className={`chat-bubble ${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}`}>
+      {body && <div className={`chat-bubble ${arrived && msg.role === "assistant" ? "ws-arrive " : ""}${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}`}>
         <div className="chat-bubble__body">
           {/* Files the operator attached, shown on the message that carried
               them. Read-only here: the send already happened, so there is
@@ -391,6 +408,7 @@ function MessageList({
   // Recency nuance: the most recent assistant answer is expanded and older ones
   // auto-shorten — but only when nothing is running, because a live turn is
   // itself the most recent thing.
+  const arrivedAfterMount = useArrivedAfterMount();
   let latestAssistantKey: string | null = null;
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i];
@@ -407,6 +425,7 @@ function MessageList({
           {b.kind === "message" && (
             <MessageBubble
               msg={b.msg}
+              arrived={arrivedAfterMount(b.msg.ts)}
               isLatest={b.key === latestAssistantKey}
               selectedModel={selectedModel}
               cardCtx={cardCtx}

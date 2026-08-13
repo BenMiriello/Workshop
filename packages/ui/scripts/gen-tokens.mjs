@@ -33,19 +33,41 @@ const kebab = (k) => k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
    into a shadow/ring instead. */
 const COMPOSED = new Set(["focusRing", "shadowSm", "shadowCard", "shadowMd", "shadowLg"]);
 
-/* The accent family IS the `you` agency tier. Emitted as `var()` aliases rather
-   than as a second copy of the hex, so the two can never drift and so the CSS
-   says out loud which one is the real name. The RN object copies the values,
-   since it has no var() to point with. */
+/* Aliases: a second name for a tone that already has one, emitted as `var()`
+   rather than as a copy of the hex so the two can never drift.
+
+   `accent*` -> `you*`: the brand accent and "your hand on it" were always the
+   same idea.
+
+   `auto*` -> `live*`: the third hue is authored per scheme as the AUTONOMOUS
+   hue, and that is still where it comes from, but what it MEANS on screen is
+   LIVE — this is changing right now, or it arrived without you. Naming it for
+   the seed rather than the job is what produced a UI that tinted settled
+   machine work: a color that never varies inside a view carries no
+   information. `--live*` is the name application CSS should use.
+
+   The RN object copies the values, since it has no var() to point with. */
 const ALIASES = {
   accent: "you",
   accentFg: "you-fg",
   accentSoft: "you-soft",
+  auto: "live",
+  autoSoft: "live-soft",
+  autoUp: "live-up",
+};
+
+/* Tones emitted under a second, primary name BEFORE their aliases, so the alias
+   has something to point at. Key = the emitted name, value = the scheme key. */
+const PRIMARY = {
+  live: "auto",
+  "live-soft": "autoSoft",
+  "live-up": "autoUp",
 };
 
 function cssBlock(selector, paletteId, mode) {
   const s = buildScheme(paletteId, mode);
   const lines = [];
+  for (const [name, key] of Object.entries(PRIMARY)) lines.push(`  --${name}: ${s[key]};`);
   for (const [k, v] of Object.entries(s)) {
     if (COMPOSED.has(k)) continue;
     if (ALIASES[k]) {

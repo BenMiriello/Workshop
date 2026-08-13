@@ -436,9 +436,19 @@ export default function Agents() {
                     : `/agents/${encodeURIComponent(a.id)}`}
                   style={{ textDecoration: "none", color: "inherit" }}
                 >
+                  {/* MARK THE EXCEPTION, NOT THE DEFAULT. Only an agent that
+                      can start its own work wears a rail; one that runs when
+                      you ask is the ordinary case and gets nothing. Striping
+                      every card is how a roster ends up looking sorted by
+                      color while saying nothing. A failed last run replaces the
+                      rail with a danger hairline: broken beats provenance. */}
                   <Card
                     interactive
-                    className={`ws-agent-card ws-agency-rail${lastJob?.status === "failed" ? " is-failed" : ""}`}
+                    className={`ws-agent-card${
+                      lastJob?.status === "failed"
+                        ? " ws-agency-rail is-failed"
+                        : agentAgency(a.triggers) === "autonomous" ? " ws-agency-rail" : ""
+                    }`}
                     data-agency={agentAgency(a.triggers)}
                   >
                     <Row between>

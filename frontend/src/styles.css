@@ -465,7 +465,7 @@ input[type="range"].grad::-moz-range-thumb {
    the settled one replaces it without anything moving. It takes the system tone
    because a fold is machine work inside a conversation you are present for, and
    its dots (.chat-working__dots) are the only part that animates. */
-.chat-fold--live { color: var(--sys); }
+.chat-fold--live { color: var(--live); }
 
 /* A user message that never reached the server. It stays in the log (losing it
    is the bug) but must not look delivered. */
@@ -583,7 +583,7 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-msg.user .chat-copy:hover,
 .chat-msg.user .chat-copy:focus-visible { color: var(--accent-fg); }
 .chat-msg.user .chat-bubble { background: var(--accent); color: var(--accent-fg); border-bottom-right-radius: 4px; }
-.chat-msg.assistant .chat-bubble { background: var(--card); color: var(--fg); border-bottom-left-radius: 4px; }
+.chat-msg.assistant .chat-bubble { background: var(--card); color: var(--fg); border-bottom-left-radius: 4px; --_arrive-to: var(--card); }
 /* A failure is STATUS, and status is outline: a transparent box with a hairline
    in the danger tone, never a red fill. A filled error block is the loudest
    thing in a log, and it reads as an alarm rather than as one turn that did not
@@ -610,17 +610,21 @@ input[type="range"].grad::-moz-range-thumb {
    turns a long log into a quilt and hurts readability on exactly the messages
    that are longest. */
 .chat-msg.autonomous .chat-bubble {
-  background: var(--auto-soft);
-  border-left: 2px solid var(--auto);
+  background: var(--card);
+  border-left: 2px solid var(--live);
   border-radius: 3px 12px 12px 3px;
 }
+/* The TINT is arrival-only. Provenance is permanent, so the rail and the label
+   are permanent; "this wants you" is not, so the fill goes with the flash. A
+   cron report from last week is a fact about the past, and a bubble still lit
+   up a week later teaches the reader that the colour means nothing. */
 .chat-msg.autonomous .chat-bubble.error { background: transparent; }
 .chat-autonomous-tag {
   display: inline-flex; align-items: center; gap: 0.3rem;
   margin-bottom: var(--space-1);
   font-family: var(--font-mono); font-size: 10px; line-height: 1.6;
   letter-spacing: var(--label-spacing); text-transform: uppercase;
-  color: var(--auto);
+  color: var(--live);
 }
 .chat-autonomous-tag svg { width: 12px; height: 12px; stroke-width: 1.8; }
 
@@ -694,7 +698,7 @@ input[type="range"].grad::-moz-range-thumb {
 /* Three sequentially-pulsing dots — a "typing/working" motif, not a loader. */
 .chat-working__dots { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; }
 .chat-working__dots i {
-  width: 5px; height: 5px; border-radius: 50%; background: var(--sys-up);
+  width: 5px; height: 5px; border-radius: 50%; background: var(--live);
   animation: chat-working-dot 1.2s ease-in-out infinite;
 }
 .chat-working__dots i:nth-child(2) { animation-delay: 0.2s; }
@@ -708,9 +712,9 @@ input[type="range"].grad::-moz-range-thumb {
 /* Vertical margin comes from .chat-footrow — see there. */
 .chat-more {
   background: none; border: none; padding: 0;
-  color: var(--sys); font: inherit; font-size: var(--fs-xs); cursor: pointer;
+  color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
-.chat-more:hover { text-decoration: underline; }
+.chat-more:hover { color: var(--fg); text-decoration: underline; }
 /* Length clamp: show the first N WHOLE rendered lines and end there.
    THE HEIGHT IS MEASURED, NOT COMPUTED. --clamp-h is the bottom of the Nth real
    line box, found by walking the block's client rects (see clampCut.ts), so the
@@ -780,7 +784,7 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-work__toggle {
   display: inline-flex; align-items: center; gap: 0.3rem;
   background: none; border: none; padding: 0.15rem 0; margin: 0;
-  color: var(--sys); font: inherit; font-size: var(--fs-xs); cursor: pointer;
+  color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-work__toggle:hover { color: var(--fg); }
 .chat-work__chev { flex: 0 0 auto; transition: transform var(--dur-fast) var(--ease-in-out); }
@@ -805,7 +809,7 @@ input[type="range"].grad::-moz-range-thumb {
   border-radius: var(--radius-sm);
 }
 .chat-tool__head:hover { color: var(--fg); background: var(--bg-inset); }
-.chat-tool__chev { flex: 0 0 auto; color: var(--sys); transition: transform var(--dur-fast) var(--ease-in-out); }
+.chat-tool__chev { flex: 0 0 auto; transition: transform var(--dur-fast) var(--ease-in-out); }
 .chat-tool.is-open .chat-tool__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-tool__chev { transition: none; } }
 .chat-tool__icon { flex: 0 0 auto; }
@@ -843,10 +847,10 @@ input[type="range"].grad::-moz-range-thumb {
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
 }
 .chat-agent__head:hover { color: var(--fg); }
-.chat-agent__chev { flex: 0 0 auto; color: var(--sys); transition: transform var(--dur-fast) var(--ease-in-out); }
+.chat-agent__chev { flex: 0 0 auto; transition: transform var(--dur-fast) var(--ease-in-out); }
 .chat-agent.is-open .chat-agent__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-agent__chev { transition: none; } }
-.chat-agent__icon { flex: 0 0 auto; color: var(--sys); }
+.chat-agent__icon { flex: 0 0 auto; }
 .chat-agent__name { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--fg); }
 .chat-agent__preview {
   flex: 1 1 auto; min-width: 0;
@@ -855,7 +859,7 @@ input[type="range"].grad::-moz-range-thumb {
 /* Still working: the only animated thing here, matching the `running` status
    kind's rule that motion means in-flight and nothing else. */
 .chat-agent__meta { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.8; }
-.chat-agent.is-running .chat-agent__meta { color: var(--sys-up); animation: ws-pulse 1.6s ease-in-out infinite; }
+.chat-agent.is-running .chat-agent__meta { color: var(--live); animation: ws-pulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .chat-agent.is-running .chat-agent__meta { animation: none; } }
 /* The divider is on the SHOWN state only. A border is part of the border box
    and is not clipped by the element's own overflow, so on the collapsed reveal
@@ -904,10 +908,10 @@ input[type="range"].grad::-moz-range-thumb {
    same thing in each, so it must not look like three different controls: the
    step took --sys here and the group inherited plain muted, which is part of
    what made a group read as the lesser thing. */
-.chat-group__chev { flex: 0 0 auto; color: var(--sys); transition: transform var(--dur-fast) var(--ease-in-out); }
+.chat-group__chev { flex: 0 0 auto; transition: transform var(--dur-fast) var(--ease-in-out); }
 .chat-group.is-open .chat-group__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-group__chev { transition: none; } }
-.chat-group__icon { flex: 0 0 auto; color: var(--sys); }
+.chat-group__icon { flex: 0 0 auto; }
 .chat-group__name { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--fg); }
 /* The distinct tool names, elided at the reader's real width. Names, never a
    description of what the steps did: see grouping.ts. */
@@ -924,12 +928,14 @@ input[type="range"].grad::-moz-range-thumb {
 /* Still working: motion means in-flight and nothing else, matching the
    `running` status kind. A group holding the live step opens itself, so this
    marks the header the reader is already looking at. */
-.chat-group.is-running .chat-group__name { color: var(--sys-up); }
+/* A live group gets NO mark of its own. It opens itself when work starts, and
+   the running step inside it already carries the live clock, so tinting the
+   header too would say the same thing twice one line apart. */
 
 /* How long a step took, or has been taking. Tabular so a ticking counter does
    not shift the row it sits on. */
 .chat-tool__time { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.75; }
-.chat-tool.is-running .chat-tool__time { color: var(--sys-up); }
+.chat-tool.is-running .chat-tool__time { color: var(--live); }
 /* A step that needs the operator, and ONLY that. Two kinds, both rare:
    `blocked` (the harness refused the capability, so the operator is the remedy)
    and `stopped` (the turn ended on it). An ordinary error result gets no mark
@@ -939,10 +945,12 @@ input[type="range"].grad::-moz-range-thumb {
    stopped: the turn did not finish what it was doing. Colour and weight, not a
    border, which is design system rule 6 and also all a bare row has. */
 .chat-tool__alert { flex: 0 0 auto; font-weight: var(--fw-semi); }
-.chat-tool.is-blocked .chat-tool__alert,
-.chat-tool.is-blocked .chat-tool__name { color: var(--warn); }
-.chat-tool.is-stopped .chat-tool__alert,
-.chat-tool.is-stopped .chat-tool__name { color: var(--danger); }
+/* THE STATE WORD CARRIES THE OUTCOME, THE NAME NEVER DOES. `Write` is what the
+   step is; `blocked` is how it went. Tinting both made the loudest thing in the
+   row the one word that had not changed, and it read as though the tool itself
+   were the problem. */
+.chat-tool.is-blocked .chat-tool__alert { color: var(--warn); }
+.chat-tool.is-stopped .chat-tool__alert { color: var(--danger); }
 
 /* ---- Receipts: what the turn changed outside the chat ----
    One row per turn, outside every fold. Quiet by default: a receipt records
@@ -1557,7 +1565,7 @@ button.chat-attach {
   padding: 0.35rem 0.5rem; border-radius: var(--radius-sm); cursor: pointer;
 }
 .chat-slash-item.is-active { background: var(--accent-soft); }
-.chat-slash-name { font-family: var(--font-mono); font-weight: var(--fw-semi); color: var(--accent); font-size: 0.82rem; }
+.chat-slash-name { font-family: var(--font-mono); font-weight: var(--fw-semi); color: var(--fg); font-size: 0.82rem; }
 .chat-slash-desc { color: var(--muted); font-size: 0.78rem; }
 /* Queued user messages (typed while a turn is streaming). */
 .chat-bubble--queued { opacity: 0.55; }
@@ -1654,8 +1662,8 @@ button.chat-attach {
 .chat-inbox__item + .chat-inbox__item { margin-top: 1px; }
 /* Only the two kinds that WANT something are marked. A notification is the
    quiet default; marking everything would mark nothing. */
-.chat-inbox__item--question .chat-inbox__kind { color: var(--accent); }
-.chat-inbox__item--review .chat-inbox__kind { color: var(--warn); }
+.chat-inbox__item--question .chat-inbox__kind { color: var(--muted); }
+.chat-inbox__item--review .chat-inbox__kind { color: var(--muted); }
 .chat-inbox__item--notify .chat-inbox__kind { color: var(--muted); }
 
 .chat-inbox__row { display: flex; align-items: center; gap: var(--space-1); }
