@@ -2,10 +2,21 @@ import { describe, expect, it } from "vitest";
 import type { ChatSegment } from "../../lib/chat";
 import { initialThreadState, threadReducer, type LogEvent, type ThreadState } from "./threadStore";
 import {
-  selectTranscript, selectCommitted, composeTranscript, committedClientIds, withoutCommitted,
+  selectCommitted, composeTranscript, committedClientIds, withoutCommitted,
   type TranscriptBlock,
 } from "./transcriptBlocks";
+
 import { splitAtUnits } from "./transcriptUnits";
+
+/** The whole transcript, composed the way the app composes it.
+ *
+ *  A TEST HELPER, and it lives here because that is what it is. It used to be
+ *  exported from the module as `selectTranscript`, where nothing in the app
+ *  called it: production splits the two halves apart for the memo boundaries in
+ *  useThreadLog and composes them there. An export only the tests use is dead
+ *  code with a reason attached, which is still dead code. Operator, 2026-08-12. */
+const selectTranscript = (state: ThreadState): TranscriptBlock[] =>
+  composeTranscript(selectCommitted(state), state);
 
 const text = (s: string): ChatSegment => ({ t: "text", text: s });
 const tool = (n: string): ChatSegment => ({ t: "tool", name: n, input: "" });

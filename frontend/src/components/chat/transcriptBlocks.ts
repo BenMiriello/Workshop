@@ -291,7 +291,7 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
  *  So: the last slice, unless the run has emitted nothing, in which case slice
  *  zero — the run's own start, which precedes every message sent during it.
  *  Nothing else can express "this turn was already running when you typed". */
-export function workingPieceIndex(pieces: Piece[]): number {
+function workingPieceIndex(pieces: Piece[]): number {
   const work = pieces.map((p, i) => (isWork(p) ? i : -1)).filter((i) => i >= 0);
   const any = pieces.some((p) => isWork(p) && p.work.length);
   return any ? work[work.length - 1] : work[0];
@@ -347,15 +347,6 @@ export type CommittedTranscript = {
  * including the live turn, because that is the truthful place for something not
  * yet sent.
  */
-// KEPT DELIBERATELY, AND ONLY THE TESTS CALL IT. Production splits the two
-// halves apart for the memo boundaries in useThreadLog, so nothing there calls
-// this. It stays because it is the single named definition of "the whole
-// transcript", it is exactly the composition production performs, and it is
-// three lines that cannot drift from them. The alternative is sixty test call
-// sites open-coding the composition, which is how they would drift.
-export function selectTranscript(state: ThreadState): TranscriptBlock[] {
-  return composeTranscript(selectCommitted(state), state);
-}
 
 /** The committed half of the transcript, plus whatever it is holding back for
  *  the run in flight.
