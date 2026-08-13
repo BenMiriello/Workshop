@@ -153,6 +153,8 @@ The cut point is `meta.at_segment` on the message — the index into the reply's
 
 Cutting at `at_segment` is neither. The message goes after what had been emitted and before what had not, which is the only placement that is true. Do not restore "renders below the whole reply", and do not reintroduce a splice that ignores `at_segment`.
 
+**And the run's own start is the floor.** The cut says where a message sits among the work; it never licenses the message to sit above the run that was already in flight. A turn announced itself with the working indicator before the operator typed, so the indicator stays above what he typed. This is the case `at_unit: 0` produces, and it is not an edge case: it is what every message sent in the first seconds of a turn looks like. `workingSliceIndex` in `transcriptBlocks.ts` is the whole rule (last slice, or slice zero when the run has emitted nothing, because an empty slice renders as nothing and the message would float to the top of the run). Reported 2026-08-12: "if it was already working my new message could not be BEFORE it since it wouldn't have seen it." Pinned in `transcriptBlocks.test.ts`.
+
 Below the blocks, in order: messages queued for the next turn (not sent at all yet), then the voice overlay.
 
 **A run in flight is always visible.** The working indicator is driven by whether the SERVER says a run is active (`active_run`), not by whether this tab holds an SSE socket. A turn whose stream dropped past its reconnect budget, one the operator stopped watching, and one started in another tab are all still running, and all still say so with an elapsed clock anchored to the run's real start. See `turnStatus.ts`.
