@@ -44,7 +44,13 @@ if printf '%s\n' "$CHANGED" | grep -q '^backend/workshop_public_app\.py$'; then
 fi
 
 # frontend/dist is gitignored, so anything matching here is genuinely an input.
-printf '%s\n' "$CHANGED" | grep -qE '^frontend/' || exit 0
+#
+# packages/ui counts: vite resolves @workshop/ui through the `workshop-source`
+# condition to packages/ui/src, so the kit compiles INTO the bundle. Matching
+# ^frontend/ alone meant a commit that only touched shared primitives never
+# rebuilt, and (before the matching fix in ui_source_id.sh) did not even register
+# as stale. See scripts/ui_source_id.sh for the same list on the checking side.
+printf '%s\n' "$CHANGED" | grep -qE '^(frontend|packages/ui)/' || exit 0
 
 mkdir -p "$CANONICAL/tmp"
 # flock -w: a burst of commits queues instead of racing two bundlers into the

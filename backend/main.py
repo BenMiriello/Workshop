@@ -19,6 +19,7 @@ from routes import stores as stores_routes
 from routes import deploys as deploys_routes
 from services import app_registry
 import asyncio
+import datetime as _dt
 import logging
 import os
 
@@ -250,6 +251,51 @@ async def root_redirect():
     return {"ok": True, "service": "workshop-backend"}
 
 
+def _backend_source_id() -> str:
+    """The id of the source THIS process is running, computed once at import.
+
+    scripts/apply.sh compares it against a fresh `scripts/backend_source_id.sh`
+    to decide whether a restart is owed. Shelling out to that script rather than
+    reimplementing the hash here is deliberate: two definitions of "what counts
+    as backend source" would drift the moment one of them learned about a new
+    input, and drift between the checker and the thing it checks is worse than
+    no checker at all (the argument is spelled out in ui_source_id.sh).
+
+    Measured at 34ms over 354 files, paid once at startup. Any failure yields
+    "unknown", which apply.sh reports as undecidable rather than treating as a
+    match -- never silently as "in sync".
+    """
+    import subprocess
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parent.parent / "scripts" / "backend_source_id.sh"
+    try:
+        out = subprocess.run(
+            ["bash", str(script)], capture_output=True, text=True, timeout=30
+        )
+        return (out.stdout or "").strip() or "unknown"
+    except Exception as exc:  # pragma: no cover - diagnostic path
+        log.warning("backend source id unavailable: %s", exc)
+        return "unknown"
+
+
+_SOURCE_ID = _backend_source_id()
+_STARTED_AT = _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True}
+    """Liveness, plus what code is answering.
+
+    `ok` is unchanged for existing callers. `source_id` is what lets a restart be
+    VERIFIED instead of assumed: before this, nothing the backend served said
+    which version it was, so "did my change land" could only be guessed at from
+    uptime -- and guessing wrong is how backend work has been reported shipped
+    while the old code kept serving.
+    """
+    return {
+        "ok": True,
+        "source_id": _SOURCE_ID,
+        "started_at": _STARTED_AT,
+        "pid": os.getpid(),
+    }

@@ -36,6 +36,23 @@ for tsc in "$FE"/tsconfig*.json; do
   [ -f "$tsc" ] && INPUTS+=("$tsc")
 done
 
+# THE KIT IS A BUNDLE INPUT, NOT A DEPENDENCY. frontend/vite.config.ts sets
+# `conditions: ["workshop-source"]`, and packages/ui's exports map resolves that
+# condition to ./src/*. So vite compiles the kit's SOURCE straight into the
+# bundle; packages/ui/dist is only what tsc reads for types.
+#
+# Leaving it out meant a change to any shared primitive did not move this id, so
+# ui_sync.sh reported "in sync" against a bundle that predated it and the
+# post-commit hook (which matched ^frontend/ only) did not fire. Verified
+# 2026-08-13: editing packages/ui/src/index.ts left this id byte-identical.
+# That is the exact "operator is looking at old code" failure this id exists to
+# catch, with the one directory most likely to change every screen at once.
+KIT="packages/ui"
+INPUTS+=("$KIT/src" "$KIT/package.json")
+for ktsc in "$KIT"/tsconfig*.json "$KIT/vite.config.ts"; do
+  [ -f "$ktsc" ] && INPUTS+=("$ktsc")
+done
+
 EXISTING=()
 for p in "${INPUTS[@]}"; do
   [ -e "$p" ] && EXISTING+=("$p")

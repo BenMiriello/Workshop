@@ -94,7 +94,7 @@ if [ "${1:-}" = "--deferred" ]; then
   # restarting at all is worse, so this waits minutes rather than forever.
   other_cap=180
   setsid bash -c '
-    self="$1"; turns="$2"; chat="$3"; max="$4"; grace="$5"; mine="$6"; ocap="$7"
+    self="$1"; turns="$2"; chat="$3"; max="$4"; grace="$5"; mine="$6"; ocap="$7"; root="$8"
     live() {  # live <pid-filter>: "" = any turn, else only that pid
       [ -d "$turns" ] || return 1
       for meta in "$turns"/*/meta.json; do
@@ -126,8 +126,41 @@ if [ "${1:-}" = "--deferred" ]; then
     while commit_pending && [ "$settled" -lt "$grace" ]; do sleep 2; settled=$((settled+2)); done
     [ "$settled" -ge "$grace" ] && echo "warn: a run still held its thread after ${grace}s; restarting anyway"
     sleep 1
-    bash "$self"
-  ' _ "$self" "$turns" "$chat" "$max_wait" "$commit_grace" "$own_turn" "$other_cap" \
+    # --force IS THE POINT. The three waits above ARE the guard: this waiter has
+    # already served every condition the synchronous guard checks, and the warns
+    # above are it deliberately giving up after a bounded wait.
+    #
+    # Without --force this line re-invoked the script, the guard found the very
+    # turn the waiter had just decided to restart on top of, printed REFUSING and
+    # exited 2 -- while the caller had long since been told "restart armed" and
+    # exit 0. Measured in /tmp/workshop-backend.log before this fix: 61 restarts,
+    # 14 silent refusals. That is the third instance of the silent-no-op this
+    # file has been fixed for twice; both earlier fixes were right and both left
+    # this path open. A bounded wait that ends in a refusal is not a wait, it is
+    # a lie, and an agent cannot be instructed out of a tool that lies.
+    old_pid="$(systemctl --user show -p MainPID --value workshop-backend.service 2>/dev/null || echo 0)"
+    if bash "$self" --force; then rc=ok; else rc=failed; fi
+    new_pid="$(systemctl --user show -p MainPID --value workshop-backend.service 2>/dev/null || echo 0)"
+    # VERIFY, do not assume. A zero exit that left the same pid running means the
+    # restart did not happen, which is precisely the failure this whole block
+    # exists to make impossible to report as success.
+    if [ "$rc" = ok ] && [ -n "$new_pid" ] && [ "$new_pid" != "0" ] && [ "$new_pid" != "$old_pid" ]; then
+      outcome=restarted
+    elif [ "$rc" = ok ]; then
+      outcome=no-pid-change
+    else
+      outcome=failed
+    fi
+    echo "deferred restart: $outcome (pid $old_pid -> $new_pid)"
+    # The receipt. Until now the ONLY record of a deferred restart was this log
+    # under /tmp, which nothing reads and nothing surfaces, so a failure was
+    # invisible to the agent that armed it and to the operator. apply.sh --check
+    # and the chat runtime briefing both read this file.
+    mkdir -p "$root/.runtime" 2>/dev/null || true
+    printf "{\"when\": \"%s\", \"action\": \"backend-restart\", \"outcome\": \"%s\", \"old_pid\": %s, \"new_pid\": %s, \"arming_turn\": \"%s\"}\n" \
+      "$(date -Is)" "$outcome" "${old_pid:-0}" "${new_pid:-0}" "${mine:-none}" \
+      > "$root/.runtime/apply-last.json" 2>/dev/null || true
+  ' _ "$self" "$turns" "$chat" "$max_wait" "$commit_grace" "$own_turn" "$other_cap" "$REPO_ROOT" \
     >>/tmp/workshop-backend.log 2>&1 </dev/null &
   disown || true
   if [ -n "$own_turn" ]; then

@@ -61,7 +61,15 @@ if is_self "$slug"; then
   exec bash "${here}/restart_backend.sh" --deferred
 fi
 
-status="$(curl -s "${base}/status" 2>/dev/null || echo '{}')"
+# EXIT NONZERO WHEN NOTHING WAS RESTARTED. Every branch below used to end in
+# `exit 0`: an unreachable backend produced `{}`, an empty service list, and the
+# cheerful line "no running services to restart" -- the same false-success shape
+# as the is_self bug documented above, one branch over. A caller (now apply.sh)
+# cannot verify what it is told if failure and success are the same exit code.
+if ! status="$(curl -sf "${base}/status" 2>/dev/null)"; then
+  echo "could not reach the app runner for ${slug} (backend down?)" >&2
+  exit 1
+fi
 
 restart_one() {
   local s="$1"
@@ -69,12 +77,13 @@ restart_one() {
     echo "restarted ${slug}/${s}"
   else
     echo "could not restart ${slug}/${s} (is it running?)" >&2
+    return 1
   fi
 }
 
 if [ -n "$svc" ]; then
   restart_one "$svc"
-  exit 0
+  exit $?
 fi
 
 # No service named → restart every currently-running service.
@@ -88,7 +97,9 @@ print(" ".join(s["name"] for s in d.get("services", []) if s.get("status") == "r
 ' 2>/dev/null || true)"
 
 if [ -z "$running" ]; then
-  echo "no running services to restart for ${slug}"
-  exit 0
+  echo "no running services to restart for ${slug}" >&2
+  exit 1
 fi
-for s in $running; do restart_one "$s"; done
+failed=0
+for s in $running; do restart_one "$s" || failed=1; done
+exit "$failed"
