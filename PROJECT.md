@@ -104,3 +104,22 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   Plan: fix the restart lie, add one drift-based idempotent `scripts/apply.sh`,
   collapse instructions to one canonical doc, surface an apply receipt. NOT
   implemented; awaiting operator approval.
+- 2026-08-13 (2) — Operator: allow agents to restart, and make a restart only
+  ever pause or delay rather than break; decide the open questions yourself.
+  Built and tested. `bash scripts/apply.sh` is now the ONE command an agent runs
+  when it finishes: drift-based (compares what is running to what is on disk,
+  per surface), no arguments, idempotent, safe to run concurrently. The backend
+  and the bundle each report their own source id (`GET /healthz`,
+  `frontend/dist/build-info.json`) so "did my change land" is answerable instead
+  of assumed. Resilience: a restart no longer kills the detached agent process
+  (the lifespan sets `build_streaming.SHUTTING_DOWN` before asyncio cancels the
+  drive loop, which used to SIGTERM the child and write "this turn ended early"),
+  no longer duplicates a reply committed in the restart window
+  (`_already_committed` reads the thread, not the journal), and no longer hangs
+  90s on an idle browser tab (SSE generators release on shutdown, plus
+  `--timeout-graceful-shutdown 10`). Instructions collapsed from ~30 files with
+  six contradictions to `docs/applying-changes.md` plus three pointers; the
+  gengui never-restart rule is reversed; the stale-bundle warning is now a hard
+  gate when the diff touches `frontend/` or `packages/ui/`. Also fixed:
+  `ui_source_id.sh` never hashed `packages/ui`, so kit edits were invisible to
+  every staleness check despite compiling into the bundle.

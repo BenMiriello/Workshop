@@ -1,6 +1,89 @@
 # Plan: one way to apply a change (development context)
 
-Status: PROPOSED, 2026-08-13. Awaiting operator approval before any code moves.
+Status: **IMPLEMENTED, 2026-08-13.** Approved by the operator the same day, who
+also directed that a restart be made resilient ("design the system to be
+resilient so that restart doesn't break things but only ever pauses or delays")
+and reversed the gengui never-restart rule. The reference doc that came out of
+this is [`applying-changes.md`](applying-changes.md); this file is kept as the
+record of what was wrong and why, not as instructions.
+
+## What shipped
+
+- **`scripts/apply.sh`** — the one command. Drift-based, idempotent (second run:
+  44ms, no actions), safe to run concurrently.
+- **The deferred restart stopped lying** — `restart_backend.sh:129` now passes
+  `--force` to its own re-invocation, verifies the pid changed, and writes
+  `.runtime/apply-last.json`. Confirmed live: a deferred restart fired at
+  18:50:37 with pid 1287041 -> 2172700 and recorded `outcome: restarted`.
+- **Two source-of-truth ids** — `GET /healthz` reports the backend's `source_id`;
+  `ui_source_id.sh` now covers `packages/ui`, which it had never hashed despite
+  the kit compiling into the bundle.
+- **A restart is now a pause** — see the resilience section below.
+- **Instructions collapsed** to `docs/applying-changes.md` plus three pointers.
+- **The stale-bundle warning became a gate**, scoped to diffs that touch UI inputs.
+
+## Resilience: what a restart used to break
+
+The operator's direction was that a restart should only ever pause or delay.
+Three things made it worse than that, all found by reading the actual paths:
+
+1. **Shutdown killed the agent it had gone to lengths to detach.** The child is
+   spawned `start_new_session=True` and the unit sets `KillMode=process` so
+   systemd's SIGTERM cannot reach it. But `asyncio.run()` cancels every surviving
+   task on the way down, the drive loop's `CancelledError` handler called
+   `_end_wedged`, and that does `os.killpg(SIGTERM)` on the child and commits
+   "This turn ended early" into the transcript. The detachment was being undone
+   from inside the process. Fixed with a `SHUTTING_DOWN` flag set by the lifespan
+   before anything is cancelled: cancellation now means two different things, and
+   on shutdown the turn is released rather than ended, then adopted on the way
+   back up.
+2. **A restart in the commit window duplicated the reply.** `commit_run` appends
+   the reply and clears `active_run_id`, but the journal is marked done only
+   afterwards, with a seconds-long git checkpoint in between. `reattach` checked
+   only the journal status, so it re-drove a turn whose reply was already on the
+   thread: a duplicate assistant message plus a second application of every
+   task-patch, note and learning block in it. Fixed with `_already_committed`,
+   which reads the thread rather than the journal, and fails toward re-driving
+   (a duplicate is recoverable; a dropped reply is not).
+3. **An open browser tab pinned the shutdown for 90 seconds.** The chat SSE
+   generators end only when their turn does, and uvicorn's graceful shutdown
+   waits forever by default, so systemd SIGKILLed the backend at
+   `TimeoutStopSec`. Both generators now release on `SHUTTING_DOWN`, with
+   `--timeout-graceful-shutdown 10` as the backstop for anything else long-lived.
+
+Covered by `backend/tests/test_restart_is_a_pause.py` (7 tests), including a
+positive control so a generator that always returned immediately cannot pass, and
+mutation-checked: reverting the shutdown guard makes the test hang and fail.
+
+## Known gaps, deliberately not closed
+
+- **Window A store writes.** A crash between the child exiting and `commit_run`
+  still re-applies notes/tickets/learnings on replay, because the replay is not
+  idempotent per block. Rarer than window B and needs a per-block applied marker.
+- **Segments still rebuild from offset 0** on reattach, so a restart mid-reply
+  still visibly re-renders the turn, and the `cut_head`/`cut_after` anchors for
+  mid-turn messages are lost (they live only in memory). Fixing it means
+  persisting a journal cursor.
+- **Voice turns do not survive a restart at all**: `voice_worker` spawns with
+  PIPE stdio and no `start_new_session`, so the child dies with the backend.
+- **The per-turn checkpointer commits the whole working tree**, so work from
+  several agents lands in one "checkpoint: a turn" commit with no provenance.
+  That is how this session's changes were committed. Worth revisiting separately.
+
+## Decisions the operator delegated
+
+- **Reviewer gate on a stale bundle: promoted from warn to FAIL**, but only when
+  the diff actually touches `frontend/` or `packages/ui/`. An always-survivable
+  warning is one that is eventually always survived (2026-08-09 proved it), while
+  an unscoped hard failure would block backend and docs work for a bundle someone
+  else left stale. Verified both ways.
+- **Command name: `scripts/apply.sh`.** It is a verb, it says what it does
+  without claiming to be a deployment, and it does not collide with the existing
+  `restart_*` scripts it calls. Production can later re-point the same name.
+
+---
+
+## Original plan (2026-08-13, before implementation)
 
 Scope: the **development** deployment only (this box, systemd `--user`, one shared
 checkout at `~/workshop`). Production is not designed here. The plan does put the
