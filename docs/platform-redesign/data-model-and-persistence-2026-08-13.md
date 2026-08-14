@@ -1,9 +1,9 @@
 # Data model and persistence: diagnosis and redesign
 
-- Status: **proposed.** Diagnosis measured against the live tree; design
-  validated against PostgreSQL multi-tenancy guidance and against two real
-  tracker schemas (Linear's documented state model, Plane's readable Django
-  schema). Three open questions remain and are listed in §5.7.
+- Status: **accepted; P0 to P2 built and committed** (`c38e33d`). Diagnosis
+  measured against the live tree; design validated against PostgreSQL
+  multi-tenancy guidance and two real tracker schemas (Linear's documented state
+  model, Plane's readable Django schema). See §6 for what is running.
 - Date: 2026-08-13
 - Supersedes on acceptance: the storage half of `entity-model-2026-07-18.md`
   (its vocabulary section is separately revised here, see §3)
@@ -273,7 +273,35 @@ The point of RLS rather than a discipline of always writing `WHERE org_id = ?`
 is R1: a forgotten predicate must not be able to leak. Application-level scoping
 stays as the first layer; RLS is the second.
 
-#### The two footguns, both of which have bitten real deployments
+#### The footgun the guidance does not mention, found by testing
+
+**A SUPERUSER or a role with BYPASSRLS ignores row security entirely, and no
+table-level setting can change that.** `FORCE ROW LEVEL SECURITY` subjects a
+table's *owner* to its policies. It says nothing about a superuser.
+
+The official Postgres image creates `POSTGRES_USER` as a superuser. So the
+obvious setup, where the application connects with the credentials the container
+was initialised with, produces a database where RLS is enabled, forced, policied
+and **completely inert**.
+
+This was not theoretical. It was the state of this deployment on first
+implementation: every table read `enabled=true forced=true policies=1`, the
+per-table audit reported no problems, and a session scoped to one organization
+read another organization's ticket by primary key while
+`SELECT count(*) FROM ticket` returned every row in the database.
+
+That is the worst available failure shape, because every signal reads healthy.
+Two roles are therefore mandatory, not a refinement:
+
+- `workshop` owns the schema and runs migrations. Never serves a request.
+- `workshop_app` is `NOSUPERUSER NOBYPASSRLS` with DML grants and no DDL, so it
+  cannot drop a policy. This is what the application connects as.
+
+`db/bootstrap.py` creates it and refuses to report success if the flags are
+wrong. `verify_rls()` checks the connecting role **before** it checks any table,
+because a per-table audit alone certifies the broken state as correct.
+
+#### The two footguns that are documented
 
 **1. The table owner bypasses RLS silently.** By default a policy does not apply
 to the role that owns the table, and the application usually connects as that
@@ -739,3 +767,68 @@ Migrating the personal stores (health, location, budget, finance) out of
 `.runtime/users/<id>/`. They are a separate concern with their own privacy
 posture, and folding them in would triple the size of this change. `SEC-A5`
 tracks their isolation gap.
+
+---
+
+## 6. What is built (2026-08-13, commit `c38e33d`)
+
+**P0 foundation.** PostgreSQL 18.6 in `infra/postgres` (loopback :5440, named
+volume, healthcheck). SQLAlchemy 2.0.52, Alembic 1.19.1, psycopg 3.3.4.
+`db/engine.py` owns the session lifecycle and the tenant set-point;
+`db/bootstrap.py` creates the least-privilege application role.
+
+Two operational notes, both found the hard way:
+
+- Compose on this host does not read `.env`, even with `--env-file`. The
+  password is sourced into the shell before `docker compose up`.
+- Postgres 18 changed the data directory. The volume mounts
+  `/var/lib/postgresql`, not `/var/lib/postgresql/data`; mounting the old path
+  makes the container crash-loop with "unused mount/volume".
+
+**P1 schema.** 14 tables in one Alembic migration, with RLS applied to all 12
+that carry `org_id`. `db/models.TENANT_TABLES` is derived from the metadata, so
+a table that gains an `org_id` is caught rather than forgotten.
+
+**P2 backfill.** `db/backfill.py`, print-by-default with `--apply`. Loaded 112
+tickets, 2,753 runs, 248 events, 11 links, 5 comments, 8 agents and 1 user into
+one organization. Idempotent, proven by a second `--apply` writing zero rows.
+Fidelity verified against the source: every status count matches, 112 of 112
+titles are byte-identical, ticket numbers are contiguous per project.
+
+The scheduler's whole selection, including the unsatisfied-dependency check, is
+now one statement returning in 3.7 ms:
+
+```sql
+WHERE s.category IN ('backlog','unstarted')
+  AND COALESCE(ty.agent_executable, false)
+  AND NOT EXISTS (SELECT 1 FROM ticket_link l ... WHERE l.kind = 'blocked_by'
+                    AND ds.category NOT IN ('completed','canceled'))
+ORDER BY t.priority DESC, t.created_at ASC
+```
+
+**Nothing reads from Postgres yet.** The JSON stores remain authoritative and
+the running application is unchanged. P3 cuts `services/tasks.py` over behind
+its existing signatures.
+
+### Open questions, revised
+
+Settled during implementation:
+
+- *Ticket number allocation* is a `next_ticket_number` counter on `project`,
+  taken with the insert. Contention is per project, which is the right
+  granularity; a Postgres sequence cannot give per-project numbering.
+- *Who writes the first membership* is the provisioning flow, inside the new
+  org's own tenant session. No privileged write is needed, and an
+  `admin_session` write is correctly refused by `WITH CHECK`.
+
+Still open:
+
+1. **Priority as integer or enum.** Unchanged from the draft. The backfill
+   preserved the existing signed integers, so this remains a behaviour change
+   to queue ordering rather than a type change.
+2. **Where scope lands for notes and agents** (`agent:`, `role:`, `app:`).
+   Sequenced with P6.
+3. **Run to agent linkage.** `jobs.jsonl` records `agent_id` as a Letta id or
+   logical name, which does not correspond to the `build_agents` registry
+   slugs, so backfilled runs have a null `agent_id`. Not invented; it needs a
+   mapping decision.
