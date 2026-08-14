@@ -62,7 +62,9 @@ STATE_CATEGORIES = ("backlog", "unstarted", "started", "completed", "canceled")
 # Relation kinds taken from Plane's IssueRelation rather than invented.
 # `blocked_by` is the scheduling edge: it is the one that makes a ticket
 # ineligible for selection. The others are informational.
-LINK_KINDS = ("blocked_by", "relates_to", "duplicates")
+# `discovered_from` names the ticket whose work turned this one up. It was a
+# scalar field on the JSON record (2 of 112) and it is an edge like any other.
+LINK_KINDS = ("blocked_by", "relates_to", "duplicates", "discovered_from")
 
 # Priority. THE ONE PLACE A NATIVE POSTGRES ENUM IS USED, and it is deliberate.
 #
@@ -96,6 +98,11 @@ AGENT_AUTONOMY = ("reactive", "supervised", "autonomous")
 RUN_STATUSES = ("queued", "running", "blocked", "done", "failed", "cancelled")
 RUN_TRIGGERS = ("manual", "cron", "event", "loop")
 EFFORTS = ("quick", "standard", "deep")
+
+# Where a ticket came from. The JSON store's `source.kind`, which took exactly
+# these three values across all 112 tickets. `chat` carries a thread id in
+# `source_ref` and is the chat-to-ticket link.
+SOURCE_KINDS = ("chat", "operator", "agent")
 
 _ALIVE = text("deleted_at IS NULL")
 
@@ -345,9 +352,42 @@ class Ticket(Base, Timestamps, SoftDelete):
     external_source: Mapped[str | None] = mapped_column(String(64))
     external_id: Mapped[str | None] = mapped_column(String(255))
 
+    # WHO FILED THIS AND FROM WHERE. `{kind: "chat", ref: <thread id>}` is the
+    # chat-to-ticket link, and carrying it as an unindexed JSON blob is the
+    # reason "show me the tickets this conversation filed" is not a query today.
+    # Populated on all 112 tickets, so it is current state, not history.
+    source_kind: Mapped[str | None] = mapped_column(String(16))
+    source_ref: Mapped[str | None] = mapped_column(String(255))
+
+    # The hash over the spec fields ONLY (not `updated`), which is what lets a
+    # queue triager decide it has already seen this ticket and terminate.
+    spec_hash: Mapped[str | None] = mapped_column(String(64))
+
+    # The paths a worker may change. A coordination guard, not a security
+    # boundary (SEC-A2): it is checked post-hoc against the committed diff.
+    touches: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+
+    # Why this ticket is stuck. A blocked ticket that has lost this is the sharp
+    # failure the backfill review already caught once.
+    blocked_reason: Mapped[str | None] = mapped_column(Text)
+
+    # `{kind, spec, criteria: [{desc, cmd, expect}]}`. Genuinely nested, 5 of
+    # 112, and nothing filters or sorts on it, so a column per key would be
+    # modelling for its own sake.
+    acceptance: Mapped[dict | None] = mapped_column(JSONB)
+
+    # The claim fence's ALLOCATOR. Bumped on every (re)claim; a run stamps the
+    # value it got and every subsequent write is checked against it, so a
+    # resurrected worker holding generation 3 cannot write over generation 4.
+    claim_token: Mapped[int] = mapped_column(Integer, nullable=False,
+                                             server_default="0")
+
     __table_args__ = (
         CheckConstraint(f"effort IS NULL OR {_one_of('effort', EFFORTS)}",
                         name="ck_ticket_effort"),
+        CheckConstraint(
+            f"source_kind IS NULL OR {_one_of('source_kind', SOURCE_KINDS)}",
+            name="ck_ticket_source_kind"),
         CheckConstraint("parent_id IS NULL OR parent_id <> id",
                         name="ck_ticket_not_own_parent"),
         Index("uq_ticket_number", "project_id", "number", unique=True),
@@ -518,11 +558,13 @@ class Run(Base, Timestamps):
     `ticket.attempts` becomes `count(run)`, which removes a hand-maintained
     counter that had already produced a real bug.
 
-    NOT ALL of them moved: `claim_token`, the monotonic fence the JSON store
-    hand-rolled to reject a resurrected zombie worker's late write, has no
-    column here yet. `lease_expires_at` + `heartbeat_at` + `worker_pid` cover
-    liveness; they do not cover compare-and-swap. P4 needs it before the sweep
-    runs against this schema.
+    All of them have now moved. `claim_token` is the monotonic fence the JSON
+    store hand-rolled to reject a resurrected zombie worker's late write:
+    `lease_expires_at` + `heartbeat_at` + `worker_pid` cover liveness, but not
+    compare-and-swap, and a held-but-unchecked token does not stop a late write
+    from a worker everyone else has given up on. It is a per-ticket generation
+    counter, so it lives on `ticket` as the allocator and is STAMPED here, on
+    the execution that holds it.
     """
     __tablename__ = "run"
 
@@ -558,6 +600,11 @@ class Run(Base, Timestamps):
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     worker_pid: Mapped[int | None] = mapped_column(Integer)
+
+    # The generation this run claimed, compared against `ticket.claim_token` on
+    # every write. A run holding a stale one has been superseded and its writes
+    # are refused, which is what makes the fence a fence rather than a label.
+    claim_token: Mapped[int | None] = mapped_column(Integer)
 
     legacy_job_id: Mapped[str | None] = mapped_column(String(64))
 

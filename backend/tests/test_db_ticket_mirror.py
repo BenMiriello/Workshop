@@ -215,3 +215,83 @@ def test_the_mirror_never_raises_into_the_write_path(monkeypatch, tmp_path):
     monkeypatch.setattr(ticket_sync, "scope_for_root", lambda _r: "anything")
     stats = ticket_sync.mirror(tmp_path, [_task("t1")])
     assert stats["skipped"] == 1
+
+
+# --- the fields that got columns in d7b3e0c5f981 -----------------------------
+
+def test_a_chat_source_becomes_a_queryable_link(scope):
+    """THE POINT OF THE `source` COLUMNS. `{kind: chat, ref: <thread>}` was an
+    unindexed blob, which is why "which tickets did this conversation file" has
+    never been a query."""
+    from db.engine import tenant_session
+
+    thread = "a" * 32
+    _mirror(scope, [_task("t1", source={"kind": "chat", "ref": thread}),
+                    _task("t2", source={"kind": "operator", "ref": None})])
+    with tenant_session(scope["org"]) as s:
+        got = s.execute(text(
+            "SELECT external_id FROM ticket WHERE source_kind = 'chat' "
+            "AND source_ref = :r AND deleted_at IS NULL"), {"r": thread}).scalars().all()
+    assert got == ["t1"]
+    assert _rows(scope)["t2"]["source"] == {"kind": "operator", "ref": None}
+
+
+def test_a_scope_key_is_not_stored_as_a_thread_id(scope):
+    """19 live tickets carry `ref: "general"`, a SCOPE name from before the
+    convention settled. Storing it as a thread reference yields a link that
+    resolves to whatever chat that scope currently shows, which is worse than no
+    link because it looks right. The kind is kept, the ref is not."""
+    _mirror(scope, [_task("t1", source={"kind": "chat", "ref": "general"})])
+    assert _rows(scope)["t1"]["source"] == {"kind": "chat", "ref": None}
+
+
+def test_an_unknown_source_kind_does_not_lose_the_ticket(scope):
+    """The CHECK would refuse it. Dropping a provenance label is the right
+    trade against failing the whole write."""
+    _mirror(scope, [_task("t1", source={"kind": "carrier-pigeon", "ref": "x"})])
+    assert _rows(scope)["t1"]["source"]["kind"] is None
+    assert _rows(scope)["t1"]["title"] == "A ticket"
+
+
+def test_the_preserved_fields_round_trip(scope):
+    """Every one of these was silently discarded by the first backfill. They are
+    populated on live tickets: touches 35, blocked_reason 23, provenance 56."""
+    acc = {"kind": "command", "spec": "file exists",
+           "criteria": [{"desc": "d", "cmd": "test -f x", "expect": "exit0"}]}
+    _mirror(scope, [_task("t1", touches=["a/b.py", "c.py"], provenance="ab" * 32,
+                          blocked_reason="waiting on the operator",
+                          acceptance=acc, claim_token=7)])
+    row = _rows(scope)["t1"]
+    assert row["touches"] == ["a/b.py", "c.py"]
+    assert row["provenance"] == "ab" * 32
+    assert row["blocked_reason"] == "waiting on the operator"
+    assert row["acceptance"] == acc
+    assert row["claim_token"] == 7
+
+
+def test_blocked_reason_changing_is_recorded_but_a_claim_token_bump_is_not(scope):
+    """History is a feed a person reads. A claim bump is execution bookkeeping
+    that `run` records properly, and putting it here would bury the changes that
+    matter."""
+    from db.engine import tenant_session
+
+    _mirror(scope, [_task("t1", blocked_reason="one", claim_token=1)])
+    _mirror(scope, [_task("t1", blocked_reason="two", claim_token=2)])
+    with tenant_session(scope["org"]) as s:
+        fields = s.execute(text(
+            "SELECT field FROM ticket_event WHERE verb = 'changed'")).scalars().all()
+    assert "blocked_reason" in fields
+    assert "claim_token" not in fields
+    assert _rows(scope)["t1"]["claim_token"] == 2
+
+
+def test_discovered_from_is_an_edge_and_accepts_a_bare_id(scope):
+    """It was a scalar on the JSON record and is a list here, because an edge
+    table has no reason to special-case one."""
+    _mirror(scope, [_task("child", discovered_from="parent"), _task("parent")])
+    from db.engine import tenant_session
+    with tenant_session(scope["org"]) as s:
+        n = s.execute(text(
+            "SELECT count(*) FROM ticket_link WHERE kind = 'discovered_from' "
+            "AND deleted_at IS NULL")).scalar()
+    assert n == 1

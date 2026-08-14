@@ -27,6 +27,7 @@ WHAT IS DELIBERATELY NOT COMPARED, and why each is expected rather than ignored:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -43,16 +44,31 @@ _MAPPED = ("priority",)
 # Order-insensitive.
 _SET_FIELDS = ("depends_on", "relates_to")
 
-# Present in the JSON record, no column, on purpose. Reported, not skipped.
-_DROPPED = ("latitude", "max_attempts", "owner", "assignee", "exec",
-            "blocked_request", "sync", "external_refs", "claim_token",
-            "claim_pid", "lease_until", "last_heartbeat", "attempts",
-            "job_ids", "evidence", "acceptance", "touches", "scoped_by",
-            "provenance", "discovered_from", "blocked_reason", "source",
-            "labels", "triage", "execution", "effort", "created", "updated",
-            "comments",
-            "text", "id", "title", "body", "status", "parent", "priority",
-            "depends_on", "relates_to")
+# A chat thread id is a `uuid4().hex`. See `db/ticket_sync._legacy_view`.
+_THREAD_ID = re.compile(r"[0-9a-f]{32}")
+
+# Every JSON key that is ACCOUNTED FOR: compared above, projected, moved to
+# `run`, turned into history, or deliberately deleted. Anything populated and
+# NOT in here is reported as unmodelled at the end of the run, which is how a
+# field nobody decided about gets noticed instead of quietly lost.
+_ACCOUNTED = frozenset({
+    # compared directly, or after mapping
+    "id", "title", "body", "status", "priority", "parent", "effort",
+    "execution", "depends_on", "relates_to", "comments", "provenance",
+    "touches", "blocked_reason", "acceptance", "claim_token", "source",
+    "labels", "discovered_from",
+    # projections and timestamps, not stored
+    "text", "created", "updated",
+    # deleted: both are the literal string "operator" on all 112 tickets
+    "owner", "assignee",
+    # execution state, which lives on `run`
+    "attempts", "claim_pid", "lease_until", "last_heartbeat", "job_ids",
+    # history rows, not columns
+    "evidence", "scoped_by",
+    # never occupied, dropped by ADR 0019
+    "latitude", "max_attempts", "exec", "blocked_request", "sync",
+    "external_refs", "triage",
+})
 
 
 def _json_tasks(store: Path) -> list[dict]:
@@ -107,6 +123,27 @@ def compare(org_id, scope: str, tasks: list[dict]) -> dict:
             diffs["comments"].append(
                 (tid, sorted(want_c), sorted(have_c)))
 
+        # The fields that got columns in d7b3e0c5f981.
+        for field in ("provenance", "blocked_reason", "acceptance"):
+            a, b = task.get(field) or None, row.get(field) or None
+            if a != b:
+                diffs[field].append((tid, a, b))
+        if int(task.get("claim_token") or 0) != int(row.get("claim_token") or 0):
+            diffs["claim_token"].append(
+                (tid, task.get("claim_token"), row.get("claim_token")))
+        if sorted(task.get("touches") or []) != sorted(row.get("touches") or []):
+            diffs["touches"].append((tid, task.get("touches"), row.get("touches")))
+        # `source.ref` is compared only when the JSON side holds a real thread
+        # id. 20 tickets carry a scope key there from before the convention
+        # settled, and the schema stores no ref for those on purpose.
+        js = task.get("source") if isinstance(task.get("source"), dict) else {}
+        db_s = row.get("source") or {}
+        if (js.get("kind") or None) != (db_s.get("kind") or None):
+            diffs["source.kind"].append((tid, js.get("kind"), db_s.get("kind")))
+        jref = str(js.get("ref") or "")
+        if _THREAD_ID.fullmatch(jref) and jref != (db_s.get("ref") or ""):
+            diffs["source.ref"].append((tid, jref, db_s.get("ref")))
+
         for field in _SET_FIELDS:
             a = {x for x in (task.get(field) or []) if isinstance(x, str)}
             # A dangling id the JSON store allowed cannot exist as an edge, so
@@ -118,7 +155,7 @@ def compare(org_id, scope: str, tasks: list[dict]) -> dict:
     present = Counter()
     for task in tasks:
         for key, value in task.items():
-            if key not in _DROPPED and value not in (None, "", [], {}):
+            if key not in _ACCOUNTED and value not in (None, "", [], {}):
                 present[key] += 1
     return {"diffs": dict(diffs), "unmodelled": dict(present),
             "json": len(tasks), "db": len(rows)}

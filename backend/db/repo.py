@@ -64,6 +64,13 @@ SELECT
   t.created_at               AS created,
   t.updated_at               AS updated,
   t.closed_at                AS closed,
+  t.source_kind              AS source_kind,
+  t.source_ref               AS source_ref,
+  t.spec_hash                AS spec_hash,
+  t.touches                  AS touches,
+  t.blocked_reason           AS blocked_reason,
+  t.acceptance               AS acceptance,
+  t.claim_token              AS claim_token,
   parent.external_id         AS parent_legacy,
   COALESCE((SELECT array_agg(d.external_id ORDER BY d.external_id)
             FROM ticket_link l JOIN ticket d ON d.id = l.to_ticket_id
@@ -117,6 +124,15 @@ def _row_to_legacy(row: Any) -> dict:
         "depends_on": list(m["depends_on"] or []),
         "relates_to": list(m["relates_to"] or []),
         "comments": list(m["comments"] or []),
+        # `source` is rebuilt as the pair the JSON record carried, because every
+        # caller reads `task["source"]["kind"]`. The columns are what make it
+        # queryable; this is the compatibility shape on top of them.
+        "source": {"kind": m["source_kind"], "ref": m["source_ref"]},
+        "provenance": m["spec_hash"],
+        "touches": list(m["touches"] or []),
+        "blocked_reason": m["blocked_reason"],
+        "acceptance": m["acceptance"],
+        "claim_token": m["claim_token"],
         "created": m["created"].isoformat() if m["created"] else None,
         "updated": m["updated"].isoformat() if m["updated"] else None,
         "closed": m["closed"].isoformat() if m["closed"] else None,

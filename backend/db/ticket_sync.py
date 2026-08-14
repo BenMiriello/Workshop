@@ -21,6 +21,7 @@ from the first mirrored write.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,19 +29,39 @@ from typing import Any
 from sqlalchemy import text
 
 from db.legacy_map import STATUS_TO_STATE, priority_band
+from db.models import SOURCE_KINDS
 
 log = logging.getLogger(__name__)
+
+
+def _json(value):
+    """A dict for a jsonb bind. psycopg will not adapt a plain dict to jsonb, so
+    the value is serialised here and cast in the statement."""
+    import json as _j
+    return None if value is None else _j.dumps(value)
 
 __all__ = ["mirror", "scope_for_root"]
 
 # Fields worth a history row. Deliberately not every field: `updated` changes on
 # every write by definition, and recording that it changed says nothing.
-_TRACKED = ("title", "body", "status", "priority", "effort", "type", "parent")
+_TRACKED = ("title", "body", "status", "priority", "effort", "type", "parent",
+            "source_kind", "source_ref", "spec_hash", "touches",
+            "blocked_reason", "acceptance", "claim_token")
+
+# Of those, the ones worth a history row when they change. A `spec_hash` moving
+# is a restatement of a title or body change already recorded, and a
+# `claim_token` bump is an execution event that `run` records properly, so
+# writing history for either would be noise in the feed that history is for.
+_HISTORIC = ("title", "body", "status", "priority", "effort", "type",
+             "blocked_reason")
 
 # The legacy `execution` values, as type names. `None` means no type, which is
 # how the JSON store spelled "not classified".
 _EXECUTION_TO_TYPE = {"code": "Code", "judgement": "Judgement",
                       "external": "External"}
+
+# A chat thread id is a `uuid4().hex`. See `_legacy_view`.
+_THREAD_ID = re.compile(r"[0-9a-f]{32}")
 
 
 def scope_for_root(root: Path) -> str | None:
@@ -118,6 +139,19 @@ def _legacy_view(task: dict) -> dict:
     """The tracked fields of a JSON record, in the schema's vocabulary, so the
     comparison is like for like. Comparing a raw integer priority against an
     enum band would report a change on every single write."""
+    source = task.get("source") if isinstance(task.get("source"), dict) else {}
+    kind = (source.get("kind") or "").strip() or None
+    ref = str(source.get("ref")).strip() if source.get("ref") else None
+    # A CHAT REF IS A THREAD ID OR IT IS NOTHING. Before the convention settled,
+    # `source.ref` held the SCOPE key for chat-filed tickets: 19 of the live 112
+    # say `"general"`, which names a scope and not a conversation. Storing that
+    # as a thread reference produces a link that resolves to whatever chat the
+    # scope currently shows, which is worse than no link because it looks right.
+    # A thread id is a `uuid4().hex`, so the shape is the test; anything else
+    # keeps `kind='chat'` (it did come from a conversation) with no ref, which
+    # is the true statement. The partial index skips those rows.
+    if kind == "chat" and not _THREAD_ID.fullmatch(ref or ""):
+        ref = None
     return {
         "title": (task.get("title") or "").strip(),
         "body": task.get("body") or "",
@@ -126,6 +160,16 @@ def _legacy_view(task: dict) -> dict:
         "effort": task.get("effort") or None,
         "type": _EXECUTION_TO_TYPE.get(task.get("execution") or "") or None,
         "parent": task.get("parent") or None,
+        # An unrecognised source kind is dropped rather than stored, because the
+        # CHECK would refuse it and losing a whole ticket write over a
+        # provenance label would be the wrong trade.
+        "source_kind": kind if kind in SOURCE_KINDS else None,
+        "source_ref": ref,
+        "spec_hash": task.get("provenance") or None,
+        "touches": list(task.get("touches") or []) or None,
+        "blocked_reason": task.get("blocked_reason") or None,
+        "acceptance": task.get("acceptance") or None,
+        "claim_token": int(task.get("claim_token") or 0),
     }
 
 
@@ -140,13 +184,22 @@ def _row_view(row) -> dict:
         "effort": m["effort"],
         "type": m["type_name"],
         "parent": m["parent_legacy"],
+        "source_kind": m["source_kind"],
+        "source_ref": m["source_ref"],
+        "spec_hash": m["spec_hash"],
+        "touches": list(m["touches"]) if m["touches"] else None,
+        "blocked_reason": m["blocked_reason"],
+        "acceptance": m["acceptance"],
+        "claim_token": m["claim_token"],
     }
 
 
 _CURRENT = """
 SELECT t.id, t.external_id, t.title, t.body, t.priority::text AS priority,
        t.effort, t.closed_at, ws.name AS state_name, ty.name AS type_name,
-       parent.external_id AS parent_legacy
+       parent.external_id AS parent_legacy,
+       t.source_kind, t.source_ref, t.spec_hash, t.touches, t.blocked_reason,
+       t.acceptance, t.claim_token
   FROM ticket t
   JOIN workflow_state ws ON ws.id = t.state_id
   LEFT JOIN ticket_type ty ON ty.id = t.type_id
@@ -155,7 +208,10 @@ SELECT t.id, t.external_id, t.title, t.body, t.priority::text AS priority,
 """
 
 
-_LINK_KINDS = (("depends_on", "blocked_by"), ("relates_to", "relates_to"))
+# (legacy field, link kind). `discovered_from` was a scalar on the JSON record
+# and is a list here, because an edge table has no reason to special-case one.
+_LINK_KINDS = (("depends_on", "blocked_by"), ("relates_to", "relates_to"),
+               ("discovered_from", "discovered_from"))
 
 
 def _sync_links(s, org_id, from_pk, ids: dict, task: dict) -> int:
@@ -171,7 +227,11 @@ def _sync_links(s, org_id, from_pk, ids: dict, task: dict) -> int:
 
     changed = 0
     for legacy_field, kind in _LINK_KINDS:
-        want = {ids[t] for t in (task.get(legacy_field) or [])
+        raw = task.get(legacy_field) or []
+        # `discovered_from` is a bare id, the others are lists.
+        if isinstance(raw, str):
+            raw = [raw]
+        want = {ids[t] for t in raw
                 if isinstance(t, str) and t in ids and ids[t] != from_pk}
         rows = s.execute(text(
             "SELECT id, to_ticket_id FROM ticket_link WHERE org_id = :o "
@@ -361,13 +421,21 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                 s.execute(text(
                     "INSERT INTO ticket (id, org_id, project_id, number, title, "
                     "body, state_id, type_id, priority, effort, closed_at, "
+                    "source_kind, source_ref, spec_hash, touches, "
+                    "blocked_reason, acceptance, claim_token, "
                     "external_source, external_id) VALUES (:i, :o, :p, :n, :ti, "
                     ":bo, :st, :ty, CAST(:pr AS ticket_priority), :ef, :cl, "
+                    ":sk, :sr, :sh, :tc, :br, CAST(:ac AS jsonb), :ct, "
                     "'workshop-json', :ex)"),
                     {"i": uuid7(), "o": org_id, "p": project_id, "n": number,
                      "ti": want["title"][:255] or "(untitled)", "bo": want["body"],
                      "st": state_id, "ty": type_id, "pr": want["priority"],
                      "ef": want["effort"], "cl": now if closed else None,
+                     "sk": want["source_kind"], "sr": want["source_ref"],
+                     "sh": want["spec_hash"], "tc": want["touches"],
+                     "br": want["blocked_reason"],
+                     "ac": _json(want["acceptance"]),
+                     "ct": want["claim_token"],
                      "ex": legacy_id})
                 stats["inserted"] += 1
                 continue
@@ -382,14 +450,24 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
             s.execute(text(
                 "UPDATE ticket SET title = :ti, body = :bo, state_id = :st, "
                 "type_id = :ty, priority = CAST(:pr AS ticket_priority), "
-                "effort = :ef, closed_at = :cl WHERE id = :i"),
+                "effort = :ef, closed_at = :cl, source_kind = :sk, "
+                "source_ref = :sr, spec_hash = :sh, touches = :tc, "
+                "blocked_reason = :br, acceptance = CAST(:ac AS jsonb), "
+                "claim_token = :ct WHERE id = :i"),
                 {"ti": want["title"][:255] or "(untitled)", "bo": want["body"],
                  "st": state_id, "ty": type_id, "pr": want["priority"],
                  "ef": want["effort"],
                  "cl": (row._mapping["closed_at"] or now) if closed else None,
+                 "sk": want["source_kind"], "sr": want["source_ref"],
+                 "sh": want["spec_hash"], "tc": want["touches"],
+                 "br": want["blocked_reason"],
+                 "ac": _json(want["acceptance"]),
+                 "ct": want["claim_token"],
                  "i": ticket_id})
             stats["updated"] += 1
             for field, (old, new) in changed.items():
+                if field not in _HISTORIC:
+                    continue
                 _event(s, org_id, ticket_id, field, old, new)
                 stats["events"] += 1
 
