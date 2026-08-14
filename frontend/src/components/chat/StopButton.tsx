@@ -33,7 +33,7 @@ export default function StopButton({ label, onStop }: {
       aria-label={label}
       title={label}
     >
-      <Square size={9} strokeWidth={3} aria-hidden />
+      <Square size={10} strokeWidth={3} aria-hidden />
     </button>
   );
 }

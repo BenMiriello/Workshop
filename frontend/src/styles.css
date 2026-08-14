@@ -376,13 +376,27 @@ input[type="range"].grad::-moz-range-thumb {
        instead of at the same offset as every other menu in the app.
    One negative margin, both symptoms. The padding now costs its own width, and
    the toolbar's own `gap` spaces this the same as everything else. */
+/* ONE ROW HEIGHT FOR EVERY HOVER BOX IN THE BAR. This used to size to its own
+   text (`padding: 0.2rem 0.4rem`, no height), which came out around 25px against
+   the 32px of every `.chat-tb__btn` beside it, on a slightly sharper corner
+   (--radius-sm against --radius-md). Nothing intended that: the title is the one
+   control here that sizes to its content and the rest are fixed squares, so its
+   highlight rectangle was visibly shorter and tighter than its neighbours' and
+   the row had two rhythms in it. Operator, 2026-08-14: "the padding and internal
+   spacing around the chat name title is different than the other buttons, and I
+   don't know why. That doesn't make any sense."
+
+   It stays a plain button rather than becoming a flex box on purpose: the
+   ellipsis is doing real work here (see the no-shrink note below) and
+   text-overflow does not apply to a flex container's anonymous item. A button
+   centres its content in a fixed height by itself. */
 .chat-tb__title {
   flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: inherit; font-size: var(--fs-sm); color: var(--muted);
   background: transparent; border: none; cursor: pointer;
-  padding: 0.2rem 0.4rem;
-  border-radius: var(--radius-sm);
+  height: 2rem; padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
 }
 .chat-tb__title:hover { color: var(--fg); background: var(--card-hover); }
 /* Open state reads like every other quiet trigger in the chat (.chat-model,
@@ -400,13 +414,40 @@ input[type="range"].grad::-moz-range-thumb {
    longer than the entire bar still ellipsises rather than pushing the layout
    sideways, which is the only case where the space has genuinely run out. */
 .chat-tb__titlemenu { flex: 0 0 auto; min-width: 0; max-width: 100%; }
-/* Rename sits immediately right of the name, so it is smaller than the action
-   buttons at the far end of the bar: it belongs to the title, not to the row of
-   things you do to the chat. It also must not be what gives up room when the
-   bar is tight — the NAME shrinks, and a 1.5rem button next to a shrinking name
-   is the pair that stays legible longest. Spaced by the toolbar's own gap like
-   every other neighbour here, not pulled in by a negative margin. */
-.chat-tb__rename { flex: 0 0 auto; width: 1.5rem; height: 1.5rem; }
+/* The name and the pencil are ONE object, and the toolbar's gap belongs around
+   the pair, not inside it. Everything in this bar is spaced by the same
+   --space-2, which is correct between independent controls and wrong between a
+   name and the thing that renames it: at 8px the pencil read as another action
+   button that happened to sit there. The cluster takes the title's own
+   no-shrink rules so the pair still behaves as one item when the bar is tight. */
+.chat-tb__namegroup {
+  display: flex; align-items: center;
+  gap: 0.1rem;
+  flex: 0 0 auto; min-width: 0; max-width: 100%;
+}
+/* NOT a .chat-tb__btn any more. It carried the full button treatment (a border
+   box, --radius-md, the 2rem square's hover) with only its width and height
+   overridden, so it was the same control as the actions at the far end of the
+   bar, drawn slightly smaller. It belongs to the title instead: a 12px glyph
+   against their 16px, no chrome at rest, and the title's own --muted ink so the
+   two read as one thing with the size carrying the hierarchy.
+
+   The BOX is still the row's full height while the ink is small. That is the
+   part worth keeping from the old rule: a 12px icon needs a target bigger than
+   itself, and taking the row height gets that without widening the cluster or
+   reaching into the title's own click area, which opens the recent list and must
+   not lose taps to its neighbour. */
+.chat-tb__rename {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.75rem; height: 2rem; padding: 0;
+  background: transparent; border: none; border-radius: var(--radius-sm);
+  color: var(--muted); cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out),
+              background var(--dur-fast) var(--ease-out);
+}
+.chat-tb__rename:hover { color: var(--fg); background: var(--card-hover); }
+.chat-tb__rename:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
 .chat-tb__spacer { flex: 1 1 var(--space-2); min-width: 0; }
 .chat-tb__btn {
   flex: 0 0 auto; position: relative;
@@ -1570,7 +1611,15 @@ a.chat-receipt--link:hover > svg { color: var(--fg); }
 .chat-stopdot {
   flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
-  width: 1.15rem; height: 1.15rem; padding: 0;
+  /* 1.4rem (22.4px), up from 1.15rem. It is the only PRESSABLE thing on a row of
+     read-only text, so matching the copy/branch icons undersold it; those two are
+     chrome on a message you are reading, this ends the work in front of you.
+     Operator, 2026-08-14: bigger, and take the row height if you need it.
+
+     It does need it, by about 4px: the working line's box is a 13px line at 1.4,
+     so ~18.2px, and the circle is now the tallest thing in it. That is the whole
+     cost, on one row, and it was offered. */
+  width: 1.4rem; height: 1.4rem; padding: 0;
   border-radius: 50%;
   background: transparent; color: var(--muted);
   border: 1px solid var(--border);

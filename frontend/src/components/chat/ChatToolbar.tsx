@@ -196,7 +196,14 @@ export default function ChatToolbar({
           bigger target and left switching chats to a round trip through /chats.
           Two controls, the common one first. */}
       {activeThreadTitle && (
-        <>
+        // ONE CLUSTER, so the toolbar's own gap spaces the PAIR against its
+        // neighbours instead of spacing the pencil away from the name it acts
+        // on. The pencil was a `chat-tb__btn` sitting a full --space-2 from the
+        // title, which is the same gap used between unrelated actions at the far
+        // end of the bar, so it read as one more button that happened to land
+        // there. Grouping is what fixes that; a negative margin would too, and
+        // the note on .chat-tb__title records why that was the wrong tool.
+        <span className="chat-tb__namegroup">
           <RecentChatsMenu
             title={activeThreadTitle}
             activeId={activeId}
@@ -204,14 +211,14 @@ export default function ChatToolbar({
             onSeeAll={() => onNavigate("/chats")}
           />
           <button
-            className="chat-tb__btn chat-tb__rename"
+            className="chat-tb__rename"
             onClick={onEditTitle}
             title="Rename chat"
             aria-label="Rename chat"
           >
-            <Pencil size={14} aria-hidden />
+            <Pencil size={12} aria-hidden />
           </button>
-        </>
+        </span>
       )}
 
       {/* Beside the chat's name, because it is the same kind of fact: which

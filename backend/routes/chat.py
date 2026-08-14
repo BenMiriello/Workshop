@@ -707,6 +707,15 @@ async def fork_thread(thread_id: str, body: ForkThread):
     # earlier history again, with no summary of a line that no longer exists.
     # Without the detach the CLI would have kept the compacted session regardless
     # and none of that would have been visible.
+    # THE CACHED CUT IS RE-DERIVED, because it is the one piece of cut state that
+    # is not branch-aware. `_fold` reads the log through the branch filter, but
+    # `cut_state` answers the sync endpoint from `meta.cut_through` alone (that is
+    # deliberate: it runs on every poll from every open tab and must not read the
+    # log). Moving to a line whose boundary is somewhere else leaves that cache
+    # describing a cut this line does not have, so the divider and the prompt
+    # would be answering about different conversations. Re-resolving costs one
+    # log read here, at an action the operator took, instead of one per poll.
+    chat_store.resolve_cut(thread_id)
     t = chat_store.get_thread(thread_id)
     if t is not None:
         _detach_live_session(
@@ -731,7 +740,10 @@ async def switch_branch(thread_id: str, branch_id: str):
         raise HTTPException(503, str(e))
     # Same reason as forking: switching lines changes which conversation the
     # transcript describes, and a resumed session would carry the old one's
-    # history into the next turn regardless. See fork_thread.
+    # history into the next turn regardless. See fork_thread. Switching BACK to a
+    # line that was compacted is what makes re-resolving load-bearing rather than
+    # tidy: that line's boundary is real again, so its cut has to come back.
+    chat_store.resolve_cut(thread_id)
     t = chat_store.get_thread(thread_id)
     if t is not None:
         _detach_live_session(
