@@ -115,6 +115,92 @@ class TestTheEventsEndpoint:
         assert e.value.status_code == 404
 
 
+class TestTailAndBeforePaging:
+    """Phase 3a: `tail`/`before` page the newest end of the transcript, the
+    complement of the `after` cursor. No database is configured in this test
+    environment (`chat_branches.branch_state_sync` degrades to `hidden=None`
+    without one), so these pin the route's PARAM PLUMBING and RESPONSE SHAPE --
+    additive keys, mutual exclusion with a real cursor, and page contiguity --
+    against a small in-process thread. The branch-membership filter itself
+    (`keep_visible` against a real hidden set) and the archive fallback are
+    proven separately against real data and a synthetic large/branched thread;
+    see the phase 3a handoff for those numbers, not expressible here without
+    WORKSHOP_DATABASE_ADMIN_URL."""
+
+    def _seed(self, tid: str, n: int) -> None:
+        for i in range(n):
+            chat_store.append_message(tid, "user", f"msg{i}")
+
+    def test_after_zero_with_no_tail_is_unchanged(self, thread):
+        """The additive requirement: `after=0`/no `tail` must look exactly as it
+        did before this phase, plus the two new keys with harmless defaults."""
+        import routes.chat as rc
+        tid = thread["id"]
+        self._seed(tid, 5)
+        got = asyncio.run(rc.thread_events(tid, after=0))
+        assert [e["seq"] for e in got["events"]] == [1, 2, 3, 4, 5]
+        assert got["has_more"] is False
+        assert got["first_seq"] == 1
+
+    def test_tail_returns_the_newest_n_not_the_oldest(self, thread):
+        """The gap this phase closes: `limit` alone counts from the oldest.
+        `tail` must count from the newest end instead."""
+        import routes.chat as rc
+        tid = thread["id"]
+        self._seed(tid, 30)
+        got = asyncio.run(rc.thread_events(tid, after=0, tail=5))
+        assert [e["seq"] for e in got["events"]] == [26, 27, 28, 29, 30]
+        assert got["has_more"] is True
+        assert got["first_seq"] == 26
+
+    def test_tail_then_before_composes_without_gap_or_duplicate(self, thread):
+        import routes.chat as rc
+        tid = thread["id"]
+        self._seed(tid, 30)
+        page1 = asyncio.run(rc.thread_events(tid, after=0, tail=10))
+        assert [e["seq"] for e in page1["events"]] == list(range(21, 31))
+
+        page2 = asyncio.run(
+            rc.thread_events(tid, after=0, tail=10, before=page1["first_seq"]))
+        assert [e["seq"] for e in page2["events"]] == list(range(11, 21))
+        assert page2["has_more"] is True
+
+        page3 = asyncio.run(
+            rc.thread_events(tid, after=0, tail=10, before=page2["first_seq"]))
+        assert [e["seq"] for e in page3["events"]] == list(range(1, 11))
+        assert page3["has_more"] is False
+        assert page3["first_seq"] == 1
+
+        combined = page3["events"] + page2["events"] + page1["events"]
+        assert [e["seq"] for e in combined] == list(range(1, 31))
+
+    def test_a_real_cursor_wins_over_tail(self, thread):
+        """`tail`/`before` are ignored the moment `after` is a real cursor: the
+        incremental-sync path a client is mid-poll on must never be intercepted
+        by a tail read instead."""
+        import routes.chat as rc
+        tid = thread["id"]
+        self._seed(tid, 10)
+        got = asyncio.run(rc.thread_events(tid, after=7, tail=2))
+        assert [e["seq"] for e in got["events"]] == [8, 9, 10]
+
+    def test_before_without_tail_uses_the_default_page_size(self, thread):
+        import routes.chat as rc
+        tid = thread["id"]
+        self._seed(tid, 80)
+        got = asyncio.run(rc.thread_events(tid, after=0, before=61))
+        assert len(got["events"]) == rc._BACK_PAGE_DEFAULT
+        assert [e["seq"] for e in got["events"]] == list(range(11, 61))
+
+    def test_tail_larger_than_the_transcript_returns_everything(self, thread):
+        import routes.chat as rc
+        tid = thread["id"]
+        self._seed(tid, 3)
+        got = asyncio.run(rc.thread_events(tid, after=0, tail=50))
+        assert [e["seq"] for e in got["events"]] == [1, 2, 3]
+        assert got["has_more"] is False
+
+
 class TestSSEResume:
     """The offset-addressed stream is kept as-is (it was already right). This
     pins the property the rest of the rebuild leans on: a reconnect carrying

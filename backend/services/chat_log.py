@@ -485,6 +485,27 @@ def _warn_bad(thread_id: str, bad: int) -> None:
         log.warning("thread %s: skipped %d unreadable log line(s)", thread_id, bad)
 
 
+def read_live_events(thread_id: str, before: int | None = None) -> list[dict]:
+    """Every event in the LIVE (hot) file only, in seq order, optionally only
+    those with `seq < before`. NEVER opens the archive.
+
+    The cheap half of `read_events`, for a caller that wants the newest end of
+    the log and can fall back to the full read on the rare thread where the live
+    file alone does not hold enough. Rotation (`ROTATE_BYTES`/`KEEP_MIN_EVENTS`)
+    guarantees the live file always holds at least the most recent
+    `KEEP_MIN_EVENTS` events, so a `tail` request for a normal page size resolves
+    here alone on almost every thread; only a heavily branched thread, where most
+    of the live window is hidden, has to reach further back. See
+    `routes.chat._tail_page`, the one caller.
+    """
+    live_rows, bad = _read_rows(log_path(thread_id))
+    live = [ev for _, ev in live_rows if ev is not None]
+    if before is not None:
+        live = [e for e in live if e["seq"] < before]
+    _warn_bad(thread_id, bad)
+    return live
+
+
 def read_thread(thread_id: str, tail: int | None = None) -> dict | None:
     """meta plus a bounded tail of events — what an initial render needs.
 

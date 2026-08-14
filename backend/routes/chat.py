@@ -502,8 +502,15 @@ async def stream_thread(thread_id: str, request: Request, since: int = 0):
     })
 
 
+# The page size a `before` request uses when the caller does not also say
+# `tail`. Not load-bearing on correctness -- any positive size behaves the same
+# way, this just picks a reasonable one so `before` alone is a valid call.
+_BACK_PAGE_DEFAULT = 50
+
+
 @router.get("/threads/{thread_id}/events")
-async def thread_events(thread_id: str, after: int = 0, limit: int | None = None):
+async def thread_events(thread_id: str, after: int = 0, limit: int | None = None,
+                        tail: int | None = None, before: int | None = None):
     """The thread's event log from a cursor. THE sync endpoint.
 
     Everything needed to render a transcript is here: `events` in seq order,
@@ -537,16 +544,56 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
     That leaves `read_events`, and a poll with nothing new to fetch does not need
     it either: `after >= last_seq` means the caller is already current. `last_seq`
     is reconciled against the log's real tail inside `read_meta`, so this is an
-    exact test, not an optimistic one."""
+    exact test, not an optimistic one.
+
+    `tail` and `before` are the other end: paging BACKWARD from the newest
+    events, for an initial render that wants to show the bottom of a long
+    conversation without pulling everything above it.
+
+      tail=N             the last N events of the CURRENT branch path.
+      tail=N&before=S     the N events of that path immediately before seq S,
+                          for walking further back a page at a time. `before`
+                          without `tail` uses `_BACK_PAGE_DEFAULT`.
+
+    Composable without gaps or duplicates: call `tail=20`, note the page's
+    `first_seq`, then call `before=<that first_seq>&tail=20` for the next page
+    back, repeating. Each page is exactly the visible events strictly below the
+    previous page's floor, because both are windows into the same seq-ordered
+    log filtered by the same branch snapshot.
+
+    `tail`/`before` are IGNORED once `after` is a real cursor (`after > 0`): the
+    incremental-sync path always wins, because that is the request a client still
+    mid-poll is making and a tail read must never intercept it instead. This
+    endpoint answers ONE question per call.
+
+    THE SOURCE IS STILL THE FILE for `tail`/`before` too, not the branch tree in
+    Postgres, for the same reason it is for `after`. ADR 0020 says outright that
+    this is unfinished: "the transcript read still comes from the file; only
+    branch membership comes from the database... the tree is authoritative for
+    STRUCTURE and the log for CONTENT, which is a seam that must be closed rather
+    than left." Checked against a live thread before writing this (65341b40...):
+    the Postgres mirror has 98 rows against the log's 175 events, because it
+    never mirrors `run` or `title` kind events at all, and its `seq` is a
+    SEPARATE counter from the log's -- Postgres seq 1 is the log's seq 2 for the
+    same message. A page built from Postgres could not be spliced against an
+    `after` cursor from this same endpoint without silently dropping events and
+    misaligning the cursor space it shares with every other client on the
+    thread. So the WINDOW is new; the source and the branch filter are not:
+    `keep_visible` against `chat_branches.branch_state_sync`'s hidden set, the
+    same recursive CTE path walk that answers `after=0` today.
+
+    The live (hot) half of the log (`read_live_events`) is read first and is
+    almost always enough, because rotation keeps at least `KEEP_MIN_EVENTS`
+    events live; `_tail_page` only reaches into the cold archive when the
+    visible events in that window are sparser than the page (a heavily branched
+    thread). That is the one case this does not avoid an O(archive) read for --
+    correct, just not cheap, and rare rather than the common case this exists to
+    fix."""
     meta = chat_log.read_meta(thread_id)
     if meta is None:
         raise HTTPException(404, "thread not found")
     last_seq = int(meta.get("last_seq") or 0)
     cursor = max(0, after)
-    events = (
-        chat_log.read_events(thread_id, after=cursor, limit=limit)
-        if cursor < last_seq else []
-    )
     # WHICH BRANCH THIS IS, on every poll, and it has to be here rather than on
     # its own endpoint. This is a CURSOR sync: the client merges what it is given
     # into what it already holds. Filtering alone could never make it forget the
@@ -556,13 +603,33 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
     # below: one endpoint answers "what is in this chat", and things that must
     # agree are not allowed to arrive separately.
     branch = chat_branches.branch_state_sync(thread_id)
-    events = chat_branches.keep_visible(events, branch["hidden"])
+    hidden = branch["hidden"]
+    has_more = False
+    first_seq = None
+    if cursor <= 0 and (tail is not None or before is not None):
+        page_size = tail if tail is not None else _BACK_PAGE_DEFAULT
+        events, has_more, first_seq = _tail_page(thread_id, hidden, page_size, before)
+    else:
+        events = (
+            chat_log.read_events(thread_id, after=cursor, limit=limit)
+            if cursor < last_seq else []
+        )
+        events = chat_branches.keep_visible(events, hidden)
+        if events:
+            first_seq = events[0]["seq"]
     return {
         "events": events,
         "last_seq": last_seq,
         "branch": branch["branch"],
         "branch_count": branch["count"],
         "active_run": _active_run_payload(thread_id, meta),
+        # ADDITIVE. `after=0` with no `tail` always has `has_more=False` and
+        # `first_seq` set from whatever `events` came back (or None if empty):
+        # that call already returns the whole log, so nothing is being withheld.
+        # A `tail`/`before` page is the only case either one carries information
+        # a client did not already have.
+        "has_more": has_more,
+        "first_seq": first_seq,
         # THE CUT THE SERVER IS ACTUALLY APPLYING, so the divider in the
         # transcript describes the prompt rather than the log. Derived from the
         # same resolution the prompt uses (chat_store._fold), which is what makes
@@ -576,6 +643,52 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
         # queue for free.
         **chat_queue.state(thread_id),
     }
+
+
+def _tail_page(thread_id: str, hidden: set[str] | None, n: int,
+               before: int | None) -> tuple[list[dict], bool, int | None]:
+    """The last `n` VISIBLE events of the current branch path, optionally ending
+    strictly before seq `before`. Returns `(events, has_more, first_seq)`.
+
+    Reads only the live file first (`read_live_events`); falls back to the full
+    log (`read_events`, the existing after=0 path) only when that window does
+    not hold `n` visible events after the branch filter -- see the route
+    docstring for why the archive is the one case this stays O(log size) for.
+
+    `has_more` is exact, never a guess, computed from what was actually counted:
+
+      * whenever `visible` (this call's candidate pool, before slicing to `n`)
+        holds more than the page it produced, there is provably more -- those
+        events were seen and set aside, not merely suspected;
+      * otherwise it depends on whether `visible` is EXHAUSTIVE for the range
+        (whether it already accounts for every event below `before`, live and
+        archived). It is exhaustive whenever the fallback ran (the archive read
+        that produced it covers the whole path) or there never was an archive to
+        miss. A live-only pool that under-filled `n` for a branchy thread with NO
+        archive is exhaustive for the same reason. Only a live-only pool that
+        already met `n` without checking the archive is not exhaustive: there
+        might be more back there, and finding out for certain costs exactly the
+        archive read this function exists to avoid on the common thread, so it
+        answers `True` rather than pay for the certainty.
+
+    A page whose count did not need trimming and whose pool is not proven
+    exhaustive is the ONLY case that can over-report `has_more`; it never
+    under-reports, so a client cannot stop paging with events still unseen.
+    """
+    n = max(0, int(n))
+    live = chat_log.read_live_events(thread_id, before=before)
+    visible = chat_branches.keep_visible(live, hidden)
+    has_archive = chat_log.archive_path(thread_id).exists()
+    exhaustive = not has_archive
+    if len(visible) < n and has_archive:
+        everything = chat_log.read_events(thread_id, after=0)
+        if before is not None:
+            everything = [e for e in everything if e["seq"] < before]
+        visible = chat_branches.keep_visible(everything, hidden)
+        exhaustive = True
+    page = visible[-n:] if n and len(visible) > n else (visible if n else [])
+    has_more = len(visible) > len(page) or not exhaustive
+    return page, has_more, (page[0]["seq"] if page else None)
 
 
 def _cut_payload(thread_id: str) -> dict:
