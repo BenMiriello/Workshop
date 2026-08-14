@@ -1203,6 +1203,18 @@ def _persist(root: Path, tasks: list[dict]) -> None:
     except Exception:
         # Never let bookkeeping fail a write that already landed on disk.
         pass
+    # Mirror into the relational store (ADR 0019 P3). Here, at the single write
+    # path, for the same reason the version bump is here: there is no way to add
+    # a caller that silently skips it. `.tasks.json` above is still the
+    # authoritative write and nothing reads the mirror yet -- `db/shadow.py`
+    # compares the two so the relational side can be proven before it is
+    # switched over. `mirror` swallows its own failures and returns counts; it
+    # cannot raise into a write that has already landed on disk.
+    try:
+        from db import ticket_sync
+        ticket_sync.mirror(root, tasks)
+    except Exception:
+        pass
 
 
 # ---- Reconcile (heal out-of-band TODO.md edits) ----------------------------

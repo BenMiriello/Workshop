@@ -259,26 +259,39 @@ async def name_thread(thread_id: str) -> None:
 # `_name_attempts`, each wrote N+1 (undercounting the budget), and each spent a
 # model call asking a question the first answer had already settled.
 _NAMING_TASKS: dict = {}
+# Threads that asked again while a naming was in flight. The in-flight task
+# read the thread BEFORE the new message landed, so a refused schedule is not
+# a duplicate, it is new information; one re-run when the task finishes covers
+# it without reopening the task-per-message fan-out.
+_REARM: set = set()
 
 
 def schedule(thread_id: str) -> None:
     """Fire-and-forget auto-naming. Safe to call from an async handler (the
     common case) or a plain function; never delays the caller. One task per
-    thread: while one is in flight, another schedule is a no-op, which is
-    correct because the in-flight task reads the thread fresh."""
+    thread; a schedule that arrives while one is in flight re-arms it to run
+    once more on completion."""
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = None
     if loop is not None:
         if thread_id in _NAMING_TASKS:
+            _REARM.add(thread_id)
             return
         # HELD, so the loop cannot garbage-collect a task nothing else
         # references. asyncio keeps only a weak reference: an unheld task can be
         # collected mid-flight, and a thread simply never gets its name, with no
-        # error anywhere. Same pattern as routes/chat.py's _DISTILL_TASKS.
+        # error anywhere (the bug 93768fd fixed).
         task = loop.create_task(name_thread(thread_id))
         _NAMING_TASKS[thread_id] = task
-        task.add_done_callback(lambda _t: _NAMING_TASKS.pop(thread_id, None))
+        task.add_done_callback(lambda _t: _naming_done(thread_id))
     else:  # pragma: no cover — no running loop (rare): just do it inline.
         generate_title(thread_id)
+
+
+def _naming_done(thread_id: str) -> None:
+    _NAMING_TASKS.pop(thread_id, None)
+    if thread_id in _REARM:
+        _REARM.discard(thread_id)
+        schedule(thread_id)

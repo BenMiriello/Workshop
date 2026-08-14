@@ -77,8 +77,12 @@ export default function ContextMeter({
       .catch(() => {
         // The estimate still renders — a meter that disappears on a failed read
         // says even less than one that lies. It renders MARKED, so the number
-        // stops claiming to be the server's.
-        if (!cancelled) setReadFailed(true);
+        // stops claiming to be the server's. The held live reading retires on
+        // this path too: a post-turn fetch that FAILED must not leave a dead
+        // turn's number on screen labeled as a server fact.
+        if (cancelled) return;
+        setReadFailed(true);
+        if (!streaming) setLive(null);
       });
     return () => { cancelled = true; };
   }, [activeId, nonce, streaming, streaming ? -1 : messages.length]);

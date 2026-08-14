@@ -260,6 +260,13 @@ export function useSendPipeline({
       const r = await chatApi.injectIntoThread(threadId, text, clientId, {
         sentAt, attachments, draftKey: draftKeyRef.current,
       });
+      // ANSWERED FOR A THREAD NO LONGER ON SCREEN. The store now holds another
+      // conversation; dispatching into it would mark the wrong thread's sends,
+      // and the !delivered fallback below would start a turn on the WRONG chat
+      // with this chat's message. The server outcome stands either way: the
+      // message is recorded or queued over there, and that thread's own outbox
+      // and sync show it when it is next opened.
+      if (activeIdRef.current !== threadId) return;
       // THE SERVER TOOK IT AND IS HOLDING IT. The run in flight reads nothing (a
       // slash command, a voice turn), so it goes out as the next turn — sent by
       // the server, from the thread's own queue, whether or not this browser is
@@ -287,10 +294,13 @@ export function useSendPipeline({
     } catch (e) {
       // The request never landed, so the server has no copy and this browser is
       // the only place the text exists. It stays in `pending`, marked, which is
-      // both the bubble the operator sees and the durable outbox entry.
+      // both the bubble the operator sees and the durable outbox entry. If the
+      // operator has switched threads, the entry lives in THAT thread's outbox
+      // and surfaces when it is next opened; the current store is not touched.
+      if (activeIdRef.current !== threadId) return;
       dispatch({ type: "sendFailed", clientId, error: sendFailureText(e) });
     }
-  }, [dispatch, sync, sendTurn]);
+  }, [dispatch, sync, sendTurn, activeIdRef]);
   injectIntoRunRef.current = injectIntoRun;
 
   const dispatchSend = useCallback((

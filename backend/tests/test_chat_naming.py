@@ -473,10 +473,35 @@ class TestOneNamingTaskPerThread:
         async def main():
             for _ in range(3):
                 chat_naming.schedule(tid)
-            await asyncio.sleep(0.1)
-            # After the in-flight task finishes, a NEW schedule may run again.
+            # One task for the burst, plus ONE re-run for what landed during
+            # its flight: never a task per message.
+            await asyncio.sleep(0.2)
+            # After everything settles, a NEW schedule may run again.
             chat_naming.schedule(tid)
             await asyncio.sleep(0.1)
+
+        asyncio.run(main())
+        assert started == [tid, tid, tid]
+
+    def test_a_schedule_refused_in_flight_rearms_one_rerun(self, store, monkeypatch):
+        """The in-flight task read the thread BEFORE the refused schedule's
+        message landed, so the refusal is new information, not a duplicate.
+        One re-run on completion; a named thread makes it a cheap no-op."""
+        import asyncio
+        tid = chat_store.create_thread("general")["id"]
+        started = []
+
+        async def slow_name(thread_id):
+            started.append(thread_id)
+            await asyncio.sleep(0.05)
+
+        monkeypatch.setattr(chat_naming, "name_thread", slow_name)
+
+        async def main():
+            chat_naming.schedule(tid)
+            await asyncio.sleep(0.01)
+            chat_naming.schedule(tid)   # refused: in flight. Re-arms.
+            await asyncio.sleep(0.2)
 
         asyncio.run(main())
         assert started == [tid, tid]

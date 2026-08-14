@@ -122,24 +122,46 @@ Landed in this pass (each with tests):
 
 ## 5. The remaining plan, in order
 
-Backend, from the write-path inventory's numbered race windows (details and
-file:line in the inventory):
+Second pass (2026-08-14, same day, after a fresh-context adversarial review of
+the first): the top of this list is now DONE.
 
-- **R1 claim-to-spawn delivery hole.** A message filed against a claimed but
-  not-yet-spawned run is in the log, not in the prompt, not injected, not
-  queued. Fix: on the "claimed but not spawned" branch, enqueue with an
-  `already_recorded` marker the drain understands, or assemble the prompt from
-  a fresh read inside the claim.
-- **R3 finalize window jumps the queue.** Between `_requeue_unread` and the
-  commit, a new send takes the inject branch and overtakes requeued messages.
-  Fix: the queue-first check should also fire when the run `is_ending`.
-- **R4 `turn_marks` resurrected after /clear.** Same class as the meter; fence
-  it the same way (I6).
-- **R2 `mark_run_started` unconditional write outside the lock; R7
-  `save_thread` deletes fields from a stale snapshot; R8 `_promotion_patch`
-  rides unrelated writes; R9 branch mirror unordered; R10 startup reconcile
-  vs adoption.** Each small; fix in that order.
-- **Voice turns** must check `thread_ops.pending` when they start runs.
+- **R1 closed.** The prompt's snapshot is re-read after the claim, and its
+  floor is stamped on the Turn (`prompt_through_seq`) in the same synchronous
+  stretch, so "did the prompt see this message" is a seq comparison. A message
+  past the floor that cannot be injected queues with `recorded=True`, which
+  the drain's already-delivered check now understands (a recorded entry is in
+  the log by definition and still owed an answer). History strips stored
+  copies of the ask (`_without_trailing_copy`) so nothing is read twice.
+- **R3 closed, plus its operation-shaped twin.** A send landing while a run is
+  ending joins the queue when messages are already waiting OR an operation is
+  pending, instead of taking the thread over and overtaking them.
+- **R2 closed.** `mark_run_started` writes nothing for a run that no longer
+  owns the thread.
+- **R7 closed.** `save_thread` never deletes `_PRESERVED_ON_SAVE` keys (the
+  session, summary, meter, bookkeeping) on a round-trip; deliberate deletion
+  of those goes through their own clear_* calls.
+- **R4 closed structurally**, no code: a mid-turn /clear now lands after the
+  turn ends (ADR-0021), so the wipe always wins over the turn's marks write.
+- **Review findings fixed:** landing tasks are held (`thread_ops._LANDINGS`;
+  an unheld task could be collected and hold the door forever), a refused
+  operation answers `busy` instead of falsely promising a deferred landing,
+  the meter's live hold retires on a FAILED post-turn fetch too, naming
+  re-arms one re-run when a schedule was refused in flight, and
+  `injectIntoRun` drops a response for a thread no longer on screen instead
+  of dispatching into the wrong store.
+
+Still open, in order:
+
+- **R8 `_promotion_patch` rides unrelated writes; R9 branch mirror unordered;
+  R10 startup reconcile vs adoption.** Each small.
+- **Voice turns during a pending operation** proceed rather than queue
+  (deliberate: a spoken turn cannot wait 30s), at the cost of one uncompacted
+  voice turn; the landing still serializes behind the voice run via the claim,
+  found by `wait_quiet`'s 60s re-check since a voice shell Turn's `finished`
+  never fires.
+- **A deferred landing that fails is log-only.** The UI said "then it lands";
+  a failed landing (rare: the writes are local) leaves the queue to drain on
+  the pre-fold prompt with no visible signal.
 
 Frontend, from the state-map seams:
 

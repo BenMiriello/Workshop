@@ -44,6 +44,20 @@ log = logging.getLogger(__name__)
 # thread_id -> operation name ("compact" | "clear"). One at most.
 _PENDING: dict[str, str] = {}
 
+# Landing tasks, HELD. asyncio keeps only a weak reference to a task, and a
+# collected landing would leave _PENDING set forever: every send queued, the
+# drain refusing, until restart. Same bug class chat_naming holds its tasks for.
+_LANDINGS: set = set()
+
+
+def land_in_background(thread_id: str, coro) -> None:
+    """Run an operation's landing as a held background task. The coroutine owns
+    the registration: it must call end(thread_id) in its finally."""
+    task = asyncio.get_running_loop().create_task(
+        coro, name=f"op-land:{thread_id}")
+    _LANDINGS.add(task)
+    task.add_done_callback(_LANDINGS.discard)
+
 
 def pending(thread_id: str) -> str | None:
     """The operation this thread is inside, or None."""
@@ -75,10 +89,13 @@ def end(thread_id: str) -> None:
 async def wait_quiet(thread_id: str) -> None:
     """Return when no run is live on this thread.
 
-    Prefers the turn's own completion event; falls back to polling when the run
-    is not driven by this process (adopted-but-unregistered windows around a
-    restart). The 60s re-check on the event is not a timeout on the turn, it is
-    a guard against waiting on a Turn object that reconcile has replaced.
+    Waits on the turn's own completion event, re-checking every 60s. The
+    re-check is not a timeout on the turn: it is what covers a run whose
+    `finished` event never fires, which is real, not defensive. A VOICE turn
+    claims the thread through the same registry but is driven by voice_worker,
+    which releases the claim without touching the shell Turn's event; the
+    re-check sees `active_run_id` cleared and returns. Worst case a landing
+    lags a voice turn's end by one re-check interval.
     """
     from services import build_streaming, chat_store
 
@@ -87,10 +104,12 @@ async def wait_quiet(thread_id: str) -> None:
         if not rid or not build_streaming.run_is_live(rid):
             return
         turn = build_streaming.get_turn(rid)
-        if turn is not None:
-            try:
-                await asyncio.wait_for(turn.finished.wait(), timeout=60.0)
-            except asyncio.TimeoutError:
-                continue
-        else:
-            await asyncio.sleep(2.0)
+        if turn is None:
+            # run_is_live and get_turn read the same registry in the same
+            # tick; only a prune racing between the two calls lands here.
+            await asyncio.sleep(0.5)
+            continue
+        try:
+            await asyncio.wait_for(turn.finished.wait(), timeout=60.0)
+        except asyncio.TimeoutError:
+            continue

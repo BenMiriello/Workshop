@@ -210,6 +210,14 @@ def _now_iso() -> str:
 # Meta fields that belong to the log machinery, not to the thread document. They
 # never appear in a thread dict a caller sees, so a caller can never write them
 # back, and `save_thread` never mistakes their absence for a deletion.
+# Keys `save_thread` never deletes on a round-trip: state OTHER writers own,
+# which a caller holding a pre-award snapshot would silently strip (the
+# latent race window R7 in docs/platform-redesign/chat-concurrency-model).
+_PRESERVED_ON_SAVE = ("claude_session", "agent_sessions", "summary",
+                      "context_tokens", "turn_marks", "card_states",
+                      "_seed_title", "_name_attempts", "cut_through",
+                      "cut_mode", "voice_session", "live_message")
+
 _INTERNAL_META = ("last_seq", "boundary_seq", "active_run_id", "active_run_seq",
                   "live_message", "cut_through")
 
@@ -1030,6 +1038,13 @@ def save_thread(thread: dict) -> dict:
     for k in meta:
         if k in _INTERNAL_META or k in ("id", "created_at"):
             continue
+        if k in _PRESERVED_ON_SAVE:
+            # A key absent from the caller's dict is USUALLY a key added to the
+            # thread after the caller's read, not a deletion the caller means:
+            # a document round-trip must not be able to strip the session, the
+            # summary, or the bookkeeping as a side effect of saving something
+            # else. Deleting one of these goes through its own clear_* call.
+            continue
         if k not in thread:
             fields[k] = None
     fields["updated_at"] = _now_iso()
@@ -1164,7 +1179,16 @@ def mark_run_started(thread_id: str, run_id: str) -> None:
 
     A run whose marker never lands degrades softly: `active_run` falls back to
     scanning for it, finds none, and reports `started_seq: None`, which no
-    reader uses for anything."""
+    reader uses for anything.
+
+    FENCED ON STILL OWNING THE THREAD (I6). This runs after the claim lock has
+    been released, so a stop-and-finalize of this very run can interleave
+    before it: the finalize clears `active_run_seq`, and an unconditional write
+    here would set it back, pointing at a run `active_run_id` no longer names,
+    which the rotation floor and `active_run` then trust."""
+    m = chat_log.read_meta(thread_id) or {}
+    if m.get("active_run_id") != run_id:
+        return
     started = chat_log.append_sync(
         thread_id, {"kind": "run", "run_id": run_id, "state": "started"})
     chat_log.patch_meta_sync(thread_id, active_run_seq=started.get("seq"))

@@ -1491,7 +1491,10 @@ async def compact_thread(thread_id: str):
     # the ~30s summarize started a turn carrying the whole 467k transcript, and
     # the boundary then landed mid-turn. See services/thread_ops.
     if not thread_ops.begin(thread_id, "compact"):
-        return {"folded": 0, "session_reset": False, "deferred": True,
+        # REFUSED is not DEFERRED: nothing was computed and nothing will land
+        # from THIS request. Saying "deferred" here made the client promise a
+        # landing that was never going to happen.
+        return {"folded": 0, "session_reset": False, "busy": True,
                 "error": "", "summary_chars": 0}
     handed_off = False
     try:
@@ -1509,11 +1512,12 @@ async def compact_thread(thread_id: str):
             # a boundary mid-turn is how a reply ends up on the far side of the
             # divider from the messages it answers. The summary is computed
             # from a count-from-the-front, so it names the same messages
-            # however long the wait runs.
+            # however long the wait runs. The task is HELD (thread_ops), and
+            # handed_off flips only once it exists: a create_task that raised
+            # would otherwise skip end() and hold the door forever.
+            thread_ops.land_in_background(
+                thread_id, _land_fold_when_quiet(thread_id, summary, folded_through))
             handed_off = True
-            asyncio.create_task(
-                _land_fold_when_quiet(thread_id, summary, folded_through),
-                name=f"compact-land:{thread_id}")
             return {"folded": fold_n, "session_reset": False, "deferred": True,
                     "error": "", "summary_chars": len(summary)}
         session_reset = _land_fold(thread_id, summary, folded_through)
@@ -1644,15 +1648,15 @@ async def clear_thread_context(thread_id: str):
     if t is None:
         raise HTTPException(404, "thread not found")
     if not thread_ops.begin(thread_id, "clear"):
+        # Refused, not deferred: see compact_thread.
         return {"cleared": False, "cleared_through": 0,
-                "session_reset": False, "deferred": True}
+                "session_reset": False, "busy": True}
     handed_off = False
     try:
         rid = chat_store.active_run_id(thread_id)
         if rid and build_streaming.run_is_live(rid):
+            thread_ops.land_in_background(thread_id, _land_clear_when_quiet(thread_id))
             handed_off = True
-            asyncio.create_task(_land_clear_when_quiet(thread_id),
-                                name=f"clear-land:{thread_id}")
             return {"cleared": True, "cleared_through": 0,
                     "session_reset": False, "deferred": True}
         thread, cleared, session_reset = _land_clear(thread_id)
@@ -2725,6 +2729,21 @@ async def list_mentionable(thread_id: str):
     return {"scope": scope, "agents": _mentions.mentionable_agents(scope)}
 
 
+def _without_trailing_copy(t: dict, content: str) -> dict:
+    """A copy of the thread with the LAST user message matching `content`
+    removed. Used when the ask is already in the log (a refused delivery, a
+    recorded queue entry): prompt assembly treats history as everything BEFORE
+    the ask, so the stored copy has to come back out or the model reads the
+    message twice, once as history and once as the question."""
+    msgs = list(t.get("messages") or [])
+    for i in range(len(msgs) - 1, -1, -1):
+        if msgs[i].get("role") == "user" and (msgs[i].get("content") or "") == content:
+            out = dict(t)
+            out["messages"] = msgs[:i] + msgs[i + 1:]
+            return out
+    return t
+
+
 async def _run_for_message(thread_id: str, t: dict, content: str,
                            model: str | None, parts: list[TurnPart] | None,
                            *, take_over: str | None = None,
@@ -2774,10 +2793,41 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
         raise build_streaming.RunInFlight(joined)
 
     try:
+        # THE PROMPT'S SNAPSHOT AND ITS FLOOR, one synchronous stretch. The
+        # thread is re-read HERE, after the claim, so the prompt is assembled
+        # from everything filed up to this instant instead of from the caller's
+        # snapshot (taken before its own awaits; a message filed against this
+        # claimed run in that gap used to be in the log, absent from the
+        # prompt, undeliverable, and unqueued: silently never answered). The
+        # floor is then stamped on the Turn: on one event loop nothing can
+        # interleave between the read and the stamp, so "seq <= floor" is
+        # exactly "the prompt carries it", and _send routes anything newer to
+        # the queue when injection cannot take it.
+        fresh = chat_store.get_thread(thread_id)
+        if fresh is not None:
+            t = fresh
+        if already_recorded:
+            # The trigger is already in the log, so the fresh read includes it;
+            # history must exclude the ask or the model reads it twice.
+            t = _without_trailing_copy(t, content)
+        elif parts:
+            # A queued batch (or a retried send) can carry entries that are
+            # ALREADY in the log: a delivery that was refused mid-run
+            # (queue-entry recorded=True), or a resend of an accepted message.
+            # Their append below no-ops on client_id; their stored copies come
+            # out of history for the same reason as above.
+            for _p in parts:
+                if _p.client_id and chat_log.find_message_by_client_id(
+                        thread_id, _p.client_id):
+                    t = _without_trailing_copy(t, _p.text or "")
         if not already_recorded:
             _record_user_turn(thread_id, content, parts, client_id=client_id,
                               attachments=attachments)
         chat_store.mark_run_started(thread_id, run_id)
+        _turn_obj = build_streaming.get_turn(run_id)
+        if _turn_obj is not None:
+            _m = chat_log.read_meta(thread_id) or {}
+            _turn_obj.prompt_through_seq = int(_m.get("last_seq") or 0)
         # ---- @mention: this message is addressed to an AGENT, not the assistant.
         # The agent answers in the chat, attributed to it, and the ordinary
         # assistant stays out of it. Resolution is scope-bounded and opt-in
@@ -3046,19 +3096,55 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         return {"turn_id": run_id, "injected": False, "queued": True,
                 "at_segment": None, "queue": st}
     if run_id:
-        at_segment = _file_during_run(thread_id, run_id, content, client_id=client_id,
-                                      attachments=attachments)
+        at_segment, msg_seq = _file_during_run(thread_id, run_id, content,
+                                               client_id=client_id,
+                                               attachments=attachments)
         if build_streaming.inject(run_id, content, attachments,
                                   client_id=client_id, sent_at=sent_at):
             return {"turn_id": run_id, "injected": True, "at_segment": at_segment}
         if not build_streaming.run_is_ending(run_id):
-            # Claimed but not spawned yet: it is about to start and will read
-            # this message as history. Starting a rival for it is the one thing
-            # that must not happen here.
+            # Claimed but not spawned yet. Whether its prompt will carry this
+            # message is a COMPARISON, not a hope: the prompt's history floor is
+            # stamped in the same synchronous stretch that assembles it
+            # (_run_for_message), so a floor at or above this seq means the
+            # message is in the prompt, and an older floor means it provably is
+            # not. The unstamped case means the floor stretch has not run yet,
+            # and the fresh read it starts with will include this message.
+            _t_obj = build_streaming.get_turn(run_id)
+            _floor = _t_obj.prompt_through_seq if _t_obj is not None else None
+            if _floor is not None and msg_seq > _floor:
+                # In the log, not in the prompt, and the input channel is not
+                # up: nothing would ever deliver it. Queue it (marked recorded,
+                # so the drain does not mistake log-presence for answered) and
+                # it goes out when this run ends.
+                st = chat_queue.enqueue(
+                    thread_id, text=content, client_id=client_id or chat_log.new_ulid(),
+                    ts=_first_part_ts(parts) or sent_at, attachments=attachments,
+                    model=model_in, effort=effort_in, permission_mode=mode_in,
+                    recorded=True)
+                chat_drain.drain_soon(thread_id, reason="missed a spawning run's prompt")
+                return {"turn_id": run_id, "injected": False, "queued": True,
+                        "at_segment": at_segment, "queue": st}
             return {"turn_id": run_id, "injected": False, "at_segment": at_segment}
         # It has spawned and its input channel is gone: it is finishing and will
-        # never read this. The message is already in the log, so take the thread
-        # over and give it a run of its own without writing it twice.
+        # never read this. The message is already in the log. If messages are
+        # ALREADY WAITING (the finalize window requeues undelivered ones),
+        # taking the thread over now would answer this message before them and
+        # bake that order into the transcript; join the back of the queue
+        # instead. A PENDING OPERATION queues it for the same reason as the
+        # idle branch above: without this check, a send landing in the finalize
+        # window of the run a fold is waiting out started a fresh turn on the
+        # pre-fold prompt, which is the incident itself through a side door.
+        # Only an empty queue with no pending operation takes the thread over.
+        if chat_queue.read(thread_id) or thread_ops.pending(thread_id):
+            st = chat_queue.enqueue(
+                thread_id, text=content, client_id=client_id or chat_log.new_ulid(),
+                ts=_first_part_ts(parts) or sent_at, attachments=attachments,
+                model=model_in, effort=effort_in, permission_mode=mode_in,
+                recorded=True)
+            chat_drain.drain_soon(thread_id, reason="joined behind requeued messages")
+            return {"turn_id": run_id, "injected": False, "queued": True,
+                    "at_segment": at_segment, "queue": st}
         log.info("thread %s: run %s is finishing; starting a fresh run for this message",
                  thread_id, run_id)
         take_over, already_recorded = run_id, True
@@ -3075,7 +3161,7 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         # Another POST won the same event-loop tick. Join its run rather than
         # starting a rival, which is the whole reason the claim is atomic.
         at_segment = (_file_during_run(thread_id, e.run_id, content, client_id=client_id,
-                                       attachments=attachments)
+                                       attachments=attachments)[0]
                       if not already_recorded else _at_segment(e.run_id, thread_id))
         build_streaming.inject(e.run_id, content, attachments,
                                client_id=client_id, sent_at=sent_at)
@@ -3432,8 +3518,9 @@ def _file_during_run(thread_id: str, run_id: str, content: str,
     re-assembled a history missing it.
 
     Persist first and the transcript can only ever be AHEAD of what the model
-    saw, which is the recoverable direction. Returns `at_segment`, which the
-    caller also reports to the client."""
+    saw, which is the recoverable direction. Returns `(at_segment, seq)`:
+    `at_segment` is reported to the client, `seq` is what the caller compares
+    against the run's prompt floor when delivery fails."""
     at_segment, at_unit, cut_id = _cut_point(run_id, thread_id)
     meta = {"injected": True, "during_run": run_id,
             "at_segment": at_segment, "at_unit": at_unit}
@@ -3441,10 +3528,10 @@ def _file_during_run(thread_id: str, run_id: str, content: str,
         meta["cut_id"] = cut_id
     if attachments:
         meta["attachments"] = attachments
-    chat_store.append_message_during_turn(
+    msg = chat_store.append_message_during_turn(
         thread_id, "user", content, meta=meta, client_id=client_id,
     )
-    return at_segment
+    return at_segment, int(msg.get("seq") or 0)
 
 
 @router.post("/threads/{thread_id}/inject")

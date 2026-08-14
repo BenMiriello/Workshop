@@ -61,48 +61,11 @@ from db.models import (  # noqa: E402
 ROOT = Path(os.environ.get("WORKSHOP_ROOT", Path(__file__).resolve().parents[2]))
 LEGACY = "workshop-json"
 
-# The eight statuses the JSON store hard-coded, as (name, category, position).
-# Category is the fixed axis; the name is what a human reads and what a tenant
-# may rename. `parked` keeps its dead-letter meaning here because that is what
-# the code did, whatever the entity model said.
-STATES = [
-    ("draft",     "Draft",       "backlog",   1.0),
-    ("todo",      "Todo",        "unstarted", 2.0),
-    ("doing",     "In Progress", "started",   3.0),
-    ("in_review", "In Review",   "started",   4.0),
-    ("blocked",   "Blocked",     "started",   5.0),
-    ("parked",    "Parked",      "backlog",   6.0),
-    ("done",      "Done",        "completed", 7.0),
-    ("cancelled", "Cancelled",   "canceled",  8.0),
-]
-
-# `execution` becomes a type, because "what kind of work is this" is the concept
-# every tracker already has. `agent_executable` is the one behaviour the old
-# field actually drove.
-TYPES = [
-    ("code",      "Code",      True,  "A change a worker can make and a gate can check."),
-    ("judgement", "Judgement", False, "Needs a decision, not a diff."),
-    ("external",  "External",  False, "Happens outside this system (host admin, a vendor)."),
-]
-
-# The JSON store held a signed integer. Bands chosen from the live distribution
-# (38 distinct values across 0..140), matching migration 769d64dbfa74 exactly so
-# a fresh backfill and a migrated database agree.
-def _priority(value) -> str:
-    try:
-        n = int(value or 0)
-    except (TypeError, ValueError):
-        return "none"
-    if n >= 100:
-        return "urgent"
-    if n >= 80:
-        return "high"
-    if n >= 40:
-        return "medium"
-    if n >= 1:
-        return "low"
-    return "none"
-
+# The status, type and priority vocabulary moved to `db/legacy_map.py` so the
+# mirror (`db/ticket_sync.py`) and the read layer (`db/repo.py`) share ONE copy
+# with this script. Three copies drifting is how a ticket changes status by
+# being read and written back.
+from db.legacy_map import STATES, TYPES, priority_band as _priority  # noqa: E402
 
 _STATUS_TOKENS = {row[0] for row in STATES}
 
@@ -358,10 +321,22 @@ def apply() -> dict:
                     n_events += 1
 
                 for c in (rec.get("comments") or []):
+                    # The author is a ROLE, not a head count. "assistant" is an
+                    # agent whether or not the org has one member; deriving it
+                    # from `sole_user` recorded the wrong actor and lost the
+                    # only signal that a machine wrote the comment.
+                    author = (c.get("author") or "").strip().lower()
+                    if author in ("assistant", "agent", "worker"):
+                        atype, auser = "agent", None
+                    elif author and sole_user:
+                        atype, auser = "user", sole_user
+                    else:
+                        atype, auser = "system", None
                     s.add(Comment(id=uuid7(), org_id=org_id, ticket_id=t.id,
-                                  author_type="user" if sole_user else "system",
-                                  author_user_id=sole_user,
+                                  author_type=atype, author_user_id=auser,
                                   body=c.get("text") or "",
+                                  external_source=LEGACY,
+                                  external_id=str(c.get("id") or "") or None,
                                   created_at=_iso(c.get("ts"))))
                     n_comments += 1
 
@@ -429,9 +404,15 @@ def apply() -> dict:
                 agents[slug] = a.id
 
         n_runs = 0
+        runs_by_legacy = {}
+        parent_of = {}
         for job in _load_jobs(ROOT / ".runtime" / "jobs.jsonl"):
             jid = str(job.get("id"))
-            if s.scalar(select(Run).where(Run.legacy_job_id == jid)):
+            if job.get("parent_id"):
+                parent_of[jid] = str(job["parent_id"])
+            existing = s.scalar(select(Run).where(Run.legacy_job_id == jid))
+            if existing:
+                runs_by_legacy[jid] = existing.id
                 continue
             status = job.get("status")
             if status == "awaiting_input":
@@ -446,8 +427,10 @@ def apply() -> dict:
                 status = "failed"
             trigger = job.get("trigger")
             trigger = trigger if trigger in RUN_TRIGGERS else "manual"
+            run_id = uuid7()
+            runs_by_legacy[jid] = run_id
             s.add(Run(
-                id=uuid7(), org_id=org_id,
+                id=run_id, org_id=org_id,
                 ticket_id=tickets_by_legacy.get(str(job.get("task_id") or "")),
                 agent_id=agents.get(str(job.get("agent_id") or "")),
                 trigger=trigger, status=status,
@@ -460,7 +443,23 @@ def apply() -> dict:
             ))
             n_runs += 1
 
-        stats.update(tickets=n_tickets, links=n_links, labels=n_labels,
+        # SECOND PASS for the sweep -> child edge, because a child can be logged
+        # before the parent's own line and a forward reference cannot resolve on
+        # the first. Same reason `ticket.parent_id` needs one.
+        s.flush()
+        n_run_parents = 0
+        for jid, pid in parent_of.items():
+            child, parent = runs_by_legacy.get(jid), runs_by_legacy.get(pid)
+            if child is None or parent is None or child == parent:
+                if parent is None:
+                    dropped["run_parent_missing"] += 1
+                continue
+            s.execute(update(Run).where(Run.id == child)
+                        .values(parent_id=parent))
+            n_run_parents += 1
+
+        stats.update(run_parents=n_run_parents,
+                     tickets=n_tickets, links=n_links, labels=n_labels,
                      parents=n_parents, events=n_events, comments=n_comments,
                      runs=n_runs, agents=len(agents), org=str(org_id))
         for field, count in sorted(preserved.items()):

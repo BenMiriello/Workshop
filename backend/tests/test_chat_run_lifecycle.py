@@ -695,3 +695,27 @@ class TestTheSyncEndpointDoesNotReparseTheLog:
         run = chat_log.active_run(tid)
         assert run["run_id"] == "legacy"
         assert run["started_seq"] is not None
+
+
+class TestTheRunMarkerIsFenced:
+    """R2: mark_run_started runs after the claim lock is released, so a stop
+    that finalized this very run can interleave before it. The marker write
+    must lose that race, not resurrect `active_run_seq` for a dead run."""
+
+    def test_a_marker_for_a_run_no_longer_owning_the_thread_is_dropped(self, thread):
+        tid = thread["id"]
+        chat_store.begin_run(tid, "run-1", announce=False)
+        # The run ends (a stop, a crash finalize) before the marker lands.
+        chat_store.commit_run(tid, "run-1", [], "done")
+        before = len(chat_log.read_events(tid))
+        chat_store.mark_run_started(tid, "run-1")
+        assert len(chat_log.read_events(tid)) == before
+        meta = chat_log.read_meta(tid)
+        assert not meta.get("active_run_seq")
+
+    def test_the_owning_run_still_writes_its_marker(self, thread):
+        tid = thread["id"]
+        chat_store.begin_run(tid, "run-1", announce=False)
+        chat_store.mark_run_started(tid, "run-1")
+        kinds = [(e.get("kind"), e.get("state")) for e in chat_log.read_events(tid)]
+        assert ("run", "started") in kinds

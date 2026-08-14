@@ -129,9 +129,12 @@ class TestCompactDefersMidRun:
             # operation still holds the door.
             assert not chat_store.get_thread(tid).get("summary")
             assert thread_ops.pending(tid) == "compact"
-            # A second compact while one is pending is refused, not stacked.
+            # A second compact while one is pending is refused, not stacked,
+            # and says BUSY: "deferred" would promise a landing this press
+            # never computed.
             r2 = await rc.compact_thread(tid)
-            assert r2["deferred"] is True and r2["folded"] == 0
+            assert r2["busy"] is True and r2["folded"] == 0
+            assert "deferred" not in r2
             # The run ends; the landing task fires.
             chat_store.commit_run(tid, "run-1", [], "done")
             turn.finished.set()
@@ -185,3 +188,111 @@ class TestClearDefersMidRun:
             # The cut includes the late messages: nothing survives above it.
             assert t.get("cleared_through") == len(t.get("messages") or [])
         asyncio.run(scenario())
+
+
+class TestTheSpawnGapCannotEatAMessage:
+    """R1: a message filed against a CLAIMED run whose prompt floor has already
+    been stamped below it is in the log, absent from the prompt, and the input
+    channel is not up. It used to be silently unanswered; now it queues."""
+
+    def _claimed_run(self, tid, floor):
+        chat_store.begin_run(tid, "run-1")
+        turn = build_streaming.Turn(id="run-1", thread_id=tid, agent_slug="a")
+        turn.spawned = False
+        turn.prompt_through_seq = floor
+        build_streaming.TURNS["run-1"] = turn
+        return turn
+
+    def test_a_message_past_the_floor_queues_as_recorded(self, thread, monkeypatch):
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "the trigger")
+        floor = int((build_streaming.chat_log.read_meta(tid) or {}).get("last_seq") or 0)
+        self._claimed_run(tid, floor)
+        monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: False)
+
+        out = asyncio.run(rc._send(tid, "typed into the gap", client_id="c-gap"))
+        assert out["queued"] is True
+        entries = chat_queue.read(tid)
+        assert [e.get("client_id") for e in entries] == ["c-gap"]
+        assert entries[0].get("recorded") is True
+        # In the log exactly once, as persist-before-deliver requires.
+        bodies = [m["content"] for m in chat_store.get_thread(tid)["messages"]]
+        assert bodies.count("typed into the gap") == 1
+
+    def test_a_message_under_the_floor_rides_the_prompt(self, thread, monkeypatch):
+        """Filed before the floor was stamped: the fresh read carried it, so it
+        is NOT queued; the spawning run answers it as history."""
+        import routes.chat as rc
+        tid = thread["id"]
+        self._claimed_run(tid, floor=10_000)
+        monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: False)
+        out = asyncio.run(rc._send(tid, "already in the prompt"))
+        assert out.get("queued") is None and out["injected"] is False
+        assert not chat_queue.read(tid)
+
+    def test_the_drain_does_not_drop_a_recorded_entry_as_done(self, thread, monkeypatch):
+        """The already-delivered check drops entries it finds in the log. A
+        recorded entry is in the log BY DEFINITION and still owed an answer."""
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "typed into the gap",
+                                  client_id="c-gap")
+        chat_queue.enqueue(tid, text="typed into the gap", client_id="c-gap",
+                           ts="2026-08-14T00:00:00Z", recorded=True)
+        seen = {}
+
+        async def fake_run(thread_id, t, content, model, parts, **kw):
+            seen["content"] = content
+            seen["history"] = [m["content"] for m in (t.get("messages") or [])]
+            turn = build_streaming.Turn(id="r-x", thread_id=thread_id, agent_slug="a")
+            build_streaming.TURNS["r-x"] = turn
+            return turn
+        monkeypatch.setattr(rc, "_run_for_message", fake_run)
+
+        started = asyncio.run(rc._start_queued_batch(tid, chat_queue.next_batch(tid)))
+        assert started is True
+        assert seen["content"] == "typed into the gap"
+
+
+class TestFinalizeWindowRespectsOrderAndOps:
+    """R3 and its op-shaped twin: a send landing while a run is ENDING must not
+    overtake waiting messages or a pending operation by taking the thread over."""
+
+    def _ending_run(self, tid):
+        chat_store.begin_run(tid, "run-1")
+        turn = build_streaming.Turn(id="run-1", thread_id=tid, agent_slug="a")
+        turn.spawned = True   # spawned with no FIFO: it is ending
+        build_streaming.TURNS["run-1"] = turn
+        return turn
+
+    def test_it_joins_behind_requeued_messages(self, thread, monkeypatch):
+        import routes.chat as rc
+        tid = thread["id"]
+        self._ending_run(tid)
+        monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: False)
+        chat_queue.enqueue(tid, text="requeued first", client_id="c-1",
+                           ts="2026-08-14T00:00:00Z")
+
+        async def never(**kw):
+            raise AssertionError("must not take the thread over past a queue")
+        monkeypatch.setattr(rc, "_start_assistant_turn", never)
+
+        out = asyncio.run(rc._send(tid, "typed at the end", client_id="c-2"))
+        assert out["queued"] is True
+        assert [e["client_id"] for e in chat_queue.read(tid)] == ["c-1", "c-2"]
+
+    def test_it_queues_behind_a_pending_operation(self, thread, monkeypatch):
+        import routes.chat as rc
+        tid = thread["id"]
+        self._ending_run(tid)
+        monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: False)
+        thread_ops.begin(tid, "compact")
+
+        async def never(**kw):
+            raise AssertionError("must not start a turn during a pending op")
+        monkeypatch.setattr(rc, "_start_assistant_turn", never)
+
+        out = asyncio.run(rc._send(tid, "typed at the end", client_id="c-3"))
+        assert out["queued"] is True
+        assert chat_queue.read(tid)[0].get("recorded") is True

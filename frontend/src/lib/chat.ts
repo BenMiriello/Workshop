@@ -715,8 +715,11 @@ export const chatApi = {
         error: string;
         summary_chars: number;
         // The fold was computed but a reply is being written, so its writes
-        // land when the thread goes quiet (or one was already in flight).
+        // land when the thread goes quiet.
         deferred?: boolean;
+        // An operation is already in flight on this thread; nothing was
+        // computed and nothing from THIS request will land.
+        busy?: boolean;
       }>,
     ),
 
@@ -726,7 +729,7 @@ export const chatApi = {
   clearThreadContext: (id: string) =>
     fetch(`/api/chat/threads/${id}/clear`, { method: "POST" }).then(
       j<{ cleared: number; cleared_through: number; session_reset: boolean;
-          deferred?: boolean }>,
+          deferred?: boolean; busy?: boolean }>,
     ),
 
   // Record that an in-chat card has been acted on, so it stops offering an

@@ -440,6 +440,11 @@ class Comment(Base, Timestamps, SoftDelete):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # How the mirror finds this comment again, and what `delete_comment` matches
+    # on. Missing until c4a9f18d6b25; the read-shadow caught it.
+    external_source: Mapped[str | None] = mapped_column(String(64))
+    external_id: Mapped[str | None] = mapped_column(String(255))
+
     __table_args__ = (
         CheckConstraint(_one_of("author_type", ACTOR_TYPES), name="ck_comment_author_type"),
         Index("ix_comment_ticket", "ticket_id", "created_at"),
@@ -528,6 +533,17 @@ class Run(Base, Timestamps):
     agent_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("agent.id", ondelete="SET NULL"))
 
+    # THE SWEEP THAT SPAWNED THIS RUN, and it is what carries ticket identity.
+    #
+    # A queue sweep works N tickets. The sweep run itself has no ticket -- it
+    # records counts -- and each ticket's actual work is a CHILD run that does
+    # carry `ticket_id`. Measured on the real log: every child run created since
+    # the mechanism landed on 2026-07-15 carries its ticket, 74 of 74, so this
+    # relation is how "which tickets did that sweep work" is answerable at all.
+    # The first cut of this schema dropped the edge, which would have quietly
+    # flattened every sweep back into a pair of integers.
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+
     attempt_no: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     trigger: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -548,7 +564,10 @@ class Run(Base, Timestamps):
     __table_args__ = (
         CheckConstraint(_one_of("status", RUN_STATUSES), name="ck_run_status"),
         CheckConstraint(_one_of("trigger", RUN_TRIGGERS), name="ck_run_trigger"),
+        CheckConstraint("parent_id IS NULL OR parent_id <> id",
+                        name="ck_run_not_own_parent"),
         Index("ix_run_ticket", "ticket_id", "started_at"),
+        Index("ix_run_parent", "parent_id", "started_at"),
         Index("ix_run_org_started", "org_id", "started_at"),
         Index("ix_run_legacy", "legacy_job_id"),
     )

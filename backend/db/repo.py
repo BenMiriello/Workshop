@@ -32,23 +32,16 @@ from uuid import UUID
 from sqlalchemy import text
 
 from db.engine import tenant_session
+from db.legacy_map import STATE_TO_STATUS
 
 __all__ = ["list_tickets", "get_ticket", "next_ready", "LEGACY_STATUS"]
 
 # The state names the backfill seeded, mapped back to the token the JSON store
 # used. Only the compatibility layer needs this: a tenant that renames "Todo" to
 # "Up next" keeps working everywhere else, and this map is deleted with the rest
-# of the shape once callers speak in states.
-LEGACY_STATUS = {
-    "Draft": "draft",
-    "Todo": "todo",
-    "In Progress": "doing",
-    "In Review": "in_review",
-    "Blocked": "blocked",
-    "Parked": "parked",
-    "Done": "done",
-    "Cancelled": "cancelled",
-}
+# of the shape once callers speak in states. Shared with the backfill and the
+# mirror via `legacy_map`, so the three cannot disagree.
+LEGACY_STATUS = STATE_TO_STATUS
 
 # One statement, because the legacy record is a join: the state's name, the
 # type's name, and both link kinds aggregated. Doing this per row would be the
@@ -79,7 +72,18 @@ SELECT
   COALESCE((SELECT array_agg(d.external_id ORDER BY d.external_id)
             FROM ticket_link l JOIN ticket d ON d.id = l.to_ticket_id
             WHERE l.from_ticket_id = t.id AND l.kind = 'relates_to'
-              AND l.deleted_at IS NULL), '{}') AS relates_to
+              AND l.deleted_at IS NULL), '{}') AS relates_to,
+  -- Comments come back with the ticket because the JSON record carried them
+  -- inline and every caller expects them there. The read-shadow caught this:
+  -- five live comments existed in both stores and the compatibility shape
+  -- returned none of them, so a cutover would have dropped them from the UI
+  -- while the rows sat in the database looking healthy.
+  COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                     'id', c.external_id, 'author', c.author_type,
+                     'text', c.body, 'created', c.created_at)
+                   ORDER BY c.created_at)
+            FROM comment c
+            WHERE c.ticket_id = t.id AND c.deleted_at IS NULL), '[]') AS comments
 FROM ticket t
 JOIN project p         ON p.id  = t.project_id
 JOIN workflow_state ws ON ws.id = t.state_id

@@ -309,3 +309,66 @@ def test_no_composite_set_null_nulls_its_discriminator():
     assert bad == [], (
         "composite SET NULL without a column list; these will raise "
         f"NotNullViolation on delete: {bad}")
+
+
+def _run(session, ctx, **kw):
+    from db.ids import uuid7
+    from db.models import Run
+    r = Run(id=uuid7(), org_id=ctx["org"], trigger="loop", status="done", **kw)
+    session.add(r)
+    session.flush()
+    return r.id
+
+
+def test_a_sweep_names_the_tickets_its_children_worked(org):
+    """THE RELATION THE WHOLE `run` SHAPE TURNS ON.
+
+    A queue sweep works N tickets: the sweep row itself carries no ticket and
+    closes with counts, while each ticket's work is a child run that does carry
+    one. Without `parent_id` a sweep degrades to a pair of integers and "which
+    tickets did that sweep work" has no answer, which is what the file store
+    looked like before 2026-07-15.
+    """
+    from db.engine import tenant_session
+
+    with tenant_session(org["org"]) as s:
+        a = _ticket(s, org, 901, "high")
+        b = _ticket(s, org, 902, "low")
+        sweep = _run(s, org)
+        _run(s, org, parent_id=sweep, ticket_id=a)
+        _run(s, org, parent_id=sweep, ticket_id=b)
+
+        worked = s.execute(text(
+            "SELECT t.number FROM run c JOIN ticket t ON t.id = c.ticket_id "
+            " WHERE c.parent_id = :p ORDER BY t.number"), {"p": sweep}).scalars().all()
+    assert worked == [901, 902]
+
+
+def test_a_run_cannot_be_its_own_parent(org):
+    from db.engine import tenant_session
+
+    with tenant_session(org["org"]) as s:
+        rid = _run(s, org)
+        with pytest.raises(Exception) as err:
+            s.execute(text("UPDATE run SET parent_id = id WHERE id = :i"), {"i": rid})
+    assert "ck_run_not_own_parent" in str(err.value)
+
+
+def test_a_child_run_survives_its_sweep_being_deleted(org):
+    """`SET NULL (parent_id)`, not CASCADE. A child holds its own ticket, exit
+    code and receipt, so losing the sweep must not lose the work record. Also
+    the regression test for the column list: without it this delete would try
+    to null `org_id` too and raise."""
+    from db.engine import tenant_session
+
+    with tenant_session(org["org"]) as s:
+        t = _ticket(s, org, 903, "none")
+        sweep = _run(s, org)
+        child = _run(s, org, parent_id=sweep, ticket_id=t)
+        s.execute(text("DELETE FROM run WHERE id = :i"), {"i": sweep})
+        row = s.execute(text(
+            "SELECT parent_id, ticket_id, org_id FROM run WHERE id = :i"),
+            {"i": child}).one()
+    assert row.parent_id is None
+    assert row.ticket_id == t
+    assert row.org_id == org["org"]

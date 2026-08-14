@@ -143,9 +143,37 @@ class TestSaveThreadDiffsInsteadOfOverwriting:
         assert [m["content"] for m in msgs] == ["go", "the whole answer"]
 
     def test_a_field_the_caller_dropped_is_removed(self, thread):
+        """For ORDINARY fields. Keys other writers own (_PRESERVED_ON_SAVE:
+        the session, the summary, the meter, the bookkeeping) are exempt: a
+        stale snapshot must not strip them, and deliberate deletion goes
+        through their own clear_* calls. This used to use context_tokens as
+        its example, which is exactly the field a concurrent finalize writes."""
         tid = thread["id"]
-        chat_store.set_thread_context_tokens(tid, 999)
+        chat_store.set_thread_effort(tid, "high")
         t = chat_store.get_thread(tid)
-        t.pop("context_tokens")
+        t.pop("effort")
         chat_store.save_thread(t)
-        assert "context_tokens" not in chat_store.get_thread(tid)
+        assert "effort" not in chat_store.get_thread(tid)
+
+
+class TestARoundTripCannotStripOtherWritersState:
+    """R7: a caller holding a snapshot from before another writer added state
+    (a session, the summary, the bookkeeping) must not delete that state by
+    round-tripping its stale dict through save_thread."""
+
+    def test_fields_added_after_the_read_survive_the_save(self, thread):
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "hello")
+        stale = chat_store.get_thread(tid)          # no session, no summary yet
+        sid, _ = chat_store.ensure_thread_session(tid)
+        chat_store.set_summary(tid, "S", folded_through=1)
+        chat_store.set_thread_context_tokens(tid, 4242)
+        chat_store.set_turn_marks(tid, live_hash="h1")
+
+        chat_store.save_thread(stale)               # the stale round-trip
+
+        t = chat_store.get_thread(tid)
+        assert t.get("claude_session") == sid
+        assert t.get("summary") == "S"
+        assert t.get("context_tokens") == 4242
+        assert (t.get("turn_marks") or {}).get("live_hash") == "h1"
