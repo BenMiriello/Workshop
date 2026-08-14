@@ -1,7 +1,14 @@
 """Move the JSON stores into Postgres (P2 of the data-model plan).
 
-Prints a plan by default; writes only with `--apply`. Re-runnable: every row is
-matched on a natural key, so a second run updates rather than duplicates.
+Prints a plan by default; writes only with `--apply`.
+
+INSERT-ONCE, NOT SYNC. Every row is matched on a natural key and SKIPPED if it
+already exists; nothing is ever updated. A second `--apply` therefore writes
+zero rows, which is the property that makes it safe to re-run, but it does NOT
+pick up edits made to the JSON store after the first run. That matters for P3:
+if the file store is still being written while the database is read-shadowed,
+the two will diverge and this script will not close the gap. Make it an upsert
+keyed on `(external_source, external_id)` before relying on it for that.
 
     set -a; . ~/.config/workshop/secrets.env; set +a
     .venv/bin/python -m db.backfill            # show what would happen
@@ -35,18 +42,20 @@ import json
 import os
 import sqlite3
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from db.engine import owner_session, tenant_session  # noqa: E402
 from db.ids import uuid7  # noqa: E402
 from db.models import (  # noqa: E402
-    Agent, Comment, Membership, Organization, Project, Run, Ticket, TicketEvent,
-    TicketLink, TicketType, UserAccount, WorkflowState,
+    RUN_STATUSES, RUN_TRIGGERS, Agent, Comment, Label, Membership, Organization,
+    Project, Run, Ticket, TicketEvent, TicketLabel, TicketLink, TicketType,
+    UserAccount, WorkflowState,
 )
 
 ROOT = Path(os.environ.get("WORKSHOP_ROOT", Path(__file__).resolve().parents[2]))
@@ -94,6 +103,16 @@ def _priority(value) -> str:
         return "low"
     return "none"
 
+
+_STATUS_TOKENS = {row[0] for row in STATES}
+
+# JSON fields with no column of their own. They are POPULATED (scoped_by 112,
+# provenance 56, touches 35, blocked_reason 23, acceptance 5, discovered_from 2)
+# and were silently discarded by the first version of this script. They are
+# preserved as ticket_event rows, which is what models.py always claimed
+# happened. Nothing is dropped without being counted in the run summary.
+_PRESERVED = ("scoped_by", "provenance", "touches", "acceptance",
+              "discovered_from", "blocked_reason", "latitude", "max_attempts")
 
 SCOPES = [
     ("development", "Development", "DEV", ROOT),
@@ -160,6 +179,10 @@ def plan() -> dict:
 def apply() -> dict:
     stats: dict[str, int] = {}
     users_by_legacy: dict[int, object] = {}
+    # Counted, not silent. The first version of this script discarded eight
+    # populated fields without recording that it had.
+    preserved: Counter[str] = Counter()
+    dropped: Counter[str] = Counter()
 
     # --- organization + users -------------------------------------------------
     # PROVISIONING RUNS ON THE OWNER CONNECTION. Both tables are RLS-protected
@@ -198,8 +221,10 @@ def apply() -> dict:
 
         states: dict[tuple[str, str], object] = {}
         types: dict[tuple[str, str], object] = {}
+        labels: dict[tuple[str, str], object] = {}
         tickets_by_legacy: dict[str, object] = {}
-        n_tickets = n_links = n_events = n_comments = 0
+        n_tickets = n_links = n_events = n_comments = n_labels = n_parents = 0
+        sole_user = next(iter(users_by_legacy.values()), None)
 
         for key, title, prefix, store_dir in SCOPES:
             proj = s.scalar(select(Project).where(Project.org_id == org_id,
@@ -238,14 +263,19 @@ def apply() -> dict:
 
             for rec in rows:
                 legacy = str(rec.get("id") or "")
+                if not legacy:
+                    # Without an id there is no idempotency key, and a SECOND
+                    # such record would match the first on external_id='' and be
+                    # silently dropped. Count it and move on.
+                    dropped["no_id"] += 1
+                    continue
                 existing = s.scalar(select(Ticket).where(
                     Ticket.external_source == LEGACY, Ticket.external_id == legacy))
                 if existing is not None:
                     tickets_by_legacy[legacy] = existing.id
                     continue
 
-                status = rec.get("status") if rec.get("status") in dict(
-                    (k, 1) for k, *_ in STATES) else "todo"
+                status = rec.get("status") if rec.get("status") in _STATUS_TOKENS else "todo"
                 closed = _iso(rec.get("updated")) if status in ("done", "cancelled") else None
                 t = Ticket(
                     id=uuid7(), org_id=org_id, project_id=proj.id, number=number,
@@ -258,6 +288,12 @@ def apply() -> dict:
                     created_at=_iso(rec.get("created")),
                     updated_at=_iso(rec.get("updated")),
                     closed_at=closed,
+                    # `assignee` was the constant string "operator" on all 112
+                    # records, so it carried no information as a value, but the
+                    # ATTRIBUTION is real and there is exactly one user to
+                    # attribute it to.
+                    assignee_id=sole_user,
+                    created_by_id=sole_user,
                     external_source=LEGACY, external_id=legacy,
                 )
                 s.add(t)
@@ -267,13 +303,51 @@ def apply() -> dict:
                 n_tickets += 1
 
                 src = rec.get("source") or {}
-                actor = {"operator": "user", "chat": "user", "agent": "agent"}.get(
-                    src.get("kind"), "system")
+                # `ck_*_actor_is_consistent` requires the id to match the type,
+                # so a 'user' event without a user id is not expressible. When
+                # the actor is not recoverable the honest answer is 'system'.
+                human = src.get("kind") in ("operator", "chat") and sole_user
                 s.add(TicketEvent(id=uuid7(), org_id=org_id, ticket_id=t.id,
-                                  actor_type=actor, verb="created",
+                                  actor_type="user" if human else "system",
+                                  actor_user_id=sole_user if human else None,
+                                  verb="created",
                                   field="source", new_value=src.get("kind"),
                                   created_at=_iso(rec.get("created"))))
                 n_events += 1
+
+                # Fields with no column. Preserved rather than discarded.
+                for field in _PRESERVED:
+                    value = rec.get(field)
+                    if value in (None, "", [], {}, 0):
+                        continue
+                    s.add(TicketEvent(
+                        id=uuid7(), org_id=org_id, ticket_id=t.id,
+                        actor_type="system", verb="migrated", field=field,
+                        new_value=(value if isinstance(value, str)
+                                   else json.dumps(value))[:8000],
+                        created_at=_iso(rec.get("created"))))
+                    n_events += 1
+                    preserved[field] += 1
+
+                # Labels have had tables since the first migration and were
+                # never populated.
+                for name in (rec.get("labels") or []):
+                    name = str(name).strip()
+                    if not name:
+                        continue
+                    lab = labels.get((key, name))
+                    if lab is None:
+                        lab = s.scalar(select(Label).where(
+                            Label.org_id == org_id, Label.project_id == proj.id,
+                            Label.name == name))
+                        if lab is None:
+                            lab = Label(id=uuid7(), org_id=org_id,
+                                        project_id=proj.id, name=name)
+                            s.add(lab)
+                            s.flush()
+                        labels[(key, name)] = lab
+                    s.add(TicketLabel(ticket_id=t.id, label_id=lab.id, org_id=org_id))
+                    n_labels += 1
 
                 for ev in (rec.get("evidence") or []):
                     s.add(TicketEvent(id=uuid7(), org_id=org_id, ticket_id=t.id,
@@ -285,7 +359,9 @@ def apply() -> dict:
 
                 for c in (rec.get("comments") or []):
                     s.add(Comment(id=uuid7(), org_id=org_id, ticket_id=t.id,
-                                  author_type="user", body=c.get("text") or "",
+                                  author_type="user" if sole_user else "system",
+                                  author_user_id=sole_user,
+                                  body=c.get("text") or "",
                                   created_at=_iso(c.get("ts"))))
                     n_comments += 1
 
@@ -298,6 +374,20 @@ def apply() -> dict:
                 src_id = tickets_by_legacy.get(str(rec.get("id") or ""))
                 if src_id is None:
                     continue
+
+                # `parent` is 0% occupancy today, which is exactly why it was
+                # missed: the code never read it, so the day someone starts
+                # writing it the hierarchy would migrate as nothing. It needs
+                # the second pass for the same reason links do (the parent may
+                # sort after the child).
+                parent_id = tickets_by_legacy.get(str(rec.get("parent") or ""))
+                if parent_id is not None and parent_id != src_id:
+                    s.execute(update(Ticket).where(Ticket.id == src_id)
+                              .values(parent_id=parent_id))
+                    n_parents += 1
+                elif rec.get("parent"):
+                    dropped["parent_unresolvable"] += 1
+
                 for field, kind in (("depends_on", "blocked_by"),
                                     ("relates_to", "relates_to")):
                     for dep in (rec.get(field) or []):
@@ -344,12 +434,18 @@ def apply() -> dict:
             if s.scalar(select(Run).where(Run.legacy_job_id == jid)):
                 continue
             status = job.get("status")
-            status = status if status in (
-                "queued", "running", "done", "failed", "cancelled") else "done"
-            if job.get("status") == "awaiting_input":
+            if status == "awaiting_input":
                 status = "blocked"
+            elif status not in RUN_STATUSES:
+                # An UNKNOWN state is not a successful one. The first version
+                # coerced anything unrecognised to "done", which silently
+                # reports failed or half-finished work as complete. No live row
+                # hits this (all 2753 are done/failed/cancelled), so it is
+                # latent, and latent is exactly when to fix it.
+                dropped[f"run_status:{status}"] += 1
+                status = "failed"
             trigger = job.get("trigger")
-            trigger = trigger if trigger in ("manual", "cron", "event", "loop") else "manual"
+            trigger = trigger if trigger in RUN_TRIGGERS else "manual"
             s.add(Run(
                 id=uuid7(), org_id=org_id,
                 ticket_id=tickets_by_legacy.get(str(job.get("task_id") or "")),
@@ -364,9 +460,13 @@ def apply() -> dict:
             ))
             n_runs += 1
 
-        stats.update(tickets=n_tickets, links=n_links, events=n_events,
-                     comments=n_comments, runs=n_runs,
-                     agents=len(agents), org=str(org_id))
+        stats.update(tickets=n_tickets, links=n_links, labels=n_labels,
+                     parents=n_parents, events=n_events, comments=n_comments,
+                     runs=n_runs, agents=len(agents), org=str(org_id))
+        for field, count in sorted(preserved.items()):
+            stats[f"preserved:{field}"] = count
+        for reason, count in sorted(dropped.items()):
+            stats[f"DROPPED:{reason}"] = count
     return stats
 
 
