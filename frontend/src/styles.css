@@ -898,7 +898,12 @@ input[type="range"].grad::-moz-range-thumb {
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
   border-radius: var(--radius-sm);
 }
-.chat-tool__head:hover { color: var(--fg); background: var(--bg-inset); }
+/* The same veil the group uses, a step weaker: a row hovers by lifting off
+   whatever it sits on, so it works on a bubble and on an opened group alike
+   (on the group it stacks with the fill, which is what puts it above it). It was --bg-inset, which is a fixed DARK surface in dark mode;
+   against the group's fill that hover punched a near-black hole in the block it
+   was meant to highlight. The resting row is untouched. */
+.chat-tool__head:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
 .chat-tool__chev { flex: 0 0 auto; transition: transform var(--dur-fast) var(--ease-in-out); }
 .chat-tool.is-open .chat-tool__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-tool__chev { transition: none; } }
@@ -1017,11 +1022,18 @@ input[type="range"].grad::-moz-range-thumb {
    the same kind of thing at different depths. */
 .chat-group {
   margin: 0.3rem 0; min-width: 0;
-  /* One step off the bubble it sits on (--card): lighter in dark, a faint tint
-     in light. --bg-inset, what it used to be, is a WELL — darker than the card
-     in dark mode — and reads as something recessed out of the reply rather than
-     as part of it. */
-  background: var(--card-hover);
+  /* A VEIL OF INK, NOT A NAMED SURFACE. It lifts whatever it is drawn on by a
+     fixed amount, so it reads the same in a reply bubble (--card) and inside a
+     delegation (--bg-inset), and it goes the right direction in both themes on
+     its own: --fg is near-white in dark, so the block is lighter, and near-black
+     in light, so it is a tint.
+
+     9%, measured rather than guessed. --card-hover was the first try and the
+     operator's read was "too faint": it is 8/255 off --card in dark, which is a
+     hover state doing a resting job. This is about 19, which is the step
+     --bg-inset makes against the page and the smallest one that actually reads
+     as a block at this size. */
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
   border-radius: var(--radius-md);
   /* Vertical only. The horizontal inset is the head's own padding, which the
      rail's offset is derived from; adding a second one here would move the head
