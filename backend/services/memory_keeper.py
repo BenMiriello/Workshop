@@ -8,7 +8,9 @@ never races the primary loop: it reads the append-only Job log and writes files.
 The write path is the mem0/ACE shape the design (Section 6) settled on:
 
   Gather  new episodic material since a per-scope watermark (recently-closed
-          Jobs for the scope, new learnings, any chat-distilled facts).
+          Jobs for the scope, new learnings, any chat-distilled facts still on
+          disk in a scope from before that writer was retired - see DISTILLED_NOTE
+          below).
   Route   each candidate fact with an ADD / UPDATE / RETIRE / NOOP decision
           against the top-k similar existing notes. A DETERMINISTIC router is the
           reliable core (jaccard near-duplicate => UPDATE or NOOP; a negation /
@@ -53,7 +55,18 @@ _CONSOLIDATED_HEADER = (
     "monolithic rewrite). A superseded fact is annotated in place, not deleted.\n\n"
 )
 
-# A note the compaction path may drop chat-distilled facts into; folded in if present.
+# The note a Haiku compaction-time distillation pass used to write per scope.
+# THAT WRITER IS GONE, not disabled: server-side transcript folding (its only
+# trigger) was deleted 2026-08-12 (see routes/chat.py "The context cut"), and
+# automatic chat distillation is explicitly NOT being rebuilt in this phase
+# (docs/platform-redesign/memory-and-documentation-model-2026-08-14.md sec 13;
+# if it returns, it returns on top of that doc's per-fact provenance model, sec
+# 5). The three accumulator files this constant used to point at were migrated
+# to individual notes and deleted in Phase 0. This name stays only so `_gather`
+# below degrades gracefully (folds it in if present) for the rare case an
+# operator or another writer leaves a note at this id in some scope;
+# `knowledge.get_note` returns None when it is absent, which is the common case
+# now.
 DISTILLED_NOTE = "chat-distilled"
 
 # Near-duplicate threshold on canonical token-set jaccard (matches learnings).
@@ -283,9 +296,11 @@ def _gather(scope_key: str, since_iso: str) -> dict:
     Selective by construction: heartbeat/coordination Jobs are excluded, only
     real-work Jobs are considered, Job summary prose is NEVER folded as a semantic
     fact (it is per-run status narration), and a procedural lesson is taken only
-    from a concrete, non-vacuous failure reason. Semantic facts come from the
-    curated chat-distilled note (narration-filtered), plus operator corrections
-    surfaced through learnings; not from per-tick status text."""
+    from a concrete, non-vacuous failure reason. Semantic facts come from a
+    DISTILLED_NOTE left on disk in this scope, if any (narration-filtered) - see
+    that constant's comment: the writer that used to populate it is gone and is
+    not being rebuilt this phase - plus operator corrections surfaced through
+    learnings; not from per-tick status text."""
     semantic: list[str] = []
     procedural: list[str] = []
     job_n = 0
@@ -302,8 +317,11 @@ def _gather(scope_key: str, since_iso: str) -> dict:
             if reason and not _is_vacuous(reason) and not _is_narration(reason):
                 procedural.append(f"failure pattern: {reason}")
 
-    # Semantic facts come only from the curated chat-distilled note, if present,
-    # with narration/short-prose dropped.
+    # Semantic facts come only from DISTILLED_NOTE, if this scope happens to
+    # still have one, with narration/short-prose dropped. `get_note` returns
+    # None when it does not exist, which is now the normal case for every scope
+    # (Phase 0 deleted the three that did and nothing writes new ones), so this
+    # degrades to zero semantic facts rather than raising.
     distilled_n = 0
     body = knowledge.get_note(scope_key, DISTILLED_NOTE)
     if body:

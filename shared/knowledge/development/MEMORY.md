@@ -1,3 +1,17 @@
 # Knowledge index
 
-- [Distilled from chats](chat-distilled.md) - facts auto-captured from chat compaction
+- [Chat drafts are keyed per-thread, not per-scope](chat-drafts-are-keyed-per-thread-not-per-scope-1a0028fb2ce.md)
+- [Chat restores scroll position per thread via sessionStorage](chat-restores-scroll-position-per-thread-via-ses-1a0028fb2d2.md)
+- [Chat width: 1200px intermediate, full-width toolbar](chat-width-1200px-intermediate-full-width-toolba-1a0028fb2d1.md)
+- [Context meter shows rounded whole percentages only](context-meter-shows-rounded-whole-percentages-on-1a0028fb2d0.md)
+- [Derived state fields must never be directly patchable](derived-state-fields-must-never-be-directly-patc-1a0028fb2d5.md)
+- [Device list pages: 10 items, newest-first, deduped registrations](device-list-pages-10-items-newest-first-deduped-1a0028fb2cd.md)
+- [Empirical testing required to verify fixes](empirical-testing-required-to-verify-fixes-1a0028fb2d8.md)
+- [Kanban-style status columns wanted for ticket views](kanban-style-status-columns-wanted-for-ticket-vi-1a0028fb2c9.md)
+- [Mobile support needed for ticket views](mobile-support-needed-for-ticket-views-1a0028fb2ca.md)
+- [Operator removed automatic compaction and folding](operator-removed-automatic-compaction-and-foldin-1a0028fb2d4.md)
+- [Silence-threshold tuning cannot fix voice fragmentation](silence-threshold-tuning-cannot-fix-voice-fragme-1a0028fb2d7.md)
+- [Ticket implementation had leftover junk needing cleanup](ticket-implementation-had-leftover-junk-needing-1a0028fb2cc.md)
+- [Tickets need name, description, comments, and scope fields](tickets-need-name-description-comments-and-scope-1a0028fb2c7.md)
+- [Voice worker needs full history and persistent sessions](voice-worker-needs-full-history-and-persistent-s-1a0028fb2da.md)
+- [Work pages renamed to Tickets](work-pages-renamed-to-tickets-1a0028fb2b7.md)

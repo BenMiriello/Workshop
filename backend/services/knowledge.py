@@ -498,20 +498,102 @@ def layered_index_block(scope_key: str, role: str | None = None,
     return ("\n\n".join(blocks), used)
 
 
-def index_block(scope_key: str) -> str:
-    """A compact ambient index of the scope's notes for the chat prompt, or ""
-    when the scope has no notes. Titles + hooks only (the bodies load on recall),
-    so it stays small and cache-stable."""
+# --- ambient index: a ranked, token-capped digest ----------------------------
+# This used to list EVERY note in the scope, so the block injected into every
+# chat prompt grew linearly with the corpus and enforce_index_cap(200) above was
+# a band-aid on that growth rather than a design. See
+# docs/platform-redesign/memory-and-documentation-model-2026-08-14.md sec 5.5.
+# Now it ranks (pinned first, then most-recently-updated, then type) and stops
+# at a token budget, and it SAYS what it left out rather than truncating
+# silently: a list that presents itself as complete is worse than no list,
+# because the model stops looking for the rest.
+
+# ~4 chars/token, the same rough estimate used elsewhere in this repo (e.g.
+# services/learnings._approx_tokens). Good enough to hold a prompt block under a
+# budget without pulling in a tokenizer dependency.
+def _approx_tokens(text: str) -> int:
+    return (len(text or "") + 3) // 4
+
+
+# The ambient index is read on every turn, in every scope of the read union (up
+# to four layers per turn - see read_layers), so it has to stay small no matter
+# how large a scope's note count grows. 800 tokens (~3200 chars) holds roughly
+# 15-25 title+hook lines depending on length: enough to orient a fresh turn
+# without crowding out the rest of the prompt. Anything past it is one search
+# call away.
+DEFAULT_INDEX_TOKEN_BUDGET = 800
+
+# `preference` and `decision` outrank `fact` and `reference` (lower number sorts
+# first) per the ranking rule in sec 5.5 of the design doc.
+_TYPE_RANK = {"preference": 0, "decision": 0, "fact": 1, "reference": 1}
+
+
+def _ranked_notes(scope_key: str) -> list[dict]:
+    """`list_notes()` plus each note's `pinned` / `type` / raw mtime, read from
+    its metadata marker. One extra file read per note (small scopes; the same
+    cost class list_notes already pays per-note for mtime)."""
+    d = scope_dir(scope_key)
+    out = []
+    for n in list_notes(scope_key):
+        f = d / f"{n['id']}.md"
+        pinned, ntype, mtime = False, _DEFAULT_NOTE_TYPE, 0.0
+        if f.exists():
+            try:
+                _, t, p, _ = _parse_meta_line(f.read_text())
+                pinned = bool(p)
+                ntype = t or _DEFAULT_NOTE_TYPE
+                mtime = f.stat().st_mtime
+            except OSError:
+                pass
+        out.append({**n, "pinned": pinned, "type": ntype, "_mtime": mtime})
+    return out
+
+
+def _index_rank_key(n: dict) -> tuple:
+    """Pinned first, then most-recently-updated, then type, then id (stable)."""
+    return (
+        0 if n.get("pinned") else 1,
+        -(n.get("_mtime") or 0.0),
+        _TYPE_RANK.get(n.get("type") or _DEFAULT_NOTE_TYPE, 1),
+        n.get("id") or "",
+    )
+
+
+def index_block(scope_key: str, max_tokens: int = DEFAULT_INDEX_TOKEN_BUDGET) -> str:
+    """A ranked, token-capped ambient digest of the scope's notes for the chat
+    prompt, or "" when the scope has no notes. Titles + hooks only, never bodies
+    (ADR 0011 restated in sec 5.5 of the design doc), so it stays small and
+    cache-stable regardless of corpus size. Pinned notes first, then most-
+    recently-updated, then type. When the scope has more notes than fit the
+    budget, the last line declares how many were left out."""
     try:
-        notes = list_notes(scope_key)
+        notes = _ranked_notes(scope_key)
     except Exception:
         return ""
     if not notes:
         return ""
-    lines = []
+    notes.sort(key=_index_rank_key)
+
+    lines: list[str] = []
+    used_tokens = 0
+    shown = 0
     for n in notes:
         hook = f": {n['hook']}" if n.get("hook") else ""
-        lines.append(f"- {n['title']} ({n['id']}){hook}")
+        line = f"- {n['title']} ({n['id']}){hook}"
+        cost = _approx_tokens(line)
+        # Always show at least one note, even if it alone busts the budget: an
+        # empty digest is a worse failure than a slightly-over-budget one.
+        if shown and used_tokens + cost > max_tokens:
+            break
+        lines.append(line)
+        used_tokens += cost
+        shown += 1
+
+    remaining = len(notes) - shown
+    if remaining > 0:
+        lines.append(
+            f"({remaining} more notes in this scope; use the search tool to reach them)"
+        )
     return "\n".join(lines)
 
 
@@ -531,52 +613,123 @@ def get_note(scope_key: str, note_id: str) -> str | None:
     return body
 
 
-# --- authorship --------------------------------------------------------------
+# --- metadata: author, type, pinned -------------------------------------------
 # A note the operator hand-wrote, one the model wrote through a ```note``` block
-# last week, and one Haiku distilled during compaction were byte-identical on
-# re-entry, so nothing downstream could weigh them differently. The author rides
-# in an HTML comment on the first line of the body rather than in MEMORY.md: the
+# last week, and one distilled during compaction were byte-identical on
+# re-entry, so nothing downstream could weigh them differently. Author rides in
+# an HTML comment on the first line of the body rather than in MEMORY.md: the
 # index line is regex-parsed with an already-optional ` - hook` tail, and a
 # second optional tail there would be ambiguous for any hook containing " - ".
 #
-# See docs/decisions/0015-transcript-structure-and-content-provenance.md §8.
-_AUTHOR_RE = re.compile(r"^<!--\s*author:\s*(?P<author>[^>]*?)\s*-->\s*\n?")
+# `type` and `pinned` are OPTIONAL fields added to that SAME marker, per the
+# design doc sec 5 ("every note carries a type") rather than a third mechanism
+# or a sidecar file. A note with no marker at all, or an author-only marker
+# (every note written before this existed, which is most of them), still
+# parses: type defaults to "fact", pinned defaults to False.
+#
+# See docs/decisions/0015-transcript-structure-and-content-provenance.md §8 and
+# docs/platform-redesign/memory-and-documentation-model-2026-08-14.md §5.
+_NOTE_TYPES = ("decision", "fact", "reference", "preference")
+_DEFAULT_NOTE_TYPE = "fact"
+
+_META_RE = re.compile(
+    r"^<!--\s*author:\s*(?P<author>[^;>]*?)"
+    r"(?:;\s*type:\s*(?P<type>[a-z]+))?"
+    r"(?:;\s*pinned:\s*(?P<pinned>true|false))?"
+    r"\s*-->\s*\n?"
+)
+
+
+def _parse_meta_line(body: str) -> tuple[str, str, bool | None, str]:
+    """(author, type, pinned, body-without-the-marker).
+
+    `type` is "" and `pinned` is None when the marker (or that field of it) is
+    absent, rather than defaulted here: callers that MERGE a write need to tell
+    "not specified this call" (fall back to what's on disk) from "explicitly
+    fact/unpinned". Callers that just want to RENDER a value use `note_type` /
+    `note_pinned` below, which apply the default.
+    """
+    m = _META_RE.match(body or "")
+    if not m:
+        return "", "", None, (body or "")
+    author = (m.group("author") or "").strip()
+    note_type = (m.group("type") or "").strip().lower()
+    if note_type not in _NOTE_TYPES:
+        note_type = ""
+    pinned_raw = (m.group("pinned") or "").strip().lower()
+    pinned = True if pinned_raw == "true" else (False if pinned_raw == "false" else None)
+    return author, note_type, pinned, (body or "")[m.end():]
 
 
 def split_author(body: str) -> tuple[str, str]:
     """(author, body-without-the-marker). Author is "" on notes written before
     this existed, which is most of them and is not an error."""
-    m = _AUTHOR_RE.match(body or "")
-    if not m:
-        return "", (body or "")
-    return m.group("author").strip(), (body or "")[m.end():]
+    author, _type, _pinned, rest = _parse_meta_line(body)
+    return author, rest
 
 
-def _stored_author(scope_key: str, note_id: str) -> str:
-    """The author already on disk for this note, or ""."""
+def note_type(body: str) -> str:
+    """The note's type, defaulting to "fact" when the marker carries none."""
+    _, t, _, _ = _parse_meta_line(body)
+    return t or _DEFAULT_NOTE_TYPE
+
+
+def note_pinned(body: str) -> bool:
+    """Whether the note is pinned, defaulting to False when the marker carries
+    none."""
+    _, _, p, _ = _parse_meta_line(body)
+    return bool(p)
+
+
+def _stored_meta(scope_key: str, note_id: str) -> tuple[str, str, bool]:
+    """(author, type, pinned) already on disk for this note, defaults applied."""
     f = scope_dir(scope_key) / f"{note_id}.md"
     if not f.exists():
-        return ""
+        return "", _DEFAULT_NOTE_TYPE, False
     try:
-        return split_author(f.read_text())[0]
+        author, t, p, _ = _parse_meta_line(f.read_text())
+        return author, (t or _DEFAULT_NOTE_TYPE), bool(p)
     except OSError:
-        return ""
+        return "", _DEFAULT_NOTE_TYPE, False
 
 
-def _with_author(body: str, author: str, fallback: str = "") -> str:
-    """Stamp `author` onto a body, PRESERVING what is already recorded when none
-    is given. An edit that passes no author is an edit, not a claim of
-    anonymity: round-tripping a note through the editor must not silently erase
-    who wrote it. The fallback comes from disk rather than from the passed body,
-    because `get_note` strips the marker before anything else sees it."""
-    existing, clean = split_author(body)
-    a = (author or "").strip() or existing or fallback
-    return f"<!-- author: {a} -->\n{clean}" if a else clean
+def _with_meta(body: str, author: str, note_type_: str, pinned: bool | None,
+              fallback_author: str, fallback_type: str, fallback_pinned: bool) -> str:
+    """Stamp author/type/pinned onto a body, PRESERVING what is already recorded
+    for a field that this call does not specify. An edit that passes no author
+    is an edit, not a claim of anonymity, and the same now holds for type and
+    pinned: round-tripping a note through the editor must not silently erase
+    them. Fallbacks come from disk rather than from the passed body, because
+    `get_note` strips the marker before anything else sees it.
+
+    When the result would carry no author, the default type, and not be
+    pinned, the marker is omitted entirely so an untouched old note stays
+    byte-for-byte what it was."""
+    existing_author, existing_type, existing_pinned, clean = _parse_meta_line(body)
+    a = (author or "").strip() or existing_author or fallback_author
+    t = (note_type_ or "").strip().lower()
+    if t not in _NOTE_TYPES:
+        t = existing_type or fallback_type or _DEFAULT_NOTE_TYPE
+    if pinned is not None:
+        p = bool(pinned)
+    elif existing_pinned is not None:
+        p = existing_pinned
+    else:
+        p = fallback_pinned
+    if not a and t == _DEFAULT_NOTE_TYPE and not p:
+        return clean
+    marker = f"<!-- author: {a}"
+    if t != _DEFAULT_NOTE_TYPE:
+        marker += f"; type: {t}"
+    if p:
+        marker += "; pinned: true"
+    marker += " -->\n"
+    return marker + clean
 
 
 # --- writes ------------------------------------------------------------------
 async def put_note(scope_key: str, note_id: str, title: str, content: str, hook: str = "",
-                   author: str = "") -> dict:
+                   author: str = "", note_type: str = "", pinned: bool | None = None) -> dict:
     """Write a note (source of truth on disk).
 
     1. write `<note-id>.md` atomically,
@@ -586,13 +739,21 @@ async def put_note(scope_key: str, note_id: str, title: str, content: str, hook:
     `author` is an origin string (see services/origin): "operator", "self",
     "agent:<slug>", "derived:<model>". Optional, and absent on every note written
     before it existed.
+
+    `note_type` is one of decision/fact/reference/preference (defaults to "fact"
+    when never set). `pinned` is a tri-state: None means "leave whatever is
+    already on disk (False for a new note)"; True/False sets it explicitly. Both
+    are optional metadata (design doc sec 5); omitting them keeps an existing
+    note's write path unchanged.
     """
     _parse_scope(scope_key)
     _valid_note_id(note_id)
     d = scope_dir(scope_key)
 
+    stored_author, stored_type, stored_pinned = _stored_meta(scope_key, note_id)
     _atomic_write(d / f"{note_id}.md",
-                  _with_author(content, author, _stored_author(scope_key, note_id)))
+                  _with_meta(content, author, note_type, pinned,
+                            stored_author, stored_type, stored_pinned))
 
     idx = _read_index(scope_key)
     idx[note_id] = {"title": (title or note_id).strip(), "hook": (hook or "").strip()}
