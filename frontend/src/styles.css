@@ -574,6 +574,18 @@ input[type="range"].grad::-moz-range-thumb {
      Nothing should ever render smaller than the smallest real message. */
   min-height: calc(1.4em + 2 * 0.5rem);
 }
+/* EXCEPT A REPLY THAT IS ONLY ITS FOLDED WORK. A turn that ran tools and wrote
+   no closing text renders as one collapsed summary line and nothing else, and
+   that line is --fs-xs: about 22px against a floor sized to a 0.9rem body row,
+   about 36px. The bubble came out half again taller than its content with no
+   visible reason, which is what "extra tall for no reason" was. Reported with a
+   screenshot, 2026-08-14.
+
+   The floor is for a bubble with NOTHING in it. This one has exactly one real
+   row, so it sets its own height. Anything else in the body (a byline, a
+   receipt, an answer) makes the group not the only child and the floor applies
+   again, which is correct: those cases have a text row to be as tall as. */
+.chat-bubble:has(> .chat-bubble__body > .chat-work:only-child) { min-height: 0; }
 .chat-bubble__body { min-width: 0; }
 /* Reserve the inline room the copy button sits in, so it never overlaps the end
    of the last line. This is horizontal only — it adds no row and no height. */
