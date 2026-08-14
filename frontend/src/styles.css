@@ -1080,13 +1080,23 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-group.is-open .chat-group__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-group__chev { transition: none; } }
 .chat-group__icon { flex: 0 0 auto; }
-.chat-group__name { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--fg); }
-/* The distinct tool names, elided at the reader's real width. Names, never a
-   description of what the steps did: see grouping.ts. */
-.chat-group__preview {
+/* The tool names, and they LEAD: same treatment as a single step's name, since
+   a group head and a step row are the same shape at two depths (icon, name,
+   meta). Names, never a description of what the steps did: see grouping.ts.
+
+   This is the slot that gives on a narrow row, so it carries the ellipsis. It
+   used to be the fixed-width one holding "6 steps" while the names ellipsised
+   beside it, which had the row shrinking away the only part of it that said
+   anything. */
+.chat-group__tools {
   flex: 1 1 auto; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: var(--fw-semi); color: var(--fg);
 }
+/* The count, and anything blocked. Muted by inheritance and never shrinks: it
+   is three characters, and it is the part that says the label is not the whole
+   story. Absent entirely when the names already enumerate every step. */
+.chat-group__count { flex: 0 0 auto; }
 /* The steps, one level in, behind the rail. Vertical space is padding for the
    same reason as .chat-tool__detail: a margin would survive the collapse. */
 .chat-group__body {

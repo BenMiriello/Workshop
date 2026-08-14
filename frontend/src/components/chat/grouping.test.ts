@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { ChatSegment } from "../../lib/chat";
 import {
-  buildTurnBlocks, groupSummary, groupTools, groupIsRunning, turnWorkSummary,
+  buildTurnBlocks, groupLabel, groupCount, groupTools, groupIsRunning, turnWorkSummary,
   isRunning, hadErrorResult, stepAlert, blockedLabel, stepDuration,
   runningSeconds, turnDuration, type TurnItem, type TurnBlock,
 } from "./grouping";
@@ -33,7 +33,7 @@ describe("buildTurnBlocks: adjacent coalescing by part type", () => {
     const blocks = buildTurnBlocks([read("a.ts"), bash("ls"), grep("x"), edit("b.ts")]);
     expect(blocks).toHaveLength(1);
     expect(items(blocks)).toHaveLength(1);
-    expect(groupSummary(items(blocks)[0] as never)).toBe("4 steps");
+    expect(groupLabel(items(blocks)[0] as never)).toBe("Read, Bash, Grep, Edit");
   });
 
   it("PRESERVES ORDER EXACTLY, which is the property the old window broke", () => {
@@ -121,10 +121,30 @@ describe("what breaks a group", () => {
   });
 });
 
-describe("the group header is a count, never a description", () => {
-  it("counts, with the right plural", () => {
+describe("the group header names its tools, never describes them", () => {
+  // NAMES LEAD, THE COUNT TRAILS, and the count is dropped when the names have
+  // already enumerated every step. The turn line above keeps the count and is
+  // the only line that does, so the two nesting levels stop reading identically.
+  it("leads with the names and counts only what they do not say", () => {
     const g = items(buildTurnBlocks([read("a"), read("b")]))[0];
-    expect(groupSummary(g as never)).toBe("2 steps");
+    expect(groupLabel(g as never)).toBe("Read");
+    expect(groupCount(g as never)).toBe("2 steps");
+  });
+
+  it("says no count when there is one distinct name per step", () => {
+    const g = items(buildTurnBlocks([read("a"), bash("ls"), grep("x")]))[0];
+    expect(groupLabel(g as never)).toBe("Read, Bash, Grep");
+    expect(groupCount(g as never)).toBe("");
+  });
+
+  it("falls back to the count when no step carries a name", () => {
+    const g = items(buildTurnBlocks([
+      { t: "tool", name: "", input: "a", ok: true },
+      { t: "tool", name: "", input: "b", ok: true },
+    ]))[0];
+    expect(groupLabel(g as never)).toBe("2 steps");
+    // Never twice: the label already is the count.
+    expect(groupCount(g as never)).toBe("");
   });
 
   it("says nothing about error results the turn recovered from", () => {
@@ -137,7 +157,8 @@ describe("the group header is a count, never a description", () => {
       { t: "tool", name: "Bash", input: "make", ok: false },
       read("b"),
     ]))[0];
-    expect(groupSummary(g as never)).toBe("4 steps");
+    expect(groupLabel(g as never)).toBe("Read, Bash");
+    expect(groupCount(g as never)).toBe("4 steps");
   });
 
   it("NEVER paraphrases what a step did, not even a destructive one", () => {
@@ -146,7 +167,7 @@ describe("the group header is a count, never a description", () => {
     // merge allowlist is needed to keep a destructive command out of a group.
     const g = items(buildTurnBlocks([read("a"), bash("rm -rf important_dir")]))[0] as
       Extract<TurnItem, { t: "group" }>;
-    const line = `${groupSummary(g)} ${groupTools(g)}`;
+    const line = `${groupLabel(g)} ${groupCount(g)}`;
     expect(line).not.toMatch(/execut|ran|command|deleted|removed/i);
     // And the command itself is still there, in full, on its own row inside.
     expect(g.steps.map((s) => s.input)).toContain("rm -rf important_dir");
@@ -175,7 +196,8 @@ describe("legacy segments", () => {
       { t: "tool", name: "Read", input: "a" }, { t: "tool", name: "Read", input: "b" },
     ]));
     expect(got).toHaveLength(1);
-    expect(groupSummary(got[0] as never)).toBe("2 steps");
+    expect(groupLabel(got[0] as never)).toBe("Read");
+    expect(groupCount(got[0] as never)).toBe("2 steps");
   });
 });
 
@@ -272,7 +294,8 @@ describe("marks in the collapsed lines", () => {
       { t: "tool", name: "Bash", input: "git status", ok: false, error: "Exit code 1 changes" },
       denied("d1"),
     ]))[0] as Extract<TurnItem, { t: "group" }>;
-    expect(groupSummary(g)).toBe("3 steps, 1 blocked");
+    expect(groupLabel(g)).toBe("Read, Bash");
+    expect(groupCount(g)).toBe("3 steps, 1 blocked");
   });
 
   // A GROUP DOES NOT SPEAK FOR THE TURN. It used to append "stopped here" when
@@ -281,7 +304,10 @@ describe("marks in the collapsed lines", () => {
   it("a group stays quiet about how the turn ended", () => {
     const work: ChatSegment[] = [read("a"), { t: "tool", name: "Bash", input: "x", ok: false, id: "s9" }];
     const g = items(buildTurnBlocks(work))[0] as Extract<TurnItem, { t: "group" }>;
-    expect(groupSummary(g)).toBe("2 steps");
+    expect(groupLabel(g)).toBe("Read, Bash");
+    expect(groupCount(g)).toBe("");
+    // And the TURN line is the one that counts. This pair is the whole point of
+    // the split: the two levels no longer print the same string.
     expect(turnWorkSummary(work)).toBe("2 steps");
   });
 

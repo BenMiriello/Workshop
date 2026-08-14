@@ -223,31 +223,73 @@ export function buildTurnBlocks(work: ChatSegment[]): TurnBlock[] {
   return blocks;
 }
 
-/** The collapsed label for a group: how many steps, and anything blocked.
- *
- *  A COUNT, NEVER A DESCRIPTION. See the header note: a paraphrase is the one
- *  thing a collapsed group must not do, because it can be wrong about what it
- *  hid. It used to append "N failed" off the raw is_error flag, which on this
- *  history would have shouted about 37 nonzero exit codes and 2 real denials in
- *  the same voice. */
-export function groupSummary(item: Extract<TurnItem, { t: "group" }>): string {
-  const n = item.steps.length;
-  const blocked = item.steps.filter((s) => stepAlert(s)).length;
-  const parts = [`${n} step${n === 1 ? "" : "s"}`];
-  if (blocked) parts.push(`${blocked} blocked`);
-  return parts.join(", ");
+/** "4 steps". One place, because the group line and the turn line both say it
+ *  and they must never disagree about the plural. */
+function stepCount(n: number): string {
+  return `${n} step${n === 1 ? "" : "s"}`;
 }
 
-/** The distinct tool names in a group, in the order they first appear.
+/** The distinct tool names in a group, in the order they first appear. */
+function distinctTools(item: Extract<TurnItem, { t: "group" }>): string[] {
+  const seen: string[] = [];
+  for (const s of item.steps) if (s.name && !seen.includes(s.name)) seen.push(s.name);
+  return seen;
+}
+
+/** The distinct tool names in a group, joined.
  *
  *  Names, not a summary of what they did. "Bash, Read, Grep" is a fact about
  *  the group that stays true however the steps are read; "Explored the repo" is
  *  a guess. This is the same thing AI Elements puts in a single Tool header,
  *  applied to a group of them. */
 export function groupTools(item: Extract<TurnItem, { t: "group" }>): string {
-  const seen: string[] = [];
-  for (const s of item.steps) if (s.name && !seen.includes(s.name)) seen.push(s.name);
-  return seen.join(", ");
+  return distinctTools(item).join(", ");
+}
+
+/** The leading text of a collapsed group: the tool names in it.
+ *
+ *  NAMES LEAD, THE COUNT TRAILS. This line and the settled turn's line above it
+ *  both used to open with "N steps", so the two nesting levels read identically
+ *  and a turn holding exactly one group printed the same string twice, one
+ *  indent apart. Operator, 2026-08-14: "it's odd that a whole system message can
+ *  be collapsed into 'N steps' and so can individual groups".
+ *
+ *  The TURN keeps the count, because an aggregate over the whole reply is what
+ *  it is, and it is the only line carrying the duration. A group's own fact is
+ *  WHICH TOOLS, which the turn line cannot say, so that is what it leads with. A
+ *  line opening with a number is a turn; a line opening with a tool name is a
+ *  run inside one, and that is readable from the first character.
+ *
+ *  It also puts the group head in the same shape as a step row (icon, name,
+ *  meta), which is right: they are the same kind of thing at two depths.
+ *
+ *  Still names, NEVER A DESCRIPTION. See the header note: a paraphrase is the
+ *  one thing a collapsed group must not do, because it can be wrong about what
+ *  it hid. Falls back to the count only when no step in the group carries a
+ *  name, since a header with nothing in it is worse than a repeated noun. */
+export function groupLabel(item: Extract<TurnItem, { t: "group" }>): string {
+  return groupTools(item) || stepCount(item.steps.length);
+}
+
+/** The trailing meta of a collapsed group: how many steps, and anything blocked.
+ *
+ *  The count is DROPPED when there are as many distinct names as steps, because
+ *  the label has then enumerated them one for one and the number is just the
+ *  length of a list already on screen. "Read, Bash, Grep" needs no "3 steps"
+ *  after it; "Read, Bash" over six calls does.
+ *
+ *  `blocked` is always said. It used to append "N failed" off the raw is_error
+ *  flag too, which on this history would have shouted about 37 nonzero exit
+ *  codes and 2 real denials in the same voice. */
+export function groupCount(item: Extract<TurnItem, { t: "group" }>): string {
+  const n = item.steps.length;
+  const named = distinctTools(item).length;
+  const blocked = item.steps.filter((s) => stepAlert(s)).length;
+  const parts: string[] = [];
+  // `named &&`: with no names at all the label already IS the count.
+  if (named && n > named) parts.push(stepCount(n));
+  if (blocked) parts.push(`${blocked} blocked`);
+  return parts.join(", ");
 }
 
 /** Is anything in this group still running? A group holding the step the turn
@@ -284,7 +326,9 @@ export function turnWorkSummary(work: ChatSegment[]): string {
   // before this is called), and SettledWork carries its own fallback label
   // rather than trusting that to stay true.
   if (!steps) return "";
-  const parts = [`${steps} step${steps === 1 ? "" : "s"}`];
+  // The count LEADS here, and only here. See groupLabel: that is what separates
+  // this line from the group lines nested under it.
+  const parts = [stepCount(steps)];
   if (agents) parts.push(`${agents} agent${agents === 1 ? "" : "s"}`);
   if (asked) parts.push(`${asked} approval${asked === 1 ? "" : "s"}`);
   // Named in the collapsed line, because a turn that hit one of these is the

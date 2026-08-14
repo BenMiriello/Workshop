@@ -5,7 +5,7 @@ import type { ChatSegment } from "../../lib/chat";
 import ApprovalBlock from "./ApprovalBlock";
 import { agentBrief, agentChipLine, agentSummary } from "./segments";
 import {
-  blockedLabel, buildTurnBlocks, groupSummary, groupTools, hadErrorResult, isRunning,
+  blockedLabel, buildTurnBlocks, groupCount, groupLabel, hadErrorResult, isRunning,
   runningSeconds, stepAlert, stepDuration, turnDuration, turnWorkSummary,
   type TurnItem,
 } from "./grouping";
@@ -199,8 +199,14 @@ function GroupChip({ item, nowMs, defaultOpen, arrived, current }: {
         >
           <ChevronRight size={13} aria-hidden className="chat-group__chev" />
           <Wrench size={12} aria-hidden className="chat-group__icon" />
-          <span className="chat-group__name">{groupSummary(item)}</span>
-          <span className="chat-group__preview">{groupTools(item)}</span>
+          {/* Names lead, count trails. The names take the flexible, ellipsising
+              slot because a long list of them is what has to give on a narrow
+              row, and the count never does: it is three characters and it is
+              the part that says the label is not the whole story. */}
+          <span className="chat-group__tools">{groupLabel(item)}</span>
+          {!!groupCount(item) && (
+            <span className="chat-group__count">{groupCount(item)}</span>
+          )}
         </button>
       )}
       {/* A change animates if the state it is leaving was on screen long enough
