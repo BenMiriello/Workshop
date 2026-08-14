@@ -53,6 +53,15 @@ DERIVED = [
 def test_every_state_path_follows_a_relocated_root(module_name, attr, monkeypatch, tmp_path):
     root = tmp_path / "elsewhere"
     monkeypatch.setenv("WORKSHOP_ROOT", str(root))
+    # Clear the per-path overrides too, or this test answers a question about
+    # the AMBIENT SHELL rather than about the code. On this deployment
+    # secrets.env sets WORKSHOP_CHAT_CWD, so `paths.chat_cwd` returned it
+    # verbatim and the chat_cwd case failed for everyone who had that variable
+    # exported and passed for everyone who did not. A gate whose verdict depends
+    # on who ran it teaches people to ignore the gate.
+    for override in ("WORKSHOP_CHAT_CWD", "WORKSHOP_PROJECTS_ROOT",
+                     "WORKSHOP_PROJECTS_REGISTRY", "WORKSHOP_RUNTIME_DIR"):
+        monkeypatch.delenv(override, raising=False)
     # These are module-level constants, so the module has to be re-imported for
     # the new root to be read. That is also the real-world behaviour: the value
     # is fixed at process start.

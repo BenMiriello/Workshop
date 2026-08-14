@@ -207,11 +207,17 @@ class Project(Base, Timestamps, SoftDelete):
     description: Mapped[str | None] = mapped_column(Text)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    # Ticket numbering. Settled here rather than left open: a counter column
-    # taken with SELECT ... FOR UPDATE in the same transaction as the insert.
-    # A Postgres sequence is global and cannot give per-project numbering, and
-    # an advisory lock would serialise on a hash rather than on the real row.
-    # Contention is per project, which is the correct granularity.
+    # Ticket numbering. A per-project counter, because a Postgres sequence is
+    # global and cannot give per-project numbering.
+    #
+    # NOT YET CONCURRENCY-SAFE. The intended mechanism is
+    # `SELECT ... FOR UPDATE` on this row in the same transaction as the insert;
+    # the only writer today is the backfill, which is single-threaded and reads
+    # it with a plain attribute access. `uq_ticket_number` means a race loses a
+    # row to a constraint violation rather than duplicating a number, so it
+    # fails safe, but it does fail. The lock lands with the first concurrent
+    # writer in P3. Described as intent, not as fact, because documenting a
+    # mechanism that does not exist is how the JSON store's docs drifted.
     next_ticket_number: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="1")
 
@@ -476,10 +482,16 @@ class Agent(Base, Timestamps, SoftDelete):
 class Run(Base, Timestamps):
     """One execution attempt.
 
-    This is where the nine claim and lease columns that used to sit on the
-    ticket now live, because they describe an execution and not a durable work
-    item. `ticket.attempts` becomes `count(run)`, which removes a
-    hand-maintained counter that had already produced a real bug.
+    The claim and lease columns that used to sit on the ticket live here,
+    because they describe an execution and not a durable work item.
+    `ticket.attempts` becomes `count(run)`, which removes a hand-maintained
+    counter that had already produced a real bug.
+
+    NOT ALL of them moved: `claim_token`, the monotonic fence the JSON store
+    hand-rolled to reject a resurrected zombie worker's late write, has no
+    column here yet. `lease_expires_at` + `heartbeat_at` + `worker_pid` cover
+    liveness; they do not cover compare-and-swap. P4 needs it before the sweep
+    runs against this schema.
     """
     __tablename__ = "run"
 
@@ -516,9 +528,17 @@ class Run(Base, Timestamps):
     )
 
 
-# Tables that carry `org_id` and therefore must be RLS-protected. The migration
-# reads this list, so a table added to this module is protected by construction
-# rather than by someone remembering to write the policy.
+# Tables that carry `org_id` and therefore must be RLS-protected.
+#
+# This is DERIVED from the metadata, but the migration does NOT read it: a
+# migration must stay frozen against the schema as it was when written, so it
+# carries its own literal tuple. Two lists that have to agree.
+#
+# The agreement is enforced by tests/test_db_rls_coverage.py, which needs no
+# database and therefore runs everywhere. That matters: the drift it catches is
+# a new table with `org_id`, no policy, and full DML granted to the application
+# role by ALTER DEFAULT PRIVILEGES, which is readable by every tenant. The only
+# other detector is verify_rls(), and that needs a live connection.
 TENANT_TABLES = tuple(
     t.name for t in Base.metadata.sorted_tables
     if "org_id" in t.columns

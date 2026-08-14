@@ -21,31 +21,36 @@ from sqlalchemy import text  # noqa: E402
 @pytest.fixture
 def org():
     """A throwaway organization with a project and one state."""
-    from db.engine import admin_session, tenant_session
+    from db.engine import owner_session, tenant_session
     from db.ids import uuid7
     from db.models import Organization, Project, WorkflowState
 
+    from tests.conftest import DB_ORG_PREFIX, _delete_test_orgs
+
     tag = uuid.uuid4().hex[:8]
-    with admin_session() as s:
-        o = Organization(id=uuid7(), slug=f"s-{tag}", name="Schema test")
-        s.add(o)
-        s.flush()
-        oid = o.id
+    oid = None
+    try:
+        with owner_session() as s:
+            o = Organization(id=uuid7(), slug=f"{DB_ORG_PREFIX}s-{tag}",
+                             name="Schema test")
+            s.add(o)
+            s.flush()
+            oid = o.id
 
-    with tenant_session(oid) as s:
-        p = Project(id=uuid7(), org_id=oid, slug=f"p-{tag}", name="P", key=f"S{tag[:3]}")
-        s.add(p)
-        s.flush()
-        st = WorkflowState(id=uuid7(), org_id=oid, project_id=p.id, name="Todo",
-                           category="unstarted", is_default=True)
-        s.add(st)
-        s.flush()
-        ctx = {"org": oid, "project": p.id, "state": st.id}
+        with tenant_session(oid) as s:
+            p = Project(id=uuid7(), org_id=oid, slug=f"p-{tag}", name="P",
+                        key=f"S{tag[:3]}")
+            s.add(p)
+            s.flush()
+            st = WorkflowState(id=uuid7(), org_id=oid, project_id=p.id, name="Todo",
+                               category="unstarted", is_default=True)
+            s.add(st)
+            s.flush()
+            ctx = {"org": oid, "project": p.id, "state": st.id}
 
-    yield ctx
-
-    with admin_session() as s:
-        s.execute(text("DELETE FROM organization WHERE id = :i"), {"i": oid})
+        yield ctx
+    finally:
+        _delete_test_orgs([oid])
 
 
 def _ticket(session, ctx, number, priority, title="t"):

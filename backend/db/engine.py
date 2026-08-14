@@ -110,7 +110,12 @@ def assert_unprivileged(eng) -> None:
             "SELECT current_user, rolsuper, rolbypassrls "
             "FROM pg_roles WHERE rolname = current_user")).one_or_none()
     if row is None:
-        return
+        # Not a silent pass. If the connecting role cannot be identified then
+        # the most important check in this module did not run, and refusing to
+        # start is the only safe reading of that.
+        raise PrivilegedConnection(
+            "could not read the connecting role from pg_roles, so it is not "
+            "possible to confirm that row-level security applies to it")
     name, is_super, bypass = tuple(row)
     if is_super or bypass:
         raise PrivilegedConnection(
@@ -231,12 +236,15 @@ def owner_session() -> Iterator[Session]:
 
 @contextmanager
 def admin_session() -> Iterator[Session]:
-    """A session with NO tenant set. Reads nothing from tenant-scoped tables.
+    """A session with NO tenant set, on the APPLICATION connection.
 
-    For migrations, the backfill, and cross-tenant administration. It is not a
-    back door: with no `app.current_org` set, every RLS policy evaluates against
-    a missing setting and returns no rows, so this session sees tenant tables as
-    empty rather than as everything.
+    It reads nothing from tenant-scoped tables and it cannot administer them
+    either: with no `app.current_org` set, every policy compares against NULL
+    and matches no rows. That is the point. It is for the few tables that are
+    not tenant-scoped and for liveness checks like `verify_rls`.
+
+    For work that genuinely must cross tenants (provisioning, the backfill),
+    use `owner_session`, which says so in its name.
     """
     session = SessionLocal()
     try:

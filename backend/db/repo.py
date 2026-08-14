@@ -145,11 +145,21 @@ def get_ticket(org_id: UUID | str, legacy_id: str) -> dict | None:
 #
 # `unattended` adds the two predicates the JSON scheduler had to compute in
 # Python over every record: the type must be agent-executable, and no blocked_by
-# edge may point at a ticket that is not finished. Ordering is
-# `priority, created_at` and the ORDER BY is TABLE-QUALIFIED on purpose: an
-# unqualified `priority` would bind to the `priority::text` output column above
-# and sort alphabetically. See db/models.PRIORITIES.
+# edge may point at a ticket that is not finished.
+#
+# `t.closed_at IS NULL` is redundant with the category filter and is here
+# anyway, because `ix_ticket_queue` is a PARTIAL index predicated on
+# `closed_at IS NULL AND deleted_at IS NULL`. Postgres will only use a partial
+# index when it can PROVE the query implies the predicate, and it cannot derive
+# "not closed" from a join to `workflow_state.category`. Without this line the
+# plan is a sequential scan, which a reviewer confirmed with EXPLAIN: the index
+# built for this query could not serve it.
+#
+# The ORDER BY is TABLE-QUALIFIED on purpose: an unqualified `priority` would
+# bind to the `priority::text` output column above and sort alphabetically. See
+# db/models.PRIORITIES.
 _READY = _SELECT + """
+  AND t.closed_at IS NULL
   AND ws.category IN ('backlog','unstarted')
   AND ws.name <> 'Draft'
   AND NOT EXISTS (

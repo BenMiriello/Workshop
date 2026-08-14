@@ -66,3 +66,43 @@ def requires_route(app, path: str):
     """Skip unless `path` is actually mounted on this deployment."""
     if not any(getattr(r, "path", None) == path for r in app.routes):
         pytest.skip(f"{path} is not mounted on this deployment")
+
+
+# --- database fixtures -------------------------------------------------------
+# The DB suite runs against whatever WORKSHOP_DATABASE_URL points at, which on a
+# developer machine is the SAME database holding real work. Teardown is a
+# `DELETE FROM organization`, which cascades to every tenant table, so a wrong id
+# would take real data with it. `tests-must-not-share-owner-storage` records the
+# same failure shape for the file stores.
+#
+# Two guards, because one is not enough:
+#   1. every test organization is created with the `wstest-` slug prefix, and
+#      teardown refuses to delete anything without it;
+#   2. setup runs inside try/finally, so a fixture that raises PART WAY through
+#      still cleans up what it already created. Without that, a failure between
+#      creating org A and org B leaked A forever, which is how stale `rev-*` and
+#      `aud*` organizations accumulated in this database.
+
+DB_ORG_PREFIX = "wstest-"
+
+
+def _delete_test_orgs(org_ids) -> None:
+    """Delete by id, but only for organizations carrying the test prefix."""
+    from sqlalchemy import text
+
+    from db.engine import owner_session
+
+    ids = [str(o) for o in org_ids if o]
+    if not ids:
+        return
+    with owner_session() as s:
+        rows = s.execute(text(
+            "SELECT id, slug FROM organization WHERE id = ANY(CAST(:ids AS uuid[]))"),
+            {"ids": ids}).all()
+        unsafe = [slug for _, slug in rows if not slug.startswith(DB_ORG_PREFIX)]
+        if unsafe:
+            raise AssertionError(
+                f"refusing to delete organizations without the {DB_ORG_PREFIX!r} "
+                f"prefix: {unsafe}. A test fixture is holding a real org id.")
+        s.execute(text("DELETE FROM organization WHERE id = ANY(CAST(:ids AS uuid[]))"),
+                  {"ids": ids})

@@ -32,47 +32,61 @@ def two_orgs():
     tenant table cascades from, so a failed test cannot leave rows behind that a
     tenant-scoped session would be unable to see in order to delete.
     """
-    from db.engine import admin_session, tenant_session
+    from db.engine import owner_session, tenant_session
     from db.ids import uuid7
     from db.models import Organization, Project, Ticket, UserAccount, WorkflowState
 
+    from tests.conftest import DB_ORG_PREFIX, _delete_test_orgs
+
     tag = uuid.uuid4().hex[:8]
-    made = {}
-    with admin_session() as s:
+    ids: dict = {}
+    try:
+        # Organizations and users are provisioned on the OWNER connection: the
+        # application role deliberately has no INSERT on either (migration
+        # 7bf9ae20fe0d), because a request handler must never be able to create
+        # or destroy a tenant.
+        with owner_session() as s:
+            for name in ("a", "b"):
+                org = Organization(id=uuid7(), slug=f"{DB_ORG_PREFIX}{name}-{tag}",
+                                   name=f"Test {name}")
+                s.add(org)
+                s.flush()
+                ids[name] = org.id
+            user = UserAccount(id=uuid7(), email=f"t-{tag}@example.test", name="T")
+            s.add(user)
+            s.flush()
+            ids["user"] = user.id
+
         for name in ("a", "b"):
-            org = Organization(id=uuid7(), slug=f"t-{name}-{tag}", name=f"Test {name}")
-            s.add(org)
-            made[name] = org
-        user = UserAccount(id=uuid7(), email=f"t-{tag}@example.test", name="T")
-        s.add(user)
-        s.flush()
-        ids = {k: v.id for k, v in made.items()}
-        ids["user"] = user.id
+            org = ids[name]
+            with tenant_session(org) as s:
+                p = Project(id=uuid7(), org_id=org, slug=f"p-{tag}", name="P",
+                            key=f"P{tag[:3]}")
+                s.add(p)
+                s.flush()
+                st = WorkflowState(id=uuid7(), org_id=org, project_id=p.id, name="Todo",
+                                   category="unstarted", is_default=True)
+                s.add(st)
+                s.flush()
+                t = Ticket(id=uuid7(), org_id=org, project_id=p.id, number=1,
+                           title=f"{name} secret", state_id=st.id)
+                s.add(t)
+                s.flush()
+                ids[f"project_{name}"] = p.id
+                ids[f"state_{name}"] = st.id
+                ids[f"ticket_{name}"] = t.id
 
-    for name in ("a", "b"):
-        org = ids[name]
-        with tenant_session(org) as s:
-            p = Project(id=uuid7(), org_id=org, slug=f"p-{tag}", name="P", key=f"P{tag[:3]}")
-            s.add(p)
-            s.flush()
-            st = WorkflowState(id=uuid7(), org_id=org, project_id=p.id, name="Todo",
-                               category="unstarted", is_default=True)
-            s.add(st)
-            s.flush()
-            t = Ticket(id=uuid7(), org_id=org, project_id=p.id, number=1,
-                       title=f"{name} secret", state_id=st.id)
-            s.add(t)
-            s.flush()
-            ids[f"project_{name}"] = p.id
-            ids[f"state_{name}"] = st.id
-            ids[f"ticket_{name}"] = t.id
-
-    yield ids
-
-    with admin_session() as s:
-        s.execute(text("DELETE FROM organization WHERE id = ANY(:ids)"),
-                  {"ids": [ids["a"], ids["b"]]})
-        s.execute(text("DELETE FROM user_account WHERE id = :u"), {"u": ids["user"]})
+        yield ids
+    finally:
+        # try/finally, not a plain teardown after the yield: a fixture that
+        # raises PART WAY through setup never reaches the yield, so a bare
+        # teardown never runs and the rows it already created leak. That is how
+        # stale organizations accumulated in this database.
+        _delete_test_orgs([ids.get("a"), ids.get("b")])
+        if ids.get("user"):
+            with owner_session() as s:
+                s.execute(text("DELETE FROM user_account WHERE id = :u"),
+                          {"u": ids["user"]})
 
 
 def test_the_app_role_is_not_privileged():
@@ -182,3 +196,106 @@ def test_tenant_session_refuses_a_missing_org():
     with pytest.raises(TenantUnset):
         with tenant_session(None):
             pass
+
+
+def test_the_tenant_setting_does_not_follow_a_pooled_connection(two_orgs):
+    """`engine.py`'s headline claim, which nothing tested.
+
+    `SET LOCAL` is transaction-scoped. A plain `SET` would survive the request
+    and the next caller to check out that pooled connection would inherit the
+    previous tenant's context. Since the pool is small, the connection used here
+    is very likely the same one, which is exactly the case that matters.
+    """
+    from db.engine import admin_session, tenant_session
+
+    with tenant_session(two_orgs["a"]) as s:
+        assert s.execute(text("SELECT current_setting('app.current_org', true)")
+                         ).scalar() == str(two_orgs["a"])
+
+    with admin_session() as s:
+        leaked = s.execute(text("SELECT current_setting('app.current_org', true)")).scalar()
+        visible = s.execute(text("SELECT count(*) FROM ticket")).scalar()
+
+    assert leaked in (None, ""), f"tenant context survived the transaction: {leaked!r}"
+    assert visible == 0
+
+
+def test_a_tenant_cannot_reference_another_orgs_rows(two_orgs):
+    """Referential-integrity checks run with row security OFF, so `WITH CHECK`
+    constrains the label on a row and says nothing about what it points at.
+    Before the composite foreign keys, all of these succeeded, which gave an
+    existence oracle for other tenants' UUIDs and let one tenant pin a RESTRICT
+    on another tenant's workflow state.
+    """
+    from db.engine import tenant_session
+    from db.ids import uuid7
+
+    attempts = {
+        "ticket -> other org's project": (
+            "INSERT INTO ticket (id, org_id, project_id, number, title, state_id) "
+            "VALUES (:i, :o, :p, 700, 'x', :st)",
+            {"p": two_orgs["project_b"], "st": two_orgs["state_a"]}),
+        "ticket -> other org's state": (
+            "INSERT INTO ticket (id, org_id, project_id, number, title, state_id) "
+            "VALUES (:i, :o, :p, 701, 'x', :st)",
+            {"p": two_orgs["project_a"], "st": two_orgs["state_b"]}),
+        "link -> other org's ticket": (
+            "INSERT INTO ticket_link (id, org_id, from_ticket_id, to_ticket_id, kind) "
+            "VALUES (:i, :o, :f, :t, 'blocked_by')",
+            {"f": two_orgs["ticket_a"], "t": two_orgs["ticket_b"]}),
+        "comment on other org's ticket": (
+            "INSERT INTO comment (id, org_id, ticket_id, author_type, body) "
+            "VALUES (:i, :o, :t, 'system', 'x')",
+            {"t": two_orgs["ticket_b"]}),
+    }
+    for label, (sql, extra) in attempts.items():
+        with pytest.raises(Exception) as err:
+            with tenant_session(two_orgs["a"]) as s:
+                s.execute(text(sql), {"i": uuid7(), "o": two_orgs["a"], **extra})
+        assert "foreign key" in str(err.value).lower(), f"{label} was allowed"
+
+
+def test_a_tenant_cannot_enumerate_other_organizations_or_users(two_orgs):
+    """`organization` and `user_account` carry no `org_id`, so they fall outside
+    the derived tenant-table list and originally had no policy at all: every
+    tenant could read every other tenant's name and every customer's email."""
+    from db.engine import tenant_session
+
+    with tenant_session(two_orgs["a"], two_orgs["user"]) as s:
+        orgs = [r[0] for r in s.execute(text("SELECT id FROM organization")).all()]
+        emails = s.execute(text("SELECT count(*) FROM user_account")).scalar()
+
+    assert two_orgs["b"] not in orgs, "another tenant's organization was visible"
+    assert emails <= 1, "the customer list was enumerable from inside a tenant"
+
+
+def test_the_audit_log_cannot_be_rewritten_by_the_application(two_orgs):
+    """`models.py` says an audit row that can be edited or removed is not an
+    audit row. `GRANT ... ON ALL TABLES` had made that false."""
+    from db.engine import tenant_session
+
+    for sql in ("UPDATE ticket_event SET new_value = 'rewritten history'",
+                "DELETE FROM ticket_event"):
+        with pytest.raises(Exception) as err:
+            with tenant_session(two_orgs["a"]) as s:
+                s.execute(text(sql))
+        assert "permission denied" in str(err.value).lower()
+
+
+def test_verify_rls_actually_detects_a_broken_table():
+    """A negative test. `verify_rls` returning `[]` is only reassuring if it can
+    return something else; a regression that made it unconditionally empty would
+    otherwise pass every check in this file."""
+    from db.engine import owner_session, verify_rls
+
+    with owner_session() as s:
+        s.execute(text("ALTER TABLE ticket_label NO FORCE ROW LEVEL SECURITY"))
+        try:
+            problems = verify_rls(s)
+        finally:
+            s.execute(text("ALTER TABLE ticket_label FORCE ROW LEVEL SECURITY"))
+
+    assert any("ticket_label" in p and "FORCED" in p for p in problems), problems
+
+    with owner_session() as s:
+        assert not [p for p in verify_rls(s) if "ticket_label" in p]
