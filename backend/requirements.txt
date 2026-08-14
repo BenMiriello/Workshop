@@ -24,3 +24,10 @@ croniter==6.0.0
 # voice extras raised ImportError on the first search call rather than degrading.
 # It is not a voice dependency; it is the storage and ranking layer of the index.
 numpy==2.5.1
+
+# Persistence (ADR 0019). Work data moves off .tasks.json into PostgreSQL.
+# psycopg 3 (not psycopg2): it is the maintained driver, and the `binary` extra
+# avoids needing libpq headers at install time.
+SQLAlchemy==2.0.52
+alembic==1.19.1
+psycopg[binary]==3.3.4

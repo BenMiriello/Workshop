@@ -1,0 +1,107 @@
+"""Create the least-privilege application role.
+
+WHY THIS EXISTS, and it is not a nicety.
+
+`ALTER TABLE ... FORCE ROW LEVEL SECURITY` makes a table's OWNER subject to its
+policies. It does nothing about a SUPERUSER or a role holding BYPASSRLS: those
+bypass row security unconditionally, and no table-level setting can stop them.
+
+The official Postgres image creates `POSTGRES_USER` as a superuser. So the
+obvious setup, where the application connects with the credentials the container
+was initialised with, has RLS **enabled, forced, policied and completely
+inert**. It was verified inert here: with policies in place and `verify_rls()`
+reporting no problems, one tenant read another tenant's ticket by primary key
+and `SELECT count(*) FROM ticket` returned every row in the database.
+
+That is the worst possible failure shape, because every signal says it is
+working. Hence two roles:
+
+  workshop      owner + superuser. Migrations only. Never serves a request.
+  workshop_app  NOSUPERUSER NOBYPASSRLS. What the application connects as.
+
+`verify_rls()` now also asserts the connecting role is not privileged, because
+that is the check that would have caught this immediately.
+
+Run after `alembic upgrade`:
+
+    set -a; . ~/.config/workshop/secrets.env; set +a
+    .venv/bin/python -m db.bootstrap
+"""
+from __future__ import annotations
+
+import os
+import sys
+
+from sqlalchemy import create_engine, text
+
+APP_ROLE = "workshop_app"
+
+
+def _admin_url() -> str:
+    url = os.environ.get("WORKSHOP_DATABASE_ADMIN_URL", "").strip()
+    if not url:
+        raise SystemExit(
+            "WORKSHOP_DATABASE_ADMIN_URL is not set (the OWNER connection, used "
+            "for migrations and this bootstrap). See ~/.config/workshop/secrets.env."
+        )
+    return url
+
+
+def bootstrap(password: str) -> None:
+    engine = create_engine(_admin_url(), future=True)
+    with engine.begin() as conn:
+        dbname = conn.execute(text("SELECT current_database()")).scalar()
+        exists = conn.execute(
+            text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": APP_ROLE}
+        ).scalar()
+
+        # CREATE/ALTER ROLE are utility statements: Postgres does not accept a
+        # bind parameter for the password, so it has to be a literal. Composed
+        # with psycopg.sql rather than f-stringed, so quoting is the driver's
+        # job and a password containing a quote cannot end the statement early.
+        from psycopg import sql
+
+        raw = conn.connection.driver_connection
+        stmt = (sql.SQL("ALTER ROLE {} WITH PASSWORD {}") if exists
+                else sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}"))
+        with raw.cursor() as cur:
+            cur.execute(stmt.format(sql.Identifier(APP_ROLE), sql.Literal(password)))
+
+        # Belt and braces: assert the negative privileges explicitly rather than
+        # relying on CREATE ROLE defaults, so a role that was created by hand
+        # with the wrong flags is corrected rather than trusted.
+        conn.execute(text(f"ALTER ROLE {APP_ROLE} NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE"))
+
+        conn.execute(text(f'GRANT CONNECT ON DATABASE "{dbname}" TO {APP_ROLE}'))
+        conn.execute(text(f"GRANT USAGE ON SCHEMA public TO {APP_ROLE}"))
+        # DML only. No DDL: the application must not be able to drop a policy.
+        conn.execute(text(
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {APP_ROLE}"))
+        conn.execute(text(
+            f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {APP_ROLE}"))
+        # And for tables a future migration adds, so a new table is not silently
+        # unreadable by the application until someone remembers to grant it.
+        conn.execute(text(
+            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+            f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {APP_ROLE}"))
+        conn.execute(text(
+            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+            f"GRANT USAGE, SELECT ON SEQUENCES TO {APP_ROLE}"))
+
+        row = conn.execute(text(
+            "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = :r"),
+            {"r": APP_ROLE}).one()
+        if row[0] or row[1]:
+            raise SystemExit(
+                f"{APP_ROLE} still has rolsuper={row[0]} rolbypassrls={row[1]}; "
+                "RLS would not apply to it. Refusing to report success."
+            )
+    print(f"{APP_ROLE}: created/updated, NOSUPERUSER NOBYPASSRLS, DML granted")
+
+
+if __name__ == "__main__":
+    pw = os.environ.get("WORKSHOP_DB_APP_PASSWORD", "").strip()
+    if not pw:
+        print("WORKSHOP_DB_APP_PASSWORD is not set", file=sys.stderr)
+        raise SystemExit(2)
+    bootstrap(pw)

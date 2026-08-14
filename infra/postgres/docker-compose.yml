@@ -1,0 +1,41 @@
+# Workshop's own PostgreSQL.
+#
+# Deliberately its own instance. There are already three Postgres servers on
+# this host (5432, 5433 Letta, 5436) and they belong to other stacks; Workshop
+# does not borrow a database it does not own.
+#
+# Loopback-bound on purpose. Every all-interface bind on this host is an open
+# security ticket (SEC-H2/H4/H7), so this one starts closed.
+#
+# Password lives in ./.env, which is gitignored by the `*.env` rule. Copy
+# .env.example and set your own before the first `docker compose up`.
+services:
+  workshop-db:
+    image: postgres:18-alpine
+    container_name: workshop-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: workshop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in infra/postgres/.env}
+      POSTGRES_DB: workshop
+    volumes:
+      # A named volume, not a host path. Host paths are the hardcoding this
+      # repo already has a checker for, and they do not survive a second host.
+      #
+      # Mount point is /var/lib/postgresql, NOT /var/lib/postgresql/data.
+      # Postgres 18 changed this: the image now places the cluster in a
+      # major-version subdirectory so `pg_upgrade --link` does not have to cross
+      # a mount boundary. Mounting the old path makes the container refuse to
+      # start with "PostgreSQL data in /var/lib/postgresql/data (unused
+      # mount/volume)". See docker-library/postgres#1259.
+      - workshop-db-data:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:5440:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workshop -d workshop"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  workshop-db-data:
