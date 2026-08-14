@@ -957,36 +957,59 @@ input[type="range"].grad::-moz-range-thumb {
 }
 
 /* ---- Step group: a run of adjacent tool calls behind one count ----
-   ONE BOX IN THE WHOLE TRANSCRIPT, AND IT IS THE SUBAGENT. Operator, 2026-08-12,
-   after seeing both arrangements: a frame is a strong claim and only a
-   delegation earns it, because only a delegation holds a whole separate context.
-   Everything else discloses the same quiet way: a chevron on the row, and the
-   opened contents indented behind a vertical rail.
+   A GROUP IS A FILL, A DELEGATION IS A FRAME. Operator, 2026-08-13, revising
+   2026-08-12's "one box and it is the subagent": the group had carried a border
+   AND an inset background, both were removed, and with nothing at all the run of
+   steps stopped reading as one thing. The fill comes back; the border does not.
 
-   So the rail is the ONE nesting mark, used at every depth (.chat-group__body,
-   .chat-tool__detail, .chat-agent__steps). It was already the idiom here for
-   the delegate's own steps; it is now the idiom everywhere, which is what makes
-   a group and a step read as the same kind of thing at different depths rather
-   than as two competing treatments. Hierarchy from position and indentation,
-   not from borders (design system rule 6). */
-.chat-group { margin: 0.3rem 0; min-width: 0; }
+   That keeps the claim the frame was making. A delegation holds a whole separate
+   context that was deliberately kept out of this conversation, and the border is
+   what says so; a group is just this turn's own steps gathered under a count, so
+   it gets the softer of the two treatments. Fill against outline is how the
+   design system already separates two vocabularies that must not be confused
+   (rule 4), and it is why one hairline still means one thing here.
+
+   The fill wraps the WHOLE group, header and steps together, so opening one
+   extends the block down around every row in it. The rows inside are untouched:
+   a step looks the same standing alone, inside an open group, or inside a
+   delegate. Operator, same date.
+
+   The rail stays the nesting mark at every depth (.chat-group__body,
+   .chat-tool__detail, .chat-agent__steps), so a group and a step still read as
+   the same kind of thing at different depths. */
+.chat-group {
+  margin: 0.3rem 0; min-width: 0;
+  /* One step off the bubble it sits on (--card): lighter in dark, a faint tint
+     in light. --bg-inset, what it used to be, is a WELL — darker than the card
+     in dark mode — and reads as something recessed out of the reply rather than
+     as part of it. */
+  background: var(--card-hover);
+  border-radius: var(--radius-md);
+  /* Vertical only. The horizontal inset is the head's own padding, which the
+     rail's offset is derived from; adding a second one here would move the head
+     and the rail apart. */
+  padding: 0.15rem 0;
+}
 /* A GROUP OF ONE IS INVISIBLE AS A GROUP. Every run of tool calls is a group now
    (see grouping.closeGroup: it is what keeps a row from being rebuilt as a
    different component the moment a second call lands beside it), so a lone step
    is wrapped in one. It must look exactly like the bare row it used to be: no
    header, no rail, and none of the group's own vertical margin, since the list's
-   0.2rem gap is the only spacing a single step ever had. */
-.chat-group.is-bare { margin: 0; }
+   0.2rem gap is the only spacing a single step ever had. No fill either: the
+   fill is what says "these belong together", and one step belongs with nothing. */
+.chat-group.is-bare { margin: 0; background: none; padding: 0; }
 .chat-group__head {
   display: flex; align-items: center; gap: 0.4rem;
   width: 100%; min-width: 0; padding: 0.2rem var(--chat-head-pad);
   background: transparent; border: none; color: var(--muted);
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
-  border-radius: var(--radius-sm);
 }
-/* No frame to sit in, so hover is what says the row is a control. Same as the
-   step row, because they are the same kind of control. */
-.chat-group__head:hover { color: var(--fg); background: var(--bg-inset); }
+/* Ink only, now that the group has a surface of its own. A second background on
+   hover would be a box inside a box one shade apart, and in dark mode the old
+   --bg-inset hover is DARKER than the group's fill, so hovering dimmed the row
+   it was meant to light up. Same as .chat-agent__head, which has had a surface
+   under it all along and hovers the same way. */
+.chat-group__head:hover { color: var(--fg); }
 /* Same chevron in all three disclosures (step, group, delegation). It means the
    same thing in each, so it must not look like three different controls: the
    step took --sys here and the group inherited plain muted, which is part of

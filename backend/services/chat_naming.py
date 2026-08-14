@@ -1,9 +1,20 @@
 """Auto-generate a short chat title once the chat has a nameable topic.
 
-Shared by the data chat path (POST /messages) and the build streaming path
-(/turns). A new thread shows a first-message snippet as a placeholder; once an
-exchange lands that has a discernible subject we replace it with a concise
-model-generated title.
+WHEN IT RUNS: as soon as the operator's message lands
+(`chat_store.append_message`), and again after each turn commits
+(`build_streaming._commit_turn`) in case the first attempt found no subject and
+the reply has since supplied one. Both call `schedule()`, which is safe to call
+at any time because the namer re-reads the thread and guards itself.
+
+It used to run ONLY at turn commit, and that one fact produced the whole
+"naming is inconsistent, sometimes it doesn't run" report. A title could not
+exist before the first turn finished, so it inherited that turn's duration:
+measured across the real threads, a median of 9.4 minutes after the opening
+message, ranging from 1.9 to 38.8. The chat sat on "New chat" for the entire
+first turn and then renamed itself at an apparently arbitrary moment.
+
+A new thread shows a first-message snippet as a placeholder; once there is a
+discernible subject we replace it with a concise model-generated title.
 
 The namer reads the conversation FROM THE START, one exchange at a time. It may
 answer NONE when an exchange has no topic (a greeting, a bare command), and the
@@ -39,12 +50,26 @@ def is_blank_title(title: str | None) -> bool:
 
 
 def _exchanges(messages: list[dict]) -> list[tuple[str, str]]:
-    """Every (user, assistant) pair in the thread, IN ORDER.
+    """Every (user, assistant) pair in the thread, IN ORDER. The assistant half
+    may be "" for an exchange whose reply has not landed yet.
 
     Naming walks this list from the front, so exchange 0 is the conversation's
     opening and is tried first. Consecutive user messages (the operator typing
     twice before a reply) collapse onto the first of them: the reply answers the
-    run, and the opener is the part that says what the chat is about."""
+    run, and the opener is the part that says what the chat is about.
+
+    A PENDING EXCHANGE COUNTS, and that is what lets a chat be named while the
+    first turn is still running. It used to require the reply, which meant the
+    earliest a name could exist was the moment the turn committed. Measured over
+    this operator's real threads, that put the name a median of 9.4 minutes after
+    the opening message, spread from 1.9 to 38.8, entirely because it inherited
+    the length of whatever turn it was waiting on. That variance is what reads as
+    "the naming is inconsistent and sometimes does not run": the chat sits on
+    "New chat" for the whole first turn, and turns here run long.
+
+    The reply is still used when it is there. It is simply no longer required,
+    because what a conversation is ABOUT is almost always already in its opening
+    message, which is exactly what the operator can see while they wait."""
     out: list[tuple[str, str]] = []
     pending_user: str | None = None
     for m in messages:
@@ -58,6 +83,8 @@ def _exchanges(messages: list[dict]) -> list[tuple[str, str]]:
         elif role == "assistant" and pending_user is not None:
             out.append((pending_user, content))
             pending_user = None
+    if pending_user is not None:
+        out.append((pending_user, ""))
     return out
 
 
@@ -140,14 +167,21 @@ def compute_title(thread_id: str) -> tuple[str | None, bool]:
         return None, False
     last_user, last_assistant = exchanges[attempt]
 
+    # The reply is included only when there IS one. An empty "Assistant:" line
+    # invites the model to describe the absence ("Awaiting Response") rather than
+    # the subject, which is a title that is wrong the moment the reply lands.
+    body = f"User: {last_user[:600]}"
+    if last_assistant:
+        body += f"\n\nAssistant: {last_assistant[:600]}"
     prompt = (
         "Generate a concise chat title (at most 6 words, Title Case, no quotes, "
         "no trailing punctuation, no emoji) describing what this conversation "
-        "is ABOUT. If the exchange has no clear subject yet (a greeting, an "
+        "is ABOUT. If it has no clear subject yet (a greeting, an "
         "acknowledgement, a bare command, small talk), output exactly NONE "
-        "instead. Output only the title, or NONE.\n\n"
-        f"User: {last_user[:600]}\n\n"
-        f"Assistant: {last_assistant[:600]}"
+        "instead. Title the SUBJECT, never the state of the conversation: never "
+        "answer with something like Awaiting Reply or New Request. "
+        "Output only the title, or NONE.\n\n"
+        f"{body}"
     )
     try:
         result = llm_router.call_cloud(

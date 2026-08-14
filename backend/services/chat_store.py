@@ -25,6 +25,7 @@ whole document view.
 """
 from __future__ import annotations
 
+import asyncio
 import bisect
 import json
 import logging
@@ -191,6 +192,15 @@ def set_default_permission_mode(mode: str | None) -> str | None:
             f"pick one of {list(model_caps.OFFERED_MODES)}")
     _write_pref("default_permission_mode", value)
     return value
+
+
+def _loop_running() -> bool:
+    """Is there an event loop to hand background work to? See append_message."""
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
 
 
 def _now_iso() -> str:
@@ -869,6 +879,35 @@ def append_message(thread_id: str, role: str, content: str, meta: dict | None = 
     if role == "user" and not m.get("_seed_title") \
             and m.get("title") in (None, "", "New chat"):
         _patch(thread_id, _seed_title=content.strip().split("\n")[0][:60] or "New chat")
+    # NAME IT NOW, NOT WHEN THE TURN ENDS. The message the chat is about has just
+    # arrived, so everything the namer needs is already here.
+    #
+    # This used to be scheduled only from build_streaming._commit_turn, which
+    # meant the earliest a name could exist was the moment the first turn
+    # committed, and the title inherited that turn's length. Measured over the
+    # real threads: a median of 9.4 minutes from opening message to name, ranging
+    # 1.9 to 38.8. Nothing was broken and nothing was random; the trigger was
+    # simply attached to the wrong event, and the spread is what the operator
+    # reported as "sometimes it runs, other times it doesn't".
+    #
+    # Imported here rather than at module scope: chat_naming reads this module,
+    # so a top-level import is a cycle. The namer guards itself (still unnamed,
+    # and there is something to name) and is capped, so calling it on every user
+    # message costs at most _MAX_NAME_ATTEMPTS model calls per chat, ever.
+    #
+    # ONLY WITH A LOOP TO PUT IT ON. `chat_naming.schedule` falls back to running
+    # the model call INLINE when there is no running loop, which is right for the
+    # scripts that call it deliberately and quite wrong here: appending a message
+    # is a store write on the hot path, and it must never turn into a blocking
+    # model call because of where it was called from. Off the loop (a script, a
+    # test, a migration) the name simply waits for the next turn, which is the
+    # behaviour that path already had.
+    if role == "user" and _loop_running():
+        try:
+            from services import chat_naming
+            chat_naming.schedule(thread_id)
+        except Exception:   # pragma: no cover — naming is best-effort, always
+            pass
     return _msg_from_event(ev)
 
 

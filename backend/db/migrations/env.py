@@ -32,14 +32,16 @@ if config.config_file_name is not None:
 # "permission denied for schema public", which is the separation working rather
 # than a misconfiguration.
 #
-# The admin URL is preferred and the app URL is only a fallback, for a
-# deployment that has not split the roles yet.
-_url = (os.environ.get("WORKSHOP_DATABASE_ADMIN_URL", "").strip()
-        or os.environ.get("WORKSHOP_DATABASE_URL", "").strip())
+# No fallback to the application URL. Falling back would mean that setting
+# WORKSHOP_DATABASE_URL to the owner DSN "to make migrations work" is a
+# supported path, and that is precisely the configuration that made every RLS
+# policy inert the first time. Requiring the admin variable by name keeps the
+# two credentials distinguishable.
+_url = os.environ.get("WORKSHOP_DATABASE_ADMIN_URL", "").strip()
 if not _url:
     raise RuntimeError(
-        "Neither WORKSHOP_DATABASE_ADMIN_URL nor WORKSHOP_DATABASE_URL is set. "
-        "Source them before running alembic:\n"
+        "WORKSHOP_DATABASE_ADMIN_URL is not set. Migrations run as the schema "
+        "OWNER; the application role holds DML only and cannot execute DDL.\n"
         "  set -a; . ~/.config/workshop/secrets.env; set +a"
     )
 config.set_main_option("sqlalchemy.url", _url.replace("%", "%%"))

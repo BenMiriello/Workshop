@@ -100,6 +100,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.error("queued chat messages could not be drained at startup: %s", e)
     yield
+    # FIRST, before anything is cancelled: say that this is a restart, not an
+    # abandonment. asyncio.run() cancels every surviving task on the way out,
+    # including each turn's drive loop, and that cancellation used to be handled
+    # by killing the turn's detached agent process and committing "this turn
+    # ended early". A restart is meant to be a pause -- the child is detached and
+    # the unit sets KillMode=process precisely so it survives -- and this flag is
+    # what keeps that promise from being broken from inside.
+    try:
+        from services import build_streaming as _bs
+        _bs.begin_shutdown()
+    except Exception:
+        pass
     for t in [*getattr(app.state, "_app_bg", []),
               getattr(app.state, "_bg_port_reconcile", None),
               getattr(app.state, "_bg_deploy_watcher", None),

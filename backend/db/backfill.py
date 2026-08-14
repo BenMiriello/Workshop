@@ -42,7 +42,7 @@ from sqlalchemy import select, text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db.engine import admin_session, tenant_session  # noqa: E402
+from db.engine import owner_session, tenant_session  # noqa: E402
 from db.ids import uuid7  # noqa: E402
 from db.models import (  # noqa: E402
     Agent, Comment, Membership, Organization, Project, Run, Ticket, TicketEvent,
@@ -161,8 +161,13 @@ def apply() -> dict:
     stats: dict[str, int] = {}
     users_by_legacy: dict[int, object] = {}
 
-    # --- organization + users (neither is RLS-scoped) -------------------------
-    with admin_session() as s:
+    # --- organization + users -------------------------------------------------
+    # PROVISIONING RUNS ON THE OWNER CONNECTION. Both tables are RLS-protected
+    # and the application role has no INSERT on either (migration 7bf9ae20fe0d),
+    # because a bug in a request handler must not be able to create or destroy a
+    # tenant: `organization` cascades to every tenant table. Creating an org is
+    # an admin operation and this is a script, so it says so explicitly.
+    with owner_session() as s:
         org = s.scalar(select(Organization).where(Organization.slug == "workshop"))
         if org is None:
             org = Organization(id=uuid7(), slug="workshop",

@@ -31,8 +31,9 @@ from uuid import UUID
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
-__all__ = ["ENGINE_URL", "engine", "SessionLocal", "tenant_session", "user_session",
-           "admin_session", "verify_rls", "TenantUnset"]
+__all__ = ["engine", "SessionLocal", "tenant_session", "user_session",
+           "admin_session", "owner_session", "verify_rls", "assert_unprivileged",
+           "TenantUnset"]
 
 # The runtime variables the RLS policies read. Defined once; the migration and
 # this module must agree or every policy silently matches nothing.
@@ -66,8 +67,6 @@ def _url() -> str:
     return url
 
 
-ENGINE_URL = _url  # callable, so importing this module never requires the env
-
 _engine = None
 _SessionLocal = None
 
@@ -81,12 +80,46 @@ def engine():
     """
     global _engine
     if _engine is None:
-        _engine = create_engine(
+        eng = create_engine(
             _url(),
             pool_pre_ping=True,   # a recycled connection must not fail a request
             future=True,
         )
+        assert_unprivileged(eng)
+        _engine = eng
     return _engine
+
+
+class PrivilegedConnection(RuntimeError):
+    """The application connected as a role that row security does not apply to."""
+
+
+def assert_unprivileged(eng) -> None:
+    """Refuse to serve on a connection where RLS cannot bite. Called once, at
+    engine construction, so the process cannot start in the unprotected state.
+
+    This is the check that would have caught the original bug in seconds. Every
+    table read `enabled=true forced=true policies=1`, the per-table audit
+    reported no problems, and tenants could read each other, because the
+    connecting role was a superuser and row security simply does not apply to
+    one. A per-table audit certifies that state as healthy; only the role tells
+    the truth.
+    """
+    with eng.connect() as conn:
+        row = conn.execute(text(
+            "SELECT current_user, rolsuper, rolbypassrls "
+            "FROM pg_roles WHERE rolname = current_user")).one_or_none()
+    if row is None:
+        return
+    name, is_super, bypass = tuple(row)
+    if is_super or bypass:
+        raise PrivilegedConnection(
+            f"WORKSHOP_DATABASE_URL connects as {name!r}, which has "
+            f"rolsuper={is_super} rolbypassrls={bypass}. Row-level security does "
+            f"not apply to such a role, so every tenant policy would be inert. "
+            f"Use the workshop_app role (see db/bootstrap.py); the owner "
+            f"connection belongs in WORKSHOP_DATABASE_ADMIN_URL."
+        )
 
 
 def SessionLocal() -> Session:
@@ -158,6 +191,42 @@ def user_session(user_id: UUID | str) -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+@contextmanager
+def owner_session() -> Iterator[Session]:
+    """A session on the OWNER connection. Bypasses RLS entirely. Scripts only.
+
+    Provisioning is an admin operation: creating an organization or a user
+    account writes to tables the application role deliberately cannot write,
+    because a bug in a request handler must not be able to create or destroy a
+    tenant (`organization` cascades to every tenant table).
+
+    NOTHING THAT SERVES A REQUEST MAY CALL THIS. It connects as `workshop`,
+    which is a superuser, so every row-security policy is inert on it. It exists
+    for `db/backfill.py`, `db/bootstrap.py` and migrations. It raises rather than
+    falling back to the application URL, so a process without the admin
+    credential fails loudly instead of quietly running unprotected.
+    """
+    url = os.environ.get("WORKSHOP_DATABASE_ADMIN_URL", "").strip()
+    if not url:
+        raise RuntimeError(
+            "WORKSHOP_DATABASE_ADMIN_URL is not set. owner_session() is for "
+            "provisioning scripts and migrations; it does not fall back to the "
+            "application connection."
+        )
+    eng = create_engine(url, future=True)
+    session = sessionmaker(bind=eng, expire_on_commit=False, future=True)()
+    try:
+        session.begin()
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+        eng.dispose()
 
 
 @contextmanager

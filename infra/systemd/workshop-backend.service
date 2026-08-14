@@ -59,9 +59,17 @@ Environment=DOCKER_HOST=unix://%t/docker.sock
 # cloudflared both connect to 127.0.0.1. If a deployment genuinely needs another
 # bind address, change it here deliberately rather than shipping it as a default
 # nobody chose.
-ExecStart=@WORKSHOP_ROOT@/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+#
+# --timeout-graceful-shutdown: uvicorn defaults to waiting FOREVER for open
+# connections. The chat SSE streams end only when their turn does, so a single
+# open browser tab held a restart until TimeoutStopSec expired and systemd sent
+# SIGKILL -- 90 seconds of dead backend for a 3-second restart. The streams now
+# release themselves on shutdown (build_streaming.SHUTTING_DOWN); this is the
+# cap for any long-lived response that does not.
+ExecStart=@WORKSHOP_ROOT@/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 10
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=20
 
 [Install]
 WantedBy=default.target

@@ -109,12 +109,42 @@ class TestNaming:
         assert chat_store.get_thread(tid)["title"] == "Operator's Own Name"
         assert "prompt" not in named   # not even a model call
 
-    def test_a_chat_with_no_reply_yet_is_not_named(self, store, named):
-        """One user message is not enough to categorize a chat by."""
+    def test_a_chat_is_named_from_the_opening_message_alone(self, store, named):
+        """WITHOUT WAITING FOR THE REPLY, which is the whole timing fix.
+
+        Requiring the reply meant the earliest a name could exist was the moment
+        the first turn committed, so the title inherited that turn's length:
+        measured across the real threads, a median of 9.4 minutes from the
+        opening message, ranging 1.9 to 38.8. That spread is what the operator
+        reported as the naming being inconsistent and sometimes not running.
+
+        The subject of a conversation is almost always already in the message
+        that opened it, so there is nothing to wait for."""
+        tid = chat_store.create_thread("general")["id"]
+        chat_store.append_message(tid, "user", "How do subagents work here?")
+        chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "Subagent Delegation In Chat"
+        # And the reply is not fabricated into the prompt when there is not one.
+        assert "Assistant:" not in named["prompt"]
+
+    def test_a_topicless_opener_still_waits(self, store, monkeypatch):
+        """Naming early must not mean naming badly. A greeting has no subject,
+        so the model answers NONE and the chat keeps waiting, exactly as it did
+        when a full exchange was required."""
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud",
+                            lambda prompt, **kw: {"text": "NONE"})
         tid = chat_store.create_thread("general")["id"]
         chat_store.append_message(tid, "user", "hey")
         chat_naming.generate_title(tid)
         assert chat_store.get_thread(tid)["title"] == "New chat"
+
+    def test_the_reply_is_used_when_there_is_one(self, store, named):
+        """Not required, but not ignored either: a reply that has landed is still
+        context for what the chat turned out to be about."""
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid)
+        chat_naming.generate_title(tid)
+        assert "They run in an isolated context." in named["prompt"]
 
     def test_naming_costs_one_cheap_tools_off_call(self, store, named):
         tid = chat_store.create_thread("general")["id"]
@@ -354,3 +384,71 @@ class TestTheNamerDoesNotRaceTheConversation:
 
         asyncio.run(main())
         assert chat_store.get_thread(tid)["title"] == "What I Called It"
+
+
+class TestTheTriggerIsWired:
+    """WHERE NAMING IS CALLED FROM, which is the part that kept regressing.
+
+    Every test above drives the namer directly, so all of them passed through
+    seven rounds of fixes in which the actual defects were in the wiring: a call
+    site deleted during an unrelated refactor, a second one routed through a
+    function that no longer existed, and a guard that made the two ways a turn
+    can fail behave oppositely. None of that is visible from the namer's side.
+    """
+
+    def test_sending_a_message_schedules_naming(self, store, monkeypatch):
+        """The primary trigger. If this stops firing the chat is named only when
+        the turn commits, which is the slow, variable behaviour that was
+        reported."""
+        import asyncio
+
+        called = []
+        monkeypatch.setattr(chat_naming, "schedule", called.append)
+        tid = chat_store.create_thread("general")["id"]
+
+        async def main():
+            chat_store.append_message(tid, "user", "How do subagents work here?")
+
+        asyncio.run(main())
+        assert called == [tid]
+
+    def test_the_assistants_own_reply_does_not_schedule_naming(self, store, monkeypatch):
+        """Only the operator's message brings a new subject. Scheduling on the
+        reply too would double every chat's naming cost for nothing."""
+        import asyncio
+
+        called = []
+        monkeypatch.setattr(chat_naming, "schedule", called.append)
+        tid = chat_store.create_thread("general")["id"]
+
+        async def main():
+            chat_store.append_message(tid, "assistant", "They run in an isolated context.")
+
+        asyncio.run(main())
+        assert called == []
+
+    def test_appending_off_the_loop_never_blocks_on_a_model_call(self, store, monkeypatch):
+        """`schedule` runs the model call INLINE when there is no running loop,
+        which is right for a script that asks for it and wrong for a store write
+        that merely happens to be off the loop. Appending a message must never
+        become a blocking model call because of where it was called from."""
+        def explode(*a, **kw):
+            raise AssertionError("a store write must not make a model call")
+
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud", explode)
+        tid = chat_store.create_thread("general")["id"]
+        chat_store.append_message(tid, "user", "How do subagents work here?")
+        assert chat_store.get_thread(tid)["title"] == "New chat"
+
+    def test_a_failed_turn_still_gets_its_chat_named(self, store, named):
+        """There used to be an `if not is_error` guard at the commit call site,
+        so a chat whose turns errored was never named. It also disagreed with
+        itself: a turn the operator STOPPED commits with is_error False and DID
+        name. The operator's message is present and perfectly nameable either
+        way, and a chat whose first turn failed is exactly the one being
+        reopened."""
+        tid = chat_store.create_thread("general")["id"]
+        chat_store.append_message(tid, "user", "How do subagents work here?")
+        chat_store.append_message(tid, "assistant", "Rate limited.", meta={"error": True})
+        chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "Subagent Delegation In Chat"

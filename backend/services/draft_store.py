@@ -36,8 +36,14 @@ Deleting the row threw that ordering away, so the late write looked like the
 first thing anyone had ever said about this key and was stored — which is a sent
 message reappearing in the composer seconds later, one of the reported quirks.
 
-Empty rows are pruned once they are older than `TOMBSTONE_TTL_S`, by which time
-no write from before the clear can still be in flight.
+A tombstone is ALSO the only way to correct a surface that missed the clear, and
+that is the job that sets how long it is kept. A second tab, a phone in a pocket,
+a laptop asleep: each still holds the sent text, and each asks the server on
+mount and on focus. A pruned row answers `ts: 0`, which loses the ordering
+comparison, so the stale copy wins and keeps winning. Tombstones therefore
+outlive any plausible absence rather than just the in-flight write, and rows
+holding text are aged out too, so a key nothing reads any more cannot sit here
+forever. See `TOMBSTONE_TTL_S` and `STALE_DRAFT_TTL_S`.
 
 Last-write-wins by the client's wall clock. Single-user box: the alternative
 (server-assigned versions) buys nothing here, because the only writer that
@@ -51,10 +57,44 @@ from pathlib import Path
 
 from . import ownership
 
-# How long a cleared draft keeps its timestamp. Long enough that no PUT issued
-# before the clear can still land (the client debounces by 600ms and retries
-# nothing), short enough that the file does not accumulate dead keys.
-TOMBSTONE_TTL_S = 300
+# How long a cleared draft keeps its timestamp.
+#
+# THIS IS NOT ABOUT THE IN-FLIGHT PUT, WHICH IS WHY IT IS NOT SECONDS. It was
+# 300s, reasoned from the client's 600ms debounce: long enough that no write
+# issued before the clear can still land. That is true and it is the wrong
+# question, because the tombstone is also THE ONLY THING THAT CAN CORRECT A
+# CLIENT THAT MISSED THE CLEAR.
+#
+# Reconciliation here is last-write-wins on the timestamp, and a pruned row
+# reads back as `ts: 0`, which loses every comparison there is. So once the
+# tombstone was gone, a surface still holding the sent text would ask the server,
+# be told `ts: 0`, keep its own copy on the ordering rule, and go on showing an
+# already-sent message forever. There was no path back: the client re-checks on
+# mount and on focus, and both checks are the same losing comparison.
+#
+# That is the "I send a message and the text is still in the box days later"
+# report, and every way of diverging landed in it: a second tab, a phone in a
+# pocket, a laptop asleep past the window, a key written by an older version of
+# the client. Five minutes is shorter than any of those.
+#
+# So a clear now outlives any plausible absence. An empty row is about sixty
+# bytes and there is one per conversation, so keeping them is free; being unable
+# to correct a client is not.
+TOMBSTONE_TTL_S = 30 * 24 * 3600
+
+# A draft WITH TEXT that nobody has touched in this long is dead, and is dropped
+# on the next write.
+#
+# Pruning used to skip these entirely, so any row holding text lived forever.
+# That is not hypothetical: this store was found holding `budget` -> "… oh I see"
+# from ten days earlier, under a bare context key that no composer has written
+# since per-chat draft keys landed (ec4db15). Nothing reads that key now, so
+# nothing could ever clear it, and it would have sat there for the life of the
+# install. Any key scheme that changes again leaves the same litter.
+#
+# Well beyond how long unsent text stays interesting, so this can only ever
+# reclaim something abandoned.
+STALE_DRAFT_TTL_S = 30 * 24 * 3600
 
 NEW_SUFFIX = "::new"
 
@@ -82,12 +122,25 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _is_empty(v: dict | None) -> bool:
+    return not (v or {}).get("text") and not (v or {}).get("attachments")
+
+
 def _prune(data: dict) -> bool:
-    """Drop tombstones nothing can still be racing. Returns whether it changed."""
-    cutoff = _now_ms() - TOMBSTONE_TTL_S * 1000
-    dead = [k for k, v in data.items()
-            if not (v or {}).get("text") and not (v or {}).get("attachments")
-            and int((v or {}).get("ts", 0)) < cutoff]
+    """Drop rows that can no longer do any work. Returns whether it changed.
+
+    Two ages, because the two kinds of row are kept for different reasons. A
+    tombstone is kept so a client that missed the clear can still be corrected,
+    which is a question about how long a surface can be away. A draft with text
+    is kept because it is the operator's unsent writing, and is only dropped once
+    it is abandoned by any reasonable measure."""
+    now = _now_ms()
+    tomb_cutoff = now - TOMBSTONE_TTL_S * 1000
+    stale_cutoff = now - STALE_DRAFT_TTL_S * 1000
+    dead = [
+        k for k, v in data.items()
+        if int((v or {}).get("ts", 0)) < (tomb_cutoff if _is_empty(v) else stale_cutoff)
+    ]
     for k in dead:
         data.pop(k, None)
     return bool(dead)

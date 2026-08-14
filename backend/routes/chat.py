@@ -47,7 +47,6 @@ from services import origin
 from services import skills
 from services import llm_router
 from services import build_streaming
-from services import chat_naming
 from services import draft_store
 
 log = logging.getLogger("workshop.chat")
@@ -445,6 +444,14 @@ async def stream_thread(thread_id: str, request: Request, since: int = 0):
         seen = chat_events.version(thread_id)
         while True:
             if await request.is_disconnected():
+                return
+            if build_streaming.SHUTTING_DOWN:
+                # Release the connection so a restart is a pause, not a 90s
+                # stall. This generator ends only on disconnect, so an idle open
+                # tab held uvicorn's graceful shutdown until systemd's
+                # TimeoutStopSec SIGKILLed it. The client reconnects with
+                # backoff and re-syncs, and this stream carries no content, so
+                # dropping it loses precisely nothing.
                 return
             v = await chat_events.wait(thread_id, seen, _THREAD_STREAM_KEEPALIVE_S)
             if await request.is_disconnected():

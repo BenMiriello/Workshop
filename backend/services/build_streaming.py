@@ -347,6 +347,33 @@ class Turn:
 # acceptable; a future upgrade can spill to disk for cross-process resume.
 TURNS: dict[str, Turn] = {}
 
+# A RESTART IS A PAUSE, NOT AN ENDING.
+#
+# The agent process is deliberately detached (start_new_session=True) and the
+# unit sets KillMode=process, so systemd's SIGTERM reaches uvicorn alone and the
+# child keeps working across a restart. But that guarantee was being defeated
+# from INSIDE this process: on shutdown, asyncio cancels every remaining task,
+# the drive loop's CancelledError handler ran _end_wedged, and _end_wedged calls
+# _retire_turn_proc -- os.killpg(SIGTERM) on the very child systemd had been
+# careful not to touch. It then committed "This turn ended early", so a restart
+# that was supposed to be invisible instead killed the operator's agent mid-work
+# and wrote that into the transcript.
+#
+# Cancellation therefore has to mean two different things, and only the process
+# knows which: "this turn was abandoned" (end it, say so) versus "the process is
+# going away" (let go; the child outlives us and reattach_running_turns adopts
+# it on the way back up). This flag is that distinction. main.py's lifespan sets
+# it before cancelling anything.
+SHUTTING_DOWN = False
+
+
+def begin_shutdown() -> None:
+    """Mark the process as going down so in-flight turns are released, not ended.
+
+    Idempotent, and safe to call even if nothing is running."""
+    global SHUTTING_DOWN
+    SHUTTING_DOWN = True
+
 # How long a finished turn stays reachable by id. It holds its full event list
 # and segment tree, so without this the registry grew for the life of the
 # process: every turn ever run, with everything it ever emitted, until a restart.
@@ -1805,6 +1832,15 @@ def _drive_task(turn: Turn, meta: dict, coro) -> "asyncio.Task":
         try:
             await coro
         except asyncio.CancelledError:
+            if SHUTTING_DOWN:
+                # NOT an ended turn: a restart. The child is detached and still
+                # writing to its journal, which still says "running" -- exactly
+                # the state reattach_running_turns() is built to adopt. Ending
+                # it here would kill that child (see SHUTTING_DOWN above) and
+                # write "this turn ended early" over work that is still going.
+                # Let go instead, and let the next process pick it back up.
+                log.info("turn %s: releasing across shutdown (child keeps running)", turn.id)
+                raise
             # A cancelled turn is an ended turn. Say so and re-raise, so the
             # cancellation is not swallowed from whoever asked for it.
             await _end_wedged(turn, meta, "the turn was cancelled")
@@ -2767,18 +2803,24 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     except Exception:
         pass
 
-    # ONE naming path. chat_naming owns the guard ("still unnamed, and a reply
-    # has landed") and reads the thread itself, so this is safe to call after
-    # every turn and will keep trying until a name sticks. There used to be a
-    # second call below routing through routes.chat._maybe_autoname, a function
-    # that no longer exists: it raised AttributeError on every streamed turn into
-    # a best-effort `except` and logged it where nobody looks.
-    if not is_error:
-        try:
-            from services import chat_naming
-            chat_naming.schedule(turn.thread_id)
-        except Exception as e:  # pragma: no cover — best-effort
-            log.debug("turn %s: auto-name schedule failed: %s", turn.id, e)
+    # A SECOND CHANCE, NOT THE FIRST ONE. Naming is primarily triggered when the
+    # operator's message lands (chat_store.append_message), because that is when
+    # the subject arrives; this covers the case where that attempt found no topic
+    # and the reply has since supplied one.
+    #
+    # NO is_error GUARD. There used to be one, and it made the two ways a turn
+    # can fail behave oppositely: an errored turn never named, while a turn the
+    # operator STOPPED did, because a stop commits with is_error False. Neither
+    # was intended and nothing said so here. The guard was also pointless: the
+    # namer reads the thread itself and titles it from the operator's message,
+    # which is present and perfectly nameable whether or not the reply worked.
+    # Refusing to name a chat because its first turn failed is precisely when a
+    # name is most useful, since that chat is the one being reopened.
+    try:
+        from services import chat_naming
+        chat_naming.schedule(turn.thread_id)
+    except Exception as e:  # pragma: no cover — best-effort
+        log.debug("turn %s: auto-name schedule failed: %s", turn.id, e)
 
     # Auto-checkpoint the working tree (skip the self/platform monorepo).
     try:
@@ -2805,6 +2847,27 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         shutil.rmtree(_journal_dir(turn.id), ignore_errors=True)
     except Exception:
         pass
+
+
+def _already_committed(meta: dict) -> bool:
+    """Did this run's reply already land on its thread before we went down?
+
+    One field, read from disk: a thread holds `active_run_id` from the moment a
+    run is claimed until `commit_run` appends the reply and clears it. So the
+    field still naming this run means the commit had NOT happened; anything else
+    means it had (or the run was explicitly released), and re-driving would
+    duplicate it. Falls back to False -- re-drive, which is recoverable -- when
+    the answer cannot be read, because the alternative is silently dropping a
+    reply that never committed.
+    """
+    thread_id = meta.get("thread_id") or ""
+    run_id = meta.get("turn_id") or ""
+    if not thread_id or not run_id:
+        return False
+    try:
+        return chat_store.active_run_id(thread_id) != run_id
+    except Exception:
+        return False
 
 
 def reattach_running_turns() -> None:
@@ -2834,6 +2897,30 @@ def reattach_running_turns() -> None:
             try:
                 ownership.set_current_owner(int(owner_id))
                 if not chat_store.get_thread(meta.get("thread_id") or ""):
+                    shutil.rmtree(d, ignore_errors=True)
+                    continue
+                # THE REPLY MAY ALREADY BE ON THE THREAD. commit_run appends the
+                # reply AND clears active_run_id, but the journal is only marked
+                # done afterwards -- and the git checkpoint that runs in between
+                # takes seconds. A restart inside that window leaves a journal
+                # still reading "running" for a run whose reply is committed.
+                #
+                # This pass used to check only status and thread existence, so it
+                # re-drove that turn, replayed the journal, and committed AGAIN:
+                # a duplicate assistant message, plus a second application of
+                # every task-patch, note and learning block the turn carried.
+                # That is the one restart outcome that is not recoverable by
+                # waiting, so it is checked before anything else is done.
+                #
+                # The thread no longer naming this run is the durable record that
+                # the commit won. A genuinely interrupted run (window A) still
+                # holds the field and is still adopted below.
+                if _already_committed(meta):
+                    log.info(
+                        "turn %s: reply already committed before shutdown; "
+                        "retiring journal instead of re-driving", tid,
+                    )
+                    _mark_meta(meta, "done")
                     shutil.rmtree(d, ignore_errors=True)
                     continue
             except Exception:
@@ -3015,6 +3102,21 @@ async def iter_events(turn: Turn, after: int = 0):
             yield after + 1, turn.events[after]
             after += 1
         if turn.complete:
+            return
+        if SHUTTING_DOWN:
+            # Let go of the stream so the process can actually go down.
+            #
+            # This generator otherwise only ends when the turn does, so every
+            # open chat tab pinned uvicorn's graceful shutdown open: with no
+            # --timeout-graceful-shutdown set, uvicorn waits forever and systemd
+            # SIGKILLed it at TimeoutStopSec (90s). A "quick restart" therefore
+            # took a minute and a half of dead backend whenever anyone had the
+            # chat open, which is most of the time.
+            #
+            # Ending here is safe and invisible: the client reconnects (see
+            # useTurnStream's handleDrop, 1.2s backoff) and the turn itself is
+            # untouched -- its child is still running and the next process adopts
+            # it. The stream is a view of the turn, not the turn.
             return
         # Wait for the next push or a 1s heartbeat (so disconnected clients
         # get noticed eventually).

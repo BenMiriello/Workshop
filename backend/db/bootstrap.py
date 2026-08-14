@@ -88,6 +88,23 @@ def bootstrap(password: str) -> None:
             f"ALTER DEFAULT PRIVILEGES IN SCHEMA public "
             f"GRANT USAGE, SELECT ON SEQUENCES TO {APP_ROLE}"))
 
+        # Tables the application may read and append to but never rewrite.
+        #
+        # `ticket_event` is the audit log, and models.py states outright that
+        # "an audit row that can be edited or removed is not an audit row".
+        # `GRANT ... ON ALL TABLES` had swept it up, and a reviewer confirmed
+        # the application role could run `UPDATE ticket_event SET new_value =
+        # 'rewritten history'` and then `DELETE FROM ticket_event`. The property
+        # was asserted in a docstring and enforced by nothing.
+        conn.execute(text(f"REVOKE UPDATE, DELETE ON ticket_event FROM {APP_ROLE}"))
+
+        # Provisioning and the migration stamp are admin-only (see migration
+        # 7bf9ae20fe0d). Re-applied here so a re-run of bootstrap after a fresh
+        # GRANT does not silently hand them back.
+        for table in ("organization", "user_account", "alembic_version"):
+            conn.execute(text(
+                f"REVOKE INSERT, UPDATE, DELETE ON {table} FROM {APP_ROLE}"))
+
         row = conn.execute(text(
             "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = :r"),
             {"r": APP_ROLE}).one()
