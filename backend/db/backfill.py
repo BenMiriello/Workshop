@@ -76,6 +76,25 @@ TYPES = [
     ("external",  "External",  False, "Happens outside this system (host admin, a vendor)."),
 ]
 
+# The JSON store held a signed integer. Bands chosen from the live distribution
+# (38 distinct values across 0..140), matching migration 769d64dbfa74 exactly so
+# a fresh backfill and a migrated database agree.
+def _priority(value) -> str:
+    try:
+        n = int(value or 0)
+    except (TypeError, ValueError):
+        return "none"
+    if n >= 100:
+        return "urgent"
+    if n >= 80:
+        return "high"
+    if n >= 40:
+        return "medium"
+    if n >= 1:
+        return "low"
+    return "none"
+
+
 SCOPES = [
     ("development", "Development", "DEV", ROOT),
     ("workshop",    "Workshop",    "WS",  ROOT / "shared" / "queue"),
@@ -229,7 +248,7 @@ def apply() -> dict:
                     body=rec.get("body") or "",
                     state_id=states[(key, status)],
                     type_id=types.get((key, rec.get("execution"))),
-                    priority=int(rec.get("priority") or 0),
+                    priority=_priority(rec.get("priority")),
                     effort=rec.get("effort"),
                     created_at=_iso(rec.get("created")),
                     updated_at=_iso(rec.get("updated")),

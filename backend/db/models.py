@@ -38,8 +38,8 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
-    CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text,
-    func, text,
+    CheckConstraint, DateTime, Enum as SAEnum, Float, ForeignKey, Index, Integer,
+    String, Text, func, text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -47,7 +47,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from db.ids import uuid7
 
 # --- controlled vocabularies -------------------------------------------------
-# CHECK constraints rather than native Postgres ENUM types. A native enum cannot
+# CHECK constraints rather than native Postgres ENUM types, with ONE deliberate
+# exception (priority, below, which needs enum ordering). A native enum cannot
 # have a value removed, and altering one takes a lock; a CHECK is a one-line
 # migration. The tuples here are the single source of truth for both sides.
 
@@ -61,6 +62,31 @@ STATE_CATEGORIES = ("backlog", "unstarted", "started", "completed", "canceled")
 # `blocked_by` is the scheduling edge: it is the one that makes a ticket
 # ineligible for selection. The others are informational.
 LINK_KINDS = ("blocked_by", "relates_to", "duplicates")
+
+# Priority. THE ONE PLACE A NATIVE POSTGRES ENUM IS USED, and it is deliberate.
+#
+# Everywhere else this schema prefers a CHECK constraint, because a native enum
+# cannot have a value removed and altering one takes a lock. Priority is the
+# exception because a native enum type SORTS BY DECLARATION ORDER: `ORDER BY
+# priority` puts urgent first and none last with no CASE expression, no rank
+# column, and no chance of a caller sorting alphabetically by accident and
+# getting high, low, medium, none, urgent.
+#
+# It replaced a signed integer. The integer was not carrying meaning: 112 live
+# tickets held 38 distinct values between 0 and 140, including 87, 92 and 94,
+# distinctions nobody chose and nobody could act on. Five named levels are what
+# Plane, Jira and Linear all settle on.
+#
+# ONE CAVEAT, and it is easy to hit. `ORDER BY` resolves an unqualified name
+# against the SELECT's OUTPUT columns before the table's, so
+#
+#     SELECT priority::text AS priority FROM ticket ORDER BY priority
+#
+# sorts the TEXT alphabetically (high, low, medium, none, urgent) and silently
+# restores the bug this type exists to prevent. Either do not reuse the column
+# name for the cast, or qualify the ORDER BY (`ORDER BY t.priority`). Pinned in
+# tests/test_db_schema.py.
+PRIORITIES = ("urgent", "high", "medium", "low", "none")
 
 ACTOR_TYPES = ("user", "agent", "system")
 MEMBERSHIP_ROLES = ("owner", "admin", "member")
@@ -264,7 +290,9 @@ class Ticket(Base, Timestamps, SoftDelete):
     type_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("ticket_type.id", ondelete="SET NULL"))
 
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    priority: Mapped[str] = mapped_column(
+        SAEnum(*PRIORITIES, name="ticket_priority"),
+        nullable=False, server_default="none")
     effort: Mapped[str | None] = mapped_column(String(16))
     sort_order: Mapped[float] = mapped_column(Float, nullable=False,
                                               server_default="65535")

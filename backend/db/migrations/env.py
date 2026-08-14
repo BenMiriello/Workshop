@@ -24,10 +24,22 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-_url = os.environ.get("WORKSHOP_DATABASE_URL", "").strip()
+# MIGRATIONS RUN AS THE OWNER, NOT AS THE APPLICATION.
+#
+# `WORKSHOP_DATABASE_URL` is the least-privilege `workshop_app` role: it holds
+# DML only and deliberately cannot execute DDL, so that a compromised
+# application cannot drop an RLS policy. Running alembic with it fails with
+# "permission denied for schema public", which is the separation working rather
+# than a misconfiguration.
+#
+# The admin URL is preferred and the app URL is only a fallback, for a
+# deployment that has not split the roles yet.
+_url = (os.environ.get("WORKSHOP_DATABASE_ADMIN_URL", "").strip()
+        or os.environ.get("WORKSHOP_DATABASE_URL", "").strip())
 if not _url:
     raise RuntimeError(
-        "WORKSHOP_DATABASE_URL is not set. Source it before running alembic:\n"
+        "Neither WORKSHOP_DATABASE_ADMIN_URL nor WORKSHOP_DATABASE_URL is set. "
+        "Source them before running alembic:\n"
         "  set -a; . ~/.config/workshop/secrets.env; set +a"
     )
 config.set_main_option("sqlalchemy.url", _url.replace("%", "%%"))
