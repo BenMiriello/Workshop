@@ -116,6 +116,7 @@ def _row_to_legacy(row: Any) -> dict:
         "parent": m["parent_legacy"],
         "depends_on": list(m["depends_on"] or []),
         "relates_to": list(m["relates_to"] or []),
+        "comments": list(m["comments"] or []),
         "created": m["created"].isoformat() if m["created"] else None,
         "updated": m["updated"].isoformat() if m["updated"] else None,
         "closed": m["closed"].isoformat() if m["closed"] else None,

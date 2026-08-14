@@ -50,6 +50,7 @@ _DROPPED = ("latitude", "max_attempts", "owner", "assignee", "exec",
             "job_ids", "evidence", "acceptance", "touches", "scoped_by",
             "provenance", "discovered_from", "blocked_reason", "source",
             "labels", "triage", "execution", "effort", "created", "updated",
+            "comments",
             "text", "id", "title", "body", "status", "parent", "priority",
             "depends_on", "relates_to")
 
@@ -91,6 +92,21 @@ def compare(org_id, scope: str, tasks: list[dict]) -> dict:
             a = priority_band(task.get(field))
             if a != row.get(field):
                 diffs[field].append((tid, a, row.get(field)))
+        # Comments by id and text. NOT by author: the JSON store wrote the
+        # literal word "assistant" with no identity, and the schema's actor axis
+        # (user/agent/system, with `agent` required to name which agent) has no
+        # slot for an unattributed machine other than `system`. That difference
+        # is a deliberate modelling decision, so comparing it would report a
+        # divergence on every comment forever.
+        want_c = {str(c.get("id")): (c.get("text") or "").strip()
+                  for c in (task.get("comments") or [])
+                  if isinstance(c, dict) and c.get("id")}
+        have_c = {str(c.get("id")): (c.get("text") or "").strip()
+                  for c in (row.get("comments") or []) if c.get("id")}
+        if want_c != have_c:
+            diffs["comments"].append(
+                (tid, sorted(want_c), sorted(have_c)))
+
         for field in _SET_FIELDS:
             a = {x for x in (task.get(field) or []) if isinstance(x, str)}
             # A dangling id the JSON store allowed cannot exist as an edge, so

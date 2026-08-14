@@ -193,17 +193,28 @@ def _sync_links(s, org_id, from_pk, ids: dict, task: dict) -> int:
     return changed
 
 
-def _author(value: str | None) -> tuple[str, None]:
-    """A legacy comment author string as an actor type. "assistant" is an AGENT:
-    it is the one signal that a machine wrote the comment, and mapping it to
-    `system` or to a human loses that."""
+def _author(value: str | None, user_id) -> tuple[str, Any]:
+    """A legacy comment author string as an actor type, plus its actor id.
+
+    "assistant" maps to `system`, NOT to `agent`, and a constraint is what
+    settled it. `ck_comment_actor_is_consistent` requires an `agent` author to
+    name WHICH agent, which is the whole reason that constraint exists: 117 rows
+    once claimed an actor with no actor id. The JSON store recorded the literal
+    word "assistant" and no identity, so there is no agent to name and `system`
+    (a machine, unattributed) is the honest slot.
+
+    `operator` is the human, and it must carry a user id for the same reason.
+    `user` with a null id -- what the first backfill produced for these rows --
+    was the one genuinely wrong answer: it claims a person wrote it and then
+    declines to say which, which is exactly what the constraint forbids.
+    """
     a = (value or "").strip().lower()
-    if a in ("assistant", "agent", "worker"):
-        return "agent", None
-    return ("user" if a else "system"), None
+    if a in ("operator", "user", "human") and user_id is not None:
+        return "user", user_id
+    return "system", None
 
 
-def _sync_comments(s, org_id, ticket_pk, task: dict) -> int:
+def _sync_comments(s, org_id, user_id, ticket_pk, task: dict) -> int:
     """Mirror a ticket's inline comments, matched on their legacy id.
 
     Insert-and-retire only: a comment's body is not updated in place because the
@@ -232,7 +243,7 @@ def _sync_comments(s, org_id, ticket_pk, task: dict) -> int:
     for ext, c in wanted.items():
         if ext not in have:
             continue
-        atype, auser = _author(c.get("author"))
+        atype, auser = _author(c.get("author"), user_id)
         if author_now.get(ext) != atype:
             s.execute(text("UPDATE comment SET author_type = :at, "
                            "author_user_id = :au WHERE id = :i"),
@@ -254,7 +265,7 @@ def _sync_comments(s, org_id, ticket_pk, task: dict) -> int:
             pk = unlabelled.pop(c.get("text") or "", None)
             if pk is None:
                 continue
-            atype, auser = _author(c.get("author"))
+            atype, auser = _author(c.get("author"), user_id)
             # The author is corrected here too. The first backfill derived it
             # from the org's member count rather than from the comment, so an
             # "assistant" comment was recorded as a human's or as `system`.
@@ -268,7 +279,7 @@ def _sync_comments(s, org_id, ticket_pk, task: dict) -> int:
     for ext, c in wanted.items():
         if ext in have:
             continue
-        atype, auser = _author(c.get("author"))
+        atype, auser = _author(c.get("author"), user_id)
         s.execute(text(
             "INSERT INTO comment (id, org_id, ticket_id, author_type, "
             "author_user_id, body, external_source, external_id) "
@@ -303,15 +314,15 @@ def mirror(root: Path, tasks: list[dict]) -> dict:
         if slug is None:
             stats["skipped"] = len(tasks)
             return stats
-        org_id, _user_id = tenancy.org_and_user()
-        return _mirror(org_id, slug, tasks, stats)
+        org_id, user_id = tenancy.org_and_user()
+        return _mirror(org_id, user_id, slug, tasks, stats)
     except Exception:
         log.warning("ticket mirror failed for %s", root, exc_info=True)
         stats["skipped"] = len(tasks)
         return stats
 
 
-def _mirror(org_id, slug: str, tasks: list[dict], stats: dict) -> dict:
+def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
     from db.engine import tenant_session
     from db.ids import uuid7
     from db.legacy_map import STATE_TO_STATUS
@@ -403,7 +414,7 @@ def _mirror(org_id, slug: str, tasks: list[dict], stats: dict) -> dict:
             pk = ids.get(str(task.get("id") or ""))
             if pk is not None:
                 stats["links"] += _sync_links(s, org_id, pk, ids, task)
-                stats["comments"] += _sync_comments(s, org_id, pk, task)
+                stats["comments"] += _sync_comments(s, org_id, user_id, pk, task)
 
         # A ticket that left the JSON list is soft-deleted, never hard. The
         # events, comments and runs that reference it stay readable, which is

@@ -35,7 +35,12 @@ silently vanished from every later prompt.
 
 1. **One operation at a time.** `services/thread_ops` keeps an in-process
    registry, thread id to operation name. `begin` refuses a second operation;
-   the route reports "already in progress" rather than stacking folds.
+   the route answers `busy: true` for a refusal, distinct from
+   `deferred: true` (computed, lands when quiet): a refusal computed nothing,
+   and reporting it as deferred would promise a landing that never comes.
+   Landing tasks are HELD in the registry; an unheld asyncio task can be
+   garbage-collected mid-wait, which would leave the registration in place
+   and the thread queueing forever.
 
 2. **Compute free, land quiet.** An operation's expensive read-only half (the
    summarizer call) runs while the thread lives its life. Its WRITES (summary,
