@@ -42,6 +42,7 @@ cd "$REPO_ROOT"
 CHECK=0
 PUBLISH_WIP=0
 UI_SKIPPED=0
+BE_SKIPPED=0
 for arg in "$@"; do
   case "$arg" in
     --check|-n) CHECK=1 ;;
@@ -161,7 +162,32 @@ elif [ "$BE_SRC" = "$BE_RUN" ]; then
   ok "backend ($BE_RUN)"
 else
   plan "backend: running=$BE_RUN source=$BE_SRC"
-  if [ "$CHECK" = 0 ]; then
+  # THE RUNNING BACKEND RUNS COMMITTED WORK, for exactly the reason the built
+  # origin serves it (see the UI section above). A restart starts the WORKING
+  # TREE, so on a shared checkout it starts whatever anyone else has open, and
+  # backend_source_id.sh hashes the working tree too -- which means someone
+  # else's half-written edit is itself what reports "stale" here.
+  #
+  # This is not hypothetical and it is not symmetric-for-tidiness. On
+  # 2026-08-14 the UI half of this rule was added after a concurrent build
+  # published a half-finished chat migration to the operator's screen; the
+  # backend half was left open, and within the hour the tree held another
+  # agent's mid-edit knowledge.py that raised NameError on the notes write
+  # path. restart_backend.sh's preflight would NOT have caught it: it does
+  # what uvicorn does, `import main`, and a name that only resolves when a
+  # function is called imports perfectly.
+  #
+  # Skipping strands nothing. Committing is the act that already means
+  # "finished", and the owner of the work restarts by doing it.
+  be_wip="$(git status --porcelain -uall -- backend 2>/dev/null | awk '{print $NF}' \
+    | grep -E '(\.py|requirements[^/]*\.txt)$' | grep -v 'workshop_public_app\.py$' || true)"
+  if [ -n "$be_wip" ] && [ "$PUBLISH_WIP" = 0 ]; then
+    warn "not restarting: the backend is stale because of UNCOMMITTED work:"
+    printf '            %s\n' $be_wip
+    say  "          commit it and rerun, or: bash scripts/apply.sh --publish-wip"
+    BE_SKIPPED=1
+  fi
+  if [ "$CHECK" = 0 ] && [ "$BE_SKIPPED" = 0 ]; then
     if bash scripts/restart_backend.sh --deferred >/dev/null 2>&1; then
       ACTED=1
       ok "backend restart armed -- it fires after this turn's reply lands"
@@ -249,5 +275,6 @@ fi
 # Never let a skip pass for a success. Something deliberately not done still has
 # to be said out loud, or the next reader concludes the bundle is current.
 [ "$UI_SKIPPED" = 1 ] && say "apply: the bundle is still STALE by choice (uncommitted UI work above)"
+[ "$BE_SKIPPED" = 1 ] && say "apply: the backend is still STALE by choice (uncommitted backend work above)"
 [ "$ACTED" = 0 ] && [ "$DRIFT" = 0 ] && say "already in sync; nothing to do"
 exit 0
