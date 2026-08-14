@@ -3,20 +3,31 @@
 THE TENANT SET-POINT IS THE WHOLE SECURITY MODEL, so it lives in one place.
 
 Row-Level Security in Postgres filters on a runtime variable, and this module
-is the only thing that sets it. Two rules are load-bearing and both have a
-documented failure mode behind them:
+is the only thing that sets it. THREE rules are load-bearing and each has a
+failure mode that was reproduced here, not imagined:
 
-1. `SET LOCAL`, never plain `SET`. A plain `SET` outlives the transaction and
+1. THE CONNECTING ROLE MUST NOT BE PRIVILEGED. A SUPERUSER or a role holding
+   BYPASSRLS ignores row security entirely, and no table-level setting changes
+   that. The Postgres image creates `POSTGRES_USER` as a superuser, so the
+   obvious setup has RLS enabled, forced, policied and completely inert. That
+   was this deployment's actual state until `db/bootstrap.py` split the roles.
+   `assert_unprivileged()` runs at engine construction, so the process cannot
+   start in that state. It is checked FIRST because a per-table audit reports
+   the broken state as healthy.
+
+2. `SET LOCAL`, never plain `SET`. A plain `SET` outlives the transaction and
    the next request served by that pooled connection inherits the previous
    tenant's context. That converts a connection pool into a cross-tenant read.
    `SET LOCAL` is scoped to the transaction, so it cannot outlive the request.
 
-2. Every tenant-scoped table is created with `FORCE ROW LEVEL SECURITY`, not
-   just `ENABLE`. A table's owner bypasses its policies by default, the
-   application usually connects as the owner, and forgetting `FORCE` is the
-   single most common way an RLS deployment is silently unprotected. The
-   `FORCE` lives in the migration; `verify_rls()` below asserts it at runtime so
-   a table added later without it fails loudly instead of quietly.
+3. Every tenant-scoped table is created with `FORCE ROW LEVEL SECURITY`, not
+   just `ENABLE`. A table's owner bypasses its policies by default, and
+   forgetting `FORCE` is the most common way an RLS deployment is silently
+   unprotected. The `FORCE` lives in the migration; `verify_rls()` asserts it at
+   runtime so a table added later without it fails loudly.
+
+Rules 1 and 2 are pinned in tests/test_db_tenancy.py; rule 3's coverage check
+is in tests/test_db_rls_coverage.py and needs no database.
 
 The application-level `WHERE org_id = ...` stays as the first layer. RLS is the
 second one, and it is the one that holds when a query forgets.
@@ -216,9 +227,11 @@ def owner_session() -> Iterator[Session]:
     url = os.environ.get("WORKSHOP_DATABASE_ADMIN_URL", "").strip()
     if not url:
         raise RuntimeError(
-            "WORKSHOP_DATABASE_ADMIN_URL is not set. owner_session() is for "
-            "provisioning scripts and migrations; it does not fall back to the "
-            "application connection."
+            "WORKSHOP_DATABASE_ADMIN_URL is not set. It lives in "
+            "~/.config/workshop/db-admin.env, which the backend service "
+            "deliberately does not load. owner_session() is for provisioning "
+            "scripts and migrations; it does not fall back to the application "
+            "connection."
         )
     eng = create_engine(url, future=True)
     session = sessionmaker(bind=eng, expire_on_commit=False, future=True)()

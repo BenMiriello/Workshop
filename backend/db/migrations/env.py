@@ -42,7 +42,9 @@ if not _url:
     raise RuntimeError(
         "WORKSHOP_DATABASE_ADMIN_URL is not set. Migrations run as the schema "
         "OWNER; the application role holds DML only and cannot execute DDL.\n"
-        "  set -a; . ~/.config/workshop/secrets.env; set +a"
+        "The owner DSN lives in its OWN file, which the backend service does not\n"
+        "load, so that the serving process never holds it:\n"
+        "  set -a; . ~/.config/workshop/db-admin.env; set +a"
     )
 config.set_main_option("sqlalchemy.url", _url.replace("%", "%%"))
 

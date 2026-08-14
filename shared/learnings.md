@@ -20,7 +20,7 @@ Order: most recent at top.
 - DO NOT leave a backend route added to a file without wiring it in `backend/main.py` (`app.include_router(...)`). Untested routes that 404 because they aren't wired are not "done".
 - DO NOT add a frontend page without adding it to `App.tsx` routes AND a nav link. Orphaned pages that never render are not "done".
 - DO NOT modify a file you didn't read first this tick. The "modified since read" tooling errors usually mean a parallel writer (cron + supervisor + you) is racing.
-- DO NOT claim a service restart succeeded if you used `systemctl` and got classifier-blocked. Use `nohup` for long-running services. State the actual outcome.
+- DO NOT claim a service restart succeeded without checking it actually happened. Verify: `bash scripts/apply.sh --check`, or the pid in `.runtime/apply-last.json`. State the actual outcome. (Revised 2026-08-13: this used to say "use `nohup`, not systemctl, because systemctl gets classifier-blocked". Measured on this box, `systemctl --user restart` runs fine for agents, and every Workshop service IS a systemd --user unit — so the old advice steered agents away from the correct mechanism toward one that leaves processes outside the unit's cgroup. That exact mistake once left the frontend unit crash-looping on a port a stray nohup vite was holding.)
 - Ralph: worker finished cleanly but forgot to emit <promise>COMPLETE</promise> sentinel — always end the final iteration with that exact string on its own line — 2026-05-23T01:23Z [src:ralph sha:ed821201c9d1]
 - Ralph rejected: py_typecheck_fail — 2026-05-23T02:00Z [src:ralph sha:c8aa7fce0032]
 - Ralph rejected: ts_typecheck_fail — 2026-05-23T02:04Z [src:ralph sha:556e56b10480]

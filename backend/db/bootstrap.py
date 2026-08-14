@@ -22,9 +22,11 @@ working. Hence two roles:
 `verify_rls()` now also asserts the connecting role is not privileged, because
 that is the check that would have caught this immediately.
 
-Run after `alembic upgrade`:
+Run after `alembic upgrade`. The owner DSN lives in its own file, which the
+backend service deliberately does not load, so the serving process never holds
+a superuser credential:
 
-    set -a; . ~/.config/workshop/secrets.env; set +a
+    set -a; . ~/.config/workshop/db-admin.env; set +a
     .venv/bin/python -m db.bootstrap
 """
 from __future__ import annotations
@@ -42,7 +44,9 @@ def _admin_url() -> str:
     if not url:
         raise SystemExit(
             "WORKSHOP_DATABASE_ADMIN_URL is not set (the OWNER connection, used "
-            "for migrations and this bootstrap). See ~/.config/workshop/secrets.env."
+            "for migrations and this bootstrap). It lives in "
+            "~/.config/workshop/db-admin.env, which the backend service does not "
+            "load, so the serving process never holds the superuser DSN."
         )
     return url
 

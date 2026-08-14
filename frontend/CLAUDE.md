@@ -2,6 +2,8 @@
 
 **This file is binding for every change under `frontend/` (and the `mobile/` Expo app). Any UI work — by a human, by the cron/supervisor agents, or by an interactive Claude session — MUST follow it. New screens are designed this way from the start; they do not get a "we'll systematize it later" pass.**
 
+> **A UI change is not delivered until the built origin serves it.** The operator views the BUILT bundle, not the Vite dev server, so hot reload does not reach him. When you have finished editing, run **`bash scripts/apply.sh`** — it rebuilds the bundle if it is stale and does nothing if it is not. This applies to `packages/ui` too: the kit compiles *into* the bundle. See [`docs/applying-changes.md`](../docs/applying-changes.md).
+
 The system is the Workshop Design System, packaged as **`@workshop/ui`**. It lives at **`packages/ui/`**, OUTSIDE this app: `frontend/` is one consumer of the kit, not its owner. It is already implemented:
 
 - **Tokens** — `@workshop/ui/tokens.css` (CSS custom properties: color, space, type, radii, shadow, z, motion) and `@workshop/ui/tokens.js` (the same values as a JS object for the Expo app).

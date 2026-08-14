@@ -10,44 +10,30 @@ Personal-ops monorepo: `backend/` (FastAPI + Letta), `frontend/` (Vite + React +
 - Ephemeral files (smoke tests, throwaway probes, scraped output, ad-hoc working notes) go in a `scratch/` or `tmp/` folder (anywhere in the tree — both are gitignored). Do NOT drop stray `test_*` / `tmp_*` files into source dirs. Per-project working trees (`projects/*`, `build-agents/`, `branches/`) are gitignored too — only the registries (`projects.json`, `build_agents.json`) and `projects/_templates/` are tracked. Durable docs belong in `docs/`.
 - Commit your own work as you go; never leave it uncommitted. When a background agent's unrelated WIP is in the tree, stage only your files so commits stay isolated.
 
-### A UI change is not delivered until the operator's origin serves it
+### Finished a change? Run `bash scripts/apply.sh`
 
-**The operator uses `$WORKSHOP_PUBLIC_ORIGIN`, the BUILT one.** Settled
-2026-08-11: he said so directly and added that keeping it in sync is expected
-during this pre-launch phase. Do not ask which origin he is on; asking reads as
-not knowing the deployment. Rebuild the built origin after every frontend
-change and prove it with `bash scripts/ui_sync.sh`.
+That is the whole instruction. It compares what is running against what is on
+disk and fixes only what drifted: the built bundle the operator's origin serves,
+the backend, the Vite dev server, the public edge. It takes no arguments, it is
+idempotent, and it is **safe to run at any time, from any agent, concurrently
+with any other agent**. You do not need to coordinate and you do not need to ask.
 
-Two origins serve this UI and they update differently:
+`bash scripts/apply.sh --check` reports drift without changing anything.
 
-| origin | serves | updates by |
-|---|---|---|
-| `$WORKSHOP_LOCAL_ORIGIN` → `:5173` | Vite, from SOURCE | instantly, no build |
-| `$WORKSHOP_PUBLIC_ORIGIN` → `:8002` | the built `frontend/dist` | **`bash scripts/build_workshop_public.sh`** |
+Mechanics, costs and troubleshooting: [`docs/applying-changes.md`](docs/applying-changes.md).
+That file is the ONLY current source for how to apply a change. Restart and
+rebuild commands in dated handoff docs and under `docs/platform-redesign/` are
+historical; several describe behaviour that has since been fixed or reversed.
+Do not follow them and do not update them.
 
-(Both are set in `~/.config/workshop/instance.env`; `scripts/lib/instance.sh`
-loads them. They are this deployment's, so they are not written down here.)
-
-Default to running the build after any change under `frontend/`. It takes
-seconds, the edge serves `dist` from disk so nothing restarts, and skipping it
-is invisible to you and total to the operator.
-
-**A rebuild is not a restart, and two other things need one.** The build covers
-`frontend/` only. A change under `backend/` is not live until
-`bash scripts/restart_backend.sh --deferred` (it waits for the current turn to
-finish, then fires, so it cannot eat the reply). And the Vite dev server reads
-`frontend/.env` only at service start, so a new build-time flag needs
-`systemctl --user restart workshop-frontend` before `:5173` sees it. Developer
-mode was set, built and committed on 2026-08-11 and still invisible for hours,
-twice, because these two were assumed to follow from the build. They do not.
-
-**`check_design.sh` printing "the public bundle is STALE" means the operator may
+**A UI change is not delivered until the operator's origin serves it.** The
+operator uses `$WORKSHOP_PUBLIC_ORIGIN`, the BUILT one (settled 2026-08-11; do
+not ask which origin he is on, it reads as not knowing the deployment). So
+`check_design.sh` printing **"the public bundle is STALE" means the operator may
 be looking at old code. It is not noise. Never report a UI task complete over
 it.** On 2026-08-09 a whole session of width fixes was correct in source, never
-built, and the operator said three times that it wasn't done — while the stale
-warning fired after every commit and went unread. Builds now hold a lock
-(`build_workshop_public.sh`), so the warning is trustworthy: concurrent builds
-used to race the stamp and make it fire unconditionally.
+built, and the operator said three times that it wasn't done, while the stale
+warning fired after every commit and went unread. `apply.sh` is what clears it.
 
 ## Platform design (current: 2026-07-18)
 

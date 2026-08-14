@@ -38,10 +38,11 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
-    CheckConstraint, DateTime, Enum as SAEnum, Float, ForeignKey, Index, Integer,
-    String, Text, func, text,
+    CheckConstraint, DateTime, Enum as SAEnum, Float, ForeignKey,
+    ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, func,
+    text,
 )
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PgUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from db.ids import uuid7
@@ -108,6 +109,18 @@ def _one_of(column: str, values: tuple[str, ...]) -> str:
 
 def _pk() -> Mapped[uuid.UUID]:
     return mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid7)
+
+
+def _org_target(table: str) -> UniqueConstraint:
+    """`UNIQUE (id, org_id)`, so children can reference the pair.
+
+    Postgres runs referential-integrity checks with row security OFF, so a
+    policy's `WITH CHECK (org_id = current_org)` constrains the label on a row
+    and says nothing about what that row POINTS AT. Composite FKs against this
+    pair make org agreement a constraint rather than a convention. Introduced by
+    migration 402e96cbbb79 after both findings were reproduced live.
+    """
+    return UniqueConstraint("id", "org_id", name=f"uq_{table}_id_org")
 
 
 def _org_fk() -> Mapped[uuid.UUID]:
@@ -525,6 +538,298 @@ class Run(Base, Timestamps):
         Index("ix_run_ticket", "ticket_id", "started_at"),
         Index("ix_run_org_started", "org_id", "started_at"),
         Index("ix_run_legacy", "legacy_job_id"),
+    )
+
+
+# --- chat --------------------------------------------------------------------
+# ADR 0020. The load-bearing idea is that a transcript is a TREE, not a list,
+# and that the tree is RECORDED rather than reconstructed. Both halves matter:
+#
+# **Why a tree.** Going back to an earlier point in a conversation and carrying
+# on from there is the operation every one of "undo", "rewind", "edit and
+# retry" and "branch" actually is. Given a parent pointer and a ref, they are
+# one operation, and nothing is ever destroyed to perform it. A list cannot
+# express any of them; the JSONL log this replaces says so explicitly in its own
+# header ("editing a stored message is not expressible").
+#
+# **Why the tree also fixes ordering.** A message sent while a reply was being
+# written belongs INSIDE that reply, after the work that had been done and
+# before the work that had not. The file log recorded that as a token pair
+# (`meta.cut_id` on the message, `seg.cut_after` on the segment it arrived
+# after) and re-derived the split on every render, in three separate readers.
+# Here the reply is simply stored as several messages, one per stretch, threaded
+# through the message that interrupted it. The split is a fact, not a
+# computation, and `cut_id`, `cut_after`, `cut_head`, `at_unit`, `at_segment`,
+# `during_run` and `injected` all cease to exist. See ADR 0018 for the
+# render-time version of the same principle.
+#
+# **What deliberately did NOT move.** The per-run scratch: `live.json` (the
+# in-flight draft, rewritten every ~0.4s and deliberately not fsynced),
+# `queue.json`, `drafts.json`, `prefs.json`. None of it is transcript, all of it
+# is rewritten constantly, and none of it survives a restart in any meaningful
+# sense. The line is: the record of what was said is in the database; the
+# scratchpad of a turn in flight is a file.
+
+CHAT_MODES = ("orchestrated", "direct")
+MESSAGE_ROLES = ("user", "assistant")
+
+# What a node in the transcript can be. All three occupy a POSITION, which is
+# why they are one table: a context cut sits between two messages, and rewinding
+# to a point before it has to un-apply it. Modelling boundaries separately would
+# make "where is the cut relative to the branch head" a join against a second
+# ordering, which is the exact class of bug this schema exists to remove.
+# `run`/`title` from the file log's KINDS are NOT here: a run is `chat_turn`, and
+# a title is a column on the thread.
+MESSAGE_KINDS = ("message", "boundary", "scope")
+BOUNDARY_MODES = ("clear", "compact")
+TURN_STATUSES = ("running", "finished", "lost")
+
+# Documented for the reader; NOT constrained, because segments are a JSONB
+# render payload (see ChatMessage.segments).
+SEGMENT_KINDS = ("text", "tool", "agent", "approval")
+
+
+class ChatThread(Base, Timestamps, SoftDelete):
+    """One conversation.
+
+    `current_branch_id` is the only mutable pointer that decides what the
+    transcript IS. Switching branches is one UPDATE of one column; nothing is
+    copied and nothing is deleted, which is what makes the operation safe enough
+    to offer without a warning about losing work.
+    """
+    __tablename__ = "chat_thread"
+
+    id: Mapped[uuid.UUID] = _pk()
+    org_id: Mapped[uuid.UUID] = _org_fk()
+    # Whose chat it is. RLS isolates the organization; this is the second,
+    # application-level predicate, and it is the direct successor to the
+    # `.runtime/users/<owner_id>/` directory partition.
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("user_account.id", ondelete="CASCADE"),
+        nullable=False)
+    # The 32-hex id the URLs, the frontend and the file archive already use.
+    # Kept for exactly the reason `ticket.external_id` is: every existing link,
+    # bookmark and `claude_session` mapping names a thread by it.
+    external_id: Mapped[str | None] = mapped_column(String(64))
+
+    context_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    scope: Mapped[str] = mapped_column(String(128), nullable=False)
+    scope_locked: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    mode: Mapped[str] = mapped_column(String(16), nullable=False,
+                                      server_default="orchestrated")
+
+    title: Mapped[str | None] = mapped_column(String(255))
+    title_source: Mapped[str | None] = mapped_column(String(16))
+    # The first user message, truncated. Stands in until naming succeeds, and
+    # naming failing silently behind it is a known open defect, so it is a
+    # separate column rather than a title that lies about being one.
+    seed_title: Mapped[str | None] = mapped_column(String(255))
+
+    model: Mapped[str | None] = mapped_column(String(64))
+    effort: Mapped[str | None] = mapped_column(String(16))
+    permission_mode: Mapped[str | None] = mapped_column(String(32))
+    pre_plan_permission_mode: Mapped[str | None] = mapped_column(String(32))
+    # NULL means ALL servers, which is not the same as none of them. A nullable
+    # array carries that distinction; a join table would need a sentinel row.
+    mcp_servers_enabled: Mapped[list[str] | None] = mapped_column(ARRAY(String(64)))
+    agent_slug: Mapped[str | None] = mapped_column(String(64))
+
+    # chat_thread and chat_branch reference each other, so this FK is added
+    # after both tables exist (`use_alter`). Composite on (id, org_id) like
+    # every other FK here: see the note on ChatBranch.
+
+    # The compaction fold. Transcript-adjacent (it REPLACES the messages behind
+    # the cut in the prompt), so it belongs with the transcript.
+    summary: Mapped[str | None] = mapped_column(Text)
+    context_tokens: Mapped[int | None] = mapped_column(Integer)
+    claude_session: Mapped[str | None] = mapped_column(String(64))
+    voice_session: Mapped[str | None] = mapped_column(String(64))
+
+    # Opaque per-thread client state: `turn_marks`, `card_states`,
+    # `ticket_drafts`, `agent_sessions`. Bags today and bags here. JSONB rather
+    # than columns because nothing filters, sorts or joins on any of it; the
+    # moment something does, it earns a column. Contrast `ticket_event`, which
+    # got field-level columns precisely because it IS queried.
+    state: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Insertion counter for `chat_message.seq`, allocated with SELECT ... FOR
+    # UPDATE in the same transaction as the insert. Same mechanism and the same
+    # reasoning as `project.next_ticket_number`: a Postgres sequence is global
+    # and cannot be per-thread.
+    next_seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(_one_of("mode", CHAT_MODES), name="ck_chat_thread_mode"),
+        _org_target("chat_thread"),
+        ForeignKeyConstraint(
+            ["current_branch_id", "org_id"], ["chat_branch.id", "chat_branch.org_id"],
+            name="chat_thread_current_branch_id_org_fkey", ondelete="SET NULL",
+            use_alter=True),
+        Index("uq_chat_thread_external", "external_id", unique=True,
+              postgresql_where=text("external_id IS NOT NULL AND deleted_at IS NULL")),
+        # The thread list: one owner's chats in one scope, most recent first.
+        Index("ix_chat_thread_owner", "org_id", "owner_user_id", "updated_at",
+              postgresql_where=_ALIVE),
+        Index("ix_chat_thread_scope", "org_id", "scope", "updated_at",
+              postgresql_where=_ALIVE),
+    )
+
+
+class ChatBranch(Base, Timestamps, SoftDelete):
+    """A named pointer to a message. A git ref, deliberately.
+
+    A branch stores NO membership: which messages are on it is derived by
+    walking `head_message_id` up its parent chain. That is what keeps the two
+    tables from being able to disagree about what the conversation is.
+
+    `fork_message_id` is therefore metadata, not structure. It exists for two
+    reasons that walking cannot supply: it labels the branch in the picker
+    ("branched from here"), and it is the ONLY record of a branch that is still
+    empty because the operator went back to a point and has not typed yet. That
+    state is the common one, not an edge case.
+    """
+    __tablename__ = "chat_branch"
+
+    id: Mapped[uuid.UUID] = _pk()
+    org_id: Mapped[uuid.UUID] = _org_fk()
+    thread_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    parent_branch_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+
+    fork_message_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+    head_message_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+
+    # Ordinal, allocated per thread. Unique so the picker cannot show two rows
+    # with the same label, which is the whole point of naming them.
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("parent_branch_id IS NULL OR parent_branch_id <> id",
+                        name="ck_chat_branch_not_own_parent"),
+        Index("uq_chat_branch_ordinal", "thread_id", "ordinal", unique=True,
+              postgresql_where=_ALIVE),
+        Index("ix_chat_branch_thread", "org_id", "thread_id", "created_at",
+              postgresql_where=_ALIVE),
+    )
+
+
+class ChatTurn(Base, Timestamps):
+    """One run of the model.
+
+    A turn produces ONE assistant message normally and N when it was
+    interrupted N-1 times, which is the whole reason this table exists: the
+    stretches need something to say they were one reply, so the UI can group
+    them and put the turn's outcome on the last one.
+
+    No soft delete: like `ticket_event`, a turn is a record that something ran.
+    """
+    __tablename__ = "chat_turn"
+
+    id: Mapped[uuid.UUID] = _pk()
+    org_id: Mapped[uuid.UUID] = _org_fk()
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("chat_thread.id", ondelete="CASCADE"),
+        nullable=False)
+    # The uuid the streaming layer already mints and puts on the wire.
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    model: Mapped[str | None] = mapped_column(String(64))
+    agent_slug: Mapped[str | None] = mapped_column(String(64))
+
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    timeout: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    # NULL, "operator" or "interrupted".
+    stopped: Mapped[str | None] = mapped_column(String(16))
+
+    __table_args__ = (
+        CheckConstraint(_one_of("status", TURN_STATUSES), name="ck_chat_turn_status"),
+        Index("uq_chat_turn_run", "run_id", unique=True),
+        Index("ix_chat_turn_thread", "org_id", "thread_id", "started_at"),
+    )
+
+
+class ChatMessage(Base, Timestamps, SoftDelete):
+    """A node in the transcript tree.
+
+    `parent_id` IS the order. The rendered transcript is the path from the
+    current branch's head up to the root, reversed; `seq` is an insertion
+    counter and a sync cursor, never a render order. Those two were the same
+    number in the file log and that is precisely why a message sent mid-reply
+    could not be placed without a second mechanism.
+    """
+    __tablename__ = "chat_message"
+
+    id: Mapped[uuid.UUID] = _pk()
+    org_id: Mapped[uuid.UUID] = _org_fk()
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("chat_thread.id", ondelete="CASCADE"),
+        nullable=False)
+    # CASCADE, not SET NULL: severing a parent would orphan its whole subtree
+    # into an unreachable, unlistable state. A branch is abandoned by moving a
+    # ref, never by deleting rows, so this fires only on a real hard delete.
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("chat_message.id", ondelete="CASCADE"))
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("chat_turn.id", ondelete="SET NULL"))
+
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False,
+                                      server_default="message")
+    # The joined text of the top-level text segments, exactly as before.
+    content: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+
+    # The rendering payload: the ordered tool/text/agent/approval segments.
+    #
+    # JSONB rather than a `chat_segment` table, and the reasoning is not "it was
+    # easier". Three things decide it: nothing filters, sorts or joins on a
+    # segment field, so a table would buy no query; a live turn MUTATES this
+    # list a few times a second and row-per-segment turns one in-memory append
+    # into ~20 writes; and the one field that genuinely was relational,
+    # `cut_after`, is deleted outright by threading the message into the tree.
+    # The schema's general anti-JSONB stance came from `ticket_event`, whose
+    # fields ARE queried ("who changed priority, from what"). That argument does
+    # not carry here.
+    segments: Mapped[list | None] = mapped_column(JSONB)
+    # The remaining sparse render keys, in the shape the client already reads:
+    # notes, receipts, attachments, voice, autonomous, ticket, block_kind.
+    meta: Mapped[dict | None] = mapped_column(JSONB)
+
+    # kind="boundary"
+    boundary_mode: Mapped[str | None] = mapped_column(String(16))
+    # kind="scope"
+    scope_from: Mapped[str | None] = mapped_column(String(128))
+    scope_to: Mapped[str | None] = mapped_column(String(128))
+
+    # Per-thread insertion counter. The sync cursor (`events?after=N`), and the
+    # tiebreak for listing siblings. NOT the render order.
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Browser-minted idempotency key. Was a linear scan of the log; now a
+    # constraint, so a double-send cannot race past the check.
+    client_id: Mapped[str | None] = mapped_column(String(64))
+    # The ULID this event had in the file log.
+    external_id: Mapped[str | None] = mapped_column(String(32))
+
+    __table_args__ = (
+        CheckConstraint(_one_of("role", MESSAGE_ROLES), name="ck_chat_message_role"),
+        CheckConstraint(_one_of("kind", MESSAGE_KINDS), name="ck_chat_message_kind"),
+        CheckConstraint(
+            "boundary_mode IS NULL OR " + _one_of("boundary_mode", BOUNDARY_MODES),
+            name="ck_chat_message_boundary_mode"),
+        CheckConstraint("parent_id IS NULL OR parent_id <> id",
+                        name="ck_chat_message_not_own_parent"),
+        Index("uq_chat_message_seq", "thread_id", "seq", unique=True),
+        Index("uq_chat_message_client", "thread_id", "client_id", unique=True,
+              postgresql_where=text("client_id IS NOT NULL AND deleted_at IS NULL")),
+        Index("ix_chat_message_thread", "org_id", "thread_id", "seq",
+              postgresql_where=_ALIVE),
+        # Children of a node: sibling detection and the branch picker.
+        Index("ix_chat_message_parent", "parent_id", postgresql_where=_ALIVE),
+        Index("ix_chat_message_turn", "turn_id"),
     )
 
 

@@ -161,6 +161,14 @@ def test_a_ticket_cannot_be_its_own_parent(org):
 
 
 def test_a_link_cannot_point_at_itself(org):
+    """Two independent guards cover this and the TRIGGER wins the race.
+
+    `ck_ticket_link_not_self` is a CHECK constraint; `ticket_link_cycle_guard`
+    is a BEFORE INSERT trigger, and BEFORE triggers run first, so a self-link is
+    reported as a one-node cycle rather than as the CHECK. Either message is a
+    correct refusal, so this asserts the refusal and that it names one of the
+    two guards, rather than pinning whichever happens to fire first.
+    """
     from db.engine import tenant_session
     from db.ids import uuid7
 
@@ -173,7 +181,90 @@ def test_a_link_cannot_point_at_itself(org):
                 "INSERT INTO ticket_link (id, org_id, from_ticket_id, to_ticket_id, kind) "
                 "VALUES (:i, :o, :t, :t, 'blocked_by')"),
                 {"i": uuid7(), "o": org["org"], "t": tid})
-    assert "ck_ticket_link_not_self" in str(err.value)
+    message = str(err.value)
+    assert "ck_ticket_link_not_self" in message or "cycle" in message, message
+
+
+def test_a_dependency_cycle_is_refused(org):
+    """A `blocked_by` cycle makes every ticket in it permanently ineligible for
+    the scheduler, with no error and no diagnostic. Nothing prevented it."""
+    from db.engine import tenant_session
+    from db.ids import uuid7
+
+    with tenant_session(org["org"]) as s:
+        a = _ticket(s, org, 601, "none", title="A")
+        b = _ticket(s, org, 602, "none", title="B")
+
+    def link(frm, to):
+        with tenant_session(org["org"]) as s:
+            s.execute(text(
+                "INSERT INTO ticket_link (id, org_id, from_ticket_id, to_ticket_id, kind) "
+                "VALUES (:i, :o, :f, :t, 'blocked_by')"),
+                {"i": uuid7(), "o": org["org"], "f": frm, "t": to})
+
+    link(a, b)
+    with pytest.raises(Exception) as err:
+        link(b, a)
+    assert "cycle" in str(err.value)
+
+
+def test_sub_ticket_depth_is_capped_at_two(org):
+    """ADR 0001 ratified a depth cap of 2 and nothing enforced it. A parent may
+    not itself have a parent, which also makes hierarchy cycles impossible
+    without a recursive walk."""
+    from db.engine import tenant_session
+
+    with tenant_session(org["org"]) as s:
+        a = _ticket(s, org, 611, "none", title="A")
+        b = _ticket(s, org, 612, "none", title="B")
+        c = _ticket(s, org, 613, "none", title="C")
+
+    with tenant_session(org["org"]) as s:
+        s.execute(text("UPDATE ticket SET parent_id = :p WHERE id = :i"), {"p": a, "i": b})
+
+    with pytest.raises(Exception) as err:
+        with tenant_session(org["org"]) as s:
+            s.execute(text("UPDATE ticket SET parent_id = :p WHERE id = :i"),
+                      {"p": b, "i": c})
+    assert "depth is capped" in str(err.value)
+
+
+def test_updated_at_fires_for_raw_sql(org):
+    """`onupdate=func.now()` is an ORM-level hook and does not fire for a raw
+    UPDATE. `ix_ticket_updated` and the default list order both depend on this
+    column being honest, so it is a database trigger now."""
+    import time
+
+    from db.engine import tenant_session
+
+    with tenant_session(org["org"]) as s:
+        tid = _ticket(s, org, 620, "none")
+        before = s.execute(text("SELECT updated_at FROM ticket WHERE id = :i"),
+                           {"i": tid}).scalar()
+
+    time.sleep(0.02)
+    with tenant_session(org["org"]) as s:
+        s.execute(text("UPDATE ticket SET title = 'changed' WHERE id = :i"), {"i": tid})
+    with tenant_session(org["org"]) as s:
+        after = s.execute(text("SELECT updated_at FROM ticket WHERE id = :i"),
+                          {"i": tid}).scalar()
+
+    assert after > before
+
+
+def test_only_one_default_state_per_project(org):
+    """Ticket creation needs a defined fallback. A project could carry zero or
+    five defaults."""
+    from db.engine import tenant_session
+    from db.ids import uuid7
+
+    with pytest.raises(Exception) as err:
+        with tenant_session(org["org"]) as s:
+            s.execute(text(
+                "INSERT INTO workflow_state (id, org_id, project_id, name, category, is_default) "
+                "VALUES (:i, :o, :p, 'Second default', 'unstarted', true)"),
+                {"i": uuid7(), "o": org["org"], "p": org["project"]})
+    assert "uq_workflow_state_one_default" in str(err.value)
 
 
 def test_a_state_in_use_cannot_be_deleted(org):
