@@ -27,10 +27,26 @@ INITIAL = MIGRATIONS / "966ddcaa35ae_initial_work_schema.py"
 
 
 def _tables_in_migration() -> set[str]:
-    src = INITIAL.read_text()
-    block = re.search(r"_TENANT_TABLES\s*=\s*\((.*?)\)", src, re.S)
-    assert block, "could not find _TENANT_TABLES in the initial migration"
-    return set(re.findall(r'"([a-z_]+)"', block.group(1)))
+    """Every table any migration declares tenant-scoped.
+
+    EVERY migration, not just the initial one. This read the initial schema
+    alone, which meant the check could not see a table added by a later
+    migration at all: the chat tables (c1a7b8e3d204) arrived correctly policied
+    and this still reported them unprotected, because it was looking in one
+    file. A guard that goes blind the moment the schema grows is worse than no
+    guard, because it keeps passing.
+
+    The convention it enforces, and the reason a migration adding a
+    tenant-scoped table must follow it: name the tuple `_TENANT_TABLES` and put
+    the table names in it as string literals.
+    """
+    found: set[str] = set()
+    for path in sorted(MIGRATIONS.glob("*.py")):
+        for block in re.finditer(r"_TENANT_TABLES\s*=\s*\((.*?)\)",
+                                 path.read_text(), re.S):
+            found.update(re.findall(r'"([a-z_]+)"', block.group(1)))
+    assert found, "no migration declares _TENANT_TABLES"
+    return found
 
 
 def test_every_org_scoped_table_has_a_policy_in_the_migration():

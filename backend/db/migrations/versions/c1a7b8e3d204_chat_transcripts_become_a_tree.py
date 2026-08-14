@@ -54,7 +54,7 @@ depends_on: str | Sequence[str] | None = None
 # rather than filtering. See 966ddcaa35ae.
 _ORG = "nullif(current_setting('app.current_org', true), '')::uuid"
 
-_CHAT_TABLES = ("chat_thread", "chat_branch", "chat_turn", "chat_message")
+_TENANT_TABLES = ("chat_thread", "chat_branch", "chat_turn", "chat_message")
 
 _ALIVE = sa.text("deleted_at IS NULL")
 
@@ -258,7 +258,7 @@ def upgrade() -> None:
                     ["org_id", "thread_id", "created_at"], postgresql_where=_ALIVE)
 
     # --- 3. row-level security ----------------------------------------------
-    for table in _CHAT_TABLES:
+    for table in _TENANT_TABLES:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} FORCE  ROW LEVEL SECURITY")
         op.execute(
@@ -269,7 +269,7 @@ def upgrade() -> None:
     # --- 4. updated_at ------------------------------------------------------
     # The ORM's `onupdate` is an ORM-level hook and does not fire for raw SQL,
     # which the branch operations use. 402e96cbbb79 found that the hard way.
-    for table in _CHAT_TABLES:
+    for table in _TENANT_TABLES:
         op.execute(f"CREATE TRIGGER {table}_set_updated_at BEFORE UPDATE ON {table} "
                    f"FOR EACH ROW EXECUTE FUNCTION set_updated_at()")
 
@@ -305,7 +305,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS chat_message_lineage_guard ON chat_message")
     op.execute("DROP FUNCTION IF EXISTS chat_message_lineage_is_immutable()")
-    for table in _CHAT_TABLES:
+    for table in _TENANT_TABLES:
         op.execute(f"DROP TRIGGER IF EXISTS {table}_set_updated_at ON {table}")
         op.execute(f"DROP POLICY IF EXISTS {table}_org_isolation ON {table}")
     # chat_thread -> chat_branch has to go before chat_branch does.
