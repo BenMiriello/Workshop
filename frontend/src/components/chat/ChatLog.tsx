@@ -66,7 +66,7 @@ export default function ChatLog({
   selectedModel, cardCtx, onRetry, onCancelQueued, onReleaseQueue,
   queueHeld, queueError, workingLabel, elapsed, nowMs,
   answerPermission, liveTurnId, renderBranch, branchHead,
-  queued, folding, onStop, onStopFold,
+  queued, folding, onStop, stopping, onStopFold,
   voiceOn, vsnap,
 }: {
   scrollRef: RefObject<HTMLDivElement>;
@@ -117,6 +117,8 @@ export default function ChatLog({
   /** End the run in flight. Rendered on the working line, inside the transcript,
    *  rather than under the composer: the control belongs beside the work. */
   onStop?: () => void;
+  /** The stop request is out; the working line's control shows it. */
+  stopping?: boolean;
   /** Abandon the fold in flight. Same idea, on the fold's own line. */
   onStopFold?: () => void;
   voiceOn: boolean;
@@ -162,6 +164,7 @@ export default function ChatLog({
         renderBranch={renderBranch}
         branchHead={branchHead}
         onStop={onStop}
+        stopping={stopping}
       />
 
       {/* WAITING ON THE SERVER, not in this browser. These have been accepted

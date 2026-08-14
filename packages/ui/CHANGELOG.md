@@ -12,6 +12,36 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.7 — 2026-08-14 — two surfaces, because one token had two opposite jobs
+
+**Compatible (one token added, one token's value changed).** New `--bg-sunken`,
+a recessed panel for content holding a separate context. `--bg-block` goes back
+to a whisper: light 0.855 to 0.965 L, dark 0.365 to 0.27.
+
+This is the fourth pass on these colours and the first that changes the SHAPE of
+the problem rather than the number. Workshop's chat needs a grouped block of tool
+calls to be soft (it sits inside a message and must not shout over it) and a
+delegation to be unmistakable (it holds a whole separate context). Both demands
+were being made of `--bg-block` alone, and in light mode they are unsatisfiable
+together: the card is 0.995 and `--bg-inset` was 0.945, so soft-enough-for-the-card
+landed ON the delegation, and clear-of-the-delegation was loud against the card.
+The delegation was sitting in the only place the block could go.
+
+Three passes moved the block further and further out, fixed the collision, and
+produced the opposite complaint. Splitting the surfaces resolves it: the block is
+a whisper (~1.09 against its card) and the panel is the deep step (~1.22 against
+the block), which also matches what the two things ARE. A group is this turn's
+own steps behind a count; a delegation is a separate context, and it carries a
+border as well. Fill against frame, soft against deep.
+
+`--bg-inset` is unchanged and still the page-level inset. The lesson worth
+keeping: it is a PAGE surface, and reaching for it inside a card is what put two
+unrelated things on the same colour.
+
+Bounds are asserted for all sixteen scheme x modes: the block stays under 1.18
+against its card, the panel clears 1.15 against the block, and `--muted` and
+`--fg` clear AA on both.
+
 ## 0.5.6 — 2026-08-14 — `--bg-block` moves as far as the ink on it allows
 
 **Compatible (one token's value changed).** Light 0.90 to 0.855 L, dark 0.30 to

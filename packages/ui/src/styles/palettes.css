@@ -21,7 +21,8 @@
   --muted: #5b545c;
   --faint: #6d666f;
   --card: #fefdff;
-  --bg-block: #d1ced2;
+  --bg-block: #f5f2f5;
+  --bg-sunken: #e0dde1;
   --card-hover: #fbf9fb;
   --card-ring: transparent;
   --border: #e1dce2;
@@ -77,7 +78,8 @@
   --muted: #b3adb5;
   --faint: #8e8890;
   --card: #201d21;
-  --bg-block: #413d42;
+  --bg-block: #29252a;
+  --bg-sunken: #171318;
   --card-hover: #282429;
   --card-ring: #2e2a2f;
   --border: #343035;
@@ -135,7 +137,8 @@
     --muted: #b3adb5;
     --faint: #8e8890;
     --card: #201d21;
-    --bg-block: #413d42;
+    --bg-block: #29252a;
+    --bg-sunken: #171318;
     --card-hover: #282429;
     --card-ring: #2e2a2f;
     --border: #343035;
@@ -194,7 +197,8 @@
   --muted: #4d5a59;
   --faint: #5f6c6c;
   --card: #fbfefe;
-  --bg-block: #c9d1d1;
+  --bg-block: #eff5f5;
+  --bg-sunken: #d8e0e0;
   --card-hover: #f7fbfb;
   --card-ring: transparent;
   --border: #d8e0e0;
@@ -250,7 +254,8 @@
   --muted: #a3b3b3;
   --faint: #7f8e8e;
   --card: #162020;
-  --bg-block: #364141;
+  --bg-block: #1e2929;
+  --bg-sunken: #0d1717;
   --card-hover: #1e2828;
   --card-ring: #232e2e;
   --border: #283434;
@@ -308,7 +313,8 @@
     --muted: #a3b3b3;
     --faint: #7f8e8e;
     --card: #162020;
-    --bg-block: #364141;
+    --bg-block: #1e2929;
+    --bg-sunken: #0d1717;
     --card-hover: #1e2828;
     --card-ring: #232e2e;
     --border: #283434;
@@ -367,7 +373,8 @@
   --muted: #5b545c;
   --faint: #6d666f;
   --card: #fefdff;
-  --bg-block: #d1ced2;
+  --bg-block: #f5f2f5;
+  --bg-sunken: #e0dde1;
   --card-hover: #fbf9fb;
   --card-ring: transparent;
   --border: #e1dce2;
@@ -423,7 +430,8 @@
   --muted: #b3adb5;
   --faint: #8e8890;
   --card: #201d21;
-  --bg-block: #413d42;
+  --bg-block: #29252a;
+  --bg-sunken: #171318;
   --card-hover: #282429;
   --card-ring: #2e2a2f;
   --border: #343035;
@@ -481,7 +489,8 @@
     --muted: #b3adb5;
     --faint: #8e8890;
     --card: #201d21;
-    --bg-block: #413d42;
+    --bg-block: #29252a;
+    --bg-sunken: #171318;
     --card-hover: #282429;
     --card-ring: #2e2a2f;
     --border: #343035;
@@ -540,7 +549,8 @@
   --muted: #515760;
   --faint: #636972;
   --card: #fcfdff;
-  --bg-block: #ccd0d5;
+  --bg-block: #f1f4f8;
+  --bg-sunken: #dadee4;
   --card-hover: #f8fafd;
   --card-ring: transparent;
   --border: #dadee4;
@@ -596,7 +606,8 @@
   --muted: #a9b0bb;
   --faint: #848b96;
   --card: #1a1e25;
-  --bg-block: #3a3f46;
+  --bg-block: #22272e;
+  --bg-sunken: #11151b;
   --card-hover: #21262d;
   --card-ring: #272c33;
   --border: #2d323a;
@@ -654,7 +665,8 @@
     --muted: #a9b0bb;
     --faint: #848b96;
     --card: #1a1e25;
-    --bg-block: #3a3f46;
+    --bg-block: #22272e;
+    --bg-sunken: #11151b;
     --card-hover: #21262d;
     --card-ring: #272c33;
     --border: #2d323a;
@@ -713,7 +725,8 @@
   --muted: #4f5a54;
   --faint: #616c66;
   --card: #fcfefd;
-  --bg-block: #cdd0ce;
+  --bg-block: #f2f4f3;
+  --bg-sunken: #dcdfdd;
   --card-hover: #f9fafa;
   --card-ring: transparent;
   --border: #d9e0dc;
@@ -769,7 +782,8 @@
   --muted: #abb1ae;
   --faint: #878c89;
   --card: #1c1f1d;
-  --bg-block: #3b403d;
+  --bg-block: #242725;
+  --bg-sunken: #131614;
   --card-hover: #232725;
   --card-ring: #292c2a;
   --border: #2f3330;
@@ -827,7 +841,8 @@
     --muted: #abb1ae;
     --faint: #878c89;
     --card: #1c1f1d;
-    --bg-block: #3b403d;
+    --bg-block: #242725;
+    --bg-sunken: #131614;
     --card-hover: #232725;
     --card-ring: #292c2a;
     --border: #2f3330;
@@ -886,7 +901,8 @@
   --muted: #5f5450;
   --faint: #726662;
   --card: #fffdfc;
-  --bg-block: #d2cecd;
+  --bg-block: #f5f3f2;
+  --bg-sunken: #e1dddb;
   --card-hover: #fbfaf9;
   --card-ring: transparent;
   --border: #e4dcda;
@@ -942,7 +958,8 @@
   --muted: #b5adab;
   --faint: #908986;
   --card: #211d1b;
-  --bg-block: #423d3b;
+  --bg-block: #2a2523;
+  --bg-sunken: #181412;
   --card-hover: #2a2523;
   --card-ring: #2f2a28;
   --border: #36302e;
@@ -1000,7 +1017,8 @@
     --muted: #b5adab;
     --faint: #908986;
     --card: #211d1b;
-    --bg-block: #423d3b;
+    --bg-block: #2a2523;
+    --bg-sunken: #181412;
     --card-hover: #2a2523;
     --card-ring: #2f2a28;
     --border: #36302e;
@@ -1059,7 +1077,8 @@
   --muted: #50585f;
   --faint: #626a72;
   --card: #fcfeff;
-  --bg-block: #ccd0d4;
+  --bg-block: #f1f4f6;
+  --bg-sunken: #dbdee2;
   --card-hover: #f8fafc;
   --card-ring: transparent;
   --border: #d9dfe4;
@@ -1115,7 +1134,8 @@
   --muted: #a9b0b8;
   --faint: #848c93;
   --card: #1a1f23;
-  --bg-block: #3a3f44;
+  --bg-block: #22272c;
+  --bg-sunken: #111519;
   --card-hover: #22272b;
   --card-ring: #272c31;
   --border: #2d3238;
@@ -1173,7 +1193,8 @@
     --muted: #a9b0b8;
     --faint: #848c93;
     --card: #1a1f23;
-    --bg-block: #3a3f44;
+    --bg-block: #22272c;
+    --bg-sunken: #111519;
     --card-hover: #22272b;
     --card-ring: #272c31;
     --border: #2d3238;
@@ -1232,7 +1253,8 @@
   --muted: #5e554e;
   --faint: #706760;
   --card: #fffdfb;
-  --bg-block: #d1cfcd;
+  --bg-block: #f4f3f2;
+  --bg-sunken: #e0dddc;
   --card-hover: #fbfaf9;
   --card-ring: transparent;
   --border: #e3ddd8;
@@ -1288,7 +1310,8 @@
   --muted: #b3afac;
   --faint: #8e8a87;
   --card: #201e1c;
-  --bg-block: #413e3c;
+  --bg-block: #282624;
+  --bg-sunken: #171413;
   --card-hover: #282523;
   --card-ring: #2d2b29;
   --border: #34312f;
@@ -1346,7 +1369,8 @@
     --muted: #b3afac;
     --faint: #8e8a87;
     --card: #201e1c;
-    --bg-block: #413e3c;
+    --bg-block: #282624;
+    --bg-sunken: #171413;
     --card-hover: #282523;
     --card-ring: #2d2b29;
     --border: #34312f;
@@ -1405,7 +1429,8 @@
   --muted: #535760;
   --faint: #656972;
   --card: #fdfdff;
-  --bg-block: #cfcfd1;
+  --bg-block: #f3f3f4;
+  --bg-sunken: #dddedf;
   --card-hover: #fafafb;
   --card-ring: transparent;
   --border: #dbdee4;
@@ -1461,7 +1486,8 @@
   --muted: #aeafb2;
   --faint: #898b8d;
   --card: #1d1e20;
-  --bg-block: #3d3e40;
+  --bg-block: #262628;
+  --bg-sunken: #141517;
   --card-hover: #252628;
   --card-ring: #2a2b2d;
   --border: #313134;
@@ -1519,7 +1545,8 @@
     --muted: #aeafb2;
     --faint: #898b8d;
     --card: #1d1e20;
-    --bg-block: #3d3e40;
+    --bg-block: #262628;
+    --bg-sunken: #141517;
     --card-hover: #252628;
     --card-ring: #2a2b2d;
     --border: #313134;

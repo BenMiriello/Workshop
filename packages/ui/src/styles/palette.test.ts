@@ -89,24 +89,46 @@ describe("every scheme is readable", () => {
   // (3/255 apart, in all eight schemes). It was invisible to a dark-mode check
   // and wrong in half the app. Measured and reported 2026-08-14.
   //
-  // 1.25 is not a taste threshold, it is where the operator's eye landed. The
-  // first attempt cleared 1.1 in every scheme and he still reported the two as
-  // the same colour, so a bound that only proves "not identical" proves nothing
-  // useful here. These now sit at ~1.32 (light) and ~1.68 (dark).
-  it.each(schemes)("%s %s — a grouped block is tellable from a delegation", (_id, _mode, s) => {
-    expect(ratio(s.bgBlock, s.bgInset), "--bg-block vs --bg-inset").toBeGreaterThanOrEqual(1.25);
-    expect(ratio(s.bgBlock, s.card), "--bg-block vs --card").toBeGreaterThanOrEqual(1.25);
+  // TWO SURFACES, TWO OPPOSITE JOBS, and the reason there are two of them.
+  //
+  // A grouped block (`bgBlock`) must be SOFT: it is this turn's own steps behind
+  // a count, sitting inside a message, and the operator's report on a loud one
+  // was that it stood out too much from the message it was in. A delegation
+  // (`bgSunken`) must be UNMISTAKABLE: it holds a whole separate context.
+  //
+  // Those two demands were made of one token for four rounds and cannot both be
+  // met by it, because in light mode the old `bgInset` sat BETWEEN the card and
+  // anywhere a distinct block could go: soft enough for the card meant landing on
+  // the delegation, and clear of the delegation meant loud against the card.
+  // Splitting them is what resolves it, and these bounds are what keep them from
+  // drifting back into each other's territory.
+  it.each(schemes)("%s %s — a grouped block stays a whisper on its card", (_id, _mode, s) => {
+    expect(ratio(s.bgBlock, s.card), "--bg-block vs --card").toBeGreaterThan(1.0);
+    expect(ratio(s.bgBlock, s.card), "--bg-block vs --card").toBeLessThanOrEqual(1.18);
   });
 
-  // THE OTHER BOUND, and the one that says how far this can be pushed. `bgBlock`
-  // is not in `surfacesOf`, so text tones are not SOLVED against it the way they
-  // are against bg/card/inset; it carries text anyway (a block is a run of tool
-  // rows, written in --muted). Without this, driving the two surfaces further
-  // apart to satisfy the eye would quietly walk the ink under AA instead.
-  // Currently ~4.6 at worst, so the surface is close to as far as it can go.
-  it.each(schemes)("%s %s — the ink on a grouped block clears AA", (_id, _mode, s) => {
-    expect(ratio(s.muted, s.bgBlock), "--muted on --bg-block").toBeGreaterThanOrEqual(AA_TEXT);
-    expect(ratio(s.fg, s.bgBlock), "--fg on --bg-block").toBeGreaterThanOrEqual(AA_TEXT);
+  // The load-bearing pair is delegation vs BLOCK: those are the two the operator
+  // reported as indistinguishable, and the two that mean different things.
+  //
+  // Against the CARD the bar is deliberately lower, and dark mode is why. There
+  // the block sits just ABOVE the card and the panel just below it, so they are
+  // told apart by being on opposite sides of it rather than by distance, and the
+  // panel only needs to read as recessed (~1.10). It also carries a border,
+  // which is the other half of "a group is a fill, a delegation is a frame". In
+  // light both sit below the card and the panel does the travelling (~1.21).
+  it.each(schemes)("%s %s — a delegation is unmistakable against a block", (_id, _mode, s) => {
+    expect(ratio(s.bgSunken, s.bgBlock), "--bg-sunken vs --bg-block").toBeGreaterThanOrEqual(1.15);
+    expect(ratio(s.bgSunken, s.card), "--bg-sunken vs --card").toBeGreaterThanOrEqual(1.08);
+  });
+
+  // Neither is in `surfacesOf`, so text tones are not SOLVED against them the way
+  // they are against bg/card/inset. Both carry text anyway (a block and a panel
+  // are both full of --muted rows), so the floor is asserted rather than assumed.
+  it.each(schemes)("%s %s — the ink on both chat surfaces clears AA", (_id, _mode, s) => {
+    for (const [name, surface] of [["--bg-block", s.bgBlock], ["--bg-sunken", s.bgSunken]] as const) {
+      expect.soft(ratio(s.muted, surface), `--muted on ${name}`).toBeGreaterThanOrEqual(AA_TEXT);
+      expect.soft(ratio(s.fg, surface), `--fg on ${name}`).toBeGreaterThanOrEqual(AA_TEXT);
+    }
   });
 });
 

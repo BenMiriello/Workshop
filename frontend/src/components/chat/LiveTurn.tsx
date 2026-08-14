@@ -19,6 +19,7 @@ import WorkingIndicator from "./WorkingIndicator";
 // still running and still says so.
 export default function LiveTurn({
   segments, working, workingLabel, elapsed, nowMs, model, cardCtx, onAnswerPermission, onStop,
+  stopping,
 }: {
   segments: ChatSegment[];
   working: boolean;
@@ -27,6 +28,8 @@ export default function LiveTurn({
   /** End the run. The control lives ON the working line now, not under the
    *  composer, so it travels with the thing it stops. */
   onStop?: () => void;
+  /** The stop request is out; the control shows it. */
+  stopping?: boolean;
   // The shared 1Hz clock, for the per-step counter on whatever is running now.
   nowMs: number;
   model: string;
@@ -48,7 +51,7 @@ export default function LiveTurn({
             onAnswerPermission={onAnswerPermission}
           />
         )}
-        {working && <WorkingIndicator label={workingLabel} elapsed={elapsed} onStop={onStop} />}
+        {working && <WorkingIndicator label={workingLabel} elapsed={elapsed} onStop={onStop} stopping={stopping} />}
       </div>
     </div>
   );

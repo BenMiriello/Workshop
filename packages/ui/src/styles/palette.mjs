@@ -294,14 +294,15 @@ const DERIVED = {
     fieldBg: [0.193, 0.0125],
     cardHover: [0.268, 0.015],
     cardRing: [0.29, 0.015],       // dark cards float on a faint ring, not a shadow
-    /* A BLOCK OF GROUPED CONTENT INSIDE A CARD, and the one surface that is NOT
-       on the same side of `card` in both modes. See the light entry.
-
-       0.365, up from 0.30. Pushed as far from `inset` as the ink on it allows:
-       the rows inside a block are `--muted`, so the binding constraint is AA at
-       4.5:1, which runs out around 0.40. Asserted in palette.test.ts, both the
-       separation and the floor, so the next nudge cannot quietly cross it. */
-    bgBlock: [0.365, 0.015],
+    /* A BLOCK OF GROUPED CONTENT INSIDE A CARD. A WHISPER: just enough to say
+       "these rows belong together", and no more. 0.27 against a 0.235 card.
+       See the light entry for why this stopped chasing `inset`. */
+    bgBlock: [0.27, 0.015],
+    /* A RECESSED PANEL holding a separate context (a delegation). The deep step,
+       and the one that carries the distinction the block used to be asked to
+       carry on its own. In dark it is essentially where `inset` already sat, so
+       nothing visibly moves here; the work is all in light mode. */
+    bgSunken: [0.195, 0.014],
     borderStrong: [0.4, 0.017],
     scrim: [0.12, 0.03],
     scrimAlpha: 0.62,
@@ -334,17 +335,31 @@ const DERIVED = {
        app. Operator, 2026-08-14: "it's the same background color as the agent
        background color and that's wrong."
 
-       So light goes past inset instead of toward it. 0.855, and the number is
-       set by the INK rather than by taste: the rows inside a block are `--muted`,
-       which stops clearing AA at 4.5:1 somewhere around 0.845, so this is as far
-       from `inset` as the surface can go and still be readable.
+       THE BLOCK STOPPED CHASING `inset`, because chasing it was the wrong move.
+       Three passes drove this further and further from the card (0.90, then
+       0.855) to get clear of the delegation's fill, and the operator's verdict on
+       the result was that the block now stands out too much from the message it
+       sits in: "it should be subtler of a difference compared to the regular
+       chat message background."
 
-       It was 0.90 first, which was one step below inset and measurably distinct
-       (1.14:1 against it) and still read as the same colour to the operator. A
-       step that a measurement calls different and an eye calls the same is not a
-       step. Both bounds are asserted in palette.test.ts now, so the separation
-       cannot close again and the next nudge cannot quietly break the contrast. */
-    bgBlock: [0.855, 0.009],
+       Both of his asks are right and they cannot both be satisfied by this one
+       token, which is the thing the earlier passes missed. In light mode the
+       card is 0.995 and `inset` is 0.945, so a block that stays subtle against
+       the card lands ON the delegation, and a block clear of the delegation is
+       loud against the card. The delegation was sitting between the two.
+
+       So the block goes back to a whisper (0.965, one soft step under the card)
+       and the DELEGATION moves out of the way instead: see `bgSunken`. That also
+       matches what the two things are. A group is this turn's own steps gathered
+       under a count, so it earns the softest mark there is; a delegation holds a
+       whole separate context, so it earns the deep one, and it has a border on
+       top of that. Fill against frame, loud against soft, both saying the same
+       thing twice rather than one token doing two jobs. */
+    bgBlock: [0.965, 0.006],
+    /* THE DEEP STEP, and the one doing the work light mode needs. 0.90 against a
+       0.995 card and a 0.965 block: unmistakably a different surface from either,
+       with room left for `--muted` to clear AA on it. */
+    bgSunken: [0.9, 0.009],
     borderStrong: [0.855, 0.011],
     scrim: [0.18, 0.03],
     scrimAlpha: 0.55,
@@ -464,6 +479,11 @@ export function buildScheme(schemeId, mode) {
        the way a hover is, because it must stay clear of `bgInset` too, and in
        light mode those two pull the same direction. */
     bgBlock: N(d.bgBlock),
+    /* The recessed panel. Deliberately NOT `bgInset`: that is a page-level
+       surface, and inside a card it happened to land right where a grouped
+       block wanted to be. Giving the panel its own token is what lets the block
+       be a whisper and the panel be unmistakable at the same time. */
+    bgSunken: N(d.bgSunken),
     cardHover: N(d.cardHover),
     cardRing: d.cardRing ? N(d.cardRing) : "transparent",
     border: T(P.border),

@@ -1,4 +1,4 @@
-import { Square } from "lucide-react";
+import { Loader2, Square } from "lucide-react";
 
 // STOP, WHERE THE WORK IS. Not under the composer.
 //
@@ -16,28 +16,40 @@ import { Square } from "lucide-react";
 // It never renders when there is nothing to stop: the caller passes no handler,
 // and a disabled stop would be a promise that the work could be ended if only
 // you were allowed to ask.
-export default function StopButton({ label, onStop }: {
+export default function StopButton({ label, onStop, busy = false }: {
   /** What gets stopped, for the accessible name: "Stop the turn", "Stop compacting". */
   label: string;
   onStop: () => void;
+  /** The request is in flight. Ending a turn takes as long as it takes the
+   *  server to reach the run and commit what it produced, and with no state on
+   *  the button a press looked like it had done nothing. */
+  busy?: boolean;
 }) {
   return (
     <button
       type="button"
-      className="chat-stopdot"
+      className={`chat-stopdot${busy ? " is-busy" : ""}`}
+      // Inert while the request is out. A second press cannot make it stop
+      // harder, and the first one is already doing the only thing there is.
+      disabled={busy}
+      aria-busy={busy || undefined}
       // Cancels pointerdown so pressing it never blurs the composer, which on a
       // phone would close the keyboard and move this button out from under the
       // finger mid-tap. Same rule as every control in the composer's action row.
       onPointerDown={(e) => e.preventDefault()}
       onClick={onStop}
-      aria-label={label}
-      title={label}
+      aria-label={busy ? "Stopping" : label}
+      title={busy ? "Stopping" : label}
     >
-      {/* 11px against an ~18px circle. lucide draws Square at 0.875 of the
-          nominal size once its stroke is counted, so the mark is ~9.6px wide and
-          its diagonal is ~13.6px inside a 16.2px inner circle: full enough to
-          read as a stop, with the corners clear of the ring. */}
-      <Square size={11} strokeWidth={3} aria-hidden />
+      {/* The square becomes the spinner IN PLACE, in the same ring, so the press
+          reads as this control changing state rather than as one control being
+          swapped for another. `ws-spin` is the kit's own rotation (it already
+          slows under prefers-reduced-motion), not a second spinner invented
+          here. 12px because a ring reads smaller than a filled square at the
+          same nominal size. */}
+      {busy
+        ? <Loader2 size={12} strokeWidth={2.5} aria-hidden className="ws-spin" />
+        : <Square size={11} strokeWidth={3} aria-hidden />}
     </button>
   );
 }

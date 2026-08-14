@@ -12,6 +12,7 @@ export default function WorkingIndicator({
   label,
   elapsed = 0,
   onStop,
+  stopping = false,
 }: {
   label: string;
   // Omitted where there is nothing meaningful to count (a voice turn's
@@ -20,6 +21,9 @@ export default function WorkingIndicator({
   /** End the turn. Absent where this line is not something the operator can
    *  stop (the voice shell drives its own turn), and then no control renders. */
   onStop?: () => void;
+  /** The stop request is out. The label already reads "Stopping" (turnStatus
+   *  owns that); this is what puts the same state on the control. */
+  stopping?: boolean;
 }) {
   return (
     // chat-footrow: the working line, "Show more" and "Show less" are all the
@@ -28,7 +32,7 @@ export default function WorkingIndicator({
     <div className="chat-working chat-footrow" role="status" aria-live="polite">
       {/* Left of the label, so the control sits at the head of the line that
           says work is happening rather than after the clock. */}
-      {onStop && <StopButton label="Stop the turn" onStop={onStop} />}
+      {onStop && <StopButton label="Stop the turn" onStop={onStop} busy={stopping} />}
       <span className="chat-working__label">{label}</span>
       <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
       {elapsed > 0 && <span className="chat-working__time">{formatElapsed(elapsed)}</span>}

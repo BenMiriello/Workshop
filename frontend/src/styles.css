@@ -1039,7 +1039,11 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-agent {
   margin: 0.3rem 0; min-width: 0;
   border: 1px solid var(--border); border-radius: var(--radius-md);
-  background: var(--bg-inset); overflow: hidden;
+  /* --bg-sunken, not --bg-inset. `inset` is a PAGE surface, and inside a card it
+     landed exactly where a grouped block wants to sit, which is what made these
+     two read as the same thing for four rounds. The delegation now takes the
+     deep step of its own, so the group can go back to being a whisper. */
+  background: var(--bg-sunken); overflow: hidden;
 }
 .chat-agent__head {
   display: flex; align-items: center; gap: 0.4rem;
@@ -1185,8 +1189,20 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-group__count { flex: 0 0 auto; }
 /* The steps, one level in, behind the rail. Vertical space is padding for the
    same reason as .chat-tool__detail: a margin would survive the collapse. */
+/* THE RAIL SITS EVENLY IN THE BLOCK. Above it: the group's own padding (0.15rem)
+   plus the head's (0.2rem), so the caret's row starts 0.35rem below the block's
+   top edge. Below it there was only the group's 0.15rem, so the rail ended much
+   closer to the bottom edge than the caret sits from the top, and the whole
+   block read as sitting low in its own background. Operator, 2026-08-14: even it
+   up, and give the bottom the extra.
+
+   The extra goes on THIS element's margin, not on .chat-group's padding, for the
+   same reason the work summary's gap did: .chat-group__body is the reveal's
+   inner, so a margin here exists only while the group is open and animates shut
+   with it. On .chat-group it would be permanent, and a COLLAPSED group would
+   carry 0.35rem of empty space under a single header row. */
 .chat-group__body {
-  margin: 0 0 0 calc(var(--chat-head-pad) + var(--chat-rail-nudge));
+  margin: 0 0 0.2rem calc(var(--chat-head-pad) + var(--chat-rail-nudge));
   padding: 0.1rem 0 0.2rem 0.6rem; border-left: 2px solid var(--border);
 }
 /* Still working: motion means in-flight and nothing else, matching the
@@ -1625,24 +1641,16 @@ a.chat-receipt--link:hover > svg { color: var(--fg); }
      one-cell grid centres the only child on both axes with nothing to argue
      with, and the target now comes from the button being bigger. */
   display: grid; place-items: center;
-  /* EXACTLY ONE LINE BOX, which is the largest it can be without making its row
-     any taller than the text already makes it. That is the operator's rule after
-     three passes on this size (1.15rem, 1.4rem, 1.75rem: the last overshot), and
-     `lh` states it directly instead of hard-coding a number that is only correct
-     for one row. It is a circle, so the width takes it too.
+  /* 1.5rem (24px). Fifth pass, and the last three bracket it: 1.75rem overshot,
+     one line box (18.2px, `1lh`) was correct to the letter of "do not grow the
+     row" and too small to hit, and the operator's read on trying it was that he
+     had not realised the row was that short. So the constraint he gave is
+     released deliberately: this is ~6px taller than the working line's text, and
+     that row now sizes to the button.
 
-     `font: inherit` is what makes that work: a button does not inherit type from
-     its parent, and `lh` resolves against the ELEMENT's own line-height. Without
-     it this would measure the UA's 13.33px default rather than the row it sits
-     in. It also stops `line-height: 1` from being set here, which would have
-     made `1lh` mean the font size instead of the line box.
-
-     The em fallback is for an engine without `lh`. It is exact in the working
-     line (1.4 line-height) and slightly under in the fold line (1.55), which
-     errs the safe way: smaller never grows a row. */
+     Kept in rem, not `lh`, precisely because it no longer tracks the row. */
   font: inherit;
-  width: 1.4em; height: 1.4em;
-  width: 1lh; height: 1lh;
+  width: 1.5rem; height: 1.5rem;
   padding: 0;
   border-radius: 50%;
   background: transparent; color: var(--muted);
@@ -1657,6 +1665,24 @@ a.chat-receipt--link:hover > svg { color: var(--fg); }
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
 .chat-stopdot:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
+/* PRESSED, AND STILL WORKING ON IT. Stop is a request, not an instant: the
+   server has to reach the run, signal its process group and commit whatever it
+   had produced. Until it answers, the control kept its resting look and the
+   line still read "Working", so a press was indistinguishable from a miss and
+   invited a second one. Operator, 2026-08-14.
+
+   It takes the LIVE tone because that is what the tone is for: this is happening
+   right now, and it is the only thing on the row still in motion. It holds the
+   tone for the whole wait (standing LIVE), and the ring fills faintly so the
+   button reads as engaged rather than merely hovered. Not `stopped`: nothing has
+   stopped yet, which is the entire point of the state.
+
+   Cursor stays `default` while inert, never `not-allowed` (design rule 10). */
+.chat-stopdot.is-busy {
+  color: var(--live); border-color: var(--live);
+  background: color-mix(in srgb, var(--live) 12%, transparent);
+  cursor: default;
+}
 
 /* ---- Attachments: chips above the input, and the chat-wide drop target ----
    A chip is one object, so removing it is one click. That is the whole reason

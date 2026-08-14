@@ -404,7 +404,7 @@ export type AnswerPermissionFor = (
 // turns this memo off and nothing fails visibly; it just gets slow again.
 function MessageList({
   blocks, selectedModel, cardCtx, workingLabel, elapsed, nowMs, onRetry,
-  answerPermission, liveTurnId, renderBranch, branchHead, onStop,
+  answerPermission, liveTurnId, renderBranch, branchHead, onStop, stopping,
 }: {
   blocks: TranscriptBlock[];
   selectedModel: string;
@@ -429,6 +429,8 @@ function MessageList({
   /** End the run in flight. Rendered on the working line itself. Must be stable
    *  (a useCallback in Chat.tsx) or it turns this memo off. */
   onStop?: () => void;
+  /** The stop request is out; the control on the working line shows it. */
+  stopping?: boolean;
 }) {
   // Recency nuance: the most recent assistant answer is expanded and older ones
   // auto-shorten — but only when nothing is running, because a live turn is
@@ -487,6 +489,7 @@ function MessageList({
                 answerPermission && liveTurnId ? (a) => answerPermission(liveTurnId, a) : undefined
               }
               onStop={onStop}
+              stopping={stopping}
             />
           )}
           {b.kind === "pending" && (

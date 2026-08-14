@@ -280,6 +280,11 @@ export default function Chat({
   // leaving the operator holding a button that did nothing visible is worse than
   // the error line beside it.
   const { beginStop, stopWatching } = stream;
+  // Stop is not instant: the server reaches the run, signals its process group
+  // and commits what it produced, and only then answers. Until this turn ends
+  // the indicator said "Working" and the button looked untouched, so a press
+  // read as having done nothing and invited a second one.
+  const [stopping, setStopping] = useState(false);
   const onStopTurn = useCallback(async () => {
     const runId = stateRef.current.activeRun?.runId ?? null;
     // Claim the ending before the request goes out: the `done` frame arrives
@@ -291,6 +296,7 @@ export default function Chat({
     // Holding it here as well would be a second owner of the same fact, and
     // this one would not survive a reload.
     beginStop();
+    setStopping(true);
     try {
       if (runId) await chatApi.stopTurn(runId);
     } catch (e) {
@@ -300,6 +306,10 @@ export default function Chat({
       });
     } finally {
       stopWatching();
+      // Cleared whatever happened. On success the run is gone and the indicator
+      // goes with it; on failure the error line says to press again, and a
+      // button still spinning would contradict it.
+      setStopping(false);
     }
   }, [beginStop, stateRef, stopWatching]);
 
@@ -721,6 +731,7 @@ export default function Chat({
   const workingLabel = turnLabel({
     attached: stream.attached,
     reconnecting: stream.reconnecting,
+    stopping,
   });
 
   // ---- Egress banner (build only) -----------------------------------------
@@ -1050,6 +1061,7 @@ export default function Chat({
       queued={queuedWaiting}
       folding={folding}
       onStop={onStopClick}
+      stopping={stopping}
       onStopFold={cancelFold}
       voiceOn={voiceOn}
       vsnap={vsnap}

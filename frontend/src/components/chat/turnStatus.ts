@@ -25,7 +25,7 @@
 // phase and the word was unreachable. It said the thing the operator was owed
 // while apparently still saying it. The fold announces itself at the foot of the
 // log instead, for as long as it runs. See FoldingNote.
-export type TurnPhase = "working" | "reconnecting" | "detached";
+export type TurnPhase = "working" | "reconnecting" | "detached" | "stopping";
 
 export const TURN_LABEL: Record<TurnPhase, string> = {
   working: "Working",
@@ -33,6 +33,13 @@ export const TURN_LABEL: Record<TurnPhase, string> = {
   // Running, but this tab is not the one reading its output. Says the true
   // thing ("it has not stopped") without implying a stream that is not open.
   detached: "Still running",
+  // Stop was pressed and the request is in flight. Ending a turn is not
+  // instant: the server has to reach the run, signal its process group and
+  // commit whatever it had produced, and until that returns the indicator was
+  // still saying "Working", which reads as the press having done nothing.
+  // Operator, 2026-08-14: "there's no styling indicating the state of it or if
+  // it's been clicked or what's happening."
+  stopping: "Stopping",
 };
 
 export function turnPhase(o: {
@@ -40,7 +47,13 @@ export function turnPhase(o: {
   attached: boolean;
   // The socket dropped and is being retried.
   reconnecting: boolean;
+  // Stop was pressed and the server has not answered yet.
+  stopping?: boolean;
 }): TurnPhase {
+  // FIRST, because it outranks every other thing the turn could be doing. A
+  // reconnect during a stop is still a stop as far as the reader is concerned:
+  // they asked for it to end and are waiting to hear that it did.
+  if (o.stopping) return "stopping";
   if (o.reconnecting) return "reconnecting";
   if (!o.attached) return "detached";
   return "working";
