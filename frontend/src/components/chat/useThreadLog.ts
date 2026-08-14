@@ -67,7 +67,7 @@ export type ThreadLog = {
   /** Which line of the conversation the server is serving, and how many exist
    *  (ADR 0020). `id` is null when this chat cannot be branched, which is the
    *  signal the transcript uses to leave the control off entirely. */
-  branch: { id: string | null; name: string; count: number };
+  branch: { id: string | null; name: string; count: number; head: string | null };
 };
 
 export function useThreadLog({
@@ -108,10 +108,12 @@ export function useThreadLog({
   // yet", which is deliberately distinct from `null` ("this chat has no
   // branches"): the first sync must not be mistaken for a branch CHANGE and
   // trigger a re-read of a page that just arrived.
-  const branchRef = useRef<{ id: string | null | undefined; count: number; pending: boolean }>(
-    { id: undefined, count: 0, pending: false });
-  const [branch, setBranch] = useState<{ id: string | null; name: string; count: number }>(
-    { id: null, name: "", count: 0 });
+  const branchRef = useRef<{ id: string | null | undefined; count: number;
+                             head: string | null; pending: boolean }>(
+    { id: undefined, count: 0, head: null, pending: false });
+  const [branch, setBranch] = useState<
+    { id: string | null; name: string; count: number; head: string | null }>(
+    { id: null, name: "", count: 0, head: null });
 
   const sync = useCallback(async () => {
     const id = threadIdRef.current;
@@ -137,7 +139,8 @@ export function useThreadLog({
         const first = branchRef.current.id === undefined;
         branchRef.current.id = nextBranch;
         setBranch({ id: nextBranch, name: page.branch?.name ?? "",
-                    count: page.branch_count ?? 0 });
+                    count: page.branch_count ?? 0,
+                    head: page.branch?.head ?? null });
         if (!first) {
           // Learned about the change on this very response, which was fetched
           // from the OLD cursor. Drop what we have and ask again from zero.
@@ -146,10 +149,15 @@ export function useThreadLog({
           void sync();
           return;
         }
-      } else if (branchRef.current.count !== (page.branch_count ?? 0)) {
+      } else if (branchRef.current.count !== (page.branch_count ?? 0)
+                 || branchRef.current.head !== (page.branch?.head ?? null)) {
+        // The head moves on every committed message, so this keeps the
+        // "already the end of the chat" state honest as the chat grows.
         branchRef.current.count = page.branch_count ?? 0;
+        branchRef.current.head = page.branch?.head ?? null;
         setBranch({ id: nextBranch, name: page.branch?.name ?? "",
-                    count: page.branch_count ?? 0 });
+                    count: page.branch_count ?? 0,
+                    head: page.branch?.head ?? null });
       }
       if (branchChanged) dispatch({ type: "reset", threadId: id });
       dispatch({

@@ -70,43 +70,67 @@ async def list_branches(thread_ref: str) -> list[dict]:
         return []
 
 
-def _resolve_anchor(s, thread_id: str, ref: str) -> str | None:
-    """A client-supplied anchor to a message id.
+def _resolve_anchor(s, thread_id: str, ref: str, mode: str = "after"
+                    ) -> str | None:
+    """A client-supplied anchor to the message to carry on FROM.
 
     Accepts either a message uuid or the ULID the file log gave the event. The
     ULID is the interesting case: an interrupted reply became SEVERAL rows that
     all carry it, and "branch from this reply" means from the END of it, so the
     last one wins. Anchoring on the first stretch would silently drop the rest
     of a reply the operator was pointing AT, not before.
+
+    TWO MODES, because a reply and your own message mean different things when
+    you point at them.
+
+      after   keep this message, drop what follows. What a reply means: "this
+              answer was fine, the conversation after it was not."
+      before  drop this message too. What YOUR message means: "take back what I
+              said here", so the anchor is its PARENT and the conversation ends
+              just before you typed. Pointing at your own message and keeping it
+              would leave you re-sending into your own last word.
+
+    `before` on the first message of a thread has no parent and returns the
+    empty-string sentinel, which the caller reports rather than silently
+    treating as "the whole conversation".
     """
     from sqlalchemy import text
     row = s.execute(text(
-        "SELECT id FROM chat_message "
+        "SELECT id, parent_id FROM chat_message "
         " WHERE thread_id = :t AND deleted_at IS NULL "
         "   AND (external_id = :ref OR CAST(id AS text) = :ref) "
-        " ORDER BY seq DESC LIMIT 1"),
+        " ORDER BY seq {} LIMIT 1".format("ASC" if mode == "before" else "DESC")),
         {"t": str(thread_id), "ref": str(ref)}).one_or_none()
-    return None if row is None else str(row._mapping["id"])
+    if row is None:
+        return None
+    if mode == "before":
+        parent = row._mapping["parent_id"]
+        return "" if parent is None else str(parent)
+    return str(row._mapping["id"])
 
 
-def _sync_fork(org_id, thread_ref: str, anchor: str) -> dict:
+def _sync_fork(org_id, thread_ref: str, anchor: str, mode: str = "after") -> dict:
     from db import chat_repo
     from db.engine import tenant_session
     with tenant_session(org_id) as s:
         t = chat_repo.thread_by_ref(s, thread_ref)
         if t is None:
             raise chat_repo.BranchError(f"no such thread: {thread_ref}")
-        msg_id = _resolve_anchor(s, t["id"], anchor)
+        msg_id = _resolve_anchor(s, t["id"], anchor, mode)
         if msg_id is None:
             raise chat_repo.MessageNotFound(
                 f"no message {anchor} in thread {thread_ref}")
+        if msg_id == "":
+            raise chat_repo.BranchError(
+                "this is the first message in the chat, so there is no point "
+                "before it to go back to")
         branch = chat_repo.branch_from(s, t["id"], msg_id)
         return {"branch": branch, "branches": chat_repo.list_branches(s, t["id"])}
 
 
-async def fork(thread_ref: str, anchor: str) -> dict:
+async def fork(thread_ref: str, anchor: str, mode: str = "after") -> dict:
     org_id, _ = tenancy.org_and_user()
-    return await run_in_threadpool(_sync_fork, org_id, thread_ref, anchor)
+    return await run_in_threadpool(_sync_fork, org_id, thread_ref, anchor, mode)
 
 
 def _sync_switch(org_id, thread_ref: str, branch_id: str) -> dict:
@@ -157,12 +181,21 @@ def _sync_state(org_id, thread_ref: str) -> dict:
             return {"branch": None, "count": 0, "hidden": None}
         row = s.execute(text(
             "SELECT count(*) AS n, "
-            "       max(CASE WHEN b.id = th.current_branch_id THEN b.name END) AS nm "
-            "  FROM chat_branch b JOIN chat_thread th ON th.id = b.thread_id "
+            "       max(CASE WHEN b.id = th.current_branch_id THEN b.name END) AS nm, "
+            # The head's FILE event id, because that is the id the transcript
+            # renders with and therefore the one the client can compare against.
+            # It is what lets the menu grey out an action that would be a no-op
+            # instead of accepting the click and appearing to do nothing.
+            "       max(CASE WHEN b.id = th.current_branch_id "
+            "                THEN hm.external_id END) AS head "
+            "  FROM chat_branch b "
+            "  JOIN chat_thread th ON th.id = b.thread_id "
+            "  LEFT JOIN chat_message hm ON hm.id = b.head_message_id "
             " WHERE b.thread_id = :t AND b.deleted_at IS NULL"),
             {"t": t["id"]}).one()
         n = int(row._mapping["n"] or 0)
-        branch = ({"id": t["current_branch_id"], "name": row._mapping["nm"]}
+        branch = ({"id": t["current_branch_id"], "name": row._mapping["nm"],
+                   "head": row._mapping["head"]}
                   if t["current_branch_id"] else None)
         # NEVER BRANCHED means never filtered. One branch is the state every
         # thread starts in and stays in until the operator uses the feature, so

@@ -12,13 +12,25 @@ import { chatApi, type Branch } from "../../lib/chat";
 // be two names for one act, and the operator would reasonably expect them to
 // differ.
 //
-// That is also why the confirmation reads the way it does. A confirm normally
-// warns about a loss; this one exists because going back FEELS destructive, and
-// its job is to say plainly that it is not.
+// TWO MEANINGS, THOUGH, AND THEY DEPEND ON WHOSE BUBBLE IT IS.
+//
+//   a reply    keep this answer, drop what came after it. The answer was fine
+//              and the conversation after it was not.
+//   your own   take back what you said here, so the anchor is the message
+//   message    BEFORE it. Keeping your own message and continuing from it would
+//              leave you typing into your own last word, which is not what
+//              pointing at it means.
+//
+// That is why the label differs by role rather than one label covering both:
+// the same word would be doing two jobs and the operator would have to learn
+// which one from the outcome.
+//
+// The confirmation is not a warning. Going back FEELS destructive, and the
+// dialog exists to say plainly that it is not.
 
-/** Up to this many branches before the list starts scrolling. The CSS cap
- *  (.chat-branch-list) is what actually enforces it; this is only for the
- *  "and N more" line, so the count in the copy and the height agree. */
+/** Rows before the branch list starts scrolling. The CSS cap
+ *  (.chat-branch-list) is what enforces it; this only keeps the "N more" line
+ *  honest about the same number. */
 const VISIBLE_BRANCHES = 3;
 
 function subtitle(b: Branch): string {
@@ -30,12 +42,20 @@ function subtitle(b: Branch): string {
 export default function BranchMenu({
   threadId,
   anchorId,
+  mode,
+  isHead,
   branchCount,
   onChanged,
 }: {
   threadId: string;
-  /** The message to carry on from: the transcript's own id for this bubble. */
+  /** The message pointed at: the transcript's own id for this bubble. */
   anchorId: string;
+  /** Whether the anchor is KEPT. See the note above. */
+  mode: "after" | "before";
+  /** This bubble is already the end of the conversation, so going back to it
+   *  would change nothing. The action says so instead of accepting the click
+   *  and appearing to do nothing. */
+  isHead: boolean;
   /** From the sync endpoint, so the picker can be offered before it is opened. */
   branchCount: number;
   /** Re-read the thread; the visible transcript has changed. */
@@ -58,11 +78,11 @@ export default function BranchMenu({
   const fork = useCallback(() => {
     setBusy(true);
     setError("");
-    chatApi.forkThread(threadId, anchorId)
+    chatApi.forkThread(threadId, anchorId, mode)
       .then(() => { setConfirming(false); onChanged(); })
       .catch((e) => setError(e?.message || "Could not go back to this point."))
       .finally(() => setBusy(false));
-  }, [threadId, anchorId, onChanged]);
+  }, [threadId, anchorId, mode, onChanged]);
 
   const switchTo = useCallback((b: Branch) => {
     if (b.is_current) return;
@@ -74,6 +94,7 @@ export default function BranchMenu({
   // Before the list has loaded, the sync endpoint's count is what tells us
   // whether this conversation has other lines at all.
   const hasOthers = rows.length > 1 || branchCount > 1;
+  const label = mode === "before" ? "Go back to before this" : "Continue from here";
 
   return (
     <>
@@ -85,8 +106,8 @@ export default function BranchMenu({
           <button
             type="button"
             className="chat-branch"
-            title="Go back to this point"
-            aria-label="Go back to this point"
+            title={label}
+            aria-label={label}
             onClick={load}
           >
             <GitBranch size={13} strokeWidth={1.8} aria-hidden />
@@ -95,9 +116,11 @@ export default function BranchMenu({
       >
         <MenuItem
           icon={<GitBranch size={14} strokeWidth={1.8} aria-hidden />}
+          disabled={isHead}
+          title={isHead ? "This is already the end of the chat" : undefined}
           onSelect={() => setConfirming(true)}
         >
-          Continue from here
+          {label}
         </MenuItem>
 
         {hasOthers && (
@@ -133,14 +156,18 @@ export default function BranchMenu({
         // Not destructive, and the treatment has to say so. Nothing is deleted:
         // the line being left keeps its pointer and appears in the picker.
         danger={false}
-        confirmLabel="Continue from here"
-        title="Continue from this message?"
+        confirmLabel={label}
+        title={mode === "before"
+          ? "Go back to before this message?"
+          : "Continue from this message?"}
         body={
           error
             ? error
-            : "The chat goes back to this point and carries on from here. "
-              + "Everything after it is kept as a separate branch you can switch "
-              + "back to at any time."
+            : (mode === "before"
+                ? "The chat goes back to just before this message. It and "
+                : "The chat goes back to this point and carries on from here. ")
+              + (mode === "before" ? "everything after it are kept " : "Everything after it is kept ")
+              + "as a separate branch you can switch back to at any time."
         }
         onCancel={() => { setConfirming(false); setError(""); }}
         onConfirm={fork}

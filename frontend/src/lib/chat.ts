@@ -406,7 +406,7 @@ export type Branch = {
  *  Rides on the sync endpoint rather than its own, for the same reason the cut
  *  and the queue do: things that must agree may not arrive separately. */
 export type BranchState = {
-  branch: { id: string; name: string } | null;
+  branch: { id: string; name: string; head: string | null } | null;
   branch_count: number;
 };
 
@@ -622,11 +622,13 @@ export const chatApi = {
 
   // Carry on from `anchor` (a message id from the transcript). Nothing is
   // deleted: the line being left keeps its own ref and stays in listBranches.
-  forkThread: (id: string, anchor: string) =>
+  // `mode` says whether the anchor is kept: "after" for a reply (keep this
+  // answer, drop what followed), "before" for your own message (take it back).
+  forkThread: (id: string, anchor: string, mode: "after" | "before" = "after") =>
     fetch(`/api/chat/threads/${encodeURIComponent(id)}/branches`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ anchor }),
+      body: JSON.stringify({ anchor, mode }),
     }).then(j<{ branch: { id: string }; branches: Branch[] }>),
 
   // Show a different branch. One pointer moves; nothing else does.

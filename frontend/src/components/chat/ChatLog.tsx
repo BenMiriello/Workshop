@@ -101,7 +101,7 @@ export default function ChatLog({
   liveTurnId?: string | null;
   /** Builds the "go back to here" control for one message. Passed straight
    *  through to MessageList; absent when this chat cannot be branched. */
-  renderBranch?: (messageId: string) => ReactNode;
+  renderBranch?: (messageId: string, mode: "after" | "before") => ReactNode;
   /** Messages the SERVER is holding to send next. Read, never written: this is
    *  the thread's own queue, the same on every device. */
   queued: {

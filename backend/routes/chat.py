@@ -157,8 +157,13 @@ class ForkThread(BaseModel):
 
     It is the file-event id the transcript already renders with, not a new
     coordinate: the client points at what it is showing. The server resolves it
-    to a node in the tree (ADR 0020)."""
+    to a node in the tree (ADR 0020).
+
+    `mode` says whether the anchor is KEPT. `after` (a reply: keep this answer,
+    drop what followed) or `before` (your own message: take it back, so the
+    anchor becomes its parent)."""
     anchor: str
+    mode: str = "after"
 
 
 class RenameBranch(BaseModel):
@@ -635,8 +640,10 @@ async def branches(thread_id: str):
 async def fork_thread(thread_id: str, body: ForkThread):
     """Carry on from `anchor`. Nothing is deleted."""
     from db import chat_repo
+    if body.mode not in ("after", "before"):
+        raise HTTPException(400, "mode must be 'after' or 'before'")
     try:
-        out = await chat_branches.fork(thread_id, body.anchor)
+        out = await chat_branches.fork(thread_id, body.anchor, body.mode)
     except chat_repo.MessageNotFound as e:
         raise HTTPException(404, str(e))
     except chat_repo.BranchError as e:

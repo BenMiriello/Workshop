@@ -88,23 +88,25 @@ def org_for_owner(owner_id: int) -> tuple[UUID, UUID]:
 
     from sqlalchemy import text
 
-    from db.engine import owner_session
+    from db.engine import admin_session
 
-    # The owner connection, because `user_account` and `organization` are
-    # RLS-protected with policies keyed on the tenant we are trying to FIND.
-    # This is the same bootstrap question `db.engine.user_session` exists for,
-    # asked before there is a user_account id to ask it with.
-    with owner_session() as s:
-        row = s.execute(text("""
-            SELECT u.id AS user_id, m.org_id AS org_id
-              FROM user_account u
-              JOIN membership m ON m.user_id = u.id
-              JOIN organization o ON o.id = m.org_id
-             WHERE u.legacy_user_id = :legacy
-               AND u.deleted_at IS NULL AND o.deleted_at IS NULL
-             ORDER BY (o.slug = :slug) DESC, m.created_at ASC
-             LIMIT 1
-        """), {"legacy": int(owner_id), "slug": DEFAULT_ORG_SLUG}).one_or_none()
+    # THE APPLICATION CONNECTION, through a narrow SECURITY DEFINER function.
+    #
+    # This asked through `owner_session()` and that was a design error, not a
+    # detail: the serving process DOES NOT HOLD the owner credential, on
+    # purpose, so every resolution raised in the running backend while passing
+    # under pytest (which had both DSNs exported). The chat branch control never
+    # rendered because of it.
+    #
+    # It cannot be a plain SELECT either. `user_account`, `organization` and
+    # `membership` are RLS-protected by policies keyed on `app.current_user` and
+    # `app.current_org`, and this lookup is what PRODUCES those values, so with
+    # neither set all three read as empty. `workshop_resolve_tenant` (migration
+    # d4e17c9b3a55) answers exactly that one question and nothing else.
+    with admin_session() as s:
+        row = s.execute(
+            text("SELECT org_id, user_id FROM workshop_resolve_tenant(:legacy)"),
+            {"legacy": int(owner_id)}).one_or_none()
     if row is None:
         raise TenantUnresolved(
             f"app user {owner_id} has no user_account/membership. Run "

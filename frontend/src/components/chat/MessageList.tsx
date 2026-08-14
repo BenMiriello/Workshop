@@ -414,7 +414,7 @@ function MessageList({
    *  it is stable across a keystroke like every other prop here. Absent when
    *  the chat cannot be branched (no relational store), which is the whole of
    *  how this degrades: no control, everything else unchanged. */
-  renderBranch?: (messageId: string) => ReactNode;
+  renderBranch?: (messageId: string, mode: "after" | "before") => ReactNode;
   // The shared 1Hz clock. One interval for the whole transcript, already owned
   // by Chat.tsx and already gated on document.hidden; a per-step clock costs
   // nothing new because LiveTurn re-renders on the tick regardless.
@@ -434,6 +434,31 @@ function MessageList({
     if (b.kind === "message" && b.msg.role === "assistant") { latestAssistantKey = b.key; break; }
   }
 
+  // WHICH BUBBLE CAN BE BRANCHED FROM, and the interesting half is which cannot.
+  //
+  // A reply that was interrupted renders as SEVERAL blocks that all came from
+  // one log event, so they all resolve to the same anchor. Putting the control
+  // on each of them would show three identical buttons doing one identical
+  // thing, which reads as three different branch points and is not. Only the
+  // LAST block of an event carries it, which is also where the turn's own
+  // metadata already goes.
+  //
+  // Not here at all, for reasons that are about the data and not the layout:
+  // a PENDING bubble is not on the server yet, a QUEUED one has not been sent,
+  // and a LIVE turn has not committed. None of the three is a point in the
+  // conversation you could return to, because none of them is IN the
+  // conversation. They render through different components, so this is stated
+  // rather than enforced here.
+  const lastBlockOfEvent = new Set<string>();
+  const seenEvent = new Set<string>();
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    if (b.kind !== "message") continue;
+    if (seenEvent.has(b.id)) continue;
+    seenEvent.add(b.id);
+    lastBlockOfEvent.add(b.key);
+  }
+
   return (
     <>
       {blocks.map((b) => (
@@ -449,7 +474,9 @@ function MessageList({
               cardCtx={cardCtx}
               answerPermission={answerPermission}
               nowMs={b.key === latestAssistantKey ? nowMs : undefined}
-              branchFor={renderBranch ? renderBranch(b.id) : undefined}
+              branchFor={renderBranch && lastBlockOfEvent.has(b.key)
+                ? renderBranch(b.id, b.msg.role === "user" ? "before" : "after")
+                : undefined}
             />
           )}
           {b.kind === "live" && (

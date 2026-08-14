@@ -342,6 +342,48 @@ def test_branching_from_a_foreign_message_is_refused(chat):
             chat_repo.branch_from(s, chat["thread"], foreign["id"])
 
 
+# --- the tenant lookup the SERVING process has to be able to do ---------------
+
+def test_the_tenant_resolves_without_the_owner_credential(chat, monkeypatch):
+    """THE REGRESSION THIS EXISTS FOR.
+
+    `tenancy.org_for_owner` reached for `owner_session()`, and the backend
+    deliberately does not hold `WORKSHOP_DATABASE_ADMIN_URL`: it lives in its
+    own file that the service unit does not load, so a request handler can never
+    run as a role row security does not apply to. Every resolution therefore
+    raised in the running process and the chat branch control never rendered,
+    while the tests passed because the test shell had both DSNs exported.
+
+    So this test removes the owner credential first. Anything the serving
+    process must do has to work in the serving process's environment.
+    """
+    from sqlalchemy import text
+
+    from db.engine import owner_session
+    from services import tenancy
+
+    with owner_session() as s:
+        legacy = 900000 + (hash(str(chat["user"])) % 90000)
+        s.execute(text("UPDATE user_account SET legacy_user_id = :l WHERE id = :u"),
+                  {"l": legacy, "u": chat["user"]})
+
+    monkeypatch.delenv("WORKSHOP_DATABASE_ADMIN_URL", raising=False)
+    tenancy.reset_cache()
+    org_id, user_id = tenancy.org_for_owner(legacy)
+    assert str(org_id) == str(chat["org"])
+    assert str(user_id) == str(chat["user"])
+
+
+def test_an_unknown_app_user_fails_closed(chat, monkeypatch):
+    """Never "the first organization". An unresolvable owner raises."""
+    from services import tenancy
+
+    monkeypatch.delenv("WORKSHOP_DATABASE_ADMIN_URL", raising=False)
+    tenancy.reset_cache()
+    with pytest.raises(tenancy.TenantUnresolved):
+        tenancy.org_for_owner(987654321)
+
+
 # --- the backfill, and its repair path ---------------------------------------
 
 def _write_thread_dir(root, name, events, meta=None):
@@ -519,6 +561,53 @@ def test_an_anchor_resolves_from_a_file_event_id(chat):
     assert out["branch"]["name"] == "Branch 2"
     with tenant_session(chat["org"]) as s:
         assert _texts(chat_repo_transcript(s, chat["thread"])) == ["one", "two"]
+
+
+def test_before_mode_takes_back_the_message_it_points_at(chat):
+    """Pointing at YOUR OWN message means taking it back, so the anchor is its
+    parent. Keeping it and continuing would leave you typing into your own last
+    word, which is not what pointing at it means."""
+    from db.engine import tenant_session
+    from db import chat_repo
+    from services import chat_branches
+
+    with tenant_session(chat["org"]) as s:
+        t = chat["thread"]
+        _say(s, t, "user", "one", external_id="B1")
+        _say(s, t, "assistant", "two", external_id="B2")
+        _say(s, t, "user", "three", external_id="B3")
+        _say(s, t, "assistant", "four", external_id="B4")
+
+    chat_branches._sync_fork(chat["org"], chat["thread"], "B3", mode="before")
+    with tenant_session(chat["org"]) as s:
+        assert _texts(chat_repo.transcript(s, chat["thread"])) == ["one", "two"]
+
+
+def test_before_mode_on_the_first_message_is_refused(chat):
+    """There is no point before the first message, and saying so is better than
+    silently branching from nothing."""
+    from db.engine import tenant_session
+    from db import chat_repo
+    from services import chat_branches
+
+    with tenant_session(chat["org"]) as s:
+        _say(s, chat["thread"], "user", "first", external_id="F1")
+
+    with pytest.raises(chat_repo.BranchError):
+        chat_branches._sync_fork(chat["org"], chat["thread"], "F1", mode="before")
+
+
+def test_the_sync_state_reports_the_head_event_id(chat):
+    """What lets the menu grey out an action that would be a no-op."""
+    from db.engine import tenant_session
+    from services import chat_branches
+
+    with tenant_session(chat["org"]) as s:
+        _say(s, chat["thread"], "user", "one", external_id="H1")
+        _say(s, chat["thread"], "assistant", "two", external_id="H2")
+
+    state = chat_branches._sync_state(chat["org"], chat["thread"])
+    assert state["branch"]["head"] == "H2"
 
 
 def test_an_interrupted_reply_anchors_on_its_last_stretch(chat):

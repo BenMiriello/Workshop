@@ -981,16 +981,20 @@ export default function Chat({
   // when the branch state actually does, which is rarely and never while typing.
   const onBranchChanged = useCallback(() => { void sync(); }, [sync]);
   const branchThreadId = branch.id ? activeId : null;
-  const renderBranch = useCallback((messageId: string) => (
+  const renderBranch = useCallback((messageId: string, mode: "after" | "before") => (
     branchThreadId
       ? <BranchMenu
           threadId={branchThreadId}
           anchorId={messageId}
+          mode={mode}
+          // Going back to the message the chat already ends at changes nothing,
+          // so the action says so rather than accepting the click silently.
+          isHead={mode === "after" && !!branch.head && branch.head === messageId}
           branchCount={branch.count}
           onChanged={onBranchChanged}
         />
       : null
-  ), [branchThreadId, branch.count, onBranchChanged]);
+  ), [branchThreadId, branch.count, branch.head, onBranchChanged]);
 
   const logLoading = thread.loadingThreads || !hydrated;
   // EXACTLY ONE OF THE TWO renders a given failure. The log owns the error one
