@@ -279,7 +279,12 @@ export type CardState = {
   ts?: string;
 };
 
-export type Thread = ThreadSummary & { messages: ChatMsg[] } & QueueState;
+// Deliberately NOT `& { messages: ChatMsg[] }`: the server strips `messages`
+// from this route's response (backend/routes/chat.py, thread()). The
+// transcript comes from `threadEvents` only; see the comment on `getThread`
+// below. Adding `messages` back here would let the compiler believe a field
+// the server no longer sends.
+export type Thread = ThreadSummary & QueueState;
 
 // ---- The event log (the wire shapes) ---------------------------------------
 // A thread IS an append-only, sequence-numbered event log; everything else about
@@ -601,10 +606,12 @@ export const chatApi = {
   // The thread's SETTINGS: title, model, mode, card states, scope. Called once
   // when a chat opens and after a write that changes one of them.
   //
-  // It also carries `messages`, and nothing in the client reads them any more.
-  // The transcript comes from `threadEvents` and from nowhere else — a
-  // transcript assembled by merging endpoints with local state is the
-  // anti-pattern behind every reorder and eaten-message bug this chat has had.
+  // It used to also carry `messages` (up to 4.77 MB on the worst thread) even
+  // though nothing in the client read them; the server now strips that field
+  // from this route entirely. The transcript comes from `threadEvents` and
+  // from nowhere else — a transcript assembled by merging endpoints with
+  // local state is the anti-pattern behind every reorder and eaten-message
+  // bug this chat has had.
   getThread: (id: string) => fetch(`/api/chat/threads/${id}`).then(j<Thread>),
 
   // THE SYNC ENDPOINT. The thread's event log from a cursor, plus the run in

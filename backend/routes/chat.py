@@ -423,7 +423,14 @@ async def thread(thread_id: str):
         raise HTTPException(404, "thread not found")
     # Opening a chat shows what is waiting to be sent in it, on the first paint,
     # from the same read that produced the transcript.
-    return {**t, **chat_queue.state(thread_id)}
+    #
+    # `messages` is stripped from the HTTP response here, not from
+    # chat_store.get_thread() itself: this route is settings/metadata (the
+    # transcript is served by GET /events), but plenty of backend code still
+    # calls get_thread() directly and legitimately needs messages. Measured
+    # 2026-08-14: the worst thread's `messages` was 4.77 MB of a 4.79 MB
+    # response the client never reads. Do not add it back to this dict.
+    return {k: v for k, v in t.items() if k != "messages"} | chat_queue.state(thread_id)
 
 
 # How long a thread stream waits before sending a keepalive. Long enough that an
