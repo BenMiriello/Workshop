@@ -103,11 +103,12 @@ later.
 
 Each stage is shippable and verified on its own.
 
-**1. The tree becomes complete and true for live traffic.** Write `chat_turn`
+**1. The tree becomes complete and true for live traffic.** DONE 2026-08-14. Write `chat_turn`
 rows (nothing has ever written one outside the backfill). Open a stretch row at
-seal; fill and close at commit. Stop stripping the positional meta, since the
-structure now carries it. Add a completeness check (every log message event has a
-row) and a repair. The log is still authoritative for reads throughout, so
+seal; fill and close at commit. The positional meta stays stripped from a row,
+and only now is that honest: it was already being dropped, and until this stage
+nothing had taken over the job of saying where a message landed. Add a
+completeness check (every log message event has a row) and a repair. The log is still authoritative for reads throughout, so
 nothing user-visible changes and the stage is verifiable by comparing the tree
 against the log for real threads.
 
@@ -135,3 +136,42 @@ keep writing a log as an export artifact; it is no longer a store either way.
 a second while a turn streams, it is discarded when the turn commits, and it is
 the one thing here that genuinely does not want a transaction per keystroke. It
 is not a store of record and never was.
+
+## Stage 1, as built
+
+`chat_repo.upsert_turn` / `fill_message` / `turn_stretches`;
+`chat_branches.stretches` / `open_stretch` / `_close_turn`;
+`chat_log.mirror_next` (the per-thread ordering chain, now general);
+the hook in `routes/chat._file_during_run`; `db/chat_verify.py`.
+
+A reply nobody interrupted still writes exactly one row and keeps its own
+`content` byte for byte. Only a split reply takes its text from the pieces,
+because there is no per-stretch `content` to take.
+
+The split reads the COMMITTED segment list, never the one in memory at seal
+time. Two paths rewrite a turn's segments at commit (the `/compact` text strip
+and the trailing-text replacement, which walks back over every trailing text
+segment including sealed ones). `carry_cuts` preserves the refs, so the
+positions survive, but the prose of an earlier stretch can genuinely change.
+
+Both degrade paths are tested rather than assumed:
+
+- **A stretch write that fails** leaves fewer rows than pieces. The remainder
+  goes into the final row, so the reply comes out cut in fewer places than it
+  should be and every word is still there.
+- **A ref that `carry_cuts` moved onto `cut_head`** leaves more rows than
+  pieces. The extra row is filled empty, which renders as nothing, so the
+  message reads as arriving before the reply, which is what `cut_head` means.
+
+Verified on the real corpus, 63 threads: `chat_verify` found 5 threads carrying
+12 missing messages and 13 flat rows from the old mirror, rebuilt them, and now
+reports 63 of 63 clean. Text conservation is exact per role. Ordering differs
+from the raw log on 7 threads and every difference is a mid-run message moving
+into the reply it interrupted, which is what the screen does too: with those
+removed, the remaining messages are in identical order on every thread, 0
+unexplained.
+
+`rebuild` refuses a branched thread. A branch names its fork point and head by
+message id, so rebuilding under one would leave those pointers naming rows that
+no longer exist; repairing a branched thread is a judgement, not a migration.
+Only one thread has ever been branched and it needed no repair.
