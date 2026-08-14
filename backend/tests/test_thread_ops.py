@@ -296,3 +296,30 @@ class TestFinalizeWindowRespectsOrderAndOps:
         out = asyncio.run(rc._send(tid, "typed at the end", client_id="c-3"))
         assert out["queued"] is True
         assert chat_queue.read(tid)[0].get("recorded") is True
+
+
+class TestOneIdentityAcrossLogAndQueue:
+    def test_a_caller_with_no_client_id_still_gets_one_shared_copy(self, thread, monkeypatch):
+        """A refused delivery files the message in the log AND enqueues it; the
+        drain strips by client_id, so both copies must carry the same one even
+        when the caller sent none. A lazily minted id at the enqueue produced a
+        log row with no id, a queue entry with a fresh one, and a duplicate
+        message when the drain re-recorded it."""
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "the trigger")
+        floor = int((build_streaming.chat_log.read_meta(tid) or {}).get("last_seq") or 0)
+        chat_store.begin_run(tid, "run-1")
+        turn = build_streaming.Turn(id="run-1", thread_id=tid, agent_slug="a")
+        turn.spawned = False
+        turn.prompt_through_seq = floor
+        build_streaming.TURNS["run-1"] = turn
+        monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: False)
+
+        out = asyncio.run(rc._send(tid, "typed into the gap"))   # no client_id
+        assert out["queued"] is True
+        [entry] = chat_queue.read(tid)
+        assert entry.get("client_id")
+        found = build_streaming.chat_log.find_message_by_client_id(
+            tid, entry["client_id"])
+        assert found is not None and found.get("content") == "typed into the gap"

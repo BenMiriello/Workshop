@@ -10,7 +10,8 @@ import { useAttachments, dragHasFiles, filesFromTransfer } from "./chat/useAttac
 import { canSendWith } from "./chat/attachments";
 import ChatToolbar from "./chat/ChatToolbar";
 import ChatLog from "./chat/ChatLog";
-import BranchMenu from "./chat/BranchMenu";
+import BranchAction from "./chat/BranchAction";
+import BranchPicker from "./chat/BranchPicker";
 import ChatProblemBlock from "./chat/ChatProblemBlock";
 import ChatDialogs from "./chat/ChatDialogs";
 import ContextModal from "./chat/ContextModal";
@@ -812,6 +813,37 @@ export default function Chat({
     [navigate, contextKey, activeId, thread.cardStates, recordCardState],
   );
 
+  // Going back to a point in the conversation (ADR 0020).
+  //
+  // Built here rather than inside the transcript because the transcript is
+  // memoized on prop identity, and a control that needs the thread id, the
+  // branch count and a way to re-sync would otherwise be three more props to
+  // keep stable on every bubble. This is one callback whose identity moves only
+  // when the branch state actually does, which is rarely and never while typing.
+  const onBranchChanged = useCallback(() => { void sync(); }, [sync]);
+  const branchThreadId = branch.id ? activeId : null;
+  // A bubble whose action would change nothing carries no control at all now
+  // (see branchable.ts), so there is no disabled state left to pass down.
+  const renderBranch = useCallback((messageId: string, mode: "after" | "before") => (
+    branchThreadId
+      ? <BranchAction
+          threadId={branchThreadId}
+          anchorId={messageId}
+          mode={mode}
+          runActive={runActive}
+          onChanged={onBranchChanged}
+        />
+      : null
+  ), [branchThreadId, runActive, onBranchChanged]);
+  const branchPicker = branchThreadId
+    ? <BranchPicker
+        threadId={branchThreadId}
+        name={branch.name}
+        count={branch.count}
+        onChanged={onBranchChanged}
+      />
+    : null;
+
   // ---- Chrome --------------------------------------------------------------
   const toolbar = (
     <ChatToolbar
@@ -821,6 +853,7 @@ export default function Chat({
       hideExpand={hideExpand}
       activeId={activeId}
       activeThreadTitle={thread.activeThreadTitle}
+      branchPicker={branchPicker}
       showProviderPicker={variant === "full" || effectiveMode === "data"}
       providers={scopeState.providers}
       activeProvider={scopeState.activeProvider}
@@ -972,29 +1005,6 @@ export default function Chat({
       }));
   }, [activeIdRef, sync, setErr]);
 
-  // Going back to a point in the conversation (ADR 0020).
-  //
-  // Built here rather than inside the transcript because the transcript is
-  // memoized on prop identity, and a control that needs the thread id, the
-  // branch count and a way to re-sync would otherwise be three more props to
-  // keep stable on every bubble. This is one callback whose identity moves only
-  // when the branch state actually does, which is rarely and never while typing.
-  const onBranchChanged = useCallback(() => { void sync(); }, [sync]);
-  const branchThreadId = branch.id ? activeId : null;
-  const renderBranch = useCallback((messageId: string, mode: "after" | "before") => (
-    branchThreadId
-      ? <BranchMenu
-          threadId={branchThreadId}
-          anchorId={messageId}
-          mode={mode}
-          // Going back to the message the chat already ends at changes nothing,
-          // so the action says so rather than accepting the click silently.
-          isHead={mode === "after" && !!branch.head && branch.head === messageId}
-          branchCount={branch.count}
-          onChanged={onBranchChanged}
-        />
-      : null
-  ), [branchThreadId, branch.count, branch.head, onBranchChanged]);
 
   const logLoading = thread.loadingThreads || !hydrated;
   // EXACTLY ONE OF THE TWO renders a given failure. The log owns the error one
@@ -1031,6 +1041,7 @@ export default function Chat({
       answerPermission={answerPermission}
       liveTurnId={runId}
       renderBranch={renderBranch}
+      branchHead={branch.head}
       queued={queuedWaiting}
       folding={folding}
       voiceOn={voiceOn}

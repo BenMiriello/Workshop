@@ -12,6 +12,7 @@ import {
 } from "react";
 import { Check } from "lucide-react";
 import { cx } from "./cx";
+import { placeMenu } from "./menuPlacement";
 
 // Menu — a button that opens a small popover list of actions or choices.
 //
@@ -26,6 +27,39 @@ import { cx } from "./cx";
 // action rows. Closes on Escape, outside pointerdown, and item activation;
 // arrow keys / Home / End move between items; focus returns to the trigger.
 
+// The box a popover must stay inside: the viewport, narrowed by every ancestor
+// that clips.
+//
+// THE VIEWPORT IS NOT THE ONLY EDGE, and assuming it was is what put the chat's
+// branch menu half off screen. `.chat-log` is `overflow-x: hidden` and the chat
+// column is capped at `--page-max` and centred, so on a desktop a menu opening
+// from a bubble had hundreds of pixels of viewport to its right and was still
+// sliced off at the log's own edge. Measured against the viewport it did not
+// overflow, so it never flipped. Reported 2026-08-14: "it opens up and off to
+// the side oddly and is clipped/hidden off the edge of its container".
+//
+// Each axis is asked separately, because `overflow-x: hidden` with a `visible`
+// y is a real and common combination (that log is exactly it) and clipping one
+// axis says nothing about the other.
+function clipBox(el: HTMLElement) {
+  let left = 0;
+  let top = 0;
+  let right = window.innerWidth;
+  let bottom = window.innerHeight;
+  for (let n = el.parentElement; n; n = n.parentElement) {
+    const s = getComputedStyle(n);
+    // CSS coerces a `visible` paired with a non-visible other axis to `auto`,
+    // so a computed value of `visible` is the only one that does not clip.
+    const clipsX = s.overflowX !== "visible";
+    const clipsY = s.overflowY !== "visible";
+    if (!clipsX && !clipsY) continue;
+    const r = n.getBoundingClientRect();
+    if (clipsX) { left = Math.max(left, r.left); right = Math.min(right, r.right); }
+    if (clipsY) { top = Math.max(top, r.top); bottom = Math.min(bottom, r.bottom); }
+  }
+  return { left, top, right, bottom };
+}
+
 export function Menu({
   trigger,
   label,
@@ -37,6 +71,10 @@ export function Menu({
   // merged in, so callers style their own trigger without re-wiring behaviour.
   trigger: ReactElement<Record<string, unknown>>;
   label: string;
+  // Which way it PREFERS to open. Not a guarantee: like `align`, it is measured
+  // after opening and flipped if the preference would be clipped and the other
+  // way fits. A caller knows which side reads better, not how much room the
+  // page will have at that scroll position on that viewport.
   side?: "bottom" | "top";
   className?: string;
   children: ReactNode;
@@ -48,9 +86,12 @@ export function Menu({
   // Two guesses were wrong on a narrow phone (Effort and Mode, both hardcoded
   // "end", ran off the LEFT edge). Left-anchored ("start") is the one default;
   // this measures itself after opening and flips to right-anchored ("end")
-  // only if that default would run past the RIGHT edge of the viewport. One
-  // rule, no per-caller guessing, correct at any position in any row.
+  // only if that default would run past the right edge of the box it must stay
+  // inside. One rule, no per-caller guessing, correct at any position in any
+  // row.
   const [align, setAlign] = useState<"start" | "end">("start");
+  // Where it ACTUALLY opened, which is `side` unless that would be clipped.
+  const [placed, setPlaced] = useState<"bottom" | "top">(side);
   const wrapRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const id = useId();
@@ -68,22 +109,42 @@ export function Menu({
     viaKeyboard.current = false;
   }, []);
 
-  // Measure against the viewport BEFORE paint, so a flip is never visible as a
-  // jump. Re-measures on resize/orientation change too, while open — the
-  // trigger's position relative to the edge can change without a close/reopen.
+  // Measure BEFORE paint, so a flip is never visible as a jump. Re-measures on
+  // resize and on any ancestor scroll while open: the trigger's position
+  // relative to the clip edge can change without a close and reopen.
   useLayoutEffect(() => {
-    if (!open) { setAlign("start"); return; }
+    if (!open) { setAlign("start"); setPlaced(side); return; }
     const measure = () => {
       const list = listRef.current;
-      if (!list) return;
-      const EDGE_PAD = 8;
-      const overflowsRight = list.getBoundingClientRect().right > window.innerWidth - EDGE_PAD;
-      setAlign(overflowsRight ? "end" : "start");
+      const wrap = wrapRef.current;
+      if (!list || !wrap) return;
+      // The arithmetic is in menuPlacement.ts, where a test can execute it.
+      // This function's whole job is turning the DOM into its four arguments.
+      const at = wrap.getBoundingClientRect();
+      const p = placeMenu(
+        { left: at.left, top: at.top, right: at.right, bottom: at.bottom },
+        { width: list.offsetWidth, height: list.offsetHeight },
+        clipBox(wrap),
+        side,
+        // The real gap the CSS leaves between trigger and list, read from the
+        // token rather than restated as a number that can drift from it.
+        parseFloat(getComputedStyle(list).getPropertyValue("--space-1")) || 4,
+      );
+      setAlign(p.align);
+      setPlaced(p.side);
     };
     measure();
     window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, [open]);
+    // Scrolling any ancestor moves the trigger relative to the clip box without
+    // closing the menu (only a pointerdown does that), so the side that fitted
+    // when it opened may not fit a moment later. Capture, because a scroll on an
+    // inner scroller does not bubble.
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [open, side]);
 
   useEffect(() => {
     if (!open) return;
@@ -154,7 +215,7 @@ export function Menu({
           role="menu"
           tabIndex={-1}
           aria-label={label}
-          className={cx("ws-menu__list", `ws-menu__list--${align}`, `ws-menu__list--${side}`)}
+          className={cx("ws-menu__list", `ws-menu__list--${align}`, `ws-menu__list--${placed}`)}
           // Activating an ITEM closes the menu; individual items don't each have
           // to remember to. Gated to role="menuitem" rather than "any click in
           // the list", because a menu can also hold a persistent control (a

@@ -2,6 +2,7 @@ import {
   Archive, ChevronLeft, ListPlus, Maximize2, MessagesSquare,
   MoreVertical, PanelsTopLeft, Pencil, Plus, Ticket,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator, Toggle } from "@workshop/ui";
 import type { Provider, ThreadSummary } from "../../lib/chat";
 import {
@@ -50,7 +51,7 @@ import ScopeIcon from "./ScopeIcon";
 
 export default function ChatToolbar({
   variant, mode, slug, hideExpand,
-  activeId, activeThreadTitle,
+  activeId, activeThreadTitle, branchPicker,
   showProviderPicker, providers, activeProvider, onChooseProvider, runActive,
   chatMode, onChooseChatMode,
   drawer, onSetDrawer, needsYouCount, taskScope,
@@ -98,6 +99,11 @@ export default function ChatToolbar({
   onNewChat: () => void;
   /** Close this chat: it goes to the archive, from where it can be restored
    *  or deleted. Nothing here destroys a conversation. */
+  /** Which line of the conversation this is, and the way to the others (ADR
+   *  0020). A node rather than three props: the toolbar does not need to know
+   *  what a branch is, only where the control goes. Null until the thread has
+   *  more than one line, which is most threads. */
+  branchPicker?: ReactNode;
   onArchive: (id: string) => void;
   onPopOut: () => void;
   onNavigate: (to: string) => void;
@@ -207,6 +213,11 @@ export default function ChatToolbar({
           </button>
         </>
       )}
+
+      {/* Beside the chat's name, because it is the same kind of fact: which
+          conversation you are in, then which line of it. Absent entirely until
+          there is a second line to be on. */}
+      {branchPicker}
       {/* Pushes the actions right on desktop; on a narrow viewport the title
           just left of it has already given up the room instead. */}
       <span className="chat-tb__spacer" />

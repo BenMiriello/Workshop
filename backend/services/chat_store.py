@@ -283,9 +283,27 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
     boundary this function decided to ignore cannot draw a divider claiming
     something that is not happening.
 
-    A straight replay: every `message` event in seq order, nothing rewritten and
-    nothing moved. The log has no revision event, so this cannot do anything
-    else, which is the property the whole rebuild is for.
+    A straight replay of the line the conversation is CURRENTLY on: every
+    `message` event in seq order, nothing rewritten and nothing moved. The log
+    has no revision event, so this cannot do anything else, which is the property
+    the whole rebuild is for.
+
+    "Currently on" is the only thing branching changes here, and it had to be
+    added rather than being free. Going back to an earlier point (ADR 0020) does
+    not delete the line it left; the abandoned tail stays in the log, because the
+    log is append-only and that is the point of it. The SCREEN has filtered that
+    tail out since branching shipped (`chat_branches.keep_visible` on the sync
+    endpoint) and this function did not, so after a fork the operator and the
+    model were reading different conversations: he saw the line he had gone back
+    to, and the prompt still carried everything he had branched away from,
+    including the exchange he went back to get rid of. That is the failure the
+    feature exists to prevent, arriving through the one path nobody was looking
+    at. `hidden_event_ids_sync` was written for this caller and had never been
+    called by anything.
+
+    None from the filter means "show everything", which covers both a thread that
+    was never branched (almost all of them) and any failure to ask. Both mean the
+    file's own order is the whole truth, which is what this did before.
 
     Committed messages only. A run in flight has nothing here — see `_live_view`,
     which `_document` appends as a trailing view. Keeping it out of the fold is
@@ -338,7 +356,16 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
     cut_at: int | None = None
     cut_mode = ""
     has_summary = bool((meta.get("summary") or "").strip())
+    # Which events belong to a line this conversation is no longer on. See the
+    # docstring. `run` and `title` events never become rows, and are not read
+    # here anyway; `message` and `boundary` both do, so both are filtered, which
+    # is what makes a `clear` performed only on an abandoned line stop cutting
+    # the line the operator went back to.
+    from services import chat_branches
+    hidden = chat_branches.hidden_event_ids_sync(thread_id)
     for ev in chat_log.read_events(thread_id):
+        if hidden and ev.get("id") in hidden:
+            continue
         if ev.get("kind") == "boundary":
             mode = ev.get("mode")
             if mode == "clear" or (mode == "compact" and has_summary):

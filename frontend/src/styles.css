@@ -618,34 +618,36 @@ input[type="range"].grad::-moz-range-thumb {
 /* Go back to this message and carry on from it. Sits immediately left of the
    copy button, in the same padding corner and at the same size and resting
    tone: they are two actions on one message and neither outranks the other.
-   The anchor carries the position because the Menu primitive wraps its trigger
-   in a relative element of its own. */
-.chat-branch-anchor { position: absolute; right: 0.5rem; bottom: 0.5rem; }
-.chat-bubble--copyable .chat-branch-anchor { right: 1.95rem; }
+   It positions itself now that it is a plain button rather than a Menu (which
+   wrapped its trigger in a relative element of its own, and had to be
+   positioned through that wrapper). */
 .chat-branch {
+  position: absolute; right: 0.5rem; bottom: 0.5rem;
   display: inline-flex; align-items: center; justify-content: center;
   width: 1.15rem; height: 1.15rem; padding: 0;
   background: none; border: none; border-radius: 5px;
   color: color-mix(in srgb, var(--muted) 50%, var(--card)); cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out);
 }
-.chat-branch:hover { color: var(--fg); }
+.chat-bubble--copyable .chat-branch { right: 1.95rem; }
+.chat-branch:hover:enabled { color: var(--fg); }
 .chat-branch:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
-/* Open is a control that is ON, which is the one state that earns the tier
-   tone. See "a control is not content" in frontend/CLAUDE.md. */
-.chat-branch[aria-expanded="true"] { color: var(--you); }
+/* Not right now (a turn is in flight), as opposed to never: an action that
+   could never do anything is not rendered at all (see branchable.ts). Dimmed
+   and inert, with the reason on the title. The cursor stays `default` — never
+   `not-allowed`, per design rule 10. */
+.chat-branch:disabled { opacity: 0.4; cursor: default; }
 .chat-msg.user .chat-branch { color: color-mix(in srgb, var(--accent-fg) 50%, var(--accent)); }
-.chat-msg.user .chat-branch:hover,
-.chat-msg.user .chat-branch:focus-visible,
-.chat-msg.user .chat-branch[aria-expanded="true"] { color: var(--accent-fg); }
+.chat-msg.user .chat-branch:hover:enabled,
+.chat-msg.user .chat-branch:focus-visible { color: var(--accent-fg); }
 /* Room for both controls, still horizontal only: neither adds a row. */
 .chat-bubble--branchable .chat-bubble__body { padding-right: 1.45rem; }
 .chat-bubble--branchable.chat-bubble--copyable .chat-bubble__body { padding-right: 2.9rem; }
 /* THREE ROWS, THEN IT SCROLLS. The operator asked for exactly this: a picker
    that stays a small target no matter how many times a conversation has been
    branched. The kit's menu already scrolls at 16rem; this is the tighter cap
-   for the branch list alone, so the "continue from here" action above it is
-   never pushed off screen by history. */
+   for the branch list alone, so a heavily branched chat does not open a
+   full-height menu off the toolbar. */
 .chat-branch-list { max-height: 8.4rem; overflow-y: auto; overscroll-behavior: contain; }
 .chat-branch-row { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
 .chat-branch-row__sub {

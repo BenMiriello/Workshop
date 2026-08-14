@@ -65,7 +65,7 @@ export default function ChatLog({
   loading, error, blocks, isBuild, inFlight,
   selectedModel, cardCtx, onRetry, onCancelQueued, onReleaseQueue,
   queueHeld, queueError, workingLabel, elapsed, nowMs,
-  answerPermission, liveTurnId, renderBranch,
+  answerPermission, liveTurnId, renderBranch, branchHead,
   queued, folding,
   voiceOn, vsnap,
 }: {
@@ -102,6 +102,9 @@ export default function ChatLog({
   /** Builds the "go back to here" control for one message. Passed straight
    *  through to MessageList; absent when this chat cannot be branched. */
   renderBranch?: (messageId: string, mode: "after" | "before") => ReactNode;
+  /** The branch's last committed message, so the list can tell which bubble the
+   *  action would be a no-op on. Passed straight through. */
+  branchHead?: string | null;
   /** Messages the SERVER is holding to send next. Read, never written: this is
    *  the thread's own queue, the same on every device. */
   queued: {
@@ -152,6 +155,7 @@ export default function ChatLog({
         answerPermission={answerPermission}
         liveTurnId={liveTurnId}
         renderBranch={renderBranch}
+        branchHead={branchHead}
       />
 
       {/* WAITING ON THE SERVER, not in this browser. These have been accepted

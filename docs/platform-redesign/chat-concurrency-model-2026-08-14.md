@@ -149,6 +149,10 @@ the first): the top of this list is now DONE.
   re-arms one re-run when a schedule was refused in flight, and
   `injectIntoRun` drops a response for a thread no longer on screen instead
   of dispatching into the wrong store.
+- **The unheld-task class swept repo-wide** (I8's other shoe): `drain_soon`
+  and the branch mirror now hold their tasks like naming and the landings do.
+  Remaining unheld sites are all in voice (`voice_worker.py:523,825`), which
+  is another workstream's surface; flagged, not touched.
 
 Still open, in order:
 
@@ -156,9 +160,14 @@ Still open, in order:
   lazy migration (legacy `agent:<slug>` chats drift to participant form on any
   write), guarded by scope_locked and exact-participant checks. Riding
   unrelated writes is its mechanism, not an accident. No change.
-- **R9 branch mirror unordered; R10 startup reconcile vs adoption.** Both
-  belong to the ADR-0020 tree/Postgres workstream and the lifespan
-  respectively; small, and owned there.
+- **R10 verified closed by ordering, no change**: `reattach_running_turns`
+  registers every adopted turn in `TURNS` synchronously, and
+  `reconcile_threads` runs strictly after it on the same thread (main.py
+  lifespan), so reconcile cannot see an adopted-but-unregistered run. The
+  audit's premise assumed concurrency that is not there.
+- **R9 branch mirror unordered.** Belongs to the ADR-0020 tree/Postgres
+  workstream; the mirror's own backfill is the repair path meanwhile (its
+  tasks are now held, so collection cannot silently drop a row).
 - **Voice turns during a pending operation** proceed rather than queue
   (deliberate: a spoken turn cannot wait 30s), at the cost of one uncompacted
   voice turn; the landing still serializes behind the voice run via the claim,

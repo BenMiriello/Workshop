@@ -12,6 +12,36 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.4 — 2026-08-14 — a menu stays inside the box that clips it
+
+**Compatible (behaviour fix, no surface change).** `Menu` measured its popover
+against the VIEWPORT and nothing else, so a menu inside a clipping scroller
+opened outward and was sliced off at the scroller's edge while the viewport
+still had room to spare.
+
+The chat is exactly that geometry: `.chat-log` is `overflow-x: hidden` and the
+column is capped at `--page-max` and centred, so on a desktop a menu opening
+from a message bubble had hundreds of pixels of viewport to its right, never
+flipped, and lost half of itself at the log's edge. Reported 2026-08-14.
+
+- **The clip box is the viewport narrowed by every ancestor that clips**, asked
+  per axis (`overflow-x: hidden` with a visible y is a real combination, and
+  clipping one axis says nothing about the other).
+- **`side` is now a preference, not a mandate.** It flips top/bottom on the same
+  rule `align` already used: flip only when the preference is genuinely clipped
+  and the other way fits. A menu opening upward from the first message in a
+  scrolled-to-top list used to open into nothing.
+- **Placement is projected, not read back.** It used to measure where the list
+  currently sat, so a menu that had flipped measured its flipped position, saw
+  no overflow, and stayed flipped even after the window grew back.
+- **Re-measures on ancestor scroll**, not only on resize. Scrolling does not
+  close a menu, so the side that fitted when it opened may not fit a moment
+  later.
+
+The arithmetic moved to `src/menuPlacement.ts` (internal, not exported) so it
+can be executed by a test; the kit has no render harness, and this was a bug in
+one comparison that nothing could reach.
+
 ## 0.5.3 — 2026-08-13 — a link is underlined, not tinted
 
 **Compatible (styles only, no surface change).** Four colour corrections, all of

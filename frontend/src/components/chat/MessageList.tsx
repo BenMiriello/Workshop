@@ -15,6 +15,7 @@ import { hasBubble, noReplyText } from "./replyBody";
 import type { TranscriptBlock } from "./transcriptBlocks";
 import AttachmentViewer, { type ViewableAttachment } from "./AttachmentViewer";
 import { receiptHref, receiptItems, receiptLabel } from "./receipts";
+import { branchTargets } from "./branchable";
 
 // The transcript body: one rendered block per entry the selector produced.
 //
@@ -403,7 +404,7 @@ export type AnswerPermissionFor = (
 // turns this memo off and nothing fails visibly; it just gets slow again.
 function MessageList({
   blocks, selectedModel, cardCtx, workingLabel, elapsed, nowMs, onRetry,
-  answerPermission, liveTurnId, renderBranch,
+  answerPermission, liveTurnId, renderBranch, branchHead,
 }: {
   blocks: TranscriptBlock[];
   selectedModel: string;
@@ -415,6 +416,9 @@ function MessageList({
    *  the chat cannot be branched (no relational store), which is the whole of
    *  how this degrades: no control, everything else unchanged. */
   renderBranch?: (messageId: string, mode: "after" | "before") => ReactNode;
+  /** The branch's last committed message. What makes the trailing reply the
+   *  identity operation, and so the one bubble with nothing to offer. */
+  branchHead?: string | null;
   // The shared 1Hz clock. One interval for the whole transcript, already owned
   // by Chat.tsx and already gated on document.hidden; a per-step clock costs
   // nothing new because LiveTurn re-renders on the tick regardless.
@@ -434,30 +438,18 @@ function MessageList({
     if (b.kind === "message" && b.msg.role === "assistant") { latestAssistantKey = b.key; break; }
   }
 
-  // WHICH BUBBLE CAN BE BRANCHED FROM, and the interesting half is which cannot.
+  // WHICH BUBBLE OFFERS TO GO BACK TO IT. The rule is in `branchable.ts`, with
+  // the reasoning; the short version is that a bubble carries the control only
+  // when going back to it would produce a different conversation.
   //
-  // A reply that was interrupted renders as SEVERAL blocks that all came from
-  // one log event, so they all resolve to the same anchor. Putting the control
-  // on each of them would show three identical buttons doing one identical
-  // thing, which reads as three different branch points and is not. Only the
-  // LAST block of an event carries it, which is also where the turn's own
-  // metadata already goes.
-  //
-  // Not here at all, for reasons that are about the data and not the layout:
-  // a PENDING bubble is not on the server yet, a QUEUED one has not been sent,
-  // and a LIVE turn has not committed. None of the three is a point in the
-  // conversation you could return to, because none of them is IN the
-  // conversation. They render through different components, so this is stated
-  // rather than enforced here.
-  const lastBlockOfEvent = new Set<string>();
-  const seenEvent = new Set<string>();
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    const b = blocks[i];
-    if (b.kind !== "message") continue;
-    if (seenEvent.has(b.id)) continue;
-    seenEvent.add(b.id);
-    lastBlockOfEvent.add(b.key);
-  }
+  // Only committed message blocks are passed. A PENDING bubble is not on the
+  // server yet, a QUEUED one has not been sent, and a LIVE turn has not
+  // committed: none of the three is a point in the conversation you could
+  // return to, because none of them is IN the conversation.
+  const branchTarget = branchTargets(
+    blocks.flatMap((b) => (b.kind === "message" ? [{ key: b.key, id: b.id, role: b.msg.role }] : [])),
+    branchHead ?? null,
+  );
 
   return (
     <>
@@ -474,8 +466,8 @@ function MessageList({
               cardCtx={cardCtx}
               answerPermission={answerPermission}
               nowMs={b.key === latestAssistantKey ? nowMs : undefined}
-              branchFor={renderBranch && lastBlockOfEvent.has(b.key)
-                ? renderBranch(b.id, b.msg.role === "user" ? "before" : "after")
+              branchFor={renderBranch && branchTarget.has(b.key)
+                ? renderBranch(b.id, branchTarget.get(b.key)!)
                 : undefined}
             />
           )}

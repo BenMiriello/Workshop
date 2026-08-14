@@ -637,12 +637,51 @@ async def branches(thread_id: str):
     return {"branches": await chat_branches.list_branches(thread_id)}
 
 
+def _require_quiet_for_branching(thread_id: str, verb: str) -> None:
+    """Branching is an operation on the stored conversation, so it obeys the
+    one-op-per-thread rule (ADR 0021) like /compact and /clear do.
+
+    It REFUSES rather than queueing, which is where it differs from those two. A
+    fold is slow and can sensibly wait its turn; going back to an earlier point
+    cannot, because the thing it would wait for is the very turn it is trying to
+    get rid of. Landing it afterwards would answer a message on a line that no
+    longer contains it.
+
+    Unguarded, that is not hypothetical: `chat_repo.append_message` parents a new
+    message to the CURRENT branch head, and the fork has already moved that
+    pointer, so an in-flight reply committed onto the new branch as a child of
+    the fork anchor. The operator would go back to before a question, and the
+    answer to that question would arrive on the line he had just cleared it
+    from.
+    """
+    if thread_ops.pending(thread_id):
+        raise HTTPException(
+            409, f"this chat is busy ({thread_ops.pending(thread_id)}). "
+                 f"Try {verb} again in a moment.")
+    rid = chat_store.active_run_id(thread_id)
+    if rid and build_streaming.run_is_live(rid):
+        raise HTTPException(
+            409, "a turn is running on this chat. Wait for it to finish, or "
+                 "stop it first.")
+
+
 @router.post("/threads/{thread_id}/branches")
 async def fork_thread(thread_id: str, body: ForkThread):
     """Carry on from `anchor`. Nothing is deleted."""
     from db import chat_repo
     if body.mode not in ("after", "before"):
         raise HTTPException(400, "mode must be 'after' or 'before'")
+    _require_quiet_for_branching(thread_id, "going back")
+    # Messages the SERVER is holding to send next were typed against the line
+    # being left, and when the drain wakes they will go out on the new one. That
+    # is usually right (unsent text is still what you meant to say) and
+    # occasionally not ("yes, do that" now refers to nothing), and nothing here
+    # can tell the two apart. So it is REPORTED rather than guessed at: cancelling
+    # for him would destroy work he never asked to destroy, and staying silent is
+    # how it became a surprise. Requiring a quiet thread above already makes this
+    # the narrow case it looks like — the queue only fills behind a run or an
+    # operation, and neither is allowed to be in flight here.
+    held = len(chat_queue.read(thread_id) or [])
     try:
         out = await chat_branches.fork(thread_id, body.anchor, body.mode)
     except chat_repo.MessageNotFound as e:
@@ -652,7 +691,7 @@ async def fork_thread(thread_id: str, body: ForkThread):
     except tenancy.TenantUnresolved as e:
         raise HTTPException(503, str(e))
     chat_events.bump(thread_id)
-    return out
+    return {**out, "queued_held": held}
 
 
 @router.post("/threads/{thread_id}/branches/{branch_id}")
@@ -660,6 +699,9 @@ async def switch_branch(thread_id: str, branch_id: str):
     """Make another branch the visible one. Reversible, and nothing moves but
     one pointer, which is why it does not ask for confirmation."""
     from db import chat_repo
+    # Same rule as forking, for the same reason: the pointer this moves is the
+    # one an in-flight reply parents itself to.
+    _require_quiet_for_branching(thread_id, "switching")
     try:
         out = await chat_branches.switch(thread_id, branch_id)
     except chat_repo.BranchError as e:
@@ -3096,6 +3138,13 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         return {"turn_id": run_id, "injected": False, "queued": True,
                 "at_segment": None, "queue": st}
     if run_id:
+        # ONE IDENTITY BEFORE ANYTHING IS WRITTEN. The paths below may file the
+        # message in the log AND enqueue it (a refused delivery); the log
+        # dedupes and the drain strips by client_id, so the two copies must
+        # share one. Minting it lazily at the enqueue meant a caller that sent
+        # none produced a log row with no id and a queue entry with a fresh
+        # one, and the drain re-recorded the message as a duplicate.
+        client_id = client_id or chat_log.new_ulid()
         at_segment, msg_seq = _file_during_run(thread_id, run_id, content,
                                                client_id=client_id,
                                                attachments=attachments)
