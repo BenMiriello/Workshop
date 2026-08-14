@@ -55,20 +55,53 @@ Covered by `backend/tests/test_restart_is_a_pause.py` (7 tests), including a
 positive control so a generator that always returned immediately cannot pass, and
 mutation-checked: reverting the shutdown guard makes the test hang and fail.
 
-## Known gaps, deliberately not closed
+## Second pass (2026-08-13 evening): the rest of the list
 
-- **Window A store writes.** A crash between the child exiting and `commit_run`
-  still re-applies notes/tickets/learnings on replay, because the replay is not
-  idempotent per block. Rarer than window B and needs a per-block applied marker.
-- **Segments still rebuild from offset 0** on reattach, so a restart mid-reply
-  still visibly re-renders the turn, and the `cut_head`/`cut_after` anchors for
-  mid-turn messages are lost (they live only in memory). Fixing it means
-  persisting a journal cursor.
-- **Voice turns do not survive a restart at all**: `voice_worker` spawns with
-  PIPE stdio and no `start_new_session`, so the child dies with the backend.
-- **The per-turn checkpointer commits the whole working tree**, so work from
-  several agents lands in one "checkpoint: a turn" commit with no provenance.
-  That is how this session's changes were committed. Worth revisiting separately.
+Closed after the operator said to do all of it.
+
+- **`apply.sh` could restart onto another agent's broken WIP.** The promise that
+  it is safe to run concurrently was not kept by the tooling: `restart_backend.sh`
+  had no check that the code it was starting could run, and a failed import means
+  a crash-loop and the whole app down. It now runs `import main` in a subprocess
+  first (0.78s, exactly what uvicorn does) and refuses with exit 3.
+- **The restart reported success it had not verified.** `is-active` after a fixed
+  2s answers "did a process spawn". It now polls `/healthz` for a `source_id`, so
+  the receipt distinguishes restarted / no-pid-change / refused-tree-broken /
+  failed and records which code is live.
+- **The checkpointer committed other agents' work.** The guard asked whether cwd
+  WAS the monorepo root, but `git add -A` is repo-wide from any subdirectory and
+  `backend/`, `shared/`, `apps/`, `branches/` all resolve into this repo. That is
+  how this session's own changes landed in commit `cf3eabd` beside another
+  agent's half-finished migrations. The guard is now containment
+  (`is_in_self_repo`), and where checkpointing is wanted it stages only the paths
+  the turn wrote, read back from its journal, under an flock.
+- **Replay re-applied the turn's writes.** `blocks_applied` in the journal meta,
+  with `strip_all_blocks` on the replay path. Closes the window between the
+  writes landing and the reply committing (which contains the git checkpoint);
+  a crash *inside* the block still replays, since the helpers apply and strip in
+  one step.
+- **Reattach rebuilt the message from byte zero.** The live draft now carries the
+  journal offset its segments were built from, written in the same call so the
+  pair cannot disagree. Every uncertainty falls back to a full replay.
+- **A recycled pid kept a dead turn "Still running" forever.** `_proc_alive` now
+  checks the command line, and treats another user's process as not ours.
+
+### Still open, deliberately
+
+- **Voice.** Investigation showed this is smaller than first stated: workers
+  respawn with `--resume` against a stable cwd, so the *conversation* survives a
+  restart, and an interrupted utterance is closed with `LOST_RUN_TEXT`, which
+  says so plainly. Only the in-flight utterance is lost. Porting the detached
+  journal architecture across is a large change to a subsystem rebuilt on
+  2026-08-12, with real regression risk and no way to test it end to end from a
+  chat turn. Not attempted.
+- **The narrow spawn race.** The pid is written to the journal just after the
+  child starts; a crash in that gap deletes the journal while the agent is still
+  writing to it and leaks the process. Microseconds wide, and the fix needs the
+  spawn to record identity before the process exists.
+- **A crash inside the mediated-write block** still re-applies whichever blocks
+  had already been applied. Needs per-block markers, which needs the apply
+  helpers to stop applying and stripping in one step.
 
 ## Decisions the operator delegated
 

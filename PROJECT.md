@@ -170,3 +170,22 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   decision that is the operator's — a Postgres outage would go from costing
   branching to costing the chat — and on the mirror being provably complete first.
   Plan and recommendation: `docs/platform-redesign/transcript-read-from-rows-2026-08-14.md`.
+- 2026-08-13 (3) — Operator: "go do both, do all of your plan". Closed the rest
+  of the restart work. `apply.sh` promised it was safe to run concurrently and
+  the tooling did not keep that promise: `restart_backend.sh` had no check that
+  the code it was starting could run, so on a tree several agents edit at once a
+  restart could crash-loop the whole app. It now preflights `import main` (0.78s,
+  exactly what uvicorn does) and refuses with exit 3, and verifies afterwards by
+  polling /healthz for a source_id instead of trusting `is-active`. The
+  per-turn checkpointer was committing other agents' unfinished work because its
+  guard asked whether cwd WAS the repo root while `git add -A` is repo-wide from
+  any subdirectory (that is how this session's own changes landed in cf3eabd
+  beside another agent's migrations); the guard is now containment and it stages
+  only the paths the turn wrote, under an flock. Replay no longer re-files the
+  turn's tickets and notes (`blocks_applied` + `strip_all_blocks`), reattach
+  resumes the journal from a recorded offset instead of rebuilding the message
+  from byte zero (with a fallback to full replay on any uncertainty), and a
+  recycled pid no longer leaves a dead turn spinning "Still running". Voice was
+  on the list and was deliberately NOT changed: it already respawns with
+  `--resume` so the conversation survives, and only an in-flight utterance is
+  lost, with an honest message. Suite 2171 green.
