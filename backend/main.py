@@ -8,6 +8,7 @@ from deps_user import (
     require_user,
     require_operator,
 )
+from middleware.compression import SSEAwareGZipMiddleware
 
 # Platform-core routers only — the shell. App routers (finance/budget/commute/
 # location/birds/health/…) are NOT imported here; they mount from the installed-
@@ -158,6 +159,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Response compression. SSE-safe by construction -- see middleware/compression.py
+# for why the stock starlette GZipMiddleware is unsafe for streaming responses
+# and must never be swapped in here. minimum_size=500B: don't bother on tiny
+# bodies. compresslevel=5: level 9 measured 87ms on a ~4.9MB payload for
+# negligible extra ratio; 5 is the right cost/benefit tradeoff.
+app.add_middleware(SSEAwareGZipMiddleware, minimum_size=500, compresslevel=5)
 
 # Gating model (docs/auth-redesign/): identity, never network position.
 #   PLATFORM control      -> require_operator (the admin role)

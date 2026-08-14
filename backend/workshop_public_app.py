@@ -84,7 +84,15 @@ def _app_edge_blocks() -> tuple[frozenset[str], frozenset[str]]:
 
 # Hop-by-hop headers we must not forward verbatim.
 _DROP_REQ = {"host", "content-length", "connection", "keep-alive", "transfer-encoding"}
-_DROP_RESP = {"content-length", "connection", "keep-alive", "transfer-encoding", "content-encoding"}
+# NOTE: content-encoding is deliberately NOT here. The backend (phase-2 perf
+# fix, middleware/compression.py) now gzips its buffered JSON/HTML responses
+# when the caller's Accept-Encoding allows it, and this proxy forwards the
+# browser's own Accept-Encoding upstream unmodified (it isn't in _DROP_REQ
+# either) -- so the backend is compressing FOR the real client, not for us.
+# Dropping content-encoding here would have thrown that away for nothing: see
+# _proxy() below for why keeping it requires reading the RAW upstream bytes
+# rather than httpx's auto-decoded `.aread()`.
+_DROP_RESP = {"content-length", "connection", "keep-alive", "transfer-encoding"}
 
 # No interactive docs on the internet-facing edge. (security-audit-2026-07-18 L3)
 _DOCS = os.environ.get("WORKSHOP_ENABLE_DOCS", "0").strip().lower() in {"1", "true", "yes"}
@@ -236,7 +244,18 @@ async def _proxy(request: Request, backend_path: str) -> Response:
     except httpx.HTTPError as e:
         return _unreachable(request.method, backend_path, e)
     try:
-        content = await upstream.aread()
+        # RAW bytes, not `upstream.aread()`. httpx's `.aread()`/`.content`
+        # transparently DECODE a gzip Content-Encoding as part of reading the
+        # body — that's convenient for code that wants the decoded JSON, but
+        # it means a naive read-then-forward here would silently strip
+        # compression the backend put on FOR THE BROWSER, while still
+        # reporting content-encoding: gzip on the passed-through headers
+        # (mismatched framing) or, previously, dropping that header via
+        # _DROP_RESP and serving the now-decoded plaintext body -- either way
+        # the public origin's actual client never saw a single compressed
+        # byte. `aiter_raw()` yields the untouched wire bytes, so whatever
+        # encoding the backend applied rides through to the real client.
+        content = b"".join([chunk async for chunk in upstream.aiter_raw()])
     finally:
         await upstream.aclose()
     resp_headers = [(k, v) for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP]
