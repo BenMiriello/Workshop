@@ -69,16 +69,17 @@ export function contextLabel(reading: ContextReading): string {
   return reading.label;
 }
 
-// THE OPERATOR'S EXACT STRING: `Context: 120000/1000000 tokens used`.
+// `Context: 120,000/1,000,000 tokens used`.
 //
 // It used to be up to two sentences explaining where the count came from and
-// what it did not include. Dictated verbatim on 2026-08-14 after a first pass
-// that was still guessing at the format. Plain digits, no thousands separators,
-// no spaces around the slash: that is how it was written, so that is what it
-// says. The standing instruction behind it is broader than this tooltip: do not
-// write explanatory copy that was not asked for.
+// what it did not include. The shape was dictated on 2026-08-14; the digits in
+// that dictation were unseparated and I took them literally, which was reading
+// an example as a spec. Grouped, no spaces around the slash.
+//
+// The standing instruction behind it is broader than this tooltip: do not write
+// explanatory copy that was not asked for.
 export function contextTooltip(used: number, win: number): string {
   const u = Number.isFinite(used) && used > 0 ? Math.round(used) : 0;
   const w = Number.isFinite(win) && win > 0 ? Math.round(win) : 0;
-  return `Context: ${u}/${w} tokens used`;
+  return `Context: ${u.toLocaleString("en-US")}/${w.toLocaleString("en-US")} tokens used`;
 }

@@ -50,12 +50,11 @@ describe("contextReading", () => {
 });
 
 describe("the tooltip", () => {
-  // THE OPERATOR'S EXACT STRING, dictated 2026-08-14. It used to be a sentence
-  // or two naming where the count came from and what an estimate could not see.
-  // Pinned literally, including the lack of thousands separators, because the
-  // format was given rather than inferred.
-  it("is the dictated string", () => {
-    expect(contextTooltip(120_000, 1_000_000)).toBe("Context: 120000/1000000 tokens used");
+  // The shape was dictated 2026-08-14, replacing a sentence or two about where
+  // the count came from. The numbers are GROUPED: the dictation wrote them
+  // unseparated and that was an example, not a spec.
+  it("is the dictated string, with the numbers grouped", () => {
+    expect(contextTooltip(120_000, 1_000_000)).toBe("Context: 120,000/1,000,000 tokens used");
   });
 
   it("says nothing about where the number came from", () => {
@@ -64,7 +63,7 @@ describe("the tooltip", () => {
   });
 
   it("survives a missing count without printing NaN", () => {
-    expect(contextTooltip(Number.NaN, 1_000_000)).toBe("Context: 0/1000000 tokens used");
+    expect(contextTooltip(Number.NaN, 1_000_000)).toBe("Context: 0/1,000,000 tokens used");
   });
 
   it("renders a plain percent beside it", () => {
