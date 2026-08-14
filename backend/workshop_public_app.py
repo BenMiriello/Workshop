@@ -31,6 +31,8 @@ from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from middleware.compression import SSEAwareGZipMiddleware
+
 log = logging.getLogger("workshop.public_edge")
 
 BACKEND = os.environ.get("WORKSHOP_BACKEND", "http://127.0.0.1:8000")
@@ -102,6 +104,19 @@ app = FastAPI(
     redoc_url="/redoc" if _DOCS else None,
     openapi_url="/openapi.json" if _DOCS else None,
 )
+
+# This is the process the operator's browser actually talks to (the built SPA
+# origin), and until now it shipped every response -- the static bundle
+# included -- uncompressed. Reuse the SAME SSE-safe middleware as the backend
+# (middleware/compression.py) rather than starlette's stock GZipMiddleware:
+# this app also owns the SSE proxy path (_proxy_stream above), whose chunks
+# would sit unflushed in a stock GzipFile writer and stall live chat/voice
+# streaming. This middleware never attempts incremental compression, so that
+# hazard doesn't apply, and it already skips any response that arrives with
+# Content-Encoding set -- which is exactly the case where the backend gzipped
+# a response and _proxy() forwarded it raw (see test_edge_compression_passthrough.py)
+# -- so a backend-compressed body is never gzipped a second time here.
+app.add_middleware(SSEAwareGZipMiddleware, minimum_size=500, compresslevel=5)
 
 # SECURITY: use a raw transport, NOT httpx.AsyncClient. An AsyncClient keeps a
 # persistent cookie jar: it auto-stores every upstream `Set-Cookie` and replays
@@ -392,9 +407,44 @@ async def proxy_ws(websocket: WebSocket, path: str) -> None:
             pass                                        # already closed
 
 
+class _ImmutableStaticFiles(StaticFiles):
+    """Serve /assets with a far-future, immutable Cache-Control.
+
+    Safe ONLY because every file Vite emits under dist/assets is content-hashed
+    into its filename (e.g. index-BcnhBBb8.js) -- verified against a real build
+    (73/73 files matched `name-HASH.ext`, checked 2026-08-14) rather than
+    assumed. A changed file gets a new name, so a stale cached copy can never
+    shadow a new deploy; there is nothing to invalidate. This must NOT be
+    applied to index.html (it isn't served from this mount -- see the `spa`
+    route below, which deliberately keeps `Cache-Control: no-cache` on it):
+    index.html is the one file whose content does NOT change name when its
+    content changes, since it's what points the browser at the hashed
+    bundles. Caching it immutably would pin visitors on a dead deploy forever.
+    """
+
+    # FileResponse's default chunk_size (64 KiB) sends anything bigger as
+    # MULTIPLE `http.response.body` ASGI messages (more_body=True until the
+    # last one). SSEAwareGZipMiddleware treats any multi-chunk response it
+    # doesn't recognize by content-type as a stream and deliberately leaves it
+    # uncompressed (see middleware/compression.py's module docstring) -- which
+    # would silently defeat compression for exactly the asset motivating this
+    # change: the ~700KB main JS bundle is well over 64KB. Raise chunk_size
+    # past the largest asset in a real build (~1.1MB, checked 2026-08-14) so a
+    # normal file is read and sent as ONE message, making it eligible for the
+    # middleware's single-shot gzip path like any other buffered response.
+    _CHUNK_SIZE = 16 * 1024 * 1024
+
+    def file_response(self, *args, **kwargs) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        if isinstance(response, FileResponse):
+            response.chunk_size = self._CHUNK_SIZE
+        return response
+
+
 # Static SPA. Mounted last so /api wins. html=True serves index.html at "/".
 if DIST.is_dir():
-    app.mount("/assets", StaticFiles(directory=str(DIST / "assets")), name="assets")
+    app.mount("/assets", _ImmutableStaticFiles(directory=str(DIST / "assets")), name="assets")
 
     @app.get("/{full_path:path}")
     async def spa(full_path: str) -> Response:
