@@ -12,6 +12,27 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.6 — 2026-08-14 — `--bg-block` moves as far as the ink on it allows
+
+**Compatible (one token's value changed).** Light 0.90 to 0.855 L, dark 0.30 to
+0.365. Separation from `--bg-inset` goes from 1.14 to 1.32 in light and 1.31 to
+1.68 in dark.
+
+0.5.5 fixed a genuine collision (3/255 apart in every light scheme) and the
+result still read as the same colour to the operator. The lesson is in the test
+rather than the value: the old assertion was `>= 1.1`, which proves two surfaces
+are not identical and proves nothing about whether anyone can tell them apart. A
+measurement that disagrees with the eye is the measurement being asked the wrong
+question. The bound is 1.25 now.
+
+The new value is set by the INK, not by taste. A block carries text (`--muted`
+rows), and `--bg-block` is deliberately not in `surfacesOf`, so text tones are
+not solved against it; pushing the two surfaces further apart to satisfy the eye
+would otherwise walk that text under AA. `--muted on --bg-block` is now asserted
+at 4.5:1 for all sixteen scheme x modes and sits at ~4.6 worst case, so this is
+close to as far as the surface can travel without the rows on it getting harder
+to read.
+
 ## 0.5.5 — 2026-08-14 — `--bg-block`, a surface that is not on the same side in both modes
 
 **Compatible (one token added).** New generated surface `--bg-block`: a block of

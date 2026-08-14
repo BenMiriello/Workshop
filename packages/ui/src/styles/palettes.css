@@ -21,7 +21,7 @@
   --muted: #5b545c;
   --faint: #6d666f;
   --card: #fefdff;
-  --bg-block: #e0dde1;
+  --bg-block: #d1ced2;
   --card-hover: #fbf9fb;
   --card-ring: transparent;
   --border: #e1dce2;
@@ -77,7 +77,7 @@
   --muted: #b3adb5;
   --faint: #8e8890;
   --card: #201d21;
-  --bg-block: #302c31;
+  --bg-block: #413d42;
   --card-hover: #282429;
   --card-ring: #2e2a2f;
   --border: #343035;
@@ -135,7 +135,7 @@
     --muted: #b3adb5;
     --faint: #8e8890;
     --card: #201d21;
-    --bg-block: #302c31;
+    --bg-block: #413d42;
     --card-hover: #282429;
     --card-ring: #2e2a2f;
     --border: #343035;
@@ -194,7 +194,7 @@
   --muted: #4d5a59;
   --faint: #5f6c6c;
   --card: #fbfefe;
-  --bg-block: #d8e0e0;
+  --bg-block: #c9d1d1;
   --card-hover: #f7fbfb;
   --card-ring: transparent;
   --border: #d8e0e0;
@@ -250,7 +250,7 @@
   --muted: #a3b3b3;
   --faint: #7f8e8e;
   --card: #162020;
-  --bg-block: #253030;
+  --bg-block: #364141;
   --card-hover: #1e2828;
   --card-ring: #232e2e;
   --border: #283434;
@@ -308,7 +308,7 @@
     --muted: #a3b3b3;
     --faint: #7f8e8e;
     --card: #162020;
-    --bg-block: #253030;
+    --bg-block: #364141;
     --card-hover: #1e2828;
     --card-ring: #232e2e;
     --border: #283434;
@@ -367,7 +367,7 @@
   --muted: #5b545c;
   --faint: #6d666f;
   --card: #fefdff;
-  --bg-block: #e0dde1;
+  --bg-block: #d1ced2;
   --card-hover: #fbf9fb;
   --card-ring: transparent;
   --border: #e1dce2;
@@ -423,7 +423,7 @@
   --muted: #b3adb5;
   --faint: #8e8890;
   --card: #201d21;
-  --bg-block: #302c31;
+  --bg-block: #413d42;
   --card-hover: #282429;
   --card-ring: #2e2a2f;
   --border: #343035;
@@ -481,7 +481,7 @@
     --muted: #b3adb5;
     --faint: #8e8890;
     --card: #201d21;
-    --bg-block: #302c31;
+    --bg-block: #413d42;
     --card-hover: #282429;
     --card-ring: #2e2a2f;
     --border: #343035;
@@ -540,7 +540,7 @@
   --muted: #515760;
   --faint: #636972;
   --card: #fcfdff;
-  --bg-block: #dadee4;
+  --bg-block: #ccd0d5;
   --card-hover: #f8fafd;
   --card-ring: transparent;
   --border: #dadee4;
@@ -596,7 +596,7 @@
   --muted: #a9b0bb;
   --faint: #848b96;
   --card: #1a1e25;
-  --bg-block: #292e35;
+  --bg-block: #3a3f46;
   --card-hover: #21262d;
   --card-ring: #272c33;
   --border: #2d323a;
@@ -654,7 +654,7 @@
     --muted: #a9b0bb;
     --faint: #848b96;
     --card: #1a1e25;
-    --bg-block: #292e35;
+    --bg-block: #3a3f46;
     --card-hover: #21262d;
     --card-ring: #272c33;
     --border: #2d323a;
@@ -713,7 +713,7 @@
   --muted: #4f5a54;
   --faint: #616c66;
   --card: #fcfefd;
-  --bg-block: #dcdfdd;
+  --bg-block: #cdd0ce;
   --card-hover: #f9fafa;
   --card-ring: transparent;
   --border: #d9e0dc;
@@ -769,7 +769,7 @@
   --muted: #abb1ae;
   --faint: #878c89;
   --card: #1c1f1d;
-  --bg-block: #2b2f2d;
+  --bg-block: #3b403d;
   --card-hover: #232725;
   --card-ring: #292c2a;
   --border: #2f3330;
@@ -827,7 +827,7 @@
     --muted: #abb1ae;
     --faint: #878c89;
     --card: #1c1f1d;
-    --bg-block: #2b2f2d;
+    --bg-block: #3b403d;
     --card-hover: #232725;
     --card-ring: #292c2a;
     --border: #2f3330;
@@ -886,7 +886,7 @@
   --muted: #5f5450;
   --faint: #726662;
   --card: #fffdfc;
-  --bg-block: #e1dddb;
+  --bg-block: #d2cecd;
   --card-hover: #fbfaf9;
   --card-ring: transparent;
   --border: #e4dcda;
@@ -942,7 +942,7 @@
   --muted: #b5adab;
   --faint: #908986;
   --card: #211d1b;
-  --bg-block: #322c2b;
+  --bg-block: #423d3b;
   --card-hover: #2a2523;
   --card-ring: #2f2a28;
   --border: #36302e;
@@ -1000,7 +1000,7 @@
     --muted: #b5adab;
     --faint: #908986;
     --card: #211d1b;
-    --bg-block: #322c2b;
+    --bg-block: #423d3b;
     --card-hover: #2a2523;
     --card-ring: #2f2a28;
     --border: #36302e;
@@ -1059,7 +1059,7 @@
   --muted: #50585f;
   --faint: #626a72;
   --card: #fcfeff;
-  --bg-block: #dbdee2;
+  --bg-block: #ccd0d4;
   --card-hover: #f8fafc;
   --card-ring: transparent;
   --border: #d9dfe4;
@@ -1115,7 +1115,7 @@
   --muted: #a9b0b8;
   --faint: #848c93;
   --card: #1a1f23;
-  --bg-block: #292e33;
+  --bg-block: #3a3f44;
   --card-hover: #22272b;
   --card-ring: #272c31;
   --border: #2d3238;
@@ -1173,7 +1173,7 @@
     --muted: #a9b0b8;
     --faint: #848c93;
     --card: #1a1f23;
-    --bg-block: #292e33;
+    --bg-block: #3a3f44;
     --card-hover: #22272b;
     --card-ring: #272c31;
     --border: #2d3238;
@@ -1232,7 +1232,7 @@
   --muted: #5e554e;
   --faint: #706760;
   --card: #fffdfb;
-  --bg-block: #e0dddc;
+  --bg-block: #d1cfcd;
   --card-hover: #fbfaf9;
   --card-ring: transparent;
   --border: #e3ddd8;
@@ -1288,7 +1288,7 @@
   --muted: #b3afac;
   --faint: #8e8a87;
   --card: #201e1c;
-  --bg-block: #302d2b;
+  --bg-block: #413e3c;
   --card-hover: #282523;
   --card-ring: #2d2b29;
   --border: #34312f;
@@ -1346,7 +1346,7 @@
     --muted: #b3afac;
     --faint: #8e8a87;
     --card: #201e1c;
-    --bg-block: #302d2b;
+    --bg-block: #413e3c;
     --card-hover: #282523;
     --card-ring: #2d2b29;
     --border: #34312f;
@@ -1405,7 +1405,7 @@
   --muted: #535760;
   --faint: #656972;
   --card: #fdfdff;
-  --bg-block: #dddedf;
+  --bg-block: #cfcfd1;
   --card-hover: #fafafb;
   --card-ring: transparent;
   --border: #dbdee4;
@@ -1461,7 +1461,7 @@
   --muted: #aeafb2;
   --faint: #898b8d;
   --card: #1d1e20;
-  --bg-block: #2d2e30;
+  --bg-block: #3d3e40;
   --card-hover: #252628;
   --card-ring: #2a2b2d;
   --border: #313134;
@@ -1519,7 +1519,7 @@
     --muted: #aeafb2;
     --faint: #898b8d;
     --card: #1d1e20;
-    --bg-block: #2d2e30;
+    --bg-block: #3d3e40;
     --card-hover: #252628;
     --card-ring: #2a2b2d;
     --border: #313134;

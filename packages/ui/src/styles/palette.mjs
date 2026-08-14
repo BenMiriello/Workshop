@@ -295,8 +295,13 @@ const DERIVED = {
     cardHover: [0.268, 0.015],
     cardRing: [0.29, 0.015],       // dark cards float on a faint ring, not a shadow
     /* A BLOCK OF GROUPED CONTENT INSIDE A CARD, and the one surface that is NOT
-       on the same side of `card` in both modes. See the light entry. */
-    bgBlock: [0.3, 0.015],
+       on the same side of `card` in both modes. See the light entry.
+
+       0.365, up from 0.30. Pushed as far from `inset` as the ink on it allows:
+       the rows inside a block are `--muted`, so the binding constraint is AA at
+       4.5:1, which runs out around 0.40. Asserted in palette.test.ts, both the
+       separation and the floor, so the next nudge cannot quietly cross it. */
+    bgBlock: [0.365, 0.015],
     borderStrong: [0.4, 0.017],
     scrim: [0.12, 0.03],
     scrimAlpha: 0.62,
@@ -329,11 +334,17 @@ const DERIVED = {
        app. Operator, 2026-08-14: "it's the same background color as the agent
        background color and that's wrong."
 
-       So light goes past inset instead of toward it. 0.90 is one clear step
-       below inset's 0.945, about the size of the step inset itself makes against
-       card, which is the smallest gap that reads as a different surface rather
-       than as a rendering artifact. Pinned in palette.test.ts. */
-    bgBlock: [0.9, 0.009],
+       So light goes past inset instead of toward it. 0.855, and the number is
+       set by the INK rather than by taste: the rows inside a block are `--muted`,
+       which stops clearing AA at 4.5:1 somewhere around 0.845, so this is as far
+       from `inset` as the surface can go and still be readable.
+
+       It was 0.90 first, which was one step below inset and measurably distinct
+       (1.14:1 against it) and still read as the same colour to the operator. A
+       step that a measurement calls different and an eye calls the same is not a
+       step. Both bounds are asserted in palette.test.ts now, so the separation
+       cannot close again and the next nudge cannot quietly break the contrast. */
+    bgBlock: [0.855, 0.009],
     borderStrong: [0.855, 0.011],
     scrim: [0.18, 0.03],
     scrimAlpha: 0.55,

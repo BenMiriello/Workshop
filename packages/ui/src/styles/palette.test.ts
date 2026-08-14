@@ -89,11 +89,24 @@ describe("every scheme is readable", () => {
   // (3/255 apart, in all eight schemes). It was invisible to a dark-mode check
   // and wrong in half the app. Measured and reported 2026-08-14.
   //
-  // 1.1 is deliberately close to the floor: this asserts the two surfaces are
-  // TELLABLE APART, not that either is loud. Tightening it is a design change.
+  // 1.25 is not a taste threshold, it is where the operator's eye landed. The
+  // first attempt cleared 1.1 in every scheme and he still reported the two as
+  // the same colour, so a bound that only proves "not identical" proves nothing
+  // useful here. These now sit at ~1.32 (light) and ~1.68 (dark).
   it.each(schemes)("%s %s — a grouped block is tellable from a delegation", (_id, _mode, s) => {
-    expect(ratio(s.bgBlock, s.bgInset), "--bg-block vs --bg-inset").toBeGreaterThanOrEqual(1.1);
-    expect(ratio(s.bgBlock, s.card), "--bg-block vs --card").toBeGreaterThanOrEqual(1.1);
+    expect(ratio(s.bgBlock, s.bgInset), "--bg-block vs --bg-inset").toBeGreaterThanOrEqual(1.25);
+    expect(ratio(s.bgBlock, s.card), "--bg-block vs --card").toBeGreaterThanOrEqual(1.25);
+  });
+
+  // THE OTHER BOUND, and the one that says how far this can be pushed. `bgBlock`
+  // is not in `surfacesOf`, so text tones are not SOLVED against it the way they
+  // are against bg/card/inset; it carries text anyway (a block is a run of tool
+  // rows, written in --muted). Without this, driving the two surfaces further
+  // apart to satisfy the eye would quietly walk the ink under AA instead.
+  // Currently ~4.6 at worst, so the surface is close to as far as it can go.
+  it.each(schemes)("%s %s — the ink on a grouped block clears AA", (_id, _mode, s) => {
+    expect(ratio(s.muted, s.bgBlock), "--muted on --bg-block").toBeGreaterThanOrEqual(AA_TEXT);
+    expect(ratio(s.fg, s.bgBlock), "--fg on --bg-block").toBeGreaterThanOrEqual(AA_TEXT);
   });
 });
 

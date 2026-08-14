@@ -1124,7 +1124,13 @@ input[type="range"].grad::-moz-range-thumb {
 
      --bg-block is generated per scheme x mode in palette.mjs precisely so the
      two are separated by construction rather than by luck, and the separation is
-     asserted for all sixteen in palette.test.ts. Change it there, not here. */
+     asserted for all sixteen in palette.test.ts. Change it there, not here.
+
+     And it took two goes. The first value cleared the assertion (1.14:1 against
+     the delegation's fill, against a 1.1 bound) and the operator still read the
+     two as one colour. A threshold that only proves "not identical" is not
+     measuring the thing being complained about; it is now 1.25, and the value
+     sits as far out as the ink on this surface allows. */
   background: var(--bg-block);
   border-radius: var(--radius-md);
   /* Vertical only. The horizontal inset is the head's own padding, which the
@@ -1610,16 +1616,23 @@ a.chat-receipt--link:hover > svg { color: var(--fg); }
    circle growing. */
 .chat-stopdot {
   flex: 0 0 auto;
-  display: inline-flex; align-items: center; justify-content: center;
-  /* 1.4rem (22.4px), up from 1.15rem. It is the only PRESSABLE thing on a row of
-     read-only text, so matching the copy/branch icons undersold it; those two are
-     chrome on a message you are reading, this ends the work in front of you.
-     Operator, 2026-08-14: bigger, and take the row height if you need it.
-
-     It does need it, by about 4px: the working line's box is a 13px line at 1.4,
-     so ~18.2px, and the circle is now the tallest thing in it. That is the whole
-     cost, on one row, and it was offered. */
-  width: 1.4rem; height: 1.4rem; padding: 0;
+  /* GRID, and no pseudo-element inside it. It was inline-flex with a 44px
+     absolutely-positioned ::after for the tap target, and the icon rendered
+     visibly off-centre: an abspos pseudo is supposed to leave the flex flow, and
+     whatever the reason it was not doing so here, `justify-content: center` was
+     centring [icon][44px] as a pair and pushing the icon left. A tap target that
+     costs the button its centre is not worth having. `place-items: center` on a
+     one-cell grid centres the only child on both axes with nothing to argue
+     with, and the target now comes from the button being bigger. */
+  display: grid; place-items: center;
+  line-height: 1;
+  /* 1.75rem (28px). It started at 1.15rem to match the copy and branch icons and
+     has been asked up twice: those two are chrome on a message you are reading,
+     this is the only PRESSABLE thing on the row and it ends the work in front of
+     you. It is now the tallest thing in the working line (a 13px line at 1.4 is
+     ~18.2px), so it sets that row's height. That cost was offered explicitly.
+     Operator, 2026-08-14, twice. */
+  width: 1.75rem; height: 1.75rem; padding: 0;
   border-radius: 50%;
   background: transparent; color: var(--muted);
   border: 1px solid var(--border);
@@ -1627,14 +1640,6 @@ a.chat-receipt--link:hover > svg { color: var(--fg); }
   transition: color var(--dur-fast) var(--ease-out),
               border-color var(--dur-fast) var(--ease-out),
               background var(--dur-fast) var(--ease-out);
-  /* The ring stays 1.15rem; the TARGET is 44px, via a transparent extension that
-     costs no layout (the row's height is set by its text). A control this small
-     is otherwise a miss on a phone, which is the complaint that moved it here. */
-  position: relative;
-}
-.chat-stopdot::after {
-  content: ""; position: absolute; inset: 50% auto auto 50%;
-  width: 44px; height: 44px; transform: translate(-50%, -50%);
 }
 .chat-stopdot:hover {
   color: var(--fg); border-color: var(--border-strong);
