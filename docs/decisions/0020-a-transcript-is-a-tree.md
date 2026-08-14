@@ -143,6 +143,58 @@ again.
 That is the whole safety argument, and it needs no feature flag: the mechanism
 is inert until the feature is used.
 
+## Which bubble carries the control
+
+Operator question, 2026-08-13, and the answer is mostly about which ones do not.
+
+**A reply carries it, and the action keeps it.** "This answer was fine, the
+conversation after it was not." Anchor is the reply itself.
+
+**Your own message carries it, and the action takes it back.** The anchor is its
+PARENT, so the chat ends just before you typed and you can say it differently.
+Keeping your own message and continuing from it would leave you typing into your
+own last word, which is not what pointing at it means. The label differs by role
+for the same reason: one word doing two jobs would have to be learned from the
+outcome.
+
+**Only the LAST block of a log event carries it.** An interrupted reply renders
+as several blocks from one event, so they all resolve to the same anchor.
+Putting a control on each would show three identical buttons that look like
+three branch points and are one.
+
+**Pending, queued and live bubbles do not.** Not a layout decision: a pending
+send is not on the server, a queued one has not been sent, and a live turn has
+not committed. None of the three is a point you could return to, because none of
+them is in the conversation yet.
+
+**The head is offered but disabled.** Going back to the message the chat already
+ends at changes nothing, so the item says so rather than accepting the click and
+appearing to do nothing. The picker still opens, because that is the other
+reason to press it.
+
+## The tenant lookup, and a lesson about test environments
+
+The first cut of this shipped with the control never rendering at all, and the
+cause was one line: `services/tenancy.py` resolved the acting organization
+through `owner_session()`. **The backend deliberately does not hold the owner
+credential** (402e96cbbb79 moved it into a file the service unit does not load,
+so a request handler can never run as a role row security does not apply to).
+Every resolution raised in the running process, `branch` came back null, and the
+control was skipped.
+
+It passed under pytest because the test shell had both DSNs exported. That gap
+is the whole lesson: **anything the serving process must do has to be tested in
+the serving process's environment.** `test_the_tenant_resolves_without_the_owner
+_credential` now removes the credential before asking.
+
+The fix is `workshop_resolve_tenant`, a `SECURITY DEFINER` function (migration
+d4e17c9b3a55) taking one integer and returning one `(org_id, user_id)` pair. It
+cannot be a plain SELECT: the three identity tables are RLS-protected by
+policies keyed on `app.current_user` and `app.current_org`, and this lookup is
+what PRODUCES those values, so with neither set all three read as empty. That is
+the standard bootstrap cycle and a narrow definer function is the standard
+answer to it, rather than a wider policy or a privileged connection.
+
 ## Consequences
 
 **Gained.** Going back to a point in a conversation, with nothing destroyed to
