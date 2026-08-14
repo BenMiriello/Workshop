@@ -3125,7 +3125,7 @@ async def _start_queued_batch(thread_id: str, batch: list[dict]) -> bool:
     # handed the message twice. Checking first is what makes the drain
     # idempotent rather than merely non-destructive.
     done = [e for e in batch
-            if e.get("client_id")
+            if e.get("client_id") and not e.get("recorded")
             and chat_log.find_message_by_client_id(thread_id, e["client_id"])]
     if done:
         chat_queue.drop(thread_id, [e["client_id"] for e in done])

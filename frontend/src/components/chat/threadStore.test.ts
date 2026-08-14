@@ -189,6 +189,35 @@ describe("the active run", () => {
   });
 });
 
+describe("the live context reading", () => {
+  const started = { type: "runStarted" as const, runId: "r1" };
+
+  it("lands on the active run and dedupes an unchanged value", () => {
+    const s = apply(initialThreadState("t"), started,
+      { type: "runContext", runId: "r1", tokens: 1000 });
+    expect(s.activeRun?.ctxTokens).toBe(1000);
+    const same = threadReducer(s, { type: "runContext", runId: "r1", tokens: 1000 });
+    expect(same).toBe(s); // no state churn on an unchanged reading
+    const moved = threadReducer(s, { type: "runContext", runId: "r1", tokens: 2500 });
+    expect(moved.activeRun?.ctxTokens).toBe(2500);
+  });
+
+  it("ignores a reading for a run it is not showing, and junk values", () => {
+    const s0 = apply(initialThreadState("t"), started);
+    expect(threadReducer(s0, { type: "runContext", runId: "other", tokens: 5 })).toBe(s0);
+    expect(threadReducer(s0, { type: "runContext", runId: "r1", tokens: 0 })).toBe(s0);
+  });
+
+  it("survives the reattach rewind that empties the segments", () => {
+    // The replay re-delivers every context event in order anyway, but the
+    // reading must not blank in the meantime: the meter renders from it.
+    const s = apply(initialThreadState("t"), started,
+      { type: "runContext", runId: "r1", tokens: 1000 },
+      { type: "runReattached", runId: "r1" });
+    expect(s.activeRun?.ctxTokens).toBe(1000);
+  });
+});
+
 describe("reset", () => {
   it("drops everything when switching to another conversation", () => {
     const s = apply(initialThreadState("a"),

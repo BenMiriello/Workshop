@@ -728,20 +728,31 @@ class ChatBranch(Base, Timestamps, SoftDelete):
         ForeignKeyConstraint(
             ["thread_id", "org_id"], ["chat_thread.id", "chat_thread.org_id"],
             name="chat_branch_thread_fkey", ondelete="CASCADE"),
+        # THE COLUMN LIST ON EACH `SET NULL` IS LOAD-BEARING, and leaving it off
+        # is a deadlock you only meet at delete time. A composite FK's plain
+        # `ON DELETE SET NULL` nulls EVERY column in the key, `thread_id`
+        # included, and `thread_id` is NOT NULL -- so deleting a message that
+        # any branch points at raised NotNullViolation instead of clearing the
+        # pointer. Measured: it made a branch-head message undeletable. Naming
+        # the columns (Postgres 15+) nulls the pointer and leaves the tenant
+        # column alone, which is what "the message went away" should mean.
         ForeignKeyConstraint(
             ["parent_branch_id", "thread_id"],
             ["chat_branch.id", "chat_branch.thread_id"],
-            name="chat_branch_parent_fkey", ondelete="SET NULL"),
+            name="chat_branch_parent_fkey",
+            ondelete="SET NULL (parent_branch_id)"),
         # Both message refs must name a message in THIS thread.
         ForeignKeyConstraint(
             ["fork_message_id", "thread_id"],
             ["chat_message.id", "chat_message.thread_id"],
-            name="chat_branch_fork_message_fkey", ondelete="SET NULL",
+            name="chat_branch_fork_message_fkey",
+            ondelete="SET NULL (fork_message_id)",
             use_alter=True),
         ForeignKeyConstraint(
             ["head_message_id", "thread_id"],
             ["chat_message.id", "chat_message.thread_id"],
-            name="chat_branch_head_message_fkey", ondelete="SET NULL",
+            name="chat_branch_head_message_fkey",
+            ondelete="SET NULL (head_message_id)",
             use_alter=True),
         Index("uq_chat_branch_ordinal", "thread_id", "ordinal", unique=True,
               postgresql_where=_ALIVE),

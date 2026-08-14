@@ -323,6 +323,14 @@ class Turn:
     # run whose channel has been cleaned up because it is finishing, and the
     # injection path has to tell them apart.
     spawned: bool = False
+    # The log seq through which this turn's prompt includes the thread, stamped
+    # in the same synchronous stretch that records the trigger message and the
+    # run marker (routes/chat._run_for_message). None until that stretch runs.
+    # This is what makes "did the prompt see this message" a comparison instead
+    # of a guess: a message filed with a higher seq while the run was claimed
+    # but not yet deliverable is provably NOT in the prompt, and the send path
+    # queues it rather than dropping it into the gap.
+    prompt_through_seq: int | None = None
     # The turn's process, for the one caller that has to end it early (stop_turn).
     # `pid` is set on the re-attach path too, where this process never held a
     # handle; `proc` only when we spawned it ourselves.

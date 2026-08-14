@@ -279,3 +279,33 @@ def test_a_state_in_use_cannot_be_deleted(org):
         with tenant_session(org["org"]) as s:
             s.execute(text("DELETE FROM workflow_state WHERE id = :i"), {"i": org["state"]})
     assert "foreign key" in str(err.value).lower()
+
+
+def test_no_composite_set_null_nulls_its_discriminator():
+    """A composite `ON DELETE SET NULL` must name the column it nulls.
+
+    THE BUG THIS PINS. Postgres nulls EVERY column of a composite foreign key on
+    `SET NULL` unless the action names them. Every composite FK here pairs a
+    nullable pointer with a NOT NULL discriminator (`org_id`, or `thread_id` on
+    the chat tables), so the plain form tried to null that too and raised at
+    delete time. Eleven constraints were affected; `chat_thread`'s tried to null
+    the thread's own primary key.
+
+    Written as a query over the live catalogue rather than over the models,
+    because these constraints are created by raw DDL in migrations and a test
+    that read the models would not have seen any of them.
+    """
+    from db.engine import owner_session
+
+    with owner_session() as s:
+        bad = s.execute(text("""
+            SELECT conrelid::regclass || '.' || conname
+              FROM pg_constraint
+             WHERE contype = 'f'
+               AND confdeltype = 'n'
+               AND array_length(conkey, 1) > 1
+               AND coalesce(array_length(confdelsetcols, 1), 0) = 0
+        """)).scalars().all()
+    assert bad == [], (
+        "composite SET NULL without a column list; these will raise "
+        f"NotNullViolation on delete: {bad}")

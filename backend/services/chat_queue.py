@@ -189,7 +189,8 @@ def is_command(text: str) -> bool:
 def enqueue(thread_id: str, *, text: str, client_id: str, ts: str | None = None,
             attachments: list[dict] | None = None,
             model: str | None = None, effort: str | None = None,
-            permission_mode: str | None = None) -> dict:
+            permission_mode: str | None = None,
+            recorded: bool = False) -> dict:
     """Take responsibility for a message that cannot run yet.
 
     IDEMPOTENT ON `client_id`. A retry after a timeout, a second tab replaying
@@ -209,6 +210,12 @@ def enqueue(thread_id: str, *, text: str, client_id: str, ts: str | None = None,
         "ts": ts or chat_log.now_iso(),
         "received_at": chat_log.now_iso(),
     }
+    if recorded:
+        # The message is ALREADY in the log (a delivery was attempted against a
+        # run that could not read it), so finding it there does not mean it was
+        # answered. The drain's already-delivered check reads this flag; without
+        # it the entry would be dropped as done and never answered.
+        entry["recorded"] = True
     if attachments:
         entry["attachments"] = attachments
     for k, v in (("model", model), ("effort", effort), ("permission_mode", permission_mode)):

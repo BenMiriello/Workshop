@@ -959,6 +959,11 @@ def _msg_from_event(ev: dict) -> dict:
     msg = {"role": ev.get("role"), "content": ev.get("content") or "", "ts": ev.get("ts")}
     if ev.get("meta"):
         msg["meta"] = dict(ev["meta"])
+    # The log seq, when the event carries one. It is what lets a caller compare
+    # a message's position against a turn's prompt floor (Turn.prompt_through_seq)
+    # instead of guessing whether the prompt included it.
+    if ev.get("seq") is not None:
+        msg["seq"] = ev.get("seq")
     return msg
 
 
