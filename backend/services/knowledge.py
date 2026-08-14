@@ -476,22 +476,69 @@ def read_layers(scope_key: str, role: str | None = None,
     return out
 
 
+# The total token budget for the WHOLE block layered_index_block injects, not
+# per layer. The first cut of the ranked digest gave `index_block` its own
+# per-layer budget and had `layered_index_block` call it once per layer with no
+# total, so a chat reading three or four layers MULTIPLIED the cap instead of
+# bounding it: measured on this corpus, a plain workshop chat rose from ~651
+# pre-digest tokens (19 notes, no cap at all) to ~805, and
+# `layered_index_block("development", role="reviewer")` (workshop + role +
+# development, the read union for a development chat) hit ~1255 against a
+# ~672-token pre-digest baseline for that same read union (workshop ~651 +
+# development ~21). 500 is set so an ordinary three-to-four-layer chat lands
+# clearly under that ~672 baseline with headroom to spare, while still holding
+# roughly 10-15 title+hook lines split across the layers that actually have
+# notes.
+DEFAULT_LAYERED_INDEX_TOKEN_BUDGET = 500
+
+
 def layered_index_block(scope_key: str, role: str | None = None,
-                        private: str | None = None) -> tuple[str, list[str]]:
-    """`index_block` over the read-union. Returns (text, scopes_used).
+                        private: str | None = None,
+                        total_tokens: int = DEFAULT_LAYERED_INDEX_TOKEN_BUDGET
+                        ) -> tuple[str, list[str]]:
+    """`index_block` over the read-union, under ONE total token budget for the
+    whole block. Returns (text, scopes_used).
 
     Each layer is labelled, because an unlabelled merge tells the model what is
     known but not what governs: "this is how reviewing is done here" and "this is
     how THIS project does it" are different claims, and a conflict between them
     is resolvable only if the reader can see which is which.
+
+    Budget is allocated NARROWEST LAYER FIRST (the reverse of `read_layers`'
+    widest-first order): the narrowest layer is the one most relevant to this
+    chat, so it spends what it needs before anything is left for a wide layer
+    that happens to hold many more notes. A layer that is left with no budget
+    still announces itself in one line (its note count, no titles), rather than
+    vanishing: a layer disappearing entirely is the same failure `index_block`'s
+    own truncation footer exists to avoid, one level up.
     """
-    blocks: list[str] = []
-    used: list[str] = []
-    for sk in read_layers(scope_key, role, private):
+    layers = read_layers(scope_key, role, private)
+    remaining = total_tokens
+    rendered: dict[str, str] = {}
+    for sk in reversed(layers):  # narrowest first, for allocation only
+        if remaining <= 0:
+            try:
+                n = len(list_notes(sk))
+            except Exception:
+                n = 0
+            if n:
+                rendered[sk] = (
+                    f"({n} notes in this scope; use the search tool to reach them)"
+                )
+            continue
         try:
-            b = index_block(sk)
+            b = index_block(sk, max_tokens=remaining)
         except Exception:
             continue
+        if not b:
+            continue
+        rendered[sk] = b
+        remaining -= _approx_tokens(b)
+
+    blocks: list[str] = []
+    used: list[str] = []
+    for sk in layers:  # back to widest-first for display, unchanged from before
+        b = rendered.get(sk)
         if b:
             blocks.append(f"[{sk}]\n{b}")
             used.append(sk)
@@ -515,12 +562,16 @@ def _approx_tokens(text: str) -> int:
     return (len(text or "") + 3) // 4
 
 
-# The ambient index is read on every turn, in every scope of the read union (up
-# to four layers per turn - see read_layers), so it has to stay small no matter
-# how large a scope's note count grows. 800 tokens (~3200 chars) holds roughly
-# 15-25 title+hook lines depending on length: enough to orient a fresh turn
-# without crowding out the rest of the prompt. Anything past it is one search
-# call away.
+# The default for a STANDALONE call to `index_block` on a single scope: a
+# direct caller that wants one scope's whole digest, not a turn's injected
+# block. 800 tokens (~3200 chars) holds roughly 15-25 title+hook lines
+# depending on length. It has to stay small no matter how large a scope's note
+# count grows, but it is not what bounds a chat turn: a turn reads the layered
+# union (up to four layers via `read_layers`), and THAT path is bounded by
+# `DEFAULT_LAYERED_INDEX_TOKEN_BUDGET` below, spent once across every layer
+# rather than once per layer. (The two were conflated in the first cut of this
+# digest, which let a multi-layer turn multiply the per-layer cap instead of
+# being bounded by it - see that constant's comment for the measured numbers.)
 DEFAULT_INDEX_TOKEN_BUDGET = 800
 
 # `preference` and `decision` outrank `fact` and `reference` (lower number sorts

@@ -1,13 +1,16 @@
 """The ambient index (`knowledge.index_block`) is a ranked, token-capped digest,
 not a listing of every note (Phase 0 of docs/platform-redesign/
-memory-and-documentation-model-2026-08-14.md, sec 5.5). Three properties are
+memory-and-documentation-model-2026-08-14.md, sec 5.5). Four properties are
 load-bearing and covered here:
 
   - it truncates at a token budget and DECLARES what it left out, rather than
     presenting a partial list as complete;
   - pinned notes rank first, ahead of recency and type;
   - a note with no `type`/`pinned` metadata at all (every note written before
-    this existed) still parses and still renders, defaulting to fact/unpinned.
+    this existed) still parses and still renders, defaulting to fact/unpinned;
+  - `layered_index_block` spends ONE total budget across every layer it
+    renders (narrowest layer first), rather than the per-layer budget being
+    multiplied by the number of layers in a turn.
 """
 from __future__ import annotations
 
@@ -156,3 +159,65 @@ class TestNoMetadataStillParses:
         _put("workshop", "plain", "Plain note", "just words")
         raw = (knowledge.scope_dir("workshop") / "plain.md").read_text()
         assert not raw.startswith("<!--")
+
+
+class TestLayeredBudgetIsOneTotal:
+    """The bug found after the first cut of this digest shipped: `index_block`
+    took its own per-layer token budget, and `layered_index_block` called it
+    once per layer with no total, so a turn reading three or four layers
+    MULTIPLIED the cap instead of being bounded by it. `layered_index_block`
+    now owns one total and allocates it narrowest-layer-first."""
+
+    def test_the_total_is_respected_across_three_populated_layers(self, tree):
+        long_hook = "a deliberately long hook so each line costs real tokens"
+        for i in range(15):
+            _put("workshop", f"w-{i}", f"Workshop note number {i}", "body",
+                 hook=long_hook)
+        for i in range(5):
+            _put("role:tester", f"r-{i}", f"Role tester note {i}", "body",
+                 hook=long_hook)
+        for i in range(5):
+            _put("project:demo", f"p-{i}", f"Project demo note {i}", "body",
+                 hook=long_hook)
+
+        text, used = knowledge.layered_index_block(
+            "project:demo", role="tester", total_tokens=80)
+        assert set(used) == {"workshop", "role:tester", "project:demo"}
+        total = knowledge._approx_tokens(text)
+        # Generous slack for footer/first-note overshoot across layers (each
+        # truncating layer can overshoot its exact allowance by at most one
+        # footer line plus the one note it always shows), but nowhere near
+        # what rendering three uncapped layers would cost.
+        assert total <= 80 + 80, (
+            f"layered block ({total} tokens) did not respect its 80-token total")
+
+        # It is a real cap, not a no-op: the same layers with a huge budget
+        # render far more.
+        uncapped, _ = knowledge.layered_index_block(
+            "project:demo", role="tester", total_tokens=100_000)
+        assert knowledge._approx_tokens(uncapped) > total * 2
+
+    def test_a_starved_layer_still_announces_its_note_count_not_silence(self, tree):
+        long_hook = "a deliberately long hook so each line costs real tokens too"
+        for i in range(20):
+            _put("workshop", f"w-{i}", f"Workshop note number {i}", "body",
+                 hook=long_hook)
+        for i in range(3):
+            _put("project:demo", f"p-{i}", f"Project note {i}", "body",
+                 hook=long_hook)
+
+        # total_tokens=1: the narrower layer (project:demo) is allocated
+        # first and always shows at least its own first note, which alone
+        # exceeds a 1-token budget - guaranteeing nothing is left for the
+        # wider workshop layer, deterministically, regardless of exact token
+        # arithmetic.
+        text, used = knowledge.layered_index_block("project:demo", total_tokens=1)
+
+        assert "workshop" in used, "the starved layer vanished instead of announcing itself"
+        workshop_block = text.split("[workshop]\n", 1)[1].split("\n\n[", 1)[0]
+        assert workshop_block.strip() == (
+            "(20 notes in this scope; use the search tool to reach them)"
+        )
+        # And it carries no note titles/hooks - a starved layer names a count,
+        # never content, or it would blow the budget it was denied.
+        assert "- " not in workshop_block
