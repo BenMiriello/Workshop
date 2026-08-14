@@ -41,6 +41,33 @@ _lock = threading.Lock()
 _cache: dict[int, tuple[UUID, UUID]] = {}
 _db_ok: bool | None = None
 
+# The file store this process started against. A deployment sets
+# WORKSHOP_RUNTIME before import, so for a real one this never changes; only a
+# test redirecting `ownership._RUNTIME` at a tmp_path makes it differ. See
+# `_file_store_redirected`.
+_RUNTIME_AT_IMPORT = ownership._RUNTIME
+
+
+def _file_store_redirected() -> bool:
+    """Has this process been pointed at a throwaway file store since import?
+
+    THE TWO STORES MUST DESCRIBE ONE INSTALLATION, and this is what enforces it.
+
+    Tests that touch a real owner redirect `ownership._RUNTIME` to a tmp_path so
+    they do not write real chats, which is the correct and long-standing guard.
+    It stopped being sufficient the moment a second store went in behind the
+    same write: `org_and_user()` resolves the tenant from the OWNER contextvar
+    and never looked at `_RUNTIME`, so a test with a redirected file store still
+    mirrored into the real database. It went unnoticed because `available()`
+    below assumed no test machine had Postgres, which was true until this one
+    got one. Measured cost before the fix: 56 phantom threads, most of them
+    titled "Voice", written by the voice suite on every full run.
+
+    Checked on every call rather than cached with `_db_ok`, because the
+    redirect happens after import and the point is to notice it.
+    """
+    return ownership._RUNTIME != _RUNTIME_AT_IMPORT
+
 
 def reset_cache() -> None:
     global _db_ok
@@ -54,9 +81,12 @@ def available() -> bool:
 
     Cached after the first answer. The chat read path asks this before trying a
     branch-aware read, so a machine with no Postgres (every checkout that is not
-    this one, and the whole test suite) keeps working on the files.
+    this one) keeps working on the files. A process whose file store has been
+    redirected answers False too: see `_file_store_redirected`.
     """
     global _db_ok
+    if _file_store_redirected():
+        return False
     if _db_ok is not None:
         return _db_ok
     with _lock:
@@ -82,6 +112,15 @@ def available() -> bool:
 
 def org_for_owner(owner_id: int) -> tuple[UUID, UUID]:
     """(org_id, user_id) for an app user. Raises if either is missing."""
+    if _file_store_redirected():
+        # Belt and braces with `available()`. Every caller today checks that
+        # first, but this is the function that actually hands out the key to
+        # the real database, so a caller that forgets must fail rather than
+        # write. An owner id read out of a throwaway file store does not name
+        # a real tenant.
+        raise TenantUnresolved(
+            "the file store is redirected (a test tmp_path), so this process "
+            "must not resolve a real tenant")
     cached = _cache.get(int(owner_id))
     if cached is not None:
         return cached

@@ -385,3 +385,58 @@ class TestAPromptThatCouldNotBeDeliveredAtAll:
         q = chat_queue.read(thread["id"])
         assert [(e["text"], e["client_id"], e["ts"]) for e in q] == [
             ("the message", "cid-7", "2026-08-12T21:00:00+00:00")]
+
+
+def _assistant_with_usage(text: str, ctx: int) -> str:
+    """An assistant frame whose usage reports a context reading of `ctx`."""
+    return json.dumps({"type": "assistant", "message": {
+        "content": [{"type": "text", "text": text}],
+        "usage": {"input_tokens": ctx // 2,
+                  "cache_read_input_tokens": ctx - ctx // 2}}})
+
+
+class TestTheMeterFeed:
+    """The `context` stream event: the composer meter's only live source.
+
+    The reading used to exist solely in the driver's `state` dict until
+    finalize, so the meter could not move during a turn no matter what the
+    client did. A fix for this was recorded as shipped on 2026-08-13 and had
+    never been written; this test is what makes that silent deletion loud."""
+
+    def test_a_changed_reading_is_pushed_and_an_unchanged_one_is_not(
+            self, thread, monkeypatch):
+        async def go():
+            d = Driver(thread["id"], monkeypatch, delivered=1)
+            d.write(_replay("do the thing"),
+                    _assistant_with_usage("step one", 1000),
+                    _assistant_with_usage("step two", 1000),
+                    _assistant_with_usage("step three", 2500),
+                    _result())
+            task = asyncio.create_task(
+                build_streaming._drive_turn(d.turn, d.meta, proc=d.proc))
+            await asyncio.wait_for(task, 5)
+            return d
+        d = asyncio.run(go())
+        ctx = [e.payload.get("tokens") for e in d.turn.events if e.kind == "context"]
+        assert ctx == [1000, 2500]
+
+    def test_a_subagents_reading_is_not_the_turns(self, thread, monkeypatch):
+        """A delegate runs on its own fresh window; letting its usage through
+        made the meter fall from 44% to 8% mid-turn without the conversation
+        shrinking. Its frames carry `parent_tool_use_id`."""
+        async def go():
+            d = Driver(thread["id"], monkeypatch, delivered=1)
+            sub = json.dumps({"type": "assistant", "parent_tool_use_id": "tu_1",
+                              "message": {"content": [{"type": "text", "text": "sub"}],
+                                          "usage": {"input_tokens": 50}}})
+            d.write(_replay("do the thing"),
+                    _assistant_with_usage("main", 9000),
+                    sub,
+                    _result())
+            task = asyncio.create_task(
+                build_streaming._drive_turn(d.turn, d.meta, proc=d.proc))
+            await asyncio.wait_for(task, 5)
+            return d
+        d = asyncio.run(go())
+        ctx = [e.payload.get("tokens") for e in d.turn.events if e.kind == "context"]
+        assert ctx == [9000]
