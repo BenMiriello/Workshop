@@ -288,6 +288,27 @@ def _agent_scope_dir(slug: str) -> Path | None:
     return d
 
 
+#: The mediated-write blocks, by the name the commit path books them under.
+#: Each `apply_*` helper uses `.search`, so at most ONE block of each kind is
+#: ever applied from a reply -- which is what makes a per-kind "already done"
+#: marker complete rather than approximate.
+_BLOCK_KINDS = {
+    "tasks": _PATCH_BLOCK,
+    "learnings": _LEARNING_BLOCK,
+    "notes": _NOTE_BLOCK,
+}
+
+
+def strip_block_kind(reply: str, kind: str) -> str:
+    """Remove one kind of mediated-write block without applying it.
+
+    For a replay that has already applied THIS block but not necessarily the
+    others: the block still has to come off the visible reply, or it renders as
+    raw JSON that reads like work which just happened."""
+    pat = _BLOCK_KINDS.get(kind)
+    return reply if pat is None else pat.sub("", reply).strip()
+
+
 def strip_all_blocks(reply: str) -> str:
     """Remove every mediated-write block WITHOUT applying any of them.
 

@@ -86,22 +86,36 @@ Closed after the operator said to do all of it.
 - **A recycled pid kept a dead turn "Still running" forever.** `_proc_alive` now
   checks the command line, and treats another user's process as not ours.
 
-### Still open, deliberately
+### Third pass: the rest of it
 
-- **Voice.** Investigation showed this is smaller than first stated: workers
-  respawn with `--resume` against a stable cwd, so the *conversation* survives a
-  restart, and an interrupted utterance is closed with `LOST_RUN_TEXT`, which
-  says so plainly. Only the in-flight utterance is lost. Porting the detached
-  journal architecture across is a large change to a subsystem rebuilt on
-  2026-08-12, with real regression risk and no way to test it end to end from a
-  chat turn. Not attempted.
-- **The narrow spawn race.** The pid is written to the journal just after the
-  child starts; a crash in that gap deletes the journal while the agent is still
-  writing to it and leaks the process. Microseconds wide, and the fix needs the
-  spawn to record identity before the process exists.
-- **A crash inside the mediated-write block** still re-applies whichever blocks
-  had already been applied. Needs per-block markers, which needs the apply
-  helpers to stop applying and stripping in one step.
+- **A crash inside the mediated-write block** re-applied whichever blocks had
+  already succeeded, because the marker was one flag written after all four.
+  Each helper uses `.search`, so a reply carries at most ONE block of each kind
+  — which makes a per-kind marker exact rather than approximate. Each kind is now
+  recorded the moment its write lands, and a replay strips just those. No window
+  left between them.
+- **The spawn race is closed, not mitigated.** The backend can die between
+  spawning the agent and journalling its pid, leaving `pid: null` while a real
+  agent runs and writes. That read as "died before it started": the turn was
+  finalised as lost and the journal deleted under a live process, orphaning it
+  with the session the next turn would resume. The session id is in the journal
+  AND on the process's command line, so the orphan is now found and adopted.
+  Identity is `/proc/<pid>/comm`, which is exactly `claude`; matching the command
+  line instead matched the scanning shell itself, whose snapshot path contains
+  `.claude/` (caught in testing).
+
+### Voice: a decision, not a gap
+
+A restart mid-utterance loses that utterance. It does not lose the conversation:
+workers respawn with `--resume` against a stable cwd, and the interrupted run is
+closed with `LOST_RUN_TEXT`, which says plainly what happened. Nothing leaks and
+nothing wedges.
+
+That is a dropped call, and it is the right amount of robustness for the case.
+Porting the detached-journal architecture into `voice_worker` would be a large
+change to a subsystem rebuilt on 2026-08-12, carrying real regression risk, to
+save one utterance during a deliberate restart. Not worth it. This is settled
+rather than outstanding.
 
 ## Decisions the operator delegated
 

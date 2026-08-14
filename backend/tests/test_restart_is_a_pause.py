@@ -160,6 +160,60 @@ class TestALiveProcessMeansOurProcess:
         assert any(bs._proc_alive(int(p)) for p in found[:5])
 
 
+class TestAnOrphanedAgentIsRecovered:
+    """The backend can go down between spawning the agent and journalling its
+    pid. The journal then says `pid: null` while a real agent is running and
+    writing to it -- and the re-attach read that as "died before it started",
+    finalised the turn as lost, and deleted the journal out from under a live
+    process, orphaning it with the session the next turn would try to resume.
+
+    The session id is in the journal AND on the process's command line, so the
+    orphan is identifiable.
+    """
+
+    @staticmethod
+    def _a_live_agent():
+        import re
+        import subprocess
+
+        out = subprocess.run(["pgrep", "-af", "claude"],
+                             capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            m = re.search(r"--(?:session-id|resume)\s+([0-9a-f-]{36})", line)
+            if m:
+                return int(line.split()[0]), m.group(1)
+        return None, None
+
+    def test_finds_a_running_agent_by_its_session_id(self):
+        pid, sid = self._a_live_agent()
+        if not sid:
+            pytest.skip("no live agent with a session id on this box")
+        assert bs._recover_pid(sid) == pid
+
+    def test_an_unknown_session_finds_nothing(self):
+        """Regression: matching on the command line alone matched the scanning
+        shell itself, whose snapshot path contains `.claude/`. Identity is now
+        `/proc/<pid>/comm`, which is exactly "claude"."""
+        assert bs._recover_pid("00000000-0000-0000-0000-000000000000") is None
+
+    def test_no_session_id_finds_nothing(self):
+        assert bs._recover_pid(None) is None
+        assert bs._recover_pid("") is None
+
+    def test_identity_is_the_executable_not_the_arguments(self):
+        import os
+
+        assert bs._is_agent_proc(os.getpid()) is False
+        pid, _ = self._a_live_agent()
+        if pid:
+            assert bs._is_agent_proc(pid) is True
+
+    def test_an_unreadable_process_answers_the_callers_default(self):
+        """Alive-checks must not invent a death; scans must not invent a match."""
+        assert bs._is_agent_proc(999_999, unknown=True) is True
+        assert bs._is_agent_proc(999_999) is False
+
+
 def test_already_committed_fails_toward_re_driving(monkeypatch):
     """When the answer cannot be read, re-drive.
 

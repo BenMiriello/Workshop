@@ -1515,14 +1515,27 @@ def _proc_alive(pid: int | None) -> bool:
         # same forever-spinning turn one level down: "some process exists" was
         # never the question.
         return False
+    return _is_agent_proc(pid, unknown=True)
+
+
+def _is_agent_proc(pid: int, *, unknown: bool = False) -> bool:
+    """Is this pid an agent process (rather than whatever recycled its number)?
+
+    `/proc/<pid>/comm` is the executable name, which for the CLI is exactly
+    "claude". Matching on the COMMAND LINE instead is too loose: any process
+    whose argv happens to mention claude counts, and on this box that includes
+    every shell whose snapshot path contains `.claude/`. That false positive
+    turned up immediately in testing.
+
+    `unknown` is the answer when procfs cannot say -- True where the caller is
+    asking "is my known child still alive" (do not invent a death), False where
+    it is scanning for a match (do not invent a process).
+    """
     try:
-        with open(f"/proc/{pid}/cmdline", "rb") as fh:
-            cmd = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
+        with open(f"/proc/{pid}/comm", "r") as fh:
+            return fh.read().strip() == "claude"
     except OSError:
-        # No procfs entry (it exited between the two calls) or an unreadable one.
-        # Fall back to the signal's answer rather than inventing a death.
-        return True
-    return "claude" in cmd
+        return unknown
 
 
 async def _retire_turn_proc(pid: int | None, proc=None) -> None:
@@ -2735,55 +2748,71 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
             # carried the first time -- and re-running them files a duplicate
             # ticket and writes a duplicate note, silently.
             #
-            # The marker goes in the journal's own meta, written the moment the
-            # writes complete, because the journal is the thing a replay reads.
-            # The receipts are stored with it so the replayed reply still says
+            # PER KIND, AND RECORDED AS EACH ONE LANDS. A single "blocks_applied"
+            # flag written after all four would still replay whatever had already
+            # been applied when a crash landed in the middle of them. Each helper
+            # uses `.search`, so a reply carries at most one block of each kind:
+            # marking the kind the moment it succeeds is therefore exact, not an
+            # approximation, and there is no window left between them.
+            #
+            # The receipts are stored alongside so a replayed reply still says
             # "Saved a note to workshop" and still links to the note that was
             # actually written, rather than losing the record of its own effects.
-            #
-            # This does not close the window entirely: a crash INSIDE the block
-            # below still replays what had already been applied, because these
-            # helpers apply and strip in one step and do not report which blocks
-            # they got through. It closes the much larger window between the
-            # writes finishing and the reply committing, which includes the
-            # seconds-long git checkpoint.
+            _done_kinds = set(meta.get("applied_kinds") or [])
+            # Older journals carry the previous whole-block flag; honour it as
+            # "all of them", so a turn in flight across this deploy is not
+            # re-applied.
             if meta.get("blocks_applied"):
-                new_text = task_scope.strip_all_blocks(new_text)
+                _done_kinds |= {"actions", "tasks", "learnings", "notes"}
+            if _done_kinds:
                 applied_notes += list(meta.get("applied_notes") or [])
                 receipts.extend(meta.get("applied_receipts") or [])
-                _replayed_blocks = True
-            else:
-                _replayed_blocks = False
-            if _replayed_blocks:
+
+            def _mark_kind(kind: str) -> None:
+                """Record that this kind's write is done, before the next runs."""
+                _done_kinds.add(kind)
+                try:
+                    meta["applied_kinds"] = sorted(_done_kinds)
+                    meta["applied_notes"] = list(applied_notes)
+                    meta["applied_receipts"] = list(receipts)
+                    _write_meta(meta)
+                except Exception as e:  # pragma: no cover - best effort
+                    log.debug("turn %s: could not record applied %s: %s", turn.id, kind, e)
+
+            if "actions" in _done_kinds:
                 pass
             elif type(provider).apply_actions is not chat_context.ContextProvider.apply_actions:
                 new_text, pnotes = provider.apply_actions(new_text)
                 applied_notes += (pnotes or [])
                 _receipt("action", pnotes or [])
+                _mark_kind("actions")
             # O2: apply a task-patch block against this chat's task scope.
-            if _replayed_blocks:
-                pass
+            if "tasks" in _done_kinds:
+                new_text = task_scope.strip_block_kind(new_text, "tasks")
             elif _permitted("tasks"):
                 new_text, tnotes = task_scope.apply_task_patch(
                     ctx_key, new_text, (thread or {}).get("id"), (thread or {}).get("mode"))
                 applied_notes += tnotes
                 _receipt("ticket", tnotes)
+                _mark_kind("tasks")
             else:
                 new_text = task_scope.strip_task_patch(new_text)
                 refusal = f"(a {_role or 'roleless'} agent may not file tickets)"
                 applied_notes.append(refusal)
                 _receipt("ticket", [refusal])
+                _mark_kind("tasks")
             # Phase 4: capture an explicit operator preference/correction emitted
             # as a ``learning-note`` block into the learnings store.
-            if _replayed_blocks:
-                pass
+            if "learnings" in _done_kinds:
+                new_text = task_scope.strip_block_kind(new_text, "learnings")
             elif _permitted("learnings"):
                 new_text, lnotes = task_scope.apply_learning_note(ctx_key, new_text)
                 applied_notes += lnotes
                 _receipt("learning", lnotes)
+                _mark_kind("learnings")
             # Phase N3: capture a durable scoped ``note`` into the knowledge store.
-            if _replayed_blocks:
-                pass
+            if "notes" in _done_kinds:
+                new_text = task_scope.strip_block_kind(new_text, "notes")
             elif _permitted("notes"):
                 # The note is stamped with WHO WROTE IT: an @mentioned agent's
                 # note and the assistant's are otherwise byte-identical when
@@ -2795,18 +2824,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
                 )
                 applied_notes += nnotes
                 _receipt("note", nnotes, nrefs)
-            # Mediated writes are done. Record that in the journal NOW, before
-            # the reply is committed and long before the git checkpoint, so a
-            # restart anywhere after this point replays the reply without
-            # re-filing the tickets and re-writing the notes.
-            if not _replayed_blocks and (applied_notes or receipts):
-                try:
-                    meta["blocks_applied"] = True
-                    meta["applied_notes"] = list(applied_notes)
-                    meta["applied_receipts"] = list(receipts)
-                    _write_meta(meta)
-                except Exception as e:  # pragma: no cover - best effort
-                    log.debug("turn %s: could not record applied blocks: %s", turn.id, e)
+                _mark_kind("notes")
             # A data-mode assistant is told it may ask for a skill by emitting a
             # fenced block. It has tools and reads the skill itself, so nothing
             # expands one; take the raw protocol off the reply.
@@ -2965,6 +2983,44 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         shutil.rmtree(_journal_dir(turn.id), ignore_errors=True)
     except Exception:
         pass
+
+
+def _recover_pid(session_id: str | None) -> int | None:
+    """Find a still-running agent process by the session id it was spawned with.
+
+    Closes the gap between the child being spawned and its pid reaching the
+    journal. If the backend dies in there, the journal says `pid: null` while a
+    real agent is running and writing to it -- and the re-attach then read that
+    as "died before it started", finalised the turn as lost, and deleted the
+    journal out from under a process that was still working. The turn's output
+    went nowhere and the agent was left orphaned, holding the session the next
+    turn would try to resume.
+
+    The session id is in the journal and on the process's command line, so the
+    orphan is identifiable. Returns None when there is no match, which lands on
+    the old behaviour: treat it as dead.
+    """
+    if not session_id:
+        return None
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            pid = int(entry)
+            # Identity first (cheap, and exact), then the session id. Testing
+            # the command line alone matched this scan's own shell.
+            if not _is_agent_proc(pid):
+                continue
+            try:
+                with open(f"/proc/{entry}/cmdline", "rb") as fh:
+                    cmd = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
+            except OSError:
+                continue  # exited between the two reads
+            if session_id in cmd:
+                return pid
+    except OSError:
+        return None
+    return None
 
 
 def _resume_from(turn: "Turn") -> int:
@@ -3139,6 +3195,19 @@ def reattach_running_turns() -> None:
             # journal for the same reason — an adopted run must still be
             # stoppable, and it is a process group like any other.
             turn.spawned = True
+            # No pid recorded, but the agent may well be running: the backend can
+            # go down between spawning the child and journalling its pid. Look for
+            # it by session id before concluding it is dead, because concluding
+            # that deletes the journal a live agent is writing to.
+            if not meta.get("pid"):
+                found = _recover_pid(meta.get("session_id"))
+                if found:
+                    log.info("turn %s: recovered orphaned agent pid %s by session id", tid, found)
+                    meta["pid"] = found
+                    try:
+                        _write_meta(meta)
+                    except Exception:
+                        pass
             turn.pid = meta.get("pid")
             TURNS[tid] = turn
             alive = _proc_alive(meta.get("pid"))

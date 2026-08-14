@@ -103,3 +103,41 @@ def test_all_three_block_kinds_are_stripped():
 def test_a_reply_with_no_blocks_is_untouched_apart_from_trim():
     reply = "just an ordinary answer"
     assert task_scope.strip_all_blocks(reply) == reply
+
+
+class TestPerKindSkipping:
+    """Marking the whole set as applied only after ALL of them have run still
+    replays whatever succeeded before a crash landed in the middle. Each helper
+    uses `.search`, so a reply carries at most one block of each kind -- which
+    makes a per-kind marker exact rather than approximate, with no window left
+    between the writes.
+    """
+
+    REPLY = (
+        "head\n\n"
+        '```task-patch\n{"add": []}\n```\n\n'
+        '```learning-note\n{"note": "x"}\n```\n\n'
+        '```note\n{"title": "t", "body": "b"}\n```\n\n'
+        "tail"
+    )
+
+    def test_one_kind_comes_off_and_the_others_stay(self):
+        """The half-applied case: the ticket was filed before the crash, the
+        note was not. The ticket block must be stripped without applying, and
+        the note block must survive to be applied on the replay."""
+        out = task_scope.strip_block_kind(self.REPLY, "tasks")
+        assert "```task-patch" not in out
+        assert "```learning-note" in out
+        assert "```note" in out
+
+    @pytest.mark.parametrize("kind,fence", [
+        ("tasks", "```task-patch"),
+        ("learnings", "```learning-note"),
+        ("notes", "```note"),
+    ])
+    def test_every_kind_is_strippable_on_its_own(self, kind, fence):
+        assert fence not in task_scope.strip_block_kind(self.REPLY, kind)
+
+    def test_an_unknown_kind_changes_nothing(self):
+        """A marker from a future version must not silently eat the reply."""
+        assert task_scope.strip_block_kind(self.REPLY, "something-else") == self.REPLY
