@@ -605,6 +605,40 @@ def agent_self_preamble(
 # (including resumed turns) so the agent can't drift out of sync with reality.
 
 
+def _last_apply_line() -> str:
+    """Report the outcome of the last deferred backend restart, if it failed.
+
+    CLOSING THE LOOP. A deferred restart necessarily reports "armed" and then
+    succeeds or fails minutes later, long after the agent that armed it has
+    stopped looking -- and until 2026-08-13 that outcome went only to
+    /tmp/workshop-backend.log, which nothing reads and nothing surfaces. That is
+    how a restart could fail fourteen times in one log while every caller was
+    told it worked, and it is the mechanism behind agents distrusting the restart
+    tooling: the failures were real and invisible.
+
+    Deliberately SILENT on success. A briefing line that appears every turn
+    saying everything is fine is noise that trains the reader to skip the block,
+    which is the failure this is meant to fix, one level up.
+    """
+    try:
+        from services import paths
+        import json as _json
+
+        p = paths.runtime_dir() / "apply-last.json"
+        raw = _json.loads(p.read_text())
+        if raw.get("outcome") == "restarted":
+            return ""
+        return (
+            f"- HEADS UP: the last backend restart did not complete "
+            f"(outcome={raw.get('outcome')}, pid {raw.get('old_pid')} -> "
+            f"{raw.get('new_pid')}, at {str(raw.get('when', ''))[:19]}). The "
+            f"backend may be serving older code than the tree. Check with "
+            f"`bash scripts/apply.sh --check`."
+        )
+    except Exception:
+        return ""
+
+
 def _detect_stack(dir_path) -> tuple[list[str], bool]:
     """Best-effort stack labels for a project dir + whether it looks like an
     empty scaffold (no real source yet). Cheap: stats a handful of marker files.
@@ -960,6 +994,9 @@ def runtime_briefing(provider: "ContextProvider") -> str:
             "you changed, branch off main for non-trivial work, commit only when asked. "
             "Don't pick ports or start servers; they are already running."
         )
+        receipt = _last_apply_line()
+        if receipt:
+            lines.append(receipt)
         return "\n".join(lines)
 
     # Shadow detection: a project named after a built-in Workshop app whose real

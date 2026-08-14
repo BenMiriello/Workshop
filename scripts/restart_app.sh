@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
-# Apply a finished change to a running project — the builder's "make it live" tool.
+# Restart a running PROJECT's services.
 #
 #   restart_app.sh <slug> [service]
 #
+# NOT THE ENTRY POINT FOR THE PLATFORM ITSELF. For a change to this repo, run
+# `bash scripts/apply.sh`, which covers all four surfaces (built bundle, backend,
+# dev server, edge) and decides which of them actually drifted. This script only
+# ever restarts a backend, so using it for platform work silently leaves a
+# frontend change unbuilt -- and the operator views the BUILT origin, so that is
+# invisible to the agent and total to him. See docs/applying-changes.md.
+#
 # - SELF / platform project (workshop): the backend serves this very chat, so it
 #   does a DEFERRED + detached backend restart (your reply lands first, then it
-#   reloads). Frontend changes are already live via Vite HMR — no restart needed.
+#   reloads). It does NOT touch the frontend bundle; apply.sh does.
 # - App project: restarts the named service, or every currently-running service,
 #   through the app runner (separate processes — safe, never touches this chat).
 #   Vite/dev-server services hot-reload on their own; pass the specific backend

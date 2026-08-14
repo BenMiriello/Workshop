@@ -832,3 +832,145 @@ Still open:
    logical name, which does not correspond to the `build_agents` registry
    slugs, so backfilled runs have a null `agent_id`. Not invented; it needs a
    mapping decision.
+
+---
+
+## 7. What two adversarial reviews found (2026-08-13)
+
+Two independent reviews were run against `c38e33d`: one on security and
+separation of concerns, one on code quality and data-model design. Both
+reproduced their findings against the live database rather than reasoning about
+the code. Everything below was CONFIRMED by execution.
+
+This section exists because the findings are more useful than the design was.
+
+### 7.1 Critical: privilege escalation through the membership policy
+
+`membership_self` was created `FOR ALL` with a `WITH CHECK`. Postgres ORs
+permissive policies, so the check applied to INSERT and UPDATE as well as
+SELECT. Any authenticated caller could write a membership row naming themselves,
+in any organization, from a session holding nothing but a login:
+
+```
+with user_session(me):          # no org at all
+    INSERT INTO membership (org_id, user_id, role)
+    VALUES (<someone else's org>, me, 'owner')      -> SUCCEEDED
+```
+
+The read-side justification was correct and remains: a user who has just
+authenticated has no org and must be able to see which ones they may enter. That
+needs SELECT and nothing else. Narrowed to `FOR SELECT` in `7bf9ae20fe0d`.
+
+### 7.2 Critical: the identity tables had no RLS at all
+
+`organization` and `user_account` carry no `org_id`, so they fell outside the
+metadata-derived tenant-table list and got no policy. From inside one tenant,
+every other tenant's row was readable, every customer email was readable,
+`UPDATE organization` on another tenant applied, and `DELETE FROM organization`
+would have cascaded through every tenant table in the database.
+
+**This is the same shape as the superuser bug**: the audit could not see it,
+because `verify_rls` selects tables that HAVE an `org_id`. A check that can only
+look where the problem is not will always report health.
+
+Both tables now carry membership-based policies, and the application role has
+lost INSERT, UPDATE and DELETE on both: provisioning is an admin operation and
+runs on the owner connection.
+
+### 7.3 Foreign keys crossed the tenant boundary
+
+Postgres runs referential-integrity checks with row security OFF. `WITH CHECK
+(org_id = current_org)` constrains the label on a row and says nothing about
+what it points at. A ticket could reference another org's project, state or
+parent; a link could point at another org's ticket; a comment could attach to
+one.
+
+No cross-tenant read fell out, but three real consequences did: an existence
+oracle (a real UUID raises no FK violation, a fabricated one does), cross-tenant
+writes that cascade-delete with the attacker's org, and a reproduced
+**cross-tenant denial of service** where one tenant, having deleted all its own
+tickets, still could not delete its own workflow state because another tenant
+held a hidden reference to it, with no visible cause and an unactionable error.
+
+Fixed structurally in `402e96cbbb79`: `UNIQUE (id, org_id)` on every parent and
+composite `(child, org_id) REFERENCES parent (id, org_id)` on all 19 child
+references. Org agreement is now a constraint rather than a convention.
+
+### 7.4 The backfill was discarding populated fields
+
+Eight fields with data were dropped silently: `scoped_by` (112 rows),
+`provenance` (56), `touches` (35), `blocked_reason` (23), `acceptance` (5),
+`discovered_from` (2), plus `labels` (18) and every assignee. `blocked_reason`
+is the sharpest: a blocked ticket that loses why it is blocked is a straight
+regression against the JSON store.
+
+Worse, `models.py` claimed `ticket_event` "replaces five fields ... source,
+scoped_by, provenance, discovered_from and evidence". Only two were ever
+written. The docstring described an intention as though it were behaviour.
+
+Now: every one of them is preserved as a `ticket_event` row, labels populate the
+tables that existed for them, assignee and creator resolve to the migrated user,
+and `apply()` prints a per-field preserved count and a dropped count. Nothing
+leaves without being counted.
+
+### 7.5 Claims in this document that were wrong
+
+- **"Idempotent" overstated it.** The backfill is INSERT-ONCE: it skips rows
+  that exist and never updates them. A second run writes zero rows, which is
+  what makes it safe to re-run, but it does not pick up edits. That matters for
+  P3, where the file store keeps being written while the database is
+  read-shadowed. Corrected in the docstring; an upsert is required before
+  relying on it for that.
+- **The 3.7 ms scheduler figure was a first-run wall time.** Median is 0.22 ms.
+  More importantly the query was a SEQUENTIAL SCAN: `ix_ticket_queue` is partial
+  on `closed_at IS NULL`, and Postgres will not use a partial index unless the
+  query provably implies its predicate, which a join to `workflow_state.category`
+  does not. The query now states `closed_at IS NULL` and plans as an index scan.
+- **"The migration reads TENANT_TABLES"** was false; it hardcodes its own tuple.
+  The agreement is now enforced by `tests/test_db_rls_coverage.py`, which needs
+  no database and so runs everywhere, unlike `verify_rls`.
+- **`updated_at` never fired for raw SQL.** `onupdate` is an ORM hook. It is a
+  database trigger now.
+
+### 7.6 Also fixed
+
+- The audit log was editable and deletable by the application role, while
+  `models.py` asserted that "an audit row that can be edited or removed is not
+  an audit row". `UPDATE`/`DELETE` on `ticket_event` revoked.
+- No cycle protection anywhere: `A parent B` + `B parent A` was accepted, as was
+  a `blocked_by` cycle, which makes both tickets permanently unschedulable with
+  no diagnostic. Both are triggers now, and the hierarchy trigger enforces
+  ADR 0001's depth cap of 2, which nothing had enforced.
+- A project could have zero or five default states. Now exactly one.
+- 117 live rows asserted a human or agent actor with a NULL actor id. Repaired,
+  then constrained.
+- The backend service held the superuser DSN in its environment, which undoes
+  the two-role split. It now lives in `~/.config/workshop/db-admin.env`, which
+  the service does not load.
+- `verify_rls` had no production caller. `assert_unprivileged()` now runs at
+  engine construction, so the process cannot start on a privileged connection.
+- Test fixtures leaked organizations on setup failure and deleted by raw id
+  against the same database that holds real work. Setup is now `try/finally` and
+  teardown refuses to delete an organization without the `wstest-` prefix.
+- An unknown job status was coerced to `done`. Coercing an unrecognised state to
+  "successfully completed" is the wrong default; it is `failed` and counted.
+
+### 7.7 Still open
+
+- **Search index.** Still absent. Substring search over title and body is a
+  sequential scan, which is one of the JSON store's defects that this work has
+  not yet fixed. R5 is not met for that access pattern.
+- **`claim_token` has no column.** The monotonic fence that rejects a zombie
+  worker's late write did not move to `run`. Liveness moved
+  (`lease_expires_at`, `heartbeat_at`, `worker_pid`); compare-and-swap did not.
+  P4 needs it before the sweep runs against this schema.
+- **`next_ticket_number` is not concurrency-safe yet.** The intended
+  `SELECT ... FOR UPDATE` is not implemented; the only writer today is
+  single-threaded. `uq_ticket_number` means a race fails rather than duplicates,
+  so it fails safe, but it fails. Lands with the first concurrent writer in P3.
+- **The DB test suite runs against the same database as real work.** Guarded by
+  a slug prefix, which is a mitigation, not an answer. A dedicated test database
+  is the fix.
+- **`backfill.py` and `bootstrap.py` sit in the runtime package.** One-shot ETL
+  and a privileged provisioning script should not be importable from the module
+  that serves requests.

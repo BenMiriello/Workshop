@@ -123,6 +123,19 @@ def _org_target(table: str) -> UniqueConstraint:
     return UniqueConstraint("id", "org_id", name=f"uq_{table}_id_org")
 
 
+def _thread_target(table: str) -> UniqueConstraint:
+    """`UNIQUE (id, thread_id)`, the same trick one level narrower.
+
+    Inside a conversation, org agreement is not the property that matters:
+    SAME THREAD is. A message whose parent lives in another thread, or a branch
+    head pointing outside its own conversation, corrupts the path walk in a way
+    no tenant check would catch, and it implies a cross-org reference anyway
+    since a thread pins its own org. So intra-chat references are composite on
+    the thread, and that single constraint covers both.
+    """
+    return UniqueConstraint("id", "thread_id", name=f"uq_{table}_id_thread")
+
+
 def _org_fk() -> Mapped[uuid.UUID]:
     return mapped_column(
         PgUUID(as_uuid=True),
@@ -636,7 +649,8 @@ class ChatThread(Base, Timestamps, SoftDelete):
 
     # chat_thread and chat_branch reference each other, so this FK is added
     # after both tables exist (`use_alter`). Composite on (id, org_id) like
-    # every other FK here: see the note on ChatBranch.
+    # every other FK here: see `_org_target`.
+    current_branch_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
 
     # The compaction fold. Transcript-adjacent (it REPLACES the messages behind
     # the cut in the prompt), so it belongs with the transcript.
@@ -708,6 +722,22 @@ class ChatBranch(Base, Timestamps, SoftDelete):
     __table_args__ = (
         CheckConstraint("parent_branch_id IS NULL OR parent_branch_id <> id",
                         name="ck_chat_branch_not_own_parent"),
+        _org_target("chat_branch"),
+        ForeignKeyConstraint(
+            ["thread_id", "org_id"], ["chat_thread.id", "chat_thread.org_id"],
+            name="chat_branch_thread_id_org_fkey", ondelete="CASCADE"),
+        ForeignKeyConstraint(
+            ["parent_branch_id", "org_id"], ["chat_branch.id", "chat_branch.org_id"],
+            name="chat_branch_parent_branch_id_org_fkey", ondelete="SET NULL"),
+        # Added after chat_message exists.
+        ForeignKeyConstraint(
+            ["fork_message_id", "org_id"], ["chat_message.id", "chat_message.org_id"],
+            name="chat_branch_fork_message_id_org_fkey", ondelete="SET NULL",
+            use_alter=True),
+        ForeignKeyConstraint(
+            ["head_message_id", "org_id"], ["chat_message.id", "chat_message.org_id"],
+            name="chat_branch_head_message_id_org_fkey", ondelete="SET NULL",
+            use_alter=True),
         Index("uq_chat_branch_ordinal", "thread_id", "ordinal", unique=True,
               postgresql_where=_ALIVE),
         Index("ix_chat_branch_thread", "org_id", "thread_id", "created_at",
@@ -729,9 +759,7 @@ class ChatTurn(Base, Timestamps):
 
     id: Mapped[uuid.UUID] = _pk()
     org_id: Mapped[uuid.UUID] = _org_fk()
-    thread_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("chat_thread.id", ondelete="CASCADE"),
-        nullable=False)
+    thread_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
     # The uuid the streaming layer already mints and puts on the wire.
     run_id: Mapped[str] = mapped_column(String(64), nullable=False)
 
@@ -748,6 +776,10 @@ class ChatTurn(Base, Timestamps):
 
     __table_args__ = (
         CheckConstraint(_one_of("status", TURN_STATUSES), name="ck_chat_turn_status"),
+        _org_target("chat_turn"),
+        ForeignKeyConstraint(
+            ["thread_id", "org_id"], ["chat_thread.id", "chat_thread.org_id"],
+            name="chat_turn_thread_id_org_fkey", ondelete="CASCADE"),
         Index("uq_chat_turn_run", "run_id", unique=True),
         Index("ix_chat_turn_thread", "org_id", "thread_id", "started_at"),
     )
@@ -766,16 +798,12 @@ class ChatMessage(Base, Timestamps, SoftDelete):
 
     id: Mapped[uuid.UUID] = _pk()
     org_id: Mapped[uuid.UUID] = _org_fk()
-    thread_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("chat_thread.id", ondelete="CASCADE"),
-        nullable=False)
+    thread_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
     # CASCADE, not SET NULL: severing a parent would orphan its whole subtree
     # into an unreachable, unlistable state. A branch is abandoned by moving a
     # ref, never by deleting rows, so this fires only on a real hard delete.
-    parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("chat_message.id", ondelete="CASCADE"))
-    turn_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("chat_turn.id", ondelete="SET NULL"))
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
 
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False,
@@ -822,6 +850,16 @@ class ChatMessage(Base, Timestamps, SoftDelete):
             name="ck_chat_message_boundary_mode"),
         CheckConstraint("parent_id IS NULL OR parent_id <> id",
                         name="ck_chat_message_not_own_parent"),
+        _org_target("chat_message"),
+        ForeignKeyConstraint(
+            ["thread_id", "org_id"], ["chat_thread.id", "chat_thread.org_id"],
+            name="chat_message_thread_id_org_fkey", ondelete="CASCADE"),
+        ForeignKeyConstraint(
+            ["parent_id", "org_id"], ["chat_message.id", "chat_message.org_id"],
+            name="chat_message_parent_id_org_fkey", ondelete="CASCADE"),
+        ForeignKeyConstraint(
+            ["turn_id", "org_id"], ["chat_turn.id", "chat_turn.org_id"],
+            name="chat_message_turn_id_org_fkey", ondelete="SET NULL"),
         Index("uq_chat_message_seq", "thread_id", "seq", unique=True),
         Index("uq_chat_message_client", "thread_id", "client_id", unique=True,
               postgresql_where=text("client_id IS NOT NULL AND deleted_at IS NULL")),

@@ -1,8 +1,8 @@
-"""chat transcripts become a branchable tree in postgres
+"""tmp chat
 
-Revision ID: 6f2881beafc9
+Revision ID: 0a866a255c89
 Revises: 402e96cbbb79
-Create Date: 2026-08-13 18:50:06.001247
+Create Date: 2026-08-13 18:51:59.015844
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '6f2881beafc9'
+revision: str = '0a866a255c89'
 down_revision: Union[str, Sequence[str], None] = '402e96cbbb79'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -51,10 +51,11 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
     sa.CheckConstraint("mode IN ('orchestrated', 'direct')", name='ck_chat_thread_mode'),
-    sa.ForeignKeyConstraint(['current_branch_id'], ['chat_branch.id'], name='chat_thread_current_branch_id_fkey', ondelete='SET NULL', use_alter=True),
+    sa.ForeignKeyConstraint(['current_branch_id', 'org_id'], ['chat_branch.id', 'chat_branch.org_id'], name='chat_thread_current_branch_id_org_fkey', ondelete='SET NULL', use_alter=True),
     sa.ForeignKeyConstraint(['org_id'], ['organization.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['owner_user_id'], ['user_account.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('id', 'org_id', name='uq_chat_thread_id_org')
     )
     op.create_index('ix_chat_thread_owner', 'chat_thread', ['org_id', 'owner_user_id', 'updated_at'], unique=False, postgresql_where=sa.text('deleted_at IS NULL'))
     op.create_index('ix_chat_thread_scope', 'chat_thread', ['org_id', 'scope', 'updated_at'], unique=False, postgresql_where=sa.text('deleted_at IS NULL'))
@@ -72,12 +73,13 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('deleted_at', sa.DateTime(timezone=True), nullable=True),
     sa.CheckConstraint('parent_branch_id IS NULL OR parent_branch_id <> id', name='ck_chat_branch_not_own_parent'),
-    sa.ForeignKeyConstraint(['fork_message_id'], ['chat_message.id'], name='chat_branch_fork_message_id_fkey', ondelete='SET NULL', use_alter=True),
-    sa.ForeignKeyConstraint(['head_message_id'], ['chat_message.id'], name='chat_branch_head_message_id_fkey', ondelete='SET NULL', use_alter=True),
+    sa.ForeignKeyConstraint(['fork_message_id', 'org_id'], ['chat_message.id', 'chat_message.org_id'], name='chat_branch_fork_message_id_org_fkey', ondelete='SET NULL', use_alter=True),
+    sa.ForeignKeyConstraint(['head_message_id', 'org_id'], ['chat_message.id', 'chat_message.org_id'], name='chat_branch_head_message_id_org_fkey', ondelete='SET NULL', use_alter=True),
     sa.ForeignKeyConstraint(['org_id'], ['organization.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['parent_branch_id'], ['chat_branch.id'], ondelete='SET NULL'),
-    sa.ForeignKeyConstraint(['thread_id'], ['chat_thread.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
+    sa.ForeignKeyConstraint(['parent_branch_id', 'org_id'], ['chat_branch.id', 'chat_branch.org_id'], name='chat_branch_parent_branch_id_org_fkey', ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['thread_id', 'org_id'], ['chat_thread.id', 'chat_thread.org_id'], name='chat_branch_thread_id_org_fkey', ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('id', 'org_id', name='uq_chat_branch_id_org')
     )
     op.create_index('ix_chat_branch_thread', 'chat_branch', ['org_id', 'thread_id', 'created_at'], unique=False, postgresql_where=sa.text('deleted_at IS NULL'))
     op.create_index('uq_chat_branch_ordinal', 'chat_branch', ['thread_id', 'ordinal'], unique=True, postgresql_where=sa.text('deleted_at IS NULL'))
@@ -98,8 +100,9 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.CheckConstraint("status IN ('running', 'finished', 'lost')", name='ck_chat_turn_status'),
     sa.ForeignKeyConstraint(['org_id'], ['organization.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['thread_id'], ['chat_thread.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
+    sa.ForeignKeyConstraint(['thread_id', 'org_id'], ['chat_thread.id', 'chat_thread.org_id'], name='chat_turn_thread_id_org_fkey', ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('id', 'org_id', name='uq_chat_turn_id_org')
     )
     op.create_index('ix_chat_turn_thread', 'chat_turn', ['org_id', 'thread_id', 'started_at'], unique=False)
     op.create_index('uq_chat_turn_run', 'chat_turn', ['run_id'], unique=True)
@@ -128,10 +131,11 @@ def upgrade() -> None:
     sa.CheckConstraint("role IN ('user', 'assistant')", name='ck_chat_message_role'),
     sa.CheckConstraint('parent_id IS NULL OR parent_id <> id', name='ck_chat_message_not_own_parent'),
     sa.ForeignKeyConstraint(['org_id'], ['organization.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['parent_id'], ['chat_message.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['thread_id'], ['chat_thread.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['turn_id'], ['chat_turn.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id')
+    sa.ForeignKeyConstraint(['parent_id', 'org_id'], ['chat_message.id', 'chat_message.org_id'], name='chat_message_parent_id_org_fkey', ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['thread_id', 'org_id'], ['chat_thread.id', 'chat_thread.org_id'], name='chat_message_thread_id_org_fkey', ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['turn_id', 'org_id'], ['chat_turn.id', 'chat_turn.org_id'], name='chat_message_turn_id_org_fkey', ondelete='SET NULL'),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('id', 'org_id', name='uq_chat_message_id_org')
     )
     op.create_index('ix_chat_message_parent', 'chat_message', ['parent_id'], unique=False, postgresql_where=sa.text('deleted_at IS NULL'))
     op.create_index('ix_chat_message_thread', 'chat_message', ['org_id', 'thread_id', 'seq'], unique=False, postgresql_where=sa.text('deleted_at IS NULL'))
@@ -140,30 +144,30 @@ def upgrade() -> None:
     op.create_index('uq_chat_message_seq', 'chat_message', ['thread_id', 'seq'], unique=True)
     op.drop_constraint(op.f('uq_agent_id_org'), 'agent', type_='unique')
     op.drop_constraint(op.f('uq_comment_id_org'), 'comment', type_='unique')
-    op.drop_constraint(op.f('comment_parent_id_org_fkey'), 'comment', type_='foreignkey')
-    op.drop_constraint(op.f('comment_ticket_id_org_fkey'), 'comment', type_='foreignkey')
     op.drop_constraint(op.f('comment_author_agent_id_org_fkey'), 'comment', type_='foreignkey')
+    op.drop_constraint(op.f('comment_ticket_id_org_fkey'), 'comment', type_='foreignkey')
+    op.drop_constraint(op.f('comment_parent_id_org_fkey'), 'comment', type_='foreignkey')
+    op.create_foreign_key(None, 'comment', 'comment', ['parent_id'], ['id'], ondelete='CASCADE')
     op.create_foreign_key(None, 'comment', 'agent', ['author_agent_id'], ['id'], ondelete='SET NULL')
     op.create_foreign_key(None, 'comment', 'ticket', ['ticket_id'], ['id'], ondelete='CASCADE')
-    op.create_foreign_key(None, 'comment', 'comment', ['parent_id'], ['id'], ondelete='CASCADE')
     op.drop_constraint(op.f('ck_comment_actor_is_consistent'), 'comment', type_='check')
     op.drop_constraint(op.f('uq_label_id_org'), 'label', type_='unique')
     op.drop_constraint(op.f('label_project_id_org_fkey'), 'label', type_='foreignkey')
     op.create_foreign_key(None, 'label', 'project', ['project_id'], ['id'], ondelete='CASCADE')
     op.drop_constraint(op.f('uq_project_id_org'), 'project', type_='unique')
-    op.drop_constraint(op.f('run_agent_id_org_fkey'), 'run', type_='foreignkey')
     op.drop_constraint(op.f('run_ticket_id_org_fkey'), 'run', type_='foreignkey')
+    op.drop_constraint(op.f('run_agent_id_org_fkey'), 'run', type_='foreignkey')
     op.create_foreign_key(None, 'run', 'ticket', ['ticket_id'], ['id'], ondelete='CASCADE')
     op.create_foreign_key(None, 'run', 'agent', ['agent_id'], ['id'], ondelete='SET NULL')
     op.drop_constraint(op.f('uq_ticket_id_org'), 'ticket', type_='unique')
-    op.drop_constraint(op.f('ticket_parent_id_org_fkey'), 'ticket', type_='foreignkey')
     op.drop_constraint(op.f('ticket_project_id_org_fkey'), 'ticket', type_='foreignkey')
+    op.drop_constraint(op.f('ticket_parent_id_org_fkey'), 'ticket', type_='foreignkey')
     op.drop_constraint(op.f('ticket_type_id_org_fkey'), 'ticket', type_='foreignkey')
     op.drop_constraint(op.f('ticket_state_id_org_fkey'), 'ticket', type_='foreignkey')
     op.create_foreign_key(None, 'ticket', 'workflow_state', ['state_id'], ['id'], ondelete='RESTRICT')
+    op.create_foreign_key(None, 'ticket', 'ticket', ['parent_id'], ['id'], ondelete='SET NULL')
     op.create_foreign_key(None, 'ticket', 'project', ['project_id'], ['id'], ondelete='CASCADE')
     op.create_foreign_key(None, 'ticket', 'ticket_type', ['type_id'], ['id'], ondelete='SET NULL')
-    op.create_foreign_key(None, 'ticket', 'ticket', ['parent_id'], ['id'], ondelete='SET NULL')
     op.drop_constraint(op.f('ticket_event_ticket_id_org_fkey'), 'ticket_event', type_='foreignkey')
     op.drop_constraint(op.f('ticket_event_actor_agent_id_org_fkey'), 'ticket_event', type_='foreignkey')
     op.drop_constraint(op.f('ticket_event_comment_id_org_fkey'), 'ticket_event', type_='foreignkey')
@@ -173,10 +177,10 @@ def upgrade() -> None:
     op.drop_constraint(op.f('ck_ticket_event_actor_is_consistent'), 'ticket_event', type_='check')
     op.drop_constraint(op.f('ticket_label_ticket_id_org_fkey'), 'ticket_label', type_='foreignkey')
     op.drop_constraint(op.f('ticket_label_label_id_org_fkey'), 'ticket_label', type_='foreignkey')
-    op.create_foreign_key(None, 'ticket_label', 'label', ['label_id'], ['id'], ondelete='CASCADE')
     op.create_foreign_key(None, 'ticket_label', 'ticket', ['ticket_id'], ['id'], ondelete='CASCADE')
-    op.drop_constraint(op.f('ticket_link_from_ticket_id_org_fkey'), 'ticket_link', type_='foreignkey')
+    op.create_foreign_key(None, 'ticket_label', 'label', ['label_id'], ['id'], ondelete='CASCADE')
     op.drop_constraint(op.f('ticket_link_to_ticket_id_org_fkey'), 'ticket_link', type_='foreignkey')
+    op.drop_constraint(op.f('ticket_link_from_ticket_id_org_fkey'), 'ticket_link', type_='foreignkey')
     op.create_foreign_key(None, 'ticket_link', 'ticket', ['from_ticket_id'], ['id'], ondelete='CASCADE')
     op.create_foreign_key(None, 'ticket_link', 'ticket', ['to_ticket_id'], ['id'], ondelete='CASCADE')
     op.drop_constraint(op.f('uq_ticket_type_id_org'), 'ticket_type', type_='unique')
@@ -203,8 +207,8 @@ def downgrade() -> None:
     op.create_unique_constraint(op.f('uq_ticket_type_id_org'), 'ticket_type', ['id', 'org_id'], postgresql_nulls_not_distinct=False)
     op.drop_constraint(None, 'ticket_link', type_='foreignkey')
     op.drop_constraint(None, 'ticket_link', type_='foreignkey')
-    op.create_foreign_key(op.f('ticket_link_to_ticket_id_org_fkey'), 'ticket_link', 'ticket', ['to_ticket_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
     op.create_foreign_key(op.f('ticket_link_from_ticket_id_org_fkey'), 'ticket_link', 'ticket', ['from_ticket_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
+    op.create_foreign_key(op.f('ticket_link_to_ticket_id_org_fkey'), 'ticket_link', 'ticket', ['to_ticket_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
     op.drop_constraint(None, 'ticket_label', type_='foreignkey')
     op.drop_constraint(None, 'ticket_label', type_='foreignkey')
     op.create_foreign_key(op.f('ticket_label_label_id_org_fkey'), 'ticket_label', 'label', ['label_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
@@ -222,13 +226,13 @@ def downgrade() -> None:
     op.drop_constraint(None, 'ticket', type_='foreignkey')
     op.create_foreign_key(op.f('ticket_state_id_org_fkey'), 'ticket', 'workflow_state', ['state_id', 'org_id'], ['id', 'org_id'], ondelete='RESTRICT')
     op.create_foreign_key(op.f('ticket_type_id_org_fkey'), 'ticket', 'ticket_type', ['type_id', 'org_id'], ['id', 'org_id'], ondelete='SET NULL')
-    op.create_foreign_key(op.f('ticket_project_id_org_fkey'), 'ticket', 'project', ['project_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
     op.create_foreign_key(op.f('ticket_parent_id_org_fkey'), 'ticket', 'ticket', ['parent_id', 'org_id'], ['id', 'org_id'], ondelete='SET NULL')
+    op.create_foreign_key(op.f('ticket_project_id_org_fkey'), 'ticket', 'project', ['project_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
     op.create_unique_constraint(op.f('uq_ticket_id_org'), 'ticket', ['id', 'org_id'], postgresql_nulls_not_distinct=False)
     op.drop_constraint(None, 'run', type_='foreignkey')
     op.drop_constraint(None, 'run', type_='foreignkey')
-    op.create_foreign_key(op.f('run_ticket_id_org_fkey'), 'run', 'ticket', ['ticket_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
     op.create_foreign_key(op.f('run_agent_id_org_fkey'), 'run', 'agent', ['agent_id', 'org_id'], ['id', 'org_id'], ondelete='SET NULL')
+    op.create_foreign_key(op.f('run_ticket_id_org_fkey'), 'run', 'ticket', ['ticket_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
     op.create_unique_constraint(op.f('uq_project_id_org'), 'project', ['id', 'org_id'], postgresql_nulls_not_distinct=False)
     op.drop_constraint(None, 'label', type_='foreignkey')
     op.create_foreign_key(op.f('label_project_id_org_fkey'), 'label', 'project', ['project_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
@@ -237,9 +241,9 @@ def downgrade() -> None:
     op.drop_constraint(None, 'comment', type_='foreignkey')
     op.drop_constraint(None, 'comment', type_='foreignkey')
     op.drop_constraint(None, 'comment', type_='foreignkey')
-    op.create_foreign_key(op.f('comment_author_agent_id_org_fkey'), 'comment', 'agent', ['author_agent_id', 'org_id'], ['id', 'org_id'], ondelete='SET NULL')
-    op.create_foreign_key(op.f('comment_ticket_id_org_fkey'), 'comment', 'ticket', ['ticket_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
     op.create_foreign_key(op.f('comment_parent_id_org_fkey'), 'comment', 'comment', ['parent_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
+    op.create_foreign_key(op.f('comment_ticket_id_org_fkey'), 'comment', 'ticket', ['ticket_id', 'org_id'], ['id', 'org_id'], ondelete='CASCADE')
+    op.create_foreign_key(op.f('comment_author_agent_id_org_fkey'), 'comment', 'agent', ['author_agent_id', 'org_id'], ['id', 'org_id'], ondelete='SET NULL')
     op.create_unique_constraint(op.f('uq_comment_id_org'), 'comment', ['id', 'org_id'], postgresql_nulls_not_distinct=False)
     op.create_unique_constraint(op.f('uq_agent_id_org'), 'agent', ['id', 'org_id'], postgresql_nulls_not_distinct=False)
     op.drop_index('uq_chat_message_seq', table_name='chat_message')

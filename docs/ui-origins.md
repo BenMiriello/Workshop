@@ -10,8 +10,16 @@ land — twice now that step was skipped and the wrong thing was "fixed".
 | `workshop.<your-domain>` | cloudflared → `127.0.0.1:8002` | `frontend/dist`, the built bundle | **Yes**, but automatic — rebuilt on every commit that touches `frontend/` (below); by hand: `scripts/build_workshop_public.sh` |
 | `https://<host>.<tailnet>:8447` | `127.0.0.1:8012` | **a different user's tree** (`$HOME/<other-tenant>/…`) | not ours |
 
-**`:8443` is the operator's usual UI.** `:8000/` (tailnet `:8446`) is the
-backend and redirects there, so it is not a third UI, just a bounce.
+**The operator uses the PUBLIC origin, the built one.** Settled 2026-08-11, and
+it reverses what this file used to say (it named the `:8443` tailnet dev origin
+as his usual UI). The practical consequence is the whole reason the distinction
+matters: a frontend edit is live on `:8443` the moment you save it and is
+invisible to the operator until the bundle is rebuilt. Run
+`bash scripts/apply.sh`; see [`applying-changes.md`](applying-changes.md), which
+is the current source for anything about applying a change.
+
+`:8000/` (tailnet `:8446`) is the backend and redirects to the SPA origin, so it
+is not a third UI, just a bounce.
 
 ## Why there are two of ours, on purpose
 
