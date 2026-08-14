@@ -33,7 +33,11 @@ export default function StopButton({ label, onStop }: {
       aria-label={label}
       title={label}
     >
-      <Square size={12} strokeWidth={3} aria-hidden />
+      {/* 11px against an ~18px circle. lucide draws Square at 0.875 of the
+          nominal size once its stroke is counted, so the mark is ~9.6px wide and
+          its diagonal is ~13.6px inside a 16.2px inner circle: full enough to
+          read as a stop, with the corners clear of the ring. */}
+      <Square size={11} strokeWidth={3} aria-hidden />
     </button>
   );
 }

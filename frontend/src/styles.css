@@ -1625,14 +1625,25 @@ a.chat-receipt--link:hover > svg { color: var(--fg); }
      one-cell grid centres the only child on both axes with nothing to argue
      with, and the target now comes from the button being bigger. */
   display: grid; place-items: center;
-  line-height: 1;
-  /* 1.75rem (28px). It started at 1.15rem to match the copy and branch icons and
-     has been asked up twice: those two are chrome on a message you are reading,
-     this is the only PRESSABLE thing on the row and it ends the work in front of
-     you. It is now the tallest thing in the working line (a 13px line at 1.4 is
-     ~18.2px), so it sets that row's height. That cost was offered explicitly.
-     Operator, 2026-08-14, twice. */
-  width: 1.75rem; height: 1.75rem; padding: 0;
+  /* EXACTLY ONE LINE BOX, which is the largest it can be without making its row
+     any taller than the text already makes it. That is the operator's rule after
+     three passes on this size (1.15rem, 1.4rem, 1.75rem: the last overshot), and
+     `lh` states it directly instead of hard-coding a number that is only correct
+     for one row. It is a circle, so the width takes it too.
+
+     `font: inherit` is what makes that work: a button does not inherit type from
+     its parent, and `lh` resolves against the ELEMENT's own line-height. Without
+     it this would measure the UA's 13.33px default rather than the row it sits
+     in. It also stops `line-height: 1` from being set here, which would have
+     made `1lh` mean the font size instead of the line box.
+
+     The em fallback is for an engine without `lh`. It is exact in the working
+     line (1.4 line-height) and slightly under in the fold line (1.55), which
+     errs the safe way: smaller never grows a row. */
+  font: inherit;
+  width: 1.4em; height: 1.4em;
+  width: 1lh; height: 1lh;
+  padding: 0;
   border-radius: 50%;
   background: transparent; color: var(--muted);
   border: 1px solid var(--border);
