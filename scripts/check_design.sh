@@ -265,12 +265,42 @@ PYEOF
 design_status=$?
 
 # --- published-bundle freshness ---------------------------------------------
-# Not a design rule and never fatal: a WARNING when what an origin SERVES is not
-# what the source SAYS (docs/ui-origins.md). Delegated to ui_sync.sh rather than
-# reimplemented here — a second definition of "stale" is exactly how a checker
-# and the thing it checks drift apart. This first read mtimes, which meant every
-# `git checkout` cried stale and every `touch` hid a real one.
-bash "$WORKSHOP/scripts/ui_sync.sh" --warn
+# What an origin SERVES vs what the source SAYS (docs/ui-origins.md). Delegated
+# to ui_sync.sh rather than reimplemented here — a second definition of "stale"
+# is exactly how a checker and the thing it checks drift apart. This first read
+# mtimes, which meant every `git checkout` cried stale and every `touch` hid a
+# real one.
+#
+# FATAL, but only when this diff actually touched the bundle's inputs.
+#
+# It was advisory, and advisory was not enough: the operator's origin serves the
+# BUILT bundle, so a UI change that is correct in source and never built is
+# invisible to the agent and total to him. On 2026-08-09 a whole session of width
+# fixes shipped that way and he said three times it was not done, while this
+# exact warning printed after every commit and went unread. A warning that is
+# always survivable is one that is eventually always survived.
+#
+# Scoped to the diff so it can never block unrelated work: a backend-only or
+# docs-only change is not answerable for a bundle someone else left stale. Both
+# path prefixes matter — packages/ui compiles INTO the bundle via vite's
+# `workshop-source` condition, so a kit edit is a UI change.
+ui_inputs_touched=0
+if [ "$MODE" = "added" ]; then
+  if git -C "$WORKSHOP" diff --name-only "$REV" 2>/dev/null \
+       | grep -qE '^(frontend|packages/ui)/'; then
+    ui_inputs_touched=1
+  fi
+fi
+if [ "$ui_inputs_touched" = 1 ]; then
+  if ! bash "$WORKSHOP/scripts/ui_sync.sh" --strict; then
+    echo "check_design: this change touches the UI but the built bundle is STALE."
+    echo "              the operator views the BUILT origin, so it does not have this change."
+    echo "              run: bash scripts/apply.sh"
+    design_status=1
+  fi
+else
+  bash "$WORKSHOP/scripts/ui_sync.sh" --warn
+fi
 
 # The automation only helps if it is switched on, and core.hooksPath is local
 # config that no clone or fresh checkout inherits. Say so rather than let a tree

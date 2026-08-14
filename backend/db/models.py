@@ -677,9 +677,11 @@ class ChatThread(Base, Timestamps, SoftDelete):
     __table_args__ = (
         CheckConstraint(_one_of("mode", CHAT_MODES), name="ck_chat_thread_mode"),
         _org_target("chat_thread"),
+        # The current branch must be a branch OF THIS THREAD. `id` on the left
+        # is the thread's own id, matched against chat_branch.thread_id.
         ForeignKeyConstraint(
-            ["current_branch_id", "org_id"], ["chat_branch.id", "chat_branch.org_id"],
-            name="chat_thread_current_branch_id_org_fkey", ondelete="SET NULL",
+            ["current_branch_id", "id"], ["chat_branch.id", "chat_branch.thread_id"],
+            name="chat_thread_current_branch_fkey", ondelete="SET NULL",
             use_alter=True),
         Index("uq_chat_thread_external", "external_id", unique=True,
               postgresql_where=text("external_id IS NOT NULL AND deleted_at IS NULL")),
@@ -722,21 +724,24 @@ class ChatBranch(Base, Timestamps, SoftDelete):
     __table_args__ = (
         CheckConstraint("parent_branch_id IS NULL OR parent_branch_id <> id",
                         name="ck_chat_branch_not_own_parent"),
-        _org_target("chat_branch"),
+        _thread_target("chat_branch"),
         ForeignKeyConstraint(
             ["thread_id", "org_id"], ["chat_thread.id", "chat_thread.org_id"],
-            name="chat_branch_thread_id_org_fkey", ondelete="CASCADE"),
+            name="chat_branch_thread_fkey", ondelete="CASCADE"),
         ForeignKeyConstraint(
-            ["parent_branch_id", "org_id"], ["chat_branch.id", "chat_branch.org_id"],
-            name="chat_branch_parent_branch_id_org_fkey", ondelete="SET NULL"),
-        # Added after chat_message exists.
+            ["parent_branch_id", "thread_id"],
+            ["chat_branch.id", "chat_branch.thread_id"],
+            name="chat_branch_parent_fkey", ondelete="SET NULL"),
+        # Both message refs must name a message in THIS thread.
         ForeignKeyConstraint(
-            ["fork_message_id", "org_id"], ["chat_message.id", "chat_message.org_id"],
-            name="chat_branch_fork_message_id_org_fkey", ondelete="SET NULL",
+            ["fork_message_id", "thread_id"],
+            ["chat_message.id", "chat_message.thread_id"],
+            name="chat_branch_fork_message_fkey", ondelete="SET NULL",
             use_alter=True),
         ForeignKeyConstraint(
-            ["head_message_id", "org_id"], ["chat_message.id", "chat_message.org_id"],
-            name="chat_branch_head_message_id_org_fkey", ondelete="SET NULL",
+            ["head_message_id", "thread_id"],
+            ["chat_message.id", "chat_message.thread_id"],
+            name="chat_branch_head_message_fkey", ondelete="SET NULL",
             use_alter=True),
         Index("uq_chat_branch_ordinal", "thread_id", "ordinal", unique=True,
               postgresql_where=_ALIVE),
@@ -776,10 +781,10 @@ class ChatTurn(Base, Timestamps):
 
     __table_args__ = (
         CheckConstraint(_one_of("status", TURN_STATUSES), name="ck_chat_turn_status"),
-        _org_target("chat_turn"),
+        _thread_target("chat_turn"),
         ForeignKeyConstraint(
             ["thread_id", "org_id"], ["chat_thread.id", "chat_thread.org_id"],
-            name="chat_turn_thread_id_org_fkey", ondelete="CASCADE"),
+            name="chat_turn_thread_fkey", ondelete="CASCADE"),
         Index("uq_chat_turn_run", "run_id", unique=True),
         Index("ix_chat_turn_thread", "org_id", "thread_id", "started_at"),
     )
@@ -850,16 +855,17 @@ class ChatMessage(Base, Timestamps, SoftDelete):
             name="ck_chat_message_boundary_mode"),
         CheckConstraint("parent_id IS NULL OR parent_id <> id",
                         name="ck_chat_message_not_own_parent"),
-        _org_target("chat_message"),
+        _thread_target("chat_message"),
         ForeignKeyConstraint(
             ["thread_id", "org_id"], ["chat_thread.id", "chat_thread.org_id"],
-            name="chat_message_thread_id_org_fkey", ondelete="CASCADE"),
+            name="chat_message_thread_fkey", ondelete="CASCADE"),
+        # A parent in another thread would silently corrupt every path walk.
         ForeignKeyConstraint(
-            ["parent_id", "org_id"], ["chat_message.id", "chat_message.org_id"],
-            name="chat_message_parent_id_org_fkey", ondelete="CASCADE"),
+            ["parent_id", "thread_id"], ["chat_message.id", "chat_message.thread_id"],
+            name="chat_message_parent_fkey", ondelete="CASCADE"),
         ForeignKeyConstraint(
-            ["turn_id", "org_id"], ["chat_turn.id", "chat_turn.org_id"],
-            name="chat_message_turn_id_org_fkey", ondelete="SET NULL"),
+            ["turn_id", "thread_id"], ["chat_turn.id", "chat_turn.thread_id"],
+            name="chat_message_turn_fkey", ondelete="SET NULL"),
         Index("uq_chat_message_seq", "thread_id", "seq", unique=True),
         Index("uq_chat_message_client", "thread_id", "client_id", unique=True,
               postgresql_where=text("client_id IS NOT NULL AND deleted_at IS NULL")),
