@@ -261,7 +261,17 @@ right; they are about different stages.
 1. **One fact, one note.** No monolithic accumulators. Each write is its own file
    with its own id, so it can be superseded, corrected, promoted or deleted
    independently. `chat-distilled.md` and `consolidated-memory.md` violate this
-   and are retired in Phase 0.
+   and are migrated in Phase 0.
+
+   Measured before writing this rule: the three accumulators hold **98 lines, of
+   which 3 are noise** (`- (nothing)`, `- (no durable facts)`). The rest is
+   genuinely useful. So this is a migration, not a deletion, and the earlier
+   framing of these files as pure noise was wrong.
+
+   The real harm they do is retrieval, not injection: a 1,200-character chunk of
+   unrelated one-liners embeds to a meaningless centroid, so semantic search over
+   them returns the same blob for every query and none of it can be superseded,
+   attributed or corrected in place.
 2. **Every note carries provenance**: author (already at `split_author:546`),
    originating chat ref, turn, timestamp. Requested explicitly on 2026-08-12:
    "some retention of the chat that it came from or the time and date ... so that
@@ -271,8 +281,26 @@ right; they are about different stages.
    the chat still belongs in `docs/decisions/` as an ADR; the note points at it.
 4. **Merge on write.** Same id means update in place; history lives in git for
    committed scopes.
-5. **The injected set is titles and hooks only, capped, and it shrinks.** Bodies
-   arrive through retrieval. ADR 0011 restated; the accumulators broke it.
+5. **The injected index is a ranked digest, not a listing.** This corrects a
+   scaling defect in the current store and a contradiction in the first draft of
+   this doc.
+
+   `index_block` (`knowledge.py:501`) lists **every** note in the scope, so the
+   injected block grows linearly with the corpus and `enforce_index_cap(200)` is
+   a band-aid on that growth rather than a design. Splitting the 98 accumulated
+   lines into 98 notes under that rule would make the prompt strictly worse than
+   the accumulator it replaced, which is the trap this rule exists to avoid.
+
+   So the ambient block becomes a capped, ranked digest: **pinned notes first,
+   then recency, then type** (`preference` and `decision` outrank `fact` and
+   `reference`), to a token budget rather than a line count. Everything past the
+   cap is reachable by search and by search only.
+
+   **The block must state what it omitted** ("42 more notes in this scope; search
+   to reach them"). A truncated list that presents itself as complete is worse
+   than no list, because the model stops looking.
+
+   Bodies never appear in the ambient block at all. ADR 0011 restated.
 6. **Decay and eviction are deferred.** At 21 notes they are theory. Revisit at a
    measured threshold, not on a schedule.
 
@@ -508,11 +536,15 @@ search reaches by default.
 
 Each phase is one agent, reviewed and committed before the next starts.
 
-**Phase 0 — delete first.** Retire `chat-distilled` and `consolidated-memory` as
-accumulators; migrate anything still true into individual notes with provenance;
-stop the auto-writers that append `(nothing)` lines; confirm no injected block
-carries a body. No new features. This is the "draw down complexity" instruction,
-and doing it first is what stops the new model inheriting the old mess.
+**Phase 0 — migrate the accumulators, and cap the ambient block.** Split
+`chat-distilled` and `consolidated-memory` (98 lines across three scopes) into
+individual typed notes with provenance; drop the 3 noise lines; stop the
+auto-writer from appending to a shared file. **In the same phase**, make
+`index_block` a ranked, token-capped digest that declares its own remainder (§5.5)
+— because splitting 98 lines into 98 notes under today's list-everything index
+would make the prompt worse, these two cannot ship separately. No new features
+otherwise. This is the "draw down complexity" instruction, and doing it first is
+what stops the new model inheriting the old mess.
 
 **Phase 1 — the scope tree.** `services/scope_tree.py` per §7.1, the stored
 parent edge, `reach`/`govern`, `read_layers` and `_can_recall` reimplemented on
