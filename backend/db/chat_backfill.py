@@ -354,29 +354,53 @@ def _thread_fields(meta: dict) -> dict:
     }
 
 
+def thread_by_external(s, external: str):
+    return s.scalar(text(
+        "SELECT id FROM chat_thread WHERE external_id = :e "
+        "AND deleted_at IS NULL"), {"e": external})
+
+
 def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
-    """One conversation, files to rows. Skips a thread already loaded."""
+    """One conversation, files to rows. Tops up a thread already loaded."""
     from db import chat_repo
     from db.ids import uuid7
 
     external = thread_dir.name
-    if s.scalar(text("SELECT 1 FROM chat_thread WHERE external_id = :e"),
-                {"e": external}):
-        stats["threads_skipped"] += 1
-        return
-
     meta = _read_json(thread_dir / META_NAME)
     events = _read_events(thread_dir)
 
+    # RE-RUNNABLE MEANS TOPPING UP, NOT SKIPPING. An existing thread keeps its
+    # rows and gains only the events the tree has not seen, which is what makes
+    # this the repair for a mirror-write that failed or for the window between
+    # this script running and the mirror going live. It used to return here, and
+    # "idempotent" then meant "does nothing", which is not the same thing.
     fields = _thread_fields(meta)
-    made = chat_repo.create_thread(s, org_id, user_id, external_id=external,
-                                   **fields)
-    tid = made["id"]
-    stats["threads"] += 1
+    seen: set[str] = set()
+    existing = thread_by_external(s, external)
+    if existing is not None:
+        tid = existing
+        stats["threads_skipped"] += 1
+        seen = {r[0] for r in s.execute(text(
+            "SELECT external_id FROM chat_message WHERE thread_id = :t "
+            "AND external_id IS NOT NULL"), {"t": tid}).all()}
+        # ONLY THE EVENT KINDS THAT BECOME A ROW COUNT AS NEW. `run` and `title`
+        # never carry a chat_message id, so testing against every event kind
+        # made a thread with nothing new look topped up on every single run
+        # (measured: 16 of 63 threads, forever). The event list itself is NOT
+        # filtered, because the run markers are still needed to build the turns.
+        if not any(ev.get("kind") in ("message", "boundary", "scope")
+                   and ev.get("id") not in seen for ev in events):
+            return
+        stats["topped_up"] += 1
+    else:
+        made = chat_repo.create_thread(s, org_id, user_id, external_id=external,
+                                       **fields)
+        tid = made["id"]
+        stats["threads"] += 1
 
     state = {k: meta[k] for k in ("turn_marks", "card_states", "ticket_drafts",
                                  "agent_sessions") if meta.get(k)}
-    if state:
+    if state and existing is None:
         s.execute(text("UPDATE chat_thread SET state = :st WHERE id = :t"),
                   {"st": chat_repo._json(state), "t": tid})
 
@@ -421,18 +445,24 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
 
     org = s.scalar(text("SELECT org_id FROM chat_thread WHERE id = :t"), {"t": tid})
     for run_id, row in turns.items():
-        # run_id is globally unique by index; a run replayed under two threads
-        # would be a data fault, so let it raise rather than silently drop.
+        # ON CONFLICT DO NOTHING so a top-up re-reads the whole file without
+        # colliding with the turns it already wrote. `run_id` is globally
+        # unique, so this is an exact "have I seen this run" test.
         s.execute(text(
             "INSERT INTO chat_turn (id, org_id, thread_id, run_id, status, model,"
             " agent_slug, started_at, ended_at, error, timeout, stopped) "
             "VALUES (:id, :org, :t, :run, :status, :model, :agent, :started,"
-            "        :ended, :error, :timeout, :stopped)"),
+            "        :ended, :error, :timeout, :stopped) "
+            "ON CONFLICT (run_id) DO NOTHING"),
             {"id": row["id"], "org": org, "t": tid, "run": run_id,
              "status": row["status"], "model": row.get("model"),
              "agent": row.get("agent"), "started": row.get("started"),
              "ended": row.get("ended"), "error": bool(row.get("error")),
              "timeout": bool(row.get("timeout")), "stopped": row.get("stopped")})
+        # The row id we minted may have lost the race with one already there;
+        # the messages must point at whichever row actually exists.
+        row["id"] = s.scalar(text("SELECT id FROM chat_turn WHERE run_id = :r"),
+                             {"r": run_id})
     stats["turns"] += len(turns)
 
     # --- messages ------------------------------------------------------------
@@ -462,6 +492,10 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
             title_source = ev.get("source") or title_source
             continue
         if kind == "run":
+            continue
+        # Already a row. On a first load `seen` is empty and this never fires;
+        # on a top-up it is what keeps the pass to the genuinely new tail.
+        if ev.get("id") in seen:
             continue
         if kind == "boundary":
             chat_repo.append_message(
@@ -546,7 +580,8 @@ def plan() -> dict:
 def apply() -> dict:
     from db.engine import owner_session, tenant_session
 
-    stats = {"threads": 0, "threads_skipped": 0, "messages": 0, "turns": 0,
+    stats = {"threads": 0, "threads_skipped": 0, "topped_up": 0,
+             "messages": 0, "turns": 0,
              "boundaries": 0, "scopes": 0, "split_replies": 0,
              "legacy_split_replies": 0,
              "split_stretches": 0, "unsplit_replies": 0, "unsplit_messages": 0,

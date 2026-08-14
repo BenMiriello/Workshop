@@ -342,6 +342,104 @@ def test_branching_from_a_foreign_message_is_refused(chat):
             chat_repo.branch_from(s, chat["thread"], foreign["id"])
 
 
+# --- the backfill, and its repair path ---------------------------------------
+
+def _write_thread_dir(root, name, events, meta=None):
+    import json
+    d = root / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "meta.json").write_text(json.dumps(
+        {"id": name, "context_key": "general", "title": "T", **(meta or {})}))
+    (d / "log.jsonl").write_text(
+        "".join(json.dumps(e) + "\n" for e in events))
+    return d
+
+
+def test_the_backfill_tops_up_a_thread_it_already_loaded(chat, tmp_path):
+    """"Re-runnable" has to mean it CATCHES UP, not that it does nothing.
+
+    This is the repair path for a mirror-write that failed and for the window
+    between the backfill running and the mirror going live, so a second run has
+    to pick up the tail rather than skip the thread.
+    """
+    from db.engine import tenant_session
+    from db import chat_backfill, chat_repo
+
+    name = f"tup{uuid.uuid4().hex[:12]}"
+    events = [
+        {"seq": 1, "id": "EVT1", "ts": "2026-08-13T00:00:00+00:00",
+         "kind": "message", "role": "user", "content": "first"},
+        {"seq": 2, "id": "EVT2", "ts": "2026-08-13T00:00:01+00:00",
+         "kind": "message", "role": "assistant", "content": "second"},
+    ]
+    d = _write_thread_dir(tmp_path, name, events)
+
+    stats = {k: 0 for k in (
+        "threads", "threads_skipped", "topped_up", "messages", "turns",
+        "boundaries", "scopes", "split_replies", "legacy_split_replies",
+        "split_stretches", "unsplit_replies", "unsplit_messages",
+        "orphan_messages")}
+
+    with tenant_session(chat["org"]) as s:
+        chat_backfill._load_thread(s, chat["org"], chat["user"], d, stats)
+    assert stats["threads"] == 1 and stats["messages"] == 2
+
+    # Nothing new: a second pass must not write and must not claim it did.
+    with tenant_session(chat["org"]) as s:
+        chat_backfill._load_thread(s, chat["org"], chat["user"], d, stats)
+    assert stats["topped_up"] == 0 and stats["messages"] == 2
+
+    # A message arrives in the log that the tree never saw.
+    events.append({"seq": 3, "id": "EVT3", "ts": "2026-08-13T00:00:02+00:00",
+                   "kind": "message", "role": "user", "content": "third"})
+    _write_thread_dir(tmp_path, name, events)
+    with tenant_session(chat["org"]) as s:
+        chat_backfill._load_thread(s, chat["org"], chat["user"], d, stats)
+    assert stats["topped_up"] == 1 and stats["messages"] == 3
+
+    with tenant_session(chat["org"]) as s:
+        t = chat_repo.thread_by_ref(s, name)
+        assert _texts(chat_repo.transcript(s, t["id"])) == \
+            ["first", "second", "third"]
+
+
+def test_the_backfill_splits_an_interrupted_reply_into_rows(chat, tmp_path):
+    """The reconstruction runs ONCE, here, and its output is rows. This is the
+    cut-token path; the legacy index path is exercised by the live data."""
+    from db.engine import tenant_session
+    from db import chat_backfill, chat_repo
+
+    name = f"spl{uuid.uuid4().hex[:12]}"
+    events = [
+        {"seq": 1, "id": "S1", "ts": "2026-08-13T00:00:00+00:00",
+         "kind": "message", "role": "user", "content": "go"},
+        {"seq": 2, "id": "S2", "ts": "2026-08-13T00:00:01+00:00",
+         "kind": "message", "role": "user", "content": "wait",
+         "meta": {"during_run": "RUN1", "cut_id": "TOK1"}},
+        {"seq": 3, "id": "S3", "ts": "2026-08-13T00:00:02+00:00",
+         "kind": "message", "role": "assistant", "content": "beforeafter",
+         "meta": {"turn_id": "RUN1", "segments": [
+             {"t": "text", "text": "before", "cut_after": ["TOK1"]},
+             {"t": "text", "text": "after"}]}},
+    ]
+    d = _write_thread_dir(tmp_path, name, events)
+    stats = {k: 0 for k in (
+        "threads", "threads_skipped", "topped_up", "messages", "turns",
+        "boundaries", "scopes", "split_replies", "legacy_split_replies",
+        "split_stretches", "unsplit_replies", "unsplit_messages",
+        "orphan_messages")}
+    with tenant_session(chat["org"]) as s:
+        chat_backfill._load_thread(s, chat["org"], chat["user"], d, stats)
+        t = chat_repo.thread_by_ref(s, name)
+        nodes = chat_repo.transcript(s, t["id"])
+
+    assert stats["split_replies"] == 1
+    assert _texts(nodes) == ["go", "before", "wait", "after"]
+    # Both stretches belong to the one turn, and only the LAST carries its end.
+    assert nodes[1]["meta"]["turn_id"] == "RUN1"
+    assert nodes[3]["meta"]["turn_id"] == "RUN1"
+
+
 # --- the glue the sync endpoint actually uses --------------------------------
 
 def test_the_sync_filter_is_inert_until_a_thread_is_branched(chat):
