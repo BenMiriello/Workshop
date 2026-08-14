@@ -312,8 +312,12 @@ export function useThreadLog({
   // every message in the thread, dozens of times a second, for the whole turn.
   const committed = useMemo(
     () => selectCommitted(state),
+    // `state.cut` is in the list because selectCommitted draws the divider from
+    // it: a fold can move the cut WITHOUT appending events (the boundary lands,
+    // the count changes), and without this dep the divider kept its old count
+    // until the next unrelated event redrew it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.byId, state.order, state.idBySeq, state.activeRun?.runId],
+    [state.byId, state.order, state.idBySeq, state.activeRun?.runId, state.cut],
   );
   const transcript = useMemo(
     () => composeTranscript(committed, state),

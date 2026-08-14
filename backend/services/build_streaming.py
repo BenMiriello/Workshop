@@ -2057,8 +2057,14 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             # included, because a delegate's tokens are really spent.
             if payload.get("parent") is None:
                 ctx = _ctx_tokens_from_usage(payload.get("usage"))
-                if ctx:
+                if ctx and ctx != state["last_ctx"]:
                     state["last_ctx"] = ctx
+                    # The meter's live feed. Without this the reading exists
+                    # only in `state` until finalize, so the composer meter
+                    # cannot move during a turn no matter what the client does:
+                    # GET /context serves the LAST turn's number. One small
+                    # event per model step, only when the number changed.
+                    _push(turn, "context", {"tokens": ctx})
             # Spend accumulates across tool rounds: each assistant message is a
             # separate API call and is billed separately. (Contrast last_ctx,
             # which is overwritten because only the latest window size matters.)
@@ -2760,7 +2766,12 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     # with a real reading; a failed/timed-out turn keeps the prior value.
     if context_tokens > 0 and not is_error:
         try:
-            chat_store.set_thread_context_tokens(turn.thread_id, context_tokens)
+            # Fenced on the session the number describes: a fold or /clear that
+            # detached the window mid-turn wins over a measurement of the window
+            # it detached. chat_store.set_thread_context_tokens has the story.
+            chat_store.set_thread_context_tokens(
+                turn.thread_id, context_tokens,
+                measured_session=meta.get("session_id"))
         except Exception as e:
             log.debug("turn %s: context-token persist failed: %s", turn.id, e)
     elif compacted:

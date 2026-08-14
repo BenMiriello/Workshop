@@ -260,8 +260,12 @@ export function useDraft(key: string): {
     tsRef.current = ts;
     lastEditRef.current = ts;
     lsWrite(forKey, text, ts, atts); // synchronous — never lose a keystroke on reload
-    // Typing again is the operator taking this composer back after a send.
-    clearedAtRef.current.delete(forKey);
+    // Typing again is the operator taking this composer back after a send. Only
+    // a write WITH CONTENT is that. An empty write also flows through here (the
+    // attachment list emptying right after a send is the live case), and letting
+    // it delete the tombstone re-opened the exact window the tombstone closes:
+    // the next stale adopt restored the sent message to the box.
+    if (text || atts.length > 0) clearedAtRef.current.delete(forKey);
 
     const payload: DraftPayload = {
       key: forKey, text, ts, client_id: CLIENT_ID, attachments: atts,
@@ -311,6 +315,14 @@ export function useDraft(key: string): {
     setDraftState("");
     setAttachmentsState([]);
     attachmentsRef.current = [];
+    // The refs are this hook's own snapshot of "what is in the box", and the
+    // box just emptied. draftRef is otherwise only reassigned during render,
+    // so a callback running in the SAME tick as the send (files.take() does)
+    // still saw the sent text here and `write` re-published it under this key,
+    // tombstone deleted, server copy scheduled. That one stale ref is how a
+    // sent message reappeared in the composer days later: 2026-08-14, the
+    // new-chat composer showing the previous new chat's opening message.
+    draftRef.current = "";
     lsWrite(forKey, "", ts, []);
     window.clearTimeout(bcTimer.current);
     window.clearTimeout(srvTimer.current);

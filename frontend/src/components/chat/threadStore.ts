@@ -44,6 +44,11 @@ export type ActiveRun = {
   // answer computed before the run existed cannot erase it. Absent on a run
   // this tab learned about from the server.
   localStartedAt?: number;
+  // The live context occupancy the model reported on this run's latest step.
+  // The composer meter prefers this while the run is in flight; the thread's
+  // stored reading only updates at finalize, which is why the meter used to
+  // sit still for a whole turn and then jump.
+  ctxTokens?: number;
 };
 
 export type PendingStatus = "sending" | "sent" | "failed";
@@ -184,6 +189,7 @@ export type ThreadAction =
   // back. Triggers: a backend restart, an edge 502 mid-turn, and the 5s liveness
   // re-attach, so this fires on the ordinary long turn, not an exotic one.
   | { type: "runReattached"; runId: string }
+  | { type: "runContext"; runId: string; tokens: number }
   | { type: "runCommitted"; runId: string };
 
 export function initialThreadState(threadId: string | null = null): ThreadState {
@@ -539,6 +545,13 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       const segments = applyStreamEvent(run.segments, action.event);
       if (segments === run.segments) return state;
       return { ...state, activeRun: { ...run, segments } };
+    }
+
+    case "runContext": {
+      const run = state.activeRun;
+      if (!run || run.runId !== action.runId) return state;
+      if (!(action.tokens > 0) || action.tokens === run.ctxTokens) return state;
+      return { ...state, activeRun: { ...run, ctxTokens: action.tokens } };
     }
 
     case "runReattached": {

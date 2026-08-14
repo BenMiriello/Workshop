@@ -714,15 +714,19 @@ export const chatApi = {
         session_reset: boolean;
         error: string;
         summary_chars: number;
+        // The fold was computed but a reply is being written, so its writes
+        // land when the thread goes quiet (or one was already in flight).
+        deferred?: boolean;
       }>,
     ),
 
   // Drop this thread's context outright — the other half of /clear vs /compact.
-  // No summary, no live-session turn to send, no wait: this is a field write
-  // and returns as soon as it lands.
+  // No summary, no live-session turn to send: a handful of field writes that
+  // land when the thread is quiet.
   clearThreadContext: (id: string) =>
     fetch(`/api/chat/threads/${id}/clear`, { method: "POST" }).then(
-      j<{ cleared: number; cleared_through: number; session_reset: boolean }>,
+      j<{ cleared: number; cleared_through: number; session_reset: boolean;
+          deferred?: boolean }>,
     ),
 
   // Record that an in-chat card has been acted on, so it stops offering an

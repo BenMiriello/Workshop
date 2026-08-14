@@ -20,7 +20,7 @@ const RING_R = 7;
 const RING_C = 2 * Math.PI * RING_R;
 
 export default function ContextMeter({
-  activeId, streaming, messages, draft, model, nonce, onOpen,
+  activeId, streaming, messages, draft, model, nonce, liveTokens, onOpen,
 }: {
   activeId: string | null;
   streaming: boolean;
@@ -28,6 +28,10 @@ export default function ContextMeter({
   draft: string;
   model: string;
   nonce: number;
+  /** The in-flight run's own context reading, straight off the turn stream.
+   *  The stored thread reading only changes at finalize, so this is the only
+   *  number that can move while a turn runs. */
+  liveTokens?: number;
   // Open the breakdown. The reading answers "how full"; the panel behind it
   // answers "with what", which is the question that follows it every time.
   onOpen?: () => void;
@@ -38,6 +42,15 @@ export default function ContextMeter({
   // meter then presented that estimate exactly as it presents the server's
   // number. Both fall back to the estimate; only one of them is fine.
   const [readFailed, setReadFailed] = useState(false);
+  // The latest live reading, HELD past the run's retirement rather than read
+  // straight off the prop. The run object disappears the moment the turn is
+  // retired, a beat before the post-turn refetch resolves; without the hold the
+  // meter regressed to the previous turn's number for exactly that beat, then
+  // jumped forward again.
+  const [live, setLive] = useState<number | null>(null);
+  useEffect(() => {
+    if (typeof liveTokens === "number" && liveTokens > 0) setLive(liveTokens);
+  }, [liveTokens]);
 
   // A live turn must NOT block the reading. It used to: the fetch returned
   // early whenever `streaming` was true, so a meter that first mounted during a
@@ -55,6 +68,11 @@ export default function ContextMeter({
         if (cancelled) return;
         setServer({ used: r.used_tokens, window: r.window_tokens });
         setReadFailed(false);
+        // A fetch fired OUTSIDE a turn is the post-turn (or idle) read: the
+        // stored number is now at least as fresh as anything the stream said,
+        // so the held live reading retires. A fetch fired at turn START must
+        // not clear it; its answer predates the run by definition.
+        if (!streaming) setLive(null);
       })
       .catch(() => {
         // The estimate still renders — a meter that disappears on a failed read
@@ -67,7 +85,7 @@ export default function ContextMeter({
 
   // Drop a stale count on thread switch rather than showing one chat's usage
   // against another's transcript.
-  useEffect(() => { setServer(null); setReadFailed(false); }, [activeId]);
+  useEffect(() => { setServer(null); setReadFailed(false); setLive(null); }, [activeId]);
 
   // THE DRAFT IS DELIBERATELY NOT A DEP OF THIS ONE. estimateContextTokens walks
   // every message AND every segment of the entire log, and `draft` changes on
@@ -82,18 +100,24 @@ export default function ContextMeter({
     // than scanned in. This is how the server branch always worked; the estimate
     // branch now agrees with it, at a rounding cost of at most one token.
     const draftTokens = Math.ceil(draft.length / 4);
+    if (live != null) {
+      // The run's own report beats the stored reading, which cannot change
+      // until the run finalizes.
+      return { used: live + draftTokens, win: server ? server.window : contextWindowFor(model) };
+    }
     if (server) {
       // Real assembled-context count plus the live (unsent) draft.
       return { used: server.used + draftTokens, win: server.window };
     }
     return { used: baseUsed + draftTokens, win: contextWindowFor(model) };
-  }, [server, baseUsed, draft, model]);
+  }, [live, server, baseUsed, draft, model]);
 
   // No reading, or a reading too small to round to a whole percent. See
   // contextReading: neither may render as "0%".
   const reading = contextReading(ctx.used, ctx.win);
   if (!reading) return null;
-  const source: ContextSource = server ? "server" : readFailed ? "unavailable" : "estimate";
+  const source: ContextSource =
+    live != null || server ? "server" : readFailed ? "unavailable" : "estimate";
 
   // A single accent tone, no threshold colors: this is a reading, not a status.
   // The arc is a dash on a rotated circle so it fills clockwise from 12 o'clock.

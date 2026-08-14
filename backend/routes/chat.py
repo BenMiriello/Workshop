@@ -32,6 +32,7 @@ from services import tenancy
 from services import chat_queue
 from services import chat_store, chat_context, chat_log
 from services import tasks
+from services import thread_ops
 from services import task_scope
 from services import context_report
 from services import mcp_health
@@ -1483,13 +1484,44 @@ async def compact_thread(thread_id: str):
     if t is None:
         raise HTTPException(404, "thread not found")
     provider = chat_context.get_provider(t.get("context_key"))
-    folded, error = await _fold_thread(thread_id, t)
-    # Re-read: the fold moved the cut and wrote the summary.
-    t = chat_store.get_thread(thread_id) or t
-    session_reset = _detach_live_session(thread_id, t, provider)
-    return {"folded": folded, "session_reset": session_reset,
-            "error": error or "",
-            "summary_chars": len((t.get("summary") or ""))}
+    # ONE OPERATION AT A TIME, and admission respects it: from here until the
+    # fold lands (or is handed to the landing task), a new message on this
+    # thread queues instead of becoming a turn against the pre-fold prompt.
+    # That is the 2026-08-14 incident: compact pressed, a message sent during
+    # the ~30s summarize started a turn carrying the whole 467k transcript, and
+    # the boundary then landed mid-turn. See services/thread_ops.
+    if not thread_ops.begin(thread_id, "compact"):
+        return {"folded": 0, "session_reset": False, "deferred": True,
+                "error": "", "summary_chars": 0}
+    handed_off = False
+    try:
+        fold_n, summary, folded_through, error = await _fold_summary(thread_id, t)
+        if error or fold_n <= 0:
+            # Nothing to land. Detaching alone is still useful (it is what
+            # /clear's session half does) and touches no ordering, so it
+            # happens inline whatever the thread is doing.
+            session_reset = _detach_live_session(thread_id, t, provider)
+            return {"folded": 0, "session_reset": session_reset,
+                    "error": error or "", "summary_chars": 0}
+        rid = chat_store.active_run_id(thread_id)
+        if rid and build_streaming.run_is_live(rid):
+            # A reply is being written. The fold's WRITES wait for it: landing
+            # a boundary mid-turn is how a reply ends up on the far side of the
+            # divider from the messages it answers. The summary is computed
+            # from a count-from-the-front, so it names the same messages
+            # however long the wait runs.
+            handed_off = True
+            asyncio.create_task(
+                _land_fold_when_quiet(thread_id, summary, folded_through),
+                name=f"compact-land:{thread_id}")
+            return {"folded": fold_n, "session_reset": False, "deferred": True,
+                    "error": "", "summary_chars": len(summary)}
+        session_reset = _land_fold(thread_id, summary, folded_through)
+        return {"folded": fold_n, "session_reset": session_reset,
+                "error": "", "summary_chars": len(summary)}
+    finally:
+        if not handed_off:
+            thread_ops.end(thread_id)
 
 
 # How many messages stay verbatim. The tail is what the conversation is ABOUT
@@ -1532,11 +1564,19 @@ def _summarize_sync(prev_summary: str, to_fold: list[dict]) -> str:
     return (res.get("text") or "").strip()
 
 
-async def _fold_thread(thread_id: str, t: dict) -> tuple[int, str]:
-    """Summarize everything but the tail. Returns (messages folded, error).
+async def _fold_summary(thread_id: str, t: dict) -> tuple[int, str, int, str]:
+    """Summarize everything but the tail, WITHOUT writing anything.
 
-    Returns `(0, "")` when there is nothing to fold, and `(0, reason)` when the
+    Returns (messages folded, summary, folded_through, error). `(0, ...)` with
+    an empty error means there was nothing to fold; with an error it means the
     fold was attempted and failed. The caller reports both; neither is silent.
+
+    Compute and landing are split on purpose: this half takes tens of seconds
+    (a model call) and holds no ordering guarantees, so it runs while the
+    thread lives its life; the landing half (`_land_fold`) is a handful of
+    writes and runs only on a quiet thread. The cut is a COUNT FROM THE FRONT
+    and appends land at the back, so the count still names the same messages
+    however many arrive between the two halves.
     """
     msgs = [m for m in (t.get("messages") or [])
             if not (m.get("meta") or {}).get("streaming")]
@@ -1544,27 +1584,46 @@ async def _fold_thread(thread_id: str, t: dict) -> tuple[int, str]:
     tail = msgs[ct:] if 0 < ct <= len(msgs) else msgs
     fold_n = max(0, len(tail) - _COMPACT_KEEP_TAIL)
     if fold_n <= 0:
-        return 0, ""
+        return 0, "", 0, ""
     to_fold = tail[:fold_n]
     try:
         summary = await asyncio.to_thread(
             _summarize_sync, (t.get("summary") or "").strip(), to_fold)
     except Exception as e:
         log.warning("chat compaction failed for %s: %s", thread_id, e)
-        return 0, f"the summarizer failed: {e}"
+        return 0, "", 0, f"the summarizer failed: {e}"
     # STRIPPED HERE, not trusted from the call. A whitespace-only answer is a
     # failed summary, and storing one would move the cut and leave the model
     # with neither the messages nor anything standing in for them.
     summary = (summary or "").strip()
     if not summary:
-        return 0, "the summarizer returned nothing"
-    # WRITTEN AFTER THE CALL, ONTO THE THREAD AS IT IS NOW. The summarization
-    # takes tens of seconds and the operator can send during it; saving a
-    # snapshot read beforehand would delete whatever arrived meanwhile. The cut
-    # is a COUNT FROM THE FRONT and appends land at the back, so it still names
-    # the same messages however many arrived while this ran.
-    chat_store.set_summary(thread_id, summary, folded_through=ct + fold_n)
-    return fold_n, ""
+        return 0, "", 0, "the summarizer returned nothing"
+    return fold_n, summary, ct + fold_n, ""
+
+
+def _land_fold(thread_id: str, summary: str, folded_through: int) -> bool:
+    """The fold's writes: summary + cut + boundary, then the session detach.
+    A handful of synchronous calls; the caller guarantees the thread is quiet."""
+    chat_store.set_summary(thread_id, summary, folded_through=folded_through)
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        return False
+    provider = chat_context.get_provider(t.get("context_key"))
+    return _detach_live_session(thread_id, t, provider)
+
+
+async def _land_fold_when_quiet(thread_id: str, summary: str, folded_through: int) -> None:
+    """Background landing for a fold computed while a run was live. Owns the
+    thread_ops registration it inherited; messages queued behind the operation
+    drain when `end` fires."""
+    try:
+        await thread_ops.wait_quiet(thread_id)
+        _land_fold(thread_id, summary, folded_through)
+        log.info("compact: deferred fold landed on %s", thread_id)
+    except Exception as e:
+        log.warning("compact: deferred fold failed for %s: %s", thread_id, e)
+    finally:
+        thread_ops.end(thread_id)
 
 
 @router.post("/threads/{thread_id}/clear")
@@ -1574,22 +1633,65 @@ async def clear_thread_context(thread_id: str):
 
     THIS IS THE ONLY THING THAT CUTS A THREAD'S CONTEXT. `/compact` reclaims the
     live CLI session's window and leaves the transcript alone; this draws the
-    line the prompt is assembled from. A handful of field writes, no model call,
-    no detached task, returns as soon as they land."""
+    line the prompt is assembled from. A handful of field writes, no model call.
+
+    THE WRITES WAIT FOR A QUIET THREAD, same as compact's landing. A cut taken
+    while a turn was appending counted the messages as of its own read, so a
+    message that landed between the read and the boundary fell ABOVE the cut
+    and silently left the next prompt. One operation at a time, landed between
+    runs; a message sent meanwhile queues. See services/thread_ops."""
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
+    if not thread_ops.begin(thread_id, "clear"):
+        return {"cleared": False, "cleared_through": 0,
+                "session_reset": False, "deferred": True}
+    handed_off = False
+    try:
+        rid = chat_store.active_run_id(thread_id)
+        if rid and build_streaming.run_is_live(rid):
+            handed_off = True
+            asyncio.create_task(_land_clear_when_quiet(thread_id),
+                                name=f"clear-land:{thread_id}")
+            return {"cleared": True, "cleared_through": 0,
+                    "session_reset": False, "deferred": True}
+        thread, cleared, session_reset = _land_clear(thread_id)
+        if thread is None:
+            raise HTTPException(404, "thread not found")
+        return {
+            "cleared": cleared,
+            "cleared_through": int(thread.get("cleared_through", 0) or 0),
+            "session_reset": session_reset,
+        }
+    finally:
+        if not handed_off:
+            thread_ops.end(thread_id)
+
+
+def _land_clear(thread_id: str) -> tuple[dict | None, bool, bool]:
+    """The clear's writes, against the thread as it is NOW: re-read at landing
+    time, never from a snapshot taken before the wait."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        return None, False, False
     provider = chat_context.get_provider(t.get("context_key"))
     session_reset = _reset_live_session(t, provider)
     result = chat_store.clear_thread_context(thread_id)
     if result is None:
-        raise HTTPException(404, "thread not found")
+        return None, False, session_reset
     thread, cleared = result
-    return {
-        "cleared": cleared,
-        "cleared_through": int(thread.get("cleared_through", 0) or 0),
-        "session_reset": session_reset,
-    }
+    return thread, cleared, session_reset
+
+
+async def _land_clear_when_quiet(thread_id: str) -> None:
+    try:
+        await thread_ops.wait_quiet(thread_id)
+        _land_clear(thread_id)
+        log.info("clear: deferred cut landed on %s", thread_id)
+    except Exception as e:
+        log.warning("clear: deferred cut failed for %s: %s", thread_id, e)
+    finally:
+        thread_ops.end(thread_id)
 
 
 # Context window per model. This is the DENOMINATOR of the composer meter, and
@@ -2899,7 +3001,12 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     # FIRST, and the transcript records the two in the wrong order permanently.
     # The queue is ordered by when enter was hit; this is what keeps that true
     # once the thread goes idle.
-    if not run_id and chat_queue.read(thread_id):
+    # A PENDING OPERATION QUEUES A MESSAGE THE SAME WAY A WAITING QUEUE DOES.
+    # While a fold or clear is in flight (services/thread_ops), a new turn
+    # would run on the pre-operation prompt and race the operation's writes:
+    # exactly the 2026-08-14 compact incident. The message is accepted and
+    # durable; the drain sends it the moment the operation lands.
+    if not run_id and (chat_queue.read(thread_id) or thread_ops.pending(thread_id)):
         st = chat_queue.enqueue(
             thread_id, text=content, client_id=client_id or chat_log.new_ulid(),
             ts=_first_part_ts(parts) or sent_at, attachments=attachments,

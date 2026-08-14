@@ -222,6 +222,18 @@ export function useTurnStream({
         },
       });
     });
+    // The model's own report of how full its window is, sent whenever the
+    // number changes. This is the ONLY live source: the thread's stored
+    // reading is written at finalize, so without this event the meter cannot
+    // move during a turn at all.
+    es.addEventListener("context", (e) => {
+      markAlive();
+      const p = parse(e);
+      const tokens = Number(p.tokens);
+      if (Number.isFinite(tokens) && tokens > 0) {
+        cb.current.dispatch({ type: "runContext", runId: turnId, tokens });
+      }
+    });
     es.addEventListener("ping", markAlive); // server heartbeat (~1s) keeps this warm
     es.addEventListener("error", (e) => {
       // An in-band error EVENT (carries data) — a turn-level error from the

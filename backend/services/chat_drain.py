@@ -86,6 +86,12 @@ async def drain(thread_id: str, *, reason: str = "") -> bool:
         from services import chat_store
         if chat_store.active_run_id(thread_id):
             return False
+        # A pending fold/clear holds the queue the same way a live run does: a
+        # turn started now would read the pre-operation prompt and race the
+        # operation's writes. thread_ops.end() kicks this drain when it lands.
+        from services import thread_ops
+        if thread_ops.pending(thread_id):
+            return False
         ids = [e.get("client_id") for e in batch]
         try:
             started = await _starter(thread_id, batch)

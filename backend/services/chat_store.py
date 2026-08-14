@@ -1399,12 +1399,34 @@ def previous_run_id(thread_id: str) -> str | None:
 # ---- context accounting ----------------------------------------------------
 
 
-def set_thread_context_tokens(thread_id: str, tokens: int) -> dict | None:
+def set_thread_context_tokens(thread_id: str, tokens: int,
+                              measured_session: str | None = None) -> dict | None:
     """Persist the real context occupancy (input + cached input tokens) the model
     reported on the latest turn. The composer meter prefers this over estimating
     from the stored transcript, because it reflects the live window and drops
     after an in-session /compact. Stored at the thread level (current occupancy,
-    not per-message)."""
+    not per-message).
+
+    `measured_session` is the session the number DESCRIBES, and the write only
+    lands while the thread still owns that session. A measurement is a fact
+    about one live window; if a fold or /clear detached that window while the
+    turn was still running, the number is a fact about nothing, and writing it
+    would overwrite the clear the fold just made. That is not hypothetical: on
+    2026-08-14 a compact landed at 03:20:38 and the turn already in flight
+    finalized at 03:20:39, writing its pre-compact 467k back over the cleared
+    meter, which then read 47% on a freshly compacted chat for ten minutes
+    until the next turn happened to end. Passing None skips the check, for
+    callers that have no session to speak of."""
+    if measured_session is not None:
+        t = get_thread(thread_id)
+        if t is None:
+            return None
+        owned = {t.get("claude_session")}
+        sessions = t.get("agent_sessions")
+        if isinstance(sessions, dict):
+            owned.update(sessions.values())
+        if measured_session not in owned:
+            return t
     return _patch(thread_id, context_tokens=max(0, int(tokens)))
 
 

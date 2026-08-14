@@ -1094,6 +1094,7 @@ export default function Chat({
       activeId={activeId}
       messages={messages}
       ctxNonce={ctxNonce}
+      liveCtxTokens={state.activeRun?.ctxTokens}
       voiceOn={voiceOn}
       onToggleVoice={toggleVoice}
       isBuild={build}

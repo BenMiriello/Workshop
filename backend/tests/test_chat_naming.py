@@ -452,3 +452,31 @@ class TestTheTriggerIsWired:
         chat_store.append_message(tid, "assistant", "Rate limited.", meta={"error": True})
         chat_naming.generate_title(tid)
         assert chat_store.get_thread(tid)["title"] == "Subagent Delegation In Chat"
+
+
+class TestOneNamingTaskPerThread:
+    """A burst of messages used to schedule a naming task per message: each read
+    the same attempt counter, each wrote N+1 (undercounting the budget), and
+    each spent a model call on a question the first answer had settled."""
+
+    def test_a_burst_schedules_one_task(self, store, monkeypatch):
+        import asyncio
+        tid = chat_store.create_thread("general")["id"]
+        started = []
+
+        async def slow_name(thread_id):
+            started.append(thread_id)
+            await asyncio.sleep(0.05)
+
+        monkeypatch.setattr(chat_naming, "name_thread", slow_name)
+
+        async def main():
+            for _ in range(3):
+                chat_naming.schedule(tid)
+            await asyncio.sleep(0.1)
+            # After the in-flight task finishes, a NEW schedule may run again.
+            chat_naming.schedule(tid)
+            await asyncio.sleep(0.1)
+
+        asyncio.run(main())
+        assert started == [tid, tid]

@@ -44,7 +44,7 @@ export default function ChatComposer({
   effortLevels, effectiveEffort, onSelectEffort,
   modeOptions, effectivePermissionMode, onSelectPermissionMode,
   // Context meter
-  activeId, messages, ctxNonce,
+  activeId, messages, ctxNonce, liveCtxTokens,
   // Attachments
   attachments, attachNotice, onAttachFiles, onRemoveAttachment, onDismissAttachNotice,
   onPasteFiles,
@@ -84,6 +84,8 @@ export default function ChatComposer({
   activeId: string | null;
   messages: ChatMsg[];
   ctxNonce: number;
+  /** The in-flight run's own context reading, when one is streaming. */
+  liveCtxTokens?: number;
   attachments: Attachment[];
   attachNotice: string | null;
   onAttachFiles: (files: File[]) => void;
@@ -205,6 +207,7 @@ export default function ChatComposer({
           draft={input}
           model={selectedModel}
           nonce={ctxNonce}
+          liveTokens={liveCtxTokens}
           onOpen={onOpenContext}
         />
         <span className="chat-actions__spacer" />

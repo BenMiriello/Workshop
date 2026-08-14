@@ -110,6 +110,11 @@ export function useCompaction({
           text: `Couldn't compact: ${r.error}. Nothing was folded and the chat is unchanged.`,
           endpoint: `/api/chat/threads/${id}/compact`,
         });
+      } else if (r.deferred) {
+        // The fold is computed; its writes wait for the reply in flight. The
+        // divider appears when it lands, via the change stream. Said in one
+        // line so pressing compact mid-turn does not read as a no-op.
+        setErr({ text: "Compact is waiting for the current reply to finish, then it lands.", endpoint: null });
       } else if (!r.folded && !r.session_reset) {
         setErr({ text: "Nothing to compact. This chat is already short.", endpoint: null });
       }
@@ -140,7 +145,9 @@ export function useCompaction({
       // had just reset the agent's session out from under the operator. Two
       // different things happened and only one was named. Nothing happened only
       // when NEITHER did.
-      if (!r.cleared && !r.session_reset) {
+      if (r.deferred) {
+        setErr({ text: "Clear is waiting for the current reply to finish, then it lands.", endpoint: null });
+      } else if (!r.cleared && !r.session_reset) {
         setErr({ text: "Nothing to clear. This chat has no messages yet.", endpoint: null });
         return;
       }

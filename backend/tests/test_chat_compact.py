@@ -58,6 +58,19 @@ def _conversation(prompt: str) -> str:
     return prompt.split(marker)[1] if marker in prompt else ""
 
 
+async def _fold_now(tid: str):
+    """Compute + land in one step, as the route does on a quiet thread. The
+    split (compute while the thread lives, land when quiet) is the 2026-08-14
+    serialization change; these tests exercise the fold's semantics, not the
+    scheduling, so they land immediately."""
+    from routes import chat as chat_routes
+    fold_n, summary, through, err = await chat_routes._fold_summary(
+        tid, chat_store.get_thread(tid))
+    if not err and fold_n > 0:
+        chat_routes._land_fold(tid, summary, through)
+    return fold_n, err
+
+
 class TestAClearActuallyClears:
     def test_the_prompt_loses_the_messages_behind_the_cut(self, chatty):
         before = _conversation(_prompt(chatty))
@@ -93,7 +106,7 @@ class TestCompactionFolds:
     def test_the_prompt_shrinks_and_keeps_the_recent_tail(self, chatty, stub_summary):
         before = _conversation(_prompt(chatty))
         folded, err = asyncio.run(
-            stub_summary._fold_thread(chatty, chat_store.get_thread(chatty)))
+            _fold_now(chatty))
         assert err == ""
         assert folded == 15          # 21 messages, 6 kept verbatim
         after = _conversation(_prompt(chatty))
@@ -104,19 +117,19 @@ class TestCompactionFolds:
         assert "OLD-0" not in after
 
     def test_the_summary_replaces_them_in_the_prompt(self, chatty, stub_summary):
-        asyncio.run(stub_summary._fold_thread(chatty, chat_store.get_thread(chatty)))
+        asyncio.run(_fold_now(chatty))
         prompt = _prompt(chatty)
         assert "EARLIER IN THIS CONVERSATION (summary)" in prompt
         assert "SUMMARY of 15 messages" in prompt
 
     def test_the_transcript_is_untouched(self, chatty, stub_summary):
-        asyncio.run(stub_summary._fold_thread(chatty, chat_store.get_thread(chatty)))
+        asyncio.run(_fold_now(chatty))
         msgs = [e for e in chat_log.read_events(chatty) if e.get("kind") == "message"]
         assert len(msgs) == 21
         assert any("OLD-0" in (m.get("content") or "") for m in msgs)
 
     def test_it_leaves_a_boundary_the_transcript_can_read(self, chatty, stub_summary):
-        asyncio.run(stub_summary._fold_thread(chatty, chat_store.get_thread(chatty)))
+        asyncio.run(_fold_now(chatty))
         cuts = [e for e in chat_log.read_events(chatty) if e.get("kind") == "boundary"]
         assert [c["mode"] for c in cuts] == ["compact"]
         # WHERE it cut, on the event, so the divider is read rather than guessed
@@ -124,11 +137,11 @@ class TestCompactionFolds:
         assert cuts[0]["at_seq"] > 0
 
     def test_folding_twice_folds_what_arrived_since(self, chatty, stub_summary):
-        asyncio.run(stub_summary._fold_thread(chatty, chat_store.get_thread(chatty)))
+        asyncio.run(_fold_now(chatty))
         for i in range(8):
             chat_store.append_message(chatty, "user", f"NEW-{i}")
         folded, err = asyncio.run(
-            stub_summary._fold_thread(chatty, chat_store.get_thread(chatty)))
+            _fold_now(chatty))
         assert err == ""
         assert folded == 8   # 6 old tail + 8 new = 14, keep 6, fold 8
         assert "NEW-7" in _conversation(_prompt(chatty))
@@ -136,7 +149,7 @@ class TestCompactionFolds:
     def test_a_short_chat_folds_nothing(self, owned, stub_summary):
         tid = chat_store.create_thread("general")["id"]
         chat_store.append_message(tid, "user", "hello")
-        folded, err = asyncio.run(stub_summary._fold_thread(tid, chat_store.get_thread(tid)))
+        folded, err = asyncio.run(_fold_now(tid))
         assert (folded, err) == (0, "")
         assert not chat_store.get_thread(tid).get("summary")
 
@@ -151,7 +164,7 @@ class TestAFailedFoldChangesNothingAndSaysSo:
         monkeypatch.setattr(chat_routes, "_summarize_sync", boom)
         before = _conversation(_prompt(chatty))
         folded, err = asyncio.run(
-            chat_routes._fold_thread(chatty, chat_store.get_thread(chatty)))
+            _fold_now(chatty))
         assert folded == 0
         assert "Argument list too long" in err
         # NOTHING MOVED. This is the case that answered 200 for months while the
@@ -163,7 +176,7 @@ class TestAFailedFoldChangesNothingAndSaysSo:
         from routes import chat as chat_routes
         monkeypatch.setattr(chat_routes, "_summarize_sync", lambda prev, msgs: "   ")
         folded, err = asyncio.run(
-            chat_routes._fold_thread(chatty, chat_store.get_thread(chatty)))
+            _fold_now(chatty))
         assert folded == 0
         assert err
         assert not chat_store.get_thread(chatty).get("summary")
@@ -194,7 +207,7 @@ class TestTheCutOnTheWire:
     def test_it_agrees_with_the_prompt_after_a_fold(self, chatty, monkeypatch):
         from routes import chat as chat_routes
         monkeypatch.setattr(chat_routes, "_summarize_sync", lambda prev, msgs: "S")
-        asyncio.run(chat_routes._fold_thread(chatty, chat_store.get_thread(chatty)))
+        asyncio.run(_fold_now(chatty))
         st = chat_store.cut_state(chatty)
         assert st["cut_mode"] == "compact"
         assert st["cleared_through"] == chat_store.get_thread(chatty)["cleared_through"]
