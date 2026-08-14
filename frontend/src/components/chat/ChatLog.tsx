@@ -66,7 +66,7 @@ export default function ChatLog({
   selectedModel, cardCtx, onRetry, onCancelQueued, onReleaseQueue,
   queueHeld, queueError, workingLabel, elapsed, nowMs,
   answerPermission, liveTurnId, renderBranch, branchHead,
-  queued, folding, onStop, stopping, onStopFold,
+  queued, folding, onStop, stopping, onStopFold, foldStopping,
   voiceOn, vsnap,
 }: {
   scrollRef: RefObject<HTMLDivElement>;
@@ -121,6 +121,8 @@ export default function ChatLog({
   stopping?: boolean;
   /** Abandon the fold in flight. Same idea, on the fold's own line. */
   onStopFold?: () => void;
+  /** That cancel is out; the fold line's control shows it. */
+  foldStopping?: boolean;
   voiceOn: boolean;
   vsnap: VoiceSnapshot;
 }) {
@@ -200,7 +202,7 @@ export default function ChatLog({
       {/* The fold, while it runs. Below the queue for the same reason the cut
           divider ends up below it: what is queued was typed before the fold was
           asked for, and the boundary lands after everything above it. */}
-      {folding && <FoldingNote mode={folding} onStop={onStopFold} />}
+      {folding && <FoldingNote mode={folding} onStop={onStopFold} stopping={foldStopping} />}
 
       {/* ONE voice element, and it renders the REPLY only.
           What the operator is saying is in the composer, as a draft (see

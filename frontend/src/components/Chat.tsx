@@ -319,7 +319,7 @@ export default function Chat({
 
   // /compact reaches BOTH homes of a chat's context, server-side and without a
   // turn of its own. See useCompaction.
-  const { ctxNonce, compact, clear, cancelFold } = useCompaction({
+  const { ctxNonce, compact, clear, cancelFold, foldStopping } = useCompaction({
     activeIdRef, setFolding, setErr, sync,
   });
 
@@ -1063,6 +1063,7 @@ export default function Chat({
       onStop={onStopClick}
       stopping={stopping}
       onStopFold={cancelFold}
+      foldStopping={foldStopping}
       voiceOn={voiceOn}
       vsnap={vsnap}
     />

@@ -10,22 +10,34 @@
 //     0.5% and rounds to zero. The number is honest and still reads as broken,
 //     because "0%" is what a broken meter says.
 //
-// So: no reading renders nothing (`null`). A real reading shows the percent
-// ROUNDED to the nearest whole number, which on a fresh 1M-window thread is
-// simply "0%" or "1%". Operator directive 2026-08-11: the earlier "<1%" floor
-// read as clutter; a plain rounded percent is what the meter shows. (Case 1
-// above stays fixed by returning null, not by dressing up the zero.)
+// THE METER ALWAYS RENDERS. This used to return null for a zero reading, and
+// the meter returned null with it, so the whole element vanished from the
+// composer. On a new chat that is exactly what happens: an empty thread with no
+// draft estimates to zero tokens, so the control was missing, then appeared as
+// soon as a character was typed, then disappeared again when it was deleted.
+// Operator, 2026-08-14: "it stops showing the context percentage at all, it just
+// removes the element. That's not something we ever want."
+//
+// Case 1 above is not what null was protecting against anyway. That bug was a
+// confident "0%" printed over a chat with tens of thousands of tokens in it,
+// because the fetch was gated on `streaming` and never ran; it is fixed by the
+// meter always having an estimate to fall back on, not by hiding the control. A
+// genuinely empty chat IS at zero, and saying so is correct.
+//
+// A real reading shows the percent ROUNDED to the nearest whole number, which on
+// a fresh 1M-window thread is simply "0%" or "1%". Operator directive
+// 2026-08-11: the earlier "<1%" floor read as clutter.
 export type ContextReading = { label: string; fraction: number };
 
-export function contextReading(used: number, win: number): ContextReading | null {
-  if (!Number.isFinite(used) || !Number.isFinite(win)) return null;
-  if (used <= 0 || win <= 0) return null;
-  const pct = Math.min(100, Math.round((used / win) * 100));
+export function contextReading(used: number, win: number): ContextReading {
+  const u = Number.isFinite(used) && used > 0 ? used : 0;
+  const w = Number.isFinite(win) && win > 0 ? win : 0;
+  const ratio = w > 0 ? Math.min(1, u / w) : 0;
   return {
-    label: `${pct}%`,
+    label: `${Math.min(100, Math.round(ratio * 100))}%`,
     // The arc is drawn from the true ratio, not the rounded percent, so a
     // sliver still shows for a reading that displays as "0%".
-    fraction: Math.min(1, used / win),
+    fraction: ratio,
   };
 }
 
@@ -57,11 +69,15 @@ export function contextLabel(reading: ContextReading): string {
   return reading.label;
 }
 
-export function contextTooltip(used: number, win: number, source: ContextSource): string {
-  const of = `${used.toLocaleString()} of ${win.toLocaleString()} tokens`;
-  if (source === "server") return `${of} used in this chat, counted by the server.`;
-  const why = source === "unavailable"
-    ? "The server's own count could not be read, so this is the browser's estimate"
-    : "Estimated in the browser until the server has counted this chat's prompt";
-  return `About ${of}. ${why}, which does not include the persona or any live context the model is sent.`;
+// TWO NUMBERS AND A SLASH. Nothing else.
+//
+// This used to be up to two sentences explaining where the count came from and
+// what it did not include. Operator, 2026-08-14: "most of this is unnecessary,
+// it can just be the number of tokens currently used slash the total number of
+// tokens." The standing instruction behind it is broader than this tooltip:
+// do not write explanatory copy that was not asked for.
+export function contextTooltip(used: number, win: number): string {
+  const u = Number.isFinite(used) && used > 0 ? Math.round(used) : 0;
+  const w = Number.isFinite(win) && win > 0 ? Math.round(win) : 0;
+  return `${u.toLocaleString()} / ${w.toLocaleString()}`;
 }

@@ -69,6 +69,8 @@ export type Compaction = {
   clear: () => Promise<void>;
   /** Call off the fold in flight. Wired to the Stop control on FoldingNote. */
   cancelFold: () => void;
+  /** The cancel request is out, or has succeeded and the fold is winding up. */
+  foldStopping: boolean;
 };
 
 export function useCompaction({
@@ -86,6 +88,7 @@ export function useCompaction({
   sync: () => Promise<void>;
 }): Compaction {
   const [ctxNonce, setCtxNonce] = useState(0);
+  const [foldStopping, setFoldStopping] = useState(false);
 
   const compact = useCallback(async () => {
     const id = activeIdRef.current;
@@ -181,16 +184,38 @@ export function useCompaction({
     }
   }, [activeIdRef, setFolding, setErr, sync]);
 
-  // Fire and forget. The compact/clear request is still in flight and IT is
-  // what reports the outcome (`cancelled`), so awaiting this would be waiting
-  // on the wrong request. A failure here is genuinely nothing to say: the fold
-  // simply lands as it would have, which is the state the operator was already
-  // in when they pressed it.
+  // NOT FIRE AND FORGET, which is what made this read as a dead button.
+  //
+  // It was: the press sent the POST, discarded the answer and swallowed any
+  // failure, on the reasoning that the compact request would report the outcome
+  // itself. It does, but not for up to forty seconds: the fold's own request is
+  // still inside the summarizer, and `folding` is only cleared in its `finally`.
+  // So the whole visible sequence was press, nothing, half a minute more of
+  // "Compacting", then the line vanishing with no explanation. Measured from the
+  // backend log on 2026-08-14: two cancels, both answered 200, and the operator's
+  // report was "it did nothing". The cancel had almost certainly worked.
+  //
+  // So the press owns the feedback. `stopping` lands immediately (the control
+  // spins, the line says Stopping), and a CONFIRMED cancel retires the note at
+  // once rather than waiting for a request whose result is already known.
   const cancelFold = useCallback(() => {
     const id = activeIdRef.current;
     if (!id) return;
-    void chatApi.cancelThreadOperation(id).catch(() => {});
-  }, [activeIdRef]);
+    setFoldStopping(true);
+    void chatApi.cancelThreadOperation(id)
+      .then((r) => {
+        if (r.cancelled) setFolding(null);
+        // `cancelled: false` means it finished while the press was in flight.
+        // Nothing to say: its own request is about to return and clear the line.
+      })
+      .catch((e) => {
+        setErr({
+          text: `Could not stop the compact: ${String(e)}. It is still running.`,
+          endpoint: `/api/chat/threads/${id}/operation/cancel`,
+        });
+      })
+      .finally(() => setFoldStopping(false));
+  }, [activeIdRef, setFolding, setErr]);
 
-  return { ctxNonce, compact, clear, cancelFold };
+  return { ctxNonce, compact, clear, cancelFold, foldStopping };
 }

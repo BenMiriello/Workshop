@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { chatApi, type ChatMsg } from "../../lib/chat";
 import { estimateContextTokens } from "./chatScope";
 import { contextWindowFor } from "./models";
-import { contextLabel, contextReading, contextTooltip, type ContextSource } from "./contextReading";
+import { contextLabel, contextReading, contextTooltip } from "./contextReading";
 
 // How full this conversation's context is, under the composer.
 //
@@ -37,11 +37,12 @@ export default function ContextMeter({
   onOpen?: () => void;
 }) {
   const [server, setServer] = useState<{ used: number; window: number } | null>(null);
-  // A FAILED READ IS NOT THE SAME AS NOT HAVING READ YET. This was
-  // `.catch(() => {})` with a comment saying "keep the client estimate", and the
-  // meter then presented that estimate exactly as it presents the server's
-  // number. Both fall back to the estimate; only one of them is fine.
-  const [readFailed, setReadFailed] = useState(false);
+  // A FAILED READ USED TO BE TRACKED HERE and marked in the tooltip, so a
+  // browser estimate could not pass itself off as the server's count. The
+  // tooltip is two numbers and a slash now (operator, 2026-08-14), which leaves
+  // that distinction nowhere to be said, so the state is gone rather than kept
+  // as a value nothing reads. If it is wanted again it belongs on the meter
+  // itself, not in prose.
   // The latest live reading, HELD past the run's retirement rather than read
   // straight off the prop. The run object disappears the moment the turn is
   // retired, a beat before the post-turn refetch resolves; without the hold the
@@ -67,7 +68,6 @@ export default function ContextMeter({
       .then((r) => {
         if (cancelled) return;
         setServer({ used: r.used_tokens, window: r.window_tokens });
-        setReadFailed(false);
         // A fetch fired OUTSIDE a turn is the post-turn (or idle) read: the
         // stored number is now at least as fresh as anything the stream said,
         // so the held live reading retires. A fetch fired at turn START must
@@ -81,7 +81,6 @@ export default function ContextMeter({
         // this path too: a post-turn fetch that FAILED must not leave a dead
         // turn's number on screen labeled as a server fact.
         if (cancelled) return;
-        setReadFailed(true);
         if (!streaming) setLive(null);
       });
     return () => { cancelled = true; };
@@ -89,7 +88,7 @@ export default function ContextMeter({
 
   // Drop a stale count on thread switch rather than showing one chat's usage
   // against another's transcript.
-  useEffect(() => { setServer(null); setReadFailed(false); setLive(null); }, [activeId]);
+  useEffect(() => { setServer(null); setLive(null); }, [activeId]);
 
   // THE DRAFT IS DELIBERATELY NOT A DEP OF THIS ONE. estimateContextTokens walks
   // every message AND every segment of the entire log, and `draft` changes on
@@ -116,12 +115,9 @@ export default function ContextMeter({
     return { used: baseUsed + draftTokens, win: contextWindowFor(model) };
   }, [live, server, baseUsed, draft, model]);
 
-  // No reading, or a reading too small to round to a whole percent. See
-  // contextReading: neither may render as "0%".
+  // ALWAYS A READING, and the meter always renders. See contextReading: it used
+  // to return null at zero and take the whole control off the composer with it.
   const reading = contextReading(ctx.used, ctx.win);
-  if (!reading) return null;
-  const source: ContextSource =
-    live != null || server ? "server" : readFailed ? "unavailable" : "estimate";
 
   // A single accent tone, no threshold colors: this is a reading, not a status.
   // The arc is a dash on a rotated circle so it fills clockwise from 12 o'clock.
@@ -138,7 +134,7 @@ export default function ContextMeter({
       <span className="chat-context-meter__pct">{contextLabel(reading)}</span>
     </>
   );
-  const title = contextTooltip(ctx.used, ctx.win, source);
+  const title = contextTooltip(ctx.used, ctx.win);
   // A reading with nothing behind it stays a plain label rather than pretending
   // to be a control: a blank chat has no session to break down.
   if (!onOpen || !activeId) {
@@ -148,7 +144,7 @@ export default function ContextMeter({
     <button
       type="button"
       className="chat-context-meter chat-ctx-btn"
-      title={`${title}. Click for the breakdown`}
+      title={title}
       onClick={onOpen}
     >
       {inner}

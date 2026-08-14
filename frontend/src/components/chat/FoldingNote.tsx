@@ -26,8 +26,12 @@ import StopButton from "./StopButton";
 // It carries its own clock. The transcript's 1Hz tick is gated on a run being
 // active and a fold is not a run, so there is nothing to borrow; this interval
 // exists only while the line is mounted.
-export default function FoldingNote({ mode, onStop }: {
+export default function FoldingNote({ mode, onStop, stopping = false }: {
   mode: "compact" | "clear";
+  /** The cancel request is out. Without this the press had no visible effect at
+   *  all and the line went on saying "Compacting" until the fold's own request
+   *  returned, which is what made a working cancel read as a dead button. */
+  stopping?: boolean;
   /** Abandon the fold. A compact is a ~30s model call and it holds the thread's
    *  queue while it runs, so being unable to call it off is a real corner to be
    *  stuck in. The server drops the summary rather than landing it; nothing is
@@ -49,15 +53,18 @@ export default function FoldingNote({ mode, onStop }: {
         <StopButton
           label={mode === "compact" ? "Stop compacting" : "Stop clearing"}
           onStop={onStop}
+          busy={stopping}
         />
       )}
       {mode === "compact"
         ? <Archive size={14} strokeWidth={1.8} aria-hidden />
         : <Eraser size={14} strokeWidth={1.8} aria-hidden />}
       <span>
-        {mode === "compact"
-          ? "Compacting. Folding earlier messages into a summary"
-          : "Clearing context"}
+        {stopping
+          ? (mode === "compact" ? "Stopping the compact" : "Stopping the clear")
+          : mode === "compact"
+            ? "Compacting. Folding earlier messages into a summary"
+            : "Clearing context"}
       </span>
       <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
       {elapsed > 0 && <span className="chat-working__time">{formatElapsed(elapsed)}</span>}

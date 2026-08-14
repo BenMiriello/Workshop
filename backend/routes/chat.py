@@ -1530,6 +1530,11 @@ async def cancel_thread_operation(thread_id: str):
     if chat_store.get_thread(thread_id) is None:
         raise HTTPException(404, "thread not found")
     op = thread_ops.cancel(thread_id)
+    # LOGGED EITHER WAY. When this was reported as "stop did nothing", the access
+    # log proved the request arrived and answered 200 and could say nothing about
+    # whether it had found an operation to stop, which is the only interesting
+    # part. One line settles that next time.
+    log.info("operation cancel on %s: %s", thread_id, op or "nothing in flight")
     return {"cancelled": bool(op), "operation": op or ""}
 
 

@@ -141,6 +141,42 @@ def test_a_cancelled_deferred_fold_also_writes_nothing(chatty, monkeypatch):
     assert thread_ops.pending(chatty) is None
 
 
+def test_a_cancel_arriving_as_a_separate_request_stops_a_live_fold(chatty, monkeypatch):
+    """THE REAL INTERLEAVING, not a stub that cancels itself.
+
+    Every other test here cancels from inside a stubbed _fold_summary, which
+    proves the check is read but fakes the concurrency. This drives what actually
+    happens: the compact runs as a task, the cancel goes in as its own call while
+    the summarizer is awaiting, and the fold must not land.
+
+    Written after the control was reported as doing nothing. It was not the
+    backend: the request arrived, answered 200, and cancelled the fold correctly.
+    The failure was that the UI said nothing about it for another forty seconds.
+    """
+    rc = _routes()
+    started = asyncio.Event()
+
+    async def slow_summary(thread_id, _t):
+        started.set()
+        await asyncio.sleep(0.25)          # stands in for the model call
+        return 4, "must never land", 4, ""
+
+    monkeypatch.setattr(rc, "_fold_summary", slow_summary)
+
+    async def drive():
+        task = asyncio.ensure_future(rc.compact_thread(chatty))
+        await started.wait()
+        out = await rc.cancel_thread_operation(chatty)
+        return out, await task
+
+    cancel_out, compact_out = asyncio.run(drive())
+
+    assert cancel_out == {"cancelled": True, "operation": "compact"}
+    assert compact_out.get("cancelled") is True
+    assert "summary" not in chat_store.get_thread(chatty)
+    assert _boundaries(chatty) == []
+
+
 def test_a_cancelled_clear_writes_nothing(chatty, monkeypatch):
     """/clear has no model call, so its window is narrow, but it lands through
     the same gate and must obey the same stop."""
