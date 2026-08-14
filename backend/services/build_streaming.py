@@ -1489,15 +1489,40 @@ def _mark_meta(meta: dict, status: str) -> None:
 
 
 def _proc_alive(pid: int | None) -> bool:
+    """Is this turn's agent process still running?
+
+    IS IT STILL *OURS*. `os.kill(pid, 0)` alone answers "does some process have
+    this number", and pids are recycled. Turn journals outlive the process that
+    wrote them -- across a backend restart by design, and across a reboot by
+    accident -- so a recycled pid made a long-dead turn read as live. The drive
+    loop then tails a journal nothing is writing, and because `turn_end` is only
+    consulted after a `result` line that will never come, and chat turns run with
+    no deadline, it spins at 0.15s intervals forever while the thread shows
+    "Still running".
+
+    Checking the command line costs one small read and makes the answer specific:
+    a recycled pid belongs to something else, and that is not our turn.
+    """
     if not pid:
         return False
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
+        # The pid belongs to another user. Our agent children run as us, so this
+        # is a recycled pid, not our turn. This used to answer True, which is the
+        # same forever-spinning turn one level down: "some process exists" was
+        # never the question.
+        return False
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            cmd = fh.read().replace(b"\0", b" ").decode("utf-8", "replace")
+    except OSError:
+        # No procfs entry (it exited between the two calls) or an unreadable one.
+        # Fall back to the signal's answer rather than inventing a death.
         return True
+    return "claude" in cmd
 
 
 async def _retire_turn_proc(pid: int | None, proc=None) -> None:
@@ -2029,16 +2054,35 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
              "seg_at_result": -1,
              "activity_at": time.time(), "seg_count": 0}
     buf = ""
-    offset = 0
+    # RESUME THE JOURNAL, DO NOT REPLAY IT.
+    #
+    # This was a flat `offset = 0`, so a turn adopted after a restart re-read its
+    # whole journal and rebuilt the assistant message from scratch, then
+    # persisted the half-rebuilt version over the stored one. From the chat that
+    # looks like the conversation spontaneously rewinding mid-reply, and it also
+    # discarded `cut_head` (the anchors for messages the operator sent mid-turn,
+    # which live only in memory), so those messages lost their place in the
+    # reply.
+    #
+    # The draft already carries the segments; it now carries the journal offset
+    # they were built from, written in the SAME call, so the pair is always
+    # consistent. Anything after that offset is re-read and appended, which is
+    # exactly right because the segments stop there.
+    offset = _resume_from(turn)
     last_persist = 0.0
 
     def _persist() -> None:
         # The live snapshot, not the log. The journal on disk is the buffer and
         # this is the copy a reload reads; the record gets one write, at commit.
+        #
+        # `offset` rides along so a re-attach can resume instead of replaying.
+        # It MUST be written with the segments it corresponds to; two separate
+        # writes would let a restart land between them and resume at a position
+        # the segments do not reach (dropping output) or overshoot (duplicating).
         try:
             chat_store.update_run(
                 turn.thread_id, turn.id, turn.segments, _turn_content(turn),
-                turn.cut_head)
+                turn.cut_head, journal_offset=offset)
         except Exception as e:  # pragma: no cover — defensive
             log.debug("turn %s: incremental persist failed: %s", turn.id, e)
 
@@ -2682,13 +2726,44 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
                     return True
                 from services import agent_authority
                 return agent_authority.may_write(_role, target)
-            if type(provider).apply_actions is not chat_context.ContextProvider.apply_actions:
+            from services import task_scope
+            # A REPLAY MUST NOT FILE THE TICKET TWICE.
+            #
+            # These blocks are the turn's writes to the world outside the chat.
+            # After a restart the reply is re-derived from the journal, so it
+            # carries the same task-patch, learning-note and note blocks it
+            # carried the first time -- and re-running them files a duplicate
+            # ticket and writes a duplicate note, silently.
+            #
+            # The marker goes in the journal's own meta, written the moment the
+            # writes complete, because the journal is the thing a replay reads.
+            # The receipts are stored with it so the replayed reply still says
+            # "Saved a note to workshop" and still links to the note that was
+            # actually written, rather than losing the record of its own effects.
+            #
+            # This does not close the window entirely: a crash INSIDE the block
+            # below still replays what had already been applied, because these
+            # helpers apply and strip in one step and do not report which blocks
+            # they got through. It closes the much larger window between the
+            # writes finishing and the reply committing, which includes the
+            # seconds-long git checkpoint.
+            if meta.get("blocks_applied"):
+                new_text = task_scope.strip_all_blocks(new_text)
+                applied_notes += list(meta.get("applied_notes") or [])
+                receipts.extend(meta.get("applied_receipts") or [])
+                _replayed_blocks = True
+            else:
+                _replayed_blocks = False
+            if _replayed_blocks:
+                pass
+            elif type(provider).apply_actions is not chat_context.ContextProvider.apply_actions:
                 new_text, pnotes = provider.apply_actions(new_text)
                 applied_notes += (pnotes or [])
                 _receipt("action", pnotes or [])
             # O2: apply a task-patch block against this chat's task scope.
-            from services import task_scope
-            if _permitted("tasks"):
+            if _replayed_blocks:
+                pass
+            elif _permitted("tasks"):
                 new_text, tnotes = task_scope.apply_task_patch(
                     ctx_key, new_text, (thread or {}).get("id"), (thread or {}).get("mode"))
                 applied_notes += tnotes
@@ -2700,12 +2775,16 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
                 _receipt("ticket", [refusal])
             # Phase 4: capture an explicit operator preference/correction emitted
             # as a ``learning-note`` block into the learnings store.
-            if _permitted("learnings"):
+            if _replayed_blocks:
+                pass
+            elif _permitted("learnings"):
                 new_text, lnotes = task_scope.apply_learning_note(ctx_key, new_text)
                 applied_notes += lnotes
                 _receipt("learning", lnotes)
             # Phase N3: capture a durable scoped ``note`` into the knowledge store.
-            if _permitted("notes"):
+            if _replayed_blocks:
+                pass
+            elif _permitted("notes"):
                 # The note is stamped with WHO WROTE IT: an @mentioned agent's
                 # note and the assistant's are otherwise byte-identical when
                 # either is recalled later. See services/origin.
@@ -2716,6 +2795,18 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
                 )
                 applied_notes += nnotes
                 _receipt("note", nnotes, nrefs)
+            # Mediated writes are done. Record that in the journal NOW, before
+            # the reply is committed and long before the git checkpoint, so a
+            # restart anywhere after this point replays the reply without
+            # re-filing the tickets and re-writing the notes.
+            if not _replayed_blocks and (applied_notes or receipts):
+                try:
+                    meta["blocks_applied"] = True
+                    meta["applied_notes"] = list(applied_notes)
+                    meta["applied_receipts"] = list(receipts)
+                    _write_meta(meta)
+                except Exception as e:  # pragma: no cover - best effort
+                    log.debug("turn %s: could not record applied blocks: %s", turn.id, e)
             # A data-mode assistant is told it may ask for a skill by emitting a
             # fenced block. It has tools and reads the skill itself, so nothing
             # expands one; take the raw protocol off the reply.
@@ -2874,6 +2965,45 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         shutil.rmtree(_journal_dir(turn.id), ignore_errors=True)
     except Exception:
         pass
+
+
+def _resume_from(turn: "Turn") -> int:
+    """Where in the journal this turn's already-rendered segments end.
+
+    Returns 0 -- today's full replay -- unless the stored draft gives a complete,
+    self-consistent place to resume from. Every uncertainty resolves to 0,
+    because replaying is merely ugly while resuming from a wrong offset drops or
+    duplicates part of the reply.
+
+    Only meaningful on re-attach: a fresh turn has no draft and starts at 0
+    anyway. Restores the segments and the mid-turn cut anchors alongside the
+    offset, since the offset is only correct RELATIVE to them.
+    """
+    try:
+        from services import chat_log
+        live = chat_log.read_live(turn.thread_id)
+    except Exception:
+        return 0
+    if not live or live.get("run_id") != turn.id:
+        return 0
+    off = live.get("journal_offset")
+    segs = (live.get("meta") or {}).get("segments")
+    # An older draft, written before offsets were recorded, cannot be resumed
+    # from: its segments are real but we do not know where they stop.
+    if not isinstance(off, int) or off <= 0 or not isinstance(segs, list) or not segs:
+        return 0
+    try:
+        if off > _journal_dir(turn.id).joinpath("stream.jsonl").stat().st_size:
+            return 0  # journal shorter than the offset: not the file we indexed
+    except OSError:
+        return 0
+    turn.segments = list(segs)
+    ch = (live.get("meta") or {}).get("cut_head")
+    if isinstance(ch, list):
+        turn.cut_head = list(ch)
+    log.info("turn %s: resuming journal at byte %d (%d segments restored)",
+             turn.id, off, len(segs))
+    return off
 
 
 _WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}

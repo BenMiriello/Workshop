@@ -122,6 +122,44 @@ def test_already_committed_reads_the_thread_not_the_journal(monkeypatch, active,
     assert bs._already_committed(meta) is expected, why
 
 
+class TestALiveProcessMeansOurProcess:
+    """Turn journals outlive the process that wrote them -- across a restart by
+    design and across a reboot by accident -- and pids get recycled. `os.kill(
+    pid, 0)` answers "does some process have this number", which made a long-dead
+    turn read as live: the drive loop then tails a journal nothing is writing,
+    never sees the `result` line it waits for, and (chat turns have no deadline)
+    spins forever while the thread shows "Still running"."""
+
+    def test_no_pid_is_not_alive(self):
+        assert bs._proc_alive(None) is False
+        assert bs._proc_alive(0) is False
+
+    def test_a_pid_that_does_not_exist(self):
+        assert bs._proc_alive(999_999) is False
+
+    def test_a_recycled_pid_running_something_else(self):
+        """This very interpreter exists and is emphatically not an agent."""
+        import os
+
+        assert bs._proc_alive(os.getpid()) is False
+
+    def test_a_pid_owned_by_another_user(self):
+        """init. Our agent children run as us, so another user's process is a
+        recycled pid. This answered True before, which is the same hang."""
+        assert bs._proc_alive(1) is False
+
+    def test_a_real_agent_process_is_alive(self):
+        """The positive control. Without it, a predicate that always said False
+        would pass everything above while ending every healthy turn."""
+        import subprocess
+
+        found = subprocess.run(["pgrep", "-f", "claude"],
+                               capture_output=True, text=True).stdout.split()
+        if not found:
+            pytest.skip("no claude process on this box to sample")
+        assert any(bs._proc_alive(int(p)) for p in found[:5])
+
+
 def test_already_committed_fails_toward_re_driving(monkeypatch):
     """When the answer cannot be read, re-drive.
 

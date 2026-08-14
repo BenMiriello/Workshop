@@ -288,6 +288,21 @@ def _agent_scope_dir(slug: str) -> Path | None:
     return d
 
 
+def strip_all_blocks(reply: str) -> str:
+    """Remove every mediated-write block WITHOUT applying any of them.
+
+    For a REPLAY. A turn whose reply is re-derived from its journal after a
+    restart carries the same task-patch, learning-note and note blocks it
+    carried the first time, and applying them again files the ticket twice and
+    writes the note twice. The blocks must still come off the visible reply,
+    though, or they render as raw JSON that reads like work that just happened.
+    Skipping and cleaning are the same act (the argument in strip_task_patch,
+    applied to all three)."""
+    for pat in (_PATCH_BLOCK, _LEARNING_BLOCK, _NOTE_BLOCK):
+        reply = pat.sub("", reply)
+    return reply.strip()
+
+
 def strip_task_patch(reply: str) -> str:
     """Remove a task-patch block WITHOUT applying it.
 

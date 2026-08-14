@@ -1264,7 +1264,8 @@ def begin_run(thread_id: str, run_id: str, model: str | None = None,
 
 
 def update_run(thread_id: str, run_id: str, segments: list[dict], content: str,
-               cut_head: list[str] | None = None) -> None:
+               cut_head: list[str] | None = None,
+               journal_offset: int | None = None) -> None:
     """Overwrite the running turn's live snapshot. No-op if it is not the active
     run any more (it finished, or something took the thread over).
 
@@ -1288,6 +1289,12 @@ def update_run(thread_id: str, run_id: str, segments: list[dict], content: str,
     chat_log.write_live_sync(thread_id, {
         "run_id": run_id,
         "content": content,
+        # WHERE THESE SEGMENTS STOP in the turn's journal, so a backend that
+        # restarts mid-reply resumes the tail instead of replaying it from byte
+        # zero and rebuilding the message the operator is already looking at.
+        # Written here, in the same call as the segments, because an offset that
+        # does not match the segments beside it is worse than none at all.
+        **({"journal_offset": int(journal_offset)} if journal_offset else {}),
         # `turn_id` rides inside `meta` because that is the shape `_live_view`
         # renders and the client already reads.
         # `cut_head` names the messages that arrived before this turn had
