@@ -319,3 +319,61 @@ class TestGovernanceFloor:
         # More than the ~40 tokens a bare 60%-of-200 remainder would hold if
         # workshop's unused floor were not returned to the pool.
         assert len(project_lines) >= 4
+
+
+class TestStubNeverCostsMoreThanContent:
+    """Defect found by the coordinator: a starved layer with exactly one
+    short note was rendering `(1 notes in this scope; ...)`, a sentence
+    costing about the same as the note it replaced. A stub must never cost
+    more than the content it stands in for."""
+
+    def test_content_wins_when_it_fits_the_stubs_own_cost(self, tree):
+        _put("workshop", "solo", "Short note", "body")  # no hook: a short line
+        for i in range(20):
+            _put("project:demo", f"p-{i}", f"Project note {i}", "body",
+                 hook="a deliberately long hook so each line costs real tokens")
+
+        # total_tokens=1 drives workshop's governance floor to 0, the
+        # budget<=0 stub path - but its one SHORT note costs less than the
+        # stub sentence that would replace it, so the note wins.
+        text, used = knowledge.layered_index_block("project:demo", total_tokens=1)
+        workshop_block = text.split("[workshop]\n", 1)[1].split("\n\n[", 1)[0]
+        assert workshop_block.startswith("- Short note"), (
+            f"a stub replaced content that fit within its own cost:\n{workshop_block}")
+        assert "notes in this scope" not in workshop_block
+
+    def test_the_stub_still_wins_when_content_would_cost_more(self, tree):
+        long_hook = ("a hook long enough that even a single note costs more "
+                     "than a short stub sentence would cost on its own")
+        for i in range(5):
+            _put("workshop", f"w-{i}", f"Workshop note {i}", "body", hook=long_hook)
+        for i in range(20):
+            _put("project:demo", f"p-{i}", f"Project note {i}", "body", hook=long_hook)
+
+        text, used = knowledge.layered_index_block("project:demo", total_tokens=1)
+        workshop_block = text.split("[workshop]\n", 1)[1].split("\n\n[", 1)[0]
+        assert "notes in this scope" in workshop_block, (
+            f"content that costs more than the stub was shown anyway:\n{workshop_block}")
+
+
+class TestSingularPlural:
+    def test_the_stub_says_one_note_not_one_notes(self, tree):
+        long_hook = ("enough hook text that this single note costs noticeably "
+                     "more than the short stub sentence naming it would cost")
+        _put("workshop", "solo", "A note with a long hook", "body", hook=long_hook)
+
+        text, used = knowledge.layered_index_block("workshop", total_tokens=0)
+        assert "(1 note in this scope; use the search tool to reach them)" in text
+        assert "1 notes" not in text
+
+    def test_the_remainder_footer_says_one_more_note_not_notes(self, tree):
+        _put("workshop", "a", "Note A", "body")
+        _put("workshop", "b", "Note B", "body")
+
+        block = knowledge.index_block("workshop", max_tokens=1)
+        # `index_block` always shows one note regardless of budget; with
+        # exactly 2 notes total, exactly 1 is left over.
+        assert block.splitlines()[-1] == (
+            "(1 more note in this scope; use the search tool to reach them)"
+        )
+        assert "1 more notes" not in block

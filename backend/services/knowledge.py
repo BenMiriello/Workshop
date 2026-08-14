@@ -542,11 +542,20 @@ def layered_index_block(scope_key: str, role: str | None = None,
     A layer left with no budget still announces itself in one line (its note
     count, no titles), rather than vanishing: a layer disappearing entirely is
     the same failure `index_block`'s own truncation footer exists to avoid, one
-    level up.
+    level up. But a stub must never cost more than the content it replaces: if
+    a layer's FULL content (every note, untruncated) would cost about as much
+    as the sentence saying it exists, that content is shown instead - printing
+    a same-length sentence that says a note exists, in place of the note
+    itself, is pure loss.
     """
     layers = read_layers(scope_key, role, private)
     if not layers:
         return "", []
+
+    def _stub(n: int) -> str:
+        if n <= 0:
+            return ""
+        return f"({n} {_noun('note', n)} in this scope; use the search tool to reach them)"
 
     def _stub_or_render(sk: str, budget: int) -> str:
         if budget <= 0:
@@ -554,8 +563,26 @@ def layered_index_block(scope_key: str, role: str | None = None,
                 n = len(list_notes(sk))
             except Exception:
                 n = 0
-            return (f"({n} notes in this scope; use the search tool to reach them)"
-                    if n else "")
+            stub = _stub(n)
+            if not stub:
+                return ""
+            # A stub replaces content only when the content would cost MORE
+            # than the stub itself. `max_tokens=_approx_tokens(stub)` renders
+            # whatever fits in that same budget; compare actual costs rather
+            # than note counts, because `index_block` always shows at least
+            # one note regardless of budget, so a single huge note would
+            # otherwise look like "everything fit" when it did not. In
+            # practice this reduces to "prefer content only when nothing was
+            # left out": a truncated render always pays for the remainder
+            # line ON TOP of its notes, which reliably pushes it over the
+            # stub's own cost whenever anything was actually cut.
+            try:
+                full = index_block(sk, max_tokens=_approx_tokens(stub))
+            except Exception:
+                full = ""
+            if full and _approx_tokens(full) <= _approx_tokens(stub):
+                return full
+            return stub
         try:
             return index_block(sk, max_tokens=budget)
         except Exception:
@@ -618,6 +645,13 @@ def layered_index_block(scope_key: str, role: str | None = None,
 # budget without pulling in a tokenizer dependency.
 def _approx_tokens(text: str) -> int:
     return (len(text or "") + 3) // 4
+
+
+def _noun(word: str, n: int) -> str:
+    """English singular/plural for a count in a rendered sentence ("1 note",
+    "2 notes"). Only the plurals this module actually needs (a trailing -s);
+    not a general inflector."""
+    return word if n == 1 else word + "s"
 
 
 # The default for a STANDALONE call to `index_block` on a single scope: a
@@ -708,7 +742,8 @@ def index_block(scope_key: str, max_tokens: int = DEFAULT_INDEX_TOKEN_BUDGET) ->
     remaining = len(notes) - shown
     if remaining > 0:
         lines.append(
-            f"({remaining} more notes in this scope; use the search tool to reach them)"
+            f"({remaining} more {_noun('note', remaining)} in this scope; "
+            "use the search tool to reach them)"
         )
     return "\n".join(lines)
 
