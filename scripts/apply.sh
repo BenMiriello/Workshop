@@ -40,9 +40,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 CHECK=0
+PUBLISH_WIP=0
+UI_SKIPPED=0
 for arg in "$@"; do
   case "$arg" in
     --check|-n) CHECK=1 ;;
+    --publish-wip) PUBLISH_WIP=1 ;;
     -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "apply.sh: unknown argument '$arg' (try --check or --help)" >&2; exit 64 ;;
   esac
@@ -98,12 +101,30 @@ else
   # the operator views this origin. Naming those files is the difference between
   # a decision and a surprise -- the post-commit hook, by contrast, only ever
   # builds committed state.
+  # THE BUILT ORIGIN SERVES COMMITTED WORK.
+  #
+  # A build takes the working tree, so on a shared checkout it carries whatever
+  # anyone else has open. Uncommitted is the definition of unfinished, and this
+  # origin is the one the operator looks at -- so a backend-only change should
+  # not drag somebody's half-written chat UI onto it, which is exactly the
+  # situation this hit on 2026-08-13 (ten files, mid-refactor, not mine).
+  #
+  # Skipping is safe because it is not the only path: committing rebuilds
+  # automatically (.githooks/post-commit), committing as you go is already the
+  # repo rule, and the :5173 dev origin serves the working tree live for
+  # iterating. So the owner of that work still gets it published, by the act
+  # that already means "this is finished".
+  #
+  # A stale bundle with a CLEAN tree is a different thing entirely -- a missed
+  # hook, a failed build -- and that is the case this must always fix.
   ui_wip="$(git status --porcelain -- frontend/src packages/ui frontend/index.html 2>/dev/null | awk '{print $2}')"
-  if [ -n "$ui_wip" ]; then
-    warn "the build will publish these UNCOMMITTED files:"
+  if [ -n "$ui_wip" ] && [ "$PUBLISH_WIP" = 0 ]; then
+    warn "not building: the bundle is stale because of UNCOMMITTED UI work:"
     printf '            %s\n' $ui_wip
+    say  "          commit it and the post-commit hook builds, or: bash scripts/apply.sh --publish-wip"
+    UI_SKIPPED=1
   fi
-  if [ "$CHECK" = 0 ]; then
+  if [ "$CHECK" = 0 ] && [ "$UI_SKIPPED" = 0 ]; then
     if bash scripts/build_workshop_public.sh >/dev/null 2>&1; then
       NEW_ID="$(python3 -c '
 import json
@@ -225,5 +246,8 @@ if [ "$CHECK" = 1 ]; then
   exit "$DRIFT"
 fi
 [ "$FAILED" = 1 ] && { say "apply: something failed (above)"; exit 1; }
+# Never let a skip pass for a success. Something deliberately not done still has
+# to be said out loud, or the next reader concludes the bundle is current.
+[ "$UI_SKIPPED" = 1 ] && say "apply: the bundle is still STALE by choice (uncommitted UI work above)"
 [ "$ACTED" = 0 ] && [ "$DRIFT" = 0 ] && say "already in sync; nothing to do"
 exit 0
