@@ -2841,11 +2841,19 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     except Exception as e:  # pragma: no cover — best-effort
         log.debug("turn %s: auto-name schedule failed: %s", turn.id, e)
 
-    # Auto-checkpoint the working tree (skip the self/platform monorepo).
+    # Auto-checkpoint the working tree (never the self/platform monorepo).
+    #
+    # is_IN_self_repo, not is_self_dir. The old check asked whether cwd WAS the
+    # repo root, but `git add -A` is repo-wide from any subdirectory, so a turn
+    # running in backend/, shared/, apps/ or branches/ passed the check and then
+    # committed the whole monorepo -- other agents' unfinished files included.
     try:
         from services import checkpoints, app_runner
-        if cwd and not app_runner.is_self_dir(cwd):
-            sha = await asyncio.to_thread(checkpoints.checkpoint, cwd, f"{turn.agent_slug} turn")
+        if cwd and not app_runner.is_in_self_repo(cwd):
+            paths = _written_paths(turn.id, cwd)
+            sha = await asyncio.to_thread(
+                checkpoints.checkpoint, cwd, f"{turn.agent_slug} turn", paths
+            )
             if sha:
                 _push(turn, "checkpoint", {"sha": sha})
     except Exception as e:
@@ -2866,6 +2874,52 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         shutil.rmtree(_journal_dir(turn.id), ignore_errors=True)
     except Exception:
         pass
+
+
+_WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+
+def _written_paths(turn_id: str, cwd: str) -> list[str]:
+    """The files THIS turn wrote, repo-relative, read back from its journal.
+
+    A checkpoint should stage the turn's own work and nothing else. The journal
+    already records every tool call, so the set is recoverable without threading
+    state through the drive loop -- and it is still on disk here, because the
+    journal is not removed until after the commit.
+
+    Returns [] when it cannot tell, which the caller treats as "fall back to
+    staging everything": a messy checkpoint is recoverable, a missing one is not.
+    """
+    out: list[str] = []
+    try:
+        base = Path(cwd).resolve()
+        seen = set()
+        with open(_journal_dir(turn_id) / "stream.jsonl", encoding="utf-8") as fh:
+            for line in fh:
+                if '"tool_use"' not in line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                for block in (ev.get("message") or {}).get("content", []) or []:
+                    if not isinstance(block, dict) or block.get("type") != "tool_use":
+                        continue
+                    if block.get("name") not in _WRITE_TOOLS:
+                        continue
+                    fp = (block.get("input") or {}).get("file_path")
+                    if not fp:
+                        continue
+                    try:
+                        rel = Path(fp).resolve().relative_to(base)
+                    except Exception:
+                        continue  # wrote outside this tree; not ours to commit
+                    if str(rel) not in seen:
+                        seen.add(str(rel))
+                        out.append(str(rel))
+    except Exception:
+        return []
+    return out
 
 
 def _already_committed(meta: dict) -> bool:

@@ -856,27 +856,29 @@ _MIRROR_TASKS: set = set()
 _MIRROR_CHAIN: dict[str, "asyncio.Task"] = {}
 
 
-def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
-    """Record the event in the transcript tree as well (ADR 0020).
+def mirror_next(thread_id: str, make_coro) -> None:
+    """Queue one tree write behind this thread's previous one.
 
-    The tree is what makes a conversation branchable: a message has to know
-    which point it was sent FROM, and a flat log cannot say. This is the one
-    funnel every append goes through, so it is the one place that has to know.
+    `make_coro` is a zero-argument callable returning the coroutine to run, not
+    a coroutine: nothing is created unless there is a loop to run it on, so a
+    caller off the loop does not leave an un-awaited coroutine behind.
 
     FIRE AND FORGET, ON PURPOSE. The log line is already committed and fsynced
-    at this point; it is the durable write and it stays that way through the
-    migration. Awaiting a database round trip here would put Postgres on the
-    latency path of every keystroke-sized append and, worse, would let a
-    database outage stop the operator sending a message. What is lost if this
-    fails is the message's PLACE in the tree, which is exactly what
+    by the time this is called; it is the durable write and it stays that way
+    until step 4 of the migration. Awaiting a database round trip here would put
+    Postgres on the latency path of every keystroke-sized append. What is lost if
+    it fails is a message's PLACE in the tree, which is exactly what
     `db/chat_backfill.py` reconstructs, and it is re-runnable.
+
+    ORDERED PER THREAD, which is the whole reason this is a chain and not a bare
+    `create_task`. Every write parents its row to the branch's current head, so
+    two running at once read the same head. See `_MIRROR_CHAIN`.
     """
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
     try:
-        from services import chat_branches
         prev = _MIRROR_CHAIN.get(thread_id)
 
         async def _write_after_the_last_one():
@@ -884,7 +886,7 @@ def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
                 # return_exceptions: a failed predecessor must not cancel the
                 # rest of the thread's writes.
                 await asyncio.gather(prev, return_exceptions=True)
-            await chat_branches.record_message(thread_id, ev, meta)
+            await make_coro()
 
         # HELD: an unheld task can be garbage-collected mid-write, and a
         # silently missing mirror row is exactly the failure this mirror's
@@ -904,8 +906,19 @@ def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
     except Exception:
         # Scheduling failed. The log line is already committed, so the cost is a
         # missing PLACE in the tree, which the backfill reconstructs.
-        log.debug("thread %s: mirror-write not scheduled", thread_id,
+        log.debug("thread %s: tree write not scheduled", thread_id,
                   exc_info=True)
+
+
+def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
+    """Record the event in the transcript tree as well (ADR 0020).
+
+    The tree is what makes a conversation branchable: a message has to know
+    which point it was sent FROM, and a flat log cannot say. This is the one
+    funnel every append goes through, so it is the one place that has to know.
+    """
+    from services import chat_branches
+    mirror_next(thread_id, lambda: chat_branches.record_message(thread_id, ev, meta))
 
 
 async def drain_mirror_writes() -> None:

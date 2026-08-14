@@ -1,122 +1,137 @@
-# Moving the transcript READ onto the tree
+# Chat storage: one store, Postgres
 
-Status: **plan, not built.** Written 2026-08-14 after fixing the four defects
-recorded in [ADR 0020](../decisions/0020-a-transcript-is-a-tree.md). It carries
-one decision that is the operator's, not mine, and it is stated first because
-everything else depends on the answer.
+Status: **plan, being implemented.** Written 2026-08-14.
 
-## Where things stand
+This replaces an earlier draft of the same filename that framed the move as
+hinging on an availability trade. That framing was wrong and the operator said
+so: "isn't that every web application that is based off of a database, which is
+almost all of them." It is. A database-backed app depends on its database. Chat
+is not special, and that is not a reason to keep two stores.
 
-The WRITE path is the append-only JSONL log, mirrored into Postgres. The READ
-path is still entirely the log. The tree is consulted for exactly two things:
-which branch is current, and which log events to hide.
+## Why there are two stores today
 
-That split is doing real work. Branching degrades to "the chat renders, it just
-cannot be branched" when Postgres is unavailable, and rendering a chat has no
-database on its latency path at all.
+Order of construction, not design.
 
-## The decision: what a Postgres outage costs
+The JSONL log came first, and for a real reason: it replaced a whole-document
+JSON store where every write was a read-modify-write of the entire thread. Three
+paths broke that; the worst read a thread, spent ~30s summarizing, and wrote the
+snapshot back, deleting whatever the operator had typed meanwhile. An append
+cannot do that.
 
-Today it costs branching. After this migration it costs **the chat**: no
-transcript renders, on any device, until the database is back.
+Postgres landed on 2026-08-13, and chat was pulled forward into it a day later
+for branching, because a transcript that branches is a tree and a flat file
+cannot express one. Rather than move the whole thing at once, messages were
+MIRRORED: log first (authoritative), database second (best effort).
 
-That is not a footnote, it is the whole trade. Everything below is
-straightforward engineering; this is the part worth deciding deliberately.
+That mirror is migration scaffolding. It was never a design, and describing it
+as one is what made this confusing.
 
-Three honest answers:
+## What is wrong with keeping it
 
-**(a) Do it, and accept the coupling.** Simplest end state. The three order
-reconstructions delete rather than surviving as a second implementation of the
-same rule, the cursor becomes tree-native, and mid-reply branch points become
-expressible. One store, one order, no agreement to maintain.
+Not availability. Duplication.
 
-**(b) Do not do it.** Keep the log as the read path forever and treat the tree as
-a structural index over it. Costs: `interleave_history`, `_fmt_for_summary`, the
-voice seed and the client's `legacyPieces` all stay, four implementations of one
-ordering rule that must agree, plus permanent last-stretch-only fork anchoring.
+**One rule, four implementations.** "Where does a message that interrupted a
+reply belong" is currently answered by `interleave_history` (the prompt),
+`_fmt_for_summary` (the summarizer), `voice_worker._thread_seed` (voice), and
+`cutPieces`/`legacyPieces` (the browser). They must agree and they do not: the
+prompt honours only the recorded tokens while the screen also resolves the legacy
+index, so the model and the operator currently disagree about 33 replies.
 
-**(c) Do it with the log as a fallback read.** Serve rows; fall back to the log
-when the tree is unreachable or incomplete for a thread. Keeps today's
-availability. Costs: both readers stay alive, so (b)'s duplication is not
-retired, and the fallback path is exercised approximately never, which is how a
-fallback rots.
+**Every bug in the branch feature was a place the two stores disagreed.** The
+prompt read the abandoned line because `_fold` never applied the branch filter.
+The fork anchored at the end of an interrupted reply because the client can only
+name a log event and one event is several rows. None of those are branch bugs;
+they are seam bugs.
 
-**Recommendation: (a), and not yet.** The coupling is acceptable because the
-database is local, on the same box, with no network between it and the backend,
-and because everything else in the platform is heading onto it anyway. But it
-should land after the mirror is provably complete, not before: today the tree is
-built by a best-effort background write, and moving the read onto it while it can
-silently miss a row would make a lost mirror write into a lost message on screen.
-That is a much worse failure than a lost branch point. Step 1 below is what earns
-the right to do step 4.
+**The tree is built by a best-effort background write**, so it can silently miss
+a row. That is survivable while it is only an index and unacceptable once it is
+the store, which is why the write path is step 1 and not step 3.
 
-## Why it is not one change
+## The target
 
-### 1. The live mirror is less expressive than the backfill, and cannot be fixed in place
+Postgres is the store. `chat_message` rows are the transcript. The log is
+retired.
 
-The backfill splits an interrupted reply into one row per stretch and writes
-`chat_turn` rows. The live mirror writes **one flat row per log event**, strips
-the positional meta (`cut_id`, `cut_head`, `at_unit`, `at_segment`, `during_run`,
-`injected`), and never writes a `chat_turn` at all. Nothing in production has
-ever written one. Re-running the backfill does not repair it: `_load_thread`
-skips any event whose `external_id` already exists.
+The schema already supports this: `chat_message` has `parent_id`, `turn_id`,
+`role`, `kind`, `content`, `segments`, `meta`, `client_id`, `external_id`, `seq`,
+and `chat_turn` carries the turn-level facts (model, timings, error, timeout,
+stopped). `chat_repo._row` already emits the exact event shape the client
+consumes today, including putting a turn's outcome on its last stretch only.
 
-And it cannot simply be taught to split, because **the shape of a turn is not
-known until the turn is sealed**. The interrupting user messages arrive and are
-mirrored while the reply is still being written; by the time the reply commits,
-those rows already have parents. Splicing the reply's stretches between them
-means re-parenting, and `parent_id` is immutable by trigger, deliberately, since
-that is what makes a cycle unbuildable.
+## The one genuinely tricky part, and why it is already solved
 
-So the fix is a change of GRANULARITY, not of logic: **mirror a turn, at seal,
-atomically** — the stretches and the messages that interrupted them, written in
-true order in one transaction. A message sent during a run is not mirrored on
-arrival.
+An interrupted reply must become SEVERAL rows, threaded with the messages that
+interrupted it: `stretch0 → msg → stretch1 → msg → stretch2`. `parent_id` is
+immutable by trigger (that is what makes a cycle unbuildable), so those rows have
+to be created with the right parent the first time. No re-parenting.
 
-That is coherent (the log is the durability guarantee and is written first; the
-tree is a structural projection, and structure is a property of the whole turn)
-and it has one honest cost: a process death mid-run leaves those messages in the
-log and not in the tree until a backfill top-up. Safe today, because an event
-with no row is KEPT by the filter. Not safe once the read comes from rows, which
-is exactly why this is step 1 and the read is step 4.
+The obstacle looks fatal at first: the interrupting message arrives while the
+reply is still streaming, so at the moment it needs a parent, the stretch it
+belongs after does not exist yet.
 
-### 2. The anchor has to name a row, and today it cannot
+**It does exist, as a decision, and the server already makes it.**
+`build_streaming.cut_here` runs the instant an interrupting message arrives and
+calls `seal_open_text`, which closes the open text run so nothing written
+afterwards can merge backwards into it. That call is the server stating "this
+stretch of the reply is finished, and a message goes next". It is exactly the
+point at which a row can be opened with its parent already correct.
 
-The client can only name a LOG EVENT. One event is N rows, so `_resolve_anchor`
-disambiguates by picking the last (for `after`) or the first (for `before`). That
-is why a fork anchors at the END of an interrupted reply, and why only the last
-block of an event carries the control. It is an addressing problem created by
-rendering from the log, not a storage problem: the rows exist and are individually
-addressable.
+So:
 
-Once step 1 lands, the client can send `<event_id>#<stretch>` and every stretch
-becomes its own branch point, **without** step 4. Worth noting: that delivers the
-only user-visible capability in this document, at a fraction of the risk. If the
-answer to the decision above is (b), do this anyway.
+- **At seal** (`routes/chat._file_during_run`, between `_cut_point` and the
+  append): open a stretch row for the turn, parented to the current head, and
+  move the head. The interrupting message then parents to it by the ordinary
+  rule.
+- **At commit**: split the final segment list on the recorded cut tokens, fill
+  each opened stretch row's content, and insert the last stretch.
+- **When nothing had been emitted** (`cut_head`): no stretch is opened, and the
+  message parents to the pre-run head. That is the "the run's own start is the
+  floor" case and it comes out right for free.
 
-### 3. The sync cursor is a log seq
+Structure is written when it becomes known; content is written when it is final.
+`parent_id` is never mutated, only `content`/`segments`, which are not immutable.
 
-`after` / `last_seq` are log sequence numbers. `chat_message.seq` is a per-thread
-insertion counter and explicitly not the order. A cursor over a tree needs
-re-specifying, or the endpoint stops being a cursor sync.
+**This is NOT the reverted `revises:` mechanism.** That claimed a slot for the
+reply at turn START, before any output, which forced every mid-turn message
+below the whole reply and is precisely the bug that took five rounds of
+corrections. A slot claimed at SEAL time is the opposite: it is claimed at a
+moment that is already true, because output has demonstrably been emitted and a
+message demonstrably follows it. Do not collapse the two when reading this
+later.
 
-### 4. Then, and only then, serve rows
+## Stages
 
-`chat_repo.transcript` already produces render-order nodes with `is_turn_tail`
-correct, and `read_transcript` is the org-scoped entry point with no caller yet.
-Pointing `thread_events` at it deletes the hidden-set filter, the branch-change
-reset in `useThreadLog`, and all four order reconstructions.
+Each stage is shippable and verified on its own.
 
-## Sequence
+**1. The tree becomes complete and true for live traffic.** Write `chat_turn`
+rows (nothing has ever written one outside the backfill). Open a stretch row at
+seal; fill and close at commit. Stop stripping the positional meta, since the
+structure now carries it. Add a completeness check (every log message event has a
+row) and a repair. The log is still authoritative for reads throughout, so
+nothing user-visible changes and the stage is verifiable by comparing the tree
+against the log for real threads.
 
-1. **Mirror a turn atomically at seal.** Stretches plus interleaved messages, in
-   true order, one transaction. Backfill top-up for the gap. Add a completeness
-   check (every log message event has a row) and run it before trusting the tree.
-2. **Address a row, not an event.** `<event_id>#<stretch>` anchors. Every stretch
-   of an interrupted reply gets its own control. Independently useful.
-3. **Re-specify the cursor** over the tree.
-4. **Serve rows**, delete `interleave_history`, `_fmt_for_summary`, the voice
-   seed, and `cutPieces`/`legacyPieces`.
+**2. Reads come from rows.** `thread_events` serves `chat_repo.transcript`
+instead of log events plus the hidden-set filter. `keep_visible` and the
+hidden-set go. The client renders rows directly, which deletes `replyBlocks`,
+`cutPieces` and `legacyPieces`: each stretch is already its own row, so there is
+nothing to split. The sync cursor stays `seq` (a per-thread insertion counter,
+which is exactly what an incremental cursor wants); render order is the parent
+chain, which the client walks. Branch switches keep the existing reset.
 
-1 and 2 are worth doing under any answer to the decision. 3 and 4 are only worth
-doing under (a).
+**3. The backend reconstructions go.** `interleave_history`, `_fmt_for_summary`
+and the voice seed read rows in path order. Four implementations of the ordering
+rule become zero, because order stops being derived anywhere.
+
+**4. The log is retired.** Writes go to Postgres in the request. `chat_store`
+is the facade in front of `chat_log` for nearly every caller, which is what makes
+this tractable; the direct external callers are few. The per-thread asyncio lock
+is replaced by the database's own transactions. Decide at that point whether to
+keep writing a log as an export artifact; it is no longer a store either way.
+
+## What stays
+
+`live.json` (the in-flight turn's draft) stays a file. It is rewritten many times
+a second while a turn streams, it is discarded when the turn commits, and it is
+the one thing here that genuinely does not want a transaction per keystroke. It
+is not a store of record and never was.

@@ -479,6 +479,81 @@ def append_message(s: Session, thread_id: str | UUID, *, role: str,
     return {"id": str(msg_id), "seq": seq, "duplicate": False}
 
 
+_TURN_FIELDS = ("status", "model", "agent_slug", "started_at", "ended_at",
+                "error", "timeout", "stopped")
+
+
+def upsert_turn(s: Session, thread_id: str | UUID, run_id: str, **fields) -> UUID:
+    """The `chat_turn` row for this run, created if it is new, updated if it is
+    not. Returns its id.
+
+    `run_id` is globally unique, so it is an exact "have I seen this run" test
+    and the insert can be conflict-tolerant without a prior read. That matters
+    here more than it did in the backfill: a turn is written TWICE on the live
+    path, once when it starts producing structure and once when it ends, and the
+    second write is the one that carries how it went.
+
+    Only fields that were passed are written. A turn opened mid-flight knows its
+    model and start; it does not yet know whether it errored, and a later update
+    must not blank what an earlier one recorded.
+    """
+    org = s.scalar(text("SELECT org_id FROM chat_thread WHERE id = :t"),
+                   {"t": str(thread_id)})
+    if org is None:
+        raise BranchError(f"no such thread: {thread_id}")
+    given = {k: v for k, v in fields.items() if k in _TURN_FIELDS and v is not None}
+    given.setdefault("status", "running")
+    cols = {"id": uuid7(), "org": str(org), "t": str(thread_id), "run": run_id, **given}
+    names = ", ".join(["id", "org_id", "thread_id", "run_id", *given])
+    binds = ", ".join([":id", ":org", ":t", ":run", *(f":{k}" for k in given)])
+    updates = ", ".join(f"{k} = EXCLUDED.{k}" for k in given)
+    s.execute(text(
+        f"INSERT INTO chat_turn ({names}) VALUES ({binds}) "
+        f"ON CONFLICT (run_id) DO UPDATE SET {updates}"), cols)
+    return s.scalar(text("SELECT id FROM chat_turn WHERE run_id = :r"), {"r": run_id})
+
+
+def turn_stretches(s: Session, turn_id: str | UUID) -> list[UUID]:
+    """The rows already opened for this turn, in the order they were opened.
+
+    Ordered by `seq`, the per-thread insertion counter, which is exactly what it
+    is for: these rows were inserted one per interruption as the turn ran, so
+    insertion order IS stretch order. Render order (the parent chain) would give
+    the same answer here and is more work to ask for.
+    """
+    rows = s.execute(text(
+        "SELECT id FROM chat_message WHERE turn_id = :t AND deleted_at IS NULL "
+        "ORDER BY seq"), {"t": str(turn_id)}).all()
+    return [r[0] for r in rows]
+
+
+def fill_message(s: Session, message_id: str | UUID, *, content: str | None = None,
+                 segments: list | None = None, meta: dict | None = None,
+                 external_id: str | None = None) -> None:
+    """Write the CONTENT of a row whose place in the tree was already fixed.
+
+    This is the half of a stretch that is not known when the stretch is opened.
+    A reply that gets interrupted has its structure decided the moment it is
+    interrupted (`build_streaming.seal_open_text` says so) and its text decided
+    when the turn ends; the row is created at the first moment and completed at
+    the second.
+
+    It updates content, never `parent_id`. Parentage is immutable by trigger and
+    must stay that way: it is what makes a cycle unbuildable rather than merely
+    detectable. Nothing here needs to move a row, only to finish one.
+    """
+    sets, params = [], {"id": str(message_id)}
+    for name, value in (("content", content), ("segments", _json(segments)),
+                        ("meta", _json(meta)), ("external_id", external_id)):
+        if value is not None:
+            sets.append(f"{name} = :{name}")
+            params[name] = value
+    if not sets:
+        return
+    s.execute(text(f"UPDATE chat_message SET {', '.join(sets)} WHERE id = :id"),
+              params)
+
+
 def create_thread(s: Session, org_id: UUID | str, owner_user_id: UUID | str, *,
                   context_key: str = "general", scope: str = "workshop",
                   external_id: str | None = None, title: str | None = None,

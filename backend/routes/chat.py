@@ -3575,6 +3575,24 @@ def _file_during_run(thread_id: str, run_id: str, content: str,
             "at_segment": at_segment, "at_unit": at_unit}
     if cut_id:
         meta["cut_id"] = cut_id
+        # THE SAME FACT, WRITTEN AS STRUCTURE. `_cut_point` just sealed the open
+        # text, which is the server saying "this stretch of the reply is
+        # finished and a message goes next". That is the one moment the stretch
+        # can be given a row with its parent already correct, so the message
+        # below can hang from it instead of from the whole reply.
+        #
+        # Queued on the thread's mirror chain, so it lands BEFORE the message's
+        # own tree write however slow the database is; the two must not race for
+        # the branch head. Nothing is awaited here: a mid-run message must not
+        # wait on Postgres to reach the model.
+        #
+        # `at_segment == 0` is the `cut_head` case — nothing had been emitted
+        # yet, so there is no stretch to open and the message belongs before the
+        # whole reply. See docs/decisions/0018.
+        if at_segment:
+            chat_log.mirror_next(
+                thread_id,
+                lambda: chat_branches.open_stretch(thread_id, run_id))
     if attachments:
         meta["attachments"] = attachments
     msg = chat_store.append_message_during_turn(

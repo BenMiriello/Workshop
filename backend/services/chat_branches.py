@@ -271,6 +271,164 @@ async def hidden_event_ids(thread_ref: str) -> set[str] | None:
         return None
 
 
+# Keys that say WHERE a message landed inside a reply. Structure replaces them,
+# so they are not carried into a row's `meta`. Shared with the backfill so the
+# live path and the reconstruction cannot drift apart.
+_POSITIONAL = ("cut_id", "cut_head", "at_unit", "at_segment", "during_run",
+               "during_turn", "injected", "streaming", "segments")
+# Keys that live on `chat_turn`, not on a message.
+_TURN_LEVEL = ("turn_id", "model", "agent", "started_at", "ended_at", "error",
+               "timeout", "stopped")
+
+
+def _message_meta(ev: dict) -> dict | None:
+    m = {k: v for k, v in (ev.get("meta") or {}).items()
+         if k not in _POSITIONAL and k not in _TURN_LEVEL}
+    return m or None
+
+
+def stretches(segments: list[dict]) -> list[list[dict]]:
+    """A reply's segments, cut into one list per stretch at the positions the
+    server recorded while it was writing.
+
+    The count is the contract: one stretch per recorded `cut_after` ref, plus
+    the final one. That is exactly the number of stretch rows that were opened
+    while the turn ran (see `open_stretch`), because both come from the same
+    events: one `cut_here` call with text already emitted produces one ref and
+    one row.
+
+    `cut_head` refs are deliberately NOT counted. They mark messages that beat
+    the reply's first word, so there is no stretch before them to open a row
+    for; those messages parent to the point the run started from, which is the
+    "the run's own start is the floor" rule from docs/decisions/0018.
+
+    Two refs on one segment is two messages sent with no output between them,
+    which yields an empty stretch between them. That is correct and it is why
+    the flush is per ref rather than per segment.
+    """
+    out: list[list[dict]] = []
+    buf: list[dict] = []
+    for s in segments:
+        if not isinstance(s, dict):
+            continue
+        buf.append(s)
+        for _ in (s.get("cut_after") or ()):
+            out.append(buf)
+            buf = []
+    out.append(buf)
+    return out
+
+
+def _text_of(segs: list[dict]) -> str:
+    """What a stretch's bubble says: its top-level prose, the same join the
+    client's `textOf` does and the same one the reply's own `content` is."""
+    return "".join(s.get("text") or "" for s in segs if s.get("t") == "text")
+
+
+def _close_turn(s, thread_uuid, ev: dict, ev_meta: dict) -> None:
+    """Finish the turn this reply belongs to: fill the stretch rows that were
+    opened while it ran, then append the last stretch.
+
+    STRUCTURE WAS DECIDED WHILE IT RAN; only content is decided here. A row's
+    `parent_id` is immutable by trigger and nothing here touches it.
+    """
+    from db import chat_repo
+
+    run_id = ev_meta.get("turn_id")
+    turn_uuid = chat_repo.upsert_turn(
+        s, thread_uuid, run_id,
+        status=("error" if ev_meta.get("error") else
+                "stopped" if ev_meta.get("stopped") else "finished"),
+        model=ev_meta.get("model"), agent_slug=ev_meta.get("agent"),
+        started_at=_dt(ev_meta.get("started_at")),
+        ended_at=_dt(ev_meta.get("ended_at")),
+        error=bool(ev_meta.get("error")), timeout=bool(ev_meta.get("timeout")),
+        stopped=ev_meta.get("stopped"))
+
+    opened = chat_repo.turn_stretches(s, turn_uuid)
+    # SPLIT THE COMMITTED LIST, never the one that was in memory at seal time.
+    # Two paths rewrite a turn's segments at commit: the `/compact` text strip
+    # and the trailing-text replacement, which walks back over EVERY trailing
+    # text segment including sealed ones and replaces them with the cleaned
+    # answer. `carry_cuts` keeps the refs, so the positions survive, but the
+    # prose of an earlier stretch can genuinely change. Reading the final list is
+    # what makes that a non-event here.
+    pieces = stretches([x for x in (ev_meta.get("segments") or [])
+                        if isinstance(x, dict)])
+
+    # DEGRADE, DO NOT DROP. The counts match whenever every stretch-open landed,
+    # which is the normal case; a database blip mid-turn can lose one, and then
+    # the only wrong answer is to lose the text with it. Whatever cannot be
+    # placed in an opened row goes into the final one, so the split comes out
+    # coarser than it should and nothing is missing.
+    for i, row in enumerate(opened):
+        piece = pieces[i] if i < len(pieces) - 1 else []
+        chat_repo.fill_message(s, row, content=_text_of(piece), segments=piece)
+    rest = pieces[len(opened):] if len(opened) < len(pieces) else [pieces[-1]]
+    tail = [seg for piece in rest for seg in piece]
+    if len(opened) > len(pieces) - 1:
+        log.warning("turn %s: %d stretch rows for %d stretches; last one holds "
+                    "the remainder", run_id, len(opened), len(pieces))
+
+    # A REPLY NOBODY INTERRUPTED KEEPS ITS OWN `content`, byte for byte. The
+    # stored text and the join of the segments disagree on a handful of replies
+    # (ADR 0020 measured five), the screen renders `content`, and a turn that was
+    # never split has no reason to be re-derived. Only a SPLIT reply takes its
+    # text from the pieces, because there is no per-stretch `content` to take.
+    chat_repo.append_message(
+        s, thread_uuid, role="assistant",
+        content=(_text_of(tail) if opened else (ev.get("content") or "")),
+        segments=tail or None, meta=_message_meta(ev), turn_id=turn_uuid,
+        client_id=ev.get("client_id"), external_id=ev.get("id"))
+
+
+def _dt(value):
+    from datetime import datetime
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _sync_open_stretch(org_id, thread_ref: str, run_id: str) -> None:
+    """Open a row for the stretch of a reply that just ended, so the message
+    that ended it has something true to hang from.
+
+    Called the instant `build_streaming.cut_here` seals the open text, which is
+    the server stating "this stretch is finished and a message goes next". The
+    row's PLACE is knowable at that moment and its TEXT is not, so the place is
+    written now and `_close_turn` writes the text when the turn ends.
+
+    NOT the reverted `revises:` slot. That claimed a row for the reply at turn
+    START, before any output existed, which is what forced every mid-turn
+    message below the whole reply and took five rounds of corrections to undo
+    (see the chat_log module docstring). This claims one at a point that is
+    already true: text has demonstrably been emitted, and a message
+    demonstrably follows it.
+    """
+    from db import chat_repo
+    from db.engine import tenant_session
+    with tenant_session(org_id) as s:
+        t = chat_repo.thread_by_ref(s, thread_ref)
+        if t is None:
+            return
+        turn_uuid = chat_repo.upsert_turn(s, t["id"], run_id, status="running")
+        chat_repo.append_message(s, t["id"], role="assistant", content="",
+                                 turn_id=turn_uuid)
+
+
+async def open_stretch(thread_ref: str, run_id: str) -> None:
+    if not tenancy.available():
+        return
+    try:
+        org_id, _ = tenancy.org_and_user()
+        await run_in_threadpool(_sync_open_stretch, org_id, thread_ref, run_id)
+    except Exception:
+        log.warning("stretch-open failed for %s", thread_ref, exc_info=True)
+
+
 def _sync_record(org_id, user_id, thread_ref: str, ev: dict, meta: dict) -> None:
     from db import chat_repo
     from db.engine import tenant_session
@@ -294,16 +452,20 @@ def _sync_record(org_id, user_id, thread_ref: str, ev: dict, meta: dict) -> None
                                      scope_to=ev.get("to"),
                                      external_id=ev.get("id"))
         elif kind == "message":
-            m = dict(ev.get("meta") or {})
-            segments = m.pop("segments", None)
-            for k in ("cut_id", "cut_head", "at_unit", "at_segment",
-                      "during_run", "during_turn", "injected", "streaming"):
-                m.pop(k, None)
+            ev_meta = ev.get("meta") or {}
+            # A REPLY IS A TURN, and a turn that was interrupted is several rows
+            # whose places were already fixed while it ran. Recognised by
+            # `meta.turn_id`, which only a committed run carries, so an ordinary
+            # message still takes the plain path below and the common case (a
+            # turn nobody interrupted) still writes exactly one row.
+            if ev.get("role") == "assistant" and ev_meta.get("turn_id"):
+                _close_turn(s, t["id"], ev, ev_meta)
+                return
             chat_repo.append_message(
                 s, t["id"], role=ev.get("role") or "user",
-                content=ev.get("content") or "", segments=segments,
-                meta=m or None, client_id=ev.get("client_id"),
-                external_id=ev.get("id"))
+                content=ev.get("content") or "",
+                segments=ev_meta.get("segments"), meta=_message_meta(ev),
+                client_id=ev.get("client_id"), external_id=ev.get("id"))
 
 
 async def record_message(thread_ref: str, ev: dict, meta: dict | None = None

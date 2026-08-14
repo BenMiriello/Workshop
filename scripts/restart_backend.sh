@@ -139,26 +139,32 @@ if [ "${1:-}" = "--deferred" ]; then
     # this path open. A bounded wait that ends in a refusal is not a wait, it is
     # a lie, and an agent cannot be instructed out of a tool that lies.
     old_pid="$(systemctl --user show -p MainPID --value workshop-backend.service 2>/dev/null || echo 0)"
-    if bash "$self" --force; then rc=ok; else rc=failed; fi
+    bash "$self" --force; code=$?
     new_pid="$(systemctl --user show -p MainPID --value workshop-backend.service 2>/dev/null || echo 0)"
+    served="$(curl -sf --max-time 3 http://127.0.0.1:8000/healthz 2>/dev/null \
+      | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"source_id\") or \"\")" 2>/dev/null || true)"
     # VERIFY, do not assume. A zero exit that left the same pid running means the
     # restart did not happen, which is precisely the failure this whole block
-    # exists to make impossible to report as success.
-    if [ "$rc" = ok ] && [ -n "$new_pid" ] && [ "$new_pid" != "0" ] && [ "$new_pid" != "$old_pid" ]; then
+    # exists to make impossible to report as success. Exit 3 is the preflight
+    # refusing a tree that does not import -- a correct, deliberate no-op, and it
+    # must NOT be recorded as a failure of the restart machinery.
+    if [ "$code" = 3 ]; then
+      outcome=refused-tree-broken
+    elif [ "$code" = 0 ] && [ -n "$new_pid" ] && [ "$new_pid" != "0" ] && [ "$new_pid" != "$old_pid" ]; then
       outcome=restarted
-    elif [ "$rc" = ok ]; then
+    elif [ "$code" = 0 ]; then
       outcome=no-pid-change
     else
       outcome=failed
     fi
-    echo "deferred restart: $outcome (pid $old_pid -> $new_pid)"
+    echo "deferred restart: $outcome (pid $old_pid -> $new_pid, serving ${served:-unreachable})"
     # The receipt. Until now the ONLY record of a deferred restart was this log
     # under /tmp, which nothing reads and nothing surfaces, so a failure was
     # invisible to the agent that armed it and to the operator. apply.sh --check
     # and the chat runtime briefing both read this file.
     mkdir -p "$root/.runtime" 2>/dev/null || true
-    printf "{\"when\": \"%s\", \"action\": \"backend-restart\", \"outcome\": \"%s\", \"old_pid\": %s, \"new_pid\": %s, \"arming_turn\": \"%s\"}\n" \
-      "$(date -Is)" "$outcome" "${old_pid:-0}" "${new_pid:-0}" "${mine:-none}" \
+    printf "{\"when\": \"%s\", \"action\": \"backend-restart\", \"outcome\": \"%s\", \"old_pid\": %s, \"new_pid\": %s, \"serving\": \"%s\", \"arming_turn\": \"%s\"}\n" \
+      "$(date -Is)" "$outcome" "${old_pid:-0}" "${new_pid:-0}" "${served:-}" "${mine:-none}" \
       > "$root/.runtime/apply-last.json" 2>/dev/null || true
   ' _ "$self" "$turns" "$chat" "$max_wait" "$commit_grace" "$own_turn" "$other_cap" "$REPO_ROOT" \
     >>/tmp/workshop-backend.log 2>&1 </dev/null &
@@ -228,16 +234,74 @@ if [ "${1:-}" != "--force" ] && [ -d "$turns_dir" ]; then
   fi
 fi
 
+# --- Preflight: will this tree even start? ----------------------------------
+# THE TREE IS SHARED AND ALWAYS PARTLY MID-EDIT. Several agents work in this one
+# checkout at once, so "restart the backend" routinely means "restart onto
+# somebody else's half-written file". Measured 2026-08-13: four live turns and
+# two backend services uncommitted at the same moment. If any of it does not
+# import, uvicorn cannot start, Restart=on-failure retries every 5s, and the
+# whole app -- including the chat someone would use to fix it -- is down.
+#
+# `import main` in a subprocess is EXACTLY what uvicorn does at startup, so it is
+# an exact predictor rather than an approximation, and it costs 0.78s against a
+# restart that takes seconds anyway. Refusing here is always recoverable; a
+# crash-looping backend is not.
+#
+# This runs for --force too. --force means "do not wait for the turn to finish",
+# which is a scheduling decision; it has never meant "start code that cannot run".
+preflight_import() {
+  local py="$REPO_ROOT/backend/.venv/bin/python"
+  [ -x "$py" ] || return 0   # no venv to check with: do not invent a failure
+  ( cd "$REPO_ROOT/backend" && "$py" -c 'import sys; sys.path.insert(0, "."); import main' ) 2>&1
+}
+
+if [ "${SKIP_PREFLIGHT:-0}" != "1" ]; then
+  if ! pf_out="$(preflight_import)"; then
+    echo "REFUSING: the backend tree does not import, so restarting it would leave" >&2
+    echo "          the service crash-looping and the app down. Nothing was restarted." >&2
+    echo "" >&2
+    printf '%s\n' "$pf_out" | tail -15 >&2
+    echo "" >&2
+    echo "This is usually another agent mid-edit; re-run in a moment." >&2
+    echo "To restart anyway: SKIP_PREFLIGHT=1 scripts/restart_backend.sh --force" >&2
+    exit 3
+  fi
+fi
+
 # --- Preferred: systemd --user service -------------------------------------
 if have_unit; then
+  # What we EXPECT to be serving afterwards, captured before the restart so a
+  # tree that moves underneath us is reported as that, not as a failure.
+  want_id="$(bash "$REPO_ROOT/scripts/backend_source_id.sh" 2>/dev/null || echo unknown)"
   systemctl --user restart "$SERVICE"
-  sleep 2
-  if systemctl --user is-active --quiet "$SERVICE"; then
-    echo "Backend restarted via systemd ($SERVICE active)."
-  else
-    echo "systemd restart did not come up active. Recent logs:" >&2
+
+  # VERIFY BY ASKING THE BACKEND, not by asking systemd.
+  #
+  # `is-active` after a fixed 2s sleep answers "did a process get spawned",
+  # which is not the question. A backend that dies on its first request, or one
+  # still importing, passes it. And a unit in auto-restart backoff can read
+  # active moments before it dies again. So: poll /healthz until it answers with
+  # a source id, which proves the process is up AND which code it is running.
+  served=""; ok=0
+  for _ in $(seq 1 30); do
+    served="$(curl -sf --max-time 2 http://127.0.0.1:8000/healthz 2>/dev/null \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source_id") or "")' 2>/dev/null || true)"
+    [ -n "$served" ] && { ok=1; break; }
+    sleep 1
+  done
+
+  if [ "$ok" != 1 ]; then
+    echo "RESTART FAILED: the backend did not answer /healthz within 30s." >&2
     journalctl --user -u "$SERVICE" --no-pager -n 20 >&2 || true
     exit 1
+  fi
+  if [ "$served" = "$want_id" ]; then
+    echo "Backend restarted and verified (serving $served)."
+  else
+    # Not a failure: the tree is shared, so another agent committing mid-restart
+    # legitimately changes the answer. Say which code is actually live rather
+    # than pretending the expected one is.
+    echo "Backend restarted and healthy, serving $served (expected $want_id; the tree moved during the restart)."
   fi
   exit 0
 fi

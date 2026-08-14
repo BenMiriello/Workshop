@@ -81,7 +81,13 @@ export default function EffortMeter({
         </button>
       }
     >
-      {ordered.map((lvl) => (
+      {/* Strongest first. The menu opens UPWARD from a trigger at the bottom of
+          the screen, so the list reads top-to-bottom as max down to low, which
+          puts the weakest level nearest the trigger and the ladder the same way
+          up as the bars it opens from. Operator ask, 2026-08-14. The ORDER OF
+          THE LEVELS themselves is unchanged: orderEfforts stays ascending
+          because nearestEffort and the bar fill both depend on it. */}
+      {[...ordered].reverse().map((lvl) => (
         <MenuItem key={lvl} checked={lvl === value} onSelect={() => onSelect(lvl)} title={effortHint(lvl)}>
           {effortLabel(lvl)}
         </MenuItem>

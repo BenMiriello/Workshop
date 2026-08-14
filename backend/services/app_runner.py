@@ -74,13 +74,45 @@ def is_self_project(slug: str) -> bool:
 
 def is_self_dir(path: str | Path) -> bool:
     """True if a working dir resolves to the Workshop monorepo root (the self
-    project). Used to suppress auto-checkpoint there — never auto-commit the live
-    repo's working tree — and, since ADR 0014, as the developer-mode predicate:
-    this is the one thing every route to the platform repo has in common."""
+    project). Since ADR 0014 this is the developer-mode predicate: the one thing
+    every route to the platform repo has in common.
+
+    For "would writing here touch the platform repo", use `is_in_self_repo`,
+    which is the containment question rather than the identity one."""
     try:
         return Path(path).resolve() == WORKSHOP_ROOT
     except OSError:
         return False
+
+
+def is_in_self_repo(path: str | Path) -> bool:
+    """True if `path` lies INSIDE the platform's git repo, at any depth.
+
+    `is_self_dir` asks whether a path IS the root, which is the wrong question
+    for anything about committing. `backend/`, `shared/`, `apps/` and
+    `branches/` all resolve to the platform repo, and `git add -A` is repo-wide
+    no matter which subdirectory it runs from -- so a turn working in any of
+    them passed the exact-equality check and then auto-committed the entire
+    monorepo, including whatever every other agent had open at that moment.
+    Observed 2026-08-13 in commit cf3eabd. `projects/*` are excluded correctly
+    either way: they carry their own .git, so their toplevel is themselves.
+
+    Resolved through git rather than by string prefix so a symlinked or bind-
+    mounted path cannot sneak past, and so a nested repo is correctly treated as
+    its own tree.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode != 0:
+            return False
+        return Path(r.stdout.strip()).resolve() == WORKSHOP_ROOT
+    except Exception:
+        # Undecidable means "do not auto-commit": the failure this guards is
+        # committing other people's work, which is not undoable by waiting.
+        return True
 
 
 # ---- Developer mode (ADR 0014) ----------------------------------------------
