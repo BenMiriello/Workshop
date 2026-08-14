@@ -90,6 +90,19 @@ elif [ "$SRC_ID" = "$DIST_ID" ]; then
   ok "ui bundle ($SRC_ID)"
 else
   plan "ui bundle: dist=$DIST_ID source=$SRC_ID"
+  # A BUILD PUBLISHES THE WORKING TREE, NOT THE COMMITTED STATE.
+  #
+  # That is deliberate and it has to be: an agent that just edited the UI wants
+  # to see it, and its edits are uncommitted at that moment too. But on a shared
+  # checkout it also means a build carries whatever anyone else has open, and
+  # the operator views this origin. Naming those files is the difference between
+  # a decision and a surprise -- the post-commit hook, by contrast, only ever
+  # builds committed state.
+  ui_wip="$(git status --porcelain -- frontend/src packages/ui frontend/index.html 2>/dev/null | awk '{print $2}')"
+  if [ -n "$ui_wip" ]; then
+    warn "the build will publish these UNCOMMITTED files:"
+    printf '            %s\n' $ui_wip
+  fi
   if [ "$CHECK" = 0 ]; then
     if bash scripts/build_workshop_public.sh >/dev/null 2>&1; then
       NEW_ID="$(python3 -c '
