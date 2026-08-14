@@ -7,8 +7,8 @@ is the translation, plus the async boundary: `db/engine.py` is a synchronous
 SQLAlchemy stack and every chat route is `async def`, so a session opened on the
 event loop would block it. Everything here hops to the threadpool.
 
-WHY THE READ PATH CAN TRUST THIS. `visible_event_ids` returns None -- meaning
-"do not filter anything" -- for a thread that has never been branched, which is
+WHY THE READ PATH CAN TRUST THIS. `hidden_event_ids` returns None -- meaning
+"hide nothing" -- for a thread that has never been branched, which is
 every thread until the operator uses the feature. So this changes exactly
 nothing for a conversation nobody has forked, and there is no flag to get wrong.
 
@@ -26,30 +26,27 @@ from services import tenancy
 
 log = logging.getLogger(__name__)
 
-__all__ = ["list_branches", "fork", "switch", "rename", "visible_event_ids",
-           "visible_event_ids_sync", "record_message", "keep_visible"]
+__all__ = ["list_branches", "fork", "switch", "rename", "hidden_event_ids",
+           "hidden_event_ids_sync", "record_message", "keep_visible"]
 
 
-def keep_visible(events: list[dict], visible: set[str] | None) -> list[dict]:
-    """Drop the events that are not on the current branch.
+def keep_visible(events: list[dict], hidden: set[str] | None) -> list[dict]:
+    """Drop the events that are on a branch this thread is not showing.
 
-    `None` means show everything, which is the answer for every thread nobody
-    has branched.
+    THE ARGUMENT IS WHAT TO HIDE, NOT WHAT TO SHOW, and that is the whole
+    correctness argument rather than a preference. An event the tree has never
+    heard of -- the mirror-write failed, or it landed in the window between the
+    log append and the mirror -- is not in the hidden set, so it renders. Filter
+    by an allow-list instead and that same event disappears, which is a message
+    the operator just sent vanishing from their own chat. One of those two
+    failures is recoverable by looking again and the other is not.
 
-    AN EVENT WITH NO ROW IS KEPT. That covers the mirror-write having failed,
-    and the window between an append and its mirror landing. Keeping it shows a
-    message on a branch it may not belong to; dropping it makes a message the
-    operator just sent vanish. Only one of those is recoverable by looking
-    again, so the bias is deliberate.
+    `None` means hide nothing: no branches, or the database was unreachable.
     """
-    if visible is None:
+    if not hidden:
         return events
-    out = []
-    for ev in events:
-        eid = ev.get("id")
-        if not eid or eid in visible or ev.get("kind") in ("run", "title"):
-            out.append(ev)
-    return out
+    return [ev for ev in events
+            if ev.get("id") not in hidden or ev.get("kind") in ("run", "title")]
 
 
 def _sync_list(org_id, thread_ref: str) -> list[dict]:
@@ -148,7 +145,7 @@ def _sync_state(org_id, thread_ref: str) -> dict:
     """Which branch is current, and which file events are on it.
 
     One function because the sync endpoint needs both on every poll and they
-    come from the same two rows. Returns `visible=None` for "show everything".
+    come from the same two rows. Returns `hidden=None` for "show everything".
     """
     from sqlalchemy import text
 
@@ -157,7 +154,7 @@ def _sync_state(org_id, thread_ref: str) -> dict:
     with tenant_session(org_id) as s:
         t = chat_repo.thread_by_ref(s, thread_ref)
         if t is None:
-            return {"branch": None, "count": 0, "visible": None}
+            return {"branch": None, "count": 0, "hidden": None}
         row = s.execute(text(
             "SELECT count(*) AS n, "
             "       max(CASE WHEN b.id = th.current_branch_id THEN b.name END) AS nm "
@@ -172,25 +169,28 @@ def _sync_state(org_id, thread_ref: str) -> dict:
         # this is the answer for almost every read, and it makes the whole
         # mechanism inert until it is asked for.
         if n < 2:
-            return {"branch": branch, "count": n, "visible": None}
+            return {"branch": branch, "count": n, "hidden": None}
         ids = chat_repo.path_ids(s, t["id"])
-        if not ids:
-            return {"branch": branch, "count": n, "visible": set()}
+        # Everything in this conversation that is NOT on the current path. Asked
+        # this way round because it is the set the filter needs and because it
+        # is the smaller one: a thread is mostly the line you are on.
         rows = s.execute(text(
-            "SELECT external_id FROM chat_message WHERE thread_id = :t "
-            "AND external_id IS NOT NULL AND id = ANY(CAST(:ids AS uuid[]))"),
+            "SELECT external_id FROM chat_message "
+            " WHERE thread_id = :t AND external_id IS NOT NULL "
+            "   AND deleted_at IS NULL "
+            "   AND NOT (id = ANY(CAST(:ids AS uuid[])))"),
             {"t": t["id"], "ids": "{" + ",".join(ids) + "}"}).all()
-        return {"branch": branch, "count": n, "visible": {r[0] for r in rows}}
+        return {"branch": branch, "count": n, "hidden": {r[0] for r in rows}}
 
 
-def _sync_visible(org_id, thread_ref: str) -> set[str] | None:
-    return _sync_state(org_id, thread_ref)["visible"]
+def _sync_hidden(org_id, thread_ref: str) -> set[str] | None:
+    return _sync_state(org_id, thread_ref)["hidden"]
 
 
 def branch_state_sync(thread_ref: str) -> dict:
-    """`{branch, count, visible}` for the sync endpoint, or all-None when the
+    """`{branch, count, hidden}` for the sync endpoint, or all-None when the
     relational store is unreachable."""
-    empty = {"branch": None, "count": 0, "visible": None}
+    empty = {"branch": None, "count": 0, "hidden": None}
     if not tenancy.available():
         return empty
     try:
@@ -201,7 +201,7 @@ def branch_state_sync(thread_ref: str) -> dict:
         return empty
 
 
-def visible_event_ids_sync(thread_ref: str) -> set[str] | None:
+def hidden_event_ids_sync(thread_ref: str) -> set[str] | None:
     """Synchronous twin, for the read paths that are already synchronous.
 
     Blocking the event loop is the obvious objection and it does not survive
@@ -215,13 +215,13 @@ def visible_event_ids_sync(thread_ref: str) -> set[str] | None:
         return None
     try:
         org_id, _ = tenancy.org_and_user()
-        return _sync_visible(org_id, thread_ref)
+        return _sync_hidden(org_id, thread_ref)
     except Exception:
         log.warning("branch filter failed for %s", thread_ref, exc_info=True)
         return None
 
 
-async def visible_event_ids(thread_ref: str) -> set[str] | None:
+async def hidden_event_ids(thread_ref: str) -> set[str] | None:
     """The file-event ids on the current branch, or None for "show everything".
 
     None is returned for a thread that has never been branched AND for any
@@ -232,7 +232,7 @@ async def visible_event_ids(thread_ref: str) -> set[str] | None:
         return None
     try:
         org_id, _ = tenancy.org_and_user()
-        return await run_in_threadpool(_sync_visible, org_id, thread_ref)
+        return await run_in_threadpool(_sync_hidden, org_id, thread_ref)
     except Exception:
         log.warning("branch filter failed for %s", thread_ref, exc_info=True)
         return None

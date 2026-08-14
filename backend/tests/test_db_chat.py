@@ -342,6 +342,113 @@ def test_branching_from_a_foreign_message_is_refused(chat):
             chat_repo.branch_from(s, chat["thread"], foreign["id"])
 
 
+# --- the glue the sync endpoint actually uses --------------------------------
+
+def test_the_sync_filter_is_inert_until_a_thread_is_branched(chat):
+    """The property that makes this safe to ship: a conversation nobody has
+    branched is served exactly as it was, with no flag involved."""
+    from db.engine import tenant_session
+    from services import chat_branches
+
+    with tenant_session(chat["org"]) as s:
+        _say(s, chat["thread"], "user", "one", external_id="EV1")
+        _say(s, chat["thread"], "assistant", "two", external_id="EV2")
+
+    state = chat_branches._sync_state(chat["org"], chat["thread"])
+    assert state["count"] == 1
+    assert state["hidden"] is None
+    events = [{"id": "EV1", "kind": "message"}, {"id": "EV2", "kind": "message"}]
+    assert chat_branches.keep_visible(events, state["hidden"]) == events
+
+
+def test_after_a_fork_the_sync_filter_drops_the_abandoned_tail(chat):
+    from db.engine import tenant_session
+    from db import chat_repo
+    from services import chat_branches
+
+    with tenant_session(chat["org"]) as s:
+        t = chat["thread"]
+        _say(s, t, "user", "keep", external_id="EV1")
+        anchor = _say(s, t, "assistant", "anchor", external_id="EV2")
+        _say(s, t, "user", "abandoned", external_id="EV3")
+        chat_repo.branch_from(s, t, anchor["id"])
+
+    state = chat_branches._sync_state(chat["org"], chat["thread"])
+    assert state["count"] == 2
+    assert state["hidden"] == {"EV3"}
+
+    events = [{"id": "EV1", "kind": "message"}, {"id": "EV2", "kind": "message"},
+              {"id": "EV3", "kind": "message"}]
+    kept = [e["id"] for e in chat_branches.keep_visible(events, state["hidden"])]
+    assert kept == ["EV1", "EV2"]
+
+
+def test_an_event_with_no_row_is_kept(chat):
+    """The mirror-write is best-effort, so an event the tree has not heard of
+    must still render. Dropping it would make a message the operator just sent
+    disappear, which is the one failure that is not recoverable by looking
+    again."""
+    from db.engine import tenant_session
+    from db import chat_repo
+    from services import chat_branches
+
+    with tenant_session(chat["org"]) as s:
+        t = chat["thread"]
+        a = _say(s, t, "user", "keep", external_id="EV1")
+        _say(s, t, "assistant", "tail", external_id="EV2")
+        chat_repo.branch_from(s, t, a["id"])
+
+    state = chat_branches._sync_state(chat["org"], chat["thread"])
+    events = [{"id": "EV1", "kind": "message"}, {"id": "EV2", "kind": "message"},
+              {"id": "EV-UNMIRRORED", "kind": "message"},
+              {"id": "EV-RUN", "kind": "run"}]
+    kept = [e["id"] for e in chat_branches.keep_visible(events, state["hidden"])]
+    assert kept == ["EV1", "EV-UNMIRRORED", "EV-RUN"]
+
+
+def test_an_anchor_resolves_from_a_file_event_id(chat):
+    """The client points at what it is rendering, which is the log's ULID."""
+    from db.engine import tenant_session
+    from services import chat_branches
+
+    with tenant_session(chat["org"]) as s:
+        t = chat["thread"]
+        _say(s, t, "user", "one", external_id="EVA")
+        _say(s, t, "assistant", "two", external_id="EVB")
+        _say(s, t, "user", "three", external_id="EVC")
+
+    out = chat_branches._sync_fork(chat["org"], chat["thread"], "EVB")
+    assert out["branch"]["name"] == "Branch 2"
+    with tenant_session(chat["org"]) as s:
+        assert _texts(chat_repo_transcript(s, chat["thread"])) == ["one", "two"]
+
+
+def test_an_interrupted_reply_anchors_on_its_last_stretch(chat):
+    """One file event became several rows. "Branch from this reply" means from
+    the END of it; anchoring on the first stretch would drop the rest of the
+    very reply being pointed at."""
+    from db.engine import tenant_session
+    from services import chat_branches
+
+    with tenant_session(chat["org"]) as s:
+        t = chat["thread"]
+        _say(s, t, "user", "go", external_id="EV1")
+        _say(s, t, "assistant", "first stretch", external_id="EV2")
+        _say(s, t, "user", "wait", external_id="EV3")
+        _say(s, t, "assistant", "second stretch", external_id="EV2")
+        _say(s, t, "assistant", "later reply", external_id="EV4")
+
+    chat_branches._sync_fork(chat["org"], chat["thread"], "EV2")
+    with tenant_session(chat["org"]) as s:
+        assert _texts(chat_repo_transcript(s, chat["thread"])) == [
+            "go", "first stretch", "wait", "second stretch"]
+
+
+def chat_repo_transcript(s, thread_id):
+    from db import chat_repo
+    return chat_repo.transcript(s, thread_id)
+
+
 def test_a_thread_resolves_by_new_uuid_and_by_legacy_hex(chat):
     from db.engine import tenant_session
     from db import chat_repo

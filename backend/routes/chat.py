@@ -543,7 +543,7 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
     # below: one endpoint answers "what is in this chat", and things that must
     # agree are not allowed to arrive separately.
     branch = chat_branches.branch_state_sync(thread_id)
-    events = chat_branches.keep_visible(events, branch["visible"])
+    events = chat_branches.keep_visible(events, branch["hidden"])
     return {
         "events": events,
         "last_seq": last_seq,
