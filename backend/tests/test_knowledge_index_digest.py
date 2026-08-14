@@ -206,11 +206,11 @@ class TestLayeredBudgetIsOneTotal:
             _put("project:demo", f"p-{i}", f"Project note {i}", "body",
                  hook=long_hook)
 
-        # total_tokens=1: the narrower layer (project:demo) is allocated
-        # first and always shows at least its own first note, which alone
-        # exceeds a 1-token budget - guaranteeing nothing is left for the
-        # wider workshop layer, deterministically, regardless of exact token
-        # arithmetic.
+        # total_tokens=1: even workshop's governance floor (40% of 1, rounded
+        # down) is 0, so both it and the narrower project:demo layer render as
+        # stubs - deterministically, regardless of exact token arithmetic. See
+        # TestGovernanceFloor below for the case where the floor is large
+        # enough to hold real content.
         text, used = knowledge.layered_index_block("project:demo", total_tokens=1)
 
         assert "workshop" in used, "the starved layer vanished instead of announcing itself"
@@ -221,3 +221,101 @@ class TestLayeredBudgetIsOneTotal:
         # And it carries no note titles/hooks - a starved layer names a count,
         # never content, or it would blow the budget it was denied.
         assert "- " not in workshop_block
+
+
+class TestTypeOutranksRecency:
+    """Defect found by the coordinator after the first cut of the layered
+    budget shipped: ranking put recency ABOVE type, so a busy day of
+    same-mtime `fact` writes swept the top of the digest ahead of standing
+    `preference`/`decision` notes untouched for months. Type must outrank
+    age; recency is only the tiebreak within a type."""
+
+    def test_an_old_preference_outranks_a_brand_new_fact(self, tree):
+        _put("workshop", "old-pref", "An old standing preference", "body",
+             note_type="preference")
+        _touch("workshop", "old-pref", time.time() - 10_000_000)  # long ago
+
+        _put("workshop", "new-fact", "A fact written just now", "body",
+             note_type="fact")
+        _touch("workshop", "new-fact", time.time())
+
+        block = knowledge.index_block("workshop")
+        titles = [l for l in block.splitlines() if l.startswith("- ")]
+        assert titles[0].startswith("- An old standing preference"), (
+            "a brand-new fact outranked a months-old preference")
+        assert titles[1].startswith("- A fact written just now")
+
+    def test_an_old_decision_outranks_a_brand_new_reference(self, tree):
+        _put("workshop", "old-decision", "An old standing decision", "body",
+             note_type="decision")
+        _touch("workshop", "old-decision", time.time() - 10_000_000)
+
+        _put("workshop", "new-reference", "A reference written just now", "body",
+             note_type="reference")
+        _touch("workshop", "new-reference", time.time())
+
+        block = knowledge.index_block("workshop")
+        titles = [l for l in block.splitlines() if l.startswith("- ")]
+        assert titles[0].startswith("- An old standing decision")
+        assert titles[1].startswith("- A reference written just now")
+
+
+class TestGovernanceFloor:
+    """Defect found by the coordinator: pure narrowest-first allocation
+    starves the GOVERNANCE layer (`read_layers`'s first, widest element -
+    house style and operator preferences, design doc sec 4.3) whenever a
+    narrow scope has more notes than the budget allows, which is backwards -
+    governance is the one layer that must always reach the model. It now gets
+    a reserved floor, spent before narrower layers compete for the rest."""
+
+    def test_governance_keeps_its_floor_against_a_note_heavy_narrow_layer(self, tree):
+        long_hook = "enough hook text on every single line to cost real tokens here"
+        for i in range(10):
+            _put("workshop", f"w-{i}", f"Workshop preference {i}", "body",
+                 note_type="preference", hook=long_hook)
+        # Far more notes than a 200-token total could ever hold, so pure
+        # narrowest-first allocation would consume the whole budget here and
+        # leave nothing for workshop.
+        for i in range(200):
+            _put("project:demo", f"p-{i}", f"Project note {i}", "body",
+                 hook=long_hook)
+
+        total = 200
+        text, used = knowledge.layered_index_block("project:demo", total_tokens=total)
+
+        assert "workshop" in used
+        workshop_block = text.split("[workshop]\n", 1)[1].split("\n\n[", 1)[0]
+        # Governance shows REAL content, not the "N notes" stub: the floor
+        # exists so it never gets starved down to a bare count by a busy
+        # narrow scope.
+        assert workshop_block.startswith("- Workshop preference"), (
+            f"governance layer was starved instead of using its floor:\n{workshop_block}")
+
+        floor = int(total * knowledge.GOVERNANCE_FLOOR_FRACTION)
+        gov_tokens = knowledge._approx_tokens(workshop_block)
+        # It used a meaningful fraction of its floor (not just the one note
+        # every layer always shows regardless of budget).
+        assert gov_tokens >= floor * 0.5, (
+            f"governance used only {gov_tokens} tokens of a {floor}-token floor")
+
+        # And the narrow layer still got the rest of the budget, not zero:
+        # the floor is a reservation for governance, not a demotion of
+        # everyone else to nothing.
+        assert "project:demo" in used
+
+    def test_an_unused_floor_returns_to_the_narrower_layers(self, tree):
+        """Workshop (governance) has only ONE short note, far under its
+        floor. The unspent floor must not be wasted: the narrower layer
+        should be able to use it."""
+        _put("workshop", "solo", "The only workshop note", "body",
+             note_type="preference")
+        for i in range(30):
+            _put("project:demo", f"p-{i}", f"Project note {i}", "body",
+                 hook="a hook long enough to cost real tokens on its own")
+
+        text, used = knowledge.layered_index_block("project:demo", total_tokens=200)
+        project_block = text.split("[project:demo]\n", 1)[1]
+        project_lines = [l for l in project_block.splitlines() if l.startswith("- ")]
+        # More than the ~40 tokens a bare 60%-of-200 remainder would hold if
+        # workshop's unused floor were not returned to the pool.
+        assert len(project_lines) >= 4

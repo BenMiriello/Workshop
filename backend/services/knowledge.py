@@ -491,6 +491,21 @@ def read_layers(scope_key: str, role: str | None = None,
 # notes.
 DEFAULT_LAYERED_INDEX_TOKEN_BUDGET = 500
 
+# The GOVERNANCE layer (design doc sec 4.3: house style, operator preferences,
+# cross-cutting rules) is `read_layers`'s FIRST element, read positionally
+# rather than hardcoded as "workshop" because a later phase makes the
+# governance scope configurable. Pure narrowest-first allocation starves
+# exactly this layer whenever a narrow scope has more notes than the budget
+# allows, which is backwards: governance is the thing that must always reach
+# the model, regardless of how much a project or an agent happened to write.
+# So it gets a reserved FLOOR, spent before anything else is allocated. 0.4
+# (40%) leaves the narrower layers a majority of the budget to still compete
+# for (60% of 500 = 300 tokens, split narrowest-first across up to three more
+# layers) while guaranteeing governance enough for several preference/decision
+# lines rather than the one that survived when it was starved to whatever
+# narrower layers left over.
+GOVERNANCE_FLOOR_FRACTION = 0.4
+
 
 def layered_index_block(scope_key: str, role: str | None = None,
                         private: str | None = None,
@@ -504,36 +519,79 @@ def layered_index_block(scope_key: str, role: str | None = None,
     how THIS project does it" are different claims, and a conflict between them
     is resolvable only if the reader can see which is which.
 
-    Budget is allocated NARROWEST LAYER FIRST (the reverse of `read_layers`'
-    widest-first order): the narrowest layer is the one most relevant to this
-    chat, so it spends what it needs before anything is left for a wide layer
-    that happens to hold many more notes. A layer that is left with no budget
-    still announces itself in one line (its note count, no titles), rather than
-    vanishing: a layer disappearing entirely is the same failure `index_block`'s
-    own truncation footer exists to avoid, one level up.
+    Allocation, in order:
+
+    1. The GOVERNANCE layer (`read_layers`'s first, widest element) is served
+       first, up to its reserved floor (`GOVERNANCE_FLOOR_FRACTION` of the
+       total). Whatever it does not use returns to the pool for step 2, rather
+       than being wasted.
+    2. Everything else is allocated NARROWEST LAYER FIRST (the reverse of
+       `read_layers`' widest-first order, excluding governance, which already
+       had its turn): the narrowest layer is the one most relevant to this
+       chat, so it spends what it needs before a wider layer that happens to
+       hold many more notes.
+    3. If step 2 leaves budget unspent (there were no other layers, or they
+       did not need it all), governance gets a TOP-UP pass with the leftover.
+       Without this a chat whose only layer IS governance (an ordinary
+       workshop chat, no role, no place beyond workshop) would be capped at
+       the 40% floor and waste the other 60% of the budget on nothing, which
+       is the opposite of "must always reach the model": the floor is a
+       minimum guarantee against being starved by a busy narrow scope, not a
+       ceiling on governance when nothing is competing for the budget.
+
+    A layer left with no budget still announces itself in one line (its note
+    count, no titles), rather than vanishing: a layer disappearing entirely is
+    the same failure `index_block`'s own truncation footer exists to avoid, one
+    level up.
     """
     layers = read_layers(scope_key, role, private)
-    remaining = total_tokens
-    rendered: dict[str, str] = {}
-    for sk in reversed(layers):  # narrowest first, for allocation only
-        if remaining <= 0:
+    if not layers:
+        return "", []
+
+    def _stub_or_render(sk: str, budget: int) -> str:
+        if budget <= 0:
             try:
                 n = len(list_notes(sk))
             except Exception:
                 n = 0
-            if n:
-                rendered[sk] = (
-                    f"({n} notes in this scope; use the search tool to reach them)"
-                )
-            continue
+            return (f"({n} notes in this scope; use the search tool to reach them)"
+                    if n else "")
         try:
-            b = index_block(sk, max_tokens=remaining)
+            return index_block(sk, max_tokens=budget)
         except Exception:
-            continue
+            return ""
+
+    rendered: dict[str, str] = {}
+
+    # 1. Governance first, off the top, capped at its floor.
+    governance = layers[0]
+    floor = int(total_tokens * GOVERNANCE_FLOOR_FRACTION)
+    gov_block = _stub_or_render(governance, floor)
+    gov_used = _approx_tokens(gov_block)
+    remaining = total_tokens - gov_used
+
+    # 2. Everyone else, narrowest first, off what is left (including any of
+    # governance's floor it did not spend).
+    others = [sk for sk in layers if sk != governance]
+    for sk in reversed(others):
+        b = _stub_or_render(sk, remaining)
         if not b:
             continue
         rendered[sk] = b
         remaining -= _approx_tokens(b)
+
+    # 3. Top up governance with whatever is still unspent (see docstring).
+    # Re-rendering with a larger budget is cheap (small scopes) and simpler
+    # than tracking a separate "extra" allotment to append.
+    if remaining > 0 and gov_block:
+        topped_up = _stub_or_render(governance, floor + remaining)
+        topped_used = _approx_tokens(topped_up)
+        if topped_used > gov_used:
+            remaining -= (topped_used - gov_used)
+            gov_block = topped_up
+
+    if gov_block:
+        rendered[governance] = gov_block
 
     blocks: list[str] = []
     used: list[str] = []
@@ -550,10 +608,10 @@ def layered_index_block(scope_key: str, role: str | None = None,
 # chat prompt grew linearly with the corpus and enforce_index_cap(200) above was
 # a band-aid on that growth rather than a design. See
 # docs/platform-redesign/memory-and-documentation-model-2026-08-14.md sec 5.5.
-# Now it ranks (pinned first, then most-recently-updated, then type) and stops
-# at a token budget, and it SAYS what it left out rather than truncating
-# silently: a list that presents itself as complete is worse than no list,
-# because the model stops looking for the rest.
+# Now it ranks (pinned first, then by type, recency as the tiebreak WITHIN a
+# type) and stops at a token budget, and it SAYS what it left out rather than
+# truncating silently: a list that presents itself as complete is worse than
+# no list, because the model stops looking for the rest.
 
 # ~4 chars/token, the same rough estimate used elsewhere in this repo (e.g.
 # services/learnings._approx_tokens). Good enough to hold a prompt block under a
@@ -575,7 +633,12 @@ def _approx_tokens(text: str) -> int:
 DEFAULT_INDEX_TOKEN_BUDGET = 800
 
 # `preference` and `decision` outrank `fact` and `reference` (lower number sorts
-# first) per the ranking rule in sec 5.5 of the design doc.
+# first) REGARDLESS OF AGE. A preference stated months ago still governs; a
+# fact written this morning usually does not, and ranking recency above type
+# let a single busy day's worth of same-mtime facts sweep the top of the
+# digest ahead of standing house-style preferences that had not been touched
+# since they were written. Recency is the tiebreak WITHIN a type, never above
+# it.
 _TYPE_RANK = {"preference": 0, "decision": 0, "fact": 1, "reference": 1}
 
 
@@ -601,11 +664,12 @@ def _ranked_notes(scope_key: str) -> list[dict]:
 
 
 def _index_rank_key(n: dict) -> tuple:
-    """Pinned first, then most-recently-updated, then type, then id (stable)."""
+    """Pinned first, then type, then most-recently-updated WITHIN that type,
+    then id (stable). Type outranks recency: see _TYPE_RANK's comment."""
     return (
         0 if n.get("pinned") else 1,
-        -(n.get("_mtime") or 0.0),
         _TYPE_RANK.get(n.get("type") or _DEFAULT_NOTE_TYPE, 1),
+        -(n.get("_mtime") or 0.0),
         n.get("id") or "",
     )
 
@@ -614,8 +678,9 @@ def index_block(scope_key: str, max_tokens: int = DEFAULT_INDEX_TOKEN_BUDGET) ->
     """A ranked, token-capped ambient digest of the scope's notes for the chat
     prompt, or "" when the scope has no notes. Titles + hooks only, never bodies
     (ADR 0011 restated in sec 5.5 of the design doc), so it stays small and
-    cache-stable regardless of corpus size. Pinned notes first, then most-
-    recently-updated, then type. When the scope has more notes than fit the
+    cache-stable regardless of corpus size. Pinned notes first, then by type
+    (preference/decision before fact/reference), then most-recently-updated as
+    the tiebreak within a type. When the scope has more notes than fit the
     budget, the last line declares how many were left out."""
     try:
         notes = _ranked_notes(scope_key)
