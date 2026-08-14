@@ -221,8 +221,16 @@ def get_ticket(org_id: UUID | str, legacy_id: str) -> dict | None:
 # db/models.PRIORITIES.
 _READY = _SELECT + """
   AND t.closed_at IS NULL
-  AND ws.category IN ('backlog','unstarted')
-  AND ws.name <> 'Draft'
+  -- UNSTARTED ONLY, and this is the whole scheduling rule. `backlog` is NOT
+  -- schedulable: it holds `Draft` (not yet a real ticket) and `Parked` (the
+  -- dead-letter state a run lands in at the attempt cap). An earlier version
+  -- accepted `backlog` and excluded `Draft` by name, which quietly made every
+  -- PARKED ticket eligible again -- the exact opposite of what parking is for,
+  -- and it put a root-privileged parked ticket at the head of the queue.
+  -- `services/tasks.is_ready` has always required status == "todo" exactly;
+  -- this is that rule in the category vocabulary, and it stays correct for a
+  -- tenant that adds its own unstarted state.
+  AND ws.category = 'unstarted'
   AND NOT EXISTS (
         SELECT 1 FROM ticket_link l
         JOIN ticket d          ON d.id  = l.to_ticket_id

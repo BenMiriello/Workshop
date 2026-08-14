@@ -372,3 +372,42 @@ def test_a_child_run_survives_its_sweep_being_deleted(org):
     assert row.parent_id is None
     assert row.ticket_id == t
     assert row.org_id == org["org"]
+
+
+def test_a_parked_ticket_is_never_scheduled(org):
+    """PARKING IS WHERE WORK GOES TO STOP, and the scheduler must honour that.
+
+    `parked` is the dead-letter state a run lands in at the attempt cap. An
+    earlier version of `repo.next_ready` accepted the whole `backlog` category
+    and excluded only `Draft` by name, which made every parked ticket eligible
+    again and put a root-privileged parked ticket at the head of the queue.
+    `services/tasks.is_ready` has always required status == "todo" exactly.
+    """
+    from db import repo
+    from db.engine import tenant_session
+
+    states = {}
+    with tenant_session(org["org"]) as s:
+        for name in ("Parked", "Draft"):
+            states[name] = s.execute(text(
+                "INSERT INTO workflow_state (id, org_id, project_id, name, "
+                "category, position) VALUES (:i, :o, :p, :n, 'backlog', 9) "
+                "RETURNING id"),
+                {"i": uuid7_(), "o": org["org"], "p": org["project"],
+                 "n": name}).scalar()
+        _ticket(s, org, 940, "urgent", title="parked and urgent")
+        s.execute(text("UPDATE ticket SET state_id = :st WHERE number = 940"),
+                  {"st": states["Parked"]})
+        _ticket(s, org, 941, "urgent", title="a draft")
+        s.execute(text("UPDATE ticket SET state_id = :st WHERE number = 941"),
+                  {"st": states["Draft"]})
+        _ticket(s, org, 942, "low", title="the only real candidate")
+
+    ready = [t["title"] for t in repo.next_ready(org["org"], limit=10)]
+    assert ready == ["the only real candidate"], (
+        f"backlog states leaked into the queue: {ready}")
+
+
+def uuid7_():
+    from db.ids import uuid7
+    return uuid7()
