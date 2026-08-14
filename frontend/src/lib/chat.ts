@@ -380,11 +380,41 @@ export type QueueState = {
   queue_error?: string;
 };
 
+/** One line of the conversation this chat could be on (ADR 0020).
+ *
+ *  A branch is a named pointer to a message. Going back to an earlier point
+ *  creates one; nothing is deleted to do it, which is why the branch you left
+ *  is still in this list. */
+export type Branch = {
+  id: string;
+  name: string;
+  ordinal: number;
+  is_current: boolean;
+  is_root: boolean;
+  created_at: string;
+  fork_message_id: string | null;
+  /** A snippet of the message this branch carried on from. */
+  forked_from: string | null;
+  forked_from_role: string | null;
+  forked_at: string | null;
+  /** A snippet of the last thing said on it. */
+  preview: string | null;
+  last_at: string;
+};
+
+/** Which branch the server is serving, so the client can tell that it changed.
+ *  Rides on the sync endpoint rather than its own, for the same reason the cut
+ *  and the queue do: things that must agree may not arrive separately. */
+export type BranchState = {
+  branch: { id: string; name: string } | null;
+  branch_count: number;
+};
+
 export type ThreadEventsPage = {
   events: LogEvent[];
   last_seq: number;
   active_run: ActiveRunPayload;
-} & QueueState & CutState;
+} & QueueState & CutState & BranchState;
 
 // This browser's id for one send, stamped before the request leaves and reused
 // verbatim on a retry.
@@ -583,6 +613,27 @@ export const chatApi = {
   threadEvents: (id: string, after = 0) =>
     fetch(`/api/chat/threads/${encodeURIComponent(id)}/events?after=${after}`)
       .then(j<ThreadEventsPage>),
+
+  // Every line this conversation has taken. Empty when the relational store is
+  // not reachable, which is a chat that cannot be branched rather than an error.
+  listBranches: (id: string) =>
+    fetch(`/api/chat/threads/${encodeURIComponent(id)}/branches`)
+      .then(j<{ branches: Branch[] }>),
+
+  // Carry on from `anchor` (a message id from the transcript). Nothing is
+  // deleted: the line being left keeps its own ref and stays in listBranches.
+  forkThread: (id: string, anchor: string) =>
+    fetch(`/api/chat/threads/${encodeURIComponent(id)}/branches`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ anchor }),
+    }).then(j<{ branch: { id: string }; branches: Branch[] }>),
+
+  // Show a different branch. One pointer moves; nothing else does.
+  switchBranch: (id: string, branchId: string) =>
+    fetch(`/api/chat/threads/${encodeURIComponent(id)}/branches/${encodeURIComponent(branchId)}`,
+          { method: "POST" })
+      .then(j<{ branch: { id: string }; branches: Branch[] }>),
 
   // Re-key a thread onto a new context/provider (used by a ui-card's
   // Move-chat-into-project action). The thread id + history are unchanged; only

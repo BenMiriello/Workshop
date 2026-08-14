@@ -25,8 +25,10 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from services import chat_attachments
+from services import chat_branches
 from services import chat_drain
 from services import chat_events
+from services import tenancy
 from services import chat_queue
 from services import chat_store, chat_context, chat_log
 from services import tasks
@@ -148,6 +150,19 @@ class RescopeThread(BaseModel):
 
 class SetChatMode(BaseModel):
     mode: str  # direct | orchestrated (chat_context.CHAT_MODES)
+
+
+class ForkThread(BaseModel):
+    """`anchor` is the id of the message to carry on FROM.
+
+    It is the file-event id the transcript already renders with, not a new
+    coordinate: the client points at what it is showing. The server resolves it
+    to a node in the tree (ADR 0020)."""
+    anchor: str
+
+
+class RenameBranch(BaseModel):
+    name: str
 
 
 class CardState(BaseModel):
@@ -519,9 +534,21 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
         chat_log.read_events(thread_id, after=cursor, limit=limit)
         if cursor < last_seq else []
     )
+    # WHICH BRANCH THIS IS, on every poll, and it has to be here rather than on
+    # its own endpoint. This is a CURSOR sync: the client merges what it is given
+    # into what it already holds. Filtering alone could never make it forget the
+    # abandoned tail, because a cursor fetch after a fork returns nothing new at
+    # all. So the branch identity travels with the events, the client notices it
+    # changed, and re-reads from zero. Same reasoning as the cut and the queue
+    # below: one endpoint answers "what is in this chat", and things that must
+    # agree are not allowed to arrive separately.
+    branch = chat_branches.branch_state_sync(thread_id)
+    events = chat_branches.keep_visible(events, branch["visible"])
     return {
         "events": events,
         "last_seq": last_seq,
+        "branch": branch["branch"],
+        "branch_count": branch["count"],
         "active_run": _active_run_payload(thread_id, meta),
         # THE CUT THE SERVER IS ACTUALLY APPLYING, so the divider in the
         # transcript describes the prompt rather than the log. Derived from the
@@ -586,6 +613,66 @@ async def restore(thread_id: str):
     if t is None:
         raise HTTPException(404, "thread not found")
     return t
+
+
+# --- branches (ADR 0020) -----------------------------------------------------
+# Going back to a point in the conversation and carrying on from there. There is
+# ONE verb for it, because in a store where nothing is deleted, "return to here"
+# and "branch from here" are the same act: the line you were on keeps its own
+# ref and stays listed below. Two buttons would be two names for one operation.
+
+@router.get("/threads/{thread_id}/branches")
+async def branches(thread_id: str):
+    """Every branch of this conversation, most recently active first.
+
+    Returns an empty list rather than an error when the relational store is not
+    reachable: a chat renders without this, it just cannot be branched.
+    """
+    return {"branches": await chat_branches.list_branches(thread_id)}
+
+
+@router.post("/threads/{thread_id}/branches")
+async def fork_thread(thread_id: str, body: ForkThread):
+    """Carry on from `anchor`. Nothing is deleted."""
+    from db import chat_repo
+    try:
+        out = await chat_branches.fork(thread_id, body.anchor)
+    except chat_repo.MessageNotFound as e:
+        raise HTTPException(404, str(e))
+    except chat_repo.BranchError as e:
+        raise HTTPException(409, str(e))
+    except tenancy.TenantUnresolved as e:
+        raise HTTPException(503, str(e))
+    chat_events.bump(thread_id)
+    return out
+
+
+@router.post("/threads/{thread_id}/branches/{branch_id}")
+async def switch_branch(thread_id: str, branch_id: str):
+    """Make another branch the visible one. Reversible, and nothing moves but
+    one pointer, which is why it does not ask for confirmation."""
+    from db import chat_repo
+    try:
+        out = await chat_branches.switch(thread_id, branch_id)
+    except chat_repo.BranchError as e:
+        raise HTTPException(404, str(e))
+    except tenancy.TenantUnresolved as e:
+        raise HTTPException(503, str(e))
+    chat_events.bump(thread_id)
+    return out
+
+
+@router.patch("/threads/{thread_id}/branches/{branch_id}")
+async def rename_branch(thread_id: str, branch_id: str, body: RenameBranch):
+    from db import chat_repo
+    try:
+        out = await chat_branches.rename(thread_id, branch_id, body.name)
+    except chat_repo.BranchError as e:
+        raise HTTPException(404, str(e))
+    except tenancy.TenantUnresolved as e:
+        raise HTTPException(503, str(e))
+    chat_events.bump(thread_id)
+    return out
 
 
 @router.delete("/threads/{thread_id}")

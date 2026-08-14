@@ -1,4 +1,4 @@
-import { Fragment, memo, useRef, useState } from "react";
+import { Fragment, memo, useRef, useState, type ReactNode } from "react";
 import { Archive, ArrowRightLeft, Bot, Clock, Eraser, FileText, Lightbulb, Radio, Ticket, TriangleAlert, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { chatApi, type ChatMsg } from "../../lib/chat";
@@ -211,6 +211,7 @@ function useArrivedAfterMount(): (ts?: string) => boolean {
 // array, and the other four are shared and stable.
 const MessageBubble = memo(function MessageBubble({
   msg, isLatest, selectedModel, cardCtx, answerPermission, nowMs, arrived,
+  branchFor,
 }: {
   msg: ChatMsg;
   isLatest: boolean;
@@ -223,6 +224,11 @@ const MessageBubble = memo(function MessageBubble({
   // the clock, so this is 0 for every historical bubble and the memo above
   // keeps holding across a tick.
   nowMs?: number;
+  // The branch control for THIS message, already built by the list. Passed in
+  // rendered rather than as (threadId, onChanged, count) because those three
+  // would have to be stable props on every bubble in the transcript, and the
+  // element is built once per block by a parent that already holds them.
+  branchFor?: ReactNode;
 }) {
   const threadCfg = modelDisplay(selectedModel);
   // Stopping a turn before it wrote anything leaves nothing to put in a bubble,
@@ -247,7 +253,7 @@ const MessageBubble = memo(function MessageBubble({
       {/* --copyable reserves the inline room the copy button occupies, so the
           button never lands on top of the last line of text. It is only set
           when there IS something to copy. */}
-      {body && <div className={`chat-bubble ${arrived && msg.role === "assistant" ? "ws-arrive " : ""}${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}`}>
+      {body && <div className={`chat-bubble ${arrived && msg.role === "assistant" ? "ws-arrive " : ""}${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}${branchFor ? " chat-bubble--branchable" : ""}`}>
         <div className="chat-bubble__body">
           {/* Files the operator attached, shown on the message that carried
               them. Read-only here: the send already happened, so there is
@@ -288,6 +294,7 @@ const MessageBubble = memo(function MessageBubble({
           )}
         </div>
         {msg.content.trim() && <CopyMessage value={msg.content} />}
+        {branchFor}
       </div>}
       {/* One quiet line under the reply, and that is the whole treatment for a
           turn that ended early. No border, no tag above the body, no icon. */}
@@ -396,13 +403,18 @@ export type AnswerPermissionFor = (
 // turns this memo off and nothing fails visibly; it just gets slow again.
 function MessageList({
   blocks, selectedModel, cardCtx, workingLabel, elapsed, nowMs, onRetry,
-  answerPermission, liveTurnId,
+  answerPermission, liveTurnId, renderBranch,
 }: {
   blocks: TranscriptBlock[];
   selectedModel: string;
   cardCtx: UiCardCtx;
   workingLabel: string;
   elapsed: number;
+  /** Builds the branch control for one message. A useCallback in Chat.tsx, so
+   *  it is stable across a keystroke like every other prop here. Absent when
+   *  the chat cannot be branched (no relational store), which is the whole of
+   *  how this degrades: no control, everything else unchanged. */
+  renderBranch?: (messageId: string) => ReactNode;
   // The shared 1Hz clock. One interval for the whole transcript, already owned
   // by Chat.tsx and already gated on document.hidden; a per-step clock costs
   // nothing new because LiveTurn re-renders on the tick regardless.
@@ -437,6 +449,7 @@ function MessageList({
               cardCtx={cardCtx}
               answerPermission={answerPermission}
               nowMs={b.key === latestAssistantKey ? nowMs : undefined}
+              branchFor={renderBranch ? renderBranch(b.id) : undefined}
             />
           )}
           {b.kind === "live" && (

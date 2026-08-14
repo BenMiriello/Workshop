@@ -61,7 +61,12 @@ import { cutPointOf, splitAtUnits } from "./transcriptUnits";
 export type TranscriptBlock =
   // A message as the log holds it: the operator's, or an assistant reply that
   // nothing interrupted.
-  | { kind: "message"; key: string; seq: number; msg: ChatMsg }
+  // `id` is the LOG EVENT's own id, which `key` is not: a reply cut open by the
+  // messages that interrupted it produces several blocks keyed `${id}:${i}` and
+  // they all came from the one event. Anything that has to name this message to
+  // the server (branching from it) uses `id`; anything that has to tell two
+  // rendered blocks apart uses `key`.
+  | { kind: "message"; key: string; id: string; seq: number; msg: ChatMsg }
   // The turn in flight. `working` marks the block the indicator belongs on —
   // the last one, because that is where the work is still happening.
   | { kind: "live"; key: string; runId: string; segments: ChatSegment[]; working: boolean }
@@ -194,7 +199,7 @@ function textOf(segments: ChatSegment[]): string {
 function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
   const msg = msgFromEvent(ev);
   if (!interrupts.length) {
-    return [{ kind: "message", key: ev.id, seq: ev.seq, msg }];
+    return [{ kind: "message", key: ev.id, id: ev.id, seq: ev.seq, msg }];
   }
   const segments = msg.meta?.segments || [];
   const pieces = cutPieces(segments, interrupts, msg.meta?.cut_head);
@@ -216,7 +221,7 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
     const piece = pieces[i];
     if (!isWork(piece)) {
       const m = piece.msg;
-      out.push({ kind: "message", key: m.id, seq: m.seq, msg: msgFromEvent(m) });
+      out.push({ kind: "message", key: m.id, id: m.id, seq: m.seq, msg: msgFromEvent(m) });
       continue;
     }
     {
@@ -257,6 +262,7 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
       out.push({
         kind: "message",
         key: `${ev.id}:${i}`,
+        id: ev.id,
         seq: ev.seq,
         msg: { ...msg, content: textOf(part), meta },
       });
@@ -266,7 +272,7 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
   if (!emitted) {
     // Nothing had streamed when the messages landed, so every slice is empty and
     // the whole reply came after all of them. Say so by putting it last.
-    out.push({ kind: "message", key: `${ev.id}:0`, seq: ev.seq, msg });
+    out.push({ kind: "message", key: `${ev.id}:0`, id: ev.id, seq: ev.seq, msg });
   }
   return out;
 }
@@ -311,7 +317,7 @@ function liveBlocks(
     const piece = pieces[i];
     if (!isWork(piece)) {
       const m = piece.msg;
-      out.push({ kind: "message", key: m.id, seq: m.seq, msg: msgFromEvent(m) });
+      out.push({ kind: "message", key: m.id, id: m.id, seq: m.seq, msg: msgFromEvent(m) });
       continue;
     }
     if (piece.work.length || i === workingAt) {
@@ -430,7 +436,7 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
         hold(rid, ev);
         continue;
       }
-      out.push({ kind: "message", key: ev.id, seq: ev.seq, msg: msgFromEvent(ev) });
+      out.push({ kind: "message", key: ev.id, id: ev.id, seq: ev.seq, msg: msgFromEvent(ev) });
       continue;
     }
     const rid = ev.meta?.turn_id;

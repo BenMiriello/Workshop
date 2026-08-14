@@ -10,6 +10,7 @@ import { useAttachments, dragHasFiles, filesFromTransfer } from "./chat/useAttac
 import { canSendWith } from "./chat/attachments";
 import ChatToolbar from "./chat/ChatToolbar";
 import ChatLog from "./chat/ChatLog";
+import BranchMenu from "./chat/BranchMenu";
 import ChatProblemBlock from "./chat/ChatProblemBlock";
 import ChatDialogs from "./chat/ChatDialogs";
 import ContextModal from "./chat/ContextModal";
@@ -175,7 +176,7 @@ export default function Chat({
 
   // The conversation itself: one store, fed by one endpoint from a cursor.
   const log = useThreadLog({ threadId: activeId, onError: setErr });
-  const { state, stateRef, dispatch, transcript, sync, runActive, hydrated, stale } = log;
+  const { state, stateRef, dispatch, transcript, sync, runActive, hydrated, stale, branch } = log;
   // Sends this browser has made that the server has not taken. The ONLY chat
   // state the browser still owns on its own, and it owns it because the server
   // has never heard of it: a request that did not land. Everything else — the
@@ -971,6 +972,26 @@ export default function Chat({
       }));
   }, [activeIdRef, sync, setErr]);
 
+  // Going back to a point in the conversation (ADR 0020).
+  //
+  // Built here rather than inside the transcript because the transcript is
+  // memoized on prop identity, and a control that needs the thread id, the
+  // branch count and a way to re-sync would otherwise be three more props to
+  // keep stable on every bubble. This is one callback whose identity moves only
+  // when the branch state actually does, which is rarely and never while typing.
+  const onBranchChanged = useCallback(() => { void sync(); }, [sync]);
+  const branchThreadId = branch.id ? activeId : null;
+  const renderBranch = useCallback((messageId: string) => (
+    branchThreadId
+      ? <BranchMenu
+          threadId={branchThreadId}
+          anchorId={messageId}
+          branchCount={branch.count}
+          onChanged={onBranchChanged}
+        />
+      : null
+  ), [branchThreadId, branch.count, onBranchChanged]);
+
   const logLoading = thread.loadingThreads || !hydrated;
   // EXACTLY ONE OF THE TWO renders a given failure. The log owns the error one
   // of its four list states, so when it has nothing else to show, the problem
@@ -1005,6 +1026,7 @@ export default function Chat({
       nowMs={nowMs}
       answerPermission={answerPermission}
       liveTurnId={runId}
+      renderBranch={renderBranch}
       queued={queuedWaiting}
       folding={folding}
       voiceOn={voiceOn}

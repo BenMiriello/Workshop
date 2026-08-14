@@ -602,6 +602,44 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-msg.user .chat-copy { color: color-mix(in srgb, var(--accent-fg) 50%, var(--accent)); }
 .chat-msg.user .chat-copy:hover,
 .chat-msg.user .chat-copy:focus-visible { color: var(--accent-fg); }
+
+/* Go back to this message and carry on from it. Sits immediately left of the
+   copy button, in the same padding corner and at the same size and resting
+   tone: they are two actions on one message and neither outranks the other.
+   The anchor carries the position because the Menu primitive wraps its trigger
+   in a relative element of its own. */
+.chat-branch-anchor { position: absolute; right: 0.5rem; bottom: 0.5rem; }
+.chat-bubble--copyable .chat-branch-anchor { right: 1.95rem; }
+.chat-branch {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15rem; height: 1.15rem; padding: 0;
+  background: none; border: none; border-radius: 5px;
+  color: color-mix(in srgb, var(--muted) 50%, var(--card)); cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.chat-branch:hover { color: var(--fg); }
+.chat-branch:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
+/* Open is a control that is ON, which is the one state that earns the tier
+   tone. See "a control is not content" in frontend/CLAUDE.md. */
+.chat-branch[aria-expanded="true"] { color: var(--you); }
+.chat-msg.user .chat-branch { color: color-mix(in srgb, var(--accent-fg) 50%, var(--accent)); }
+.chat-msg.user .chat-branch:hover,
+.chat-msg.user .chat-branch:focus-visible,
+.chat-msg.user .chat-branch[aria-expanded="true"] { color: var(--accent-fg); }
+/* Room for both controls, still horizontal only: neither adds a row. */
+.chat-bubble--branchable .chat-bubble__body { padding-right: 1.45rem; }
+.chat-bubble--branchable.chat-bubble--copyable .chat-bubble__body { padding-right: 2.9rem; }
+/* THREE ROWS, THEN IT SCROLLS. The operator asked for exactly this: a picker
+   that stays a small target no matter how many times a conversation has been
+   branched. The kit's menu already scrolls at 16rem; this is the tighter cap
+   for the branch list alone, so the "continue from here" action above it is
+   never pushed off screen by history. */
+.chat-branch-list { max-height: 8.4rem; overflow-y: auto; overscroll-behavior: contain; }
+.chat-branch-row { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.chat-branch-row__sub {
+  font-size: 0.75rem; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 22rem;
+}
 .chat-msg.user .chat-bubble { background: var(--accent); color: var(--accent-fg); border-bottom-right-radius: 4px; }
 .chat-msg.assistant .chat-bubble { background: var(--card); color: var(--fg); border-bottom-left-radius: 4px; --_arrive-to: var(--card); }
 /* A failure is STATUS, and status is outline: a transparent box with a hairline

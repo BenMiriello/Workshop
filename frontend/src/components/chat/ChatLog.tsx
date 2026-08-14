@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { VoiceSnapshot } from "../../lib/voice/client";
 import type { UiCardCtx } from "./uiCardActions";
 import type { TranscriptBlock } from "./transcriptBlocks";
@@ -65,7 +65,7 @@ export default function ChatLog({
   loading, error, blocks, isBuild, inFlight,
   selectedModel, cardCtx, onRetry, onCancelQueued, onReleaseQueue,
   queueHeld, queueError, workingLabel, elapsed, nowMs,
-  answerPermission, liveTurnId,
+  answerPermission, liveTurnId, renderBranch,
   queued, folding,
   voiceOn, vsnap,
 }: {
@@ -99,6 +99,9 @@ export default function ChatLog({
   // The run in flight, so a pending approval on it can be answered. Persisted
   // messages carry their own turn id; a live one has not been committed yet.
   liveTurnId?: string | null;
+  /** Builds the "go back to here" control for one message. Passed straight
+   *  through to MessageList; absent when this chat cannot be branched. */
+  renderBranch?: (messageId: string) => ReactNode;
   /** Messages the SERVER is holding to send next. Read, never written: this is
    *  the thread's own queue, the same on every device. */
   queued: {
@@ -148,6 +151,7 @@ export default function ChatLog({
         onRetry={onRetry}
         answerPermission={answerPermission}
         liveTurnId={liveTurnId}
+        renderBranch={renderBranch}
       />
 
       {/* WAITING ON THE SERVER, not in this browser. These have been accepted

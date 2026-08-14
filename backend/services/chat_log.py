@@ -818,7 +818,35 @@ def append_sync(thread_id: str, event: dict) -> dict:
         # caller told an append failed would send it again — so this is logged,
         # not raised. The file stays oversized until the next append tries again.
         log.error("thread %s: log rotation failed: %s", thread_id, e)
+    _mirror(thread_id, ev, meta)
     return ev
+
+
+def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
+    """Record the event in the transcript tree as well (ADR 0020).
+
+    The tree is what makes a conversation branchable: a message has to know
+    which point it was sent FROM, and a flat log cannot say. This is the one
+    funnel every append goes through, so it is the one place that has to know.
+
+    FIRE AND FORGET, ON PURPOSE. The log line is already committed and fsynced
+    at this point; it is the durable write and it stays that way through the
+    migration. Awaiting a database round trip here would put Postgres on the
+    latency path of every keystroke-sized append and, worse, would let a
+    database outage stop the operator sending a message. What is lost if this
+    fails is the message's PLACE in the tree, which is exactly what
+    `db/chat_backfill.py` reconstructs, and it is re-runnable.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    try:
+        from services import chat_branches
+        loop.create_task(chat_branches.record_message(thread_id, ev, meta))
+    except Exception:
+        log.debug("thread %s: mirror-write not scheduled", thread_id,
+                  exc_info=True)
 
 
 async def append(thread_id: str, event: dict) -> dict:

@@ -64,6 +64,10 @@ export type ThreadLog = {
    *  here rather than at render time on purpose: it turns on a clock, and a
    *  chat whose backend has gone away has nothing else left to re-render it. */
   stale: boolean;
+  /** Which line of the conversation the server is serving, and how many exist
+   *  (ADR 0020). `id` is null when this chat cannot be branched, which is the
+   *  signal the transcript uses to leave the control off entirely. */
+  branch: { id: string | null; name: string; count: number };
 };
 
 export function useThreadLog({
@@ -100,10 +104,27 @@ export function useThreadLog({
   const lastOkRef = useRef(Date.now());
   const [stale, setStale] = useState(false);
 
+  // Which branch the last response was for. `undefined` means "no response
+  // yet", which is deliberately distinct from `null` ("this chat has no
+  // branches"): the first sync must not be mistaken for a branch CHANGE and
+  // trigger a re-read of a page that just arrived.
+  const branchRef = useRef<{ id: string | null | undefined; count: number; pending: boolean }>(
+    { id: undefined, count: 0, pending: false });
+  const [branch, setBranch] = useState<{ id: string | null; name: string; count: number }>(
+    { id: null, name: "", count: 0 });
+
   const sync = useCallback(async () => {
     const id = threadIdRef.current;
     if (!id) return;
-    const after = stateRef.current.threadId === id ? stateRef.current.cursor : 0;
+    // A BRANCH CHANGE IS A RE-READ FROM ZERO, not a merge. This is a cursor
+    // sync: the store keeps what it already holds and adds what it is given, so
+    // after going back to an earlier point a cursor fetch would return nothing
+    // new and the abandoned tail would stay on screen forever. The branch id
+    // rides on the same response for exactly this reason (ADR 0020).
+    const branchChanged = branchRef.current.pending;
+    branchRef.current.pending = false;
+    const after = (!branchChanged && stateRef.current.threadId === id)
+      ? stateRef.current.cursor : 0;
     // Stamped BEFORE the request, so the store can tell an answer about an older
     // state of the world from a current one. Several of these are legitimately
     // in flight at once and they do not resolve in order.
@@ -111,6 +132,26 @@ export function useThreadLog({
     try {
       const page = await chatApi.threadEvents(id, after);
       if (threadIdRef.current !== id) return;
+      const nextBranch = page.branch?.id ?? null;
+      if (branchRef.current.id !== nextBranch) {
+        const first = branchRef.current.id === undefined;
+        branchRef.current.id = nextBranch;
+        setBranch({ id: nextBranch, name: page.branch?.name ?? "",
+                    count: page.branch_count ?? 0 });
+        if (!first) {
+          // Learned about the change on this very response, which was fetched
+          // from the OLD cursor. Drop what we have and ask again from zero.
+          branchRef.current.pending = true;
+          dispatch({ type: "reset", threadId: id });
+          void sync();
+          return;
+        }
+      } else if (branchRef.current.count !== (page.branch_count ?? 0)) {
+        branchRef.current.count = page.branch_count ?? 0;
+        setBranch({ id: nextBranch, name: page.branch?.name ?? "",
+                    count: page.branch_count ?? 0 });
+      }
+      if (branchChanged) dispatch({ type: "reset", threadId: id });
       dispatch({
         type: "eventsReceived",
         events: page.events || [],
@@ -273,5 +314,5 @@ export function useThreadLog({
   );
 
   return { state, stateRef, dispatch, transcript, sync, runActive: !!state.activeRun,
-           hydrated, stale };
+           hydrated, stale, branch };
 }
