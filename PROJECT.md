@@ -123,3 +123,17 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   gate when the diff touches `frontend/` or `packages/ui/`. Also fixed:
   `ui_source_id.sh` never hashed `packages/ui`, so kit edits were invisible to
   every staleness check despite compiling into the bundle.
+- 2026-08-13 — Operator: be able to go back to a point in a chat and carry on
+  from there (a fork control on each message, with past branches in a dropdown),
+  and chats must live in PostgreSQL in a normal schema. Decided and built: a
+  transcript is a TREE, `docs/decisions/0020-a-transcript-is-a-tree.md`. Four
+  tables (`chat_thread`/`chat_branch`/`chat_turn`/`chat_message`), migration
+  `c1a7b8e3d204`, RLS and composite same-thread FKs. `parent_id` is the render
+  order and `seq` is demoted to a cursor, which deletes the reason a mid-reply
+  message needed cut tokens at all. ONE branch verb, not two: with nothing
+  deleted, "return to here" and "branch from here" are the same act. Backfill
+  verified on the real data (63 threads, 1,352 messages): conservation 63/63,
+  every ordering difference explained. Pulls chat forward out of P6 in the
+  persistence plan, which had deferred it. NOT done: the transcript READ still
+  comes from the log, so `interleave_history` and its two siblings still exist
+  and a fork anchors at the end of an interrupted reply.
