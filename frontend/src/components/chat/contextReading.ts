@@ -69,15 +69,16 @@ export function contextLabel(reading: ContextReading): string {
   return reading.label;
 }
 
-// TWO NUMBERS AND A SLASH. Nothing else.
+// THE OPERATOR'S EXACT STRING: `Context: 120000/1000000 tokens used`.
 //
-// This used to be up to two sentences explaining where the count came from and
-// what it did not include. Operator, 2026-08-14: "most of this is unnecessary,
-// it can just be the number of tokens currently used slash the total number of
-// tokens." The standing instruction behind it is broader than this tooltip:
-// do not write explanatory copy that was not asked for.
+// It used to be up to two sentences explaining where the count came from and
+// what it did not include. Dictated verbatim on 2026-08-14 after a first pass
+// that was still guessing at the format. Plain digits, no thousands separators,
+// no spaces around the slash: that is how it was written, so that is what it
+// says. The standing instruction behind it is broader than this tooltip: do not
+// write explanatory copy that was not asked for.
 export function contextTooltip(used: number, win: number): string {
   const u = Number.isFinite(used) && used > 0 ? Math.round(used) : 0;
   const w = Number.isFinite(win) && win > 0 ? Math.round(win) : 0;
-  return `${u.toLocaleString()} / ${w.toLocaleString()}`;
+  return `Context: ${u}/${w} tokens used`;
 }

@@ -50,22 +50,21 @@ describe("contextReading", () => {
 });
 
 describe("the tooltip", () => {
-  // TWO NUMBERS AND A SLASH. It used to be a sentence or two naming where the
-  // count came from and what an estimate could not see. Operator, 2026-08-14:
-  // "it can just be the number of tokens currently used slash the total number
-  // of tokens." These assert the absence of the prose as much as the format,
-  // because the prose is what was being objected to.
-  it("is used over total, and nothing else", () => {
-    expect(contextTooltip(120_000, 1_000_000)).toBe("120,000 / 1,000,000");
+  // THE OPERATOR'S EXACT STRING, dictated 2026-08-14. It used to be a sentence
+  // or two naming where the count came from and what an estimate could not see.
+  // Pinned literally, including the lack of thousands separators, because the
+  // format was given rather than inferred.
+  it("is the dictated string", () => {
+    expect(contextTooltip(120_000, 1_000_000)).toBe("Context: 120000/1000000 tokens used");
   });
 
   it("says nothing about where the number came from", () => {
     const t = contextTooltip(120_000, 1_000_000);
-    expect(t).not.toMatch(/server|estimate|browser|persona|context|token/i);
+    expect(t).not.toMatch(/server|estimate|browser|persona/i);
   });
 
   it("survives a missing count without printing NaN", () => {
-    expect(contextTooltip(Number.NaN, 1_000_000)).toBe("0 / 1,000,000");
+    expect(contextTooltip(Number.NaN, 1_000_000)).toBe("Context: 0/1000000 tokens used");
   });
 
   it("renders a plain percent beside it", () => {
