@@ -843,7 +843,12 @@ def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
         return
     try:
         from services import chat_branches
-        loop.create_task(chat_branches.record_message(thread_id, ev, meta))
+        # HELD: an unheld task can be garbage-collected mid-write, and a
+        # silently missing mirror row is exactly the failure this mirror's
+        # own backfill exists to repair. Weak-ref class, see 93768fd.
+        task = loop.create_task(chat_branches.record_message(thread_id, ev, meta))
+        _MIRROR_TASKS.add(task)
+        task.add_done_callback(_MIRROR_TASKS.discard)
     except Exception:
         log.debug("thread %s: mirror-write not scheduled", thread_id,
                   exc_info=True)

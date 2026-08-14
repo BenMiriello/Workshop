@@ -127,7 +127,15 @@ def drain_soon(thread_id: str, *, reason: str = "") -> None:
         loop = asyncio.get_running_loop()
     except RuntimeError:  # pragma: no cover - off-loop caller
         return
-    loop.create_task(_guarded(thread_id, reason))
+    # HELD: asyncio keeps only a weak reference, and a collected drain task is
+    # a queued message waiting for the next poll with no error anywhere. Same
+    # class as the naming task that silently never ran (93768fd).
+    task = loop.create_task(_guarded(thread_id, reason))
+    _DRAIN_TASKS.add(task)
+    task.add_done_callback(_DRAIN_TASKS.discard)
+
+
+_DRAIN_TASKS: set = set()
 
 
 async def _guarded(thread_id: str, reason: str) -> None:

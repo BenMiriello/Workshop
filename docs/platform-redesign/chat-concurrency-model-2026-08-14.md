@@ -152,8 +152,13 @@ the first): the top of this list is now DONE.
 
 Still open, in order:
 
-- **R8 `_promotion_patch` rides unrelated writes; R9 branch mirror unordered;
-  R10 startup reconcile vs adoption.** Each small.
+- **R8 reassessed: designed, not a race.** `_promotion_patch` is a deliberate
+  lazy migration (legacy `agent:<slug>` chats drift to participant form on any
+  write), guarded by scope_locked and exact-participant checks. Riding
+  unrelated writes is its mechanism, not an accident. No change.
+- **R9 branch mirror unordered; R10 startup reconcile vs adoption.** Both
+  belong to the ADR-0020 tree/Postgres workstream and the lifespan
+  respectively; small, and owned there.
 - **Voice turns during a pending operation** proceed rather than queue
   (deliberate: a spoken turn cannot wait 30s), at the cost of one uncompacted
   voice turn; the landing still serializes behind the voice run via the claim,
