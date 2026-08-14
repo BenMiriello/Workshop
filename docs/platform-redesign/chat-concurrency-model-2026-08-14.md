@@ -72,7 +72,21 @@ durable server queue, drained in order when the thread is next idle.
 | /clear | land inline | **land when the run finishes** (`deferred: true`) | refused politely |
 | rename / rescope | immediate (log event) | immediate; does not touch the run | immediate |
 | restart | nothing to do | turn adopted on the way back up | op dies with the process; log coherent; compact again |
+| branch (fork / switch) | move the pointer, immediate | **refused, 409** | **refused, 409** |
 | turn finalize | commit reply, drain queue | n/a | commit, then the landing task fires, then the drain |
+
+**Branching REFUSES where a fold QUEUES, and the asymmetry is the point.** A
+fold is slow and can sensibly wait its turn: it is still the right fold when the
+run ends. Going back to an earlier point cannot wait, because the thing it would
+be waiting for is the very turn it is trying to get rid of; landing it afterwards
+would answer, on the new line, a message that line no longer contains. So it
+tells the operator the chat is busy and lets him stop the run himself.
+
+This row was missing entirely until 2026-08-14, and nothing on the fork path
+asked whether the thread was busy. `chat_repo.append_message` parents to the
+CURRENT branch head and a fork has just moved that pointer, so a reply already in
+flight committed onto the NEW branch as a child of the fork anchor. Switching had
+the same hole for the same reason: it moves the same pointer.
 
 Ordering guarantees that fall out:
 

@@ -137,3 +137,36 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   persistence plan, which had deferred it. NOT done: the transcript READ still
   comes from the log, so `interleave_history` and its two siblings still exist
   and a fork anchors at the end of an interrupted reply.
+- 2026-08-14 — Operator: the branch control opens off to the side and is clipped,
+  and why is it on the LAST message. Both real, and reviewing them found four
+  more. UI: the clipping was in the KIT, not the chat — `Menu` measured its
+  popover against the VIEWPORT only, and `.chat-log` is `overflow-x: hidden`
+  inside a centred 1200px column, so it never flipped and lost half of itself at
+  the log's edge (@workshop/ui 0.5.4; clip box = viewport narrowed by every
+  clipping ancestor, per axis; `side` became a preference that flips too;
+  placement projected not read back, so a flip can undo; arithmetic extracted to
+  `menuPlacement.ts` and tested). The last-message question had no good answer:
+  the control was present-but-disabled there because the branch LIST was the only
+  thing left worth opening, and a list of the thread's branches is thread state
+  repeated identically under every bubble. Split by what each surface answers —
+  bubble is one action (`BranchAction`, absent where the action is the identity
+  operation, disabled with a reason mid-turn), toolbar owns which-line-am-I-on and
+  switching (`BranchPicker`, only once a second line exists). The rule is one
+  question in `branchable.ts`: would going back here produce a different
+  conversation? A trailing REPLY, no; a trailing message of YOURS, yes, and that
+  is the most useful case in the feature. Backend, all four found by review and
+  three invisible from the screen: `_fold` never applied the branch filter, so
+  after a fork the operator saw the new line and the MODEL still read the
+  abandoned tail (`hidden_event_ids_sync` was written for that caller and had
+  zero callers); fork and switch had no concurrency guard, so an in-flight reply
+  committed onto the new branch as a child of the fork anchor (both now refuse on
+  a busy thread rather than queue — the turn they would wait for is the one being
+  discarded); mirror writes for one thread ran concurrently and raced to create
+  the thread row, losing three of four messages at the start of a chat (chained
+  per thread); and `_MIRROR_TASKS` was referenced and never defined, so the
+  held-task safeguard had never once existed. Verified end to end through the real
+  handlers in the backend's own environment. 2,217 backend tests, 673 frontend,
+  158 kit. NOT done: moving the transcript READ onto the tree. It hinges on a
+  decision that is the operator's — a Postgres outage would go from costing
+  branching to costing the chat — and on the mirror being provably complete first.
+  Plan and recommendation: `docs/platform-redesign/transcript-read-from-rows-2026-08-14.md`.

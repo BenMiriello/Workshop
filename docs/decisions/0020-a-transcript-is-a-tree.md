@@ -162,6 +162,35 @@ as several blocks from one event, so they all resolve to the same anchor.
 Putting a control on each would show three identical buttons that look like
 three branch points and are one.
 
+**The trailing reply carries NOTHING.** Revised 2026-08-14. This first shipped
+as a control that was present-but-disabled on the last message, and the operator
+asked the only sensible question of it: "why would it be there for the last
+message if nothing else is after?" There was no good answer. A disabled control
+promises the action exists here and is unavailable right now; on the last reply
+it is the identity operation and would never be available.
+
+The rule underneath, which the special cases now fall out of, is one question:
+**would going back to this message produce a conversation different from the one
+on screen?** For a reply that is `m1..mi`, different only while it is not last.
+For your own message it is `m1..m(i-1)`, always one shorter, INCLUDING when it is
+last. So "the last bubble has no control" is not the rule, it is what the rule
+produces for a trailing reply; a trailing message of your own keeps its control,
+and taking back what you just sent is among the most useful cases in the feature.
+It lives in `frontend/src/components/chat/branchable.ts`, executable and tested.
+
+**The branch LIST is not on the bubble at all.** It was, as the second half of a
+per-message dropdown, and that was the only reason the trailing reply still
+needed a control. A list of the thread's branches is thread state: identical
+under every bubble, describing none of them, and repeating it per message is the
+same error as painting a constant. It moved to the toolbar beside the other
+thread state (`BranchPicker`), which also answers "which line am I on", a
+question that previously required opening a message's menu and hunting for a
+checkmark. The bubble keeps one action and is a button.
+
+**And it is disabled, with a reason, while a turn is in flight** — situational,
+not structural, so this one IS a disabled control rather than an absent one. See
+the concurrency note below.
+
 **Pending, queued and live bubbles do not.** Not a layout decision: a pending
 send is not on the server, a queued one has not been sent, and a live turn has
 not committed. None of the three is a point you could return to, because none of
@@ -215,6 +244,42 @@ expressed, so the fork anchor resolves to the END of an interrupted reply. Three
 readers (`interleave_history`, `_fmt_for_summary`, the voice path) still
 reconstruct order from tokens and should be deleted, not adapted, once the read
 path moves.
+
+## What was wrong in the first pass (2026-08-14)
+
+Four defects, found by reviewing the control the operator was asking about.
+Recorded here because three of them were invisible from the screen.
+
+**The model never saw the fork.** The sync endpoint filtered the transcript by
+the branch from the day this shipped; `chat_store._fold`, which builds the
+prompt, replayed the whole log and never asked. So after going back, the operator
+saw the line he had returned to and the model was still handed everything he had
+branched away from, including the exchange he went back specifically to remove.
+`chat_branches.hidden_event_ids_sync` was written for that caller, names it in
+its docstring, and had never been called by anything. Now wired, and boundaries
+are filtered too, so a `/clear` performed on an abandoned line stops cutting the
+line the operator returned to.
+
+**Branching was not in the concurrency model.** Nothing on the fork or switch
+path asked whether the thread was busy, so an in-flight reply could commit onto
+the new branch as a child of the fork anchor. Both now refuse on a busy thread
+(409) rather than queueing, because the turn they would wait for is the one being
+discarded. Added to the case matrix in the concurrency doc.
+
+**Mirror writes for one thread ran concurrently.** Each parents its row to the
+current head, so two at once read the same head. At the START of a thread it was
+worse: the thread row is created lazily by whichever write arrives first, so the
+opening events all found no row, all tried to create one, and every loser died on
+`uq_chat_thread_external` and dropped its message from the tree. Measured at
+three of four messages lost, with the branch head left on the first. They are
+chained per thread now; different threads still overlap.
+
+**The held-task set did not exist.** `_MIRROR_TASKS` was referenced in
+`chat_log._mirror` and never defined; the NameError landed in a bare `except` and
+was logged at DEBUG. `create_task` had already run by that line, so the mirror
+still worked and nothing looked wrong, but every mirror write was unheld and
+collectable mid-flight, which is the silently-missing row this design points at
+the backfill to repair.
 
 ## Alternatives considered
 
