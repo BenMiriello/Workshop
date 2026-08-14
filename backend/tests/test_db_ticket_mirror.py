@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 
@@ -88,6 +89,15 @@ def _rows(scope):
     from db import repo
     return {t["id"]: t for t in repo.list_tickets(scope["org"],
                                                   scope=scope["slug"])}
+
+
+def _run(session, scope, **kw):
+    from db.ids import uuid7
+    from db.models import Run
+    r = Run(id=uuid7(), org_id=scope["org"], trigger="loop", status="done", **kw)
+    session.add(r)
+    session.flush()
+    return r.id
 
 
 def test_a_new_ticket_is_inserted_and_a_second_pass_changes_nothing(scope):
@@ -295,3 +305,60 @@ def test_discovered_from_is_an_edge_and_accepts_a_bare_id(scope):
             "SELECT count(*) FROM ticket_link WHERE kind = 'discovered_from' "
             "AND deleted_at IS NULL")).scalar()
     assert n == 1
+
+
+# --- the fields that became history or a derivation ---------------------------
+
+def test_evidence_becomes_history_and_does_not_duplicate_on_a_re_run(scope):
+    """136 evidence items across 85 live tickets, an append-only worklog of
+    `{kind, ref}` notes. Matched on (verb, field, value), so a save that changes
+    one ticket does not re-insert every other ticket's worklog."""
+    ev = [{"kind": "note", "ref": "did the thing"},
+          {"kind": "receipt", "ref": "abc123"}]
+    first = _mirror(scope, [_task("t1", evidence=ev)])
+    assert first["history"] == 2          # the two notes; `_task` sets no scoped_by
+    assert _mirror(scope, [_task("t1", evidence=ev)])["history"] == 0
+
+    got = {(e["kind"], e["ref"]) for e in _rows(scope)["t1"]["evidence"]}
+    assert got == {("note", "did the thing"), ("receipt", "abc123")}
+
+
+def test_scoped_by_is_an_event_not_a_property(scope):
+    """Who scoped a ticket happened once, at a time. It is not a fact that keeps
+    being true, which is what a column would claim."""
+    _mirror(scope, [_task("t1", scoped_by="agent:chat")])
+    assert _rows(scope)["t1"]["scoped_by"] == "agent:chat"
+
+
+def test_labels_are_shared_per_project_and_the_join_is_what_changes(scope):
+    _mirror(scope, [_task("t1", labels=["chat-reported"]),
+                    _task("t2", labels=["chat-reported", "design"])])
+    rows = _rows(scope)
+    assert rows["t1"]["labels"] == ["chat-reported"]
+    assert rows["t2"]["labels"] == ["chat-reported", "design"]
+
+    from db.engine import tenant_session
+    with tenant_session(scope["org"]) as s:
+        n = s.execute(text("SELECT count(*) FROM label WHERE org_id = :o "
+                           "AND deleted_at IS NULL"), {"o": scope["org"]}).scalar()
+    assert n == 2, "the label row is shared; only the join is per ticket"
+
+    _mirror(scope, [_task("t1"), _task("t2", labels=["design"])])
+    rows = _rows(scope)
+    assert rows["t1"]["labels"] == [] and rows["t2"]["labels"] == ["design"]
+
+
+def test_attempts_is_derived_from_runs_that_started(scope):
+    """The stored counter had drifted on 11 of 98 live tickets, one claiming 2
+    attempts against 5 finished runs. A queued run that never started is not an
+    attempt."""
+    from db.engine import tenant_session
+
+    _mirror(scope, [_task("t1")])
+    pk = None
+    with tenant_session(scope["org"]) as s:
+        pk = s.execute(text("SELECT id FROM ticket WHERE external_id = 't1'")).scalar()
+        _run(s, scope, ticket_id=pk, started_at=datetime.now(timezone.utc))
+        _run(s, scope, ticket_id=pk, started_at=datetime.now(timezone.utc))
+        _run(s, scope, ticket_id=pk)          # queued, never started
+    assert _rows(scope)["t1"]["attempts"] == 2

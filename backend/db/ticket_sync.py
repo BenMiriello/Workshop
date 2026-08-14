@@ -253,6 +253,89 @@ def _sync_links(s, org_id, from_pk, ids: dict, task: dict) -> int:
     return changed
 
 
+def _sync_labels(s, org_id, project_id, ticket_pk, task: dict) -> int:
+    """Bring a ticket's labels in line, creating the `label` row on first use.
+
+    Labels are per-project and shared, so the name is looked up (or created)
+    once and the join row is what changes per ticket. Two names are live across
+    the store, `chat-reported` (18) and `design` (3).
+    """
+    from db.ids import uuid7
+
+    want_names = {str(x).strip() for x in (task.get("labels") or [])
+                  if str(x).strip()}
+    have = {r._mapping["name"]: r._mapping["label_id"] for r in s.execute(text(
+        "SELECT l.name, l.id AS label_id FROM ticket_label tl "
+        "  JOIN label l ON l.id = tl.label_id "
+        " WHERE tl.ticket_id = :t AND l.deleted_at IS NULL"),
+        {"t": ticket_pk}).all()}
+    changed = 0
+
+    for name in want_names - set(have):
+        label_id = _lookup(s, "SELECT id FROM label WHERE org_id = :o "
+                              "AND project_id = :p AND name = :n "
+                              "AND deleted_at IS NULL",
+                           o=org_id, p=project_id, n=name)
+        if label_id is None:
+            label_id = uuid7()
+            s.execute(text("INSERT INTO label (id, org_id, project_id, name) "
+                           "VALUES (:i, :o, :p, :n)"),
+                      {"i": label_id, "o": org_id, "p": project_id, "n": name})
+        s.execute(text("INSERT INTO ticket_label (ticket_id, label_id, org_id) "
+                       "VALUES (:t, :l, :o) ON CONFLICT DO NOTHING"),
+                  {"t": ticket_pk, "l": label_id, "o": org_id})
+        changed += 1
+
+    stale = [lid for name, lid in have.items() if name not in want_names]
+    if stale:
+        s.execute(text("DELETE FROM ticket_label WHERE ticket_id = :t "
+                       "AND label_id = ANY(:ids)"),
+                  {"t": ticket_pk, "ids": stale})
+        changed += len(stale)
+    return changed
+
+
+def _sync_history(s, org_id, ticket_pk, task: dict) -> int:
+    """Write the two JSON fields that are history rather than state.
+
+    `evidence` (136 items over 85 tickets) is an append-only worklog of
+    `{kind, ref}` notes, which is exactly "an actor did a thing at a time".
+    `scoped_by` (112/112) is who scoped the ticket, which is an event at
+    creation, not a property that keeps being true.
+
+    Matched on (verb, field, new_value) so a re-run inserts nothing. Evidence is
+    append-only in the source, so nothing is ever retired here; an entry that
+    vanished from the JSON list was a rewrite of history and the row stays.
+    """
+    from db.ids import uuid7
+
+    have = {(r._mapping["verb"], r._mapping["field"], r._mapping["new_value"])
+            for r in s.execute(text(
+                "SELECT verb, field, new_value FROM ticket_event "
+                " WHERE ticket_id = :t AND verb IN ('noted', 'scoped')"),
+                {"t": ticket_pk}).all()}
+    changed = 0
+    wanted = []
+    for e in (task.get("evidence") or []):
+        if isinstance(e, dict) and e.get("ref"):
+            wanted.append(("noted", str(e.get("kind") or "note")[:64],
+                           str(e["ref"])[:8000]))
+    if task.get("scoped_by"):
+        wanted.append(("scoped", "scoped_by", str(task["scoped_by"])[:8000]))
+
+    for verb, field, value in wanted:
+        if (verb, field, value) in have:
+            continue
+        s.execute(text(
+            "INSERT INTO ticket_event (id, org_id, ticket_id, actor_type, verb, "
+            "field, new_value) VALUES (:i, :o, :t, 'system', :v, :f, :nv)"),
+            {"i": uuid7(), "o": org_id, "t": ticket_pk, "v": verb, "f": field,
+             "nv": value})
+        have.add((verb, field, value))
+        changed += 1
+    return changed
+
+
 def _author(value: str | None, user_id) -> tuple[str, Any]:
     """A legacy comment author string as an actor type, plus its actor id.
 
@@ -488,11 +571,15 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
         # Typed edges, for EVERY ticket rather than only the ones with a parent.
         stats["links"] = 0
         stats["comments"] = 0
+        stats["labels"] = 0
+        stats["history"] = 0
         for task in tasks:
             pk = ids.get(str(task.get("id") or ""))
             if pk is not None:
                 stats["links"] += _sync_links(s, org_id, pk, ids, task)
                 stats["comments"] += _sync_comments(s, org_id, user_id, pk, task)
+                stats["labels"] += _sync_labels(s, org_id, project_id, pk, task)
+                stats["history"] += _sync_history(s, org_id, pk, task)
 
         # A ticket that left the JSON list is soft-deleted, never hard. The
         # events, comments and runs that reference it stay readable, which is

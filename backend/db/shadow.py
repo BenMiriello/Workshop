@@ -144,6 +144,25 @@ def compare(org_id, scope: str, tasks: list[dict]) -> dict:
         if _THREAD_ID.fullmatch(jref) and jref != (db_s.get("ref") or ""):
             diffs["source.ref"].append((tid, jref, db_s.get("ref")))
 
+        if sorted(task.get("labels") or []) != sorted(row.get("labels") or []):
+            diffs["labels"].append((tid, task.get("labels"), row.get("labels")))
+        if (task.get("scoped_by") or None) != (row.get("scoped_by") or None):
+            diffs["scoped_by"].append(
+                (tid, task.get("scoped_by"), row.get("scoped_by")))
+        # Evidence is compared as a SET of (kind, ref). The JSON list holds 20
+        # exact duplicates within single tickets; history rows are matched on
+        # that tuple, so the database holds each once. Order is not compared
+        # because the JSON list has no reliable timestamp to have ordered by.
+        want_e = {(str(e.get("kind") or "note"), str(e.get("ref") or ""))
+                  for e in (task.get("evidence") or []) if isinstance(e, dict)
+                  and e.get("ref")}
+        have_e = {(str(e.get("kind") or ""), str(e.get("ref") or ""))
+                  for e in (row.get("evidence") or [])}
+        if want_e != have_e:
+            diffs["evidence"].append(
+                (tid, len(want_e), len(have_e),
+                 sorted(k for k, _ in want_e ^ have_e)[:3]))
+
         for field in _SET_FIELDS:
             a = {x for x in (task.get(field) or []) if isinstance(x, str)}
             # A dangling id the JSON store allowed cannot exist as an edge, so

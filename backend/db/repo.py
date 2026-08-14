@@ -90,7 +90,35 @@ SELECT
                      'text', c.body, 'created', c.created_at)
                    ORDER BY c.created_at)
             FROM comment c
-            WHERE c.ticket_id = t.id AND c.deleted_at IS NULL), '[]') AS comments
+            WHERE c.ticket_id = t.id AND c.deleted_at IS NULL), '[]') AS comments,
+  COALESCE((SELECT array_agg(l.name ORDER BY l.name)
+            FROM ticket_label tl JOIN label l ON l.id = tl.label_id
+            WHERE tl.ticket_id = t.id AND l.deleted_at IS NULL), '{}') AS labels,
+  -- `evidence` and `scoped_by` are history rows, reassembled into the shape the
+  -- JSON record carried. They are read far more often than written, so the cost
+  -- sits here rather than in a second round trip per ticket.
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('kind', e.field, 'ref', e.new_value)
+                             ORDER BY e.created_at)
+            FROM ticket_event e
+            WHERE e.ticket_id = t.id AND e.verb = 'noted'), '[]') AS evidence,
+  (SELECT e.new_value FROM ticket_event e
+    WHERE e.ticket_id = t.id AND e.verb = 'scoped'
+    ORDER BY e.created_at LIMIT 1) AS scoped_by,
+  -- `attempts` was a hand-maintained counter on the ticket, and it had drifted:
+  -- 11 of 98 live tickets stored a value LOWER than their real run count, one
+  -- claiming 2 attempts against 5 runs that all started and all finished
+  -- done-or-failed. Deriving it is a correction, not a translation.
+  --
+  -- Restricted to runs that STARTED, which is what "an attempt was made" means.
+  -- Identical to a bare count(*) on today's data (every run with a ticket has a
+  -- started_at), so nothing changes now, and it stays right the first time a
+  -- run is queued and never picked up.
+  (SELECT count(*) FROM run r
+    WHERE r.ticket_id = t.id AND r.started_at IS NOT NULL) AS attempts,
+  COALESCE((SELECT array_agg(r.legacy_job_id ORDER BY r.started_at)
+            FROM run r
+            WHERE r.ticket_id = t.id AND r.legacy_job_id IS NOT NULL), '{}')
+    AS job_ids
 FROM ticket t
 JOIN project p         ON p.id  = t.project_id
 JOIN workflow_state ws ON ws.id = t.state_id
@@ -133,6 +161,18 @@ def _row_to_legacy(row: Any) -> dict:
         "blocked_reason": m["blocked_reason"],
         "acceptance": m["acceptance"],
         "claim_token": m["claim_token"],
+        "labels": list(m["labels"] or []),
+        "evidence": list(m["evidence"] or []),
+        "scoped_by": m["scoped_by"],
+        "attempts": int(m["attempts"] or 0),
+        "job_ids": list(m["job_ids"] or []),
+        # Both were the literal string "operator" on all 112 tickets: two
+        # fields, one concept, no information (ADR 0019 R4). They are
+        # SYNTHESISED here so the 18 callers that read `task["assignee"]` keep
+        # working, and they go when those callers do. `ticket.assignee_id` is
+        # the real column for when assignment starts meaning something.
+        "assignee": "operator",
+        "owner": "operator",
         "created": m["created"].isoformat() if m["created"] else None,
         "updated": m["updated"].isoformat() if m["updated"] else None,
         "closed": m["closed"].isoformat() if m["closed"] else None,
