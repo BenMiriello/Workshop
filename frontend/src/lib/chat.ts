@@ -720,6 +720,9 @@ export const chatApi = {
         // An operation is already in flight on this thread; nothing was
         // computed and nothing from THIS request will land.
         busy?: boolean;
+        // The operator pressed Stop on the fold line while the summarizer ran.
+        // Nothing was written; the transcript is exactly as it was.
+        cancelled?: boolean;
       }>,
     ),
 
@@ -729,7 +732,17 @@ export const chatApi = {
   clearThreadContext: (id: string) =>
     fetch(`/api/chat/threads/${id}/clear`, { method: "POST" }).then(
       j<{ cleared: number; cleared_through: number; session_reset: boolean;
-          deferred?: boolean; busy?: boolean }>,
+          deferred?: boolean; busy?: boolean; cancelled?: boolean }>,
+    ),
+
+  // Call off the /compact or /clear in flight. What the Stop control on the
+  // fold line does: the server refuses the landing, so the transcript is
+  // untouched and anything queued behind the operation goes out at once.
+  // `cancelled: false` means it had already landed, which is a race, not a
+  // failure.
+  cancelThreadOperation: (id: string) =>
+    fetch(`/api/chat/threads/${id}/operation/cancel`, { method: "POST" }).then(
+      j<{ cancelled: boolean; operation: string }>,
     ),
 
   // Record that an in-chat card has been acted on, so it stops offering an

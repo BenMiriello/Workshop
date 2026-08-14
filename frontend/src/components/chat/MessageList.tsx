@@ -290,9 +290,9 @@ const MessageBubble = memo(function MessageBubble({
                   message, not beside it. */}
               <Receipts msg={msg} />
             </>
-          ) : (
+          ) : msg.content.trim() ? (
             <ElidedContent source={msg.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
-          )}
+          ) : null}
         </div>
         {msg.content.trim() && <CopyMessage value={msg.content} />}
         {branchFor}
@@ -404,7 +404,7 @@ export type AnswerPermissionFor = (
 // turns this memo off and nothing fails visibly; it just gets slow again.
 function MessageList({
   blocks, selectedModel, cardCtx, workingLabel, elapsed, nowMs, onRetry,
-  answerPermission, liveTurnId, renderBranch, branchHead,
+  answerPermission, liveTurnId, renderBranch, branchHead, onStop,
 }: {
   blocks: TranscriptBlock[];
   selectedModel: string;
@@ -426,6 +426,9 @@ function MessageList({
   onRetry: (clientId: string) => void;
   answerPermission?: AnswerPermissionFor;
   liveTurnId?: string | null;
+  /** End the run in flight. Rendered on the working line itself. Must be stable
+   *  (a useCallback in Chat.tsx) or it turns this memo off. */
+  onStop?: () => void;
 }) {
   // Recency nuance: the most recent assistant answer is expanded and older ones
   // auto-shorten — but only when nothing is running, because a live turn is
@@ -483,6 +486,7 @@ function MessageList({
               onAnswerPermission={
                 answerPermission && liveTurnId ? (a) => answerPermission(liveTurnId, a) : undefined
               }
+              onStop={onStop}
             />
           )}
           {b.kind === "pending" && (

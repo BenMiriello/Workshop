@@ -6,11 +6,15 @@
 // be made in two places and, predictably, drifted.
 //
 // The touch fix is the reason this is worth keeping in one place: the action
-// runs on CLICK, and `onMouseDown` only calls preventDefault (to keep the
-// textarea focused). It used to run ON mousedown, which a touch device
+// runs on CLICK, and the pointerdown handler only calls preventDefault (to keep
+// the textarea focused). It used to run ON mousedown, which a touch device
 // synthesizes only after the fact and not dependably — so on a phone, tapping a
 // command did nothing at all: no error, no message, no fold. `click` fires on
-// both.
+// both. The guard itself was `onMouseDown` until 2026-08-14, which is the same
+// mistake one layer down: the compatibility mousedown arrives after touchend,
+// long after focus has moved. It is `keepFocusOnTap` now, like everything else.
+import { keepFocusOnTap } from "./keepFocus";
+
 export type PickerOption = {
   // Stable identity, and what the caller gets back on pick.
   key: string;
@@ -45,7 +49,7 @@ export default function CommandPicker({
           aria-selected={i === active}
           className={`chat-slash-item${i === active ? " is-active" : ""}`}
           onMouseEnter={() => onHover(i)}
-          onMouseDown={(e) => e.preventDefault()}
+          onPointerDown={keepFocusOnTap}
           onClick={() => onPick(o.key)}
         >
           <span className="chat-slash-name">{o.label}</span>

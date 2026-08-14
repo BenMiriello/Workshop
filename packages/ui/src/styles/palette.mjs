@@ -294,6 +294,9 @@ const DERIVED = {
     fieldBg: [0.193, 0.0125],
     cardHover: [0.268, 0.015],
     cardRing: [0.29, 0.015],       // dark cards float on a faint ring, not a shadow
+    /* A BLOCK OF GROUPED CONTENT INSIDE A CARD, and the one surface that is NOT
+       on the same side of `card` in both modes. See the light entry. */
+    bgBlock: [0.3, 0.015],
     borderStrong: [0.4, 0.017],
     scrim: [0.12, 0.03],
     scrimAlpha: 0.62,
@@ -313,6 +316,24 @@ const DERIVED = {
     fieldBg: [0.96, 0.006],
     cardHover: [0.985, 0.004],
     cardRing: null,                // light cards float on shadow
+    /* BELOW `inset`, not between it and `card`, and that asymmetry is the whole
+       point of the token.
+
+       Elevation is not symmetric across the modes: `inset` is the LOWEST surface
+       in both (dark 0.205 < card 0.235; light 0.945 < card 0.995), so a block
+       drawn as "card lifted toward --fg" moves AWAY from inset in dark and
+       straight ONTO it in light. That is exactly what shipped: measured across
+       all sixteen scheme x modes, the grouped-tool-call fill and the delegation
+       fill landed within 3/255 of each other in every light scheme while sitting
+       26 apart in every dark one. Two different things, one color, in half the
+       app. Operator, 2026-08-14: "it's the same background color as the agent
+       background color and that's wrong."
+
+       So light goes past inset instead of toward it. 0.90 is one clear step
+       below inset's 0.945, about the size of the step inset itself makes against
+       card, which is the smallest gap that reads as a different surface rather
+       than as a rendering artifact. Pinned in palette.test.ts. */
+    bgBlock: [0.9, 0.009],
     borderStrong: [0.855, 0.011],
     scrim: [0.18, 0.03],
     scrimAlpha: 0.55,
@@ -427,6 +448,11 @@ export function buildScheme(schemeId, mode) {
     muted: T(P.muted),
     faint: T(P.faint),
     card: T(P.card),
+    /* A grouped block sitting ON a card (or inside a delegation), distinct from
+       BOTH by construction rather than by luck. It is not derived from `card`
+       the way a hover is, because it must stay clear of `bgInset` too, and in
+       light mode those two pull the same direction. */
+    bgBlock: N(d.bgBlock),
     cardHover: N(d.cardHover),
     cardRing: d.cardRing ? N(d.cardRing) : "transparent",
     border: T(P.border),

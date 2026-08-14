@@ -77,6 +77,24 @@ describe("every scheme is readable", () => {
     expect(s.border).not.toBe(s.card);
     expect(s.bgInset).not.toBe(s.bg);
   });
+
+  // `not.toBe` is not enough for the one pair that carries a MEANING difference.
+  // A grouped block of tool calls and a delegation are two different kinds of
+  // thing in the chat log, and they are told apart by fill; two colors that
+  // merely differ in the last bit are the same color to a reader.
+  //
+  // This exists because they DID collide. The group's fill was authored as a
+  // veil of --fg over whatever it sat on, which lifts it clear of `bgInset` in
+  // dark (they land 26/255 apart) and drops it straight onto `bgInset` in light
+  // (3/255 apart, in all eight schemes). It was invisible to a dark-mode check
+  // and wrong in half the app. Measured and reported 2026-08-14.
+  //
+  // 1.1 is deliberately close to the floor: this asserts the two surfaces are
+  // TELLABLE APART, not that either is loud. Tightening it is a design change.
+  it.each(schemes)("%s %s — a grouped block is tellable from a delegation", (_id, _mode, s) => {
+    expect(ratio(s.bgBlock, s.bgInset), "--bg-block vs --bg-inset").toBeGreaterThanOrEqual(1.1);
+    expect(ratio(s.bgBlock, s.card), "--bg-block vs --card").toBeGreaterThanOrEqual(1.1);
+  });
 });
 
 describe("the agency axis actually separates its three tiers", () => {

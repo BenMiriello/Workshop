@@ -12,6 +12,29 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.5 — 2026-08-14 — `--bg-block`, a surface that is not on the same side in both modes
+
+**Compatible (one token added).** New generated surface `--bg-block`: a block of
+grouped content sitting on a card, guaranteed distinct from BOTH `--card` and
+`--bg-inset` in every scheme and mode.
+
+It exists because "distinct" cannot be expressed as a relative fill here.
+Elevation is not symmetric across the two modes: `--bg-inset` is the lowest
+surface in both (dark 0.205 L against a 0.235 card, light 0.945 against 0.995),
+so a block drawn as "the card lifted toward `--fg`" moves away from `--bg-inset`
+in dark and lands on top of it in light. The Workshop chat log did exactly that,
+and its grouped-tool-call fill came out within 3/255 of the delegation fill in
+all eight light schemes while sitting a comfortable 26/255 clear in all eight
+dark ones. Correct everywhere it was checked, wrong in half the app.
+
+`--bg-block` is authored per mode in `palette.mjs` (dark 0.30 L, above the card;
+light 0.90 L, one clear step BELOW `--bg-inset` rather than between it and the
+card) and `palette.test.ts` now asserts the separation from both neighbours for
+all sixteen scheme x modes, so it cannot silently close again.
+
+Use it for a run of related rows gathered into one block inside a card. It is not
+a hover (`--card-hover`) and not a recessed panel (`--bg-inset`).
+
 ## 0.5.4 — 2026-08-14 — a menu stays inside the box that clips it
 
 **Compatible (behaviour fix, no surface change).** `Menu` measured its popover

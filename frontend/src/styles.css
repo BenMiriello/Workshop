@@ -574,18 +574,17 @@ input[type="range"].grad::-moz-range-thumb {
      Nothing should ever render smaller than the smallest real message. */
   min-height: calc(1.4em + 2 * 0.5rem);
 }
-/* EXCEPT A REPLY THAT IS ONLY ITS FOLDED WORK. A turn that ran tools and wrote
-   no closing text renders as one collapsed summary line and nothing else, and
-   that line is --fs-xs: about 22px against a floor sized to a 0.9rem body row,
-   about 36px. The bubble came out half again taller than its content with no
-   visible reason, which is what "extra tall for no reason" was. Reported with a
-   screenshot, 2026-08-14.
+/* THERE WAS AN EXCEPTION HERE FOR "a reply that is only its folded work", and
+   it never did anything. It is deleted rather than kept as documentation,
+   because what it documented was wrong.
 
-   The floor is for a bubble with NOTHING in it. This one has exactly one real
-   row, so it sets its own height. Anything else in the body (a byline, a
-   receipt, an answer) makes the group not the only child and the floor applies
-   again, which is correct: those cases have a text row to be as tall as. */
-.chat-bubble:has(> .chat-bubble__body > .chat-work:only-child) { min-height: 0; }
+   The claim was that a collapsed work line (--fs-xs, ~21.6px) was being stretched
+   by this 36.16px floor, and that removing the floor was the fix for the
+   operator's "extra tall for no reason". Measured: the floor is border-box, so it
+   constrains the CONTENT to 20.16px, and 21.6 > 20.16. The floor never bound.
+   The real cause was a flex gap in .chat-work being spent on a collapsed panel;
+   see the note there. Recorded 2026-08-14, after the second report of the same
+   symptom found the first fix had changed no pixels. */
 .chat-bubble__body { min-width: 0; }
 /* Reserve the inline room the copy button sits in, so it never overlaps the end
    of the last line. This is horizontal only — it adds no row and no height. */
@@ -699,6 +698,22 @@ input[type="range"].grad::-moz-range-thumb {
   color: var(--live);
 }
 .chat-autonomous-tag svg { width: 12px; height: 12px; stroke-width: 1.8; }
+
+/* Byline over an agent's reply (@mention). Reads as attribution, not as a
+   status: same weight and hue as the other in-bubble meta rows, sitting above
+   the content the way a speaker label does. No border and no chip, since who is
+   talking is hierarchy, carried by position and color.
+
+   It lived in pages/apps/birds/birds.css until 2026-08-14 and reached the screen
+   only because that file is statically imported into the main bundle. An app's
+   stylesheet is not where platform chrome goes; making Birds lazy would have
+   unstyled every mention reply in the chat with nothing to point at. */
+.chat-byline {
+  display: flex; align-items: center; gap: 0.3rem;
+  margin-bottom: 0.35rem;
+  color: var(--muted); font-size: var(--fs-xs);
+}
+.chat-byline span { font-weight: 600; letter-spacing: 0.01em; }
 
 /* Assistant replies are MARKDOWN, which controls its own wrapping + spacing.
    The bubble's pre-wrap (needed for the user's plain text) would otherwise
@@ -869,8 +884,25 @@ input[type="range"].grad::-moz-range-thumb {
    + step list). No stacked margins: the container owns ONE internal gap and ONE
    bottom margin that exists ONLY when an answer follows — so a message whose
    bubble ends on the toggle sits flush, never with dead space below it. */
-.chat-work { margin: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.chat-work { margin: 0; display: flex; flex-direction: column; }
 .chat-work:not(:last-child) { margin-bottom: var(--space-2); }
+/* THE GAP BELONGS TO THE PANEL, NOT TO THE COLUMN. This was `gap: var(--space-1)`
+   on .chat-work, and a gap is spent on a flex item that is present, not on one
+   that is visible: a settled turn is `<button> + <Reveal>`, and a closed Reveal
+   still renders its wrapper (empty, but it anchors aria-controls). So a COLLAPSED
+   turn paid 4px for the space above a panel that was not there.
+
+   Two symptoms, one cause, and the second is the one that gave it away. The
+   bubble came out 4px taller than the one line of text in it, AND the copy and
+   branch buttons are anchored to `bottom: 0.5rem`, so they sat 4px below the
+   summary line they belong to. Operator, 2026-08-14: "it's taller than anything
+   else and also it's not vertically aligned with the two buttons on the right".
+
+   Padding on the INNER rather than a conditional gap, because the inner only
+   exists while the panel does, and it sits inside the reveal's clip, so the space
+   animates open and shut with the panel instead of snapping at the first frame
+   of the collapse. */
+.chat-work > .chat-reveal > .chat-reveal__inner { padding-top: var(--space-1); }
 .chat-work__toggle {
   display: inline-flex; align-items: center; gap: 0.3rem;
   background: none; border: none; padding: 0.15rem 0; margin: 0;
@@ -1036,18 +1068,23 @@ input[type="range"].grad::-moz-range-thumb {
    the same kind of thing at different depths. */
 .chat-group {
   margin: 0.3rem 0; min-width: 0;
-  /* A VEIL OF INK, NOT A NAMED SURFACE. It lifts whatever it is drawn on by a
-     fixed amount, so it reads the same in a reply bubble (--card) and inside a
-     delegation (--bg-inset), and it goes the right direction in both themes on
-     its own: --fg is near-white in dark, so the block is lighter, and near-black
-     in light, so it is a tint.
+  /* A NAMED SURFACE, NOT A VEIL OF INK. Both of the earlier attempts were
+     relative — --card-hover ("too faint", 8/255 off --card in dark), then a 9%
+     --fg veil — and a relative fill cannot state where it lands, which is the
+     one thing this color has to do: stay clear of the DELEGATION's fill, since
+     a group and a delegation are different kinds of thing told apart by fill.
 
-     9%, measured rather than guessed. --card-hover was the first try and the
-     operator's read was "too faint": it is 8/255 off --card in dark, which is a
-     hover state doing a resting job. This is about 19, which is the step
-     --bg-inset makes against the page and the smallest one that actually reads
-     as a block at this size. */
-  background: color-mix(in srgb, var(--fg) 9%, transparent);
+     The veil failed at exactly that, and failed invisibly. It lifts whatever it
+     sits on toward --fg, which moves AWAY from --bg-inset in dark (they landed
+     26/255 apart) and straight ONTO it in light (3/255 apart, in all eight
+     schemes). Checked in dark it looked correct; half the app was painting two
+     different things one color. Operator, 2026-08-14: "it's the same background
+     color as the agent background color and that's wrong."
+
+     --bg-block is generated per scheme x mode in palette.mjs precisely so the
+     two are separated by construction rather than by luck, and the separation is
+     asserted for all sixteen in palette.test.ts. Change it there, not here. */
+  background: var(--bg-block);
   border-radius: var(--radius-md);
   /* Vertical only. The horizontal inset is the head's own padding, which the
      rail's offset is derived from; adding a second one here would move the head
@@ -1163,6 +1200,11 @@ a.chat-receipt--link:hover > svg { color: var(--fg); }
 /* How a turn ENDED, which is not a receipt: nothing changed, the run just
    stopped. One quiet line, no card, no accent. */
 .chat-status-line { margin-top: 0.3rem; font-size: var(--fs-xs); color: var(--muted); }
+/* The margin separates this from the bubble above it. A turn stopped before it
+   wrote anything has no bubble, and .chat-msg is a flex column so the margin does
+   not collapse away: the line sat 4.8px lower than the log's own gap and read as
+   detached from the message it belongs to. Found in the 2026-08-14 sweep. */
+.chat-status-line:first-child { margin-top: 0; }
 /* Progress on something a message set off, under that message — see
    chat/StatusNote. Muted + the working dots, deliberately NOT `.chat-note`'s
    accent card: a note records something that happened, this reports something
@@ -1277,12 +1319,32 @@ a.chat-receipt--link:hover > svg { color: var(--fg); }
   border: none; border-radius: var(--radius-md);
 }
 .chat-input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-/* On a phone, once the input is focused the on-screen keyboard sits directly
-   below the composer and covers the home-indicator inset, so the bottom padding
-   becomes a dead row between the buttons and the keyboard. Collapse it while
-   focused; the small resting gap stays when unfocused. */
+/* On a phone, when the on-screen keyboard is up it sits directly below the
+   composer and covers the home-indicator inset, so the bottom padding becomes a
+   dead row between the buttons and the keyboard. Collapse it while the keyboard
+   is up; the small resting gap stays when it is down.
+
+   IT ASKS ABOUT THE KEYBOARD, NOT ABOUT FOCUS, and that is the fix rather than
+   an implementation detail. This was `.chat-composer.is-focused`, so the
+   composer changed height on blur — synchronously, inside the tap, because
+   React flushes a focusout handler at discrete priority. Between mousedown and
+   mouseup the action row moved by the inset (8px on Android, up to 30px on a
+   notched iPhone) and the browser dispatched the click to the row instead of to
+   the button under the finger. Half of "my first tap only closes the keyboard".
+
+   `--app-kb` is the keyboard's height from useVisualViewport, written only
+   outside a gesture. Zero when there is no keyboard, so this collapses to the
+   resting inset on a desktop and in any surface that does not mount the hook. */
 @media (max-width: 640px) {
-  .chat-composer.is-focused { padding-bottom: var(--space-1); }
+  .chat-composer {
+    /* The resting value is the base rule's, minus whatever the keyboard covers,
+       floored at the tight gap. kb = 0 gives back the resting padding exactly,
+       so nothing changes when there is no keyboard. */
+    padding-bottom: max(
+      var(--space-1),
+      calc(max(var(--space-3), env(safe-area-inset-bottom)) - var(--app-kb, 0px))
+    );
+  }
 }
 /* Actions sit in their own row beneath the textarea: the context meter on the
    left, the action buttons pushed to the right by a flexible spacer. This keeps
@@ -1438,7 +1500,7 @@ a.chat-receipt--link:hover > svg { color: var(--fg); }
 /* The model picker may truncate rather than push Send off the row — capped by
    max-width on the trigger, not by a min-width floor on the wrapper. */
 .chat-actions > .ws-menu { min-width: 0; }
-.chat-send, .chat-stop {
+.chat-send {
   /* flex: 0 0 auto — these are fixed-size targets; without it they inherit
      shrink:1 and get squashed below a tappable size on a crowded row. */
   flex: 0 0 auto;
@@ -1489,8 +1551,47 @@ a.chat-receipt--link:hover > svg { color: var(--fg); }
 @media (prefers-reduced-motion: reduce) {
   .chat-context-meter__ring .chat-context-meter__arc { transition: none; }
 }
-.chat-stop { background: var(--bg-inset); color: var(--fg); border: 1px solid var(--border); }
-.chat-stop:hover { background: var(--card-hover); }
+/* STOP, ON THE LINE THAT SAYS WORK IS HAPPENING. It used to be a 2.1rem square
+   in the composer's action row, beside Send; it now sits at the head of the
+   working line and of the fold line, so it is next to the thing it ends rather
+   than pinned to the bottom of the screen. See StopButton.tsx.
+
+   A CIRCLE, because it has to read as a control on a row of text. The composer
+   version could be a plain rounded square: it was in a row of other 2.1rem
+   buttons and its shape was carried by its neighbours. Here its neighbours are a
+   label, three dots and a clock, and at this size a bare square glyph reads as
+   an icon labelling the row (like the Archive icon two elements along) rather
+   than as something to press. The ring is what separates them.
+
+   Sized to the text row, not to a touch target: it is inline with 12px type, and
+   a 2.1rem control would tower over the line it belongs to. The tap area is
+   widened past the ink instead, so the target is honest on a phone without the
+   circle growing. */
+.chat-stopdot {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15rem; height: 1.15rem; padding: 0;
+  border-radius: 50%;
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              background var(--dur-fast) var(--ease-out);
+  /* The ring stays 1.15rem; the TARGET is 44px, via a transparent extension that
+     costs no layout (the row's height is set by its text). A control this small
+     is otherwise a miss on a phone, which is the complaint that moved it here. */
+  position: relative;
+}
+.chat-stopdot::after {
+  content: ""; position: absolute; inset: 50% auto auto 50%;
+  width: 44px; height: 44px; transform: translate(-50%, -50%);
+}
+.chat-stopdot:hover {
+  color: var(--fg); border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.chat-stopdot:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
 
 /* ---- Attachments: chips above the input, and the chat-wide drop target ----
    A chip is one object, so removing it is one click. That is the whole reason
@@ -1638,6 +1739,14 @@ a.chat-receipt--link:hover > svg { color: var(--fg); }
 
 /* Sent attachments sit above the message text, inside the bubble. */
 .chat-attach-row--sent { margin-bottom: var(--space-2); }
+/* Nothing under it to be separated from. A screenshot sent with no caption is an
+   ordinary send (canSendWith accepts a ready attachment with an empty draft), and
+   this margin was unconditional, so that bubble carried 8px of dead space below
+   the chips: the chips sat off-centre, and the branch control, which anchors to
+   the bubble's bottom edge, hung ~15px below the row it belongs to and clipped
+   it. The same defect as the collapsed work line, in a different message shape.
+   Found in the 2026-08-14 sweep. */
+.chat-attach-row--sent:last-child { margin-bottom: 0; }
 .chat-attach.is-sent { max-width: 14rem; }
 
 /* A CHIP INSIDE YOUR OWN BUBBLE KEEPS THE PAGE'S COLOURS, NOT THE BUBBLE'S.

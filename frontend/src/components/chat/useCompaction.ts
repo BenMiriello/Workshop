@@ -67,6 +67,8 @@ export type Compaction = {
   ctxNonce: number;
   compact: () => Promise<void>;
   clear: () => Promise<void>;
+  /** Call off the fold in flight. Wired to the Stop control on FoldingNote. */
+  cancelFold: () => void;
 };
 
 export function useCompaction({
@@ -110,6 +112,12 @@ export function useCompaction({
           text: `Couldn't compact: ${r.error}. Nothing was folded and the chat is unchanged.`,
           endpoint: `/api/chat/threads/${id}/compact`,
         });
+      } else if (r.cancelled) {
+        // Stopped from the fold's own line. Say nothing: the operator asked for
+        // it to stop and it stopped, the note disappears, and the transcript is
+        // visibly unchanged. An error line here would report their own action
+        // back to them as a problem.
+        return;
       } else if (r.busy) {
         // Refused, not deferred: an operation is already in flight and THIS
         // press did nothing. Promising a landing here would be a lie.
@@ -149,7 +157,9 @@ export function useCompaction({
       // had just reset the agent's session out from under the operator. Two
       // different things happened and only one was named. Nothing happened only
       // when NEITHER did.
-      if (r.busy) {
+      if (r.cancelled) {
+        return;
+      } else if (r.busy) {
         setErr({ text: "A compact or clear is already in progress on this chat.", endpoint: null });
       } else if (r.deferred) {
         setErr({ text: "Clear is waiting for the current reply to finish, then it lands.", endpoint: null });
@@ -171,5 +181,16 @@ export function useCompaction({
     }
   }, [activeIdRef, setFolding, setErr, sync]);
 
-  return { ctxNonce, compact, clear };
+  // Fire and forget. The compact/clear request is still in flight and IT is
+  // what reports the outcome (`cancelled`), so awaiting this would be waiting
+  // on the wrong request. A failure here is genuinely nothing to say: the fold
+  // simply lands as it would have, which is the state the operator was already
+  // in when they pressed it.
+  const cancelFold = useCallback(() => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    void chatApi.cancelThreadOperation(id).catch(() => {});
+  }, [activeIdRef]);
+
+  return { ctxNonce, compact, clear, cancelFold };
 }

@@ -16,6 +16,7 @@ import ChatProblemBlock from "./chat/ChatProblemBlock";
 import ChatDialogs from "./chat/ChatDialogs";
 import ContextModal from "./chat/ContextModal";
 import { useCompaction, type FoldMode } from "./chat/useCompaction";
+import { keepFocusOnTap } from "./chat/keepFocus";
 import { useVoiceMode } from "./chat/useVoiceMode";
 import { matchMention, applyMention } from "./chat/mentions";
 import { enterAction } from "./chat/enterKey";
@@ -302,9 +303,13 @@ export default function Chat({
     }
   }, [beginStop, stateRef, stopWatching]);
 
+  // Stable, because it reaches the memoized MessageList: an inline arrow here
+  // turns that memo off on every keystroke (see the note on MessageList's props).
+  const onStopClick = useCallback(() => { void onStopTurn(); }, [onStopTurn]);
+
   // /compact reaches BOTH homes of a chat's context, server-side and without a
   // turn of its own. See useCompaction.
-  const { ctxNonce, compact, clear } = useCompaction({
+  const { ctxNonce, compact, clear, cancelFold } = useCompaction({
     activeIdRef, setFolding, setErr, sync,
   });
 
@@ -915,7 +920,7 @@ export default function Chat({
   // mid-gesture resizes the viewport under the operator's finger, so the tap
   // lands somewhere else and the click never registers, costing a second tap.
   const jumpToLatest = showJumpToLatest ? (
-    <button className="chat-jump" onMouseDown={(e) => e.preventDefault()} onClick={followLatest}>
+    <button className="chat-jump" onPointerDown={keepFocusOnTap} onClick={followLatest}>
       <ArrowDown size={14} aria-hidden /> Jump to latest
     </button>
   ) : null;
@@ -1044,6 +1049,8 @@ export default function Chat({
       branchHead={branch.head}
       queued={queuedWaiting}
       folding={folding}
+      onStop={onStopClick}
+      onStopFold={cancelFold}
       voiceOn={voiceOn}
       vsnap={vsnap}
     />
@@ -1083,7 +1090,6 @@ export default function Chat({
       onMentionPick={pickMention}
       streaming={runActive}
       onSend={send}
-      onStop={() => { void onStopTurn(); }}
       // One rule for "is there anything to send", shared with the Enter key:
       // text, or a finished upload, and never while one is still going up.
       canSend={canSendWith(input, files.items)}
@@ -1125,6 +1131,13 @@ export default function Chat({
   const panelInner = (
     <div
       className={`chat-panel chat-panel--${variant}${files.dragging ? " is-dropping" : ""}`}
+      // ONE PLACE FOR THE WHOLE CHAT. Tapping any control here must not blur the
+      // composer, and the guard used to sit on three containers only, so every
+      // button in the TRANSCRIPT (copy, branch, approvals, the step and group
+      // disclosures, the inbox, the queue note) had none. keepFocusOnTap now
+      // asks whether the target is a control, so hoisting it here leaves message
+      // text selectable. See keepFocus.ts.
+      onPointerDown={keepFocusOnTap}
       onDragEnter={(e) => {
         if (!dragHasFiles(e.dataTransfer)) return;
         files.setDragging(true);

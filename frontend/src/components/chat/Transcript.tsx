@@ -442,13 +442,19 @@ function AgentChip({ seg, cfg, nowMs }: {
   const [open, setOpen] = useState(false);
   const line = agentChipLine(seg);
   const brief = agentBrief(seg);
+  // NOTHING TO OPEN IS NOT AN EMPTY PANEL. All three of the body's parts are
+  // conditional, and a delegation that has only just been issued has none of
+  // them (agentBrief returns "" when the detail is absent or is only the chip
+  // line again). Opening it then produced a padded strip under a hairline with
+  // nothing in it. Same rule ToolChip already applies with `hasDetail`.
+  const hasBody = !!brief || seg.steps.length > 0 || !!seg.result;
   return (
-    <div className={`chat-agent${open ? " is-open" : ""}${seg.done ? "" : " is-running"}`}>
+    <div className={`chat-agent${open && hasBody ? " is-open" : ""}${seg.done ? "" : " is-running"}`}>
       <button
         type="button"
         className="chat-agent__head"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
+        onClick={() => hasBody && setOpen((o) => !o)}
+        aria-expanded={hasBody ? open : undefined}
         title={line}
       >
         <ChevronRight size={13} aria-hidden className="chat-agent__chev" />
@@ -457,7 +463,7 @@ function AgentChip({ seg, cfg, nowMs }: {
         <span className="chat-agent__preview">{line}</span>
         <span className="chat-agent__meta">{agentSummary(seg)}</span>
       </button>
-      <Reveal open={open} className="chat-agent__body">
+      <Reveal open={open && hasBody} className="chat-agent__body">
         <>
           {brief && (
             <div className="chat-agent__brief">

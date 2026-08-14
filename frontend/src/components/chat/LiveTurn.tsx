@@ -18,12 +18,15 @@ import WorkingIndicator from "./WorkingIndicator";
 // dropped past its reconnect budget, or one the operator stopped watching, is
 // still running and still says so.
 export default function LiveTurn({
-  segments, working, workingLabel, elapsed, nowMs, model, cardCtx, onAnswerPermission,
+  segments, working, workingLabel, elapsed, nowMs, model, cardCtx, onAnswerPermission, onStop,
 }: {
   segments: ChatSegment[];
   working: boolean;
   workingLabel: string;
   elapsed: number;
+  /** End the run. The control lives ON the working line now, not under the
+   *  composer, so it travels with the thing it stops. */
+  onStop?: () => void;
   // The shared 1Hz clock, for the per-step counter on whatever is running now.
   nowMs: number;
   model: string;
@@ -45,7 +48,7 @@ export default function LiveTurn({
             onAnswerPermission={onAnswerPermission}
           />
         )}
-        {working && <WorkingIndicator label={workingLabel} elapsed={elapsed} />}
+        {working && <WorkingIndicator label={workingLabel} elapsed={elapsed} onStop={onStop} />}
       </div>
     </div>
   );

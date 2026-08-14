@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Archive, Eraser } from "lucide-react";
 import { formatElapsed } from "./chatScope";
+import StopButton from "./StopButton";
 
 // THE FOLD, WHILE IT IS HAPPENING.
 //
@@ -25,7 +26,14 @@ import { formatElapsed } from "./chatScope";
 // It carries its own clock. The transcript's 1Hz tick is gated on a run being
 // active and a fold is not a run, so there is nothing to borrow; this interval
 // exists only while the line is mounted.
-export default function FoldingNote({ mode }: { mode: "compact" | "clear" }) {
+export default function FoldingNote({ mode, onStop }: {
+  mode: "compact" | "clear";
+  /** Abandon the fold. A compact is a ~30s model call and it holds the thread's
+   *  queue while it runs, so being unable to call it off is a real corner to be
+   *  stuck in. The server drops the summary rather than landing it; nothing is
+   *  half-written, because the writes only ever happen at the end. */
+  onStop?: () => void;
+}) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     const started = Date.now();
@@ -37,6 +45,12 @@ export default function FoldingNote({ mode }: { mode: "compact" | "clear" }) {
 
   return (
     <div className="chat-fold chat-fold--live" role="status" aria-live="polite">
+      {onStop && (
+        <StopButton
+          label={mode === "compact" ? "Stop compacting" : "Stop clearing"}
+          onStop={onStop}
+        />
+      )}
       {mode === "compact"
         ? <Archive size={14} strokeWidth={1.8} aria-hidden />
         : <Eraser size={14} strokeWidth={1.8} aria-hidden />}

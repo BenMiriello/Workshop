@@ -340,13 +340,10 @@
 
 .atlas-point-card { margin-top: .8rem; padding: .7rem .8rem; }
 
-/* Byline over an agent's reply (@mention). Reads as attribution, not as a
-   status: same weight and hue as the other in-bubble meta rows, sitting above
-   the content the way a speaker label does. No border and no chip — who is
-   talking is hierarchy, carried by position and color. */
-.chat-byline {
-  display: flex; align-items: center; gap: 0.3rem;
-  margin-bottom: 0.35rem;
-  color: var(--muted); font-size: var(--fs-xs);
-}
-.chat-byline span { font-weight: 600; letter-spacing: 0.01em; }
+/* `.chat-byline` used to live here, and it had no business in an app's
+   stylesheet: it styles the chat's @mention attribution line, which is platform
+   chrome. It worked only because the registry imports BirdsShell statically, so
+   this file lands in the main bundle and is global. Making Birds lazy, the
+   obvious optimisation, would have silently dropped the byline's size, colour and
+   spacing on every mention reply in the app. Moved to styles.css beside
+   .chat-autonomous-tag, 2026-08-14. */

@@ -690,6 +690,27 @@ async def fork_thread(thread_id: str, body: ForkThread):
         raise HTTPException(409, str(e))
     except tenancy.TenantUnresolved as e:
         raise HTTPException(503, str(e))
+    # THE MODEL'S COPY OF THE CONVERSATION HAS TO GO, or the fork is a no-op for
+    # everything except the screen.
+    #
+    # A turn resumes the thread's live CLI session when it has one, and a resumed
+    # turn sends ONLY the new message: the history the model reasons over is the
+    # session's own, private to the CLI, and it still holds every message on the
+    # line just abandoned. So going back to an earlier point changed what the
+    # operator saw and nothing about what the model read. Dropping the session
+    # forces the next turn to mint a fresh one and re-assemble the prompt from
+    # the transcript, which _fold now filters to the current branch.
+    #
+    # This is also what makes going back past a /compact behave the way it reads.
+    # The summary lives on the boundary row (chat_store._fold), so a fork to
+    # before that boundary leaves it off the path and the prompt is the full
+    # earlier history again, with no summary of a line that no longer exists.
+    # Without the detach the CLI would have kept the compacted session regardless
+    # and none of that would have been visible.
+    t = chat_store.get_thread(thread_id)
+    if t is not None:
+        _detach_live_session(
+            thread_id, t, chat_context.get_provider(t.get("context_key")))
     chat_events.bump(thread_id)
     return {**out, "queued_held": held}
 
@@ -708,6 +729,13 @@ async def switch_branch(thread_id: str, branch_id: str):
         raise HTTPException(404, str(e))
     except tenancy.TenantUnresolved as e:
         raise HTTPException(503, str(e))
+    # Same reason as forking: switching lines changes which conversation the
+    # transcript describes, and a resumed session would carry the old one's
+    # history into the next turn regardless. See fork_thread.
+    t = chat_store.get_thread(thread_id)
+    if t is not None:
+        _detach_live_session(
+            thread_id, t, chat_context.get_provider(t.get("context_key")))
     chat_events.bump(thread_id)
     return out
 
@@ -1470,6 +1498,29 @@ def _detach_live_session(thread_id: str, t: dict, provider) -> bool:
     return had
 
 
+@router.post("/threads/{thread_id}/operation/cancel")
+async def cancel_thread_operation(thread_id: str):
+    """Call off the /compact or /clear in flight on this thread.
+
+    THIS IS WHAT MAKES THE STOP CONTROL ON THE FOLD LINE REAL. A compact is a
+    ~30s model call that holds the thread's queue while it runs, and until now
+    the only way out was to wait: there was no cancel path at any layer, so a
+    stop button there would have been decoration.
+
+    It refuses the LANDING rather than killing the task. An operation computes
+    for its whole life and writes once at the end, so declining to write is a
+    complete cancel with no partial state to unwind. The summarizer finishes and
+    its result is dropped; the registration is released the same way it always
+    is, so anything queued behind the operation drains immediately.
+
+    Answering `{"cancelled": false}` is not an error: it means the operation
+    landed while this request was on the wire, which is a race, not a failure."""
+    if chat_store.get_thread(thread_id) is None:
+        raise HTTPException(404, "thread not found")
+    op = thread_ops.cancel(thread_id)
+    return {"cancelled": bool(op), "operation": op or ""}
+
+
 @router.post("/threads/{thread_id}/compact")
 async def compact_thread(thread_id: str):
     """Reclaim the LIVE window: drop the session, keep the transcript.
@@ -1541,6 +1592,12 @@ async def compact_thread(thread_id: str):
     handed_off = False
     try:
         fold_n, summary, folded_through, error = await _fold_summary(thread_id, t)
+        # Called off while the summarizer ran, which is the whole window the
+        # stop control is offered in. Nothing has been written yet (the fold's
+        # writes are all in _land_fold), so there is nothing to undo.
+        if thread_ops.cancelled(thread_id):
+            return {"folded": 0, "session_reset": False, "cancelled": True,
+                    "error": "", "summary_chars": 0}
         if error or fold_n <= 0:
             # Nothing to land. Detaching alone is still useful (it is what
             # /clear's session half does) and touches no ordering, so it
@@ -1649,7 +1706,14 @@ async def _fold_summary(thread_id: str, t: dict) -> tuple[int, str, int, str]:
 
 def _land_fold(thread_id: str, summary: str, folded_through: int) -> bool:
     """The fold's writes: summary + cut + boundary, then the session detach.
-    A handful of synchronous calls; the caller guarantees the thread is quiet."""
+    A handful of synchronous calls; the caller guarantees the thread is quiet.
+
+    THE CANCEL CHECK LIVES HERE, at the write, not at the call sites. Both the
+    inline and the deferred path funnel through this function, and a stop that
+    is honoured on one path and not the other is worse than no stop at all."""
+    if thread_ops.cancelled(thread_id):
+        log.info("compact: fold called off before landing on %s", thread_id)
+        return False
     chat_store.set_summary(thread_id, summary, folded_through=folded_through)
     t = chat_store.get_thread(thread_id)
     if t is None:
@@ -1701,6 +1765,9 @@ async def clear_thread_context(thread_id: str):
             handed_off = True
             return {"cleared": True, "cleared_through": 0,
                     "session_reset": False, "deferred": True}
+        if thread_ops.cancelled(thread_id):
+            return {"cleared": False, "cleared_through": 0,
+                    "session_reset": False, "cancelled": True}
         thread, cleared, session_reset = _land_clear(thread_id)
         if thread is None:
             raise HTTPException(404, "thread not found")
@@ -1716,7 +1783,11 @@ async def clear_thread_context(thread_id: str):
 
 def _land_clear(thread_id: str) -> tuple[dict | None, bool, bool]:
     """The clear's writes, against the thread as it is NOW: re-read at landing
-    time, never from a snapshot taken before the wait."""
+    time, never from a snapshot taken before the wait. Refuses a cut the operator
+    called off, on both paths, for the same reason `_land_fold` does."""
+    if thread_ops.cancelled(thread_id):
+        log.info("clear: cut called off before landing on %s", thread_id)
+        return None, False, False
     t = chat_store.get_thread(thread_id)
     if t is None:
         return None, False, False

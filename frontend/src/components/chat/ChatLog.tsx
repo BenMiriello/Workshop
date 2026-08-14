@@ -66,7 +66,7 @@ export default function ChatLog({
   selectedModel, cardCtx, onRetry, onCancelQueued, onReleaseQueue,
   queueHeld, queueError, workingLabel, elapsed, nowMs,
   answerPermission, liveTurnId, renderBranch, branchHead,
-  queued, folding,
+  queued, folding, onStop, onStopFold,
   voiceOn, vsnap,
 }: {
   scrollRef: RefObject<HTMLDivElement>;
@@ -114,6 +114,11 @@ export default function ChatLog({
   /** A /compact or /clear in flight, or null. It is drawn at the foot of the
    *  log, where its divider lands, and nowhere else. */
   folding: FoldMode | null;
+  /** End the run in flight. Rendered on the working line, inside the transcript,
+   *  rather than under the composer: the control belongs beside the work. */
+  onStop?: () => void;
+  /** Abandon the fold in flight. Same idea, on the fold's own line. */
+  onStopFold?: () => void;
   voiceOn: boolean;
   vsnap: VoiceSnapshot;
 }) {
@@ -156,6 +161,7 @@ export default function ChatLog({
         liveTurnId={liveTurnId}
         renderBranch={renderBranch}
         branchHead={branchHead}
+        onStop={onStop}
       />
 
       {/* WAITING ON THE SERVER, not in this browser. These have been accepted
@@ -191,7 +197,7 @@ export default function ChatLog({
       {/* The fold, while it runs. Below the queue for the same reason the cut
           divider ends up below it: what is queued was typed before the fold was
           asked for, and the boundary lands after everything above it. */}
-      {folding && <FoldingNote mode={folding} />}
+      {folding && <FoldingNote mode={folding} onStop={onStopFold} />}
 
       {/* ONE voice element, and it renders the REPLY only.
           What the operator is saying is in the composer, as a draft (see

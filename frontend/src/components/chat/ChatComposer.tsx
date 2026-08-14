@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { AudioLines, BotMessageSquare, CornerDownLeft, Maximize2, Minimize2, Square } from "lucide-react";
+import { AudioLines, BotMessageSquare, CornerDownLeft, Maximize2, Minimize2 } from "lucide-react";
 import { Menu, MenuItem } from "@workshop/ui";
 import type { ChatMsg } from "../../lib/chat";
 import type { VoiceSnapshot } from "../../lib/voice/client";
@@ -39,7 +39,7 @@ export default function ChatComposer({
   // Type-ahead
   mentionOptions, mentionSelected, showMentions, onMentionHover, onMentionPick,
   // Turn controls
-  streaming, onSend, onStop, canSend,
+  streaming, onSend, canSend,
   modelOptions, selectedModel, onSelectModel,
   effortLevels, effectiveEffort, onSelectEffort,
   modeOptions, effectivePermissionMode, onSelectPermissionMode,
@@ -70,7 +70,6 @@ export default function ChatComposer({
   onMentionPick: (key: string) => void;
   streaming: boolean;
   onSend: () => void;
-  onStop: () => void;
   canSend: boolean;
   modelOptions: string[];
   selectedModel: string;
@@ -327,21 +326,13 @@ export default function ChatComposer({
           <AudioLines size={16} aria-hidden />
         </button>
 
-        {/* Stop sits left of Send: Send is the primary, most-reached-for control
-            (every turn ends at it), so it stays rightmost and closest to Enter's
-            physical position; Stop is the occasional one and sits beside it
-            rather than past it. */}
-        {streaming && (
-          <button
-            className="chat-stop"
-           
-            onClick={onStop}
-            aria-label="Stop the turn"
-            title="Stop the turn"
-          >
-            <Square size={16} aria-hidden />
-          </button>
-        )}
+        {/* STOP IS NOT HERE ANY MORE. It moved onto the working line itself, in
+            the transcript, next to the thing it stops (see StopButton). Under
+            the composer it was nowhere near the work: on a long log the working
+            line is often not on screen with the composer at all, and the row
+            gained then lost a control every time a turn started and ended, which
+            shifted Send sideways under the operator's thumb mid-conversation.
+            Operator, 2026-08-14. Do not add it back here. */}
         <button
           className="chat-send"
          

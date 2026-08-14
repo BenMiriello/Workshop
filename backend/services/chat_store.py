@@ -355,6 +355,7 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
     saw_cut = False
     cut_at: int | None = None
     cut_mode = ""
+    cut_summary = ""
     has_summary = bool((meta.get("summary") or "").strip())
     # Which events belong to a line this conversation is no longer on. See the
     # docstring. `run` and `title` events never become rows, and are not read
@@ -363,15 +364,35 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
     # the line the operator went back to.
     from services import chat_branches
     hidden = chat_branches.hidden_event_ids_sync(thread_id)
+    # Counted BEFORE the branch filter, and that is the whole point of it: it
+    # separates "this thread has no boundary at all" from "this thread's boundary
+    # is on a line we left". The first is a thread from before boundary events
+    # existed, whose `meta.summary` is the only record of its fold and must keep
+    # working. The second is a fork behind a compaction, where the summary must
+    # go with the boundary. Without this they are the same state.
+    any_boundary = False
     for ev in chat_log.read_events(thread_id):
+        if ev.get("kind") == "boundary":
+            any_boundary = True
         if hidden and ev.get("id") in hidden:
             continue
         if ev.get("kind") == "boundary":
             mode = ev.get("mode")
-            if mode == "clear" or (mode == "compact" and has_summary):
+            # The event's own summary first; `meta.summary` is the fallback for
+            # boundaries written before the event carried one. A compact boundary
+            # still counts only when there IS a summary behind it, which is what
+            # keeps the boundaries from the broken-summarizer hours inert. Note
+            # the key is `fold_summary`: the retired folder's own `summary` key
+            # is ignored here on purpose, and that is what keeps it retired.
+            ev_summary = (ev.get("fold_summary") or "").strip()
+            if mode == "clear" or (mode == "compact" and (ev_summary or has_summary)):
                 saw_cut = True
                 cut_at = ev.get("at_seq")
                 cut_mode = mode
+                # A `clear` REPLACES nothing, so it carries no summary: reaching
+                # a clear after a compact must drop the earlier fold's summary,
+                # not inherit it.
+                cut_summary = (ev_summary or meta.get("summary") or "") if mode == "compact" else ""
             continue
         if ev.get("kind") != "message":
             continue
@@ -393,6 +414,20 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
     else:
         resolved = int(meta.get("boundary_seq") or 0)
     _fold.last_mode = cut_mode if saw_cut else ""      # type: ignore[attr-defined]
+    # WHICH SUMMARY IS IN FORCE ON THIS LINE, which is not the same question as
+    # "does this thread have a summary". A fork to before a compaction leaves the
+    # boundary off the path, so nothing is resolved here and the prompt goes back
+    # to the full earlier history — the behaviour going back past a compact reads
+    # as having. See _document, which is the only reader.
+    if saw_cut:
+        resolved_summary = cut_summary
+    elif not any_boundary and has_summary:
+        # Pre-boundary-event thread: `meta.summary` is the only record its fold
+        # left, so it stays in force. Never reached once a boundary exists.
+        resolved_summary = meta.get("summary") or ""
+    else:
+        resolved_summary = ""
+    _fold.last_summary = resolved_summary               # type: ignore[attr-defined]
     return meta, messages, seqs, resolved
 
 
@@ -464,6 +499,18 @@ def _document(meta: dict, messages: list[dict], seqs: list[int], cut_seq: int = 
         t["participants"] = _participants_from_context_key(ck)
     else:
         t["participants"] = _normalize_participants(t.get("participants"))
+    # THE SUMMARY IS THE RESOLVED BOUNDARY'S, OR THERE IS NONE. `meta.summary`
+    # is thread-global and reaches here through the copy above; on its own that
+    # made going back past a compaction incoherent, because the cut correctly
+    # disappeared with the boundary while the summary stayed. The prompt then
+    # carried a summary of messages it was ALSO sending verbatim, including the
+    # tail the operator had just branched away from. `_fold` decides which
+    # boundary is on this line, so it decides the summary too.
+    resolved_summary = getattr(_fold, "last_summary", "") or ""
+    if resolved_summary:
+        t["summary"] = resolved_summary
+    else:
+        t.pop("summary", None)
     ct = _cleared_through(seqs, cut_seq)
     if ct:
         t["cleared_through"] = ct
@@ -1111,7 +1158,8 @@ def update_thread(thread_id: str, **fields: object) -> dict | None:
     return get_thread(thread_id)
 
 
-def _set_cut(thread_id: str, through: int, mode: str = "clear") -> None:
+def _set_cut(thread_id: str, through: int, mode: str = "clear",
+             summary: str = "") -> None:
     """Record a context cut: `clear` (drop what is behind it) or `compact`
     (replace what is behind it with the stored summary).
 
@@ -1123,14 +1171,32 @@ def _set_cut(thread_id: str, through: int, mode: str = "clear") -> None:
 
     `mode` is what tells the two apart everywhere downstream: the divider the
     transcript draws, and whether `_fold` honours the cut at all (a `compact`
-    boundary with no summary behind it is inert — see `_fold`)."""
+    boundary with no summary behind it is inert — see `_fold`).
+
+    THE SUMMARY RIDES ON THE EVENT, not only in meta, and that is what makes a
+    fold survive branching. `meta.summary` is one field for the whole thread,
+    while the cut that justifies it belongs to one point on one line. Going back
+    to before a compaction therefore left the boundary off the branch (so the cut
+    vanished, correctly) while the summary stayed (so the prompt carried a
+    summary of the abandoned line PLUS the full history it summarized). Written
+    here, the summary lives or dies with the boundary it describes."""
     folded = _fold(thread_id)
     if folded is None:
         return
     _meta, _msgs, seqs, _cut = folded
     ct = max(0, min(int(through), len(seqs)))
     at_seq = seqs[ct - 1] if ct > 0 else 0
-    chat_log.append_sync(thread_id, {"kind": "boundary", "mode": mode, "at_seq": at_seq})
+    ev: dict = {"kind": "boundary", "mode": mode, "at_seq": at_seq}
+    if summary:
+        # `fold_summary`, NOT `summary`. The server-side folding removed on
+        # 2026-08-12 wrote its summary onto the boundary under `summary`, and
+        # threads still carry those events. They are deliberately INERT: the
+        # summarizer of that era had been failing, so honouring them would hide
+        # messages behind a summary that was never written (see `_fold`, and
+        # TestALegacyFoldBoundaryIsInert). Reusing the key would have quietly
+        # brought every one of them back to life.
+        ev["fold_summary"] = summary
+    chat_log.append_sync(thread_id, ev)
     # `cut_through` and `cut_mode` are the SAME answer `_fold` resolves, cached
     # in meta so a reader can have it without parsing the log. The sync endpoint
     # needs it on every poll from every open tab, and computing it there put a
@@ -1157,8 +1223,12 @@ def set_summary(thread_id: str, summary: str, *, folded_through: int) -> dict | 
     before (a four-message thread reading 142k)."""
     if chat_log.read_meta(thread_id) is None:
         return None
+    # BOTH HOMES. The event is the real one (it is what a branch filter can
+    # reach); `meta.summary` stays as the cache every reader that has not folded
+    # the log still uses, and as the fallback for boundaries written before the
+    # event carried it.
     chat_log.patch_meta_sync(thread_id, summary=summary)
-    _set_cut(thread_id, folded_through, mode="compact")
+    _set_cut(thread_id, folded_through, mode="compact", summary=summary)
     chat_log.patch_meta_sync(thread_id, context_tokens=None)
     return get_thread(thread_id)
 
