@@ -822,6 +822,40 @@ def append_sync(thread_id: str, event: dict) -> dict:
     return ev
 
 
+# Mirror writes in flight, HELD so the garbage collector cannot take one
+# mid-write. asyncio keeps only a weak reference to a task.
+#
+# This set was referenced by `_mirror` and never defined. The NameError landed in
+# the bare `except Exception` below and was logged at DEBUG, so the safeguard the
+# comment down there describes had never existed once: `create_task` had already
+# scheduled the coroutine, so the mirror still ran and the failure was invisible,
+# but every mirror write was unheld and collectable, which is precisely the
+# "silently missing row" the backfill exists to repair. Found 2026-08-14 by a
+# test reaching for the set by name.
+_MIRROR_TASKS: set = set()
+
+# The last scheduled mirror write per thread, so the next one can wait for it.
+#
+# MIRROR WRITES FOR ONE THREAD MUST BE ORDERED, and they were not. Each one
+# parents its row to the branch's CURRENT head, so two running at once read the
+# same head and the second one's message ends up beside its predecessor instead
+# of after it. Worse at the start of a conversation: the thread row is created
+# lazily by whichever write gets there first, so the first few events of a new
+# chat all found no row, all tried to create one, and every loser died on
+# `uq_chat_thread_external` and dropped its message from the tree entirely.
+#
+# Measured 2026-08-14 by driving four appends through the real path: three of
+# the four mirror writes failed and the branch head was left pointing at the
+# first message. It is rare at human typing speed and NOT rare at the start of a
+# thread, where a message and the reply to it arrive close together.
+#
+# Chaining rather than locking because the order is the requirement, not
+# exclusion, and a chain cannot deadlock. Failures do not break the chain: a
+# write that dies still lets its successors run, because the tree missing one
+# row is recoverable (the backfill) and a stalled mirror is not.
+_MIRROR_CHAIN: dict[str, "asyncio.Task"] = {}
+
+
 def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
     """Record the event in the transcript tree as well (ADR 0020).
 
@@ -843,15 +877,43 @@ def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
         return
     try:
         from services import chat_branches
+        prev = _MIRROR_CHAIN.get(thread_id)
+
+        async def _write_after_the_last_one():
+            if prev is not None:
+                # return_exceptions: a failed predecessor must not cancel the
+                # rest of the thread's writes.
+                await asyncio.gather(prev, return_exceptions=True)
+            await chat_branches.record_message(thread_id, ev, meta)
+
         # HELD: an unheld task can be garbage-collected mid-write, and a
         # silently missing mirror row is exactly the failure this mirror's
         # own backfill exists to repair. Weak-ref class, see 93768fd.
-        task = loop.create_task(chat_branches.record_message(thread_id, ev, meta))
+        task = loop.create_task(_write_after_the_last_one())
         _MIRROR_TASKS.add(task)
-        task.add_done_callback(_MIRROR_TASKS.discard)
+        _MIRROR_CHAIN[thread_id] = task
+
+        def _done(t: "asyncio.Task") -> None:
+            _MIRROR_TASKS.discard(t)
+            # Only the TAIL clears the entry; an earlier link finishing must not
+            # drop a successor that is still queued behind it.
+            if _MIRROR_CHAIN.get(thread_id) is t:
+                _MIRROR_CHAIN.pop(thread_id, None)
+
+        task.add_done_callback(_done)
     except Exception:
+        # Scheduling failed. The log line is already committed, so the cost is a
+        # missing PLACE in the tree, which the backfill reconstructs.
         log.debug("thread %s: mirror-write not scheduled", thread_id,
                   exc_info=True)
+
+
+async def drain_mirror_writes() -> None:
+    """Wait for the outstanding mirror writes. For tests and for shutdown, not
+    for the request path: putting this on a send would be the latency the
+    fire-and-forget above exists to avoid."""
+    while _MIRROR_TASKS:
+        await asyncio.gather(*list(_MIRROR_TASKS), return_exceptions=True)
 
 
 async def append(thread_id: str, event: dict) -> dict:
