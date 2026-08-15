@@ -133,24 +133,19 @@ def scope_for_context(context_key: str) -> str:
 def _parse_scope(scope_key: str) -> tuple[str, str]:
     """Return (kind, slug). Raises ValueError on an unknown shape.
 
+    A thin call onto `services.scope_tree.parse`, the single owner of the scope
+    model (memory-and-documentation-model-2026-08-14.md sec 7.1). Kept as a
+    (kind, slug) tuple rather than switching every caller to `scope_tree.Scope`,
+    because `learnings.py`, `memory_keeper.py`, `triager.py`, `skills.py` and the
+    knowledge/skills routes already unpack this shape directly.
+
     `development` is present only in developer mode (ADR 0014). Off, it is not a
     scope at all and raises like any other unknown key — the notes layer for
     work on the Workshop's own source does not exist in a normal install, rather
     than existing and refusing."""
-    if scope_key == "workshop":
-        return ("workshop", "")
-    if scope_key == "development":
-        from services import app_runner
-        if app_runner.dev_mode_on():
-            return ("development", "")
-        raise ValueError(
-            "unknown scope_key: 'development' (developer mode is off; "
-            "set WORKSHOP_DEV_MODE=1 for this installation to enable it)")
-    if ":" in scope_key:
-        kind, _, slug = scope_key.partition(":")
-        if kind in ("project", "app", "agent", "role") and slug and _SLUG_RE.fullmatch(slug):
-            return (kind, slug)
-    raise ValueError(f"unknown scope_key: {scope_key!r}")
+    from services import scope_tree
+    scope = scope_tree.parse(scope_key)
+    return (scope.kind, scope.slug)
 
 
 def scope_dir(scope_key: str) -> Path:
@@ -393,11 +388,53 @@ def enforce_index_cap(scope_key: str, max_lines: int = 200) -> dict:
 
 
 # --- note read helpers -------------------------------------------------------
+# Memoized per RESOLVED DIRECTORY -- see design doc sec 7.2: this glob-and-parse
+# used to run unconditionally on every call, and the layered-index path
+# (`layered_index_block`) calls it once per rendered layer, so a single turn in
+# a project chat paid it three or four times over for state that had not
+# changed since the last turn.
+#
+# Keyed on `str(d)` (the resolved scope directory), NOT on the bare `scope_key`
+# string. A scope name like `workshop` is per-owner (`_shared_knowledge_root`)
+# and, in tests, per fixture: the same string can name a different physical
+# directory from one call to the next, and two DIFFERENT directories can
+# legitimately land on the same (scope_version, dir_mtime_ns) pair (coarse
+# filesystem timestamp resolution, or two independent callers both on their
+# first write). Keying on the string alone served one caller's cache entry to
+# another's directory the first time this was tried, caught by
+# `test_a_note_written_before_metadata_existed_still_renders` reading back a
+# stale corpus. Keying on the resolved path removes the ambiguity outright.
+#
+# The freshness check inside each entry is (scope_version.current(scope), the
+# directory's own mtime_ns): `scope_version` is bumped on every `put_note`
+# (including an in-place update), and the directory mtime changes on any
+# add/remove of a `<id>.md` entry, including `delete_note` and
+# `enforce_index_cap`'s archive moves, neither of which bumps `scope_version`
+# today. Checking both is what makes a stale read impossible without having to
+# change either write path's behaviour, which this migration must not do.
+_list_notes_cache: dict[str, tuple[tuple, list[dict]]] = {}
+
+
+def _list_notes_cache_key(scope_key: str, d: Path) -> tuple:
+    from services import scope_version
+    try:
+        dir_mtime = d.stat().st_mtime_ns
+    except OSError:
+        dir_mtime = 0
+    return (scope_version.current(scope_key), dir_mtime)
+
+
 def list_notes(scope_key: str) -> list[dict]:
     """[{id, title, hook, updated}] for the scope. Parses MEMORY.md, falls back
     to a directory scan for any `<id>.md` the index does not mention."""
     _parse_scope(scope_key)
     d = scope_dir(scope_key)
+    cache_id = str(d)
+    key = _list_notes_cache_key(scope_key, d)
+    cached = _list_notes_cache.get(cache_id)
+    if cached is not None and cached[0] == key:
+        return list(cached[1])
+
     idx = _read_index(scope_key)
     out: list[dict] = []
     seen: set = set()
@@ -418,7 +455,9 @@ def list_notes(scope_key: str) -> list[dict]:
             continue
         out.append({"id": note_id, "title": note_id, "hook": "", "updated": _mtime_iso(f)})
     out.sort(key=lambda n: n["id"])
-    return out
+
+    _list_notes_cache[cache_id] = (key, out)
+    return list(out)
 
 
 def _mtime_iso(f: Path) -> str | None:
@@ -456,24 +495,16 @@ def read_layers(scope_key: str, role: str | None = None,
     folded into `scope_key` — the caller that has both must be able to say so.
 
     Deduped and order-preserving; a scope that is its own layer appears once.
+
+    A thin call onto `services.scope_tree.govern` (memory-and-documentation-
+    model-2026-08-14.md sec 4.3, sec 7.1): this function's shape is exactly
+    what that design calls GOVERNANCE, not the ancestor chain, and `govern`
+    is now the single implementation of it. `layered_index_block` reads
+    element 0 of this list positionally as the governance layer, so the order
+    (governance widest-first) must not change.
     """
-    layers: list[str] = ["workshop"]
-    if role:
-        r = str(role).strip().lower()
-        if r and _SLUG_RE.fullmatch(r):
-            layers.append(f"role:{r}")
-    if scope_key and scope_key not in layers:
-        layers.append(scope_key)
-    if private and private not in layers:
-        layers.append(private)
-    seen: set[str] = set()
-    out: list[str] = []
-    for s in layers:
-        if s in seen:
-            continue
-        seen.add(s)
-        out.append(s)
-    return out
+    from services import scope_tree
+    return scope_tree.govern(scope_key, role=role, private=private)
 
 
 # The total token budget for the WHOLE block layered_index_block injects, not
@@ -1005,19 +1036,22 @@ def _plaintext_search(scope_key: str, query: str, limit: int) -> list[dict]:
 
 
 def _can_recall(from_scope: str, target_scope: str) -> bool:
-    """Same scope is always allowed. Cross-scope defers to
-    permissions.can_recall when the grants layer provides it; until then,
-    cross-scope auto-recall is denied (same-scope-only)."""
+    """Same scope is always allowed. Cross-scope is a membership test against
+    `scope_tree.reach(from_scope)` (memory-and-documentation-model-2026-08-14.md
+    sec 4.2): `from_scope` can recall `target_scope` exactly when it is `S`
+    itself or a descendant of it, downward only, never siblings, never upward.
+
+    This used to defer to `permissions.can_recall`, which does not exist, so
+    every cross-scope recall silently returned `[]` regardless of how the two
+    scopes related. This is the first phase in which cross-scope recall
+    actually works."""
     if from_scope == target_scope:
         return True
+    from services import scope_tree
     try:
-        from services import permissions
-    except ImportError:
+        return target_scope in scope_tree.reach(from_scope)
+    except ValueError:
         return False
-    fn = getattr(permissions, "can_recall", None)
-    if callable(fn):
-        return bool(fn(from_scope, target_scope))
-    return False
 
 
 async def recall(from_scope: str, target_scope: str, query: str, limit: int = 5) -> list[dict]:

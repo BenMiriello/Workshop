@@ -171,9 +171,19 @@ def dev_mode_refusal(context_key: str | None) -> str | None:
 def dev_scopes() -> list[str]:
     """The scope keys that exist only in developer mode. Empty in a normal
     deployment, which is what makes `development` absent from the scope list
-    rather than present and refusing."""
-    from services import app_runner
-    return ["development"] if app_runner.dev_mode_on() else []
+    rather than present and refusing.
+
+    Routes the shape question ("does `development` exist as a scope right
+    now?") through `services.scope_tree`, the single owner of that question
+    (memory-and-documentation-model-2026-08-14.md sec 7.1), rather than
+    re-reading `app_runner.dev_mode_on()` here a second time. `scope_tree.parse`
+    already derives conditionally from that same flag."""
+    from services import scope_tree
+    try:
+        scope_tree.parse(scope_tree.DEVELOPMENT_SCOPE)
+        return [scope_tree.DEVELOPMENT_SCOPE]
+    except ValueError:
+        return []
 
 
 def _workshop_scope_dir() -> Path:

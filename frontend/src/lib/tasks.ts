@@ -8,7 +8,7 @@
 // back to splitting `text` for a payload cached before the change. Backed by GET
 // /api/tasks and /api/tasks/{scope}/{id}.
 import type { StatusKind } from "@workshop/ui";
-import { DEVELOPMENT_SCOPE } from "./devMode";
+import { DEVELOPMENT_SCOPE, scopeLabel as _scopeLabel, scopeHref as _scopeHref } from "./scope";
 
 // All eight shipped statuses (backend services/tasks.py STATUSES). ProjectDetail
 // previously knew only four of these and rendered a broken StatusDot for the
@@ -648,20 +648,10 @@ export function proposalGaps(v: TicketProposal): ReadinessGap[] {
 }
 
 // A friendly label for a scope key, for filters and the scope link.
-export function scopeLabel(scope?: string): string {
-  if (!scope) return "unknown";
-  // Work ON the Workshop: the platform repo and this installation's host. The
-  // only name that resolves there, and only in a developer build (ADR 0014).
-  if (scope === DEVELOPMENT_SCOPE) return "Development";
-  // "Workshop", not "Workshop root". The word `root` is the implementation
-  // detail that this scope's store lives at the top of the tree; to a reader it
-  // reads as a second, more important Workshop somewhere. Operator, 2026-08-12.
-  if (scope === "workshop") return "Workshop";
-  const [kind, slug] = scope.split(":", 2);
-  if (!slug) return scope;
-  const kindLabel = kind === "project" ? "Project" : kind === "agent" ? "Agent" : kind === "build" ? "Build" : kind;
-  return `${kindLabel}: ${slug}`;
-}
+// Moved into `./scope`, the single owner of the scope model
+// (memory-and-documentation-model-2026-08-14.md sec 7.1); re-exported here so
+// every existing import of `scopeLabel` from `lib/tasks` keeps working.
+export const scopeLabel = _scopeLabel;
 
 // The canonical route for one ticket. Four screens were building this string by
 // hand and a fifth (RunDetail's "Linked ticket") built a DIFFERENT one —
@@ -694,12 +684,5 @@ export function runTicketScope(job: { project_slug?: string }): string {
 
 // The in-app route a scope links to (project detail / agent detail), or null
 // when the scope has no dedicated page (development, workshop root, build
-// agents).
-export function scopeHref(scope?: string): string | null {
-  if (!scope) return null;
-  if (scope === DEVELOPMENT_SCOPE) return null;
-  const [kind, slug] = scope.split(":", 2);
-  if (kind === "project" && slug) return `/projects/${encodeURIComponent(slug)}`;
-  if (kind === "agent" && slug) return `/agents/${encodeURIComponent(slug)}`;
-  return null;
-}
+// agents). Moved into `./scope`; see `scopeLabel` above.
+export const scopeHref = _scopeHref;

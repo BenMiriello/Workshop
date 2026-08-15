@@ -29,16 +29,21 @@
 // suite that mutates deployment config is one nobody can run twice. Run it after
 // changing anything here or in chatScope.ts.
 
+import { DEVELOPMENT_SCOPE, devScopes as _devScopes, orderScopes as _orderScopes } from "./scope";
+
 export const DEV_MODE = import.meta.env.VITE_DEV_MODE === "1";
 
 // The one name that resolves to the platform repo. There used to be five.
-export const DEVELOPMENT_SCOPE = "development";
+// Re-exported from `./scope`, the single owner of the scope model
+// (memory-and-documentation-model-2026-08-14.md sec 7.1); kept here too so
+// every existing import of it from this module keeps working unchanged.
+export { DEVELOPMENT_SCOPE };
 
 // Scope keys that exist only in a developer build. Empty otherwise — the scope
 // is absent, not present-and-disabled, because a disabled control still tells
 // every user about a capability they do not have and cannot get.
 export function devScopes(devMode: boolean = DEV_MODE): string[] {
-  return devMode ? [DEVELOPMENT_SCOPE] : [];
+  return _devScopes(devMode);
 }
 
 // Order a list of scope keys for a picker, and drop dev-only scopes from a
@@ -51,7 +56,5 @@ export function devScopes(devMode: boolean = DEV_MODE): string[] {
 // the client-side half of the same rule, applied to whatever the server sent so
 // a non-dev bundle talking to a dev backend still shows a non-dev list.
 export function orderScopes(scopes: string[], devMode: boolean = DEV_MODE): string[] {
-  const visible = devMode ? scopes : scopes.filter((s) => s !== DEVELOPMENT_SCOPE);
-  const rank = (s: string) => (s === DEVELOPMENT_SCOPE ? 0 : s === "workshop" ? 1 : 2);
-  return [...visible].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  return _orderScopes(scopes, devMode);
 }
