@@ -1,6 +1,11 @@
 // Client for the generalized in-app chat backend (/api/chat/*).
 // App-agnostic: every call is scoped by a `contextKey` (e.g. "budget").
 
+// The mode's VALUE SET is a wire fact and belongs to the server; its labels are
+// a UI fact and belong to `chat/chatModes`. This module used to spell the union
+// inline in five places, so adding a third mode meant finding all five.
+import type { ChatModeId } from "../components/chat/chatModes";
+
 // An assistant turn is an ordered list of segments so text and tool calls keep
 // their interleaving (text → tool → text …) instead of collapsing into one
 // block. Persisted on the message so a reload reconstructs the same turn.
@@ -239,7 +244,7 @@ export type ThreadSummary = {
   // threads on read; persisted explicitly on new writes.
   scope?: string;
   scope_locked?: boolean;
-  mode?: "orchestrated" | "direct";
+  mode?: ChatModeId;
   // Canonical form: `agent:<slug>`. Legacy agent:<slug> chats back-fill
   // to [that slug]; workshop/project chats start empty and grow when
   // participants are added (P4).
@@ -474,7 +479,7 @@ export type ModelCaps = {
 // permission mode (`platform_permission_mode`, shown so the settings screen can
 // name what "no preference" resolves to instead of leaving it blank).
 export type ChatPrefs = {
-  default_mode: "direct" | "orchestrated";
+  default_mode: ChatModeId;
   modes: string[];
   default_effort: string | null;
   efforts: string[];
@@ -485,7 +490,7 @@ export type ChatPrefs = {
 
 // Write shape: every field optional, `""` clears one to "no preference".
 export type ChatPrefsPatch = {
-  default_mode?: "direct" | "orchestrated";
+  default_mode?: ChatModeId;
   default_effort?: string;
   default_permission_mode?: string;
 };
@@ -564,7 +569,7 @@ export const chatApi = {
 
   // `mode` is sent only when the operator chose one on the blank chat before
   // sending; omitted, the server applies their default for new chats.
-  createThread: (contextKey: string, title = "", mode?: "direct" | "orchestrated") =>
+  createThread: (contextKey: string, title = "", mode?: ChatModeId) =>
     fetch(`/api/chat/threads`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -665,7 +670,7 @@ export const chatApi = {
       body: JSON.stringify(body),
     }).then(j<{ state: string; permission_mode: string | null }>),
 
-  setThreadMode: (id: string, mode: "direct" | "orchestrated") =>
+  setThreadMode: (id: string, mode: ChatModeId) =>
     fetch(`/api/chat/threads/${id}/mode`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

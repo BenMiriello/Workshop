@@ -3,7 +3,7 @@ import { chatApi, type CardState, type Thread, type ThreadSummary } from "../../
 import {
   NEW_CHAT, forgetThread, readSelection, writeSelection,
 } from "../../lib/chatSelection";
-import type { ChatModeId } from "./chatModes";
+import { chatModeDef, type ChatModeId } from "./chatModes";
 import type { ChatProblem } from "./chatProblem";
 import type { SendOutbox } from "./useSendOutbox";
 
@@ -201,7 +201,7 @@ export function useChatThread({
   const adoptSettings = useCallback((t: Thread | ThreadSummary) => {
     outboxRef.current.bind(t.id);
     setCardStates(t.card_states ?? {});
-    setChatMode(t.mode === "orchestrated" ? "orchestrated" : "direct");
+    setChatMode(chatModeDef(t.mode).id);
     if (t.model) setSelectedModel(t.model);
     // "" when the thread has none: the meter falls back to showing the model's
     // default. Seeding this is what stops the picker and the server disagreeing
