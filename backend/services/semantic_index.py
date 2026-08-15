@@ -43,8 +43,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
+import threading
+import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
@@ -57,6 +60,14 @@ log = logging.getLogger("workshop.semantic_index")
 EMBED_MODEL = os.environ.get("WORKSHOP_EMBED_MODEL", "nomic-embed-text")
 EMBED_BATCH = 32
 EMBED_TIMEOUT_S = 120.0
+
+# Measured 2026-08-14 on this box: CPU does 121 ms/chunk batched, a query embed
+# in about 0.1s warm, a full 3,800-chunk cold rebuild in about 8 minutes. GPU
+# buys nothing at this corpus size and costs the whole feature whenever another
+# workload holds the card, which is the state this box was actually found in:
+# `/api/embed` 500ing with a CUDA OOM. Default is CPU (`num_gpu: 0`); a box
+# with a genuinely free GPU can opt back in with the env var.
+EMBED_NUM_GPU = int(os.environ.get("WORKSHOP_EMBED_NUM_GPU", "0"))
 
 # ~1200 characters is about 300 tokens: long enough to carry an argument, short
 # enough that a hit points at a paragraph rather than a document. The overlap
@@ -140,7 +151,8 @@ def embed(texts: list[str]) -> np.ndarray:
         for i in range(0, len(texts), EMBED_BATCH):
             batch = texts[i:i + EMBED_BATCH]
             r = cl.post(f"{_ollama_url()}/api/embed",
-                        json={"model": EMBED_MODEL, "input": batch})
+                        json={"model": EMBED_MODEL, "input": batch,
+                              "options": {"num_gpu": EMBED_NUM_GPU}})
             r.raise_for_status()
             out.extend(r.json()["embeddings"])
     m = np.asarray(out, dtype=np.float32)
@@ -150,11 +162,42 @@ def embed(texts: list[str]) -> np.ndarray:
     return m / norms
 
 
-def available() -> tuple[bool, str]:
-    """Whether embedding can run at all, and why not when it cannot.
+# How long a health check is trusted before it is repeated. Cheap enough to
+# pay per search (one tiny embed, ~0.1s warm) but there is no reason to pay it
+# on every one when nothing about the embedder changes between two searches a
+# second apart.
+_AVAILABILITY_TTL_S = float(os.environ.get("WORKSHOP_EMBED_PROBE_TTL_S", "30"))
+_availability_cache: tuple[float, tuple[bool, str]] | None = None
 
-    Callers surface the reason instead of failing opaquely: an index that cannot
-    build because a model was never pulled is a fixable, nameable condition."""
+
+def available() -> tuple[bool, str]:
+    """Whether embedding can actually run right now, and why not when it can't.
+
+    Cached for `_AVAILABILITY_TTL_S` so a burst of calls pays for one probe.
+    Callers surface the reason instead of failing opaquely: an index that
+    cannot build because a model was never pulled is a fixable, nameable
+    condition, and so is one that cannot build because the runtime holding the
+    model has no memory to run it in."""
+    global _availability_cache
+    now = time.monotonic()
+    cached = _availability_cache
+    if cached is not None and now - cached[0] < _AVAILABILITY_TTL_S:
+        return cached[1]
+    result = _probe_embedder()
+    _availability_cache = (now, result)
+    return result
+
+
+def _probe_embedder() -> tuple[bool, str]:
+    """The uncached check. Split out so `available()` owns the caching and this
+    owns the actual test, which is a real (tiny) embed call and not just "is
+    the model pulled".
+
+    That distinction is the whole point: `/api/tags` reporting the model as
+    pulled says nothing about whether the runtime backing it can currently run
+    it. Measured on this box: the model was pulled, `/api/tags` was healthy,
+    and every embed still 500'd with a CUDA out-of-memory because another
+    workload held the GPU. Only an actual embed call catches that."""
     try:
         import httpx
         with httpx.Client(timeout=5.0) as cl:
@@ -163,9 +206,13 @@ def available() -> tuple[bool, str]:
             names = {m.get("name", "").split(":")[0] for m in r.json().get("models", [])}
         if EMBED_MODEL.split(":")[0] not in names:
             return False, f"ollama is up but the model {EMBED_MODEL} is not pulled"
-        return True, ""
     except Exception as e:
         return False, f"ollama is unreachable at {_ollama_url()}: {e}"
+    try:
+        embed(["ok"])
+    except Exception as e:
+        return False, f"the model {EMBED_MODEL} is pulled but cannot embed right now: {e}"
+    return True, ""
 
 
 # ---------------------------------------------------------------- chunking
@@ -486,6 +533,64 @@ def rebuild_if_stale() -> dict | None:
     return res
 
 
+# ------------------------------------------------------ background rebuild
+#
+# `rebuild_if_stale` above runs INSIDE the caller (still used directly by the
+# CLI and a couple of tests that want a synchronous rebuild). `search()` must
+# NOT do that: on CPU a cold build is about 8 minutes, and a search is a
+# user-facing request. This is the same self-healing trigger, moved off the
+# request path into a single background thread per owner's index, so a search
+# that arrives mid-rebuild answers from what is on disk right now instead of
+# blocking on it or returning nothing.
+#
+# Keyed by index_dir() rather than one global thread, so two owners rebuilding
+# their own (separate) indexes never contend on each other's lock; single-
+# flight is scoped to "the index this call would rebuild," which is the thing
+# that actually cannot run twice at once.
+_rebuild_state_lock = threading.Lock()
+_rebuild_threads: dict[str, threading.Thread] = {}
+
+
+def _background_rebuild_if_stale() -> bool:
+    """Kick off a background rebuild if the index is stale and none is already
+    running for this owner. Returns whether a rebuild is in flight (just
+    started, or already running) so the caller can say so. Never blocks."""
+    if not is_stale():
+        return False
+    key = str(index_dir())
+    with _rebuild_state_lock:
+        existing = _rebuild_threads.get(key)
+        if existing is not None and existing.is_alive():
+            return True
+
+        from services import ownership
+        owner_id = ownership.owner_or_none()
+
+        def _run(oid=owner_id) -> None:
+            # A background thread does not inherit the calling thread's
+            # ownership contextvar, so the owner captured above (in the
+            # thread that already had it pinned) is set explicitly here.
+            # `pin_owner()` is the same operator fallback every other
+            # background pass in this module uses when there was no owner to
+            # capture (see its own docstring).
+            if oid is not None:
+                ownership.set_current_owner(oid)
+            else:
+                pin_owner()
+            try:
+                res = build(rebuild_kinds())
+                if not res.get("ok"):
+                    log.warning("background semantic index rebuild failed: %s",
+                                res.get("error"))
+            except Exception:
+                log.warning("background semantic index rebuild crashed", exc_info=True)
+
+        t = threading.Thread(target=_run, name="semantic-index-rebuild", daemon=True)
+        _rebuild_threads[key] = t
+        t.start()
+        return True
+
+
 # ---------------------------------------------------------------- build
 
 def build(kinds: tuple[str, ...] | list[str] = DEFAULT_KINDS,
@@ -551,55 +656,241 @@ def build(kinds: tuple[str, ...] | list[str] = DEFAULT_KINDS,
             "reused": len(meta) - len(todo), "dim": int(matrix.shape[1])}
 
 
+# ------------------------------------------------------------ lexical fallback
+#
+# BM25 over the SAME chunk corpus the vector index embeds, not a second store.
+# `index.meta.jsonl` already carries every chunk's `text`, so lexical search
+# needs no embedder at all: even a stale index still answers. Chosen over the
+# simpler term-count scorer in `knowledge._plaintext_search` (raw
+# `sum(hay.count(t))`, no IDF, no length normalisation) because that scorer's
+# actual failure was measured, not theoretical: a query of pure stopwords
+# returned the three largest files in the scope, because longer documents
+# contain more of every common word and the "ranking" was really a length
+# sort. BM25's IDF term downweights words that are common across the corpus
+# and its length normalisation stops a long chunk from winning on bulk alone.
+#
+# Cached against the meta file's (size, mtime), same pattern as
+# `scope_tree._load_overrides`: a cheap `stat()` per call, a full retokenise
+# only when the index actually changed. Tokenising is only paid on the
+# fallback path (the embedder is down), never on a healthy search.
+
+_BM25_K1 = 1.5
+_BM25_B = 0.75
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokenize(text: str) -> list[str]:
+    return _TOKEN_RE.findall((text or "").lower())
+
+
+_lexical_cache: tuple[tuple, dict] | None = None
+
+
+def _bm25_state(meta: list[dict]) -> dict:
+    """Postings, document lengths and the corpus average, built once per index
+    generation. `postings[term]` is `{doc_index: term_frequency}`, so scoring a
+    query only ever touches documents that actually contain one of its terms
+    rather than looping the whole corpus per term."""
+    global _lexical_cache
+    mp = _meta_path()
+    try:
+        st = mp.stat()
+        key = (str(mp), st.st_size, st.st_mtime_ns)
+    except OSError:
+        key = (str(mp), None, None)
+    cached = _lexical_cache
+    if cached is not None and cached[0] == key:
+        return cached[1]
+
+    postings: dict[str, dict[int, int]] = {}
+    doc_len = [0] * len(meta)
+    for i, m in enumerate(meta):
+        toks = _tokenize(m.get("text", ""))
+        doc_len[i] = len(toks)
+        for t in toks:
+            bucket = postings.setdefault(t, {})
+            bucket[i] = bucket.get(i, 0) + 1
+    avgdl = (sum(doc_len) / len(doc_len)) if doc_len else 0.0
+    state = {"postings": postings, "doc_len": doc_len, "avgdl": avgdl, "n": len(meta)}
+    _lexical_cache = (key, state)
+    return state
+
+
+def _bm25_scores(query: str, meta: list[dict]) -> np.ndarray:
+    """BM25 score for `query` against every chunk in `meta`, one float per row
+    (0.0 where nothing matched). Full-corpus, like the vector path: the caller
+    masks it, rather than this function taking a candidate subset."""
+    state = _bm25_state(meta)
+    n = state["n"]
+    scores = np.zeros(n, dtype=np.float32)
+    if n == 0:
+        return scores
+    q_tokens = set(_tokenize(query))
+    if not q_tokens:
+        return scores
+    avgdl = state["avgdl"] or 1.0
+    doc_len = state["doc_len"]
+    postings = state["postings"]
+    for t in q_tokens:
+        docs = postings.get(t)
+        if not docs:
+            continue
+        df = len(docs)
+        # log(1 + ...), never the bare Robertson-Sparck-Jones form: that
+        # variant goes negative for a term present in most of the corpus,
+        # which would let a document's score fall by matching MORE of the
+        # query. This variant is always >= 0.
+        idf = math.log(1.0 + (n - df + 0.5) / (df + 0.5))
+        for i, tf in docs.items():
+            denom = tf + _BM25_K1 * (1 - _BM25_B + _BM25_B * doc_len[i] / avgdl)
+            scores[i] += idf * (tf * (_BM25_K1 + 1)) / denom
+    return scores
+
+
+# ------------------------------------------------------------- scope masking
+#
+# A chat chunk's `scope` field is really a chat `context_key` ("general",
+# "budget", "development", ...), not a `scope_tree` scope_key: chats and
+# knowledge notes are two different namespaces (design doc sec 7.1), and
+# unifying them is a further migration this phase does not own. Only chats
+# need the translation; a note's `scope` is already a real scope_key (it came
+# straight off `knowledge.all_scope_dirs()`) and a doc's is always "".
+#
+# A chunk with no scope at all (every doc) is never excluded by a scope
+# filter: docs are cross-cutting reference material with no place in the
+# tree, not something a narrower scope has failed to reach.
+
+def _resolve_chunk_scope(kind: str, raw_scope: str) -> str:
+    if kind != "chat" or not raw_scope:
+        return raw_scope
+    try:
+        from services import knowledge
+        return knowledge.scope_for_context(raw_scope)
+    except Exception:
+        return raw_scope
+
+
+def _scope_set(scope: str | tuple | list | set | frozenset | None) -> set[str] | None:
+    """Normalise the `scope=` argument to a set, or None for "no filter".
+    `search()` takes a set of allowed scopes; a bare string is still accepted
+    so single-scope callers (existing tests, direct callers) keep working."""
+    if scope is None:
+        return None
+    if isinstance(scope, str):
+        return {scope}
+    return set(scope)
+
+
+def _keep_mask(meta: list[dict], kinds, scopes: set[str] | None) -> np.ndarray:
+    """A boolean mask over the whole corpus, computed once and applied to the
+    score vector rather than used to fancy-index `vecs` (design doc sec 7.2:
+    `vecs[keep] @ q` allocates a submatrix per call; masking a precomputed
+    `vecs @ q` does not, and the cost stops depending on how narrow the filter
+    is)."""
+    n = len(meta)
+    mask = np.empty(n, dtype=bool)
+    cache: dict[tuple[str, str], str] = {}
+    for i, m in enumerate(meta):
+        if kinds is not None and m.get("kind") not in kinds:
+            mask[i] = False
+            continue
+        if scopes is None:
+            mask[i] = True
+            continue
+        raw = m.get("scope") or ""
+        if not raw:
+            mask[i] = True  # unscoped (docs) are always in reach
+            continue
+        key = (m.get("kind"), raw)
+        resolved = cache.get(key)
+        if resolved is None:
+            resolved = _resolve_chunk_scope(m.get("kind"), raw)
+            cache[key] = resolved
+        mask[i] = resolved in scopes
+    return mask
+
+
 # ---------------------------------------------------------------- search
 
 def search(query: str, *, limit: int = 8,
            kinds: tuple[str, ...] | list[str] | None = None,
-           scope: str | None = None,
-           min_score: float = MIN_SCORE) -> list[dict]:
-    """Ranked passages for a query. Empty list when there is nothing to say.
+           scope: str | tuple | list | set | frozenset | None = None,
+           min_score: float = MIN_SCORE) -> dict:
+    """Ranked passages for a query, hybrid: vector when the embedder answers,
+    BM25 lexical always available so a search degrades instead of raising.
 
-    Returns the BODY, not a title. Being unable to read what was found is the
-    defect this module exists to remove."""
+    Returns `{"hits": [...], "mode": str, "rebuilding": bool}`. `mode` is
+    `"semantic"`, `"lexical"`, or `"lexical (embedder unavailable: <reason>)"`
+    so a caller (and the model reading the MCP tool's output) knows how much
+    to trust the result. `rebuilding` is true when a background rebuild is in
+    flight; the hits are still from whatever is on disk right now, never
+    withheld while it runs.
+
+    A hit's BODY is returned, not a title. Being unable to read what was found
+    is the defect this module exists to remove."""
     query = (query or "").strip()
     if not query:
-        return []
-    # Self-healing: a note written since the last build has left a marker, so
-    # catch up before answering rather than confidently returning nothing. Costs
-    # one `exists()` in the overwhelmingly common case where nothing changed.
+        return {"hits": [], "mode": "semantic", "rebuilding": False}
+
+    # Self-healing, off the request path (design doc sec 7.2/7.4): a write
+    # left a marker, so a background thread catches the index up while THIS
+    # search still answers from what is on disk. On CPU a cold build is ~8
+    # minutes; a search must never wait on it.
     try:
-        rebuild_if_stale()
+        rebuilding = _background_rebuild_if_stale()
     except Exception:
-        # A search must still answer from whatever is on disk if the rebuild
-        # raised. Degrading to a stale result beats failing the tool call.
-        log.warning("stale-index rebuild failed; searching the existing index",
-                    exc_info=True)
+        log.warning("could not start a background rebuild; searching the "
+                    "existing index", exc_info=True)
+        rebuilding = False
+
     meta, vecs = load()
     if not meta:
-        return []
-    keep = [i for i, m in enumerate(meta)
-            if (kinds is None or m.get("kind") in kinds)
-            and (scope is None or m.get("scope") == scope)]
-    if not keep:
-        return []
-    q = embed([query])[0]
-    sims = vecs[keep] @ q
-    order = np.argsort(-sims)[:limit]
-    out = []
+        return {"hits": [], "mode": "semantic", "rebuilding": rebuilding}
+
+    scopes = _scope_set(scope)
+    mask = _keep_mask(meta, kinds, scopes)
+    if not mask.any():
+        return {"hits": [], "mode": "semantic", "rebuilding": rebuilding}
+
+    mode = "semantic"
+    scores: np.ndarray | None = None
+    try:
+        q = embed([query])[0]
+        scores = vecs @ q
+    except Exception as e:
+        reason = str(e).strip() or "unknown error"
+        if len(reason) > 160:
+            reason = reason[:157] + "..."
+        log.warning("embedder unavailable, falling back to lexical search: %s",
+                    reason, exc_info=True)
+        mode = f"lexical (embedder unavailable: {reason})"
+
+    if scores is None:
+        scores = _bm25_scores(query, meta)
+        floor = 0.0  # BM25 has no meaning below zero: nothing matched.
+        is_semantic = False
+    else:
+        floor = min_score
+        is_semantic = True
+
+    masked = np.where(mask, scores, -np.inf)
+    order = np.argsort(-masked)[:limit]
+    hits = []
     for j in order:
-        score = float(sims[int(j)])
-        # Ordered descending, so the first miss ends it.
-        if score < min_score:
+        score = float(masked[int(j)])
+        # Ordered descending, so the first miss (or the mask's -inf) ends it.
+        if (score < floor) if is_semantic else (score <= floor):
             break
-        i = keep[int(j)]
+        i = int(j)
         m = meta[i]
-        out.append({
-            "score": round(float(sims[int(j)]), 4),
+        hits.append({
+            "score": round(score, 4),
             "kind": m.get("kind"), "ref": m.get("ref"),
             "title": m.get("title"), "scope": m.get("scope"),
             "ts": m.get("ts"), "text": m.get("text"),
         })
-    return out
+    return {"hits": hits, "mode": mode, "rebuilding": rebuilding}
 
 
 def status() -> dict:
@@ -636,7 +927,10 @@ def _main(argv: list[str]) -> int:
         kinds = tuple(argv[2].split(",")) if len(argv) > 2 else DEFAULT_KINDS
         print(json.dumps(build(kinds, log_fn=lambda s: print(f"  {s}")), indent=2))
     elif verb == "search":
-        for h in search(" ".join(argv[2:]), limit=5):
+        result = search(" ".join(argv[2:]), limit=5)
+        print(f"mode: {result['mode']}"
+              + ("  (rebuilding in background)" if result["rebuilding"] else ""))
+        for h in result["hits"]:
             print(f"[{h['score']:.3f}] {h['kind']}: {h['title']}  ({h['ref']})")
             print("    " + h["text"][:180].replace("\n", " ") + "\n")
     else:

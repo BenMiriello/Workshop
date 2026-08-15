@@ -122,38 +122,65 @@ class TestSearchGuards:
     @pytest.fixture(autouse=True)
     def _tmp_index(self, tmp_path, monkeypatch):
         monkeypatch.setattr(si, "index_dir", lambda: tmp_path)
+        # No note/chat/app registries exist under a bare tmp_path; a scope
+        # filter that has to resolve a chat's context_key would otherwise
+        # explode on an unrelated missing file. Not what these tests probe.
+        monkeypatch.setattr(si, "_resolve_chunk_scope", lambda kind, raw: raw)
 
     def test_an_empty_query_never_embeds(self, monkeypatch):
         def boom(_):
             raise AssertionError("embed must not be called for an empty query")
         monkeypatch.setattr(si, "embed", boom)
-        assert si.search("") == []
-        assert si.search("   ") == []
+        assert si.search("")["hits"] == []
+        assert si.search("   ")["hits"] == []
 
     def test_an_empty_index_never_embeds(self, monkeypatch):
         def boom(_):
             raise AssertionError("embed must not be called against an empty index")
         monkeypatch.setattr(si, "embed", boom)
-        assert si.search("a real question") == []
+        assert si.search("a real question")["hits"] == []
 
     def test_the_floor_drops_everything_below_it(self, monkeypatch):
         meta = [{"kind": "note", "ref": "a.md", "title": "A", "scope": "", "ts": "",
                  "text": "a", "digest": "d1"}]
         si._save(meta, np.array([[1.0, 0.0]], dtype=np.float32))
         monkeypatch.setattr(si, "embed", lambda t: np.array([[1.0, 0.0]], dtype=np.float32))
-        assert len(si.search("q", min_score=0.5)) == 1
+        assert len(si.search("q", min_score=0.5)["hits"]) == 1
         # Same hit, floor above it: nothing rather than a confident-looking miss.
-        assert si.search("q", min_score=1.1) == []
+        assert si.search("q", min_score=1.1)["hits"] == []
 
     def test_kind_and_scope_filters_apply(self, monkeypatch):
         meta = [
             {"kind": "note", "ref": "a", "title": "A", "scope": "workshop", "ts": "", "text": "a", "digest": "1"},
-            {"kind": "vault", "ref": "b", "title": "B", "scope": "", "ts": "", "text": "b", "digest": "2"},
+            {"kind": "vault", "ref": "b", "title": "B", "scope": "project:other", "ts": "", "text": "b", "digest": "2"},
         ]
         si._save(meta, np.array([[1.0, 0.0], [1.0, 0.0]], dtype=np.float32))
         monkeypatch.setattr(si, "embed", lambda t: np.array([[1.0, 0.0]], dtype=np.float32))
-        assert {h["kind"] for h in si.search("q", kinds=("note",), min_score=0.5)} == {"note"}
-        assert {h["scope"] for h in si.search("q", scope="workshop", min_score=0.5)} == {"workshop"}
+        assert {h["kind"] for h in si.search("q", kinds=("note",), min_score=0.5)["hits"]} == {"note"}
+        assert {h["scope"] for h in si.search("q", scope="workshop", min_score=0.5)["hits"]} == {"workshop"}
+
+    def test_a_scope_set_narrows_to_any_member(self, monkeypatch):
+        """`search()` takes a SET of allowed scopes (design doc sec C), not just
+        one -- this is what lets a caller pass a whole `reach()` result."""
+        meta = [
+            {"kind": "note", "ref": "a", "title": "A", "scope": "project:birds", "ts": "", "text": "a", "digest": "1"},
+            {"kind": "note", "ref": "b", "title": "B", "scope": "project:budget", "ts": "", "text": "b", "digest": "2"},
+            {"kind": "note", "ref": "c", "title": "C", "scope": "project:other", "ts": "", "text": "c", "digest": "3"},
+        ]
+        si._save(meta, np.ones((3, 2), dtype=np.float32))
+        monkeypatch.setattr(si, "embed", lambda t: np.array([[1.0, 0.0]], dtype=np.float32))
+        hits = si.search("q", scope={"project:birds", "project:budget"}, min_score=0.5)["hits"]
+        assert {h["scope"] for h in hits} == {"project:birds", "project:budget"}
+
+    def test_an_unscoped_chunk_is_never_excluded_by_a_scope_filter(self, monkeypatch):
+        """Docs carry `scope=""` (they are cross-cutting reference material, not
+        placed in the tree). A scope filter must not silently hide every doc."""
+        meta = [{"kind": "doc", "ref": "docs/x.md", "title": "X", "scope": "",
+                 "ts": "", "text": "x", "digest": "1"}]
+        si._save(meta, np.array([[1.0, 0.0]], dtype=np.float32))
+        monkeypatch.setattr(si, "embed", lambda t: np.array([[1.0, 0.0]], dtype=np.float32))
+        hits = si.search("q", scope={"project:birds"}, min_score=0.5)["hits"]
+        assert len(hits) == 1
 
     def test_the_vault_is_not_searched_by_default(self):
         """A search about routing code must never surface a personal note."""
@@ -165,11 +192,151 @@ class TestSearchGuards:
                  "ts": "2026-08-12T00:00:00+00:00", "text": "the body", "digest": "1"}]
         si._save(meta, np.array([[1.0, 0.0]], dtype=np.float32))
         monkeypatch.setattr(si, "embed", lambda t: np.array([[1.0, 0.0]], dtype=np.float32))
-        hit = si.search("q", min_score=0.5)[0]
+        hit = si.search("q", min_score=0.5)["hits"][0]
         # Being unable to read what was found is the defect this replaces.
         assert hit["text"] == "the body"
         for field in ("kind", "ref", "title", "scope", "ts", "score"):
             assert field in hit
+        assert si.search("q", min_score=0.5)["mode"] == "semantic"
+
+    def test_masking_matches_the_old_fancy_index_ranking(self, monkeypatch):
+        """The scope/kind filter used to be applied by `vecs[keep] @ q`
+        (fancy-indexing a submatrix per call, design doc sec 7.2). It is now a
+        full-corpus `vecs @ q` masked by score. This pins that the refactor did
+        not change WHICH hits win or their ORDER, only how they get there."""
+        rng = np.random.default_rng(0)
+        n = 40
+        vecs = rng.normal(size=(n, 8)).astype(np.float32)
+        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+        meta = [{"kind": "note" if i % 2 == 0 else "doc", "ref": str(i), "title": str(i),
+                 "scope": "workshop" if i % 3 == 0 else "project:x", "ts": "", "text": str(i),
+                 "digest": str(i)} for i in range(n)]
+        si._save(meta, vecs)
+        q = rng.normal(size=8).astype(np.float32)
+        q /= np.linalg.norm(q)
+        monkeypatch.setattr(si, "embed", lambda t: np.array([q]))
+
+        got = si.search("q", kinds=("note",), scope="workshop", min_score=-1.0,
+                         limit=100)["hits"]
+
+        # The old approach, independently: filter first, THEN fancy-index.
+        keep = [i for i, m in enumerate(meta)
+                if m["kind"] == "note" and m["scope"] == "workshop"]
+        sims = vecs[keep] @ q
+        order = np.argsort(-sims)
+        expected_refs = [meta[keep[int(j)]]["ref"] for j in order]
+
+        assert [h["ref"] for h in got] == expected_refs
+
+
+class TestLexicalFallback:
+    """The point of B (design doc sec 8): a search must still answer when the
+    embedder cannot, and say so."""
+
+    @pytest.fixture(autouse=True)
+    def _tmp_index(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(si, "index_dir", lambda: tmp_path)
+        monkeypatch.setattr(si, "_resolve_chunk_scope", lambda kind, raw: raw)
+
+    def test_an_embedder_failure_still_returns_hits(self, monkeypatch):
+        meta = [
+            {"kind": "note", "ref": "a", "title": "GPU notes", "scope": "workshop",
+             "ts": "", "text": "the embedder was pinned to CPU to avoid CUDA "
+             "out of memory errors", "digest": "1"},
+            {"kind": "note", "ref": "b", "title": "Unrelated", "scope": "workshop",
+             "ts": "", "text": "a recipe for sourdough starter", "digest": "2"},
+        ]
+        si._save(meta, np.ones((2, 4), dtype=np.float32))
+
+        def boom(_texts):
+            raise RuntimeError("CUDA error: out of memory")
+        monkeypatch.setattr(si, "embed", boom)
+
+        result = si.search("CUDA out of memory")
+        assert result["hits"], "a search must still answer when the embedder fails"
+        assert result["hits"][0]["ref"] == "a"  # the lexically relevant one wins
+        assert result["mode"].startswith("lexical")
+        assert "embedder unavailable" in result["mode"]
+        assert "CUDA error: out of memory" in result["mode"]
+
+    def test_a_healthy_embedder_reports_semantic_mode(self, monkeypatch):
+        meta = [{"kind": "note", "ref": "a", "title": "A", "scope": "", "ts": "",
+                 "text": "a", "digest": "1"}]
+        si._save(meta, np.array([[1.0, 0.0]], dtype=np.float32))
+        monkeypatch.setattr(si, "embed", lambda t: np.array([[1.0, 0.0]], dtype=np.float32))
+        assert si.search("q", min_score=0.5)["mode"] == "semantic"
+
+    def test_lexical_ranks_by_relevance_not_substring_order(self, monkeypatch):
+        """BM25, not `knowledge._plaintext_search`'s raw term count: a query of
+        pure stopwords must not just return the longest document."""
+        meta = [
+            {"kind": "note", "ref": "long", "title": "Long", "scope": "", "ts": "",
+             "text": "the a of to and is in " * 40, "digest": "1"},
+            {"kind": "note", "ref": "relevant", "title": "Relevant", "scope": "",
+             "ts": "", "text": "the scope tree reaches every descendant downward",
+             "digest": "2"},
+        ]
+        si._save(meta, np.ones((2, 4), dtype=np.float32))
+        monkeypatch.setattr(si, "embed", lambda t: (_ for _ in ()).throw(RuntimeError("down")))
+        hits = si.search("scope tree descendant")["hits"]
+        assert hits[0]["ref"] == "relevant"
+
+    def test_lexical_still_respects_kind_and_scope_filters(self, monkeypatch):
+        meta = [
+            {"kind": "note", "ref": "a", "title": "A", "scope": "project:birds",
+             "ts": "", "text": "reach and scope tree", "digest": "1"},
+            {"kind": "note", "ref": "b", "title": "B", "scope": "project:other",
+             "ts": "", "text": "reach and scope tree", "digest": "2"},
+        ]
+        si._save(meta, np.ones((2, 4), dtype=np.float32))
+        monkeypatch.setattr(si, "embed", lambda t: (_ for _ in ()).throw(RuntimeError("down")))
+        hits = si.search("reach scope tree", scope={"project:birds"})["hits"]
+        assert {h["ref"] for h in hits} == {"a"}
+
+    def test_no_query_terms_match_means_no_hits(self, monkeypatch):
+        meta = [{"kind": "note", "ref": "a", "title": "A", "scope": "", "ts": "",
+                 "text": "completely unrelated content", "digest": "1"}]
+        si._save(meta, np.ones((1, 4), dtype=np.float32))
+        monkeypatch.setattr(si, "embed", lambda t: (_ for _ in ()).throw(RuntimeError("down")))
+        assert si.search("zephyr quokka")["hits"] == []
+
+
+class TestBM25:
+    """`_bm25_state` caches postings against the meta FILE's (size, mtime), the
+    same pattern `scope_tree._load_overrides` uses, so every test here goes
+    through `_save` first to keep the cache key honest -- calling
+    `_bm25_scores` with a `meta` list that was never written would key the
+    cache off whatever (unrelated) index happens to be on disk."""
+
+    @pytest.fixture(autouse=True)
+    def _tmp_index(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(si, "index_dir", lambda: tmp_path)
+
+    def test_a_document_containing_no_query_terms_scores_zero(self):
+        meta = [{"kind": "note", "ref": "a", "text": "nothing in common here", "digest": "1"}]
+        si._save(meta, np.ones((1, 4), dtype=np.float32))
+        scores = si._bm25_scores("banana helicopter", meta)
+        assert scores[0] == 0.0
+
+    def test_more_occurrences_scores_higher(self):
+        meta = [
+            {"kind": "note", "ref": "a", "text": "scope scope scope scope tree", "digest": "1"},
+            {"kind": "note", "ref": "b", "text": "scope tree elsewhere", "digest": "2"},
+        ]
+        si._save(meta, np.ones((2, 4), dtype=np.float32))
+        scores = si._bm25_scores("scope", meta)
+        assert scores[0] > scores[1]
+
+    def test_a_rarer_term_across_the_corpus_weighs_more(self):
+        meta = [
+            {"kind": "note", "ref": "a", "text": "common common rare", "digest": "1"},
+            {"kind": "note", "ref": "b", "text": "common common common", "digest": "2"},
+            {"kind": "note", "ref": "c", "text": "common common common", "digest": "3"},
+        ]
+        si._save(meta, np.ones((3, 4), dtype=np.float32))
+        common_score = si._bm25_scores("common", meta)[0]
+        rare_score = si._bm25_scores("rare", meta)[0]
+        assert rare_score > common_score
 
 
 class TestEmbedNormalisation:

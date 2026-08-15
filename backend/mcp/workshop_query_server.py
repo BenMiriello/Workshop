@@ -72,6 +72,16 @@ SEARCH_TOOL_SCHEMA = {
                 "searched when you ask for it by name."
             ),
         },
+        "scope": {
+            "type": "string",
+            "description": (
+                "Narrow to one scope and everything below it in the tree "
+                "(e.g. 'project:birds', 'app:budget'). Default: everything "
+                "this chat's own scope can reach, which already excludes "
+                "sibling projects and, unless this chat IS a development "
+                "chat, the development scope."
+            ),
+        },
         "limit": {
             "type": "integer",
             "description": "How many passages to return. Default 6, max 20.",
@@ -133,6 +143,32 @@ def _build_digest() -> str:
     return "\n\n".join(parts) if parts else "No open tasks, jobs, or notes in scope."
 
 
+def _caller_scope_key(raw: str) -> str:
+    """`WORKSHOP_QUERY_SCOPE` is the chat's `context_key` ("general",
+    "workshop", "budget", a project/app/agent key...) -- the same value
+    `_build_digest` reads. `reach()` operates on `scope_tree`'s scope_key
+    namespace, so this is the same translation `_build_digest` already
+    applies inline, pulled out because the search path needs it too."""
+    from services import knowledge
+    ck = "workshop" if raw in ("general", "global") else raw
+    try:
+        return knowledge.scope_for_context(ck)
+    except Exception:
+        return "workshop"
+
+
+def _reach_scopes(scope_key: str) -> set[str] | None:
+    """`reach(scope_key)` as a set, or None when the tree does not recognise
+    the key. `reach` is curation, not a security boundary (scope_tree module
+    docstring, SEC-A2), so an unrecognised scope degrades to "no filter"
+    rather than an error."""
+    from services import scope_tree
+    try:
+        return set(scope_tree.reach(scope_key))
+    except ValueError:
+        return None
+
+
 def _run_search(args: dict) -> str:
     """Ranked passages, rendered for a model to read.
 
@@ -148,18 +184,41 @@ def _run_search(args: dict) -> str:
     kinds = args.get("kinds") or list(semantic_index.DEFAULT_KINDS)
     limit = max(1, min(int(args.get("limit") or 6), 20))
 
-    hits = semantic_index.search(query, limit=limit, kinds=tuple(kinds))
+    # The default candidate set is what THIS chat's scope can reach, not
+    # everything: a workshop chat searches every project and app but not
+    # development, a project chat cannot reach a sibling project (memory-and-
+    # documentation-model-2026-08-14.md sec 4.2). An explicit `scope` argument
+    # narrows further and is itself bounded by the caller's own reach, so a
+    # workshop chat cannot ask its way into development just by naming it.
+    caller_raw = os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
+    my_reach = _reach_scopes(_caller_scope_key(caller_raw))
+    requested = (args.get("scope") or "").strip()
+    scopes = my_reach
+    if requested:
+        req_reach = _reach_scopes(requested)
+        if req_reach is not None:
+            scopes = req_reach if my_reach is None else (my_reach & req_reach)
+
+    result = semantic_index.search(query, limit=limit, kinds=tuple(kinds), scope=scopes)
+    hits, mode, rebuilding = result["hits"], result["mode"], result["rebuilding"]
+
+    rebuild_note = ("\n(the index is rebuilding in the background; these results "
+                     "are from what is on disk right now)" if rebuilding else "")
+
     if not hits:
         st = semantic_index.status()
         if not st["chunks"]:
             why = st["embedder_error"] or "it has not been built yet"
-            return f"The search index is empty: {why}."
+            return f"The search index is empty: {why}.{rebuild_note}"
         # An empty result is a real answer, and saying so plainly stops the model
         # from reading it as a malfunction and retrying the same query.
         return (f"No passages in the workshop are relevant to that "
-                f"({st['chunks']} indexed). Nothing has been written about it.")
+                f"({st['chunks']} indexed, mode: {mode}). Nothing has been "
+                f"written about it.{rebuild_note}")
 
-    out = [f"{len(hits)} passage(s) for: {query}", ""]
+    # The mode is surfaced up front, not buried in a footer: a model that does
+    # not know it got a degraded (lexical) result over-trusts it.
+    out = [f"{len(hits)} passage(s) for: {query}  [mode: {mode}]{rebuild_note}", ""]
     for h in hits:
         where = h["ref"]
         if h["kind"] == "chat":

@@ -11,6 +11,7 @@ deliberately no cron entry: the operator turned cron off, and a scheduler both
 rebuilds when nothing changed and lags when something did.
 """
 import asyncio
+import threading
 
 import pytest
 
@@ -142,15 +143,23 @@ class TestStaleness:
         assert called == []
 
     def test_a_stale_index_rebuilds_on_the_next_search(self, tree, monkeypatch):
+        """The rebuild is now BACKGROUND (design doc sec 7.2/D): a search must
+        not block on an ~8-minute cold build, so this waits on the background
+        thread rather than asserting the rebuild already happened by the time
+        `search` returns."""
         si.mark_stale("a note landed")
         called = []
+        done = threading.Event()
 
         def fake_build(kinds=si.DEFAULT_KINDS, **kw):
             called.append(tuple(kinds))
+            done.set()
             return {"ok": True, "chunks": 0}
 
         monkeypatch.setattr(si, "build", fake_build)
-        si.search("anything")
+        result = si.search("anything")
+        assert result["rebuilding"] is True
+        assert done.wait(timeout=5), "a stale index was searched without rebuilding"
         assert called, "a stale index was searched without rebuilding"
 
     def test_the_rebuild_never_narrows_the_corpus_to_the_query(self, tree):
@@ -173,7 +182,10 @@ class TestStaleness:
     def test_a_raising_rebuild_still_answers_from_what_is_on_disk(self, tree, monkeypatch):
         si.mark_stale("a note landed")
         monkeypatch.setattr(si, "build", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-        assert si.search("anything") == []  # no index yet, but no raise either
+        # No index yet, but no raise either -- the background thread catches
+        # its own exception (see `_background_rebuild_if_stale`), it never
+        # crosses back into the caller.
+        assert si.search("anything")["hits"] == []
 
     def test_a_partial_build_does_not_clear_a_note_write_marker(self, tree, monkeypatch):
         """`build(("chat",))` re-collects no notes. Letting it clear the marker
