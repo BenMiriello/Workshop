@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { usePoll } from "../../lib/usePoll";
 import { chatApi } from "../../lib/chat";
 import {
-  initialThreadState, threadReducer, type ThreadAction, type ThreadState,
+  initialThreadState, threadReducer, snapshotThread,
+  type ThreadAction, type ThreadState,
 } from "./threadStore";
+import { threadCache } from "./threadCache";
 import { selectCommitted, composeTranscript, type TranscriptBlock } from "./transcriptBlocks";
 import type { ChatProblem } from "./chatProblem";
 import { isStale } from "./staleNotice";
@@ -49,6 +51,28 @@ const POLL_MS = 60_000;
 // than a bespoke "first load" flag, since it is exactly the same situation —
 // this tab has nothing of the newly-selected line yet.
 const INITIAL_TAIL = 30;
+
+// STALE-WHILE-REVALIDATE OVER THE SAME CURSOR SYNC. `threadCache` (a plain
+// module, not React state) holds the last few threads this tab has actually
+// finished loading. On a thread switch that HITS the cache, this hook paints
+// the cached transcript in the very render the thread changes (`seedThread`,
+// below) instead of the tail-first cold load — and then runs exactly one
+// ordinary cursor sync (`sync()`, via `pendingCatchUpRef`) to reconcile it
+// against the server, the same call an ordinary poll makes. A cache MISS is
+// untouched: today's tail-first load, byte for byte.
+//
+// The reason the catch-up is a scheduled ref rather than a plain `void sync()`
+// called right here: `sync` reads `stateRef.current`, and `stateRef` is only
+// updated at render time (`stateRef.current = state;`, below), not inside the
+// effect that just dispatched the seed. Calling it synchronously here would
+// read the PREVIOUS thread's cursor and threadId, `sync` would conclude this
+// is a fresh read, and it would fetch the tail again instead of the one cheap
+// cursor page this whole design exists to make possible. Deferring it to an
+// effect keyed on `state.threadId` means it only runs once the seed has
+// actually committed and `stateRef` agrees with it.
+//
+// See threadCache.ts for what is deliberately excluded from the snapshot
+// (pending sends, the working indicator's authority) and why.
 
 // When the chat says it has gone quiet lives in `staleNotice`: a run of
 // failures AND real elapsed silence. Counting failures alone was not enough —
@@ -139,6 +163,13 @@ export function useThreadLog({
   const [branch, setBranch] = useState<
     { id: string | null; name: string; count: number; head: string | null }>(
     { id: null, name: "", count: 0, head: null });
+
+  // Set by the mount effect on a CACHE HIT to the thread just seeded, and
+  // consumed by the effect below once that seed has actually committed (see
+  // the STALE-WHILE-REVALIDATE comment above `POLL_MS`). `null` the rest of
+  // the time, including for every cache miss, which leaves this a no-op and
+  // today's cold-load behaviour untouched.
+  const pendingCatchUpRef = useRef<string | null>(null);
 
   // LOADING OLDER: a page further into this thread's past, on demand. Kept
   // out of `stateRef`/the reducer's own bookkeeping on purpose — whether a
@@ -275,25 +306,63 @@ export function useThreadLog({
     }
   }, []);
 
-  // Opening a thread: drop everything and read the log from the start. One
-  // commit for the reset so a stale transcript is never briefly shown under a
-  // new thread's title.
+  // Opening a thread: drop everything and read the log from the start — UNLESS
+  // this tab already holds a finished snapshot of this exact thread, in which
+  // case seed from that instead of going blank. Either way it is one commit:
+  // a stale transcript (this thread's OR the previous one's) must never be
+  // briefly shown under a new thread's title.
   useEffect(() => {
     threadIdRef.current = threadId;
-    dispatch({ type: "reset", threadId });
-    // A new thread starts from a clean slate: the previous chat's stale run says
-    // nothing about this one.
+    // A new thread starts from a clean slate: the previous chat's stale run,
+    // failure count and "load older" bookkeeping say nothing about this one.
     failuresRef.current = 0;
     lastOkRef.current = Date.now();
     setStale(false);
-    if (!threadId) return;
-    let cancelled = false;
-    const requestedAt = Date.now();
-    // Clean slate for the older-page state too: a stale error or a stray
-    // "there's more" from the thread just left must not bleed into this one.
     loadingOlderRef.current = false;
     setLoadingOlder(false);
     setOlderError(null);
+    pendingCatchUpRef.current = null;
+
+    if (!threadId) {
+      dispatch({ type: "reset", threadId: null });
+      return;
+    }
+
+    const cached = threadCache.get(threadId);
+    if (cached) {
+      // PAINT FROM CACHE, IN THIS COMMIT. `seedThread` checks the snapshot's
+      // own threadId against `threadId` itself (see threadStore.ts) — a
+      // second check on top of the cache already being keyed by threadId —
+      // so this can never seed thread B's transcript under thread A's id.
+      dispatch({ type: "seedThread", threadId, snapshot: cached.snapshot });
+      // Tell the branch tracker what we ALREADY believe, rather than leaving
+      // it at whatever the previous thread left behind (or `undefined`).
+      // This is what makes the catch-up sync's own branch-change detection
+      // (see `sync` above) hold for a cached thread exactly as it holds for a
+      // live one: if the branch this cache remembers is no longer current,
+      // `branchRef.current.id !== nextBranch` fires with `first === false`,
+      // and `sync` drops this state and re-reads from zero rather than
+      // merging a superseded branch's messages onto the current line. A
+      // cached line for a branch that moved on while this tab was away is
+      // invalidated by the exact same path a live branch change already
+      // takes, not a new one.
+      branchRef.current = { id: cached.branch.id, count: cached.branch.count,
+                             head: cached.branch.head, pending: false };
+      setBranch(cached.branch);
+      // `hydrated` goes true in this same commit — there is nothing left to
+      // wait on to show the transcript.
+      setHydratedId(threadId);
+      // Ask the effect below to run exactly one cursor sync once this seed
+      // has committed (see the STALE-WHILE-REVALIDATE comment above
+      // `POLL_MS` for why it cannot just be called here).
+      pendingCatchUpRef.current = threadId;
+      return;
+    }
+
+    // CACHE MISS: today's behaviour, unchanged.
+    dispatch({ type: "reset", threadId });
+    let cancelled = false;
+    const requestedAt = Date.now();
     (async () => {
       try {
         const page = await chatApi.threadEvents(threadId, 0, { tail: INITIAL_TAIL });
@@ -327,6 +396,42 @@ export function useThreadLog({
     })();
     return () => { cancelled = true; };
   }, [threadId]);
+
+  // THE CACHE CATCH-UP. Runs once, only after a cache-hit seed has actually
+  // committed (`state.threadId` catching up to `pendingCatchUpRef.current` IS
+  // that signal — it cannot be true before the seed's dispatch has landed).
+  // At that point `stateRef.current` is the seeded state, so `sync()` reads
+  // the CACHED cursor and issues one ordinary `after=<cursor>` request rather
+  // than a fresh tail read. See the STALE-WHILE-REVALIDATE comment above
+  // `POLL_MS`.
+  useEffect(() => {
+    if (pendingCatchUpRef.current && state.threadId === pendingCatchUpRef.current) {
+      pendingCatchUpRef.current = null;
+      void sync();
+    }
+  }, [state.threadId, sync]);
+
+  // KEEP THE CACHE CURRENT while this thread is the one on screen, so leaving
+  // and coming back finds it exactly as this tab left it — a run that
+  // finished, a message that arrived, a page of older history that was
+  // loaded. Keyed off `state.threadId`, never off the `threadId` prop: the
+  // two briefly disagree during a switch (`stateRef` only catches up at
+  // render time), and writing under the prop's id here would file the
+  // OUTGOING thread's fields under the INCOMING thread's id.
+  //
+  // Gated on `hydratedId` matching, not just `state.threadId` being set: the
+  // very first render of a cache-miss thread already has `state.threadId`
+  // set (by the `reset` dispatch) with `byId`/`order` still empty, because
+  // the tail fetch hasn't landed yet. Writing THAT to the cache would let a
+  // later visit "hit" on a snapshot that is actually blank — the seed would
+  // paint nothing, catch up a moment later, and in between show a chat that
+  // looks freshly emptied. Waiting for `hydratedId` means only a page this
+  // tab has actually confirmed loaded (successfully or with a settled error;
+  // see the mount effect's `finally`) is ever offered back to a future visit.
+  useEffect(() => {
+    if (!state.threadId || hydratedId !== state.threadId) return;
+    threadCache.set(state.threadId, snapshotThread(state), branch);
+  }, [state, branch, hydratedId]);
 
   // Back to the foreground, and a slow tick while visible. The transcript can
   // have moved on while this tab was hidden, and showing a stale log as though

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  committedEvents, initialThreadState, pendingSends, threadReducer,
+  committedEvents, initialThreadState, pendingSends, snapshotThread, threadReducer,
   type LogEvent, type ThreadState,
 } from "./threadStore";
 
@@ -447,5 +447,92 @@ describe("eventsReceived does not churn the committed log", () => {
     expect(s.order).not.toBe(seeded.order);
     expect(seeded.order).toEqual([1, 2]);          // the old array is untouched
     expect(committedEvents(s).map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+});
+
+// `seedThread` is how threadCache.ts reseeds a revisited thread instantly —
+// see useThreadLog.ts's STALE-WHILE-REVALIDATE comment. These pin the
+// invariants that make a cache a safe second owner of a copy of the state
+// rather than a new source of the reordering/wrong-thread bugs ADR 0018 and
+// this store's own header exist to remove.
+describe("seedThread", () => {
+  it("adopts the snapshot's committed log, cursor and run", () => {
+    const loaded = apply(initialThreadState("t1"),
+      { type: "eventsReceived", events: [ev(1), ev(2), ev(3)], lastSeq: 3, activeRun: null });
+    const snapshot = snapshotThread(loaded);
+    const s = threadReducer(initialThreadState(null),
+      { type: "seedThread", threadId: "t1", snapshot });
+    expect(s.threadId).toBe("t1");
+    expect(committedEvents(s).map((e) => e.seq)).toEqual([1, 2, 3]);
+    expect(s.cursor).toBe(3);
+  });
+
+  it("never adopts a snapshot recorded under a different thread's id", () => {
+    // Belt-and-braces on top of the cache already being keyed by threadId
+    // (threadCache.ts): even handed a mismatched pair directly, the reducer
+    // must not paint thread B's messages under thread A's id.
+    const snapshotForB = snapshotThread(apply(initialThreadState("B"),
+      { type: "eventsReceived", events: [ev(9)], lastSeq: 9, activeRun: null }));
+    const s = threadReducer(initialThreadState(null),
+      { type: "seedThread", threadId: "A", snapshot: snapshotForB });
+    expect(s.threadId).toBe("A");
+    expect(committedEvents(s)).toEqual([]);
+  });
+
+  it("never carries pending sends or the clock, from the snapshot or from what it replaces", () => {
+    // Pending sends have exactly one owner (useSendOutbox, restoring per
+    // thread from durable storage) and a cache seed must not become a second
+    // one — see the `seedThread` action's own comment in threadStore.ts.
+    const withPending = apply(initialThreadState("t1"),
+      { type: "sendStarted", clientId: "c1", text: "hi", ts: "t" });
+    expect(pendingSends(withPending)).toHaveLength(1);
+    const snapshot = snapshotThread(
+      apply(initialThreadState("t1"),
+        { type: "eventsReceived", events: [ev(1)], lastSeq: 1, activeRun: null }));
+    const s = threadReducer(withPending, { type: "seedThread", threadId: "t1", snapshot });
+    expect(pendingSends(s)).toEqual([]);
+    expect(s.clock).toBe(0);
+  });
+
+  it("a branch change drops a seeded snapshot outright rather than merging it", () => {
+    // Mirrors what `sync()` does on a real branch change: `reset`, then
+    // re-read from zero. A seeded thread must be exactly as droppable as a
+    // live one -- nothing about having come from the cache may make it stick
+    // around after the branch it belongs to is gone.
+    const snapshot = snapshotThread(apply(initialThreadState("t1"),
+      { type: "eventsReceived", events: [ev(1), ev(2)], lastSeq: 2, activeRun: null }));
+    const seeded = threadReducer(initialThreadState(null),
+      { type: "seedThread", threadId: "t1", snapshot });
+    expect(committedEvents(seeded)).toHaveLength(2);
+    const afterBranchChange = threadReducer(seeded, { type: "reset", threadId: "t1" });
+    expect(committedEvents(afterBranchChange)).toEqual([]);
+    expect(afterBranchChange.cursor).toBe(0);
+  });
+
+  it("a seeded thread plus one cursor sync matches a cold full load exactly", () => {
+    // The whole point of the cache: revalidating a seed with ONE small
+    // `after=<cursor>` page must land on the identical state a cold
+    // `after=0` tail read would have produced, not an approximation of it.
+    const allEvents = [ev(1), ev(2), ev(3), ev(4), ev(5)];
+
+    // Cold path: everything in one read, as a fresh thread open does today.
+    const cold = threadReducer(initialThreadState("t1"),
+      { type: "eventsReceived", events: allEvents, lastSeq: 5, activeRun: null, hasMore: false });
+
+    // Cached path: this tab saw events 1-3 on an earlier visit (captured as a
+    // snapshot), left, and comes back to find 4-5 have since landed. Seeding
+    // plus one cursor-bounded sync should catch it up to the same place.
+    const firstVisit = threadReducer(initialThreadState("t1"),
+      { type: "eventsReceived", events: allEvents.slice(0, 3), lastSeq: 3, activeRun: null });
+    const snapshot = snapshotThread(firstVisit);
+    const reseeded = threadReducer(initialThreadState(null),
+      { type: "seedThread", threadId: "t1", snapshot });
+    expect(reseeded.cursor).toBe(3);
+    const caughtUp = threadReducer(reseeded,
+      { type: "eventsReceived", events: allEvents.slice(3), lastSeq: 5, activeRun: null });
+
+    expect(committedEvents(caughtUp)).toEqual(committedEvents(cold));
+    expect(caughtUp.cursor).toBe(cold.cursor);
+    expect(caughtUp.order).toEqual(cold.order);
   });
 });

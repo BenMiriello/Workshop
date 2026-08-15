@@ -217,7 +217,47 @@ export type ThreadAction =
   // re-attach, so this fires on the ordinary long turn, not an exotic one.
   | { type: "runReattached"; runId: string }
   | { type: "runContext"; runId: string; tokens: number }
-  | { type: "runCommitted"; runId: string };
+  | { type: "runCommitted"; runId: string }
+  // Adopt a PREVIOUSLY-HELD snapshot of this same thread in one commit, so a
+  // revisited thread paints instantly instead of blank-then-loaded. See
+  // threadCache.ts for what holds the snapshot between visits and why.
+  //
+  // Deliberately narrower than `eventsReceived`: it carries only the fields a
+  // cache can honestly know. `pending`/`clock` are excluded on purpose —
+  // useSendOutbox is the ONE owner of unacknowledged sends (see its header
+  // comment) and restores them itself, per thread, from durable storage. A
+  // cache that also seeded `pending` would be a second owner of the same
+  // question, which is exactly the class of bug this store exists to remove.
+  | { type: "seedThread"; threadId: string; snapshot: ThreadSnapshot };
+
+/** The subset of `ThreadState` a cache can honestly reseed: the committed log,
+ *  the cursor it was read up to, the live run, the server's queue and the
+ *  context cut. NOT `pending` or `clock` — see `seedThread` above. */
+export type ThreadSnapshot = Pick<
+  ThreadState,
+  "threadId" | "byId" | "order" | "idBySeq" | "cursor" | "cut" | "activeRun"
+  | "queued" | "queueHeld" | "queueError" | "hasMoreOlder"
+>;
+
+/** Lift the cacheable half of a thread's state out, by reference. Nothing here
+ *  is cloned: the reducer already treats every one of these fields as
+ *  immutable (a new array/object only when it actually changed), so holding
+ *  the same references in a side cache is free and safe. */
+export function snapshotThread(state: ThreadState): ThreadSnapshot {
+  return {
+    threadId: state.threadId,
+    byId: state.byId,
+    order: state.order,
+    idBySeq: state.idBySeq,
+    cursor: state.cursor,
+    cut: state.cut,
+    activeRun: state.activeRun,
+    queued: state.queued,
+    queueHeld: state.queueHeld,
+    queueError: state.queueError,
+    hasMoreOlder: state.hasMoreOlder,
+  };
+}
 
 export function initialThreadState(threadId: string | null = null): ThreadState {
   return {
@@ -638,6 +678,16 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
           localStartedAt: Date.now(),
         },
       };
+    }
+
+    case "seedThread": {
+      // A SNAPSHOT MAY NEVER BE ADOPTED UNDER A DIFFERENT THREAD'S ID. The
+      // cache is keyed on threadId already (see threadCache.ts), so this is
+      // belt-and-braces against a caller passing the wrong pair; on a
+      // mismatch this is just an ordinary reset; no data from the mismatched
+      // snapshot is ever assigned to `state`.
+      if (action.snapshot.threadId !== action.threadId) return initialThreadState(action.threadId);
+      return { ...initialThreadState(action.threadId), ...action.snapshot };
     }
 
     case "runCommitted": {
