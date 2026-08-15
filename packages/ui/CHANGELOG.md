@@ -12,6 +12,46 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.8 — 2026-08-14 — a filter row, a board, a quiet tag, and a caret that stops running away
+
+**Compatible (six names added, one optional prop, one CSS fix).**
+
+New: `FilterBar` + `FilterChip` (search, one removable chip per active filter,
+an add affordance, actions pinned right), and `Board` + `BoardColumn` +
+`BoardCard` (fixed-width lanes in a horizontal scroller). Also `MenuCheckItem`,
+a `role="menuitemcheckbox"` row: a menu closes itself when a `[role="menuitem"]`
+is activated, because choosing one of a set of actions ends that interaction,
+and ticking one of six statuses does not. Arrow keys reach both roles. Both come from the
+tickets redesign, and both are built generic because the shapes recur: the
+filter row is meant to replace the ad-hoc `Select` rows in Work, Memory and the
+runs feed, and a board is a board.
+
+`FilterBar` is a LAYOUT primitive, not a filter engine. What is shared between
+those three pages is the row (how it wraps, which child absorbs slack, what a
+chip looks like); what is not shared is where the options come from and what
+picking one does. Owning that here would mean the kit learning what a scope is.
+
+`Tag` takes `variant="neutral"`: hue in the dot only, pill neutral. For rows of
+tags, where six tinted pills read as six competing signals while saying no more
+than six dots do. The default is unchanged, so no caller moves.
+
+**The fix.** `.ws-select` paints its chevron with `background-image` +
+`background-position`, and every state rule set the `background` SHORTHAND,
+which resets the longhands it omits. `:hover` therefore set
+`background-image: none; background-position: 0% 0%` — and the transition
+named the shorthand too, so the reset ANIMATED: the caret slid from the right
+edge toward the left, vanished halfway (an image is a discrete animation type,
+so it flips at 50%), and slid back on un-hover. `:focus` did the same, which is
+why the caret stayed gone the whole time a select was open, and `[disabled]`
+deleted it outright.
+
+Reported 2026-08-14: "any time there's a dropdown it'll transform to the left
+and then back to the right in a really weird way and it'll disappear." Every
+state rule now sets `background-color` and the transition names the longhand.
+Pinned in `frontend/src/styles.test.ts`, which parses the real sheet and fails
+on a `background:` shorthand or a bare `background` transition in any rule whose
+selector mentions `.ws-select`.
+
 ## 0.5.7 — 2026-08-14 — two surfaces, because one token had two opposite jobs
 
 **Compatible (one token added, one token's value changed).** New `--bg-sunken`,

@@ -163,8 +163,11 @@ export function Menu({
       }
       if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
       viaKeyboard.current = true;
+      // Both item roles: a checkable row is still a row you arrow onto. It is
+      // only the CLOSE-on-activation gate below that distinguishes them.
       const items = Array.from(
-        listRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
+        listRef.current?.querySelectorAll<HTMLElement>(
+          '[role="menuitem"], [role="menuitemcheckbox"]') ?? [],
       );
       if (!items.length) return;
       e.preventDefault();
@@ -287,6 +290,50 @@ export function MenuItem({
       )}
       {icon && <span className="ws-menu__icon" aria-hidden>{icon}</span>}
       <span className="ws-menu__label">{children}</span>
+    </button>
+  );
+}
+
+// A row you TOGGLE rather than choose: one value of a multi-value filter.
+//
+// `role="menuitemcheckbox"`, which is not just the correct ARIA — it is what
+// keeps the menu OPEN. The list closes itself when a click lands inside a
+// `[role="menuitem"]`, because choosing one of a set of actions is the end of
+// that interaction. Ticking one of six statuses is not: closing after each tick
+// would make picking three filters cost three round trips to the trigger.
+// Arrow keys still reach these rows (see the keyboard handler above).
+export function MenuCheckItem({
+  children,
+  checked,
+  onToggle,
+  count,
+  disabled,
+  title,
+}: {
+  children: ReactNode;
+  checked: boolean;
+  onToggle: () => void;
+  /** A trailing count, for "how many tickets carry this tag". */
+  count?: number;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      aria-disabled={disabled || undefined}
+      disabled={disabled}
+      className={cx("ws-menu__item", "ws-menu__item--check", checked && "is-checked")}
+      title={title}
+      onClick={onToggle}
+    >
+      <span className="ws-menu__check" aria-hidden>
+        {checked && <Check size={14} />}
+      </span>
+      <span className="ws-menu__label">{children}</span>
+      {count != null && <span className="ws-menu__count">{count}</span>}
     </button>
   );
 }

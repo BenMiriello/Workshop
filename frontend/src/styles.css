@@ -212,12 +212,16 @@ label {
    frontend/CLAUDE.md). It no longer REDEFINES a field — it borrows the design
    system's field surface, so there is one description of what a field looks
    like instead of two that drift. New code uses Input/Select from src/ui. */
+/* `background-color`, never the `background` shorthand: the shorthand resets
+   the caret that `select.num-in` below paints with background-image. Same bug
+   as the kit's `.ws-select`, written up at the top of that block in
+   packages/ui/src/styles/components.css. */
 .num-in {
   width: 100%; padding: 0.4rem 0.6rem; font-family: inherit; font-size: 0.9rem;
-  color: var(--fg); background: var(--field-bg);
+  color: var(--fg); background-color: var(--field-bg);
   border: 1px solid transparent; border-radius: var(--radius-md);
 }
-.num-in:hover { background: var(--bg-inset); }
+.num-in:hover { background-color: var(--bg-inset); }
 .num-in:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 /* Real select styling: drop the native OS chrome for a custom caret. */
 select.num-in {

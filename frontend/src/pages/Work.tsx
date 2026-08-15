@@ -1,147 +1,140 @@
-// The Tickets list. ONE surface: a filtered list of tickets, and nothing else.
+// The Tickets surface. ONE filtered set of tickets, drawn three ways.
 //
-// What this page used to be, and why it is not any more (operator direction,
-// 2026-08-12): a PageHeader, a queue-runner start/stop banner, a four-tab strip
-// (Open / Runs / Review / Inbox), a nine-control filter row, a drafts-and-parked
-// strip, and four-band cards. Fifteen interactive things above the first ticket.
+// What this page was before, and why (operator direction 2026-08-12): four tabs
+// and nine controls collapsed to one list and four. That collapse was right and
+// is not being undone. What the 2026-08-14 redesign adds on top of it is SHAPE:
+// the same one list, as a board when you are asking "what is where", as a table
+// when you are comparing rows, and as a grouped list on a phone. The controls
+// stay four in substance (search, filter, sort, new) and become chips, so what
+// is narrowing the list is visible rather than hidden inside three selects.
 //
-// The four tabs were not four kinds of thing:
-//   Runs   — what a ticket DID. It belongs on the ticket, the way a CI run hangs
-//            off a PR. A feed of runs detached from their tickets answers no
-//            question. /runs/:id survives as the detail page.
-//   Review — tickets whose run stopped. Measured against the live store: the
-//            `awaiting` field it reads is empty on 179 of 179 tickets, so the
-//            five-button answer flow had never once rendered a real block. The
-//            answer UI moved onto the ticket page, where the question is.
-//   Inbox  — the same set for a single operator, plus demo seeds from July.
-//
-// Every tracker surveyed (Linear, GitHub, Shortcut, Jira, Asana) has exactly two
-// surfaces for issues: a filtered list and an issue page. What we called tabs,
-// they call filters on the one list.
-//
-// The controls are four, which is what Linear's issue list has: search, status,
-// scope, sort. Grouping, the board, the ready checkbox and the backlog strip are
-// gone. Grouping by status duplicates the status filter; the board was four
-// lanes nothing drags between (status changes come from runs, not from the
-// operator); the strip was a filter wearing a banner.
+// The board came back deliberately. It was deleted in August as "a surface you
+// drag work across, which nothing here does" — and the cards still do not drag,
+// because status is changed on the ticket where the consequences are. What a
+// board is FOR here is the read: six lanes answering "what is stuck, what is
+// waiting, what is in flight" in one glance, which a single-column list sorted
+// by date cannot do at any length.
 //
 // A ticket IS a task; every identifier stays `task` (ADR 0001). The route stays
 // /work so existing links keep resolving.
-import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import {
-  Button,
-  Card,
-  PageHeader,
-  Row,
-  Stack,
-  Select,
-  Input,
-  Field,
+  Button, Card, Field, Input, Modal, Row, Select, Skeleton, Stack, StateBlock,
   Textarea,
-  Modal,
-  StateBlock,
-  Skeleton,
-  StatusDot,
 } from "@workshop/ui";
+import { type Task, cleanTitle, scopeLabel, ticketHref } from "../lib/tasks";
 import {
-  type Task,
-  type TaskSort,
-  TASK_SORTS,
-  taskStatusKind,
-  taskStatusLabel,
-  title as taskTitle,
-  cleanTitle,
-  scopeLabel,
-  ticketHref,
-  readinessLine,
-  readinessTone,
-} from "../lib/tasks";
-import {
-  DEFAULT_STATUS_FILTER,
-  STATUS_FILTERS,
-  isStatusFilter,
-  statusFilterQuery,
-  type StatusFilter,
-} from "../lib/ticketGroups";
+  apiQuery, defaultFilters, isNarrowed, parseFilters, parseSort, parseView,
+  writeParams, type TicketFilters, type TicketSort, type TicketView,
+} from "../lib/ticketFilters";
 import { orderScopes } from "../lib/devMode";
-import { ALL_SCOPES, nextWorkParams, parseWorkScope, parseWorkStatus } from "../lib/workParams";
+import { useIsWide } from "../lib/useMediaQuery";
+import { TicketBoard } from "../components/tickets/TicketBoard";
+import { TicketTable } from "../components/tickets/TicketTable";
+import { TicketList } from "../components/tickets/TicketList";
+import {
+  TicketFilterBar, TicketFilterCompact, TicketFilterSheet, ViewSwitcher,
+  type LabelCount,
+} from "../components/tickets/TicketFilters";
 
 // One page of tickets. The endpoint sorts and pages, so this is a real page size.
 const PAGE_SIZE = 50;
 
-type TasksResp = { tasks: Task[]; count: number; total: number };
+// A board is read as a whole, so paging it row by row makes no sense: a lane
+// that is short because of a page boundary looks like a lane that is short.
+// Ask for enough to draw the whole board and say so when it is still cut off.
+const BOARD_SIZE = 300;
 
-// Relative time, the unit every tracker's list column uses. An absolute
-// timestamp in a list is precision nobody reads; the ticket page has the full one.
-function ago(iso?: string | null): string {
-  if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return "";
-  const secs = Math.max(0, (Date.now() - t) / 1000);
-  if (secs < 60) return "now";
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo`;
-  return `${Math.floor(months / 12)}y`;
-}
+type TasksResp = { tasks: Task[]; count: number; total: number };
 
 export default function Work() {
   const nav = useNavigate();
-  // `?scope=` DRIVES the filter rather than seeding it once, so a /work?scope=X
-  // link pressed while already on /work changes the list and not just the URL.
   const [search, setSearch] = useSearchParams();
-  const scope = parseWorkScope(search.get("scope"));
-  const setScope = (v: string) =>
-    setSearch(nextWorkParams(search, { scope: v }), { replace: true });
+  const wide = useIsWide();
+
+  // The URL IS the filter state (frontend/CLAUDE.md: view, scope and tab belong
+  // in the URL), so a filtered list is a link and the back button walks real
+  // states. Everything below reads from it rather than mirroring it.
+  const urlView = parseView(search);
+  // Below the board's width there is one body, so the stored view still decides
+  // what a wide window would show while the phone shows the list either way.
+  const view: TicketView = urlView;
+  const sort = parseSort(search);
+  const urlFilters = parseFilters(search, view);
+
+  // The one piece of filter state that is NOT read straight from the URL.
+  // Typing must not push a history entry per keystroke or refetch per letter.
+  const [qDraft, setQDraft] = useState(urlFilters.q);
+  useEffect(() => { setQDraft(urlFilters.q); }, [urlFilters.q]);
+  // Deps are PRIMITIVES, and the params are re-read inside the updater. Both
+  // matter: `urlFilters` is a new object on every render, so depending on it
+  // would tear down and restart the timer whenever anything else re-rendered
+  // (a fetch resolving, a poll landing), and a search typed while the list was
+  // loading could keep being deferred. Reading `prev` inside also means a
+  // filter committed during the 250ms is not overwritten by a stale copy.
+  useEffect(() => {
+    if (qDraft === urlFilters.q) return;
+    const t = setTimeout(() => {
+      setSearch((prev) => {
+        const v = parseView(prev);
+        return writeParams({ ...parseFilters(prev, v), q: qDraft }, parseSort(prev), v, prev);
+      }, { replace: true });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [qDraft, urlFilters.q, setSearch]);
+
+  // What the controls show: the URL, with the letters typed since.
+  const filters = useMemo<TicketFilters>(
+    () => ({ ...urlFilters, q: qDraft }), [urlFilters, qDraft]);
 
   const [data, setData] = useState<TasksResp | null>(null);
   const [scopes, setScopes] = useState<string[]>([]);
+  const [labels, setLabels] = useState<LabelCount[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  // ACTIVE, not "all". The list is asked "what is in flight", and answering with
-  // 179 rows including every cancelled ticket from July is not an answer.
-  // The status filter lives in the URL so it can be linked to. An unrecognised
-  // value falls back to the default rather than showing an empty list.
-  const rawStatus = parseWorkStatus(search.get("status"));
-  const status: StatusFilter = isStatusFilter(rawStatus) ? rawStatus : DEFAULT_STATUS_FILTER;
-  const setStatus = (v: StatusFilter) =>
-    setSearch(nextWorkParams(search, { status: v === DEFAULT_STATUS_FILTER ? null : v }), { replace: true });
-  const [sort, setSort] = useState<TaskSort>("updated");
-  const [query, setQuery] = useState("");
-  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [creating, setCreating] = useState(false);
+  const [sheet, setSheet] = useState(false);
 
-  // Typing must not fire a cross-scope scan per keystroke.
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedQuery(query.trim()), 250);
-    return () => clearTimeout(t);
-  }, [query]);
+  const pageSize = view === "board" ? BOARD_SIZE : PAGE_SIZE;
+
+  const writeUrl = useCallback(
+    (f: TicketFilters, s: TicketSort, v: TicketView) =>
+      setSearch((prev) => writeParams(f, s, v, prev), { replace: true }),
+    [setSearch]);
+
+  const applyFilters = useCallback((next: TicketFilters) => {
+    // A change to the text is the debounce's business; anything else commits
+    // now, because a chip is a click and a click must land immediately.
+    setQDraft(next.q);
+    if (next.q === filters.q) writeUrl({ ...next, q: urlFilters.q }, sort, view);
+  }, [filters.q, urlFilters.q, sort, view, writeUrl]);
+
+  const applySort = useCallback((next: TicketSort) =>
+    writeUrl(urlFilters, next, view), [urlFilters, view, writeUrl]);
+
+  // Switching view re-reads the default status set, because each view's default
+  // is the set it can actually draw. An EXPLICIT filter is carried across
+  // untouched: it was a decision, and a view switch is not a reason to undo it.
+  const applyView = useCallback((next: TicketView) => {
+    const p = writeParams(urlFilters, sort, view, search);
+    const keptStatus = p.get("status");
+    const carried = keptStatus === null
+      ? defaultFilters(next)
+      : urlFilters;
+    writeUrl({ ...carried, q: urlFilters.q }, sort, next);
+  }, [urlFilters, sort, view, search, writeUrl]);
 
   // A new filter starts at the first page again.
-  useEffect(() => {
-    setLimit(PAGE_SIZE);
-  }, [status, scope, debouncedQuery, sort]);
-
-  const { status: serverStatus } = statusFilterQuery(status);
+  useEffect(() => { setLimit(pageSize); }, [search, pageSize]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      const params = new URLSearchParams();
-      if (serverStatus) params.set("status", serverStatus);
-      if (scope !== ALL_SCOPES) params.set("scope", scope);
-      if (debouncedQuery) params.set("q", debouncedQuery);
-      params.set("sort", sort);
-      params.set("limit", String(limit));
+      const params = apiQuery(urlFilters, sort, limit);
       const r = await fetch(`/api/tasks?${params.toString()}`);
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setData(await r.json());
@@ -150,11 +143,11 @@ export default function Work() {
     } finally {
       setLoading(false);
     }
-  }, [serverStatus, scope, debouncedQuery, sort, limit]);
+    // urlFilters is rebuilt each render; its VALUE is what matters here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, limit]);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
 
   useEffect(() => {
     fetch("/api/tasks/scopes")
@@ -163,56 +156,26 @@ export default function Work() {
       .catch(() => setScopes([]));
   }, []);
 
+  // The tag vocabulary, scoped with the list: a label is free text with no
+  // registry, so the tickets themselves are the only source for "what tags
+  // exist", and the menu must offer the ones this list can actually match.
+  useEffect(() => {
+    const p = urlFilters.scope ? `?scope=${encodeURIComponent(urlFilters.scope)}` : "";
+    fetch(`/api/tasks/labels${p}`)
+      .then((r) => (r.ok ? r.json() : { labels: [] }))
+      .then((j) => setLabels(j.labels ?? []))
+      .catch(() => setLabels([]));
+  }, [urlFilters.scope]);
+
   const rows = data?.tasks ?? [];
   const total = data?.total ?? 0;
-  const filtered = status !== DEFAULT_STATUS_FILTER || scope !== ALL_SCOPES || !!debouncedQuery;
+  const narrowed = isNarrowed(urlFilters, view);
+  // The board draws its own scope-spanning rows; the table only shows the scope
+  // column when the list actually spans more than one.
+  const showScope = !urlFilters.scope;
 
-  // Bare controls, no per-control label. Each `Field label inline` is its own
-  // `minmax(120px, 0.4fr) 1fr` grid, so four of them could not share a line at
-  // any phone width and the mobile rule stacked every one into a label row plus
-  // a control row: eight rows of chrome above the first ticket. A select shows
-  // its value, which is the label. New ticket moved into the page header.
-  const controls = (
-    <div className="ws-tickets-bar">
-      <Input
-        className="ws-tickets-bar__search"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search tickets"
-        aria-label="Search tickets"
-      />
-      <div className="ws-tickets-bar__filters">
-        <Select
-          value={status}
-          onChange={(e) => setStatus(e.target.value as StatusFilter)}
-          aria-label="Filter by status"
-        >
-          {STATUS_FILTERS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </Select>
-        <Select
-          value={scope}
-          onChange={(e) => setScope(e.target.value)}
-          aria-label="Filter by scope"
-        >
-          <option value={ALL_SCOPES}>All scopes</option>
-          {scopes.map((s) => (
-            <option key={s} value={s}>{scopeLabel(s)}</option>
-          ))}
-        </Select>
-        <Select
-          value={sort}
-          onChange={(e) => setSort(e.target.value as TaskSort)}
-          aria-label="Sort tickets"
-        >
-          {TASK_SORTS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </Select>
-      </div>
-    </div>
-  );
+  const clearAll = useCallback(
+    () => writeUrl(defaultFilters(view), sort, view), [view, sort, writeUrl]);
 
   let body: React.ReactNode;
   if (err) {
@@ -235,18 +198,12 @@ export default function Work() {
   } else if (rows.length === 0) {
     body = (
       <StateBlock
-        title={filtered ? "No tickets match these filters" : "No tickets yet"}
-        hint={filtered
+        title={narrowed ? "No tickets match these filters" : "No tickets yet"}
+        hint={narrowed
           ? "Widen the status or scope filter, or clear the search."
           : "File one with New ticket, or from a chat."}
-        action={filtered
-          ? (
-            <Button size="sm" onClick={() => {
-              setStatus(DEFAULT_STATUS_FILTER);
-              setScope(ALL_SCOPES);
-              setQuery("");
-            }}>Clear filters</Button>
-          )
+        action={narrowed
+          ? <Button size="sm" onClick={clearAll}>Clear filters</Button>
           : (
             <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
               <Plus aria-hidden /> New ticket
@@ -254,120 +211,102 @@ export default function Work() {
           )}
       />
     );
+  } else if (!wide) {
+    body = <TicketList tasks={rows} />;
+  } else if (view === "board") {
+    body = <TicketBoard tasks={rows} />;
   } else {
-    body = (
-      <>
-        <Card pad0>
-          <ul className="ws-list">
-            {rows.map((t) => {
-              // What this ticket does not say, as ONE line. In a row it is the
-              // dot's `title` and nothing else: a sentence per row would wreck
-              // the rhythm the list is built on. The full line is on the ticket
-              // page and on the card that files one.
-              // Only while the ticket is still work. Readiness is advice about
-              // handing it to a worker; on a done, cancelled or parked row it
-              // is a warn dot on history, and 74% of the store fails the
-              // acceptance check.
-              const openRow = !["done", "cancelled", "parked"].includes(t.status ?? "");
-              const notReady = openRow ? readinessLine(t.readiness?.missing) : "";
-              return (
-                <li key={`${t.scope}:${t.id}`}>
-                  {/* A link, not a row with an onClick: it opens in a new tab on
-                      a middle click, it is reachable by keyboard, and a phone
-                      gives it the native tap treatment. */}
-                  <Link className="ws-listrow" to={ticketHref(t.scope ?? "workshop", t.id)}>
-                    <span
-                      className="ws-listrow__mark"
-                      title={taskStatusLabel(t.status)}
-                      aria-label={taskStatusLabel(t.status)}
-                    >
-                      <StatusDot status={taskStatusKind(t.status)}>{null}</StatusDot>
-                    </span>
-                    <span className="ws-listrow__title" title={taskTitle(t)}>
-                      {taskTitle(t) || "(untitled)"}
-                    </span>
-                    <span className="ws-listrow__meta">
-                      {/* The state word, as plain text. The dot alone told you
-                          which of five colours it was and nothing more, and
-                          "which of blocked / to do / done is this" is exactly
-                          what the list is read for. A word, not a second chip:
-                          the dot beside the title already carries the colour. */}
-                      {/* The readiness mark rides INSIDE the state word's span,
-                          not beside it as a second meta child. Every `> * + *`
-                          in this line takes a middot separator, so a sibling
-                          rendered "todo · ·● · workshop" — a middot immediately
-                          left of a dot. It is a mark ON the state, not another
-                          fact, so this is also what it means.
-
-                          `title` carries the sentence for the pointer; the
-                          aria-label is SHORT on purpose. The full line as an
-                          aria-label appends 60+ characters of prose to the row
-                          link's accessible name on every unready row. The name
-                          says a gap exists; the page says what it is. */}
-                      <span>
-                        {taskStatusLabel(t.status)}
-                        {notReady && (
-                          <span
-                            className="ws-listrow__mark"
-                            style={{ marginLeft: "var(--space-1)" }}
-                            title={notReady}
-                            aria-label={readinessTone(t.readiness?.missing) === "error"
-                              ? "cannot run yet" : "not fully specified"}
-                          >
-                            <StatusDot status={readinessTone(t.readiness?.missing) === "error"
-                              ? "danger" : "warn"}>{null}</StatusDot>
-                          </span>
-                        )}
-                      </span>
-                      {/* Only when the list spans scopes. Filtered to one, the
-                          column repeats the filter on every row. */}
-                      {scope === ALL_SCOPES && (
-                        <span className="ws-listrow__scope">{scopeLabel(t.scope)}</span>
-                      )}
-                      <span className="ws-listrow__time" title={t.updated}>{ago(t.updated)}</span>
-                    </span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        </Card>
-        {rows.length < total && (
-          <Row>
-            <Button
-              size="sm"
-              loading={loading}
-              onClick={() => setLimit((n) => n + PAGE_SIZE)}
-            >
-              Load more ({rows.length} of {total})
-            </Button>
-          </Row>
-        )}
-      </>
-    );
+    body = <TicketTable tasks={rows} showScope={showScope} />;
   }
 
+  const more = rows.length < total;
+
   return (
-    <div>
-      {/* No `sub`. On a phone the header already wraps the action below the
-          title, and a subtitle restating what a ticket list is added a third
-          row of chrome above the first ticket. */}
-      <PageHeader
-        title="Tickets"
-        actions={
-          <Button size="sm" variant="primary" onClick={() => setCreating(true)}>
+    <div className="ws-tickets">
+      {/* The header band: what this list is, how many, and how to look at it.
+          One band, not a PageHeader plus a separate control row: the count and
+          the switcher are about the list below them, so they belong to it. */}
+      <header className="ws-tickets__head">
+        <div className="ws-tickets__headrow">
+          <div className="ws-tickets__ident">
+            <div className="ws-tickets__eyebrow">
+              Work{urlFilters.scope ? ` · ${scopeLabel(urlFilters.scope)}` : ""}
+            </div>
+            <div className="ws-tickets__titlerow">
+              <h1 className="ws-tickets__title">Tickets</h1>
+              {data && <span className="ws-tickets__count">{total}</span>}
+            </div>
+          </div>
+          {/* Below 900px there is one body whatever the switcher says, so
+              showing it there would be a control with no effect. */}
+          {wide && <ViewSwitcher view={view} onView={applyView} />}
+        </div>
+
+        {wide ? (
+          <TicketFilterBar
+            filters={filters}
+            sort={sort}
+            view={view}
+            scopes={scopes}
+            labels={labels}
+            count={total}
+            onFilters={applyFilters}
+            onSort={applySort}
+            onNew={() => setCreating(true)}
+          />
+        ) : (
+          <TicketFilterCompact
+            filters={filters}
+            sort={sort}
+            view={view}
+            onOpen={() => setSheet(true)}
+            onFilters={applyFilters}
+          />
+        )}
+      </header>
+
+      <div className="ws-tickets__body">{body}</div>
+
+      {more && (
+        <Row>
+          <Button
+            size="sm"
+            loading={loading}
+            onClick={() => setLimit((n) => n + pageSize)}
+          >
+            Load more ({rows.length} of {total})
+          </Button>
+        </Row>
+      )}
+
+      {/* A phone reaches New ticket here rather than in the bar: the bar is two
+          controls wide there, and the primary action of the screen belongs at
+          the thumb. */}
+      {!wide && (
+        <div className="ws-tickets__foot">
+          <Button block variant="primary" onClick={() => setCreating(true)}>
             <Plus aria-hidden /> New ticket
           </Button>
-        }
+        </div>
+      )}
+
+      <TicketFilterSheet
+        open={sheet}
+        onClose={() => setSheet(false)}
+        filters={filters}
+        sort={sort}
+        scopes={scopes}
+        labels={labels}
+        count={total}
+        onFilters={applyFilters}
+        onSort={applySort}
+        onReset={clearAll}
       />
-      <Stack>
-        {controls}
-        {body}
-      </Stack>
+
       {creating && (
         <CreateTicket
           scopes={scopes}
-          initialScope={scope === ALL_SCOPES ? "workshop" : scope}
+          initialScope={urlFilters.scope ?? "workshop"}
           onClose={() => setCreating(false)}
           onCreated={(t) => {
             setCreating(false);

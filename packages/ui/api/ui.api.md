@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.5.7
+Version: 0.5.8
 
 ## @workshop/ui
 
@@ -21,6 +21,9 @@ Source: `src/index.ts`
 - applyPalette
 - applyTheme
 - Badge
+- Board
+- BoardCard
+- BoardColumn
 - Button
 - Card
 - CardGrid
@@ -39,11 +42,14 @@ Source: `src/index.ts`
 - DetailLayout
 - Divider
 - Field
+- FilterBar
+- FilterChip
 - getStoredPalette
 - getStoredTheme
 - Input
 - LEGACY_PALETTES
 - Menu
+- MenuCheckItem
 - MenuItem
 - MenuLabel
 - MenuSeparator

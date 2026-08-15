@@ -259,6 +259,8 @@ async def list_all(
     status: str | None = None,
     state_type: str | None = None,
     scope: str | None = None,
+    labels: str | None = None,
+    effort: str | None = None,
     include_done: bool = True,
     q: str | None = None,
     ready: bool | None = None,
@@ -272,11 +274,20 @@ async def list_all(
     Filters: `status` (comma-separated, from the eight task statuses),
     `state_type` (comma-separated, from tasks.STATE_TYPES — the coarse category
     the UI's Active / Backlog / Done views actually mean, expanded to statuses
-    here), `scope` (restrict to a single scope key), `q` (case-insensitive
-    substring of title or body), `ready` (only what the scheduler could pick up,
-    or only what it could not). Ordering: `sort` (one of tasks.SORT_KEYS,
-    including `queue` = the scheduler's own order) + `desc`. Paging:
-    `limit`/`offset`.
+    here), `scope` (restrict to a single scope key), `labels` (comma-separated,
+    a row matches if it carries ANY of them), `effort` (comma-separated, from
+    tasks.EFFORTS), `q` (case-insensitive substring of title or body), `ready`
+    (only what the scheduler could pick up, or only what it could not).
+    Ordering: `sort` (one of tasks.SORT_KEYS, including `queue` = the
+    scheduler's own order) + `desc`. Paging: `limit`/`offset`.
+
+    `labels` and `effort` exist so the list page's filter chips push DOWN to the
+    server like status and scope already did. A chip narrowed in the browser
+    reports a `total` for the unnarrowed set and pages against it, so the count
+    beside the title contradicts the rows under it and page 2 skips matches.
+    `labels` is validated against nothing because a label is free text: an
+    unknown one is a legitimate query that matches no rows, unlike an unknown
+    status, which is a typo.
 
     `status` and `state_type` are independent and compose with AND, like every
     other filter here: sending both narrows to their intersection rather than
@@ -296,6 +307,9 @@ async def list_all(
     """
     want_status = _csv_filter(status, tasks.STATUSES, "status")
     want_type = _csv_filter(state_type, tasks.STATE_TYPES, "state_type")
+    want_effort = _csv_filter(effort, tasks.EFFORTS, "effort")
+    # Free text, so it is split but not validated (see the docstring).
+    want_labels = {v.strip() for v in (labels or "").split(",") if v.strip()} or None
     out: list[dict] = []
     scopes = 0
     lat_cache: dict[str, str | None] = {}
@@ -329,6 +343,13 @@ async def list_all(
                 continue
             if want_type is not None and \
                     tasks.state_type(t.get("status")) not in want_type:
+                continue
+            if want_effort is not None and t.get("effort") not in want_effort:
+                continue
+            # ANY, not ALL: picking two tags means "either of these", which is
+            # what a multi-value chip reads as everywhere else in the bar.
+            if want_labels is not None and \
+                    not (want_labels & {str(x) for x in (t.get("labels") or [])}):
                 continue
             if needle:
                 hay = f"{t.get('title') or ''}\n{t.get('body') or ''}".casefold()
@@ -380,6 +401,35 @@ async def list_scopes() -> dict:
     additive: `scopes` is unchanged."""
     keys = [skey for skey, _ in _scope_roots()]
     return {"scopes": keys, "pickup": {k: scope_pickup(k) for k in keys}}
+
+
+@router.get("/labels")
+async def list_labels(scope: str | None = None) -> dict:
+    """Every label in use, with how many tickets carry it.
+
+    The list page's tag filter needs the vocabulary to offer, and a label is
+    free text with no registry: the only source of truth for "what tags exist"
+    is the tickets themselves. Counts come with it so the menu can order by
+    what is actually used rather than alphabetically, and so a tag on one
+    ticket is visibly that.
+
+    Scoped when `scope` is given, so the menu on a filtered list offers the
+    tags that list can actually match."""
+    counts: dict[str, int] = {}
+    for skey, root in _scope_roots():
+        if scope and skey != scope:
+            continue
+        try:
+            items = tasks.list_tasks(root)
+        except Exception:
+            continue
+        for t in items:
+            for raw in (t.get("labels") or []):
+                key = str(raw).strip()
+                if key:
+                    counts[key] = counts.get(key, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return {"labels": [{"label": k, "count": n} for k, n in ordered]}
 
 
 # ---- Autonomy scopes: REMOVED ----------------------------------------------

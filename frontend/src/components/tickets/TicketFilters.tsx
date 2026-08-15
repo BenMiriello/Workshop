@@ -1,0 +1,420 @@
+// The filter row and its menus, and the phone's filter sheet. Both drive the
+// same `TicketFilters` value; neither owns any filtering logic of its own (that
+// is lib/ticketFilters.ts, which is pure and tested).
+//
+// The "+ Filter" menu is ONE popover grouped by field rather than a field list
+// that opens a second popover per field. Two levels of popover is a fragile
+// shape (two placements to flip, two dismiss rules, a submenu that has to
+// survive the pointer leaving it) and it costs an extra interaction on the most
+// common action there is here, which is ticking two statuses.
+import { Plus, Search, SlidersHorizontal, ArrowDown, ArrowUp } from "lucide-react";
+import {
+  Button, FilterBar, FilterChip, Menu, MenuCheckItem, MenuItem, MenuLabel, Modal,
+  Segmented, StatusDot,
+} from "@workshop/ui";
+import {
+  TASK_STATUSES, TASK_SORTS, scopeLabel, taskStatusKind, taskStatusLabel,
+  taskStatusTitle, type TaskSort,
+} from "../../lib/tasks";
+import {
+  chipsFor, clearField, toggleValue,
+  type TicketFilters as Filters, type TicketSort, type TicketView,
+} from "../../lib/ticketFilters";
+
+const EFFORTS = ["quick", "standard", "deep"];
+
+export type LabelCount = { label: string; count: number };
+
+type Props = {
+  filters: Filters;
+  sort: TicketSort;
+  view: TicketView;
+  scopes: string[];
+  labels: LabelCount[];
+  count: number;
+  onFilters: (next: Filters) => void;
+  onSort: (next: TicketSort) => void;
+  onNew: () => void;
+};
+
+// The field menu, shared by the desktop bar and (as a flat body) by the sheet.
+function FieldMenuBody({ filters, scopes, labels, onFilters }: {
+  filters: Filters; scopes: string[]; labels: LabelCount[];
+  onFilters: (next: Filters) => void;
+}) {
+  return (
+    <>
+      <MenuLabel>Status</MenuLabel>
+      {TASK_STATUSES.map((s) => (
+        <MenuCheckItem
+          key={s}
+          checked={filters.status.includes(s)}
+          onToggle={() => onFilters(toggleValue(filters, "status", s))}
+        >
+          {taskStatusLabel(s)}
+        </MenuCheckItem>
+      ))}
+      <MenuLabel>Effort</MenuLabel>
+      {EFFORTS.map((e) => (
+        <MenuCheckItem
+          key={e}
+          checked={filters.effort.includes(e)}
+          onToggle={() => onFilters(toggleValue(filters, "effort", e))}
+        >
+          {e}
+        </MenuCheckItem>
+      ))}
+      {labels.length > 0 && (
+        <>
+          <MenuLabel>Tag</MenuLabel>
+          {labels.map((l) => (
+            <MenuCheckItem
+              key={l.label}
+              checked={filters.labels.includes(l.label)}
+              count={l.count}
+              onToggle={() => onFilters(toggleValue(filters, "tag", l.label))}
+            >
+              {l.label}
+            </MenuCheckItem>
+          ))}
+        </>
+      )}
+      <MenuLabel>Scope</MenuLabel>
+      {/* Single-select: a ticket lives in exactly one scope, so picking a
+          second would mean "either", which no other control here offers and
+          the endpoint does not take. It closes the menu, unlike the rows
+          above, because choosing it is the end of the interaction. */}
+      <MenuItem
+        checked={!filters.scope}
+        onSelect={() => onFilters({ ...filters, scope: null })}
+      >
+        All scopes
+      </MenuItem>
+      {scopes.map((s) => (
+        <MenuItem
+          key={s}
+          checked={filters.scope === s}
+          onSelect={() => onFilters({ ...filters, scope: s })}
+        >
+          {scopeLabel(s)}
+        </MenuItem>
+      ))}
+    </>
+  );
+}
+
+function SortMenu({ sort, onSort }: { sort: TicketSort; onSort: (s: TicketSort) => void }) {
+  const label = TASK_SORTS.find((s) => s.value === sort.key)?.label ?? sort.key;
+  return (
+    <Menu
+      label="Sort tickets"
+      trigger={
+        <Button size="sm" title="Sort">
+          <span className="ws-sortbtn__key">Sort</span>
+          {label}
+          {sort.dir === "desc"
+            ? <ArrowDown aria-hidden />
+            : <ArrowUp aria-hidden />}
+        </Button>
+      }
+    >
+      {TASK_SORTS.map((s) => (
+        <MenuItem
+          key={s.value}
+          checked={s.value === sort.key}
+          onSelect={() => onSort({ ...sort, key: s.value as TaskSort })}
+        >
+          {s.label}
+        </MenuItem>
+      ))}
+      {/* The direction is a property OF the sort, so it lives in the same menu
+          rather than becoming a second control in an already busy row. */}
+      <MenuLabel>Direction</MenuLabel>
+      <MenuItem
+        checked={sort.dir === "desc"}
+        onSelect={() => onSort({ ...sort, dir: "desc" })}
+      >
+        Descending
+      </MenuItem>
+      <MenuItem
+        checked={sort.dir === "asc"}
+        onSelect={() => onSort({ ...sort, dir: "asc" })}
+      >
+        Ascending
+      </MenuItem>
+    </Menu>
+  );
+}
+
+/** The desktop filter row. */
+export function TicketFilterBar({
+  filters, sort, view, scopes, labels, count, onFilters, onSort, onNew,
+}: Props) {
+  const chips = chipsFor(filters, view, {
+    scope: scopeLabel,
+    status: taskStatusLabel,
+  });
+
+  return (
+    <FilterBar
+      search={
+        <label className="ws-searchfield ws-filterbar__search">
+          <Search aria-hidden />
+          <input
+            value={filters.q}
+            onChange={(e) => onFilters({ ...filters, q: e.target.value })}
+            placeholder={`Search ${count} ticket${count === 1 ? "" : "s"}`}
+            aria-label="Search tickets"
+          />
+        </label>
+      }
+      chips={chips.map((c) => (
+        <FilterChip
+          key={c.field}
+          label={c.label}
+          value={c.value}
+          onClear={() => onFilters(clearField(filters, c.field))}
+        />
+      ))}
+      add={
+        <Menu
+          label="Add a filter"
+          trigger={
+            <button type="button" className="ws-addfilter">
+              <Plus aria-hidden /> Filter
+            </button>
+          }
+        >
+          <FieldMenuBody filters={filters} scopes={scopes} labels={labels} onFilters={onFilters} />
+        </Menu>
+      }
+      actions={
+        <>
+          <SortMenu sort={sort} onSort={onSort} />
+          <Button size="sm" variant="primary" onClick={onNew}>
+            <Plus aria-hidden /> New ticket
+          </Button>
+        </>
+      }
+    />
+  );
+}
+
+/** The phone bar: search, one button into the sheet, and what is currently on. */
+export function TicketFilterCompact({
+  filters, sort, view, onOpen, onFilters,
+}: {
+  filters: Filters; sort: TicketSort; view: TicketView;
+  onOpen: () => void; onFilters: (next: Filters) => void;
+}) {
+  const chips = chipsFor(filters, view, { scope: scopeLabel, status: taskStatusLabel });
+  const sortLabel = TASK_SORTS.find((s) => s.value === sort.key)?.label ?? sort.key;
+  return (
+    <div className="ws-ticketbar-compact">
+      <div className="ws-ticketbar-compact__row">
+        <label className="ws-searchfield ws-searchfield--lg">
+          <Search aria-hidden />
+          <input
+            value={filters.q}
+            onChange={(e) => onFilters({ ...filters, q: e.target.value })}
+            placeholder="Search tickets"
+            aria-label="Search tickets"
+          />
+        </label>
+        <button
+          type="button"
+          className="ws-iconbtn-lg"
+          onClick={onOpen}
+          aria-label="Filter and sort"
+        >
+          <SlidersHorizontal aria-hidden />
+        </button>
+      </div>
+      <div className="ws-ticketbar-compact__state">
+        {chips.map((c) => (
+          <FilterChip
+            key={c.field}
+            label={c.label}
+            value={c.value}
+            onClear={() => onFilters(clearField(filters, c.field))}
+          />
+        ))}
+        <span className="ws-ticketbar-compact__sort">
+          {sortLabel} {sort.dir === "desc" ? "↓" : "↑"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** The phone's filter and sort sheet. */
+export function TicketFilterSheet({
+  open, onClose, filters, sort, scopes, labels, count, onFilters, onSort, onReset,
+}: {
+  open: boolean; onClose: () => void;
+  filters: Filters; sort: TicketSort; scopes: string[]; labels: LabelCount[];
+  count: number;
+  onFilters: (next: Filters) => void;
+  onSort: (next: TicketSort) => void;
+  onReset: () => void;
+}) {
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      sheet
+      title="Filter and sort"
+      actions={
+        <>
+          <Button variant="ghost" onClick={onReset}>Reset</Button>
+          <Button variant="primary" onClick={onClose}>
+            Show {count} ticket{count === 1 ? "" : "s"}
+          </Button>
+        </>
+      }
+    >
+      <div className="ws-filtersheet">
+        <section>
+          <div className="ws-section-label">Status</div>
+          <div className="ws-pillset">
+            {TASK_STATUSES.map((s) => {
+              const on = filters.status.includes(s);
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  className="ws-selectpill"
+                  aria-pressed={on}
+                  onClick={() => onFilters(toggleValue(filters, "status", s))}
+                >
+                  <StatusDot status={taskStatusKind(s)}>{null}</StatusDot>
+                  {taskStatusTitle(s)}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section>
+          <div className="ws-section-label">Effort</div>
+          <div className="ws-pillset">
+            {EFFORTS.map((e) => (
+              <button
+                key={e}
+                type="button"
+                className="ws-selectpill"
+                aria-pressed={filters.effort.includes(e)}
+                onClick={() => onFilters(toggleValue(filters, "effort", e))}
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {labels.length > 0 && (
+          <section>
+            <div className="ws-section-label">Tag</div>
+            <div className="ws-pillset">
+              {labels.map((l) => (
+                <button
+                  key={l.label}
+                  type="button"
+                  className="ws-selectpill"
+                  aria-pressed={filters.labels.includes(l.label)}
+                  onClick={() => onFilters(toggleValue(filters, "tag", l.label))}
+                >
+                  {l.label}
+                  <span className="ws-selectpill__count">{l.count}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section>
+          <div className="ws-section-label">Scope</div>
+          <div className="ws-sheetrows">
+            <button
+              type="button"
+              className="ws-sheetrow"
+              aria-pressed={!filters.scope}
+              onClick={() => onFilters({ ...filters, scope: null })}
+            >
+              All scopes
+            </button>
+            {scopes.map((s) => (
+              <button
+                key={s}
+                type="button"
+                className="ws-sheetrow"
+                aria-pressed={filters.scope === s}
+                onClick={() => onFilters({ ...filters, scope: s })}
+              >
+                {scopeLabel(s)}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        {/* Pills, not a Segmented. There are six sort keys and a segmented
+            control divides its width equally between them, which is ~60px each
+            on a 390px screen. Pills wrap. */}
+        <section>
+          <div className="ws-section-label">Sort by</div>
+          <div className="ws-pillset">
+            {TASK_SORTS.map((s) => (
+              <button
+                key={s.value}
+                type="button"
+                className="ws-selectpill"
+                aria-pressed={sort.key === s.value}
+                onClick={() => onSort({ ...sort, key: s.value as TaskSort })}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+          <div className="ws-pillset ws-filtersheet__dir">
+            <button
+              type="button"
+              className="ws-selectpill"
+              aria-pressed={sort.dir === "desc"}
+              onClick={() => onSort({ ...sort, dir: "desc" })}
+            >
+              <ArrowDown aria-hidden /> Descending
+            </button>
+            <button
+              type="button"
+              className="ws-selectpill"
+              aria-pressed={sort.dir === "asc"}
+              onClick={() => onSort({ ...sort, dir: "asc" })}
+            >
+              <ArrowUp aria-hidden /> Ascending
+            </button>
+          </div>
+        </section>
+      </div>
+    </Modal>
+  );
+}
+
+/** The Table / Board / Timeline switcher. Timeline holds its slot, disabled,
+ *  so the control does not need redesigning when it lands. */
+export function ViewSwitcher({ view, onView }: {
+  view: TicketView; onView: (v: TicketView) => void;
+}) {
+  return (
+    <Segmented
+      ariaLabel="Ticket view"
+      value={view}
+      onChange={(v) => { if (v !== "timeline") onView(v as TicketView); }}
+      options={[
+        { value: "table", label: "Table" },
+        { value: "board", label: "Board" },
+        { value: "timeline", label: "Timeline", disabled: true },
+      ]}
+      hint={undefined}
+    />
+  );
+}

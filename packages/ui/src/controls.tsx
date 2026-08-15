@@ -197,9 +197,26 @@ export function StatusDot({ status, children, className }: { status: StatusKind;
 }
 
 // Categorical chip — differentiation, not status.
-export function Tag({ hue, children, className }: { hue: CatHue; children: ReactNode; className?: string }) {
+//
+// `variant="neutral"` puts the hue ONLY in the dot and leaves the pill itself
+// neutral (`--bg-inset` surface, `--fg` text). Use it where several tags sit
+// together in a row: tinting six pills six ways makes a row of tags the
+// loudest thing in a dense list while saying no more than six dots do. The
+// default (tinted) stays right for a lone tag that has to be picked out of
+// surrounding prose. Design handoff 2026-08-14.
+export function Tag({
+  hue,
+  variant = "tinted",
+  children,
+  className,
+}: {
+  hue: CatHue;
+  variant?: "tinted" | "neutral";
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <span className={cx("ws-tag", catClass(hue), className)}>
+    <span className={cx("ws-tag", variant === "neutral" && "ws-tag--neutral", catClass(hue), className)}>
       <span className="ws-tag__dot" />
       {children}
     </span>

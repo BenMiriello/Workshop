@@ -407,10 +407,14 @@ export const taskStatusKind = (status?: string): StatusKind =>
   TASK_STATUS_KIND[(status ?? "") as TaskStatus] ?? "stopped";
 
 // Human labels for the status control / pill. Underscores read poorly in prose.
+//
+// `doing` reads as "in progress" (design handoff 2026-08-14). The STORED value
+// is untouched: this is the one place a status becomes display text, so the
+// rename costs one line here and nothing anywhere else.
 const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
   draft: "draft",
   todo: "todo",
-  doing: "doing",
+  doing: "in progress",
   in_review: "in review",
   blocked: "blocked",
   parked: "parked",
@@ -420,6 +424,34 @@ const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
 
 export const taskStatusLabel = (status?: string): string =>
   TASK_STATUS_LABEL[(status ?? "") as TaskStatus] ?? String(status ?? "");
+
+// The same word as a HEADING: a board column, a mobile group header. Lowercase
+// is right inline ("to do · workshop · 2h") and wrong as the title of a column,
+// and uppercasing in CSS is wrong too ("IN PROGRESS" shouts a lane name).
+//
+// Derived from the label rather than a second table, so a rename cannot land in
+// one of them and not the other.
+export const taskStatusTitle = (status?: string): string => {
+  const s = taskStatusLabel(status);
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+};
+
+// ---- the ticket key ---------------------------------------------------------
+// The short, mono, human-quotable handle for a ticket: `a3f19c`.
+//
+// The design handoff drew a per-scope sequence (`IT-06`) and the store has no
+// such field — an id is a 32-char uuid4 hex with no ordering in it, so there is
+// nothing to derive a sequence FROM without adding a counter and migrating 188
+// live records. The first six characters of the id are stable, unique enough to
+// name a row out loud, and already what every `git` short hash does.
+//
+// Six, not eight: at 188 tickets the chance of any collision is ~0.05%, and the
+// key is a visual anchor beside the title, not an identifier anything resolves.
+// Every link still carries the full id (see `ticketHref`).
+export const TICKET_KEY_LEN = 6;
+
+export const ticketKey = (id?: string | null): string =>
+  (id ?? "").slice(0, TICKET_KEY_LEN);
 
 // ---- title / description accessors ------------------------------------------
 // The record carries `title` and `body`. These accessors exist so no screen

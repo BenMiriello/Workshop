@@ -46,11 +46,13 @@ export {
   Tabs,
   type TabItem,
 } from "./controls";
+export { FilterBar, FilterChip } from "./filters";
+export { Board, BoardColumn, BoardCard } from "./Board";
 export { Segmented, type SegmentedOption } from "./Segmented";
 export { Stepper } from "./Stepper";
 export { Modal, ConfirmDialog } from "./Modal";
 export { OverlayHost, useOverlayHost } from "./OverlayHost";
-export { Menu, MenuItem, MenuSeparator, MenuLabel } from "./Menu";
+export { Menu, MenuItem, MenuCheckItem, MenuSeparator, MenuLabel } from "./Menu";
 export { StateBlock, Notice, Skeleton, ActionBar, CopyButton, RevealField } from "./feedback";
 export { TableScroll, Table, NumCell, TimeCell } from "./Table";
 export { ChartFrame, ChartTooltip, CHART_SERIES, CHART_TARGET } from "./chart";

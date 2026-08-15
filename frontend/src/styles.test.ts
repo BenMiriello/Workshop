@@ -101,10 +101,32 @@ describe("a list row never scrolls sideways", () => {
     expect(meta).toContain("overflow: hidden");
   });
 
-  it("carries no board or card rules for the surfaces that were deleted", () => {
-    expect(kit).not.toContain(".ws-board");
+  // This used to assert `.ws-board` was absent too. That is REVERSED, on
+  // operator direction (2026-08-14 redesign), and the reversal is narrow:
+  //
+  // The board was deleted in August as "a surface you drag work across, which
+  // nothing here does". The cards still do not drag — status is changed on the
+  // ticket, where the consequences are — so the original reasoning is intact
+  // for the thing it was actually about. What came back is the READ: six lanes
+  // answering "what is stuck, what is waiting, what is in flight" at a glance,
+  // which one date-sorted column cannot do at any length.
+  //
+  // The other two stay banned, because nothing overruled them: `.ws-ticket-card`
+  // was the four-band card and `.ws-ticket-grid` the multi-column list, and the
+  // redesign reintroduces neither.
+  it("carries no card or grid rules for the surfaces that were deleted", () => {
     expect(kit).not.toContain(".ws-ticket-card");
     expect(kit).not.toContain(".ws-ticket-grid");
+  });
+
+  // The board is back, so the reason it is not the old one gets pinned instead
+  // of assumed: a lane is a fixed-width column in a scroller, and a card is a
+  // link with no drag affordance anywhere near it.
+  it("draws a board of fixed lanes, with no drag surface", () => {
+    expect(kitRule(".ws-board")).toContain("overflow-x: auto");
+    expect(kitRule(".ws-board__col")).toContain("flex: 0 0 var(--ws-lane)");
+    expect(kit).not.toContain("draggable");
+    expect(kit).not.toContain("ws-board__drop");
   });
 });
 
@@ -142,5 +164,71 @@ describe("a detail page reads as a record, not as a banner", () => {
     const label = kitRule(".ws-props__label");
     expect(label).toContain("color: var(--muted)");
     expect(label).not.toContain("--fw-medium");
+  });
+});
+
+// A control that paints part of itself with a background LAYER cannot have its
+// states written with the `background` shorthand. Reported 2026-08-14: "any
+// time there's a dropdown it'll transform to the left and then back to the
+// right in a really weird way and it'll disappear."
+//
+// `.ws-select` draws its chevron with background-image + background-position.
+// The shorthand resets every longhand it omits, so `:hover { background: X }`
+// meant `background-image: none; background-position: 0% 0%`, and naming the
+// shorthand as the transition-property expanded it to every background
+// longhand, so the reset ANIMATED: the caret slid left, disappeared halfway
+// (a discrete type flips at 50%), and slid back on un-hover. `:focus` did it
+// too, so the caret was gone the entire time a select was open.
+//
+// Not visible in a diff and not catchable by eye in review, so it is pinned.
+describe("a select's caret cannot be animated away by a background shorthand", () => {
+  // Every rule in the kit sheet whose selector list mentions .ws-select.
+  const selectRules = kit
+    .split("}")
+    .map((chunk) => {
+      const brace = chunk.indexOf("{");
+      return brace === -1
+        ? null
+        : { sel: chunk.slice(0, brace), body: chunk.slice(brace + 1) };
+    })
+    // The whole class token, not a substring: `.ws-selectpill` is a different
+    // control that happens to start with the same eleven characters, and it is
+    // allowed its own `background` shorthand because it paints no layer.
+    .filter((r): r is { sel: string; body: string } =>
+      !!r && /\.ws-select(?![\w-])/.test(r.sel));
+
+  it("finds the select rules it is meant to be guarding", () => {
+    expect(selectRules.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("never sets the background shorthand on a select", () => {
+    for (const r of selectRules) {
+      // `background-color`, `background-image` and friends are longhands and
+      // are fine; a bare `background:` is the one that resets the caret.
+      expect(
+        /(^|[;\s])background\s*:/.test(r.body),
+        `background shorthand in a select rule: ${r.sel.trim()}`,
+      ).toBe(false);
+    }
+  });
+
+  it("never transitions the background shorthand on a select", () => {
+    for (const r of selectRules) {
+      const m = r.body.match(/transition\s*:([^;]*)/);
+      if (!m) continue;
+      // "background 120ms" expands to every background longhand, including
+      // position and image. "background-color 120ms" does not.
+      expect(
+        /(^|,)\s*background\s+/.test(m[1]),
+        `bare background in a transition: ${r.sel.trim()}`,
+      ).toBe(false);
+    }
+  });
+
+  it("still paints a caret, at the right edge", () => {
+    const rule = kitRule(".ws-select");
+    expect(rule).toContain("appearance: none");
+    expect(rule).toContain("background-image: url(");
+    expect(rule).toContain("background-position: right var(--space-2) center");
   });
 });

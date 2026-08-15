@@ -616,23 +616,508 @@ a.ws-btn { text-decoration: none; }
    already says it. */
 .ws-list__children { list-style: none; margin: 0; padding-left: var(--space-6); }
 
-/* The filter bar. Bare controls, no `Field label inline` per control: that is a
-   `minmax(120px, 0.4fr) 1fr` grid EACH, so four labelled controls could not fit
-   one line at any phone width and the mobile rule stacked every one of them into
-   a label row plus a control row. Eight rows of chrome above the first ticket.
-   A select shows its own value, which is the label. */
-.ws-tickets-bar {
-  display: flex; flex-wrap: wrap; align-items: center;
+/* ---- THE TICKETS SURFACE -------------------------------------------------
+   The header band, the three bodies (board / table / grouped list) and the
+   phone's compact bar + sheet. Replaces `.ws-tickets-bar`, which was three
+   equal-width selects: a select can show one value, so "status, scope and
+   sort" was the most a filter row could ever say, and what is narrowing the
+   list had to be read by opening each control in turn. Chips say it. */
+.ws-tickets { display: flex; flex-direction: column; gap: var(--space-4); }
+
+/* One band: what the list is, how many, and how to look at it. Bottom hairline
+   because it is chrome ABOVE content, which is the one job this system spends
+   a rule on. */
+.ws-tickets__head {
+  display: flex; flex-direction: column; gap: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.ws-tickets__headrow {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--space-5); flex-wrap: wrap;
+}
+.ws-tickets__ident { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.ws-tickets__eyebrow {
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint);
+}
+.ws-tickets__titlerow { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.ws-tickets__title {
+  margin: 0; font-size: var(--fs-xl); font-weight: var(--fw-semi);
+  letter-spacing: -0.015em; line-height: var(--lh-tight);
+}
+.ws-tickets__count { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--muted); }
+.ws-tickets__body { min-width: 0; }
+/* The phone's primary action, at the thumb rather than in a two-control bar. */
+.ws-tickets__foot { padding-top: var(--space-2); }
+
+/* The short mono handle for a ticket, and the priority/effort fact beside it.
+   Both are quiet by design: they are what you read AFTER the title has told
+   you which row you are on. */
+.ws-ticket-key {
+  flex: none; font-family: var(--font-mono);
+  font-size: var(--fs-xs); color: var(--faint);
+}
+.ws-ticket-meta {
+  flex: none; font-family: var(--font-mono);
+  font-size: var(--fs-xs); color: var(--muted);
+}
+
+/* ---- board card contents ------------------------------------------------- */
+.ws-board__card-title {
+  font-size: var(--fs-base); font-weight: var(--fw-medium);
+  line-height: var(--lh-snug); text-wrap: pretty;
+}
+.ws-board__card-meta { display: flex; gap: var(--space-2); min-width: 0; }
+.ws-board__card-foot {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-width: 0;
+}
+.ws-board__card-foot .ws-tagstrip { flex: 1 1 auto; }
+.ws-board__card-foot .ws-ticket-meta { margin-left: auto; }
+
+/* ---- the table ----------------------------------------------------------- */
+/* Fixed layout: the title column takes the slack and every other column is the
+   width of what it holds, so a long title cannot push Updated off the edge. */
+.ws-ticket-table { table-layout: fixed; width: 100%; }
+.ws-tt__c-ticket { width: 38%; }
+.ws-tt__c-status { width: 120px; }
+.ws-tt__c-tags   { width: 180px; }
+.ws-tt__c-scope  { width: 150px; }
+.ws-tt__c-prio   { width: 76px; }
+.ws-tt__c-effort { width: 84px; }
+.ws-tt__c-time   { width: 96px; }
+.ws-ticket-table th { white-space: nowrap; }
+.ws-ticket-table .ws-tt__num { text-align: right; }
+.ws-ticket-table td { vertical-align: middle; }
+.ws-tt__muted { color: var(--muted); }
+.ws-tt__time { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: nowrap; }
+.ws-ticket-table td.ws-tt__num { font-family: var(--font-mono); }
+/* The link is the whole ROW, not just the title: a table whose rows navigate
+   only from one cell is a target you have to aim at. Stretching a link over
+   the row keeps it a real link (middle click, keyboard, long press) without an
+   onClick on the <tr>. */
+.ws-ticket-table tbody tr { position: relative; }
+.ws-tt__ticket {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  min-width: 0; color: inherit; text-decoration: none;
+}
+.ws-tt__ticket::after { content: ""; position: absolute; inset: 0; }
+.ws-tt__title {
+  min-width: 0; font-weight: var(--fw-medium);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Anything the row link stretches over must sit above it to stay clickable. */
+.ws-ticket-table td > .ws-tagstrip { position: relative; }
+
+/* ---- the grouped list (narrow viewports) --------------------------------- */
+.ws-ticketlist { display: flex; flex-direction: column; }
+.ws-ticketlist__group { display: flex; flex-direction: column; }
+.ws-ticketlist__head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-4) var(--space-1) var(--space-2);
+}
+.ws-ticketlist__label {
+  font-size: var(--fs-xs); font-weight: var(--fw-semi);
+  letter-spacing: var(--label-spacing); text-transform: uppercase; color: var(--muted);
+}
+.ws-ticketlist__count { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--faint); }
+.ws-ticketrow {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  min-height: 44px; padding: var(--space-3) var(--space-1);
+  border-top: 1px solid var(--border);
+  color: inherit; text-decoration: none;
+}
+.ws-ticketrow:hover { background: var(--card-hover); }
+.ws-ticketrow__title {
+  font-size: var(--fs-md); font-weight: var(--fw-medium);
+  line-height: var(--lh-snug); text-wrap: pretty;
+}
+.ws-ticketrow__meta {
+  display: flex; align-items: center; gap: var(--space-2); min-width: 0;
+}
+.ws-ticketrow__meta .ws-tagstrip { flex: 1 1 auto; }
+.ws-ticketrow__time {
+  margin-left: auto; flex: none;
+  font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted);
+}
+
+/* ---- the phone's bar ------------------------------------------------------ */
+.ws-ticketbar-compact { display: flex; flex-direction: column; gap: var(--space-2); }
+.ws-ticketbar-compact__row { display: flex; gap: var(--space-2); align-items: center; }
+.ws-ticketbar-compact__row .ws-searchfield { flex: 1 1 auto; min-width: 0; }
+.ws-ticketbar-compact__state {
+  display: flex; align-items: center; gap: var(--space-2);
+  flex-wrap: wrap; min-width: 0;
+}
+.ws-ticketbar-compact__sort { font-size: var(--fs-xs); color: var(--muted); }
+/* 44px, the minimum tap target. Not a --control-h control: this is a phone. */
+.ws-searchfield--lg { height: 44px; border-radius: var(--radius-lg); }
+.ws-searchfield--lg input { font-size: var(--fs-md); }
+.ws-iconbtn-lg {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; width: 44px; height: 44px;
+  appearance: none; border: 0; border-radius: var(--radius-lg);
+  background-color: var(--accent-soft); color: var(--accent); cursor: pointer;
+}
+.ws-iconbtn-lg svg { width: 18px; height: 18px; }
+
+/* ---- the filter sheet ----------------------------------------------------- */
+.ws-filtersheet { display: flex; flex-direction: column; gap: var(--space-5); }
+.ws-pillset { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+/* A pill you toggle. Selected takes the MINE treatment (tint + ring), which is
+   the one thing that hue is for here: it is what you picked. */
+.ws-selectpill {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  min-height: 30px; padding: 0 var(--space-3);
+  appearance: none; background: transparent;
+  border: 1px solid var(--border); border-radius: var(--radius-pill);
+  color: var(--fg); font: inherit; font-size: var(--fs-sm);
+  font-weight: var(--fw-medium); cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+.ws-selectpill svg { width: 14px; height: 14px; }
+.ws-selectpill[aria-pressed="true"] {
+  color: var(--accent); background-color: var(--accent-soft); border-color: var(--accent);
+}
+.ws-selectpill__count { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--faint); }
+.ws-sheetrows { display: flex; flex-direction: column; }
+.ws-sheetrow {
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: 44px; padding: 0 var(--space-1);
+  appearance: none; background: none; border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg); font: inherit; font-size: var(--fs-md);
+  text-align: left; cursor: pointer;
+}
+.ws-sheetrow[aria-pressed="true"] { color: var(--accent); font-weight: var(--fw-medium); }
+/* The sort button's leading word, quieter than the value it introduces. */
+.ws-sortbtn__key { color: var(--muted); font-weight: var(--fw-normal); }
+
+/* ---- THE TICKET PAGE ------------------------------------------------------
+   Per-field editing, so nothing here is a form until it is being used as one.
+   Every read state is a button with no control chrome; the tint on hover is
+   the whole affordance. */
+
+/* A section heading with a subtitle and/or a link on the same line. */
+.ws-sectionhead {
+  display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap;
+}
+.ws-sectionhead .ws-section-label { margin-bottom: 0; }
+.ws-sectionhead__sub { font-size: var(--fs-xs); color: var(--faint); }
+.ws-sectionhead__link { margin-left: auto; font-size: var(--fs-sm); }
+/* SectionLabel carries its own bottom margin; inside this row it is the row
+   that owns the space beneath. */
+.ws-sectionhead + .ws-card { margin-top: var(--space-3); }
+
+/* The title. A heading that happens to be editable, so it is set as the
+   heading and takes a tint only under the pointer. The negative inline margin
+   keeps the text optically flush while the hit area is padded. */
+.ws-titleedit {
+  display: block; width: 100%;
+  margin-inline: calc(var(--space-2) * -1);
+  padding: 2px var(--space-2);
+  appearance: none; background: none; border: 0; border-radius: var(--radius-sm);
+  font: inherit; color: inherit; text-align: left; cursor: text;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.ws-titleedit:hover { background-color: var(--field-bg); }
+.ws-titleedit__form { display: flex; flex-direction: column; gap: var(--space-2); }
+.ws-titleedit__form .ws-input { font-size: inherit; height: auto; padding: var(--space-2); }
+
+/* The shared action row under an inline editor. */
+.ws-inlineedit { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.ws-inlineedit .ws-input { min-width: 0; }
+.ws-inlineedit__actions {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+.ws-inlineedit__hint { font-size: var(--fs-xs); color: var(--faint); }
+
+/* The description. Read state fills the card and tints on hover; there is no
+   Edit button, because the content IS the target. */
+.ws-bodyedit { display: flex; flex-direction: column; }
+.ws-bodyedit__read {
+  display: block; width: 100%; margin: calc(var(--space-2) * -1);
+  padding: var(--space-2); appearance: none; background: none; border: 0;
+  border-radius: var(--radius-md);
+  font: inherit; color: inherit; text-align: left; cursor: text;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.ws-bodyedit__read:hover { background-color: var(--field-bg); }
+
+/* The rail's property rows. A 96px label column, and each row is its own
+   full-bleed hover target inside the card's padding. */
+.ws-props2 { display: flex; flex-direction: column; gap: 2px; }
+.ws-proprow {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr);
+  gap: var(--space-2); align-items: center;
+  padding: var(--space-1) var(--space-2);
+  margin-inline: calc(var(--space-2) * -1);
+  border-radius: var(--radius-sm);
+}
+.ws-proprow__label { font-size: var(--fs-xs); color: var(--muted); }
+.ws-proprow__value {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-width: 0; width: 100%;
+  appearance: none; background: none; border: 0; padding: 0;
+  font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-medium);
+  color: var(--fg); text-align: left; cursor: pointer;
+}
+.ws-proprow__value--static { cursor: default; font-weight: var(--fw-normal); }
+/* The pencil is the affordance and it must not be permanent: a column of
+   pencils down the rail is six icons saying the same thing. It also must not
+   depend on hover ALONE, or a touch device never sees that a row is editable,
+   so the row keeps its pointer cursor and the icon takes a reserved slot that
+   simply stays empty until the pointer arrives. */
+.ws-proprow__pencil {
+  width: 12px; height: 12px; flex: none; margin-left: auto;
+  color: var(--faint); opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.ws-proprow:hover { background-color: var(--field-bg); }
+.ws-proprow:hover .ws-proprow__pencil,
+.ws-proprow__value:focus-visible .ws-proprow__pencil { opacity: 1; }
+.ws-proprow.is-editing { background-color: var(--field-bg); }
+.ws-proprow__editor { min-width: 0; }
+@media (pointer: coarse) {
+  /* No hover to reveal it, and a 12px glyph is not a tap target anyway: the
+     row is. Show it always so the row says it can be edited. */
+  .ws-proprow__pencil { opacity: 1; }
+}
+
+/* Runs: one row per attempt. */
+.ws-runlist { display: flex; flex-direction: column; }
+.ws-runrow {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+  color: inherit; text-decoration: none;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.ws-runlist > .ws-runrow:first-child { border-top: 0; }
+.ws-runrow:hover { background-color: var(--field-bg); }
+.ws-runrow__who {
+  flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ws-runrow__dur, .ws-runrow__when {
+  flex: none; font-family: var(--font-mono);
+  font-size: var(--fs-xs); color: var(--muted);
+}
+.ws-runrow__none { padding: var(--space-4); color: var(--muted); }
+
+/* Linked chats: the relation, then the conversation. */
+.ws-chatrow { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
+.ws-chatrow__rel { flex: none; width: 6rem; font-size: var(--fs-xs); color: var(--faint); }
+.ws-chatrow__title { min-width: 0; font-size: var(--fs-sm); }
+
+/* A dependency row. */
+.ws-deprow {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  min-width: 0; padding: var(--space-1) var(--space-2);
+  margin-inline: calc(var(--space-2) * -1);
+  border-radius: var(--radius-sm);
+  color: inherit; text-decoration: none;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.ws-deprow:hover { background-color: var(--field-bg); }
+.ws-deprow__title {
+  min-width: 0; font-size: var(--fs-sm);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Activity: a comment thread, and the composer as its last entry. */
+.ws-comment { display: flex; gap: var(--space-3); min-width: 0; }
+.ws-comment__avatar {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 50%;
+  background-color: var(--accent-soft); color: var(--accent);
+  font-size: var(--fs-xs); font-weight: var(--fw-semi);
+}
+/* The composer's own avatar is neutral: nothing has been said yet. */
+.ws-comment__avatar--self { background-color: var(--bg-inset); color: var(--muted); }
+.ws-comment__body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ws-comment__head { display: flex; align-items: baseline; gap: var(--space-2); }
+.ws-comment__who { font-size: var(--fs-sm); font-weight: var(--fw-semi); }
+.ws-comment__when { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--faint); }
+.ws-comment__text {
+  font-size: var(--fs-base); line-height: var(--lh-base);
+  white-space: pre-wrap; overflow-wrap: anywhere; text-wrap: pretty;
+}
+.ws-comment--compose { margin-top: var(--space-2); }
+
+/* Readiness: advisory, so it gets no card. Inset to line up with the cards
+   above it rather than sitting in one. */
+.ws-readiness { padding-inline: var(--space-4); }
+.ws-readiness__line {
+  margin: 0; font-size: var(--fs-sm); line-height: var(--lh-snug); color: var(--muted);
+}
+/* A gap that actually refuses the run reads differently from advice: only two
+   checks (title, dependencies) make POST /run answer 400. */
+.ws-readiness__line.is-blocking { color: var(--danger); }
+
+/* The status pill as a control: a pill with a caret, neutral until hovered. */
+.ws-statusbtn {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  appearance: none; background: none; border: 0; padding: 0;
+  font: inherit; color: var(--muted); cursor: pointer;
+  border-radius: var(--radius-pill);
+}
+.ws-statusbtn svg { width: 14px; height: 14px; }
+.ws-statusbtn:hover { color: var(--fg); }
+.ws-statusbtn[disabled] { cursor: default; opacity: 0.6; }
+
+/* ---- FILTER BAR ---------------------------------------------------------- */
+/* Search + one chip per active filter + "add a filter", then the actions
+   pinned right. Everything is --control-h and `flex: none` EXCEPT the search,
+   so narrowing the viewport shrinks the field and never crushes the buttons;
+   the left group wraps its own chips rather than colliding with the actions. */
+.ws-filterbar {
+  display: flex; align-items: center; flex-wrap: wrap;
   gap: var(--space-2); min-width: 0;
 }
-/* Wide enough to be worth typing in, and the first thing to take a line of its
-   own when the bar wraps. */
-.ws-tickets-bar__search { flex: 1 1 14rem; min-width: 0; }
-.ws-tickets-bar__filters {
-  display: flex; gap: var(--space-2); flex: 1 1 18rem; min-width: 0;
+.ws-filterbar__group {
+  flex: 1 1 28rem;
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--space-2); min-width: 0;
 }
-/* Equal thirds of whatever is left, so three selects always fit one line. */
-.ws-tickets-bar__filters > * { flex: 1 1 0; min-width: 0; }
+.ws-filterbar__actions {
+  flex: none; margin-left: auto;
+  display: flex; align-items: center; gap: var(--space-2);
+}
+/* The one child that absorbs slack. */
+.ws-filterbar__group > .ws-filterbar__search { flex: 1 1 12rem; min-width: 7rem; }
+.ws-filterbar__group > :not(.ws-filterbar__search) { flex: none; }
+
+/* The search field: an icon and an input sharing one field surface, so the
+   magnifier sits INSIDE the control rather than beside it. */
+.ws-searchfield {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  height: var(--control-h); padding: 0 var(--field-pad-x);
+  background-color: var(--field-bg);
+  border: 1px solid transparent; border-radius: var(--radius-md);
+  color: var(--faint);
+  transition: background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out);
+}
+.ws-searchfield:hover { background-color: var(--bg-inset); }
+.ws-searchfield:focus-within {
+  background-color: var(--card); border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ws-searchfield svg { width: 14px; height: 14px; flex: none; }
+.ws-searchfield input {
+  flex: 1 1 auto; min-width: 0;
+  appearance: none; border: 0; background: none; outline: none;
+  font-family: inherit; font-size: var(--fs-base); color: var(--fg);
+}
+.ws-searchfield input::placeholder { color: var(--faint); }
+
+/* A filter chip. --radius-md, not a pill: a pill in this system is a tag or a
+   status, and a filter is neither. The key is muted and the value takes the
+   accent, so the row scans as "Status · 2   Scope Development". */
+.ws-filterchip {
+  display: inline-flex; align-items: center;
+  height: var(--control-h);
+  padding-right: var(--space-1);
+  background-color: var(--accent-soft);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+  max-width: 100%; min-width: 0;
+}
+.ws-filterchip__open {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  min-width: 0;
+  height: 100%; padding: 0 var(--space-1) 0 var(--space-3);
+  appearance: none; border: 0; background: none;
+  font: inherit; color: var(--accent); cursor: pointer;
+  border-radius: var(--radius-md);
+}
+span.ws-filterchip__open { cursor: default; }
+.ws-filterchip__key { color: var(--muted); font-weight: var(--fw-normal); flex: none; }
+.ws-filterchip__val {
+  font-weight: var(--fw-medium); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ws-filterchip__clear {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; width: 1.25rem; height: 1.25rem; padding: 0;
+  appearance: none; border: 0; background: none;
+  color: var(--accent); cursor: pointer; border-radius: var(--radius-sm);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+.ws-filterchip__clear svg { width: 13px; height: 13px; }
+.ws-filterchip__clear:hover { background-color: var(--accent-soft); }
+
+/* "+ Filter" and the tag "+": a dashed outline is the one place this system
+   spends a border, because "somewhere you could add one" has no content of its
+   own to carry the affordance. Neutral at rest, --fg on hover (a control is
+   not content). */
+.ws-addfilter {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: var(--control-h); padding: 0 var(--space-3);
+  appearance: none; background: none;
+  border: 1px dashed var(--border); border-radius: var(--radius-md);
+  color: var(--muted); font: inherit; font-size: var(--fs-sm);
+  font-weight: var(--fw-medium); cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+.ws-addfilter:hover { color: var(--fg); border-color: var(--muted); }
+.ws-addfilter svg { width: 14px; height: 14px; }
+.ws-addfilter--sm { height: var(--control-h-sm); padding: 0 var(--space-2); font-size: var(--fs-xs); }
+
+/* ---- BOARD --------------------------------------------------------------- */
+/* Fixed-width lanes in a horizontal scroller. The lane width is a token here
+   rather than a number at the call site, because it is the one measurement the
+   whole board is built on. */
+.ws-board {
+  display: flex; gap: var(--space-4);
+  overflow-x: auto;
+  padding-bottom: var(--space-4);
+  /* Room for the card's shadow, which a scroller otherwise clips. */
+  padding-top: 2px;
+  --ws-lane: 288px;
+}
+.ws-board__col {
+  flex: 0 0 var(--ws-lane); min-width: 0;
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.ws-board__head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 0 var(--space-1);
+  font-size: var(--fs-base); font-weight: var(--fw-semi);
+}
+.ws-board__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-board__count {
+  margin-left: auto; flex: none;
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  font-weight: var(--fw-normal); color: var(--muted);
+}
+.ws-board__stack { display: flex; flex-direction: column; gap: var(--space-3); }
+/* An empty lane still says the lane exists. Dashed, so it reads as a slot
+   rather than as a card with nothing in it. */
+.ws-board__empty {
+  padding: var(--space-4) var(--space-3);
+  border: 1px dashed var(--border); border-radius: var(--radius-lg);
+  color: var(--faint); font-size: var(--fs-xs); text-align: center;
+}
+.ws-board__card {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3) 14px;
+  background-color: var(--card);
+  border: 1px solid var(--card-ring);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  color: inherit; text-decoration: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+/* Hover materialises the accent ring. No lift and no background change: the
+   card is a link, and a board full of lifting cards is motion with no meaning. */
+.ws-board__card:hover { border-color: var(--accent); }
 
 /* A linked ticket: a whole row that goes somewhere (parent, child, dependency).
    Hierarchy from background on hover, not a border — the row is a link, and
@@ -683,7 +1168,25 @@ a.ws-btn { text-decoration: none; }
 .ws-field__error { font-size: var(--fs-xs); color: var(--danger); display: none; }
 .ws-field--error .ws-field__error { display: block; }
 
-/* Filled, borderless at rest — a hairline only appears on focus. */
+/* Filled, borderless at rest — a hairline only appears on focus.
+
+   EVERY state rule below sets `background-color`, never the `background`
+   shorthand, and the transition names the longhand too. This is not style
+   preference, it is the fix for a real bug (operator, 2026-08-14: "any time
+   there's a dropdown it'll transform to the left and then back to the right
+   in a really weird way and it'll disappear").
+
+   `.ws-select` paints its chevron with `background-image` +
+   `background-position`. The shorthand resets every longhand it omits, so
+   `:hover` set `background-image: none` and `background-position: 0% 0%` —
+   and because the transition-property was the shorthand, it expanded to all
+   the background longhands and ANIMATED that reset. `background-position` is
+   interpolable, so the caret slid from the right edge to the left; the image
+   is a discrete type, so it vanished at the halfway point. Un-hover replayed
+   it backwards. `:focus` did the same, which is why the caret stayed gone the
+   whole time a select was open, and `[disabled]` deleted it outright.
+
+   Anything added here that needs a fill sets `background-color`. */
 .ws-input, .ws-select, .ws-textarea {
   width: 100%;
   min-width: 0;
@@ -692,20 +1195,20 @@ a.ws-btn { text-decoration: none; }
   font-family: inherit;
   font-size: var(--fs-base);
   color: var(--fg);
-  background: var(--field-bg);
+  background-color: var(--field-bg);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+  transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
 .ws-textarea { height: auto; min-height: 6rem; padding: var(--space-2) var(--field-pad-x); line-height: var(--lh-base); resize: vertical; }
 .ws-input::placeholder, .ws-textarea::placeholder { color: var(--faint); }
-.ws-input:hover, .ws-select:hover, .ws-textarea:hover { background: var(--bg-inset); }
+.ws-input:hover, .ws-select:hover, .ws-textarea:hover { background-color: var(--bg-inset); }
 .ws-input:focus, .ws-select:focus, .ws-textarea:focus {
-  outline: none; background: var(--card); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none; background-color: var(--card); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .ws-input[readonly], .ws-input[disabled],
 .ws-select[disabled], .ws-textarea[disabled] {
-  background: transparent; color: var(--muted); border-color: transparent;
+  background-color: transparent; color: var(--muted); border-color: transparent;
 }
 .ws-field--error .ws-input,
 .ws-field--error .ws-select,
@@ -936,6 +1439,31 @@ a.ws-btn { text-decoration: none; }
   background: color-mix(in srgb, var(--_cat, var(--muted)) 13%, transparent);
 }
 .ws-tag__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--_cat, var(--muted)); flex: none; }
+/* Hue in the DOT only. For rows of tags, where six tinted pills read as six
+   competing signals; the dot still differentiates and the row reads as one
+   quiet pattern. The pill is also a pill here (`--radius-pill`), because at
+   this weight the shape is what separates it from a filter chip. */
+.ws-tag--neutral {
+  color: var(--fg);
+  background: var(--bg-inset);
+  border-radius: var(--radius-pill);
+  gap: var(--space-1);
+  padding: 0.125rem var(--space-2);
+  flex: none;
+  white-space: nowrap;
+}
+.ws-tag--neutral .ws-tag__dot { width: 6px; height: 6px; }
+
+/* A row of tags is ONE line that scrolls, never a wrap. A tag wrapping changes
+   the height of the row it is in, so a list of tickets would have rows of two
+   different heights depending on how many tags each one happens to carry, and
+   the rhythm the list is read on goes with it. */
+.ws-tagstrip {
+  display: flex; gap: var(--space-1);
+  min-width: 0; overflow-x: auto;
+  scrollbar-width: none;
+}
+.ws-tagstrip::-webkit-scrollbar { display: none; }
 .ws-cat-violet    { --_cat: var(--cat-violet); }
 .ws-cat-turquoise { --_cat: var(--cat-turquoise); }
 .ws-cat-blue      { --_cat: var(--cat-blue); }
@@ -1090,6 +1618,16 @@ a.ws-btn { text-decoration: none; }
 .ws-menu__check {
   flex: 0 0 auto; display: inline-flex; align-items: center;
   color: var(--accent);
+}
+/* A CHECKABLE row does reserve the column, unlike a chosen one. Several rows
+   are ticked at once and they are read as a set, so their labels have to line
+   up; a single-choice menu has exactly one mark and indenting the other rows
+   to match it would be space spent on nothing. */
+.ws-menu__item--check .ws-menu__check { width: 14px; justify-content: center; }
+.ws-menu__item--check .ws-menu__label { flex: 1 1 auto; min-width: 0; }
+.ws-menu__count {
+  flex: none; font-family: var(--font-mono);
+  font-size: var(--fs-xs); color: var(--faint);
 }
 /* No ring on the popover itself: it is focused on open only so the arrow keys
    have somewhere to start from, and it carries tabindex="-1", which the global
@@ -2486,3 +3024,7 @@ a.ws-btn { text-decoration: none; }
   border-radius: var(--radius-sm);
 }
 .chat-ctx-btn:hover { background: var(--bg-inset); }
+
+/* The sheet's two sort groups read as one control, so the direction sits
+   tighter under the keys than the sheet's section gap would put it. */
+.ws-filtersheet__dir { margin-top: var(--space-2); }
