@@ -470,7 +470,10 @@ a.ws-btn { text-decoration: none; }
    Projects grid — no bespoke pixel heights, just consistent line-clamp +
    grid-auto-rows:1fr. */
 .ws-notes-grid { grid-auto-rows: 1fr; }
-.ws-notes-grid > li { display: flex; min-width: 0; }
+/* `position: relative` anchors the per-item share badge some cards carry
+   (Memory's chat cards -- see `.ws-note-card__share` below). It has no effect
+   on cards without one. */
+.ws-notes-grid > li { display: flex; min-width: 0; position: relative; }
 .ws-notes-grid > li > * { flex: 1 1 auto; min-width: 0; }
 .ws-note-card { width: 100%; display: flex; flex-direction: column; }
 .ws-note-card__title {
@@ -490,6 +493,28 @@ a.ws-btn { text-decoration: none; }
   word-break: break-word;
 }
 .ws-note-card__footer { margin-top: auto; padding-top: var(--space-2); }
+/* A scope tag inside this footer was wrapping onto a second line mid-word at
+   card widths a scope's own label doesn't fit -- one pill breaking across two
+   lines while its neighbour (the timestamp) stayed put. `Row wrap` already
+   wraps the whole tag down as one unit if the footer runs out of width; this
+   only stops the tag's OWN text from breaking inside the pill. */
+.ws-note-card__footer .ws-tag { white-space: nowrap; }
+/* The chat card wraps its whole body in a real `<a>` (Files/Chats need actual
+   link semantics: middle-click, open-in-new-tab). Unstyled, that anchor's UA
+   default (blue, underlined) painted every descendant inside it, including
+   plain-text timestamps -- reported as "timestamps render as underlined
+   links". `color: inherit` + no text-decoration on the link itself removes
+   that; specific children (`.ws-ref--link` etc.) still opt back in on their
+   own terms. */
+.ws-note-card__link { display: block; min-width: 0; color: inherit; text-decoration: none; }
+/* The per-chat sharing badge (Memory.tsx's ChatShareBadge): a small icon
+   button pinned to the card's corner, sitting OUTSIDE `.ws-note-card__link`
+   as a sibling rather than nested inside it (a <button> inside an <a> is
+   invalid, and was literally what broke here -- see the comment on
+   ChatShareBadge in Memory.tsx). Absolutely-positioned children of a flex
+   container are not flex items, so this costs `.ws-notes-grid > li > *`'s
+   stretch rule above nothing. */
+.ws-note-card__share { position: absolute; top: var(--space-2); right: var(--space-2); z-index: 1; }
 /* Doc cards (docs section) share the same grid rules but only carry title +
    path. Path clamps to one line so a deep tree can't spike a card taller. */
 .ws-doc-card { width: 100%; display: flex; flex-direction: column; }

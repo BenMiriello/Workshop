@@ -12,6 +12,29 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.10 — 2026-08-15 — a control is not a flex sibling of the card it decorates
+
+**Compatible (fix, no exports changed).** Three `.ws-notes-grid` / `.ws-note-card`
+CSS fixes, all found auditing a regression on the Memory page's Library list:
+
+- `.ws-note-card__link` (the chat card's wrapping `<a>`) had no rule at all, so
+  the browser's default blue-underlined anchor painted every descendant inside
+  it, including plain-text timestamps. Now `color: inherit; text-decoration:
+  none`.
+- `.ws-note-card__footer .ws-tag` gets `white-space: nowrap`: a scope tag was
+  wrapping onto a second line mid-word inside its own pill at card widths its
+  label didn't fit. `Row wrap` on the footer already moves the whole tag to
+  the next line as a unit when needed; this only stops it breaking internally.
+- New `.ws-note-card__share`: an absolutely-positioned corner slot for a
+  per-item control (Memory's chat-sharing badge) that must sit OUTSIDE a
+  card's `Link` — a control nested inside the anchor, or added as a second
+  flex child of `.ws-notes-grid > li`, either breaks operability (a button
+  inside an `<a>`) or breaks layout (two flex children fighting the grid
+  track's width, which is what actually shipped and squeezed every chat card
+  to a third of its column with the control spilling into the next one).
+  Absolutely-positioned children of a flex container are not flex items, so
+  this costs the grid's single-child stretch rule nothing.
+
 ## 0.5.9 — 2026-08-14 — a bottom bar that is actually at the bottom
 
 **Compatible (one name added).** `PageActionBar`: a page's primary action,

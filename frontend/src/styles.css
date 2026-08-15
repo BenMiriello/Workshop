@@ -1948,12 +1948,19 @@ button.chat-attach {
   border: none; cursor: pointer;
 }
 /* A filename in the Files table opens the viewer rather than navigating, but it
-   is still a link to the reader, so it keeps link affordance. */
+   is still a link to the reader, so it keeps link affordance. Same underline-
+   at-rest rule as `.ws-ref--link` / `.chat-receipt--link` (frontend/CLAUDE.md
+   "A link is underlined, not tinted") -- this used to be permanently
+   `--accent` with a hover-only underline, which is the exact pattern that rule
+   corrects: a permanent tint on a control that isn't the operator's own, and
+   an affordance invisible until a hover that doesn't exist on a phone. */
 .chat-att-link {
   padding: 0; border: none; background: none; cursor: pointer;
-  font: inherit; color: var(--accent); text-align: left;
+  font: inherit; color: inherit; text-align: left;
+  text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklab, currentColor, transparent 55%);
 }
-.chat-att-link:hover { text-decoration: underline; }
+.chat-att-link:hover { color: var(--you); text-decoration-color: currentColor; }
 
 /* The attachment viewer's body. Sized to the viewport rather than to the file:
    an image opens at a size you can actually look at, and a tall one scrolls

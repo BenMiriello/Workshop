@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   RefreshCw, Plus, Pencil, Trash2, FileText, BookOpen, MessageSquare, Pin,
-  ShieldCheck,
+  ShieldCheck, Lock, Globe, GitBranch,
 } from "lucide-react";
 import {
   Button,
@@ -304,34 +304,91 @@ export default function Notes() {
 
 // ---- Library (Notes + Documents + Chats, unified) --------------------------
 
-// One chat's entry in the sharing model (sec 6). It sits OUTSIDE the card's
-// `Link`, because a select nested inside a link is not operable.
+// One chat's entry in the sharing model (sec 6). A full "Other chats find
+// it: <select> <help sentence>" row used to sit as a SIBLING of the card
+// inside the grid cell, which broke two ways at once: as a second flex child
+// of `.ws-notes-grid > li` it fought the card for the row's width (the card
+// lost, down to a squeezed strip with the control overflowing into the next
+// column), and repeating the full sentence on every one of a hundred cards
+// was noise even where it fit.
+//
+// This is a compact icon badge instead, living in the card's footer, that
+// opens a small dialog on click. It sits OUTSIDE the card's `Link` (a select
+// nested inside a link is not operable, and a nested <button> inside an <a>
+// is invalid markup besides) as an absolutely-positioned overlay in the
+// corner: absolutely-positioned children of a flex container are not flex
+// items, so it costs the grid's single-child stretch rule nothing. The icon
+// itself already answers "what is this set to" (a locked padlock reads as
+// private at a glance); the dialog is only for changing it.
 //
 // CURATION, NOT SECURITY. This changes what other chats' searches turn up. It
 // does not restrict what anything can read: everything here runs as one uid.
 // Per SEC-A2, do not relabel this permission or access.
-//
-// Explicit Save rather than commit-on-change, per frontend/CLAUDE.md rule 7:
-// this writes config. The button appears only once the value actually differs,
-// so a row the operator is only reading stays quiet.
-function ChatShare({
-  threadId, scope, policy, onSaved,
+const SHARE_ICON: Record<ShareValue, typeof Lock> = {
+  inherit: GitBranch,
+  open: Globe,
+  private: Lock,
+};
+
+function ChatShareBadge({
+  threadId, scope, title, policy, onSaved,
 }: {
   threadId: string;
   scope: string;
+  title: string;
   policy: MemoryPolicy | null;
   onSaved: (p: MemoryPolicy) => void;
+}) {
+  const ref = chatItemRef(threadId);
+  const stored = effectiveShare(policy, "chat", scope, ref);
+  const [open, setOpen] = useState(false);
+  const Icon = SHARE_ICON[stored];
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        icon
+        className="ws-note-card__share"
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
+        aria-label={`Sharing with other chats: ${SHARE_LABEL[stored]}. ${SHARE_HELP[stored]} Click to change.`}
+        title={`Other chats find it: ${SHARE_LABEL[stored]}`}
+      >
+        <Icon size={13} strokeWidth={1.8} aria-hidden />
+      </Button>
+      {open && (
+        <ChatShareDialog
+          threadId={threadId}
+          scope={scope}
+          title={title}
+          policy={policy}
+          onSaved={(p) => { onSaved(p); setOpen(false); }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
+// The dialog the badge opens. Explicit Save rather than commit-on-change, per
+// frontend/CLAUDE.md rule 7: this writes config.
+function ChatShareDialog({
+  threadId, scope, title, policy, onSaved, onClose,
+}: {
+  threadId: string;
+  scope: string;
+  title: string;
+  policy: MemoryPolicy | null;
+  onSaved: (p: MemoryPolicy) => void;
+  onClose: () => void;
 }) {
   const ref = chatItemRef(threadId);
   const stored = effectiveShare(policy, "chat", scope, ref);
   const [value, setValue] = useState<ShareValue>(stored);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // Follow the stored value when the policy loads or another row changes it,
-  // but never stomp an edit in progress.
-  useEffect(() => { setValue(stored); }, [stored]);
-
   const dirty = value !== stored;
+
   const save = useCallback(async () => {
     setSaving(true);
     setErr(null);
@@ -339,32 +396,40 @@ function ChatShare({
       onSaved(await setItemShare(ref, value));
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
-    } finally {
       setSaving(false);
     }
   }, [ref, value, onSaved]);
 
   return (
-    <Row wrap style={{ gap: "var(--space-2)", alignItems: "center", marginTop: "var(--space-2)" }}>
-      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Other chats find it:</span>
-      <Select
-        value={value}
-        onChange={(e) => setValue(e.target.value as ShareValue)}
-        aria-label={`What other chats find from this chat`}
-      >
-        {SHARE_VALUES.map((v) => (
-          <option key={v} value={v}>{SHARE_LABEL[v]}</option>
-        ))}
-      </Select>
-      {dirty && (
-        <Button variant="primary" onClick={() => { void save(); }} loading={saving}>Save</Button>
-      )}
-      {err ? (
-        <span className="ws-field__error">{err}</span>
-      ) : (
-        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{SHARE_HELP[value]}</span>
-      )}
-    </Row>
+    <Modal
+      open
+      onClose={onClose}
+      title={`Sharing: ${title || "Chat"}`}
+      actions={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" disabled={!dirty} loading={saving} onClick={() => { void save(); }}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <Stack gap="lg">
+        <Field label="Other chats find it" htmlFor="chat-share-select" help={SHARE_HELP[value]}>
+          <Select
+            id="chat-share-select"
+            value={value}
+            onChange={(e) => setValue(e.target.value as ShareValue)}
+            data-autofocus
+          >
+            {SHARE_VALUES.map((v) => (
+              <option key={v} value={v}>{SHARE_LABEL[v]}</option>
+            ))}
+          </Select>
+        </Field>
+        {err && <p className="ws-field__error">{err}</p>}
+      </Stack>
+    </Modal>
   );
 }
 
@@ -606,8 +671,8 @@ function Library({ initialSource }: { initialSource: SourceFilter }) {
     body = (
       <>
         {overflow && (
-          <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>
-            Showing the first {OVERFLOW_AT} of {items.length}. Narrow by scope, source or search to see the rest.
+          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginBottom: "var(--space-3)" }}>
+            Listing the first {OVERFLOW_AT} of {items.length}. Narrow by scope, source or search to see the rest.
           </p>
         )}
         <CardGrid className="ws-notes-grid">
@@ -655,29 +720,31 @@ function Library({ initialSource }: { initialSource: SourceFilter }) {
                   </Stack>
                 </Card>
               ) : it.chat ? (
-                <Link to={`/chat/${encodeURIComponent(it.chat.context_key)}?thread=${encodeURIComponent(it.chat.id)}`} className="ws-note-card__link">
-                  <Card interactive compact className="ws-note-card">
-                    <Stack gap="sm">
-                      <SourceBadge source="chat" />
-                      <span className="ws-note-card__title">{it.chat.title || "Chat"}</span>
-                      <Row wrap className="ws-note-card__footer" style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-                        <Tag hue={catFor(it.chat.scope || "workshop")}>{scopeLabel(it.chat.scope)}</Tag>
-                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                          {fmtTs(it.chat.last_user_at || it.chat.created_at)}
-                        </span>
-                      </Row>
-                    </Stack>
-                  </Card>
-                </Link>
+                <>
+                  <Link to={`/chat/${encodeURIComponent(it.chat.context_key)}?thread=${encodeURIComponent(it.chat.id)}`} className="ws-note-card__link">
+                    <Card interactive compact className="ws-note-card">
+                      <Stack gap="sm">
+                        <SourceBadge source="chat" />
+                        <span className="ws-note-card__title">{it.chat.title || "Chat"}</span>
+                        <Row wrap className="ws-note-card__footer" style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                          <Tag hue={catFor(it.chat.scope || "workshop")}>{scopeLabel(it.chat.scope)}</Tag>
+                          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                            {fmtTs(it.chat.last_user_at || it.chat.created_at)}
+                          </span>
+                        </Row>
+                      </Stack>
+                    </Card>
+                  </Link>
+                  {/* Outside the Link on purpose -- see ChatShareBadge above. */}
+                  <ChatShareBadge
+                    threadId={it.chat.id}
+                    scope={it.chat.scope || "workshop"}
+                    title={it.chat.title || "Chat"}
+                    policy={policy}
+                    onSaved={setPolicy}
+                  />
+                </>
               ) : null}
-              {it.chat && (
-                <ChatShare
-                  threadId={it.chat.id}
-                  scope={it.chat.scope || "workshop"}
-                  policy={policy}
-                  onSaved={setPolicy}
-                />
-              )}
             </li>
           ))}
         </CardGrid>
