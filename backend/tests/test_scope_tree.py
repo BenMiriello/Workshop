@@ -1,4 +1,4 @@
-"""services/scope_tree.py — the single owner of the scope model (Phase 1 of
+"""services/scope_tree.py -- the single owner of the scope model (Phase 1 of
 docs/platform-redesign/memory-and-documentation-model-2026-08-14.md).
 
 Four properties are load-bearing and pinned here (design doc sec 7.4):
@@ -170,7 +170,14 @@ def notes_tree(tmp_path, monkeypatch):
     """A real, isolated knowledge tree with two sibling projects and an
     unattached agent, all children of `workshop` (no override file), so
     `knowledge.recall` exercises the real `scope_tree.reach` rather than a
-    fixture."""
+    fixture.
+
+    `agent:solo` needs a real registry entry, not just a knowledge note:
+    `scope_tree` now enumerates agents off `agents_registry.list_agents`
+    (never off which knowledge directories happen to exist), so a note with
+    no matching definition file is a note in an orphaned scope, unreachable
+    from anywhere but itself -- exactly the class of bug this fixture is
+    meant to catch, not accidentally paper over."""
     monkeypatch.setenv("WORKSHOP_ROOT", str(tmp_path))
     monkeypatch.setenv("WORKSHOP_RUNTIME", str(tmp_path / ".runtime"))
     monkeypatch.setenv("WORKSHOP_PROJECTS_ROOT", str(tmp_path / "projects"))
@@ -184,6 +191,15 @@ def notes_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "projects_root", lambda: tmp_path / "projects")
     monkeypatch.setattr(paths, "workshop_root", lambda: tmp_path)
     monkeypatch.setattr(scope_tree, "STORE", tmp_path / ".runtime" / "scope-tree.json")
+
+    from services import agents_registry, installed_apps
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(agents_registry, "_user_agents_dir", lambda: agents_dir)
+    (agents_dir / "solo.md").write_text(
+        "---\nname: Solo\nruntime: assistant\n---\n\nA standalone agent.\n")
+    monkeypatch.setattr(installed_apps, "REGISTRY_PATH", tmp_path / "installed-apps.json")
+
     ownership.set_current_owner(4242)
 
     async def seed():
@@ -225,6 +241,103 @@ class TestCrossScopeRecall:
         assert out and out[0]["note_id"] == "a1"
         out2 = asyncio.run(knowledge.recall("development", "agent:solo", "solo"))
         assert out2 and out2[0]["note_id"] == "s1"
+
+
+# --- apps and agents come from their registries, never from disk ---------------
+@pytest.fixture
+def registry_tree(tmp_path, monkeypatch):
+    """A real, isolated instance with NO knowledge notes written anywhere --
+    the fixture for the class of bug the coordinator caught: `children` and
+    `reach` used to enumerate `app:<name>` and `agent:<slug>` off which
+    knowledge directories happened to exist, so an installed app or a
+    registered agent that had never been written to was invisible to the
+    tree, and would have looked like a search bug in Phase 2 rather than a
+    tree bug here."""
+    monkeypatch.setenv("WORKSHOP_ROOT", str(tmp_path))
+    monkeypatch.setenv("WORKSHOP_RUNTIME", str(tmp_path / ".runtime"))
+    monkeypatch.setenv("WORKSHOP_PROJECTS_ROOT", str(tmp_path / "projects"))
+    monkeypatch.setattr(ownership, "_RUNTIME", tmp_path / ".runtime")
+    monkeypatch.setattr(knowledge, "_root", lambda: tmp_path)
+    monkeypatch.setattr(knowledge, "_runtime", lambda: tmp_path / ".runtime")
+    shared = tmp_path / "shared" / "knowledge"
+    monkeypatch.setattr(knowledge, "_shared_knowledge_root", lambda: shared)
+    from services import paths
+    monkeypatch.setattr(paths, "projects_root", lambda: tmp_path / "projects")
+    monkeypatch.setattr(paths, "workshop_root", lambda: tmp_path)
+    monkeypatch.setattr(scope_tree, "STORE", tmp_path / ".runtime" / "scope-tree.json")
+
+    from services import agents_registry, installed_apps
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(agents_registry, "_user_agents_dir", lambda: agents_dir)
+    monkeypatch.setattr(installed_apps, "REGISTRY_PATH", tmp_path / "installed-apps.json")
+
+    ownership.set_current_owner(4242)
+    return tmp_path, agents_dir
+
+
+def _write_agent(agents_dir, slug, extra_frontmatter=""):
+    (agents_dir / f"{slug}.md").write_text(
+        f"---\nname: {slug}\nruntime: assistant\n{extra_frontmatter}---\n\nProbe.\n")
+
+
+class TestAppsAndAgentsAreRegistryDriven:
+    def test_a_newly_installed_app_appears_with_no_knowledge_dir(self, registry_tree):
+        tmp_path, _agents_dir = registry_tree
+        from services import installed_apps
+        # "birds" is a real catalog id (app_registry._CATALOG_FACTORIES),
+        # independent of whether any note was ever written for it.
+        installed_apps.REGISTRY_PATH.write_text('{"installed": ["birds"]}')
+
+        assert not (tmp_path / "shared" / "knowledge").exists()
+        assert not (tmp_path / "apps" / "birds").exists()
+
+        assert "app:birds" in scope_tree.children("workshop")
+        assert "app:birds" in scope_tree.reach("workshop")
+        # Reading the tree must not itself have created a directory.
+        assert not (tmp_path / "shared" / "knowledge").exists()
+        assert not (tmp_path / "apps" / "birds").exists()
+
+    def test_a_newly_registered_unattached_agent_appears_with_no_knowledge_dir(self, registry_tree):
+        tmp_path, agents_dir = registry_tree
+        _write_agent(agents_dir, "scribe")
+
+        assert not (tmp_path / ".runtime" / "agents").exists()
+
+        assert "agent:scribe" in scope_tree.children("workshop")
+        assert "agent:scribe" in scope_tree.reach("workshop")
+        assert not (tmp_path / ".runtime" / "agents").exists()
+
+    def test_an_agent_bound_to_a_project_is_that_projects_child(self, registry_tree):
+        _tmp_path, agents_dir = registry_tree
+        _write_agent(agents_dir, "keeper", extra_frontmatter="project_slug: birdwatch\n")
+
+        assert scope_tree.parent("agent:keeper") == "project:birdwatch"
+        assert "agent:keeper" in scope_tree.children("project:birdwatch")
+        assert "agent:keeper" not in scope_tree.children("workshop")
+        assert "agent:keeper" in scope_tree.reach("project:birdwatch")
+        # A sibling project cannot see a project-bound agent.
+        assert "agent:keeper" not in scope_tree.reach("project:other")
+
+    def test_a_retired_agent_does_not_appear(self, registry_tree):
+        _tmp_path, agents_dir = registry_tree
+        _write_agent(agents_dir, "active")
+        _write_agent(agents_dir, "gone", extra_frontmatter="retired: true\n")
+
+        kids = scope_tree.children("workshop")
+        assert "agent:active" in kids
+        assert "agent:gone" not in kids
+        assert "agent:gone" not in scope_tree.reach("workshop")
+
+    def test_development_reaches_registry_scopes_too(self, registry_tree, monkeypatch):
+        tmp_path, agents_dir = registry_tree
+        monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
+        from services import installed_apps
+        installed_apps.REGISTRY_PATH.write_text('{"installed": ["birds"]}')
+        _write_agent(agents_dir, "scribe")
+
+        r = scope_tree.reach("development")
+        assert {"workshop", "app:birds", "agent:scribe"} <= set(r)
 
 
 # --- label -----------------------------------------------------------------------

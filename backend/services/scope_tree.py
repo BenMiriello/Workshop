@@ -1,4 +1,4 @@
-"""scope_tree — the single owner of the scope model (memory-and-documentation-
+"""scope_tree -- the single owner of the scope model (memory-and-documentation-
 model-2026-08-14.md sec 4, sec 7.1).
 
 Before this module, scope was a bare string parsed independently in
@@ -158,15 +158,32 @@ def _load_overrides() -> dict[str, str]:
 
 
 def _default_parent(scope: Scope) -> str | None:
-    """Where `scope` sits when nothing in the override file says otherwise,
-    derived from its KIND alone (design doc sec 4.1's tree diagram)."""
+    """Where `scope` sits when nothing in the override file says otherwise.
+
+    For development/workshop/role this is purely a function of KIND (design
+    doc sec 4.1's tree diagram). For an AGENT it also honours the registry's
+    own `project_slug` binding when the agent has one -- existing data, not a
+    scheme invented for this tree (see `_agent_bound_project`). APPS have no
+    equivalent binding field anywhere today (`app_registry.AppSpec` carries no
+    project reference), so every app defaults to the root; a future
+    project-scoped app catalog entry, or a binding record alongside
+    `installed_apps.json`, is what would carry that later."""
     if scope.kind == "development":
         return None  # the root, on a developer build
     if scope.kind == "workshop":
         return DEVELOPMENT_SCOPE if _dev_mode_on() else None
     if scope.kind == "role":
         return None  # the second axis, not a tree node
-    return WORKSHOP_SCOPE  # project / app / agent, unattached by default
+    if scope.kind == "agent":
+        bound = _agent_bound_project(scope.slug)
+        if bound:
+            candidate = f"project:{bound}"
+            try:
+                parse(candidate)
+                return candidate
+            except ValueError:
+                pass
+    return WORKSHOP_SCOPE  # project / app / unattached agent, unattached by default
 
 
 def parent(scope_key: str) -> str | None:
@@ -190,25 +207,54 @@ def parent(scope_key: str) -> str | None:
 
 # --- enumerating the concrete scopes that exist --------------------------------
 # `reach()` and `govern()` are called per turn and per search (design doc sec
-# 7.2), and `_raw_existing_scopes` below calls `knowledge.all_scope_dirs()`,
-# which globs a handful of directories. Fewer than 30 nodes total, but "cheap
-# once" is not "free every call" -- cached the same way `_load_overrides` is,
-# against a handful of root directories' own mtimes rather than the contents
-# underneath them: a new project/app/agent directory changes its PARENT
-# directory's mtime, so watching the parents (not walking their contents) is
-# enough to notice one appearing or disappearing.
-_existing_cache: tuple[tuple, list[str]] | None = None
+# 7.2), so this is cached the same way `_load_overrides` is: a handful of
+# cheap `stat()` calls per request, a full rebuild only when a watched path
+# actually changed.
+#
+# PROJECTS stay off disk (`knowledge.all_scope_dirs()`): every project that
+# exists today already has a knowledge directory, so this has not been wrong
+# in practice. It carries the same latent gap described below for APPS AND
+# AGENTS -- a project registered but never written to would be invisible too
+# -- but fixing that is a project-registry read this module does not have a
+# seam for yet, and it is out of scope for the app/agent gap this section
+# exists to close.
+#
+# APPS AND AGENTS ARE READ FROM THEIR REGISTRIES, NEVER FROM DISK. A scope
+# that is registered but has never had a knowledge note written is still a
+# scope: `knowledge.scope_dir` mkdirs on demand, so keying off which knowledge
+# directories happen to exist both MISSES a scope with no notes yet and RISKS
+# CREATING one as a side effect of reading the tree (see
+# `knowledge.scope_for_context`'s comment about `apps/zzz/knowledge/` for the
+# exact shape of that mistake). `agents_registry.list_agents(include_retired=
+# False)` is the source for agents specifically because it already excludes
+# retired and per-channel agents, and because it does NOT fall back to
+# `build_agents.json` for a slug with no definition file (ADR 0014 door 4: an
+# undeclared build-agent process is a Run, not an Agent, and must not become a
+# tree node just because it once ran).
+_tree_cache: tuple[tuple, tuple[list[str], dict[str, str]]] | None = None
 
 
 def _watched_roots() -> list[Path]:
-    """The directories whose immediate children `_raw_existing_scopes` reads.
-    Watching these four (rather than `knowledge.all_scope_dirs()`'s own,
-    slightly larger walk) is enough: a scope only enters or leaves the tree by
-    a project/app/agent/role directory being created or removed under one of
-    these."""
-    from services import knowledge, paths
+    """Every path whose mtime signals "the set of concrete scopes might have
+    changed". The three directories catch a project/app/agent knowledge
+    directory being created or removed; the two registry FILES catch
+    installing/removing an app and a builder agent's retirement
+    (`build_agents.retire` rewrites `build_agents.json` in place); the user
+    agents directory catches a new/deleted agent DEFINITION file.
+
+    Not caught: retiring a non-builder (assistant) agent, which only rewrites
+    its OWN existing definition file's frontmatter in place and touches none
+    of these paths. That is an accepted gap in the cache, not the read: a cold
+    cache (a fresh process, or any OTHER watched path changing meanwhile)
+    always sees it correctly, and watching every individual definition file
+    would mean enumerating them, which defeats the point of caching. A test
+    exercising this reads with a cold cache, which is the common case."""
+    from services import knowledge, paths, installed_apps, build_agents
+    from services import agents_registry as ar
     roots = [paths.projects_root(), paths.workshop_root() / "apps",
-             paths.runtime_dir() / "agents"]
+             paths.runtime_dir() / "agents",
+             installed_apps.REGISTRY_PATH, build_agents._registry(),
+             ar._user_agents_dir()]
     try:
         roots.append(knowledge._shared_knowledge_root())
     except Exception:
@@ -216,13 +262,9 @@ def _watched_roots() -> list[Path]:
     return roots
 
 
-def _raw_existing_scopes() -> list[str]:
-    """Every scope key that concretely exists, off the filesystem -- the
-    actual walk, uncached. Kept out of `knowledge.all_scope_dirs()`'s own
-    caller for one reason: it keeps this module's only dependency on
-    `knowledge` inside a lazy import. Tests substitute a fixture tree by
-    monkeypatching `_existing_scopes` (below) directly, which sidesteps the
-    cache entirely rather than fighting its invalidation key."""
+def _raw_project_scopes() -> list[str]:
+    """`project:<slug>` scopes, off the filesystem. See the section docstring
+    for why this differs from how apps and agents are read below."""
     from services import knowledge
     try:
         pairs = knowledge.all_scope_dirs()
@@ -230,20 +272,57 @@ def _raw_existing_scopes() -> list[str]:
         return []
     out: list[str] = []
     for key, _d in pairs:
-        if key in (WORKSHOP_SCOPE, DEVELOPMENT_SCOPE) or key.startswith("role:"):
+        if not key.startswith("project:"):
             continue
         try:
             parse(key)
         except ValueError:
-            continue  # an un-keyed directory all_scope_dirs() reads defensively
+            continue
         out.append(key)
     return out
 
 
-def _existing_scopes() -> list[str]:
-    """Cached `_raw_existing_scopes()`. See the module docstring's performance
-    note and `_watched_roots` above for the invalidation key."""
-    global _existing_cache
+def _raw_registry_scopes() -> tuple[list[str], dict[str, str]]:
+    """(`app:<name>` and `agent:<slug>` scopes, agent slug -> bound
+    `project:<slug>` for agents that have one) off the app and agent
+    registries -- the actual reads, uncached."""
+    scopes: list[str] = []
+    agent_projects: dict[str, str] = {}
+
+    from services import app_registry
+    for app_id in app_registry.installed_app_ids():
+        key = f"app:{app_id}"
+        try:
+            parse(key)
+        except ValueError:
+            continue
+        scopes.append(key)
+
+    from services import agents_registry
+    for rec in agents_registry.list_agents(include_retired=False):
+        slug = rec.get("slug")
+        if not slug:
+            continue
+        key = f"agent:{slug}"
+        try:
+            parse(key)
+        except ValueError:
+            continue
+        scopes.append(key)
+        project_slug = rec.get("project_slug")
+        if project_slug:
+            agent_projects[slug] = str(project_slug)
+
+    return scopes, agent_projects
+
+
+def _tree_snapshot() -> tuple[list[str], dict[str, str]]:
+    """Cached (every concrete scope key, agent slug -> bound project_slug).
+    See `_watched_roots` for the invalidation key. Tests substitute a fixture
+    tree by monkeypatching `_existing_scopes` and/or `_agent_bound_project`
+    (below) directly, which sidesteps this cache entirely rather than
+    fighting its invalidation key."""
+    global _tree_cache
     key = []
     for r in _watched_roots():
         try:
@@ -251,12 +330,26 @@ def _existing_scopes() -> list[str]:
         except OSError:
             key.append((str(r), None))
     cache_key = tuple(key)
-    cached = _existing_cache
+    cached = _tree_cache
     if cached is not None and cached[0] == cache_key:
-        return list(cached[1])
-    out = _raw_existing_scopes()
-    _existing_cache = (cache_key, out)
-    return list(out)
+        return cached[1]
+    reg_scopes, agent_projects = _raw_registry_scopes()
+    result = (_raw_project_scopes() + reg_scopes, agent_projects)
+    _tree_cache = (cache_key, result)
+    return result
+
+
+def _existing_scopes() -> list[str]:
+    """Every scope key that concretely exists, across projects (off disk) and
+    apps/agents (off their registries)."""
+    return list(_tree_snapshot()[0])
+
+
+def _agent_bound_project(slug: str) -> str | None:
+    """The project slug an agent is bound to, per the registry's own
+    `project_slug` field, or None when unattached. Existing data, not a
+    binding scheme invented for this tree."""
+    return _tree_snapshot()[1].get(slug)
 
 
 def children(scope_key: str) -> list[str]:
