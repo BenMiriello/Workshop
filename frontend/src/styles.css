@@ -2274,6 +2274,13 @@ p.chat-workpanel__note { margin: 0; }
 /* Neutral at rest, both of them: a control is not content, and the glyph is a
    constant on every one of these cards, so it labels nothing by being coloured. */
 .chat-ticket-card__glyph { flex: 0 0 auto; color: var(--muted); }
+/* The pill keeps its own width and the TITLE gives up the room. Both are flex
+   children and the title already truncates, but a `StatusPill` with no
+   `flex: none` is still shrinkable, so at a narrow width the longest state word
+   ("in progress") wrapped onto two lines and made that one card taller than
+   every sibling in the same answer. A row of cards whose heights depend on
+   which state each one is in reads as a layout accident. */
+.chat-ticket-card__head > .ws-pill { flex: 0 0 auto; white-space: nowrap; }
 .chat-ticket-card__caret {
   flex: 0 0 auto; color: var(--muted);
   transition: transform var(--dur-base) var(--ease-out);

@@ -299,3 +299,26 @@ describe("emptyText", () => {
     for (const c of WORK_CHIPS) expect(emptyText(c.id)).not.toMatch(/—/);
   });
 });
+
+// A heading SEPARATES, so one group has nothing to separate it from and the
+// heading only repeats the chip already selected above it.
+describe("headings", () => {
+  it("prints none for a single group", () => {
+    const one = workList(payload({ filed: [ticket("a", "todo")] }), "this_chat");
+    expect(one.groups).toHaveLength(1);
+    expect(one.headed).toBe(false);
+  });
+
+  it("prints them once there is more than one", () => {
+    const two = workList(
+      payload({ filed: [ticket("a", "todo"), ticket("b", "done")] }),
+      "this_chat",
+    );
+    expect(two.groups.length).toBeGreaterThan(1);
+    expect(two.headed).toBe(true);
+  });
+
+  it("never heads the needs-you list, which is always one group", () => {
+    expect(workList(payload({ inbox: [item("i")] }), "needs_you").headed).toBe(false);
+  });
+});

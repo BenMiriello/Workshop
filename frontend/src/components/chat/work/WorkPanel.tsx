@@ -331,7 +331,7 @@ function WorkBody({
       ) : (
         list.groups.map((g) => (
           <div key={g.key} className="chat-workpanel__group">
-            <SectionLabel>{g.label}</SectionLabel>
+            {list.headed && <SectionLabel>{g.label}</SectionLabel>}
             <ul className="chat-workpanel__list">
               {g.rows.map((row) => (
                 <li key={row.id} className="chat-workpanel__item">

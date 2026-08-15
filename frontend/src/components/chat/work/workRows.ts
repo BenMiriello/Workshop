@@ -66,6 +66,16 @@ export type WorkGroup = { key: WorkGroupKey; label: string; rows: WorkRow[] };
 export type WorkList = {
   /** Only groups that have rows. An empty heading is a heading that lies. */
   groups: WorkGroup[];
+  /** Whether to print the group headings at all.
+   *
+   *  A heading SEPARATES. With one group there is nothing to separate it from,
+   *  and the heading then repeats the chip that is already selected directly
+   *  above it: "Needs you" over rows chosen by the `Needs you` chip. Two words
+   *  saying the same thing, twelve pixels apart, on the panel's most-used view.
+   *  Each row already carries its own state word in its meta line, so nothing
+   *  is lost by dropping the one heading and everything is kept when there are
+   *  several. */
+  headed: boolean;
   /** Rows actually rendered, after the cap. */
   shown: number;
   /** How big the chip's set is, as far as anything knows. */
@@ -141,6 +151,7 @@ export function workList(data: WorkPayload, chip: WorkChip): WorkList {
       groups: rows.length
         ? [{ key: "needs_you", label: GROUP_LABEL.needs_you, rows }]
         : [],
+      headed: false,
       shown: rows.length,
       total,
       overflow: Math.max(0, total - rows.length),
@@ -178,7 +189,13 @@ export function workList(data: WorkPayload, chip: WorkChip): WorkList {
   // about; taking the count alone would report a negative overflow as zero and
   // claim a capped list was complete.
   const total = Math.max(counted, tickets.length);
-  return { groups, shown, total, overflow: Math.max(0, total - shown) };
+  return {
+    groups,
+    headed: groups.length > 1,
+    shown,
+    total,
+    overflow: Math.max(0, total - shown),
+  };
 }
 
 // The first two are kept VERBATIM from the surfaces this replaces. They were
