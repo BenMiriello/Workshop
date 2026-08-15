@@ -27,7 +27,8 @@ from services import tenancy
 log = logging.getLogger(__name__)
 
 __all__ = ["list_branches", "fork", "switch", "rename", "hidden_event_ids",
-           "hidden_event_ids_sync", "record_message", "keep_visible"]
+           "hidden_event_ids_sync", "record_message", "record_meta",
+           "keep_visible"]
 
 
 def keep_visible(events: list[dict], hidden: set[str] | None) -> list[dict]:
@@ -379,7 +380,8 @@ def _close_turn(s, thread_uuid, ev: dict, ev_meta: dict) -> None:
         s, thread_uuid, role="assistant",
         content=(_text_of(tail) if opened else (ev.get("content") or "")),
         segments=tail or None, meta=_message_meta(ev), turn_id=turn_uuid,
-        client_id=ev.get("client_id"), external_id=ev.get("id"))
+        client_id=ev.get("client_id"), external_id=ev.get("id"),
+        created_at=ev.get("ts"))
 
 
 def _dt(value):
@@ -435,22 +437,33 @@ def _sync_record(org_id, user_id, thread_ref: str, ev: dict, meta: dict) -> None
     with tenant_session(org_id) as s:
         t = chat_repo.thread_by_ref(s, thread_ref)
         if t is None:
+            # THE FULL FIELD SET, not a 3-column stand-in. This used to pass
+            # only context_key/scope/title, so mode, model, scope_locked,
+            # agent_slug and everything else silently took the column
+            # defaults (mode defaulted to "orchestrated" even for a "direct"
+            # chat) and NOTHING ever corrected them afterward -- the thread
+            # list now reads these columns, so a row created this thin would
+            # misreport itself for its whole life. `chat_repo._thread_fields`
+            # is the same mapping the backfill uses at creation.
             t = chat_repo.create_thread(
                 s, org_id, user_id, external_id=thread_ref,
-                context_key=meta.get("context_key") or "general",
-                scope=meta.get("scope") or "workshop",
-                title=meta.get("title"))
+                **chat_repo._thread_fields(meta))
+            # `state.participants` isn't a plain column create_thread can take
+            # a kwarg for; one extra UPDATE, once per thread, at creation.
+            chat_repo.sync_thread_fields(s, t["id"], meta)
         kind = ev.get("kind")
         if kind == "boundary":
             chat_repo.append_message(s, t["id"], role="assistant",
                                      kind="boundary", content="",
                                      boundary_mode=ev.get("mode"),
-                                     external_id=ev.get("id"))
+                                     external_id=ev.get("id"),
+                                     created_at=ev.get("ts"))
         elif kind == "scope":
             chat_repo.append_message(s, t["id"], role="assistant", kind="scope",
                                      content="", scope_from=ev.get("from"),
                                      scope_to=ev.get("to"),
-                                     external_id=ev.get("id"))
+                                     external_id=ev.get("id"),
+                                     created_at=ev.get("ts"))
         elif kind == "message":
             ev_meta = ev.get("meta") or {}
             # A REPLY IS A TURN, and a turn that was interrupted is several rows
@@ -465,7 +478,8 @@ def _sync_record(org_id, user_id, thread_ref: str, ev: dict, meta: dict) -> None
                 s, t["id"], role=ev.get("role") or "user",
                 content=ev.get("content") or "",
                 segments=ev_meta.get("segments"), meta=_message_meta(ev),
-                client_id=ev.get("client_id"), external_id=ev.get("id"))
+                client_id=ev.get("client_id"), external_id=ev.get("id"),
+                created_at=ev.get("ts"))
 
 
 async def record_message(thread_ref: str, ev: dict, meta: dict | None = None
@@ -485,3 +499,46 @@ async def record_message(thread_ref: str, ev: dict, meta: dict | None = None
                                 meta or {})
     except Exception:
         log.warning("mirror-write failed for %s", thread_ref, exc_info=True)
+
+
+def _sync_record_meta(org_id, thread_ref: str, meta: dict) -> None:
+    from db import chat_repo
+    from db.engine import tenant_session
+    with tenant_session(org_id) as s:
+        t = chat_repo.thread_by_ref(s, thread_ref)
+        if t is None:
+            # Not mirrored yet -- a later message creates it with the full
+            # field set (_sync_record above, via chat_repo._thread_fields).
+            # There is no row here to patch.
+            return
+        chat_repo.sync_thread_fields(s, t["id"], meta)
+
+
+async def record_meta(thread_ref: str, meta: dict) -> None:
+    """Mirror a META-ONLY change into the tree: archive/restore, rename, a
+    mode/model/scope change, a participants change.
+
+    `record_message` above is the funnel for a LOGGED event; this is the
+    funnel for everything that only ever touched meta.json. Before this,
+    none of it reached Postgres at all except by riding along on the next
+    message through `chat_repo.create_thread`'s one-time field set -- so an
+    archived chat kept reading `archived_at: NULL` and a renamed chat kept
+    its creation-time title, both indefinitely, until something else
+    happened to send a message on that thread. Measured on the live store
+    2026-08-15: three actually-archived threads, all still live in Postgres.
+
+    Best-effort, same as `record_message`: the file's meta.json is still the
+    durable write, and a patch must not fail because Postgres is unreachable.
+    `services.chat_log.patch_meta_sync` calls this ONLY when the patch
+    touches a field the thread list (or a future reader) actually cares
+    about -- see `_LIST_RELEVANT_META_FIELDS` there -- so the high-frequency
+    bookkeeping patches a live turn makes (active_run_id, live_message,
+    turn_marks, context_tokens) never reach here at all.
+    """
+    if not tenancy.available():
+        return
+    try:
+        org_id, _ = tenancy.org_and_user()
+        await run_in_threadpool(_sync_record_meta, org_id, thread_ref, meta)
+    except Exception:
+        log.warning("meta mirror-write failed for %s", thread_ref, exc_info=True)

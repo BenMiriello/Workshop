@@ -33,6 +33,8 @@ from typing import Any
 
 from sqlalchemy import text
 
+from db.chat_repo import _iso, _thread_fields
+
 ROOT = Path(os.environ.get("WORKSHOP_ROOT", Path(__file__).resolve().parents[2]))
 RUNTIME = Path(os.environ.get("WORKSHOP_RUNTIME", ROOT / ".runtime"))
 
@@ -312,46 +314,14 @@ def _message_meta(ev: dict) -> dict | None:
     return meta or None
 
 
-def _iso(value: Any):
-    from datetime import datetime
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value))
-    except Exception:
-        return None
+# `_thread_fields` and `_iso` moved to db.chat_repo (2026-08-15, the list-read
+# migration): `sync_thread_fields` needed the same mapping to keep an EXISTING
+# row's columns current, not only a new row's fields at creation. Imported at
+# the top of this file now; kept under the same names so nothing below (or
+# any external caller) needs to change.
 
 
 # --- the write ---------------------------------------------------------------
-
-def _thread_fields(meta: dict) -> dict:
-    scope = meta.get("scope")
-    ctx = meta.get("context_key") or "general"
-    if not scope:
-        # chat_store._scope_from_context_key, in one line: a bare context key is
-        # the workshop scope, anything prefixed carries its own.
-        scope = "workshop" if ctx in ("general", "") else (
-            ctx if ":" in ctx else f"app:{ctx}")
-    return {
-        "context_key": ctx,
-        "scope": scope,
-        "scope_locked": bool(meta.get("scope_locked")),
-        "mode": meta.get("mode") if meta.get("mode") in ("direct", "orchestrated")
-        else "orchestrated",
-        "title": (meta.get("title") or None),
-        "seed_title": (meta.get("_seed_title") or None),
-        "model": meta.get("model") or None,
-        "effort": meta.get("effort") or None,
-        "permission_mode": meta.get("permission_mode") or None,
-        "summary": meta.get("summary") or None,
-        "context_tokens": meta.get("context_tokens"),
-        "claude_session": meta.get("claude_session") or None,
-        "voice_session": meta.get("voice_session") or None,
-        "agent_slug": meta.get("agent_id") or None,
-        "archived_at": _iso(meta.get("archived_at")),
-        "created_at": _iso(meta.get("created_at")),
-        "updated_at": _iso(meta.get("updated_at")),
-    }
 
 
 def thread_by_external(s, external: str):
@@ -390,6 +360,23 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
         # filtered, because the run markers are still needed to build the turns.
         if not any(ev.get("kind") in ("message", "boundary", "scope")
                    and ev.get("id") not in seen for ev in events):
+            # NOTHING NEW TO MIRROR AS A ROW, but two things this pass can
+            # still correct do NOT depend on a new row existing:
+            #
+            # - the thread-level FIELDS can have moved since the last pass
+            #   (archived, renamed, a mode or model change), none of which
+            #   touch the event log at all, so this is the only pass that
+            #   will ever see them for a thread that gets no new messages;
+            # - an EXISTING row's `created_at`, which nothing else ever
+            #   revisits (see fix_message_created_at). Skipping this loop
+            #   whenever nothing is new would mean a thread that stopped
+            #   getting new messages right after the very first backfill
+            #   keeps its clustered, wrong created_at forever.
+            chat_repo.sync_thread_fields(s, tid, meta)
+            for ev in events:
+                if ev.get("kind") in ("message", "boundary", "scope") and ev.get("ts"):
+                    chat_repo.fix_message_created_at(s, tid, ev.get("id"), ev.get("ts"))
+                    stats["created_at_checked"] += 1
             return
         stats["topped_up"] += 1
     else:
@@ -474,7 +461,7 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
         chat_repo.append_message(
             s, tid, role="user", content=ev.get("content") or "",
             meta=_message_meta(ev), client_id=ev.get("client_id"),
-            external_id=ev.get("id"))
+            external_id=ev.get("id"), created_at=ev.get("ts"))
         stats["messages"] += 1
 
     def emit_assistant(ev: dict, content: str, segments, turn_row) -> None:
@@ -482,7 +469,7 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
             s, tid, role="assistant", content=content,
             segments=segments, meta=_message_meta(ev),
             turn_id=turn_row["id"] if turn_row else None,
-            external_id=ev.get("id"))
+            external_id=ev.get("id"), created_at=ev.get("ts"))
         stats["messages"] += 1
 
     for ev in events:
@@ -494,20 +481,28 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
         if kind == "run":
             continue
         # Already a row. On a first load `seen` is empty and this never fires;
-        # on a top-up it is what keeps the pass to the genuinely new tail.
+        # on a top-up it is what keeps the pass to the genuinely new tail --
+        # except for `created_at`, which nothing else ever revisits. See
+        # chat_repo.fix_message_created_at.
         if ev.get("id") in seen:
+            if kind in ("message", "boundary", "scope") and ev.get("ts"):
+                # A no-op once corrected -- see fix_message_created_at. This
+                # counts every CHECK, not every actual write.
+                chat_repo.fix_message_created_at(s, tid, ev.get("id"), ev.get("ts"))
+                stats["created_at_checked"] += 1
             continue
         if kind == "boundary":
             chat_repo.append_message(
                 s, tid, role="assistant", kind="boundary", content="",
-                boundary_mode=ev.get("mode"), external_id=ev.get("id"))
+                boundary_mode=ev.get("mode"), external_id=ev.get("id"),
+                created_at=ev.get("ts"))
             stats["boundaries"] += 1
             continue
         if kind == "scope":
             chat_repo.append_message(
                 s, tid, role="assistant", kind="scope", content="",
                 scope_from=ev.get("from"), scope_to=ev.get("to"),
-                external_id=ev.get("id"))
+                external_id=ev.get("id"), created_at=ev.get("ts"))
             stats["scopes"] += 1
             continue
         if kind != "message":
@@ -562,7 +557,16 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
             emit_user(ev)
             stats["orphan_messages"] += 1
 
+    # Refresh every mutable field from the meta this pass read, INCLUDING on a
+    # top-up: archived_at, mode, scope and participants can all have moved
+    # since the last pass, same reasoning as the early return above.
+    chat_repo.sync_thread_fields(s, tid, meta)
     if title:
+        # LAST, so it wins over sync_thread_fields's `f["title"]`: `title`
+        # here was walked off the log's own `title` events (auto-naming, a
+        # manual rename), which is more precise than meta.json's own field
+        # ever needs to be ahead of, and it is the only source for
+        # `title_source`, which meta.json does not carry at all.
         s.execute(text(
             "UPDATE chat_thread SET title = :ti, title_source = :src WHERE id = :t"),
             {"ti": title[:255], "src": title_source, "t": tid})
@@ -586,7 +590,7 @@ def apply() -> dict:
              "legacy_split_replies": 0,
              "split_stretches": 0, "unsplit_replies": 0, "unsplit_messages": 0,
              "orphan_messages": 0, "unmapped_owners": 0,
-             "unmapped_threads": 0}
+             "unmapped_threads": 0, "created_at_checked": 0}
     unmapped: list[str] = []
 
     # The owner connection, because `organization` and `user_account` are

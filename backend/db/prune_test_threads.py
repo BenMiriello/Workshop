@@ -53,8 +53,23 @@ def _thread_dirs_on_disk() -> set[str]:
     users = _runtime_root() / "users"
     if not users.is_dir():
         return set()
-    return {d.name for u in users.iterdir() if u.is_dir()
-            for d in (u / "chat").iterdir() if (u / "chat").is_dir() and d.is_dir()}
+    # The `is_dir()` guard has to gate the iteration, not filter its results:
+    # in a comprehension the `for d in (u/"chat").iterdir()` clause is evaluated
+    # BEFORE the `if` beside it, so a user directory with no `chat/` raised
+    # FileNotFoundError and took the whole prune down. Measured 2026-08-15 on
+    # users/4242, which has no chat dir.
+    #
+    # Failing safe matters more here than elsewhere: this set is condition 1
+    # ("no directory on disk"), so a directory this function fails to see looks
+    # exactly like a thread that was never on disk. Crashing was the safe
+    # failure; silently returning a short set would not be.
+    out: set[str] = set()
+    for u in users.iterdir():
+        chat = u / "chat"
+        if not u.is_dir() or not chat.is_dir():
+            continue
+        out.update(d.name for d in chat.iterdir() if d.is_dir())
+    return out
 
 
 def main() -> int:

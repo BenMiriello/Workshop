@@ -942,6 +942,31 @@ def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
     mirror_next(thread_id, lambda: chat_branches.record_message(thread_id, ev, meta))
 
 
+# Meta keys whose change is worth a Postgres round trip. The thread list
+# (services.chat_list_pg) reads chat_thread's mutable columns and
+# `state.participants`, all traceable to one of these; the fields NOT in this
+# set (active_run_id, live_message, turn_marks, card_states, context_tokens,
+# boundary_seq/cut_through/cut_mode, claude_session, agent_sessions, ...) are
+# per-turn bookkeeping that `patch_meta_sync` rewrites constantly WHILE A
+# TURN RUNS and that no PG reader consults, so mirroring every one of those
+# too would put a database round trip on the hottest part of a live turn for
+# no reader that wants it. `chat_repo.sync_thread_fields` still writes them
+# when it does run (it always writes the current meta, not a delta), so nothing
+# here loses accuracy -- this only decides WHEN a patch earns the trip.
+_LIST_RELEVANT_META_FIELDS = frozenset({
+    "title", "_seed_title", "archived_at", "mode", "scope", "scope_locked",
+    "model", "agent_id", "context_key", "participants",
+})
+
+
+def _mirror_meta(thread_id: str, meta: dict) -> None:
+    """Record a META-ONLY patch in the tree too, same fire-and-forget,
+    per-thread-ordered mechanism as `_mirror` (see `patch_meta_sync`, the one
+    funnel every meta write goes through)."""
+    from services import chat_branches
+    mirror_next(thread_id, lambda: chat_branches.record_meta(thread_id, meta))
+
+
 async def drain_mirror_writes() -> None:
     """Wait for the outstanding mirror writes. For tests and for shutdown, not
     for the request path: putting this on a send would be the latency the
@@ -1011,6 +1036,8 @@ def patch_meta_sync(thread_id: str, **fields: object) -> dict | None:
     meta["updated_at"] = now_iso()
     _write_json_atomic(meta_path(thread_id), meta)
     _notify(thread_id)
+    if _LIST_RELEVANT_META_FIELDS.intersection(fields):
+        _mirror_meta(thread_id, meta)
     return meta
 
 

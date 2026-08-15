@@ -159,7 +159,7 @@ def run(rebuild: bool = False) -> dict:
              "turns": 0, "boundaries": 0, "scopes": 0, "split_replies": 0,
              "legacy_split_replies": 0, "split_stretches": 0,
              "unsplit_replies": 0, "unsplit_messages": 0, "orphan_messages": 0,
-             "rebuilt": 0, "skipped_branched": 0}
+             "rebuilt": 0, "skipped_branched": 0, "created_at_checked": 0}
     by_name = {b["external"]: b for b in bad}
     with tenant_session(org_id) as s:
         for _owner, d in _owner_dirs():

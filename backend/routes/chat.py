@@ -291,7 +291,42 @@ async def providers(scope: str | None = None):
 
 @router.get("/threads")
 async def threads(context: str | None = None, archived: bool = False):
-    """The live conversations, or the archive. Never both: see list_threads."""
+    """The live conversations, or the archive. Never both: see list_threads.
+
+    Served from Postgres (services.chat_list_pg) when WORKSHOP_CHAT_LIST_PG is
+    on AND the query succeeds; otherwise from the file fold
+    (chat_store.list_threads, unchanged). Either way the file fold is the
+    fallback on any failure, so a Postgres outage costs this endpoint speed and
+    never the chat.
+
+    WHY IT IS OFF BY DEFAULT, and what has to be true to turn it on. Parity
+    against the file fold was measured on 2026-08-15 over the real store and is
+    close but NOT yet exact:
+
+      * archived: exact. 3/3 rows, every field, order matching.
+      * live: 68 rows from the file, 70 from Postgres. The two extra are test
+        artifacts titled "SCRATCH branch e2e" that never existed on disk,
+        leaked by tests before services/tenancy.py closed that hole. They would
+        show up in the operator's sidebar as two fake chats, which is the one
+        difference that is plainly a regression rather than a nuance.
+        db/prune_test_threads.py is the sanctioned cleanup and refuses to touch
+        anything that does not match a fixture signature, but it needs
+        WORKSHOP_DATABASE_ADMIN_URL, which this service deliberately does not
+        load.
+      * 13 rows differ on `last_message` only, never on ordering: `last_user_at`
+        agrees everywhere. The preview is the last MESSAGE-kind node of the
+        branch path, and an interrupted reply's tail stretch is not always the
+        same text the file's single message event holds.
+
+    So: the ordering, the counts, the titles, the modes and the timestamps all
+    agree. Flip the flag once the two scratch rows are gone and the preview
+    rule is settled. `db/chat_list_parity.py` is the check to re-run.
+    """
+    from services import chat_list_pg
+    if os.environ.get("WORKSHOP_CHAT_LIST_PG", "").strip().lower() in {"1", "true", "yes"}:
+        rows = await chat_list_pg.list_threads(context_key=context, archived=archived)
+        if rows is not None:
+            return rows
     return chat_store.list_threads(context_key=context, archived=archived)
 
 

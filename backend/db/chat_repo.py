@@ -425,13 +425,24 @@ def append_message(s: Session, thread_id: str | UUID, *, role: str,
                    external_id: str | None = None,
                    boundary_mode: str | None = None,
                    scope_from: str | None = None, scope_to: str | None = None,
-                   parent_id: str | UUID | None = None) -> dict:
+                   parent_id: str | UUID | None = None,
+                   created_at: str | None = None) -> dict:
     """Append to the current branch and advance its head.
 
     `parent_id` defaults to the branch head, which is what makes "send a message
     after going back" land on the branch instead of after the abandoned tail.
     Passing it explicitly is for the backfill, which is rebuilding a known tree
     rather than extending a live one.
+
+    `created_at` is the file event's own `ts`, when the caller has one. Left
+    unset, the column takes its `server_default=now()` -- the row's INSERT
+    time, not the message's real send time. That is a small lag for a LIVE
+    mirror write (moments behind the real send) and simply WRONG for a
+    backfilled one, where every historical message would otherwise carry the
+    instant the backfill happened to run. The thread list's ordering and
+    `last_user_at` read this column, so a caller that knows the real time
+    should pass it; see `fix_message_created_at` for correcting a row that
+    was already written without one.
     """
     locked = s.execute(text(
         "SELECT id, org_id, current_branch_id, next_seq FROM chat_thread "
@@ -457,26 +468,56 @@ def append_message(s: Session, thread_id: str | UUID, *, role: str,
         parent_id = _head_of(s, thread_id, branch_id)
 
     msg_id = uuid7()
-    s.execute(text(
-        "INSERT INTO chat_message "
-        "  (id, org_id, thread_id, parent_id, turn_id, role, kind, content, "
-        "   segments, meta, boundary_mode, scope_from, scope_to, seq, "
-        "   client_id, external_id) "
-        "VALUES (:id, :org, :t, :parent, :turn, :role, :kind, :content, "
-        "        :segments, :meta, :bmode, :sfrom, :sto, :seq, :cid, :ext)"),
-        {"id": msg_id, "org": org_id, "t": str(thread_id),
-         "parent": str(parent_id) if parent_id else None,
-         "turn": str(turn_id) if turn_id else None,
-         "role": role, "kind": kind, "content": content or "",
-         "segments": _json(segments), "meta": _json(meta),
-         "bmode": boundary_mode, "sfrom": scope_from, "sto": scope_to,
-         "seq": seq, "cid": client_id, "ext": external_id})
+    ts = _iso(created_at) if created_at else None
+    cols = ("id", "org_id", "thread_id", "parent_id", "turn_id", "role", "kind",
+            "content", "segments", "meta", "boundary_mode", "scope_from",
+            "scope_to", "seq", "client_id", "external_id")
+    binds = {"id": msg_id, "org_id": org_id, "thread_id": str(thread_id),
+             "parent_id": str(parent_id) if parent_id else None,
+             "turn_id": str(turn_id) if turn_id else None,
+             "role": role, "kind": kind, "content": content or "",
+             "segments": _json(segments), "meta": _json(meta),
+             "boundary_mode": boundary_mode, "scope_from": scope_from,
+             "scope_to": scope_to, "seq": seq, "client_id": client_id,
+             "external_id": external_id}
+    if ts is not None:
+        cols = (*cols, "created_at")
+        binds["created_at"] = ts
+    names = ", ".join(cols)
+    placeholders = ", ".join(f":{c}" for c in cols)
+    s.execute(text(f"INSERT INTO chat_message ({names}) VALUES ({placeholders})"),
+             binds)
     s.execute(text("UPDATE chat_thread SET next_seq = :n WHERE id = :t"),
               {"n": seq + 1, "t": str(thread_id)})
     if branch_id is not None:
         s.execute(text("UPDATE chat_branch SET head_message_id = :m WHERE id = :b"),
                   {"m": msg_id, "b": str(branch_id)})
     return {"id": str(msg_id), "seq": seq, "duplicate": False}
+
+
+def fix_message_created_at(s: Session, thread_id: str | UUID, external_id: str,
+                           ts) -> None:
+    """Correct one already-written row's `created_at` to its real send time.
+
+    For a row inserted before `append_message` took a `created_at`, the
+    column holds whatever `now()` was at INSERT -- accurate to within
+    moments for a live mirror write, and simply wrong for anything the
+    backfill loaded, where every historical message clustered at the instant
+    the backfill happened to run. `chat_backfill._load_thread` calls this for
+    every event a top-up finds already mirrored (`ev.get("id") in seen`),
+    which is the only pass that ever revisits an existing row.
+
+    A no-op once corrected: the WHERE clause only fires the write when the
+    value actually differs, so re-running costs a read, not a write.
+    """
+    dt = _iso(ts)
+    if dt is None:
+        return
+    s.execute(text(
+        "UPDATE chat_message SET created_at = :ts "
+        "WHERE thread_id = :t AND external_id = :ext "
+        "AND created_at IS DISTINCT FROM :ts"),
+        {"ts": dt, "t": str(thread_id), "ext": external_id})
 
 
 _TURN_FIELDS = ("status", "model", "agent_slug", "started_at", "ended_at",
@@ -596,6 +637,236 @@ def _json(value):
     if value is None:
         return None
     return Jsonb(json.loads(json.dumps(value, default=str)))
+
+
+# --- keeping chat_thread in sync with the file meta after creation ---------
+#
+# `create_thread` above sets every mutable column ONCE, at the moment a
+# thread first gets a row (the first message mirrored, or the backfill's
+# first pass). Nothing kept them in sync after that: a `patch_meta_sync` --
+# archive, restore, rename, a mode or model change -- writes meta.json and
+# stops, because the only funnel into the tree was `_mirror`, and that funnel
+# is one append, not a general meta write. Measured on the live store
+# 2026-08-15: three actually-archived threads all read `archived_at: NULL`
+# in Postgres, and most titles were still whatever they were before
+# auto-naming ran. `sync_thread_fields` is the write both the backfill's
+# top-up and the live meta-patch mirror (services.chat_branches.record_meta)
+# call to close that gap, and it is idempotent: it always writes the CURRENT
+# meta, never a delta, so calling it on a no-op patch costs one UPDATE and
+# changes nothing.
+
+def _iso(value):
+    from datetime import datetime
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _thread_fields(meta: dict) -> dict:
+    """The mutable `chat_thread` columns, from a thread's raw file meta.
+
+    Shared by thread CREATION (chat_backfill._load_thread, and the live
+    mirror's first message -- see services.chat_branches._sync_record) and
+    by `sync_thread_fields` below, so there is one mapping from file-meta key
+    to column, not two that can drift.
+    """
+    # Imported here, not at module scope: `services.chat_store` reaches this
+    # module through chat_log -> chat_branches -> chat_repo, so a top-level
+    # import would close that loop.
+    from services.chat_store import CHAT_MODES, DEFAULT_CHAT_MODE
+
+    scope = meta.get("scope")
+    ctx = meta.get("context_key") or "general"
+    if not scope:
+        # chat_store._scope_from_context_key, in one line: a bare context key
+        # is the workshop scope, anything prefixed carries its own.
+        scope = "workshop" if ctx in ("general", "") else (
+            ctx if ":" in ctx else f"app:{ctx}")
+    return {
+        "context_key": ctx,
+        "scope": scope,
+        "scope_locked": bool(meta.get("scope_locked")),
+        # THE DEFAULT COMES FROM chat_store, it is not restated here. A thread
+        # whose meta carries no `mode` key at all is the common case (nothing
+        # writes one until the operator switches modes), so this fallback IS
+        # the answer for most threads, and it has to be the same answer the
+        # file fold gives: `chat_store.list_threads` resolves it as
+        # `meta.get("mode") or DEFAULT_CHAT_MODE`. Hardcoding "orchestrated"
+        # here made the mirror disagree with the file about 32 of 68 threads,
+        # every one of them a thread nobody had ever switched. Measured
+        # 2026-08-15 while proving list parity.
+        "mode": meta.get("mode") if meta.get("mode") in CHAT_MODES
+        else DEFAULT_CHAT_MODE,
+        "title": (meta.get("title") or None),
+        "seed_title": (meta.get("_seed_title") or None),
+        "model": meta.get("model") or None,
+        "effort": meta.get("effort") or None,
+        "permission_mode": meta.get("permission_mode") or None,
+        "summary": meta.get("summary") or None,
+        "context_tokens": meta.get("context_tokens"),
+        "claude_session": meta.get("claude_session") or None,
+        "voice_session": meta.get("voice_session") or None,
+        "agent_slug": meta.get("agent_id") or None,
+        "archived_at": _iso(meta.get("archived_at")),
+        "created_at": _iso(meta.get("created_at")),
+        "updated_at": _iso(meta.get("updated_at")),
+    }
+
+
+def _participants_of(meta: dict) -> list[str]:
+    """Port of `chat_store._normalize_participants` /
+    `_participants_from_context_key`. Duplicated rather than imported, same
+    reasoning as `_thread_fields` above (chat_backfill runs as a standalone
+    script and does not pull the services package in) -- this computes the
+    SAME resolved list chat_store's own read-time fallback would, so a row
+    written before a participants change still reads right without a second
+    migration.
+    """
+    raw = meta.get("participants")
+    if raw is not None:
+        if not isinstance(raw, (list, tuple)):
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        for p in raw:
+            if not isinstance(p, str):
+                continue
+            v = p.strip()
+            if not v:
+                continue
+            if ":" not in v:
+                v = f"agent:{v}"
+            if v not in seen:
+                seen.add(v)
+                out.append(v)
+        return out
+    ck = meta.get("context_key") or "general"
+    if ":" not in ck:
+        return []
+    kind, rest = ck.split(":", 1)
+    if kind == "agent":
+        return [ck]
+    if kind == "build":
+        return [f"agent:{rest}"]
+    return []
+
+
+def sync_thread_fields(s: Session, tid: UUID | str, meta: dict) -> None:
+    """UPDATE chat_thread's mutable columns, and `state.participants`, from
+    the thread's CURRENT file meta. Always the current value, never a delta,
+    so this is safe to call on every top-up and on every meta patch."""
+    f = _thread_fields(meta)
+    participants = _participants_of(meta)
+    s.execute(text(
+        "UPDATE chat_thread SET "
+        "  context_key = :context_key, scope = :scope, "
+        "  scope_locked = :scope_locked, mode = :mode, title = :title, "
+        "  seed_title = :seed_title, model = :model, effort = :effort, "
+        "  permission_mode = :permission_mode, summary = :summary, "
+        "  context_tokens = :context_tokens, claude_session = :claude_session, "
+        "  voice_session = :voice_session, agent_slug = :agent_slug, "
+        "  archived_at = :archived_at, updated_at = :updated_at, "
+        "  state = COALESCE(state, '{}'::jsonb) || :participants "
+        "WHERE id = :tid"),
+        {**f, "tid": str(tid),
+         # `meta_updated_at` rides in the jsonb because the COLUMN cannot hold
+         # it: `chat_thread_set_updated_at` is a BEFORE UPDATE trigger calling
+         # set_updated_at(), so `chat_thread.updated_at` is a row-modified
+         # stamp and overwrites anything written to it. The file's own
+         # `updated_at` is a different fact, and a load-bearing one: the chat
+         # list sorts on it (RecentChatsMenu, Chats) and Home renders it as an
+         # age, so serving the trigger's value would make every chat read as
+         # "just now" and destroy both orderings. Stored RAW, exactly as the
+         # file holds it, so the list is byte-identical rather than reformatted.
+         "participants": _json({"participants": participants,
+                                "meta_updated_at": meta.get("updated_at")})})
+
+
+# --- the thread list, in one query ------------------------------------------
+#
+# One recursive walk of every thread's CURRENT branch path -- not the whole
+# `chat_message` table, because an abandoned branch's messages must not count
+# (exactly what `chat_branches.hidden_event_ids_sync` filters out of the file
+# fold). Aggregated to the three fields chat_store._summary_row computes from
+# a fold that the file's own columns cannot answer directly:
+#
+#   message_count   COUNT(DISTINCT external_id) -- an interrupted reply is
+#                   several rows sharing one external_id (ADR 0018) and must
+#                   count once, the same as the file fold counting one
+#                   `message` event.
+#   last_user_at    MAX(created_at) over role='user' on the path.
+#   last_message    the path's last MESSAGE-kind node -- which is not always
+#                   the branch head: a `/clear` or a scope switch can BE the
+#                   head with no message after it, and the file fold's
+#                   `messages` array only ever holds message-kind events.
+#
+# Everything else (title-from-seed, scope/participants fallback) is business
+# logic chat_store already has, applied in Python over these raw columns by
+# the caller (services.chat_list_pg), not reimplemented here.
+_THREAD_LIST_WALK = """
+WITH RECURSIVE walk AS (
+    SELECT b.thread_id AS thread_id, m.id, m.parent_id, m.role, m.kind,
+           m.content, m.external_id, m.created_at, 0 AS depth
+      FROM chat_thread t
+      JOIN chat_branch b ON b.id = t.current_branch_id AND b.deleted_at IS NULL
+      JOIN chat_message m ON m.id = b.head_message_id AND m.deleted_at IS NULL
+     WHERE t.org_id = :org AND t.owner_user_id = :owner AND t.deleted_at IS NULL
+    UNION ALL
+    SELECT w.thread_id, m.id, m.parent_id, m.role, m.kind,
+           m.content, m.external_id, m.created_at, w.depth + 1
+      FROM chat_message m
+      JOIN walk w ON m.id = w.parent_id
+     WHERE m.deleted_at IS NULL AND w.depth < :max_path
+),
+msgs AS (
+    SELECT * FROM walk WHERE kind = 'message'
+),
+agg AS (
+    SELECT thread_id,
+           count(DISTINCT external_id) AS message_count,
+           max(created_at) FILTER (WHERE role = 'user') AS last_user_at
+      FROM msgs
+     GROUP BY thread_id
+),
+head_msg AS (
+    SELECT DISTINCT ON (thread_id) thread_id, content
+      FROM msgs
+     ORDER BY thread_id, depth ASC
+)
+SELECT t.id, t.external_id, t.context_key, t.scope, t.scope_locked, t.mode,
+       t.agent_slug, t.model, t.title, t.seed_title, t.state,
+       t.created_at, t.updated_at, t.archived_at,
+       COALESCE(agg.message_count, 0) AS message_count,
+       agg.last_user_at,
+       COALESCE(head_msg.content, '') AS last_message
+  FROM chat_thread t
+  LEFT JOIN agg ON agg.thread_id = t.id
+  LEFT JOIN head_msg ON head_msg.thread_id = t.id
+ WHERE t.org_id = :org AND t.owner_user_id = :owner AND t.deleted_at IS NULL
+   AND (t.archived_at IS NOT NULL) = :archived
+   AND (CAST(:context_key AS text) IS NULL OR t.context_key = :context_key)
+"""
+
+
+def list_threads(s: Session, org_id: UUID | str, owner_user_id: UUID | str, *,
+                 context_key: str | None = None, archived: bool = False
+                 ) -> list[dict]:
+    """The thread-list summary rows, straight from the tree. One query.
+
+    Raw columns only -- see the module comment above `_THREAD_LIST_WALK`.
+    The caller (services.chat_list_pg) applies chat_store's own title/scope/
+    participants derivation over these, so the two read paths cannot drift by
+    reimplementing that rule twice.
+    """
+    rows = s.execute(text(_THREAD_LIST_WALK), {
+        "org": str(org_id), "owner": str(owner_user_id),
+        "max_path": MAX_PATH, "archived": bool(archived),
+        "context_key": context_key,
+    }).all()
+    return [dict(r._mapping) for r in rows]
 
 
 # --- the org-scoped entry points --------------------------------------------
