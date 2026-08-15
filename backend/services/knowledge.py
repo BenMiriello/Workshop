@@ -1089,11 +1089,18 @@ def _can_recall(from_scope: str, target_scope: str) -> bool:
     actually works."""
     if from_scope == target_scope:
         return True
-    from services import scope_tree
+    from services import memory_policy, scope_tree
     try:
-        return target_scope in scope_tree.reach(from_scope)
+        in_reach = target_scope in scope_tree.reach(from_scope)
     except ValueError:
         return False
+    # A scope-level `share` (Phase 5) can narrow this further: a scope marked
+    # `private` is recalled only from inside itself, and one marked `open` is
+    # recalled from anywhere. Notes default to `inherit`, which is exactly the
+    # tree rule above, so an instance with no policy file behaves identically.
+    share = memory_policy.resolve("note", target_scope)
+    return memory_policy.reachable(share=share, item_scope=target_scope,
+                                   from_scope=from_scope, in_reach=in_reach)
 
 
 async def recall(from_scope: str, target_scope: str, query: str, limit: int = 5) -> list[dict]:

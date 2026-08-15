@@ -37,6 +37,17 @@ import { Ref } from "../components/Ref";
 import { backlinksFor } from "../lib/refs";
 import { useResolvedRefs } from "../lib/useResolvedRefs";
 import { shortHttpError } from "../lib/httpError";
+import {
+  getPolicy,
+  setItem as setItemShare,
+  chatItemRef,
+  effectiveShare,
+  SHARE_VALUES,
+  SHARE_LABEL,
+  SHARE_HELP,
+  type MemoryPolicy,
+  type ShareValue,
+} from "../lib/memoryPolicy";
 
 // The Memory surface (memory-and-documentation-model-2026-08-14.md sec 11):
 // one page over three substrates that used to be scattered -- the scoped
@@ -293,11 +304,79 @@ export default function Notes() {
 
 // ---- Library (Notes + Documents + Chats, unified) --------------------------
 
+// One chat's entry in the sharing model (sec 6). It sits OUTSIDE the card's
+// `Link`, because a select nested inside a link is not operable.
+//
+// CURATION, NOT SECURITY. This changes what other chats' searches turn up. It
+// does not restrict what anything can read: everything here runs as one uid.
+// Per SEC-A2, do not relabel this permission or access.
+//
+// Explicit Save rather than commit-on-change, per frontend/CLAUDE.md rule 7:
+// this writes config. The button appears only once the value actually differs,
+// so a row the operator is only reading stays quiet.
+function ChatShare({
+  threadId, scope, policy, onSaved,
+}: {
+  threadId: string;
+  scope: string;
+  policy: MemoryPolicy | null;
+  onSaved: (p: MemoryPolicy) => void;
+}) {
+  const ref = chatItemRef(threadId);
+  const stored = effectiveShare(policy, "chat", scope, ref);
+  const [value, setValue] = useState<ShareValue>(stored);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // Follow the stored value when the policy loads or another row changes it,
+  // but never stomp an edit in progress.
+  useEffect(() => { setValue(stored); }, [stored]);
+
+  const dirty = value !== stored;
+  const save = useCallback(async () => {
+    setSaving(true);
+    setErr(null);
+    try {
+      onSaved(await setItemShare(ref, value));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [ref, value, onSaved]);
+
+  return (
+    <Row wrap style={{ gap: "var(--space-2)", alignItems: "center", marginTop: "var(--space-2)" }}>
+      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Other chats find it:</span>
+      <Select
+        value={value}
+        onChange={(e) => setValue(e.target.value as ShareValue)}
+        aria-label={`What other chats find from this chat`}
+      >
+        {SHARE_VALUES.map((v) => (
+          <option key={v} value={v}>{SHARE_LABEL[v]}</option>
+        ))}
+      </Select>
+      {dirty && (
+        <Button variant="primary" onClick={() => { void save(); }} loading={saving}>Save</Button>
+      )}
+      {err ? (
+        <span className="ws-field__error">{err}</span>
+      ) : (
+        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{SHARE_HELP[value]}</span>
+      )}
+    </Row>
+  );
+}
+
 function Library({ initialSource }: { initialSource: SourceFilter }) {
   const [searchParams] = useSearchParams();
   const [notesData, setNotesData] = useState<NotesResp | null>(null);
   const [docsData, setDocsData] = useState<DocsResp | null>(null);
   const [chatsData, setChatsData] = useState<ChatSummary[] | null>(null);
+  // What other chats find when they search (sec 6). Loaded once; a failure here
+  // must never take the list down, so it stays null and the controls read as
+  // the shipped defaults.
+  const [policy, setPolicy] = useState<MemoryPolicy | null>(null);
   const [scopeTree, setScopeTree] = useState<ScopeNode[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -334,6 +413,9 @@ function Library({ initialSource }: { initialSource: SourceFilter }) {
       setNotesData(await notesR.json());
       setDocsData(await docsR.json());
       setChatsData(await chatsR.json());
+      // Best effort and deliberately not awaited into the failure path above:
+      // the library is still readable without it.
+      void getPolicy().then(setPolicy).catch(() => {});
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -588,6 +670,14 @@ function Library({ initialSource }: { initialSource: SourceFilter }) {
                   </Card>
                 </Link>
               ) : null}
+              {it.chat && (
+                <ChatShare
+                  threadId={it.chat.id}
+                  scope={it.chat.scope || "workshop"}
+                  policy={policy}
+                  onSaved={setPolicy}
+                />
+              )}
             </li>
           ))}
         </CardGrid>

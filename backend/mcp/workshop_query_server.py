@@ -199,7 +199,13 @@ def _run_search(args: dict) -> str:
         if req_reach is not None:
             scopes = req_reach if my_reach is None else (my_reach & req_reach)
 
-    result = semantic_index.search(query, limit=limit, kinds=tuple(kinds), scope=scopes)
+    # `from_scope` is the caller's own scope, distinct from the reach SET above.
+    # The `share` field (Phase 5) needs it: a `private` item is found only from
+    # inside its own scope, and "which scope am I" is not recoverable from a set
+    # of scopes I am allowed to see.
+    result = semantic_index.search(query, limit=limit, kinds=tuple(kinds),
+                                   scope=scopes,
+                                   from_scope=_caller_scope_key(caller_raw))
     hits, mode, rebuilding = result["hits"], result["mode"], result["rebuilding"]
 
     rebuild_note = ("\n(the index is rebuilding in the background; these results "

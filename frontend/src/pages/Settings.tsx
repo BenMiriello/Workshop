@@ -17,6 +17,7 @@ import {
   Link2,
   Pencil,
   Plug,
+  Library,
 } from "lucide-react";
 import {
   ActionBar,
@@ -49,6 +50,15 @@ import { useAuth } from "../auth/AuthProvider";
 import Services from "./Services";
 import Events from "./Events";
 import { SettingsSection as Section, SettingsRow as Row } from "../components/AppSettings";
+import {
+  getPolicy,
+  setDefaults,
+  SHARE_VALUES,
+  SHARE_LABEL,
+  SHARE_HELP,
+  type MemoryPolicy,
+  type ShareValue,
+} from "../lib/memoryPolicy";
 import AutonomyControls from "../components/AutonomyControls";
 import { native } from "../native/bridge";
 import { useNative, useTrackingStatus } from "../native/useNative";
@@ -91,6 +101,7 @@ export default function Settings() {
       <DeviceSection />
       <AppearanceSection />
       <ChatSection />
+      <MemorySection />
       <McpSection />
       <BaseAppsSection />
       <PlatformSection />
@@ -102,6 +113,139 @@ export default function Settings() {
       <AutonomyControls />
       <SystemSection />
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Memory section: what one chat's search turns up from another's work
+// (memory-and-documentation-model-2026-08-14.md sec 6).
+//
+// This is CURATION, NOT SECURITY, and the copy has to keep saying so. Everything
+// on this box runs as one uid, so none of this stops anything reading anything;
+// it decides what a SEARCH surfaces, so a chat's recall stays about that chat's
+// own work. Per SEC-A2 this repo already has one open ticket about having
+// described scope as a boundary it was not. Do not reintroduce the words
+// permission, access, allowed or blocked here.
+//
+// Chats default to "Only this scope" on the operator's 2026-08-14 direction:
+// transcripts are the biggest and least deliberate corpus, so they stay out of
+// other chats' recall unless he says otherwise. Per-item overrides live on the
+// Memory page.
+// ----------------------------------------------------------------------------
+type ShareDraft = { note: ShareValue; doc: ShareValue; chat: ShareValue };
+
+function MemorySection() {
+  const [policy, setPolicy] = useState<MemoryPolicy | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void getPolicy()
+      .then((p) => { if (live) setPolicy(p); })
+      .catch((e) => { if (live) setErr(String(e)); });
+    return () => { live = false; };
+  }, []);
+
+  const current: ShareDraft = {
+    note: policy?.defaults.note ?? "inherit",
+    doc: policy?.defaults.doc ?? "inherit",
+    chat: policy?.defaults.chat ?? "private",
+  };
+
+  const edit = useEditMode<ShareDraft>(current, async (draft) => {
+    setSaveErr(null);
+    try {
+      setPolicy(await setDefaults({ note: draft.note, doc: draft.doc, chat: draft.chat }));
+    } catch (e) {
+      setSaveErr(String(e));
+      throw e;
+    }
+  });
+
+  if (err) {
+    return (
+      <Section icon={Library} title="Memory">
+        <StateBlock
+          variant="error"
+          title="Couldn't load memory settings"
+          hint={`GET /api/memory-policy failed: ${err}`}
+        />
+      </Section>
+    );
+  }
+  if (!policy) {
+    return (
+      <Section icon={Library} title="Memory">
+        <Row label="notes"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
+        <Row label="documents"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
+        <Row label="chat transcripts"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
+      </Section>
+    );
+  }
+
+  const kinds: Array<{ key: keyof ShareDraft; label: string; hint: string }> = [
+    { key: "note", label: "notes", hint: "Notes are written to be read, so they follow the tree by default." },
+    { key: "doc", label: "documents", hint: "Documents sit in no scope, so this only matters if you narrow them." },
+    {
+      key: "chat",
+      label: "chat transcripts",
+      hint: "Transcripts are the biggest and least finished writing here, so they stay out of other chats' searches by default. The notes a chat files are the intended path. Override a single chat on the Memory page.",
+    },
+  ];
+
+  return (
+    <Section icon={Library} title="Memory">
+      <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
+        What one chat finds when it searches another's work. This shapes what
+        search turns up, to keep a chat's recall about its own work. It is not a
+        security boundary and does not stop anything from reading anything.
+      </p>
+
+      {kinds.map(({ key, label, hint }) => (
+        <Row key={key} label={label} hint={hint}>
+          {edit.editing ? (
+            <Select
+              value={edit.draft[key]}
+              onChange={(e) => edit.set(key, e.target.value as ShareValue)}
+              aria-label={`Default for ${label}`}
+            >
+              {SHARE_VALUES.map((v) => (
+                <option key={v} value={v}>{SHARE_LABEL[v]}</option>
+              ))}
+            </Select>
+          ) : (
+            <ReadOnly value={SHARE_LABEL[current[key]]} />
+          )}
+        </Row>
+      ))}
+
+      <Row label="right now" hint={SHARE_HELP[edit.editing ? edit.draft.chat : current.chat]}>
+        <ReadOnly value={`Chats: ${SHARE_LABEL[edit.editing ? edit.draft.chat : current.chat]}`} />
+      </Row>
+
+      {saveErr && (
+        <Notice tone="error" detail={saveErr} where="PUT /api/memory-policy/defaults">
+          Couldn't save memory settings.
+        </Notice>
+      )}
+
+      {edit.editing ? (
+        <ActionBar flash={edit.flash ? "Saved" : undefined}>
+          <Button variant="ghost" onClick={edit.cancel} disabled={edit.saving}>Cancel</Button>
+          <Button
+            variant="primary"
+            onClick={() => { void edit.save().catch(() => {}); }}
+            loading={edit.saving}
+            disabled={!edit.dirty}
+          >
+            Save
+          </Button>
+        </ActionBar>
+      ) : (
+        <Button variant="ghost" onClick={edit.begin}><Pencil size={16} strokeWidth={1.8} aria-hidden /> Edit</Button>
+      )}
+    </Section>
   );
 }
 

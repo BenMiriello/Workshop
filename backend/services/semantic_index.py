@@ -782,7 +782,27 @@ def _scope_set(scope: str | tuple | list | set | frozenset | None) -> set[str] |
     return set(scope)
 
 
-def _keep_mask(meta: list[dict], kinds, scopes: set[str] | None) -> np.ndarray:
+def _item_ref(kind: str, ref: str, resolved_scope: str) -> str | None:
+    """The `share` policy key for a chunk, in the Phase 3 ref vocabulary.
+
+    A chunk's `ref` is whatever its collector recorded: a repo-relative path for
+    notes and docs, a thread id for chats. This is the one place that is turned
+    back into an addressable ref, so `memory_policy` and the Memory page are
+    keyed the same way and a per-item override set in the UI is the one a search
+    reads."""
+    from services import memory_policy
+    if kind == "chat":
+        return memory_policy.chat_item_ref(ref)
+    if kind == "note":
+        note_id = Path(ref).stem
+        return f"workshop:note/{resolved_scope}/{note_id}" if resolved_scope else None
+    if kind == "doc":
+        return f"workshop:doc/{ref}"
+    return None
+
+
+def _keep_mask(meta: list[dict], kinds, scopes: set[str] | None,
+               from_scope: str | None = None) -> np.ndarray:
     """A boolean mask over the whole corpus, computed once and applied to the
     score vector rather than used to fancy-index `vecs` (design doc sec 7.2:
     `vecs[keep] @ q` allocates a submatrix per call; masking a precomputed
@@ -791,23 +811,38 @@ def _keep_mask(meta: list[dict], kinds, scopes: set[str] | None) -> np.ndarray:
     n = len(meta)
     mask = np.empty(n, dtype=bool)
     cache: dict[tuple[str, str], str] = {}
+    # `from_scope` is the searcher's OWN scope, which `private` needs and plain
+    # `reach` does not: "reachable only from inside its own scope" cannot be
+    # answered by a set of allowed scopes alone. With no `from_scope` (a direct
+    # or test caller that did not say who it is) the policy layer is skipped
+    # entirely and this behaves exactly as it did before Phase 5.
+    policy = None
+    if from_scope:
+        from services import memory_policy as policy  # noqa: N813
     for i, m in enumerate(meta):
         if kinds is not None and m.get("kind") not in kinds:
             mask[i] = False
             continue
-        if scopes is None:
-            mask[i] = True
-            continue
         raw = m.get("scope") or ""
-        if not raw:
-            mask[i] = True  # unscoped (docs) are always in reach
+        kind = m.get("kind")
+        if raw:
+            key = (kind, raw)
+            resolved = cache.get(key)
+            if resolved is None:
+                resolved = _resolve_chunk_scope(kind, raw)
+                cache[key] = resolved
+        else:
+            resolved = ""
+        # Unscoped chunks (docs) are placeless, not unreachable: they sit in no
+        # scope, so the tree has nothing to say about them and they stay in.
+        in_reach = True if (scopes is None or not resolved) else (resolved in scopes)
+        if policy is None:
+            mask[i] = in_reach
             continue
-        key = (m.get("kind"), raw)
-        resolved = cache.get(key)
-        if resolved is None:
-            resolved = _resolve_chunk_scope(m.get("kind"), raw)
-            cache[key] = resolved
-        mask[i] = resolved in scopes
+        share = policy.resolve(kind, resolved or None,
+                               _item_ref(kind, m.get("ref") or "", resolved))
+        mask[i] = policy.reachable(share=share, item_scope=resolved,
+                                   from_scope=from_scope, in_reach=in_reach)
     return mask
 
 
@@ -816,6 +851,7 @@ def _keep_mask(meta: list[dict], kinds, scopes: set[str] | None) -> np.ndarray:
 def search(query: str, *, limit: int = 8,
            kinds: tuple[str, ...] | list[str] | None = None,
            scope: str | tuple | list | set | frozenset | None = None,
+           from_scope: str | None = None,
            min_score: float = MIN_SCORE) -> dict:
     """Ranked passages for a query, hybrid: vector when the embedder answers,
     BM25 lexical always available so a search degrades instead of raising.
@@ -826,6 +862,12 @@ def search(query: str, *, limit: int = 8,
     to trust the result. `rebuilding` is true when a background rebuild is in
     flight; the hits are still from whatever is on disk right now, never
     withheld while it runs.
+
+    `scope` is the set of scopes the caller may reach (Phase 1's
+    `scope_tree.reach`). `from_scope` is the caller's OWN scope, and it is a
+    separate argument because the `share` field (Phase 5) needs it: `private`
+    means "found only from inside its own scope", which a set of allowed scopes
+    cannot express. Omitting it skips the policy layer entirely.
 
     A hit's BODY is returned, not a title. Being unable to read what was found
     is the defect this module exists to remove."""
@@ -849,7 +891,7 @@ def search(query: str, *, limit: int = 8,
         return {"hits": [], "mode": "semantic", "rebuilding": rebuilding}
 
     scopes = _scope_set(scope)
-    mask = _keep_mask(meta, kinds, scopes)
+    mask = _keep_mask(meta, kinds, scopes, from_scope)
     if not mask.any():
         return {"hits": [], "mode": "semantic", "rebuilding": rebuilding}
 
