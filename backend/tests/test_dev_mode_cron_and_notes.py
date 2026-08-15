@@ -201,4 +201,13 @@ class TestDevelopmentNotesScope:
 
         assert note_id in [n["id"] for n in listed]
         assert note_id in [n["id"] for n in agg["notes"]]
-        assert all(n["scope"] == "development" for n in agg["notes"])
+        # `scope=development` filters to development AND EVERYTHING IT REACHES
+        # (scope_tree.reach, memory-and-documentation-model-2026-08-14.md sec
+        # 4.2), not an exact match -- development is the root in dev mode and
+        # reaches every other scope, so `agg["notes"]` legitimately carries
+        # non-development rows too. What this test can still pin down without
+        # depending on whatever else this box's real knowledge store holds is
+        # that the note just written is reachable and tagged with its own
+        # scope correctly.
+        written = next(n for n in agg["notes"] if n["id"] == note_id)
+        assert written["scope"] == "development"

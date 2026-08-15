@@ -708,24 +708,43 @@ _TYPE_RANK = {"preference": 0, "decision": 0, "fact": 1, "reference": 1}
 
 
 def _ranked_notes(scope_key: str) -> list[dict]:
-    """`list_notes()` plus each note's `pinned` / `type` / raw mtime, read from
-    its metadata marker. One extra file read per note (small scopes; the same
-    cost class list_notes already pays per-note for mtime)."""
+    """`list_notes()` plus each note's `author` / `pinned` / `type` / raw mtime,
+    read from its metadata marker. One extra file read per note (small scopes;
+    the same cost class list_notes already pays per-note for mtime)."""
     d = scope_dir(scope_key)
     out = []
     for n in list_notes(scope_key):
         f = d / f"{n['id']}.md"
-        pinned, ntype, mtime = False, _DEFAULT_NOTE_TYPE, 0.0
+        author, pinned, ntype, mtime = "", False, _DEFAULT_NOTE_TYPE, 0.0
         if f.exists():
             try:
-                _, t, p, _ = _parse_meta_line(f.read_text())
+                a, t, p, _ = _parse_meta_line(f.read_text())
+                author = a
                 pinned = bool(p)
                 ntype = t or _DEFAULT_NOTE_TYPE
                 mtime = f.stat().st_mtime
             except OSError:
                 pass
-        out.append({**n, "pinned": pinned, "type": ntype, "_mtime": mtime})
+        out.append({**n, "author": author, "pinned": pinned, "type": ntype, "_mtime": mtime})
     return out
+
+
+def list_notes_meta(scope_key: str) -> list[dict]:
+    """Public entry point onto `_ranked_notes`: `list_notes()` plus `author` /
+    `pinned` / `type` per note, for a cross-scope listing that needs to show
+    provenance and the ambient-injection facets (memory-and-documentation-
+    model-2026-08-14.md sec 11, "provenance on every item"). Drops the private
+    `_mtime` sort key that `index_block` needs and callers outside this module
+    should not depend on."""
+    return [{k: v for k, v in n.items() if k != "_mtime"} for n in _ranked_notes(scope_key)]
+
+
+def note_meta(scope_key: str, note_id: str) -> dict:
+    """`{author, type, pinned}` for one note, defaults applied. Used by the
+    per-note GET route so the editor can show and round-trip provenance and
+    the type/pinned facets without a second endpoint."""
+    author, ntype, pinned = _stored_meta(scope_key, note_id)
+    return {"author": author, "type": ntype, "pinned": pinned}
 
 
 def _index_rank_key(n: dict) -> tuple:

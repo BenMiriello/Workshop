@@ -201,7 +201,7 @@ app.include_router(tasks_all.router, dependencies=_OPERATOR)  # cross-scope task
 app.include_router(trackers.router, dependencies=_OPERATOR)  # external tracker connection + triage (/trackers)
 app.include_router(notes_all.router, dependencies=_OPERATOR)  # cross-scope notes feed (/notes)
 app.include_router(inbox.router, dependencies=_OPERATOR)      # agent inbox (/inbox)
-app.include_router(docs_index.router, dependencies=_OPERATOR)  # read-only docs index (/docs)
+app.include_router(docs_index.router, dependencies=_OPERATOR)  # docs index, read + write (/docs)
 app.include_router(refs_routes.router, dependencies=_OPERATOR)  # ref resolve + backlinks (/refs)
 app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_OPERATOR)
 app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)

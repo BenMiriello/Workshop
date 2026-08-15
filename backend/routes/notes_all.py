@@ -140,18 +140,33 @@ def _scope_roots() -> list[tuple[str, Path]]:
 
 @router.get("")
 async def list_all(scope: str | None = None, q: str | None = None) -> dict:
-    """Notes across every scope, each tagged with its resolved `scope` key.
-    Optional `scope` restricts to one scope; optional `q` filters by a plaintext
-    match (delegated to `knowledge.search`, which scans title, hook, and body)."""
+    """Notes across every scope, each tagged with its resolved `scope` key plus
+    `author` / `type` / `pinned` (design doc sec 11: provenance and the ranked-
+    digest facets, shown per row on the Memory page).
+
+    `scope` filters to that scope AND EVERYTHING IT REACHES (`scope_tree.reach`,
+    sec 4.2: "its own and everything else below it"), not an exact match --
+    selecting `workshop` also shows `project:*` / `app:*` / unattached agents.
+    An unparseable scope falls back to an exact match rather than 400ing, since
+    a stale `?scope=` deep link should narrow to nothing found, not break the
+    page. `q` filters by a plaintext match (delegated to `knowledge.search`,
+    which scans title, hook, and body)."""
+    from services import scope_tree
+    reach_set: set[str] | None = None
+    if scope:
+        try:
+            reach_set = set(scope_tree.reach(scope))
+        except ValueError:
+            reach_set = {scope}
     out: list[dict] = []
     scopes = 0
     query = (q or "").strip()
     for skey, _root in _scope_roots():
-        if scope and skey != scope:
+        if reach_set is not None and skey not in reach_set:
             continue
         scopes += 1
         try:
-            notes = knowledge.list_notes(skey)
+            notes = knowledge.list_notes_meta(skey)
         except Exception:
             continue
         if query:
@@ -173,3 +188,39 @@ async def list_scopes() -> dict:
     """The scope keys that currently have a knowledge directory, for the
     filter/create controls. Cheap directory + registry scan, no note load."""
     return {"scopes": [skey for skey, _ in _scope_roots()]}
+
+
+@router.get("/scopes/tree")
+async def list_scopes_tree() -> dict:
+    """The same scope keys as `/scopes`, shaped as a tree instead of a flat
+    list (design doc sec 11: "a scope filter shaped like the TREE, not a flat
+    list"). Each entry carries its `parent` (per `scope_tree.parent`, when that
+    parent is itself one of the visible scopes) and a `depth`, in root-first
+    depth-first order, so a picker can convey containment by indentation alone
+    without building a tree widget."""
+    from services import scope_tree
+    keys = [skey for skey, _ in _scope_roots()]
+    key_set = set(keys)
+    parent_of: dict[str, str | None] = {}
+    for k in keys:
+        try:
+            p = scope_tree.parent(k)
+        except ValueError:
+            p = None
+        parent_of[k] = p if p in key_set else None
+    children: dict[str | None, list[str]] = {}
+    for k in keys:
+        children.setdefault(parent_of[k], []).append(k)
+    for kids in children.values():
+        kids.sort()
+
+    out: list[dict] = []
+
+    def walk(key: str, depth: int) -> None:
+        out.append({"key": key, "parent": parent_of[key], "depth": depth})
+        for child in children.get(key, []):
+            walk(child, depth + 1)
+
+    for root in children.get(None, []):
+        walk(root, 0)
+    return {"scopes": out}

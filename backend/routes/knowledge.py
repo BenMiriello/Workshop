@@ -20,6 +20,15 @@ class PutNoteIn(BaseModel):
     title: str = ""
     content: str
     hook: str = ""
+    # Optional metadata (design doc sec 5 / sec 11): `author` is an origin
+    # string (services/origin), sent by the operator's own editor as
+    # "operator" on create and omitted on edit so an edit does not reassign
+    # who wrote the note. `note_type` and `pinned` drive the ranked ambient
+    # digest (knowledge.index_block); omitting either preserves what is
+    # already on disk (knowledge._with_meta).
+    author: str = ""
+    note_type: str = ""
+    pinned: bool | None = None
 
 
 class SearchIn(BaseModel):
@@ -56,14 +65,18 @@ async def get_note(scope_key: str, note_id: str):
         raise HTTPException(400, str(e))
     if body is None:
         raise HTTPException(404, f"note not found: {note_id}")
-    return {"scope": scope_key, "note_id": note_id, "content": body}
+    meta = knowledge.note_meta(scope_key, note_id)
+    return {"scope": scope_key, "note_id": note_id, "content": body, **meta}
 
 
 @router.put("/{scope_key}/notes/{note_id}")
 async def put_note(scope_key: str, note_id: str, body: PutNoteIn):
     _scope(scope_key)
     try:
-        return await knowledge.put_note(scope_key, note_id, body.title, body.content, body.hook)
+        return await knowledge.put_note(
+            scope_key, note_id, body.title, body.content, body.hook,
+            author=body.author, note_type=body.note_type, pinned=body.pinned,
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
 
