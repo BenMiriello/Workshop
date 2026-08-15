@@ -35,7 +35,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # Titles the test suites hardcode. `Voice` comes from test_voice_stream_route
 # and test_voice_records_what_was_said; `New chat` is the chat-store default a
 # branch test leaves untouched.
-_FIXTURE_TITLES = {"Voice", "New chat"}
+# "SCRATCH branch e2e" is the branch end-to-end fixture, added 2026-08-15 after
+# two of its threads turned up in the live list: the note below already knew
+# that fixture carried 4 messages, but its title was never in this set, so the
+# tool kept reporting them and never removed them. The name is a deliberate
+# test marker (nothing else in this system writes a title beginning "SCRATCH"),
+# and both other conditions still have to hold, so widening the set here does
+# not widen what the tool is willing to delete on its own.
+_FIXTURE_TITLES = {"Voice", "New chat", "SCRATCH branch e2e"}
 
 # Every leaked thread measured carried 1 message; the branch fixture carried 4.
 # A real conversation that somehow lost its directory is very unlikely to be
@@ -77,6 +84,13 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true",
                     help="delete; without it nothing is written")
     args = ap.parse_args()
+
+    # WORKSHOP_DATABASE_ADMIN_URL lives in ~/.config/workshop/db-admin.env and
+    # reaches the backend through EnvironmentFile=, never an interactive shell.
+    # This script is exactly the kind owner_session() exists for, so it loads
+    # its own config rather than requiring the caller to know that.
+    from db.script_env import load_config_env
+    load_config_env()
 
     from sqlalchemy import text
 

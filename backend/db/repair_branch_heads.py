@@ -57,6 +57,12 @@ def main() -> int:
                     help="app user id whose chats to repair (default 6)")
     args = ap.parse_args()
 
+    # The unit gets these from EnvironmentFile=; a shell does not. Without it
+    # this died on "WORKSHOP_DATABASE_URL is not set" for anyone running it by
+    # hand, while working from any process the service had parented.
+    from db.script_env import load_config_env
+    load_config_env()
+
     from sqlalchemy import text
 
     from services import ownership, tenancy, chat_log, chat_store
