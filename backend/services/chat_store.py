@@ -635,6 +635,13 @@ def delete_thread(thread_id: str) -> bool:
         legacy.unlink()
         gone = True
     _evict_summary_cache(thread_id)
+    if gone:
+        try:
+            from services import backlinks
+            backlinks.remove_sources_with_prefix(f"workshop:chat/{thread_id}#")
+        except Exception:
+            log.debug("backlink index cleanup skipped for deleted thread %s", thread_id,
+                      exc_info=True)
     return gone
 
 
@@ -1586,6 +1593,24 @@ def commit_run(
         meta["agent"] = agent
     ev = chat_log.append_message_sync(thread_id, "assistant", content, meta=meta,
                                       ts=_now_iso())
+    # Index this message's receipts as backlink sources (design doc sec 10/7.2:
+    # "sources of refs: note bodies, ticket bodies, chat receipts"). A receipt
+    # is a durable effect outside the chat, and every one that carries a
+    # `ref` (build_streaming.build_receipts) already names the note it wrote;
+    # this is the one place that turns it into `workshop:chat/<thread>#<msg>`
+    # naming `workshop:note/<scope>/<id>`, so "referenced by" on that note
+    # shows the conversation that filed it.
+    if receipts and ev.get("id"):
+        try:
+            from services import backlinks, refs
+            targets = []
+            for r in receipts:
+                rref = r.get("ref") or {}
+                if rref.get("scope") and rref.get("id"):
+                    targets.append(refs.note_ref(rref["scope"], rref["id"]))
+            backlinks.set_source(refs.chat_ref(thread_id, ev["id"]), targets)
+        except Exception:
+            log.debug("backlink index update skipped for chat %s", thread_id, exc_info=True)
     chat_log.append_sync(thread_id, {"kind": "run", "run_id": run_id, "state": state})
     clear: dict = {}
     if stored.get("active_run_id") == run_id:

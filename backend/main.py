@@ -14,7 +14,7 @@ from middleware.compression import SSEAwareGZipMiddleware
 # location/birds/health/…) are NOT imported here; they mount from the installed-
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
-from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, skills, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers
+from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, skills, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes
 from routes import mcp as mcp_routes
 from routes import stores as stores_routes
 from routes import deploys as deploys_routes
@@ -202,6 +202,7 @@ app.include_router(trackers.router, dependencies=_OPERATOR)  # external tracker 
 app.include_router(notes_all.router, dependencies=_OPERATOR)  # cross-scope notes feed (/notes)
 app.include_router(inbox.router, dependencies=_OPERATOR)      # agent inbox (/inbox)
 app.include_router(docs_index.router, dependencies=_OPERATOR)  # read-only docs index (/docs)
+app.include_router(refs_routes.router, dependencies=_OPERATOR)  # ref resolve + backlinks (/refs)
 app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_OPERATOR)
 app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
 app.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"], dependencies=_OPERATOR)

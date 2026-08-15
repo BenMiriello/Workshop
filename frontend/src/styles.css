@@ -1262,13 +1262,37 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-receipt--ok > svg { flex: 0 0 auto; }
 .chat-receipt--warn { color: var(--warn); }
 .chat-receipt--warn > svg { flex: 0 0 auto; }
-/* A receipt that can be opened. Underline on hover only: a permanent underline
-   on every note written turns the quiet row into a wall of links. */
-a.chat-receipt--link { text-decoration: none; }
-a.chat-receipt--link:hover { color: var(--fg); text-decoration: underline; }
+/* A receipt that can be opened. This used to underline on hover only, on the
+   reasoning that a permanent underline on every note written turns the quiet
+   row into a wall of links. Revisited (Phase 3, memory-and-documentation-
+   model-2026-08-14.md sec 10): hover does not exist on a phone, so a hover-
+   only underline made an openable receipt indistinguishable from the
+   `--ok`/`--warn` ones beside it that are not clickable at all -- reported by
+   the operator as "it doesn't look like clickable text." Same rule the kit
+   already uses for a link in rendered markdown (`.ws-md a`): a faint
+   underline at rest is the affordance, not a hover state. */
+a.chat-receipt--link {
+  text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklab, currentColor, transparent 55%);
+}
+a.chat-receipt--link:hover { color: var(--you); text-decoration-color: currentColor; }
 /* The icon follows its label. It used to go --accent while the text beside it
    went --fg, so one hover split a single control into two tones. */
-a.chat-receipt--link:hover > svg { color: var(--fg); }
+a.chat-receipt--link:hover > svg { color: var(--you); }
+
+/* ---- Ref chip (components/Ref.tsx) ----
+   One chip for a `workshop:<kind>/...` ref, wherever one resolves: a
+   backlinks list, a note body. Same underline-at-rest rule as `.ws-md a` and
+   `.chat-receipt--link` above -- readable as a link with no hover, since the
+   operator is often on a phone. */
+.ws-ref { display: inline-flex; align-items: center; gap: 0.3rem; font-size: var(--fs-xs); }
+a.ws-ref--link {
+  color: inherit; text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklab, currentColor, transparent 55%);
+}
+a.ws-ref--link:hover { color: var(--you); text-decoration-color: currentColor; }
+a.ws-ref--link:hover > svg { color: var(--you); }
+.ws-ref--unresolved { color: var(--faint); }
 
 /* How a turn ENDED, which is not a receipt: nothing changed, the run just
    stopped. One quiet line, no card, no accent. */

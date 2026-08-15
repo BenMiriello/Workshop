@@ -1185,6 +1185,15 @@ def _persist(root: Path, tasks: list[dict]) -> None:
         # Never regenerate a protected root's TODO.md (would wipe its prose
         # sections). Inert until O7 migrates it properly.
         return
+    # Captured BEFORE the write below overwrites it: the set of ids this store
+    # held last time, so a ticket dropped from `tasks` (deleted, or merged into
+    # another) can have its backlink row cleaned up further down instead of
+    # being left as a source that no longer exists.
+    try:
+        old_ids = {t.get("id") for t in json.loads(_store_path(root).read_text())
+                   .get("tasks", []) if t.get("id")}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        old_ids = set()
     rendered = render_markdown(tasks)
     payload = {"version": STORE_VERSION, "tasks": [_for_storage(t) for t in tasks],
                "export_sha": _sha(rendered)}
@@ -1213,6 +1222,26 @@ def _persist(root: Path, tasks: list[dict]) -> None:
     try:
         from db import ticket_sync
         ticket_sync.mirror(root, tasks)
+    except Exception:
+        pass
+    # Re-extract every ticket's outgoing refs into the backlink index (design
+    # doc sec 10/7.2). `_persist` always receives the FULL current list, so
+    # replacing each ticket's row here is what makes an edited-out ref
+    # disappear from `referenced_by` on the very next write -- there is no
+    # separate remove path to forget to call. A ticket present in `old_ids`
+    # but missing from `tasks` was deleted; its row is dropped too.
+    try:
+        from services import backlinks, refs
+        new_ids: set[str] = set()
+        for t in tasks:
+            tid = t.get("id")
+            if not tid:
+                continue
+            new_ids.add(tid)
+            body = f"{t.get('title') or ''}\n{t.get('body') or ''}"
+            backlinks.set_source(refs.ticket_ref(tid), refs.extract_refs(body))
+        for gone in old_ids - new_ids:
+            backlinks.remove_source(refs.ticket_ref(gone))
     except Exception:
         pass
 

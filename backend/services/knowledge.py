@@ -972,6 +972,20 @@ async def put_note(scope_key: str, note_id: str, title: str, content: str, hook:
     except Exception:
         log.debug("semantic index stale-mark skipped for %s", scope_key, exc_info=True)
 
+    # Re-extract this note's outgoing refs and replace its row in the backlink
+    # index (design doc sec 10/7.2). Replace, not append: an edit that removed
+    # a `[[Title]]` or a `workshop:...` ref must drop the corresponding
+    # backlink, not just accumulate new ones on top of stale old ones.
+    try:
+        from services import backlinks, refs
+        backlinks.set_source(
+            refs.note_ref(scope_key, note_id),
+            refs.extract_refs(content, note_scope=scope_key),
+        )
+    except Exception:
+        log.debug("backlink index update skipped for %s/%s", scope_key, note_id,
+                  exc_info=True)
+
     return {"scope": scope_key, "note_id": note_id}
 
 
@@ -998,6 +1012,15 @@ async def delete_note(scope_key: str, note_id: str) -> dict:
             semantic_index.mark_stale(f"deleted {scope_key}/{note_id}")
         except Exception:
             log.debug("semantic index stale-mark skipped for %s", scope_key, exc_info=True)
+
+    # The deleted note can no longer name anything either. Drop its row rather
+    # than leaving a source that still lists targets for a body that is gone.
+    try:
+        from services import backlinks, refs
+        backlinks.remove_source(refs.note_ref(scope_key, note_id))
+    except Exception:
+        log.debug("backlink index cleanup skipped for %s/%s", scope_key, note_id,
+                  exc_info=True)
 
     return {"scope": scope_key, "note_id": note_id, "existed": existed}
 

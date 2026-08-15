@@ -28,6 +28,9 @@ import {
 import { scopeLabel, scopeHref } from "../lib/tasks";
 import { orderScopes } from "../lib/devMode";
 import AttachmentViewer from "../components/chat/AttachmentViewer";
+import { Ref } from "../components/Ref";
+import { backlinksFor } from "../lib/refs";
+import { useResolvedRefs } from "../lib/useResolvedRefs";
 
 // The Notes surface (notes-system plan Phase N1): one /notes page over the
 // EXISTING scoped knowledge store. A note IS a knowledge note; the per-note CRUD
@@ -462,6 +465,34 @@ function CreateNote({
   );
 }
 
+// "Referenced by" on a note (design doc sec 10: "backlinks fall out"; sec 12
+// Phase 3: "surface it at least on the note view"). An index read
+// (GET /api/refs/backlinks), never a corpus scan, and the batch resolve call
+// so N backlinks cost one request, not N. Renders nothing when there are none
+// -- an inline "no backlinks" line would out-noise the body on every note
+// written before this existed.
+function ReferencedBy({ scope, noteId }: { scope: string; noteId: string }) {
+  const target = `workshop:note/${scope}/${noteId}`;
+  const [sources, setSources] = useState<string[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    backlinksFor(target)
+      .then((refs) => { if (live) setSources(refs); })
+      .catch(() => { if (live) setSources([]); });
+    return () => { live = false; };
+  }, [target]);
+  const resolved = useResolvedRefs(sources ?? []);
+  if (!sources || !sources.length) return null;
+  return (
+    <Stack gap="sm">
+      <SectionLabel>Referenced by</SectionLabel>
+      <Row wrap style={{ gap: "var(--space-2)" }}>
+        {sources.map((r) => <Ref key={r} resolved={resolved[r]} />)}
+      </Row>
+    </Stack>
+  );
+}
+
 // ---- Edit drawer -----------------------------------------------------------
 
 type EditDraft = { title: string; hook: string; content: string };
@@ -605,6 +636,7 @@ function EditNote({
             ) : (
               <p className="ws-muted" style={{ margin: 0 }}>This note has no body yet.</p>
             )}
+            {!loading && <ReferencedBy scope={scope} noteId={note.id} />}
             {flash && <p className="ws-muted" style={{ margin: 0 }}>Saved.</p>}
             {err && <p className="ws-field__error">{err}</p>}
           </>
@@ -1030,10 +1062,18 @@ function fmtBytes(bytes: number): string {
 }
 
 function Documents() {
+  const [searchParams] = useSearchParams();
   const [data, setData] = useState<DocsResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [openDoc, setOpenDoc] = useState<Doc | null>(null);
+
+  // Open the doc a `?path=` deep link names, once. A resolved `workshop:doc/...`
+  // ref (lib/refs.ts) points here so a doc chip opens the actual document
+  // rather than landing on the tab and leaving the operator to find it again --
+  // the same gesture `?note=` already does for notes above.
+  const wantPath = searchParams.get("path");
+  const openedRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -1054,6 +1094,14 @@ function Documents() {
   }, [refresh]);
 
   const docs = data?.docs ?? [];
+
+  useEffect(() => {
+    if (!wantPath || openedRef.current === wantPath || !docs.length) return;
+    const hit = docs.find((d) => d.path === wantPath);
+    if (!hit) return;
+    openedRef.current = wantPath;
+    setOpenDoc(hit);
+  }, [wantPath, docs]);
 
   // Group by top-level section (loose top-level files go under "Top level").
   const groups = new Map<string, Doc[]>();
