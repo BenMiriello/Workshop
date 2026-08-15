@@ -34,7 +34,7 @@ import {
   latitudeSourceLabel, readinessLine, readinessTone, triageLabel,
 } from "../lib/tasks";
 import { TICKET_EFFORTS, parseList, unresolvedIds } from "../lib/ticketEdit";
-import { jobIsLive, jobStatusKind } from "../lib/jobs";
+import { jobIsLive, jobStatusKind, runHref } from "../lib/jobs";
 import { nextWorkParams } from "../lib/workParams";
 import {
   EditableBody, EditableTitle, PickEditor, PropRow, TextEditor,
@@ -51,7 +51,13 @@ type JobRec = {
   ended_at?: string;
   trigger?: string;
   kind?: string;
-  agent?: string;
+  // Who ran it. `/api/tasks/{scope}/{id}/jobs` runs the same `_enrich` the runs
+  // feed does, so these two arrive on every run and nothing here read them: the
+  // page linked to the run and to the chat, and left the agent as the one party
+  // you could not reach. This used to be declared as `agent`, a field the jobs
+  // store has never written.
+  agent_id?: string;
+  agent_name?: string;
   evidence?: { summary?: string; url?: string };
 };
 
@@ -74,6 +80,20 @@ function fmtTs(iso?: string | null): string {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? "" : d.toLocaleString();
 }
+
+// The run row's own link. `.ws-runrow` still lays the row out; the link inside
+// it takes the row's ink, no underline, and the growth that used to belong to
+// `.ws-runrow__who`, so the duration and the time stay pinned right.
+const RUN_LINK = {
+  display: "flex",
+  alignItems: "center",
+  gap: "var(--space-3)",
+  flex: "1 1 auto",
+  minWidth: 0,
+  color: "inherit",
+  textDecoration: "none",
+} as const;
+const RUN_AGENT = { flex: "none", fontSize: "var(--fs-sm)" } as const;
 
 function runDuration(r: JobRec): string {
   if (!r.started_at) return "";
@@ -378,15 +398,25 @@ export default function TicketDetail() {
           : (
             <div className="ws-runlist">
               {runsInOrder.map((r) => (
-                <Link key={r.id} className="ws-runrow" to={`/runs/${encodeURIComponent(r.id)}`}>
-                  <StatusDot status={jobStatusKind(r.status)}>{r.status}</StatusDot>
-                  <span className="ws-ticket-key">{r.id.slice(-6)}</span>
-                  <span className="ws-runrow__who">
-                    {r.kind || "run"} · attempt {r.attempt}
-                  </span>
+                <div key={r.id} className="ws-runrow">
+                  {/* The row is the run; the agent beside it is its own link.
+                      The row used to BE the <a>, which left nowhere to put a
+                      second one. */}
+                  <Link style={RUN_LINK} to={runHref(r.id)}>
+                    <StatusDot status={jobStatusKind(r.status)}>{r.status}</StatusDot>
+                    <span className="ws-ticket-key">{r.id.slice(-6)}</span>
+                    <span className="ws-runrow__who">
+                      {r.kind || "run"} · attempt {r.attempt}
+                    </span>
+                  </Link>
+                  {r.agent_id && (
+                    <Link className="ws-muted" style={RUN_AGENT} to={`/agents/${encodeURIComponent(r.agent_id)}`}>
+                      {r.agent_name || r.agent_id}
+                    </Link>
+                  )}
                   <span className="ws-runrow__dur">{runDuration(r)}</span>
                   <span className="ws-runrow__when">{ago(r.started_at)}</span>
-                </Link>
+                </div>
               ))}
             </div>
           )}

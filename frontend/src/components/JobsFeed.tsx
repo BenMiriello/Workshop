@@ -14,7 +14,8 @@ import {
   agencyFor,
   type SegmentedOption,
 } from "@workshop/ui";
-import { type Job, jobStatusKind as statusKind } from "../lib/jobs";
+import { type Job, jobStatusKind as statusKind, runHref } from "../lib/jobs";
+import { runTicketScope, ticketHref } from "../lib/tasks";
 import { shortHttpError } from "../lib/httpError";
 
 // The Jobs feed: one list for every bounded execution (cron task, drained
@@ -37,6 +38,13 @@ const FILTERS: SegmentedOption<StatusFilter>[] = [
   { value: "done", label: "Done" },
   { value: "failed", label: "Failed" },
 ];
+
+// The row's own link takes the row's ink and no underline, the way every other
+// whole-row link in the kit does (`.ws-listrow`, `.ws-runrow`, `.ws-ticketrow`):
+// the row shape is the affordance. Only the secondary links in the meta line
+// read as links. This is two declarations rather than a kit class because
+// `.ws-listrow` carried them while the link WAS the row.
+const ROW_LINK = { color: "inherit", textDecoration: "none" } as const;
 
 // Relative time for the meta line, matching the ticket list.
 function ago(iso?: string | null): string {
@@ -80,6 +88,38 @@ function bindingLabel(job: Job): { icon: JSX.Element; text: string } {
   if (job.agent_id) return { icon: <Bot aria-hidden />, text: job.agent_name || job.agent_id };
   if (job.chat_id) return { icon: <MessageSquare aria-hidden />, text: job.chat_title || job.chat_id };
   return { icon: <Bot aria-hidden />, text: "unbound" };
+}
+
+// The two links a row already has the data for and used to throw away: the
+// ticket this run is working (`task_id`) and the chat that launched it
+// (`chat_context_key` + `chat_id`, which only picked an icon before).
+//
+// They are secondary: the row's own target is the run, so they render in the
+// meta line as siblings of the row's title link. Nesting them inside it would
+// be an <a> inside an <a>, which the browser silently unpicks. `ws-muted` is
+// what keeps them the meta line's own ink: an <a> with no class takes the
+// browser's link colour, and a link is underlined, never tinted.
+function crossLinks(job: Job): JSX.Element[] {
+  const out: JSX.Element[] = [];
+  if (job.task_id) {
+    out.push(
+      <Link key="ticket" className="ws-muted" to={ticketHref(runTicketScope(job), job.task_id)}>
+        Ticket
+      </Link>,
+    );
+  }
+  if (job.chat_context_key && job.chat_id) {
+    out.push(
+      <Link
+        key="chat"
+        className="ws-muted"
+        to={`/chat/${encodeURIComponent(job.chat_context_key)}?thread=${encodeURIComponent(job.chat_id)}`}
+      >
+        Chat
+      </Link>,
+    );
+  }
+  return out;
 }
 
 // Always embedded, never a page of its own. `hideHeader` used to gate a
@@ -185,26 +225,25 @@ export default function JobsFeed() {
     const topLevel = jobs.filter((j) => !(j.parent_id && parentIds.has(j.parent_id)));
 
     const childRow = (child: Job) => (
-      <li key={child.id}>
-        <Link
-          className="ws-listrow"
-          to={`/runs/${encodeURIComponent(child.id)}`}
-          data-agency={agencyFor(child.trigger) ?? undefined}
+      <li
+        key={child.id}
+        className="ws-listrow"
+        data-agency={agencyFor(child.trigger) ?? undefined}
+      >
+        <span
+          className="ws-listrow__mark"
+          title={child.status ?? "unknown"}
+          aria-label={child.status ?? "unknown"}
         >
-          <span
-            className="ws-listrow__mark"
-            title={child.status ?? "unknown"}
-            aria-label={child.status ?? "unknown"}
-          >
-            <StatusDot status={statusKind(child.status)}>{null}</StatusDot>
-          </span>
-          <span className="ws-listrow__title">
-            {child.title || child.task_text || child.id}
-          </span>
-          <span className="ws-listrow__meta">
-            <span className="ws-listrow__time">{ago(child.started_at)}</span>
-          </span>
+          <StatusDot status={statusKind(child.status)}>{null}</StatusDot>
+        </span>
+        <Link className="ws-listrow__title" style={ROW_LINK} to={runHref(child.id)}>
+          {child.title || child.task_text || child.id}
         </Link>
+        <span className="ws-listrow__meta">
+          {crossLinks(child)}
+          <span className="ws-listrow__time">{ago(child.started_at)}</span>
+        </span>
       </li>
     );
 
@@ -223,10 +262,15 @@ export default function JobsFeed() {
                     AgencyChip repeating the trigger the AgencyDot already
                     marked, and a child-runs button. Provenance is still here,
                     as the trigger WORD in the meta line: it is a fact you read,
-                    not one you scan a list for. */}
-                <Link
+                    not one you scan a list for.
+
+                    The row grid is the <div>, not the link. The link used to BE
+                    the row, and that left nowhere to put the ticket and chat
+                    links: an <a> cannot hold another one. The title is the run's
+                    link now, and as a grid item it is blockified, so it still
+                    fills the row's whole title column. */}
+                <div
                   className="ws-listrow"
-                  to={`/runs/${encodeURIComponent(job.id)}`}
                   data-agency={agencyFor(job.trigger) ?? undefined}
                 >
                   <span
@@ -236,7 +280,9 @@ export default function JobsFeed() {
                   >
                     <StatusDot status={statusKind(job.status)}>{null}</StatusDot>
                   </span>
-                  <span className="ws-listrow__title">{job.title || bind.text}</span>
+                  <Link className="ws-listrow__title" style={ROW_LINK} to={runHref(job.id)}>
+                    {job.title || bind.text}
+                  </Link>
                   <span className="ws-listrow__meta">
                     {(job.trigger_label || job.trigger) && (
                       <span>{job.trigger_label || job.trigger}</span>
@@ -245,9 +291,10 @@ export default function JobsFeed() {
                       <span>{job.project_slug || job.agent_name}</span>
                     )}
                     {dur && <span>{dur}</span>}
+                    {crossLinks(job)}
                     <span className="ws-listrow__time">{ago(job.started_at)}</span>
                   </span>
-                </Link>
+                </div>
                 {kids && (
                   <>
                     <Button

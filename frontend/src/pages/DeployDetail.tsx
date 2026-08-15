@@ -8,6 +8,7 @@ import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot,
   Badge, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Menu, MenuItem, type StatusKind,
 } from "@workshop/ui";
+import { runHref } from "../lib/jobs";
 import { shortHttpError } from "../lib/httpError";
 
 
@@ -410,7 +411,7 @@ export default function DeployDetail() {
                         </span>
                       )}
                       <Button size="sm" variant="ghost" onClick={() => openLog(r)}>Log</Button>
-                      <Link to={`/runs/${encodeURIComponent(r.id)}`} style={{ textDecoration: "none" }}>
+                      <Link to={runHref(r.id)} style={{ textDecoration: "none" }}>
                         <Button size="sm" variant="ghost">Open</Button>
                       </Link>
                       {r.status === "done" && r.kind === "deploy" && (

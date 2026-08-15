@@ -16,7 +16,7 @@ import {
   Notice,
 } from "@workshop/ui";
 import type { StatusKind } from "@workshop/ui";
-import { type Job, jobIsLive, jobStatusKind } from "../lib/jobs";
+import { type Job, jobIsLive, jobStatusKind, runHref } from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
 import { shortHttpError } from "../lib/httpError";
 
@@ -471,30 +471,35 @@ export default function JobDetail() {
                   </span>
                 )}
               </Row>
+              {/* Real links, the shape TicketDetail's dependency rows use. These
+                  were `Row onClick` with an inline pointer cursor, so a
+                  cross-link could not be middle-clicked, tabbed to, or long
+                  pressed, and hovering one told you nothing about where it
+                  went. `ws-ticket-link` is the kit's whole-row link. */}
               {job.project_slug && (
-                <Row style={{ gap: "var(--space-1)", alignItems: "center", cursor: "pointer" }}
-                     onClick={() => nav(`/projects/${encodeURIComponent(job.project_slug!)}`)}>
+                <Link className="ws-ticket-link" to={`/projects/${encodeURIComponent(job.project_slug)}`}>
                   <FolderGit2 aria-hidden /> <span className="ws-mono">{job.project_slug}</span>
-                </Row>
+                </Link>
               )}
               {job.agent_id && (
-                <Row style={{ gap: "var(--space-1)", alignItems: "center", cursor: "pointer" }}
-                     onClick={() => nav(`/agents/${encodeURIComponent(job.agent_id!)}`)}>
+                <Link className="ws-ticket-link" to={`/agents/${encodeURIComponent(job.agent_id)}`}>
                   <Bot aria-hidden />
                   <span>{job.agent_name || job.agent_id}</span>
                   {job.agent_name && job.agent_name !== job.agent_id && (
                     <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{job.agent_id}</span>
                   )}
-                </Row>
+                </Link>
               )}
               {job.chat_id && (
                 job.chat_context_key ? (
-                  <Row style={{ gap: "var(--space-1)", alignItems: "center", cursor: "pointer" }}
-                       onClick={() => nav(`/chat/${encodeURIComponent(job.chat_context_key!)}?thread=${encodeURIComponent(job.chat_id!)}`)}>
+                  <Link
+                    className="ws-ticket-link"
+                    to={`/chat/${encodeURIComponent(job.chat_context_key)}?thread=${encodeURIComponent(job.chat_id)}`}
+                  >
                     <MessageSquare aria-hidden />
                     <span>{job.chat_title || "Chat"}</span>
                     <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{job.chat_id}</span>
-                  </Row>
+                  </Link>
                 ) : (
                   <Row style={{ gap: "var(--space-1)", alignItems: "center" }}>
                     <MessageSquare aria-hidden />
@@ -508,12 +513,11 @@ export default function JobDetail() {
                   one is the truth?" ambiguity; a run has one status, and the
                   ticket has its own. Link to the ticket instead. */}
               {job.task_id && (
-                <Row style={{ gap: "var(--space-1)", alignItems: "center", cursor: "pointer" }}
-                     onClick={() => nav(ticketHref(runTicketScope(job), job.task_id!))}>
+                <Link className="ws-ticket-link" to={ticketHref(runTicketScope(job), job.task_id)}>
                   <ListChecks aria-hidden />
                   <span>Linked ticket</span>
                   <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{job.task_id}</span>
-                </Row>
+                </Link>
               )}
             </Stack>
           </Card>
@@ -526,7 +530,7 @@ export default function JobDetail() {
               <ul className="ws-list">
                 {children.map((c) => (
                   <li key={c.id}>
-                    <Link className="ws-listrow" to={`/runs/${encodeURIComponent(c.id)}`}>
+                    <Link className="ws-listrow" to={runHref(c.id)}>
                       <span
                         className="ws-listrow__mark"
                         title={c.status ?? "unknown"}

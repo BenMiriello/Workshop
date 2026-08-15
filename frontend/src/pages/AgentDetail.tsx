@@ -27,7 +27,7 @@ import {
   catFor,
   type SegmentedOption,
 } from "@workshop/ui";
-import { type Job, jobStatusKind } from "../lib/jobs";
+import { type Job, jobStatusKind, runHref } from "../lib/jobs";
 import GrantPicker from "../components/GrantPicker";
 import TaskPanel from "../components/TaskPanel";
 import { useCrumbLabel } from "../components/appNav";
@@ -954,7 +954,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
                   </span>
                   <Row wrap style={{ gap: "var(--space-1)", marginTop: "var(--space-1)" }}>
                     {agent.linked_run_ids.slice(0, 10).map((rid) => (
-                      <Link key={rid} to={`/runs/${encodeURIComponent(rid)}`} style={{ textDecoration: "none" }}>
+                      <Link key={rid} to={runHref(rid)} style={{ textDecoration: "none" }}>
                         <Badge>{rid.slice(0, 10)}</Badge>
                       </Link>
                     ))}

@@ -872,7 +872,7 @@ export default function ProjectDetail() {
   const childIndex = useMemo(() => {
     const m = new Map<string, Task[]>();
     for (const t of visibleTasks) {
-      const key = `${t.owner} ${t.parent ?? ""}`;
+      const key = `${t.owner}\0${t.parent ?? ""}`;
       const list = m.get(key);
       if (list) list.push(t);
       else m.set(key, [t]);
@@ -882,7 +882,7 @@ export default function ProjectDetail() {
 
   const childrenOf = useCallback(
     (parent: string | null, owner: string) =>
-      childIndex.get(`${owner} ${parent ?? ""}`) ?? EMPTY_TASKS,
+      childIndex.get(`${owner}\0${parent ?? ""}`) ?? EMPTY_TASKS,
     [childIndex],
   );
 

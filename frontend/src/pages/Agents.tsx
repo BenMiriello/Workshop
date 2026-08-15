@@ -29,6 +29,7 @@ import {
 import DelegatesSection from "../components/DelegatesSection";
 import { triggerSummary, nextScheduled, agentAgency, type UnifiedAgent } from "../lib/agentTriggers";
 import { latitudeDesc, type Latitude } from "../lib/tasks";
+import { runHref } from "../lib/jobs";
 import { shortHttpError } from "../lib/httpError";
 
 // Roster item enriched with the O6/O7 autonomy fields the backend now returns on
@@ -432,26 +433,29 @@ export default function Agents() {
             const lastJob = lastJobByAgent.get(a.id);
             return (
               <li key={`${a.runtime}:${a.id}`} className={isBuilder ? "ws-agent-card-cell" : undefined}>
-                <Link
-                  to={isBuilder
-                    ? `/agents/${encodeURIComponent(a.slug)}/chat`
-                    : `/agents/${encodeURIComponent(a.id)}`}
-                  style={{ textDecoration: "none", color: "inherit" }}
+                {/* MARK THE EXCEPTION, NOT THE DEFAULT. Only an agent that
+                    can start its own work wears a rail; one that runs when
+                    you ask is the ordinary case and gets nothing. Striping
+                    every card is how a roster ends up looking sorted by
+                    color while saying nothing. A failed last run replaces the
+                    rail with a danger hairline: broken beats provenance. */}
+                <Card
+                  interactive
+                  className={`ws-agent-card${
+                    lastJob?.status === "failed"
+                      ? " ws-agency-rail is-failed"
+                      : agentAgency(a.triggers) === "autonomous" ? " ws-agency-rail" : ""
+                  }`}
+                  data-agency={agentAgency(a.triggers)}
                 >
-                  {/* MARK THE EXCEPTION, NOT THE DEFAULT. Only an agent that
-                      can start its own work wears a rail; one that runs when
-                      you ask is the ordinary case and gets nothing. Striping
-                      every card is how a roster ends up looking sorted by
-                      color while saying nothing. A failed last run replaces the
-                      rail with a danger hairline: broken beats provenance. */}
-                  <Card
-                    interactive
-                    className={`ws-agent-card${
-                      lastJob?.status === "failed"
-                        ? " ws-agency-rail is-failed"
-                        : agentAgency(a.triggers) === "autonomous" ? " ws-agency-rail" : ""
-                    }`}
-                    data-agency={agentAgency(a.triggers)}
+                  {/* The card link stops above the last-run line, because that
+                      line is a link of its own now and an <a> cannot contain
+                      one. It used to wrap the whole Card. */}
+                  <Link
+                    to={isBuilder
+                      ? `/agents/${encodeURIComponent(a.slug)}/chat`
+                      : `/agents/${encodeURIComponent(a.id)}`}
+                    style={{ display: "block", textDecoration: "none", color: "inherit" }}
                   >
                     <Row between>
                       <h2 className="ws-card__title">
@@ -492,18 +496,26 @@ export default function Agents() {
                       </Row>
                     )}
                     <p className="ws-card__meta">{triggerSummary(a.triggers)}</p>
-                    <p className="ws-card__meta ws-muted">
-                      {lastJob ? (
-                        <>last run: {lastJob.status} · {activityLabel(lastJob.started_at)}</>
-                      ) : (
-                        <>next: {nextScheduled(a.triggers)}</>
-                      )}
-                    </p>
-                    <p className="ws-card__meta ws-agent-card__when">
-                      {when && <><Clock size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{when}</>}
-                    </p>
-                  </Card>
-                </Link>
+                  </Link>
+                  {/* The run itself, not a description of it. This printed a
+                      status and a time and went nowhere, on the one line of
+                      the card that names a thing with its own page. */}
+                  <p className="ws-card__meta ws-muted">
+                    {lastJob ? (
+                      <>
+                        last run:{" "}
+                        <Link className="ws-muted" to={runHref(lastJob.id)}>
+                          {lastJob.status} · {activityLabel(lastJob.started_at)}
+                        </Link>
+                      </>
+                    ) : (
+                      <>next: {nextScheduled(a.triggers)}</>
+                    )}
+                  </p>
+                  <p className="ws-card__meta ws-agent-card__when">
+                    {when && <><Clock size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{when}</>}
+                  </p>
+                </Card>
                 {isBuilder && (
                   <button
                     type="button"
