@@ -82,6 +82,26 @@ Kept deliberately, and why:
 
 ---
 
+## 3a. What is editable where
+
+One rule, because "can I change this here" should not be a per-screen discovery:
+
+**The chat shows and acts. The ticket page edits.**
+
+- A **card** is read-only about the ticket and carries only actions that move work
+  along: open it, view its run, run it now.
+- A **panel row** is read-only. Same reason the drawer it replaces was
+  (`WorkDrawer.tsx:30-37`): `TicketDetail` edits every field, and a second editor of the
+  same fields is a second thing to keep correct and a second place for them to disagree.
+- The two things the chat surface genuinely owns, it edits: **the answer to a question**
+  (which is a write the ticket page cannot do as well, because the question is addressed
+  to this conversation) and **this chat's work policy**.
+- **Ticket drafts** are the exception that proves it: their bodies are editable in the
+  drafts dialog because an unapproved draft is not yet a ticket, and its body is the
+  entire spec a worker will read.
+
+---
+
 ## 4. The card
 
 A filed ticket renders as a `ui-card` **inside the assistant's answer**, which is what
