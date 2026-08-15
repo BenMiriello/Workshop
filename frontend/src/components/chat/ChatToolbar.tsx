@@ -71,7 +71,7 @@ export default function ChatToolbar({
   variant, mode, slug, hideExpand,
   activeId, activeThreadTitle, branchPicker,
   showProviderPicker, providers, activeProvider, onChooseProvider, runActive,
-  drawer, needsYouCount, taskScope, workAnchor,
+  drawer, needsYouCount, workAnchor,
   onBack, onOpenWorkbench, onEditTitle, onOpenThread,
   onNewChat, onArchive, onPopOut, onNavigate,
 }: {
@@ -100,9 +100,6 @@ export default function ChatToolbar({
   // else. It deliberately does not count open tickets: a badge is an alarm, and
   // forty open tickets is the normal state of a working queue.
   needsYouCount: number;
-  // The task-store scope this chat maps to, or null when it has no queue. The
-  // panel's ticket rows need one; its needs-you rows do not.
-  taskScope: string | null;
   /** Wraps the Tickets button in the Work panel. A render prop rather than
    *  eight forwarded props, because the toolbar's business is the BUTTON: it
    *  builds the trigger and knows nothing about what hangs off it. */
@@ -247,9 +244,19 @@ export default function ChatToolbar({
           onClick: WorkPanel attaches the one that fits its host, so the panel
           and the button can never hold two opinions about whether it is open.
           `data-chat-work-trigger` is how the narrow sheet finds its way back
-          here on Escape. Shown once there is a thread to have an inbox for, or
-          a scope to have a queue in. */}
-      {(activeId || taskScope) && workAnchor?.(
+          here on Escape.
+
+          ALWAYS SHOWN, including on a blank chat with no thread and no queue.
+          It used to appear only once there was `activeId || taskScope`, which
+          was right when the panel was a list of work and a blank chat had no
+          work to list. It is wrong now that the panel also holds the policy:
+          the mode decides where the FIRST message's work goes, so gating the
+          only way to it on a thread existing hides it until after that decision
+          has been made. That is exactly why the Toggle this replaced was
+          deliberately ungated, and the property has to survive the move. On a
+          blank chat the panel opens on empty zones and its footer, which is the
+          honest picture. */}
+      {workAnchor?.(
         <button
           data-chat-work-trigger=""
           className={`chat-tb__btn${workOpen ? " is-active" : ""}`}

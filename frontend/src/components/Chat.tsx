@@ -917,7 +917,6 @@ export default function Chat({
       runActive={runActive}
       drawer={drawer}
       needsYouCount={work.data.counts.needs_you}
-      taskScope={taskScope}
       workAnchor={(trigger) => <WorkPanel host="anchor" trigger={trigger} {...workProps} />}
       onBack={back}
       onOpenWorkbench={() => navigate(`/agents/${slug}/chat`)}
