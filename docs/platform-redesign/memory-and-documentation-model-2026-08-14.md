@@ -364,11 +364,28 @@ The plan is as much a consolidation as a feature. Four things are load-bearing.
 
 ### 7.1 One canonical scope module (the prerequisite)
 
-Scope is currently parsed in four independent implementations:
+Scope is currently parsed in several independent implementations. ADR 0014 named
+this and deferred the fix. Adding a tree to a string parsed in that many places
+would pay the tax again and guarantee they drift.
+
+**Correction to ADR 0014's list, found while building Phase 1.** That record cites
+`frontend/src/lib/chatScope.ts`, which does not exist. The real sites are
 `knowledge._parse_scope`, `task_scope.root_for_context` / `key_for_root`,
-`frontend/src/lib/chatScope.ts`, `frontend/src/lib/tasks.ts`. ADR 0014 named this
-and deferred the fix. Adding a tree to a string parsed in four places would pay
-that tax a fifth time and guarantee the four drift.
+`frontend/src/lib/devMode.ts`, `frontend/src/lib/tasks.ts`,
+`frontend/src/lib/chatSelection.ts`, and `frontend/src/components/chat/chatScope.ts`
+(a different file at a different path, keyed on `context_key` rather than
+`scope_key`).
+
+**Two namespaces, not one, and this is the reason the migration is partial.**
+`scope_key` (`workshop`, `project:<slug>`, `app:<name>`, `agent:<slug>`,
+`role:<role>`) is what the tree models. `context_key` is a superset that also
+carries `general` and `build:<slug>` and maps *into* scope keys via
+`knowledge.scope_for_context`. `task_scope.root_for_context` and
+`components/chat/chatScope.ts` operate on `context_key` and are correctly NOT
+folded into `scope_tree`. `task_scope.key_for_root` is also left alone: its own
+docstring records that the platform repo must map back to `development` and never
+to `workshop`, and that getting it wrong re-keys every ticket in the root queue on
+the next write. Unifying those is a further migration and is not this phase.
 
 **Phase 1 introduces `backend/services/scope_tree.py` as the single owner** of:
 parsing a scope key, the parent edge, `reach()`, `govern()`, labels, and the
