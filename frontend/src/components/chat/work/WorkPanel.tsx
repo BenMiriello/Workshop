@@ -98,7 +98,7 @@ export default function WorkPanel(props: WorkPanelProps) {
       // this chat, and it is about to unmount.
       const back = sheetRef.current
         ?.closest(".chat-panel")
-        ?.querySelector<HTMLElement>("[data-chat-work-trigger]") ?? null;
+        ?.querySelector<HTMLElement>("[data-chat-workpanel-trigger]") ?? null;
       onOpenChange(false);
       back?.focus();
     };
@@ -129,7 +129,7 @@ export default function WorkPanel(props: WorkPanelProps) {
         onOpenChange={onOpenChange}
         label="Work"
       >
-        <div className="chat-work">
+        <div className="chat-workpanel">
           <WorkBody {...props} />
         </div>
       </Popover>
@@ -142,11 +142,11 @@ export default function WorkPanel(props: WorkPanelProps) {
       {/* Behind the panel, over the log. Dismisses on a press, like the
           popover's outside-pointerdown does on a wide screen. */}
       <div
-        className="chat-work__scrim"
+        className="chat-workpanel__scrim"
         aria-hidden
         onPointerDown={() => onOpenChange(false)}
       />
-      <div ref={sheetRef} className="chat-work chat-work--sheet" role="dialog" aria-label="Work">
+      <div ref={sheetRef} className="chat-workpanel chat-workpanel--sheet" role="dialog" aria-label="Work">
         <WorkBody {...props} />
       </div>
     </>
@@ -267,19 +267,19 @@ function WorkBody({
 
   return (
     <>
-      <div className="chat-work__head">
-        <span className="chat-work__heading">Work</span>
+      <div className="chat-workpanel__head">
+        <span className="chat-workpanel__heading">Work</span>
         {scope && (
           <Tag hue={catFor(scope)} variant="neutral">{scopeName(scope)}</Tag>
         )}
-        <span className="chat-work__spacer" />
+        <span className="chat-workpanel__spacer" />
         {/* Filing this chat as a ticket used to sit in the three-dot menu, two
             controls away from the list of what it produces. It is an action on
             this chat's work, so it lives with this chat's work. */}
         {onFileTicket && (
           <button
             type="button"
-            className="chat-work__iconbtn"
+            className="chat-workpanel__iconbtn"
             // The drafts dialog is a modal over the whole chat. Leaving the
             // panel open behind it would put two surfaces about the same work
             // on screen, one of them unreachable.
@@ -292,7 +292,7 @@ function WorkBody({
         )}
         <button
           type="button"
-          className="chat-work__iconbtn"
+          className="chat-workpanel__iconbtn"
           onClick={openSettings}
           title="Work settings"
           aria-label="Work settings"
@@ -304,11 +304,11 @@ function WorkBody({
       {/* All four, always, including the zeroes. They are the chat's summary of
           its own work, and dropping an empty one would slide the other three
           sideways the moment an agent raised something. */}
-      <div className="chat-work__chips" role="group" aria-label="Which work to show">
+      <div className="chat-workpanel__chips" role="group" aria-label="Which work to show">
         {WORK_CHIPS.map((c) => (
           <FilterChip
             key={c.id}
-            className={`chat-work__chip${c.id === selected ? " is-on" : ""}`}
+            className={`chat-workpanel__chip${c.id === selected ? " is-on" : ""}`}
             label={c.label}
             value={chipCount(counts, c.id)}
             onClick={() => setChip(c.id)}
@@ -319,7 +319,7 @@ function WorkBody({
       {problem}
 
       {cold && loading ? (
-        <div className="chat-work__loading">
+        <div className="chat-workpanel__loading">
           <Skeleton /><Skeleton /><Skeleton />
         </div>
       ) : list.groups.length === 0 ? (
@@ -327,14 +327,14 @@ function WorkBody({
         // says what puts something here, which is the whole job of an empty
         // state; a bordered region around one sentence is the "huge and blocky"
         // shape this app spent a pass removing.
-        <p className="chat-work__empty">{emptyText(selected)}</p>
+        <p className="chat-workpanel__empty">{emptyText(selected)}</p>
       ) : (
         list.groups.map((g) => (
-          <div key={g.key} className="chat-work__group">
+          <div key={g.key} className="chat-workpanel__group">
             <SectionLabel>{g.label}</SectionLabel>
-            <ul className="chat-work__list">
+            <ul className="chat-workpanel__list">
               {g.rows.map((row) => (
-                <li key={row.id} className="chat-work__item">
+                <li key={row.id} className="chat-workpanel__item">
                   {row.kind === "item" ? (
                     <NeedsYouRow item={row.item} onSelect={setQuestionId} />
                   ) : (
@@ -354,7 +354,7 @@ function WorkBody({
 
       {/* The overflow state, and it belongs to the list it overflows. A popover
           does not paginate: the rest is one tap away on the board. */}
-      <Link className="chat-work__more" to={board.to} onClick={close}>
+      <Link className="chat-workpanel__more" to={board.to} onClick={close}>
         {list.overflow > 0 ? `${board.label} (${list.overflow} more)` : board.label}
         <ChevronRight size={13} strokeWidth={1.8} aria-hidden />
       </Link>
@@ -362,11 +362,11 @@ function WorkBody({
       {/* The policy in words, and the second way into the settings. Two ways in
           is deliberate: the gear is where you look for settings, and this is
           where you are when you find out the policy is not what you wanted. */}
-      <div className="chat-work__foot">
-        <span className="chat-work__note">
+      <div className="chat-workpanel__foot">
+        <span className="chat-workpanel__note">
           When work comes up: {chatModeDef(chatMode).action}.
         </span>
-        <button type="button" className="chat-work__change" onClick={openSettings}>
+        <button type="button" className="chat-workpanel__change" onClick={openSettings}>
           Change
         </button>
       </div>

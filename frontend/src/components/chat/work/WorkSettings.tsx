@@ -51,12 +51,12 @@ export default function WorkSettings({
 
   return (
     <>
-      <div className="chat-work__head">
-        <button type="button" className="chat-work__back" onClick={onBack}>
+      <div className="chat-workpanel__head">
+        <button type="button" className="chat-workpanel__back" onClick={onBack}>
           <ChevronLeft size={14} strokeWidth={1.8} aria-hidden />
           Work
         </button>
-        <span className="chat-work__heading">Work settings</span>
+        <span className="chat-workpanel__heading">Work settings</span>
       </div>
 
       <SectionLabel>When work comes up</SectionLabel>
@@ -65,30 +65,30 @@ export default function WorkSettings({
           line and a description in it wins the width fight with the name; a
           settings row is two lines and the second one is where the difference
           between "draft it" and "run it" is actually explained. */}
-      <div className="chat-work__modes">
+      <div className="chat-workpanel__modes">
         {CHAT_MODES.map((m) => {
           const on = m.id === chatMode;
           return (
             <button
               key={m.id}
               type="button"
-              className="chat-work__mode"
+              className="chat-workpanel__mode"
               aria-pressed={on}
               onClick={() => onChooseChatMode(m.id)}
             >
-              <span className="chat-work__mode-mark">
+              <span className="chat-workpanel__mode-mark">
                 {on && <Check size={14} strokeWidth={2} aria-hidden />}
               </span>
-              <span className="chat-work__mode-body">
-                <span className="chat-work__mode-name">{m.action}</span>
-                <span className="chat-work__mode-gloss">{m.title}</span>
+              <span className="chat-workpanel__mode-body">
+                <span className="chat-workpanel__mode-name">{m.action}</span>
+                <span className="chat-workpanel__mode-gloss">{m.title}</span>
               </span>
             </button>
           );
         })}
       </div>
 
-      <Props className="chat-work__props">
+      <Props className="chat-workpanel__props">
         <Prop label="Files into">
           {scope ? scopeLabel(scope) : "Nowhere. This chat has no ticket queue."}
         </Prop>
@@ -98,15 +98,15 @@ export default function WorkSettings({
           own still runs nothing while the workshop is paused, and the operator
           should learn that here rather than by watching a ticket sit still. */}
       {autonomyRead && (
-        <div className="chat-work__foot">
-          <span className="chat-work__note">
+        <div className="chat-workpanel__foot">
+          <span className="chat-workpanel__note">
             {autonomy
               ? off
                 ? "Workshop autonomy is off, so nothing here runs on its own."
                 : "Workshop autonomy is on."
               : "Couldn't read whether workshop autonomy is on."}
           </span>
-          <Link className="chat-work__link-out" to="/settings">Settings</Link>
+          <Link className="chat-workpanel__link-out" to="/settings">Settings</Link>
         </div>
       )}
     </>

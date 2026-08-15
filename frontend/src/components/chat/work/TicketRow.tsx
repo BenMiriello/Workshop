@@ -43,19 +43,19 @@ export function NeedsYouRow({ item, onSelect }: {
   return (
     <button
       type="button"
-      className="chat-work__row"
+      className="chat-workpanel__row"
       onClick={() => onSelect(item.id)}
       title={item.title}
     >
-      <Icon size={14} strokeWidth={1.8} aria-hidden className="chat-work__icon" />
-      <span className="chat-work__rowbody">
-        <span className="chat-work__line">
-          <span className="chat-work__agent">{item.agent}</span>
-          <span className="ws-truncate chat-work__title">{item.title}</span>
+      <Icon size={14} strokeWidth={1.8} aria-hidden className="chat-workpanel__icon" />
+      <span className="chat-workpanel__rowbody">
+        <span className="chat-workpanel__line">
+          <span className="chat-workpanel__agent">{item.agent}</span>
+          <span className="ws-truncate chat-workpanel__title">{item.title}</span>
         </span>
-        {snippet && <span className="ws-truncate chat-work__meta">{snippet}</span>}
+        {snippet && <span className="ws-truncate chat-workpanel__meta">{snippet}</span>}
       </span>
-      <ChevronRight size={14} aria-hidden className="chat-work__caret" />
+      <ChevronRight size={14} aria-hidden className="chat-workpanel__caret" />
     </button>
   );
 }
@@ -90,19 +90,19 @@ export function TicketRow({ ticket, fallbackScope, nowMs, onFollow }: {
   return (
     <Link
       to={ticketHref(ticket.scope || fallbackScope || "workshop", ticket.id)}
-      className="chat-work__row"
+      className="chat-workpanel__row"
       onClick={onFollow}
       title={name}
     >
       <StatusDot status={taskStatusKind(ticket.status)}>{null}</StatusDot>
-      <span className="chat-work__rowbody">
-        <span className="chat-work__line">
+      <span className="chat-workpanel__rowbody">
+        <span className="chat-workpanel__line">
           <span className="ws-ticket-key">{ticketKey(ticket.id)}</span>
-          <span className="ws-truncate chat-work__title">{name}</span>
+          <span className="ws-truncate chat-workpanel__title">{name}</span>
         </span>
-        <span className="chat-work__meta">
+        <span className="chat-workpanel__meta">
           {meta.join(" · ")}
-          {elapsed && <span className="chat-work__elapsed">{elapsed}</span>}
+          {elapsed && <span className="chat-workpanel__elapsed">{elapsed}</span>}
         </span>
       </span>
     </Link>

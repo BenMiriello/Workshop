@@ -71,18 +71,18 @@ export default function QuestionView({
 
   return (
     <>
-      <div className="chat-work__head">
-        <button type="button" className="chat-work__back" onClick={onBack}>
+      <div className="chat-workpanel__head">
+        <button type="button" className="chat-workpanel__back" onClick={onBack}>
           <ChevronLeft size={14} strokeWidth={1.8} aria-hidden />
           Work
         </button>
-        <span className="chat-work__heading">Answer {item.agent}</span>
+        <span className="chat-workpanel__heading">Answer {item.agent}</span>
         {items.length > 1 && (
           <>
-            <span className="chat-work__count">{position + 1} of {items.length}</span>
+            <span className="chat-workpanel__count">{position + 1} of {items.length}</span>
             <button
               type="button"
-              className="chat-work__iconbtn"
+              className="chat-workpanel__iconbtn"
               onClick={() => onSelect(next.id)}
               title="Next"
               aria-label="Next question"
@@ -99,7 +99,7 @@ export default function QuestionView({
           (a promotion proposal, a ticket in a scope this chat does not read) the
           title is the only statement of the subject there is. */}
       {about ? (
-        <ul className="chat-work__list">
+        <ul className="chat-workpanel__list">
           <li>
             <TicketRow
               ticket={about}
@@ -110,15 +110,15 @@ export default function QuestionView({
           </li>
         </ul>
       ) : (
-        item.title && <p className="chat-work__subject">{item.title}</p>
+        item.title && <p className="chat-workpanel__subject">{item.title}</p>
       )}
 
-      {item.body && <p className="chat-work__body">{item.body}</p>}
+      {item.body && <p className="chat-workpanel__body">{item.body}</p>}
 
       {item.options.length > 0 && (
         <>
           <SectionLabel>Answer</SectionLabel>
-          <div className="chat-work__actions">
+          <div className="chat-workpanel__actions">
             {item.options.map((o) => (
               <Button key={o} size="sm" disabled={busy} onClick={() => send(o)}>
                 {o}
@@ -129,7 +129,7 @@ export default function QuestionView({
       )}
 
       <SectionLabel>{item.options.length > 0 ? "Or write one" : "Answer"}</SectionLabel>
-      <div className="chat-work__actions">
+      <div className="chat-workpanel__actions">
         <Input
           value={draft}
           onChange={(e) => work.setDraft(item.id, e.target.value)}
@@ -154,11 +154,11 @@ export default function QuestionView({
           Send
         </Button>
       </div>
-      <p className="chat-work__note">
+      <p className="chat-workpanel__note">
         Sends to {item.agent} and unblocks the run.
       </p>
 
-      <div className="chat-work__actions chat-work__actions--foot">
+      <div className="chat-workpanel__actions chat-workpanel__actions--foot">
         {item.ticket_id && (
           <Button
             size="sm"

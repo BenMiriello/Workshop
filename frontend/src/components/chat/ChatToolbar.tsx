@@ -243,7 +243,7 @@ export default function ChatToolbar({
       {/* ONE work button, and it stays exactly where it has been. It carries no
           onClick: WorkPanel attaches the one that fits its host, so the panel
           and the button can never hold two opinions about whether it is open.
-          `data-chat-work-trigger` is how the narrow sheet finds its way back
+          `data-chat-workpanel-trigger` is how the narrow sheet finds its way back
           here on Escape.
 
           ALWAYS SHOWN, including on a blank chat with no thread and no queue.
@@ -258,7 +258,7 @@ export default function ChatToolbar({
           honest picture. */}
       {workAnchor?.(
         <button
-          data-chat-work-trigger=""
+          data-chat-workpanel-trigger=""
           className={`chat-tb__btn${workOpen ? " is-active" : ""}`}
           title={needsYouCount ? `Tickets. ${needsYouCount} waiting on you` : "Tickets"}
           aria-label="Tickets"

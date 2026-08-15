@@ -35,7 +35,7 @@ import type { InboxItem, WorkTicket } from "./workTypes";
 // whole line navigates, and a card header is a disclosure that opens the card
 // under it, so sharing the component would mean a control that does two
 // incompatible things. What IS shared is everything that carries meaning: the
-// same title ink and truncation (`chat-work__title`), the same status
+// same title ink and truncation (`chat-workpanel__title`), the same status
 // vocabulary (`taskStatusKind` / `taskStatusLabel`), and the toolbar's own
 // ticket glyph. The plan (§4) states the two compositions: a row is dot, key,
 // title and the state word; a collapsed card is glyph, title, pill and chevron.
@@ -244,7 +244,7 @@ export default function TicketCard({
           onClick={() => setOpen((v) => !v)}
         >
           <TicketGlyph size={14} strokeWidth={1.8} aria-hidden className="chat-ticket-card__glyph" />
-          <span className="ws-truncate chat-work__title">{plan.title}</span>
+          <span className="ws-truncate chat-workpanel__title">{plan.title}</span>
           {plan.status && (
             <StatusPill status={plan.status.kind}>{plan.status.label}</StatusPill>
           )}
