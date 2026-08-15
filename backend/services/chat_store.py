@@ -634,6 +634,7 @@ def delete_thread(thread_id: str) -> bool:
     if legacy.exists():
         legacy.unlink()
         gone = True
+    _evict_summary_cache(thread_id)
     return gone
 
 
@@ -673,6 +674,182 @@ def restore_thread(thread_id: str) -> dict | None:
         return None
 
 
+def _summary_row(thread_id: str) -> dict | None:
+    """The one sidebar row for `thread_id`, straight from a fresh fold.
+
+    Exactly the row `list_threads` has always built for a thread, factored out
+    so `_cached_summary_row` has something to cache. No filtering here
+    (context_key / archived) — that stays in `list_threads`, over whatever row
+    it got, cached or not.
+    """
+    folded = _fold(thread_id)
+    if folded is None:
+        return None
+    meta, msgs, _seqs, _cut = folded
+    if "id" not in meta:
+        return None
+    title = meta.get("title", "New chat")
+    # When the OPERATOR last spoke in this chat. This is what orders the
+    # list, not `updated_at`: a turn that finishes, an agent that reports
+    # back, or a background write all bump updated_at, so a chat the
+    # operator has not touched in days could sit above the one they were
+    # just in. The question the list answers is "where was I", and only a
+    # user message answers it. Threads with no user message yet fall back to
+    # when they were created, so a brand-new chat still sorts to the top.
+    last_user_at = next(
+        (m.get("ts") for m in reversed(msgs)
+         if m.get("role") == "user" and m.get("ts")),
+        None,
+    )
+    # Until auto-naming runs (or if it never can), show the first-user-message
+    # seed instead of a bare "New chat".
+    if title in (None, "", "New chat") and meta.get("_seed_title"):
+        title = meta["_seed_title"]
+    last = msgs[-1] if msgs else None
+    ck = meta.get("context_key", "general")
+    return {
+        "id": meta["id"],
+        "context_key": ck,
+        # Entity-model 2026-07-18 §7 fields (C11, P1). Existing threads
+        # without stored scope/mode/participants lift them from the legacy
+        # context_key so a data migration isn't needed; new writes persist
+        # them explicitly.
+        "scope": meta.get("scope") or _scope_from_context_key(ck),
+        "scope_locked": bool(meta.get("scope_locked", False)),
+        "mode": meta.get("mode") or DEFAULT_CHAT_MODE,
+        "participants": _normalize_participants(meta.get("participants"))
+            if meta.get("participants") is not None
+            else _participants_from_context_key(ck),
+        "agent_id": meta.get("agent_id"),
+        "model": meta.get("model"),
+        "title": title,
+        "created_at": meta.get("created_at"),
+        "updated_at": meta.get("updated_at"),
+        "archived_at": meta.get("archived_at"),
+        "last_user_at": last_user_at,
+        "message_count": len(msgs),
+        "last_message": ((last.get("content") or "")[:120] if last else ""),
+    }
+
+
+# ---- sidebar summary cache --------------------------------------------------
+#
+# Profiled (cProfile, real store, 67 threads / 22MB on disk): list_threads was
+# ~110-260ms, of which the bulk was `_fold` doing thousands of `json.loads` —
+# once per thread, on the thread's ENTIRE event log — just to produce one
+# sidebar row. `list_threads` is called on every page load AND after every
+# turn (`refreshThreads()`), so that cost is paid constantly for a result
+# (title, timestamps, a message count, a 120-char preview) that ninety-nine
+# reads out of a hundred haven't changed since the last call.
+#
+# So: cache the row, keyed on a fingerprint that is cheap to prove wrong.
+# `_fold_fingerprint` is stat()-only (mtime_ns + size, never a read) over every
+# file `_fold` actually reads: `log.jsonl`, `log.1.jsonl` (rotation may or may
+# not have one), and `meta.json` (title/scope/archived_at/mode live there, not
+# in the log). A hit skips `_fold` entirely; a miss folds once and stores the
+# result under the fingerprint it folded at, so the NEXT call can trust it.
+#
+# The fingerprint covers every writer that can change a row:
+#   - a new message or boundary event: appended to `log.jsonl`, so its
+#     (mtime_ns, size) changes.
+#   - rotation (`chat_log.maybe_rotate_sync`): moves the head of `log.jsonl`
+#     into `log.1.jsonl`, rewriting BOTH files, so both stat tuples change —
+#     this is why the archive half is in the fingerprint too, not just the
+#     live half.
+#   - title / scope / mode / archived_at / anything else in meta.json: every
+#     writer of meta.json goes through `chat_log._write_json_atomic` (see
+#     `patch_meta_sync`, `_patch`, `create_thread`) with no other writer of
+#     that path, so any such change moves meta.json's mtime.
+#   - a branch fork or switch (`chat_branches.fork` / `.switch`, via
+#     `routes/chat.py`): these mutate Postgres, not either log file, but both
+#     routes call `chat_store.resolve_cut()` right after, which always calls
+#     `chat_log.patch_meta_sync(...)` — unconditionally, even when the cut it
+#     resolves to is unchanged. That write still moves meta.json's mtime, so
+#     the row this cache would otherwise keep serving (built from the
+#     now-hidden or now-revealed messages `_fold`'s branch filter selects) is
+#     invalidated by the same action that could have changed it. A branch
+#     RENAME does not call `resolve_cut` and is not covered, but a rename
+#     changes no message's visibility, so no row depends on it.
+#
+# Correctness beats speed here: if the fingerprint can't be computed for any
+# reason, `_fold_fingerprint` returns None and the caller always folds. A
+# stale sidebar row (wrong order, wrong preview, a thread that looks
+# unchanged when it isn't) is a worse outcome than a slow one, since this is
+# what the operator navigates by.
+#
+# Process-local dict, keyed by (owner_id, thread_id) since threads are
+# per-owner directories and a background loop can pin a different owner
+# mid-process (see `services.ownership`). Doesn't need to survive a restart.
+# Bounded by pruning dead threads out on every `list_threads` call, so a
+# deleted thread's entry cannot linger, and by `_evict_summary_cache` on
+# explicit delete so it doesn't even wait for the next list.
+_SUMMARY_CACHE: dict[tuple[int, str], tuple[tuple, dict]] = {}
+
+
+def _stat_sig(path: Path) -> tuple[int, int] | None:
+    """(mtime_ns, size), or None if the file does not exist. Only None here
+    means "absent" — any other stat failure propagates, which is what makes
+    `_fold_fingerprint` catch it and report "unusable" instead of silently
+    treating a permissions error the same as a missing file."""
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def _fold_fingerprint(thread_id: str) -> tuple | None:
+    """A cheap proxy for "would `_fold(thread_id)` read anything different
+    than last time". None means it could not be computed — the caller must
+    fold rather than trust a cache entry it cannot validate."""
+    try:
+        return (
+            _stat_sig(chat_log.log_path(thread_id)),
+            _stat_sig(chat_log.archive_path(thread_id)),
+            _stat_sig(chat_log.meta_path(thread_id)),
+        )
+    except Exception:
+        log.debug("summary cache: could not fingerprint %s, folding anyway",
+                   thread_id, exc_info=True)
+        return None
+
+
+def _cached_summary_row(owner_id: int, thread_id: str) -> dict | None:
+    fp = _fold_fingerprint(thread_id)
+    if fp is not None:
+        hit = _SUMMARY_CACHE.get((owner_id, thread_id))
+        if hit is not None and hit[0] == fp:
+            return dict(hit[1])
+    row = _summary_row(thread_id)
+    key = (owner_id, thread_id)
+    if fp is not None and row is not None:
+        _SUMMARY_CACHE[key] = (fp, row)
+    else:
+        # Either unfingerprintable (never cache what can't be invalidated) or
+        # the thread is gone (nothing to serve on the next hit either).
+        _SUMMARY_CACHE.pop(key, None)
+    return dict(row) if row is not None else None
+
+
+def _prune_summary_cache(owner_id: int, live_thread_ids: set[str]) -> None:
+    dead = [k for k in _SUMMARY_CACHE
+            if k[0] == owner_id and k[1] not in live_thread_ids]
+    for k in dead:
+        del _SUMMARY_CACHE[k]
+
+
+def _evict_summary_cache(thread_id: str) -> None:
+    """Best-effort: called from `delete_thread` so a removed thread's cache
+    entry doesn't wait for the next `list_threads` prune. Never raises —
+    `delete_thread` must still report success even if the owner can't be
+    resolved (e.g. a script that deleted without pinning one)."""
+    try:
+        owner_id = ownership.current_owner()
+    except Exception:
+        return
+    _SUMMARY_CACHE.pop((owner_id, thread_id), None)
+
+
 def list_threads(context_key: str | None = None,
                  archived: bool = False) -> list[dict]:
     """Summaries (no message bodies), newest first.
@@ -686,60 +863,19 @@ def list_threads(context_key: str | None = None,
     if not _chat_dir().exists():
         return []
     chat_log.migrate_owner()
+    owner_id = ownership.current_owner()
+    live_ids = set(chat_log.list_thread_ids())
+    _prune_summary_cache(owner_id, live_ids)
     out: list[dict] = []
-    for tid in chat_log.list_thread_ids():
-        folded = _fold(tid)
-        if folded is None:
+    for tid in live_ids:
+        row = _cached_summary_row(owner_id, tid)
+        if row is None:
             continue
-        meta, msgs, _seqs, _cut = folded
-        if "id" not in meta:
+        if context_key and row.get("context_key") != context_key:
             continue
-        if context_key and meta.get("context_key") != context_key:
+        if bool(row.get("archived_at")) != archived:
             continue
-        if bool(meta.get("archived_at")) != archived:
-            continue
-        title = meta.get("title", "New chat")
-        # When the OPERATOR last spoke in this chat. This is what orders the
-        # list, not `updated_at`: a turn that finishes, an agent that reports
-        # back, or a background write all bump updated_at, so a chat the
-        # operator has not touched in days could sit above the one they were
-        # just in. The question the list answers is "where was I", and only a
-        # user message answers it. Threads with no user message yet fall back to
-        # when they were created, so a brand-new chat still sorts to the top.
-        last_user_at = next(
-            (m.get("ts") for m in reversed(msgs)
-             if m.get("role") == "user" and m.get("ts")),
-            None,
-        )
-        # Until auto-naming runs (or if it never can), show the first-user-message
-        # seed instead of a bare "New chat".
-        if title in (None, "", "New chat") and meta.get("_seed_title"):
-            title = meta["_seed_title"]
-        last = msgs[-1] if msgs else None
-        ck = meta.get("context_key", "general")
-        out.append({
-            "id": meta["id"],
-            "context_key": ck,
-            # Entity-model 2026-07-18 §7 fields (C11, P1). Existing threads
-            # without stored scope/mode/participants lift them from the legacy
-            # context_key so a data migration isn't needed; new writes persist
-            # them explicitly.
-            "scope": meta.get("scope") or _scope_from_context_key(ck),
-            "scope_locked": bool(meta.get("scope_locked", False)),
-            "mode": meta.get("mode") or DEFAULT_CHAT_MODE,
-            "participants": _normalize_participants(meta.get("participants"))
-                if meta.get("participants") is not None
-                else _participants_from_context_key(ck),
-            "agent_id": meta.get("agent_id"),
-            "model": meta.get("model"),
-            "title": title,
-            "created_at": meta.get("created_at"),
-            "updated_at": meta.get("updated_at"),
-            "archived_at": meta.get("archived_at"),
-            "last_user_at": last_user_at,
-            "message_count": len(msgs),
-            "last_message": ((last.get("content") or "")[:120] if last else ""),
-        })
+        out.append(row)
     # The archive answers a different question than the chat list, so it takes a
     # different order: most recently archived first, because what you came to
     # find is almost always the one you just put there (or just regretted).
