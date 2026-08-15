@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  MAX_ROWS, NOTHING_UNDER_WAY, NOTHING_WAITING,
+  MAX_ROWS, NOTHING_FILED_HERE, NOTHING_RUNNING, NOTHING_UNDER_WAY, NOTHING_WAITING,
+  WORK_CHIPS,
   chipCount, defaultChip, emptyText, ticketsForChip, workList,
 } from "./workRows";
 import { EMPTY_WORK, type InboxItem, type WorkPayload, type WorkTicket } from "./workTypes";
@@ -279,14 +280,22 @@ describe("emptyText", () => {
     expect(emptyText("needs_you")).toBe(NOTHING_WAITING);
   });
 
-  it("says how to get work into the scope for every ticket chip", () => {
-    expect(emptyText("running")).toBe(NOTHING_UNDER_WAY);
-    expect(emptyText("this_chat")).toBe(NOTHING_UNDER_WAY);
+  // Each chip selects a DIFFERENT set, so each empty state has to describe the
+  // set that is empty. "Nothing under way in this scope" under `This chat` is
+  // wrong twice over: the set is this conversation's tickets rather than the
+  // scope's, and a filed ticket sitting in `to do` is not under way.
+  it("describes the set the chip selects, not a generic absence", () => {
+    expect(emptyText("running")).toBe(NOTHING_RUNNING);
+    expect(emptyText("this_chat")).toBe(NOTHING_FILED_HERE);
     expect(emptyText("all")).toBe(NOTHING_UNDER_WAY);
   });
 
+  it("gives every chip its own sentence", () => {
+    const said = WORK_CHIPS.map((c) => emptyText(c.id));
+    expect(new Set(said).size).toBe(said.length);
+  });
+
   it("never uses an em-dash", () => {
-    expect(NOTHING_WAITING).not.toMatch(/—/);
-    expect(NOTHING_UNDER_WAY).not.toMatch(/—/);
+    for (const c of WORK_CHIPS) expect(emptyText(c.id)).not.toMatch(/—/);
   });
 });

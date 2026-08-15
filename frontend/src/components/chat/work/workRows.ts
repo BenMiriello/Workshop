@@ -181,14 +181,32 @@ export function workList(data: WorkPayload, chip: WorkChip): WorkList {
   return { groups, shown, total, overflow: Math.max(0, total - shown) };
 }
 
-// The two empty strings, kept verbatim from the surfaces this replaces. They
-// were right, and rewriting an empty state that already says what to do next is
-// how a rebuild loses the one sentence someone thought about.
+// The first two are kept VERBATIM from the surfaces this replaces. They were
+// right, and rewriting an empty state that already says what to do next is how
+// a rebuild loses the one sentence someone thought about.
+//
+// The other two exist because an empty chip has to describe the set that is
+// empty. "Nothing under way in this scope" under `This chat` says the wrong
+// thing twice: the set is this conversation's tickets, not the scope's, and a
+// filed ticket sitting in `to do` is not "under way". An empty state that
+// misdescribes what is empty sends the reader looking for a filter they did not
+// set.
 export const NOTHING_WAITING =
   "Nothing waiting on you. Agents raise questions and reviews here.";
 export const NOTHING_UNDER_WAY =
   "Nothing under way in this scope. File work as a ticket and an agent can pick it up.";
+export const NOTHING_RUNNING =
+  "Nothing is running. A ticket shows here while an agent is working on it.";
+export const NOTHING_FILED_HERE =
+  "No tickets filed from this chat yet.";
+
+const EMPTY_TEXT: Record<WorkChip, string> = {
+  needs_you: NOTHING_WAITING,
+  running: NOTHING_RUNNING,
+  this_chat: NOTHING_FILED_HERE,
+  all: NOTHING_UNDER_WAY,
+};
 
 export function emptyText(chip: WorkChip): string {
-  return chip === "needs_you" ? NOTHING_WAITING : NOTHING_UNDER_WAY;
+  return EMPTY_TEXT[chip];
 }
