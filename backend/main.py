@@ -135,6 +135,30 @@ app = FastAPI(
 )
 
 
+# Response compression. SSE-safe by construction -- see middleware/compression.py
+# for why the stock starlette GZipMiddleware is unsafe for streaming responses
+# and must never be swapped in here. minimum_size=500B: don't bother on tiny
+# bodies. compresslevel=5: level 9 measured 87ms on a ~4.9MB payload for
+# negligible extra ratio; 5 is the right cost/benefit tradeoff.
+#
+# THE POSITION OF THIS LINE IS LOAD-BEARING. `add_middleware` inserts at the
+# front of the stack, so the LAST one registered ends up OUTERMOST. This must
+# be registered FIRST, which makes it INNERMOST: closest to the router, where a
+# JSONResponse still arrives as one complete `http.response.body` message.
+#
+# `strip_api_prefix` below is a BaseHTTPMiddleware, and BaseHTTPMiddleware
+# re-emits every response it handles as a chunked stream (`more_body=True`).
+# This middleware deliberately refuses to compress a chunked body, because it
+# has no per-chunk flush and stalling SSE is the worst failure available here.
+# So with compression registered LAST it sat outside BaseHTTPMiddleware, saw
+# only chunks, and correctly compressed nothing at all: measured 2026-08-14,
+# a 4.83MB events response went out uncompressed with the middleware active
+# and apparently wired. Registering it here fixes that. If you move it below
+# any BaseHTTPMiddleware (including any `@app.middleware("http")` function),
+# compression silently switches itself off again and nothing fails loudly.
+app.add_middleware(SSEAwareGZipMiddleware, minimum_size=500, compresslevel=5)
+
+
 # Tailscale Serve mounts the backend directly at :443/, so paths from the
 # launcher/Owntracks come in as /location/... — but the Workshop and Commute
 # vite proxies use /api/... and strip that prefix. Accept both so callers
@@ -159,13 +183,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Response compression. SSE-safe by construction -- see middleware/compression.py
-# for why the stock starlette GZipMiddleware is unsafe for streaming responses
-# and must never be swapped in here. minimum_size=500B: don't bother on tiny
-# bodies. compresslevel=5: level 9 measured 87ms on a ~4.9MB payload for
-# negligible extra ratio; 5 is the right cost/benefit tradeoff.
-app.add_middleware(SSEAwareGZipMiddleware, minimum_size=500, compresslevel=5)
 
 # Gating model (docs/auth-redesign/): identity, never network position.
 #   PLATFORM control      -> require_operator (the admin role)

@@ -199,3 +199,70 @@ def test_unrecognized_streaming_response_is_not_compressed():
     assert b"content-encoding" not in headers
     body_messages = [m for m in sent if m["type"] == "http.response.body"]
     assert [m["body"] for m in body_messages] == chunks
+
+
+# --- the ordering contract -------------------------------------------------
+#
+# These two tests exist because the middleware was correct, wired, and still
+# compressed absolutely nothing in production for several hours on 2026-08-14.
+# `add_middleware` inserts at the FRONT of the stack, so the last registration
+# is the OUTERMOST. Compression was registered last, which put it outside
+# `strip_api_prefix` -- a BaseHTTPMiddleware, and BaseHTTPMiddleware re-emits
+# every response as a chunked stream. This middleware refuses to compress a
+# chunked body on purpose (no per-chunk flush; stalling SSE is the worst
+# failure available here), so it saw only chunks and did nothing, silently.
+# A 4.83MB events response went out raw with compression "on".
+#
+# Nothing about that failure is loud: no error, no warning, just a big response.
+# So the position is pinned here instead.
+
+def test_compression_is_registered_innermost_in_the_real_app():
+    """Compression must sit CLOSEST to the router, so it sees a JSONResponse
+    as the single complete body message it is. `user_middleware` is ordered
+    outermost-first, so innermost is the LAST entry."""
+    import main
+
+    names = [m.cls.__name__ for m in main.app.user_middleware]
+    assert names[-1] == "SSEAwareGZipMiddleware", (
+        "SSEAwareGZipMiddleware must be registered FIRST (making it innermost). "
+        f"Current order, outermost first: {names}. If it sits outside a "
+        "BaseHTTPMiddleware, every response reaches it pre-chunked and "
+        "compression silently turns itself off."
+    )
+
+
+def test_a_base_http_middleware_outside_compression_would_disable_it():
+    """The mechanism itself, so the reason the order matters stays legible.
+
+    Same app, same middleware, only the registration order differs: one
+    compresses, one cannot. If this ever stops holding, the ordering
+    requirement above is obsolete and can be revisited."""
+    from fastapi import FastAPI
+    from fastapi.responses import JSONResponse
+    from starlette.testclient import TestClient
+
+    payload = {"rows": ["lorem ipsum dolor sit amet " * 20 for _ in range(200)]}
+
+    def build(gzip_registered_first: bool) -> FastAPI:
+        app = FastAPI()
+        if gzip_registered_first:
+            app.add_middleware(SSEAwareGZipMiddleware, minimum_size=500, compresslevel=5)
+
+        @app.middleware("http")
+        async def _passthrough(request, call_next):
+            return await call_next(request)
+
+        if not gzip_registered_first:
+            app.add_middleware(SSEAwareGZipMiddleware, minimum_size=500, compresslevel=5)
+
+        @app.get("/payload")
+        async def _payload():
+            return JSONResponse(payload)
+
+        return app
+
+    inner = TestClient(build(True)).get("/payload", headers={"Accept-Encoding": "gzip"})
+    outer = TestClient(build(False)).get("/payload", headers={"Accept-Encoding": "gzip"})
+
+    assert inner.headers.get("content-encoding") == "gzip"
+    assert outer.headers.get("content-encoding") is None
