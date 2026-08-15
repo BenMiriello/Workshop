@@ -649,7 +649,11 @@ class Run(Base, Timestamps):
 # sense. The line is: the record of what was said is in the database; the
 # scratchpad of a turn in flight is a file.
 
-CHAT_MODES = ("orchestrated", "direct")
+# Mirrors `services.chat_store.CHAT_MODES`. `auto` joined them on 2026-08-15
+# (tickets-in-chat-2026-08-15 §7): file and run without asking, stop only for a
+# question that cannot be answered. Adding a value here means a migration for
+# `ck_chat_thread_mode` as well; the constraint is not derived at runtime.
+CHAT_MODES = ("orchestrated", "direct", "auto")
 MESSAGE_ROLES = ("user", "assistant")
 
 # What a node in the transcript can be. All three occupy a POSITION, which is

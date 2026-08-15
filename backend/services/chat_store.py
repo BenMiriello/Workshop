@@ -53,13 +53,21 @@ def _chat_dir() -> Path:
 #   orchestrated  work leaves as Tickets run by Workshop agents; the Ticket is
 #                 the record. Labelled "Tickets" in the UI — the stored name is
 #                 kept so existing threads need no migration.
+#   auto          the same as orchestrated, minus the approval step: file and
+#                 run without asking, and stop only for a question that cannot
+#                 be answered. Labelled "File and run on its own" in the UI.
+#
+# `auto` is an EXPLICIT per-chat operator choice and nothing about it is learned.
+# ADR 0006 designed an auto-run preference inferred from past File-and-run
+# choices and stored in the learnings store; that is a different mechanism, it
+# stays Proposed, and this is not it (tickets-in-chat-2026-08-15 §7).
 #
 # DIRECT IS THE DEFAULT. Orchestrated was, and it made every passing remark a
 # candidate for a ticket; work that outlives the chat is the exception, and the
 # exception should be the one you ask for. Threads that set a mode explicitly
 # keep it; threads that never did follow the default, which is what "the default"
 # has to mean for it to be changeable at all.
-CHAT_MODES = ("direct", "orchestrated")
+CHAT_MODES = ("direct", "orchestrated", "auto")
 DEFAULT_CHAT_MODE = "direct"
 
 
@@ -568,7 +576,7 @@ def create_thread(
     # Entity-model 2026-07-18 §7 fields (C11, P1):
     # - scope: the Scope this chat lives in (workshop / project:X / app:Y).
     # - scope_locked: refuses to re-scope silently; the UI must confirm.
-    # - mode: direct (the default) or orchestrated. See CHAT_MODES.
+    # - mode: direct (the default), orchestrated, or auto. See CHAT_MODES.
     # - participants: agent slugs (as `agent:<slug>`) in this chat. Under the
     #   new model an Agent is a PARTICIPANT of a chat, not the chat's home.
     #   A legacy `agent:<slug>` context_key back-fills this list on read so old

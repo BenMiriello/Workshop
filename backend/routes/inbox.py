@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from services import inbox, chat_store, knowledge, run_inbox, memory_promotion
+from services import inbox, chat_store, knowledge, memory_promotion
 
 log = logging.getLogger(__name__)
 # Bare prefix, NOT "/api/inbox". The edge proxy strips the leading `/api`
@@ -74,30 +74,11 @@ async def list_inbox(chat_id: str | None = None, state: str = "open"):
     filtered to what that chat should surface inline (see inbox.surfaces_in_chat
     — a broad chat is deliberately not a firehose, and what it does not show
     inline is still here globally)."""
-    # Blocked work asks through the inbox. Reconciled here rather than raised at
-    # the moment of blocking, because the producers are shell sweeps in another
-    # process — see services/run_inbox.
+    # The producers that keep an open read honest live in `inbox.reconcile`, so
+    # the chat's aggregated work read runs exactly the same sequence rather than
+    # a second copy of it that can drift.
     if state == "open":
-        try:
-            from routes.tasks_all import scope_roots
-            run_inbox.sync(scope_roots())
-        except Exception as e:
-            # A reconcile failure must never empty the operator's inbox.
-            log.warning("inbox: awaiting-task sync failed: %s", e)
-        # A lesson learned in three separate scopes is no longer a local lesson.
-        # Proposed, never written automatically — see services/memory_promotion.
-        try:
-            memory_promotion.sweep()
-        except Exception as e:
-            log.warning("inbox: promotion sweep failed: %s", e)
-        # An autonomous run that ended with nobody watching. Reconciled from the
-        # job log here for the same reason blocked work is: the runs are closed
-        # by shell workers in another process, against a per-owner store that
-        # process has nobody pinned to. See inbox.sweep_finished_runs.
-        try:
-            inbox.sweep_finished_runs()
-        except Exception as e:
-            log.warning("inbox: finished-run sweep failed: %s", e)
+        inbox.reconcile()
     scope, cid = _scope_for_chat(chat_id)
     items = inbox.list_items(chat_scope=scope, chat_id=cid, state=state)
     return {

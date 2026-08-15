@@ -122,10 +122,10 @@ class CreateThread(BaseModel):
     # not as its home scope. Optional at create; UI can add/remove after.
     participants: list[str] | None = None
     scope: str | None = None
-    # How this chat handles work (direct | orchestrated). Omitted means "use the
-    # operator's default for new chats" — the toolbar sends it only when the mode
-    # was chosen before the first message, which is the whole point of showing
-    # the control on a blank chat.
+    # How this chat handles work (direct | orchestrated | auto). Omitted means
+    # "use the operator's default for new chats" — the toolbar sends it only
+    # when the mode was chosen before the first message, which is the whole
+    # point of showing the control on a blank chat.
     mode: str | None = None
 
 
@@ -150,7 +150,7 @@ class RescopeThread(BaseModel):
 
 
 class SetChatMode(BaseModel):
-    mode: str  # direct | orchestrated (chat_context.CHAT_MODES)
+    mode: str  # direct | orchestrated | auto (chat_context.CHAT_MODES)
 
 
 class ForkThread(BaseModel):
@@ -1142,6 +1142,22 @@ async def ticket_scope(thread_id: str):
     return scope_pickup(scope_key)
 
 
+@router.get("/threads/{thread_id}/work")
+async def thread_work(thread_id: str):
+    """Everything this chat's work surfaces show, in one read.
+
+    The badge, the Work panel and every ticket card in the transcript poll this
+    and nothing else. They used to poll `/inbox` and `/tasks` on separate
+    intervals, which meant three surfaces could hold three copies of one ticket
+    and disagree about its status. Assembly is in services/chat_work.
+    """
+    from services import chat_work
+    out = chat_work.thread_work(thread_id)
+    if out is None:
+        raise HTTPException(404, "thread not found")
+    return out
+
+
 @router.post("/threads/{thread_id}/spawn-task")
 async def spawn_task(thread_id: str, body: SpawnTask):
     """Turn a chat into a self-contained background task (Stage 4). Files a ticket
@@ -1250,7 +1266,7 @@ async def spawn_task(thread_id: str, body: SpawnTask):
 
 @router.post("/threads/{thread_id}/mode")
 async def set_chat_mode(thread_id: str, body: SetChatMode):
-    """Switch a chat between Direct and Orchestrated.
+    """Switch a chat between Direct, Orchestrated and Auto.
 
     Cheap and reversible, so it commits on change rather than behind a Save. The
     mode is re-stated to the model on every turn (chat_context.chat_mode_block),

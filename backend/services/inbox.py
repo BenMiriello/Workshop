@@ -458,6 +458,44 @@ def sweep_finished_runs(now: datetime | None = None) -> dict:
     return {"raised": raised, "watermark": high.isoformat()}
 
 
+def reconcile() -> None:
+    """Run every producer that keeps the OPEN inbox honest, then return.
+
+    This is what an open-state read has always done before listing, and it lived
+    inline in `GET /inbox` while that route was the only reader. It is a function
+    now because it no longer is: `services.chat_work` serves the same items to
+    the chat's Work panel out of one aggregated read, and a second copy of this
+    sequence is how the two surfaces end up disagreeing about what is waiting.
+
+    Each producer is guarded separately. A reconcile failure must never empty the
+    operator's inbox, and one broken producer must not stop the other two.
+    """
+    # Blocked work asks through the inbox. Reconciled on read rather than raised
+    # at the moment of blocking, because the producers are shell sweeps in
+    # another process — see services/run_inbox.
+    try:
+        from routes.tasks_all import scope_roots
+        from services import run_inbox
+        run_inbox.sync(scope_roots())
+    except Exception as e:
+        log.warning("inbox: awaiting-task sync failed: %s", e)
+    # A lesson learned in three separate scopes is no longer a local lesson.
+    # Proposed, never written automatically — see services/memory_promotion.
+    try:
+        from services import memory_promotion
+        memory_promotion.sweep()
+    except Exception as e:
+        log.warning("inbox: promotion sweep failed: %s", e)
+    # An autonomous run that ended with nobody watching. Reconciled from the job
+    # log for the same reason blocked work is: the runs are closed by shell
+    # workers in another process, against a per-owner store that process has
+    # nobody pinned to.
+    try:
+        sweep_finished_runs()
+    except Exception as e:
+        log.warning("inbox: finished-run sweep failed: %s", e)
+
+
 def resolve_item(item_id: str, *, answer: str | None = None,
                  dismissed: bool = False) -> dict | None:
     """Close an item. `answer` records what the operator said, which is the

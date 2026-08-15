@@ -37,7 +37,8 @@ class TestPrefs:
 
     def test_the_choices_are_named_by_the_server(self, client):
         """The settings control builds from these, so the server owns the list."""
-        assert client.get("/chat/prefs").json()["modes"] == ["direct", "orchestrated"]
+        assert client.get("/chat/prefs").json()["modes"] == [
+            "direct", "orchestrated", "auto"]
 
     def test_setting_it_sticks(self, client):
         assert client.post("/chat/prefs", json={"default_mode": "orchestrated"}).status_code == 200

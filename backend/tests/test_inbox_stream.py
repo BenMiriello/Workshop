@@ -45,10 +45,10 @@ def store(tmp_path, monkeypatch):
 @pytest.fixture
 def client(store, monkeypatch):
     # The listing reconciles on read. Those producers have their own tests; here
-    # they are noise that would raise unrelated rows into the assertions.
-    monkeypatch.setattr(inbox_routes.run_inbox, "sync", lambda *a, **k: {})
-    monkeypatch.setattr(inbox_routes.memory_promotion, "sweep", lambda *a, **k: {})
-    monkeypatch.setattr(inbox, "sweep_finished_runs", lambda *a, **k: {})
+    # they are noise that would raise unrelated rows into the assertions. The
+    # sequence moved into `inbox.reconcile` when the chat's aggregated work read
+    # started needing the same pass.
+    monkeypatch.setattr(inbox, "reconcile", lambda: None)
     app = FastAPI()
     app.include_router(inbox_routes.router, prefix="/api")
     return TestClient(app)

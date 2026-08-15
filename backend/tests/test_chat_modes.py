@@ -1,12 +1,22 @@
-"""Direct vs Orchestrated: whether work leaves the conversation.
+"""Direct, Orchestrated, Auto: whether work leaves the conversation, and
+whether it waits to be let out.
 
-The field already existed with these two names and no behaviour, like
-`participants`. These tests pin the behaviour it was given, and in particular
-that the guard is REAL: the prompt asks the model not to file in Direct mode,
-but a prompt is a request. A chat in Direct mode must be unable to file even if
-the model emits a block anyway.
+The first two already existed as a field with no behaviour, like `participants`.
+These tests pin the behaviour they were given, and in particular that the guard
+is REAL: the prompt asks the model not to file in Direct mode, but a prompt is a
+request. A chat in Direct mode must be unable to file even if the model emits a
+block anyway.
 """
-from services import chat_context, task_scope
+import sys
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from services import chat_context, task_scope  # noqa: E402
 
 
 class TestModeStatement:
@@ -51,6 +61,113 @@ class TestModeStatement:
         assert chat_context.DEFAULT_CHAT_MODE is chat_store.DEFAULT_CHAT_MODE
         assert chat_store._clamp_mode(None) == "direct"
         assert chat_store._clamp_mode("orchestrated") == "orchestrated"
+
+
+class TestAutoMode:
+    """The third policy: file and run without asking, stop only for a question
+    that cannot be answered. Without it the Work settings control is a two-way
+    switch drawn as a three-way one."""
+
+    def test_it_is_a_mode(self):
+        from services import chat_store
+        assert chat_store.CHAT_MODES == ("direct", "orchestrated", "auto")
+        assert chat_store._clamp_mode("auto") == "auto"
+
+    def test_it_does_not_become_the_default(self):
+        """Direct stays the default. A mode that files and runs on its own is
+        never something a chat acquires by not choosing."""
+        from services import chat_store
+        assert chat_store.DEFAULT_CHAT_MODE == "direct"
+        assert "AUTO" not in chat_context.chat_mode_block(None)
+        assert "AUTO" not in chat_context.chat_mode_block("nonsense")
+
+    def test_the_mode_line_says_not_to_ask_first(self):
+        out = chat_context.chat_mode_block("auto")
+        assert "AUTO" in out
+        assert "WITHOUT asking first" in out
+
+    def test_it_keeps_the_ticket_as_the_record(self):
+        """Auto is orchestrated minus the approval step, not a third place for
+        work to live."""
+        assert "Ticket is the record" in chat_context.chat_mode_block("auto")
+
+    def test_the_question_goes_through_the_ticket(self):
+        """A worker sees only the ticket text, so an answer that lands anywhere
+        else never reaches the next attempt."""
+        assert "through the ticket" in chat_context.chat_mode_block("auto")
+
+    def test_the_db_constraint_knows_it(self):
+        """The check constraint is not derived at runtime, so a value the store
+        accepts and the schema refuses is a write that fails on the mirror."""
+        from db import models
+        assert "auto" in models.CHAT_MODES
+
+    def test_an_auto_chat_may_file(self, tmp_path, monkeypatch):
+        """The filing guard tests for `direct` and nothing else, which is what
+        makes auto file like orchestrated does. Pinned because a guard written
+        as an allowlist later would silently exclude it.
+
+        Pointed at a temp store for the reason `test_unset_mode_still_files`
+        is: filing into the real workshop queue is a production side effect."""
+        monkeypatch.setattr(task_scope, "WORKSHOP_SCOPE_DIR", tmp_path)
+        patch = 'Sure.\n\n```task-patch\n{"add":[{"text":"Filed by auto"}]}\n```\n'
+        _, notes = task_scope.apply_task_patch("general", patch, "t1", "auto")
+        assert not any("Direct mode" in n for n in notes)
+        from services import tasks
+        assert any("Filed by auto" in (t.get("text") or "")
+                   for t in tasks._load(tmp_path))
+
+
+class TestModeRoundTrip:
+    """The stored value has to survive the route, the store and the prompt
+    builder. A mode the enum accepts but the route rejects is a control that
+    silently does nothing."""
+
+    @pytest.fixture
+    def client(self, tmp_path, monkeypatch):
+        from routes import chat as chat_routes
+        from services import ownership
+        monkeypatch.setattr(ownership, "_RUNTIME", tmp_path)
+        ownership.set_current_owner(1)
+        app = FastAPI()
+        app.include_router(chat_routes.router, prefix="/chat")
+        try:
+            yield TestClient(app)
+        finally:
+            ownership.clear_current_owner()
+
+    def test_the_route_accepts_auto(self, client):
+        from services import chat_store
+        t = chat_store.create_thread(context_key="general")
+        r = client.post(f"/chat/threads/{t['id']}/mode", json={"mode": "auto"})
+        assert r.status_code == 200
+        assert r.json()["mode"] == "auto"
+        assert chat_store.get_thread(t["id"])["mode"] == "auto"
+
+    def test_the_stored_mode_reaches_the_prompt(self, client):
+        """The mode line is re-stated every turn, which is what makes a
+        mid-chat switch take effect on the next one."""
+        from services import chat_store
+        t = chat_store.create_thread(context_key="general", mode="orchestrated")
+        assert "ORCHESTRATED" in chat_context.chat_mode_block(
+            chat_store.get_thread(t["id"])["mode"])
+        client.post(f"/chat/threads/{t['id']}/mode", json={"mode": "auto"})
+        assert "AUTO" in chat_context.chat_mode_block(
+            chat_store.get_thread(t["id"])["mode"])
+
+    def test_junk_is_still_refused(self, client):
+        from services import chat_store
+        t = chat_store.create_thread(context_key="general")
+        r = client.post(f"/chat/threads/{t['id']}/mode", json={"mode": "sideways"})
+        assert r.status_code == 400
+        assert chat_store.get_thread(t["id"])["mode"] == "direct"
+
+    def test_a_new_chat_can_default_to_auto(self, client):
+        """The operator's default for new chats is the same enum, so the
+        settings screen can offer all three."""
+        from services import chat_store
+        assert client.post("/chat/prefs", json={"default_mode": "auto"}).status_code == 200
+        assert chat_store.create_thread(context_key="general")["mode"] == "auto"
 
 
 class TestSubagentsAreReal:
