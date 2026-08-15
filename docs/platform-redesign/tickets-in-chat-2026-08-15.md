@@ -68,7 +68,7 @@ The point of the exercise. Each line is a deletion, not a hide.
 | The `success`-phase card body (`UiCard.tsx:628-643`) | `TicketCard` in its place |
 | Toolbar overflow: the `Run work as tickets` **Toggle** row | The three-way policy in Work settings |
 | Toolbar overflow: `File this chat as a ticket` | The panel header action |
-| `components/AutonomyPanel.tsx` (737) — zero importers, provably dead | Nothing. It is dead code in this surface's domain |
+| ~~`components/AutonomyPanel.tsx` (737), zero importers~~ **Wrong, and kept.** | It has an importer: `ProjectDetail` renders it. Two greps said otherwise because `ProjectDetail.tsx` held literal NUL bytes, so every text search treated the file as binary and skipped it **without saying so**. That is the second time this repo has been bitten by it (398948e). The bytes are now written `\0` and the file is searchable; the panel stays |
 | `.chat-inbox*` and `.chat-spawn-note*` in `styles.css` | `.chat-work*` |
 
 Kept deliberately, and why:

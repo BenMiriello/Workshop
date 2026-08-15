@@ -12,6 +12,27 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.12 - 2026-08-15 - a link is underlined, not tinted, and now actually is
+
+**Compatible (no name added or moved).** A CSS-only release: `.ws-link`.
+
+The design system has specified this treatment in detail for months and nothing
+implemented it. There is no base `a` rule in `tokens.css`, `components.css` or
+the app's `styles.css`, so every link was dressed by whatever component it sat
+in, and a link that no component dressed rendered in **the user agent's blue**:
+a hue from no palette, on a dark surface, failing contrast and meaning nothing.
+Found on TicketDetail's "All runs", whose `.ws-sectionhead__link` set a margin
+and a font size and no colour at all.
+
+At rest a link inherits its ink and is marked by an underline at 45% of the
+current colour, so the hard case is free: a link inside a `--you`-filled bubble
+is legible with no special case, because it is written in whatever ink that
+surface already uses. On hover it takes `--you`, since the act of interacting is
+the part that is genuinely yours.
+
+`.ws-sectionhead__link` is covered by the same rule rather than left to be fixed
+per caller.
+
 ## 0.5.11 — 2026-08-15 — a panel is not a menu
 
 **Compatible (one name added).** `Popover`: a panel anchored to a trigger.

@@ -91,6 +91,40 @@
 }
 .ws-muted { color: var(--muted); }
 .ws-faint { color: var(--faint); }
+
+/* A LINK. Underlined, not tinted.
+ *
+ * The design system has specified this treatment in detail for a while and
+ * nothing implemented it, so a link with no context-specific class of its own
+ * rendered in the USER AGENT'S BLUE: a hue from no palette, on a dark surface,
+ * failing contrast and meaning nothing. Every link in the app had been dressed
+ * by whatever component it sat in, and the ones nobody dressed were blue. Found
+ * 2026-08-15 on TicketDetail's "All runs".
+ *
+ * At rest it inherits its ink and says it is a link with the underline, which
+ * is what makes the hard case free: a link inside a --you-filled bubble is
+ * legible with no special case because it is written in whatever ink that
+ * surface already uses. The tone arrives on hover, because the act of
+ * interacting is the part that is yours. See frontend/CLAUDE.md, "A link is
+ * underlined, not tinted".
+ */
+.ws-link,
+.ws-sectionhead__link {
+  color: inherit;
+  text-decoration: underline;
+  /* Not a second colour: the same ink, thinned, so the rule holds on every
+     surface including a filled one. */
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 0.15em;
+  border-radius: var(--radius-sm);
+}
+.ws-link:hover,
+.ws-sectionhead__link:hover {
+  color: var(--you);
+  text-decoration-color: currentColor;
+}
+.ws-link:focus-visible,
+.ws-sectionhead__link:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .ws-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 /* Universal focus treatment.
