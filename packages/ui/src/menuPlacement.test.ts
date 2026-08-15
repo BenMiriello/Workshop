@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { placeMenu, type Rect } from "./menuPlacement";
+import { narrowClip, placeMenu, type Rect } from "./menuPlacement";
 
 const rect = (left: number, top: number, w: number, h: number): Rect =>
   ({ left, top, right: left + w, bottom: top + h });
@@ -77,5 +77,51 @@ describe("placeMenu", () => {
     const trigger = rect(1130, 400, 20, 20);
     const first = placeMenu(trigger, LIST, CHAT_LOG, "bottom", GAP);
     expect(placeMenu(trigger, LIST, CHAT_LOG, "bottom", GAP)).toEqual(first);
+  });
+});
+
+// The other half of the rule, shared by Menu and Popover through
+// useAnchoredPlacement: reducing the ancestors that clip into the one box the
+// surface must stay inside. The DOM walk that produces these clippers is not
+// testable here; what it produces them FOR is.
+describe("narrowClip", () => {
+  it("returns the viewport untouched when nothing clips", () => {
+    expect(narrowClip(VIEWPORT, [])).toEqual(VIEWPORT);
+  });
+
+  it("narrows only the axes that actually clip", () => {
+    // The chat's real geometry: a log that is overflow-x: hidden and visible on
+    // y. Narrowing y here would invent a bottom edge that does not exist and
+    // flip menus upward in the middle of a tall page.
+    const log = rect(120, 60, 1200, 780);
+    expect(narrowClip(VIEWPORT, [{ rect: log, clipsX: true, clipsY: false }]))
+      .toEqual({ left: 120, top: 0, right: 1320, bottom: 900 });
+  });
+
+  it("takes the tightest edge across several clipping ancestors", () => {
+    const outer = rect(100, 50, 1200, 800);
+    const inner = rect(200, 40, 400, 900);
+    expect(narrowClip(VIEWPORT, [
+      { rect: outer, clipsX: true, clipsY: true },
+      { rect: inner, clipsX: true, clipsY: true },
+    ])).toEqual({ left: 200, top: 50, right: 600, bottom: 850 });
+  });
+
+  it("never widens past the box it started from", () => {
+    // A scroller taller and wider than the viewport must not hand back edges
+    // outside it: the surface still has to stay on screen.
+    const huge = rect(-500, -500, 4000, 4000);
+    expect(narrowClip(VIEWPORT, [{ rect: huge, clipsX: true, clipsY: true }]))
+      .toEqual(VIEWPORT);
+  });
+
+  it("feeds placeMenu the edge that makes a menu flip", () => {
+    // The two halves together, which is what Menu and Popover both run: the
+    // trigger sits well inside the viewport and well past the log's right edge.
+    const log = rect(120, 60, 1200, 780);
+    const trigger = rect(1130, 400, 20, 20);
+    const clip = narrowClip(VIEWPORT, [{ rect: log, clipsX: true, clipsY: false }]);
+    expect(placeMenu(trigger, LIST, VIEWPORT, "bottom", GAP).align).toBe("start");
+    expect(placeMenu(trigger, LIST, clip, "bottom", GAP).align).toBe("end");
   });
 });

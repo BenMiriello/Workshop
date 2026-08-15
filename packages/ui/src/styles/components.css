@@ -1711,6 +1711,36 @@ span.ws-filterchip__open { cursor: default; }
 }
 .ws-menu__group:first-child { padding-top: var(--space-1); }
 
+/* ---- POPOVER (an anchored PANEL, not a list of choices) ------------------ */
+/* Same anchoring machinery as .ws-menu (see useAnchoredPlacement) and the same
+   card language, but this is a surface you WORK IN rather than pick from: it
+   holds chips, rows, a text field and a submit button, so it is roomier, it is
+   role="dialog", and it does not close when you click inside it.
+   flex: 0 0 auto for the same reason .ws-menu has it — as a bare flex child
+   with shrink:1 this wrapper collapses to zero width on a crowded row and
+   clips its own trigger out of existence. */
+.ws-popover { position: relative; display: inline-flex; flex: 0 0 auto; min-width: 0; }
+.ws-popover__surface {
+  position: absolute; z-index: var(--z-dropdown);
+  /* Wider than a menu because the content is columns of text, not labels; the
+     vw cap is what keeps it on a phone, where it is nearly the whole width. */
+  min-width: 18rem; max-width: min(24rem, calc(100vw - 2 * var(--space-4)));
+  /* The scroll behaviour .ws-menu__list has, for the same reason: the placement
+     rule measures the surface AFTER its CSS has clamped it, so a long panel is
+     measured at the size it will really be and scrolls inside instead of
+     growing past the clip edge and forcing a flip that would not help. The vh
+     term is the viewport half of the same cap. */
+  max-height: min(28rem, 70vh); overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--space-3);
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
+  animation: ws-pop var(--dur-fast) var(--ease-out);
+}
+.ws-popover__surface--start { left: 0; }
+.ws-popover__surface--end { right: 0; }
+.ws-popover__surface--bottom { top: calc(100% + var(--space-1)); }
+.ws-popover__surface--top { bottom: calc(100% + var(--space-1)); }
+
 /* ---- STATE BLOCKS: loading / empty / error ------------------------------- */
 .ws-state {
   display: flex; flex-direction: column; align-items: center; text-align: center;

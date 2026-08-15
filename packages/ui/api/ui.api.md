@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.5.10
+Version: 0.5.11
 
 ## @workshop/ui
 
@@ -61,6 +61,7 @@ Source: `src/index.ts`
 - PageHeader
 - PALETTE_META
 - PalettePicker
+- Popover
 - ProgressBar
 - Prop
 - Props

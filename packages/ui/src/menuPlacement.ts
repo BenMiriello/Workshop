@@ -6,6 +6,9 @@
 // menu placement, and it is worth having: the bug that prompted it was a wrong
 // answer to one comparison, in a browser, where nothing could reach it.
 //
+// Two anchored surfaces now share it, Menu and Popover, through the
+// `useAnchoredPlacement` hook that holds the DOM half.
+//
 // THE BUG: the flip measured the list against the VIEWPORT and nothing else, so
 // a menu inside a clipping scroller opened outward and was sliced off at the
 // scroller's edge while the viewport still had room. In the chat that is exactly
@@ -14,6 +17,35 @@
 // bubble and half of it was simply not there. Reported 2026-08-14.
 
 export type Rect = { left: number; top: number; right: number; bottom: number };
+
+/** One ancestor that clips, and on which axes. */
+export type Clipper = { rect: Rect; clipsX: boolean; clipsY: boolean };
+
+/**
+ * Narrow a starting box (the viewport) by every ancestor that clips.
+ *
+ * The DOM half of this — walking parentElement and asking getComputedStyle
+ * which axes clip — lives in `useAnchoredPlacement`. This half is the rule, and
+ * it is a rule worth executing: each axis is narrowed SEPARATELY, because
+ * `overflow-x: hidden` with a `visible` y is a real and common combination
+ * (`.chat-log` is exactly it) and clipping one axis says nothing about the
+ * other. Collapsing the two into one "does it clip" test is what would put a
+ * menu back off the edge of that log.
+ */
+export function narrowClip(base: Rect, clippers: readonly Clipper[]): Rect {
+  const box = { ...base };
+  for (const { rect, clipsX, clipsY } of clippers) {
+    if (clipsX) {
+      box.left = Math.max(box.left, rect.left);
+      box.right = Math.min(box.right, rect.right);
+    }
+    if (clipsY) {
+      box.top = Math.max(box.top, rect.top);
+      box.bottom = Math.min(box.bottom, rect.bottom);
+    }
+  }
+  return box;
+}
 
 export type Placement = {
   /** Which trigger edge the list is pinned to. */
@@ -39,7 +71,8 @@ const EDGE_PAD = 8;
  *   max-width / max-height, so a long menu is measured at the size it will
  *   actually be, scrolling inside).
  * @param clip the box it must stay inside: the viewport narrowed by every
- *   ancestor that clips. See `clipBox` in Menu.tsx.
+ *   ancestor that clips. See `narrowClip` above and its caller in
+ *   useAnchoredPlacement.ts.
  * @param side the caller's PREFERRED side. A preference, not a guarantee: the
  *   caller knows which side reads better, not how much room the page will have
  *   at that scroll position on that viewport.

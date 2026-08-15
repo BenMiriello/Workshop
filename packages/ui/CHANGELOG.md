@@ -12,6 +12,53 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.11 — 2026-08-15 — a panel is not a menu
+
+**Compatible (one name added).** `Popover`: a panel anchored to a trigger.
+
+```tsx
+<Popover trigger={<Button icon={<Ticket />} />} label="Work" side="bottom">
+  ...chips, rows, an answer field, a Send button...
+</Popover>
+```
+
+`role="dialog"`, `aria-label={label}`, and both controlled (`open` +
+`onOpenChange`) and uncontrolled. Closes on Escape and on an outside
+pointerdown, and on nothing else. Escape returns focus to the trigger; an
+outside click deliberately does not, because a programmatic `.focus()` after a
+mouse dismissal re-triggers the global `:focus-visible` ring and reads as a
+border the app stuck on the control for no reason.
+
+**Why `Menu` could not be used.** Menu is a list of choices, and two of its
+behaviours are load-bearing there and wrong here. It owns arrow-key roving focus
+over `[role="menuitem"]`, so it would take Up/Down away from a text field inside
+the panel; and it closes on any click landing in a menuitem, because picking one
+of a set of actions ends that interaction, whereas a click in a panel is work
+being done. It is also `role="menu"`, which tells a screen reader the arrow keys
+walk the contents. The first consumer is the chat's Work panel: filter chips,
+ticket rows, an answer field and a Send button.
+
+**Why not `Modal`.** A modal traps focus, dims the page and sits in the middle
+of the viewport. This is attached to the button that opened it and has to flip
+and re-align against every clipping ancestor, which is what `menuPlacement`
+already solves. It does not trap focus and it autofocuses nothing: opening a
+panel must not raise a phone keyboard or take the caret off the composer.
+
+**Internal refactor, no surface change.** Menu's measuring layout effect and its
+`clipBox` walk moved into `useAnchoredPlacement` (not exported), which both
+primitives now call, so the flip rule has one implementation rather than two
+copies of the arithmetic that has already been got wrong once. The pure half of
+`clipBox` came out with it as `narrowClip` in `menuPlacement.ts`, with tests
+beside `placeMenu`'s: it is the per-axis narrowing, which is the part that
+matters (`overflow-x: hidden` with a visible y is the chat log exactly, and
+collapsing the two axes into one test is the bug).
+
+New CSS: `.ws-popover`, `.ws-popover__surface` and its four placement
+modifiers, beside the `.ws-menu` rules. Card surface one elevation step below a
+modal, roomier padding than a menu row, and the same clamped max-height with an
+internal scroll, which the placement rule depends on: the surface is measured
+after its own CSS has capped it.
+
 ## 0.5.10 — 2026-08-15 — a control is not a flex sibling of the card it decorates
 
 **Compatible (fix, no exports changed).** Three `.ws-notes-grid` / `.ws-note-card`
