@@ -33,7 +33,12 @@ export function TicketBoard({ tasks }: { tasks: Task[] }) {
               as={Link}
               to={ticketHref(t.scope ?? "workshop", t.id)}
             >
-              <span className="ws-board__card-title">{taskTitle(t) || "(untitled)"}</span>
+              {/* The title is one line with an ellipsis, so the full text has
+                  to stay reachable: `title` is it on a pointer, and the ticket
+                  page is it everywhere else. */}
+              <span className="ws-board__card-title" title={taskTitle(t)}>
+                {taskTitle(t) || "(untitled)"}
+              </span>
               <span className="ws-board__card-meta">
                 <TicketKey id={t.id} />
               </span>

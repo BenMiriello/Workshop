@@ -37,7 +37,9 @@ export function TicketList({ tasks }: { tasks: Task[] }) {
                   className="ws-ticketrow"
                   to={ticketHref(t.scope ?? "workshop", t.id)}
                 >
-                  <span className="ws-ticketrow__title">{taskTitle(t) || "(untitled)"}</span>
+                  <span className="ws-ticketrow__title" title={taskTitle(t)}>
+                    {taskTitle(t) || "(untitled)"}
+                  </span>
                   <span className="ws-ticketrow__meta">
                     <TicketKey id={t.id} />
                     <TagStrip labels={t.labels} />

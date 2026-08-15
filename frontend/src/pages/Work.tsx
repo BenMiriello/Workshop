@@ -267,21 +267,35 @@ export default function Work() {
 
       <div className="ws-tickets__body">{body}</div>
 
-      {more && (
-        <Row>
-          <Button
-            size="sm"
-            loading={loading}
-            onClick={() => setLimit((n) => n + pageSize)}
-          >
-            Load more ({rows.length} of {total})
-          </Button>
-        </Row>
+      {/* Where the list ends. `Load more` only exists when there IS more, so
+          without the count beside it a list that fitted in one page ended in
+          silence and the New ticket button was the only thing at the bottom,
+          which reads as the end of the PAGE rather than the end of the list. */}
+      {rows.length > 0 && (
+        <div className="ws-tickets__end">
+          {more ? (
+            <>
+              <Button
+                size="sm"
+                loading={loading}
+                onClick={() => setLimit((n) => n + pageSize)}
+              >
+                Load more
+              </Button>
+              <span>Showing {rows.length} of {total}</span>
+            </>
+          ) : (
+            <span>
+              {total === 1 ? "1 ticket" : `All ${total} tickets`}
+            </span>
+          )}
+        </div>
       )}
 
       {/* A phone reaches New ticket here rather than in the bar: the bar is two
           controls wide there, and the primary action of the screen belongs at
-          the thumb. */}
+          the thumb. Pinned to the bottom (see .ws-tickets__foot) so filing one
+          never costs a scroll to the end of the list first. */}
       {!wide && (
         <div className="ws-tickets__foot">
           <Button block variant="primary" onClick={() => setCreating(true)}>

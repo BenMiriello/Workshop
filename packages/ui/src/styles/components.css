@@ -648,8 +648,37 @@ a.ws-btn { text-decoration: none; }
 }
 .ws-tickets__count { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--muted); }
 .ws-tickets__body { min-width: 0; }
-/* The phone's primary action, at the thumb rather than in a two-control bar. */
-.ws-tickets__foot { padding-top: var(--space-2); }
+
+/* The phone's primary action: at the thumb, and STUCK there. It used to sit at
+   the natural end of the page, which on a list of any length means filing a
+   ticket costs a scroll to the bottom first (operator, 2026-08-14).
+   Sticky rather than fixed, so it belongs to the page rather than to the
+   viewport: it cannot cover another route's content, and it lands in its own
+   space at the true end of the list instead of hovering over it forever. */
+.ws-tickets__foot {
+  position: sticky; bottom: 0; z-index: var(--z-sticky);
+  padding-top: var(--space-2);
+  padding-bottom: max(var(--space-2), env(safe-area-inset-bottom));
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  /* The page's own inset, undone and redone, so the bar's surface reaches the
+     screen edges while its button stays on the content measure. */
+  margin-inline: calc(var(--page-pad-x) * -1);
+  padding-inline: var(--page-pad-x);
+}
+/* Room for the pinned bar to sit over, so the last rows are not under it while
+   the list is still scrolling. */
+.ws-tickets:has(.ws-tickets__foot) .ws-tickets__body { padding-bottom: var(--space-5); }
+
+/* Where the list ends, said plainly. "Load more" only appears when there IS
+   more, so a list that fitted in one page ended in silence and the only thing
+   at the bottom was the New ticket button, which reads as the end of the page
+   rather than the end of the list. */
+.ws-tickets__end {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding-block: var(--space-3);
+  font-size: var(--fs-xs); color: var(--faint);
+}
 
 /* The short mono handle for a ticket, and the priority/effort fact beside it.
    Both are quiet by design: they are what you read AFTER the title has told
@@ -664,9 +693,16 @@ a.ws-btn { text-decoration: none; }
 }
 
 /* ---- board card contents ------------------------------------------------- */
+/* ONE LINE, ellipsis past the edge (operator, 2026-08-14). The handoff drew a
+   wrapping title with no clamp, and on real data that is wrong: a ticket title
+   here runs to a full sentence, so cards took two, three and four lines and no
+   two were the same height. A board is scanned down its lanes, and a ragged
+   column of different-height cards is what makes that scan expensive. The full
+   title is one click away, and the row's `title` attribute carries it on hover. */
 .ws-board__card-title {
   font-size: var(--fs-base); font-weight: var(--fw-medium);
-  line-height: var(--lh-snug); text-wrap: pretty;
+  line-height: var(--lh-snug);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ws-board__card-meta { display: flex; gap: var(--space-2); min-width: 0; }
 .ws-board__card-foot {
@@ -729,9 +765,12 @@ a.ws-btn { text-decoration: none; }
   color: inherit; text-decoration: none;
 }
 .ws-ticketrow:hover { background: var(--card-hover); }
+/* Same rule as the board card, same reason: one line, ellipsis. A phone list
+   of three-line rows is a list you scroll past rather than scan. */
 .ws-ticketrow__title {
   font-size: var(--fs-md); font-weight: var(--fw-medium);
-  line-height: var(--lh-snug); text-wrap: pretty;
+  line-height: var(--lh-snug);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ws-ticketrow__meta {
   display: flex; align-items: center; gap: var(--space-2); min-width: 0;
