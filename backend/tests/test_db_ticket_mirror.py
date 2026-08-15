@@ -362,3 +362,58 @@ def test_attempts_is_derived_from_runs_that_started(scope):
         _run(s, scope, ticket_id=pk, started_at=datetime.now(timezone.utc))
         _run(s, scope, ticket_id=pk)          # queued, never started
     assert _rows(scope)["t1"]["attempts"] == 2
+
+
+def test_a_ticket_keeps_its_own_timestamps_not_the_migrations(scope):
+    """THE ONE THAT WOULD HAVE RELABELLED THE WHOLE BACKLOG.
+
+    `created_at`/`updated_at` defaulted to the row's insert time, so reading the
+    tickets out of Postgres instead of the file changed `updated` on 109 of 109
+    and `created` on 11. `updated` is user-visible and every list sorts by it.
+
+    Needs the trigger fix in e5c2a9074b18: `set_updated_at()` stamped `now()`
+    unconditionally, so an explicit value could never survive an UPDATE.
+    """
+    from db.engine import tenant_session
+
+    made = "2026-01-02T03:04:05+00:00"
+    edited = "2026-02-03T04:05:06+00:00"
+    _mirror(scope, [_task("t1", created=made, updated=edited)])
+    with tenant_session(scope["org"]) as s:
+        row = s.execute(text("SELECT created_at, updated_at FROM ticket "
+                             " WHERE external_id = 't1'")).one()
+    assert row.created_at.isoformat() == made
+    assert row.updated_at.isoformat() == edited
+
+    # And an UPDATE keeps carrying them rather than stamping now().
+    later = "2026-03-04T05:06:07+00:00"
+    _mirror(scope, [_task("t1", created=made, updated=later, status="doing")])
+    with tenant_session(scope["org"]) as s:
+        row = s.execute(text("SELECT created_at, updated_at FROM ticket "
+                             " WHERE external_id = 't1'")).one()
+    assert row.created_at.isoformat() == made
+    assert row.updated_at.isoformat() == later
+
+
+def test_a_record_with_no_timestamps_does_not_rewrite_every_pass(scope):
+    """A record with no `created` has no opinion about the row's. Comparing
+    None against the stored value reported a change on every pass, so the
+    mirror rewrote every ticket forever and the idempotence tests caught it."""
+    _mirror(scope, [_task("t1")])
+    second = _mirror(scope, [_task("t1")])
+    assert second["updated"] == 0
+
+
+def test_an_evidence_note_keeps_the_time_it_happened(scope):
+    """A worklog's only ordering is its timestamps. Stamping history rows with
+    the migration's clock loses it."""
+    from db.engine import tenant_session
+
+    when = "2026-05-06T07:08:09+00:00"
+    _mirror(scope, [_task("t1", evidence=[
+        {"kind": "note", "ref": "did it", "ts": when}])])
+    assert _rows(scope)["t1"]["evidence"][0]["ts"] == when
+    with tenant_session(scope["org"]) as s:
+        got = s.execute(text("SELECT created_at FROM ticket_event "
+                             " WHERE verb = 'noted'")).scalar()
+    assert got.isoformat() == when

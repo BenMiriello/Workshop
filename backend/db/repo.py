@@ -87,7 +87,8 @@ SELECT
   -- while the rows sat in the database looking healthy.
   COALESCE((SELECT jsonb_agg(jsonb_build_object(
                      'id', c.external_id, 'author', c.author_type,
-                     'text', c.body, 'created', c.created_at)
+                     'text', c.body, 'created', c.created_at,
+                     'ts', c.created_at)
                    ORDER BY c.created_at)
             FROM comment c
             WHERE c.ticket_id = t.id AND c.deleted_at IS NULL), '[]') AS comments,
@@ -97,7 +98,8 @@ SELECT
   -- `evidence` and `scoped_by` are history rows, reassembled into the shape the
   -- JSON record carried. They are read far more often than written, so the cost
   -- sits here rather than in a second round trip per ticket.
-  COALESCE((SELECT jsonb_agg(jsonb_build_object('kind', e.field, 'ref', e.new_value)
+  COALESCE((SELECT jsonb_agg(jsonb_build_object('kind', e.field, 'ref', e.new_value,
+                                                'ts', e.created_at)
                              ORDER BY e.created_at)
             FROM ticket_event e
             WHERE e.ticket_id = t.id AND e.verb = 'noted'), '[]') AS evidence,
@@ -118,14 +120,37 @@ SELECT
   COALESCE((SELECT array_agg(r.legacy_job_id ORDER BY r.started_at)
             FROM run r
             WHERE r.ticket_id = t.id AND r.legacy_job_id IS NOT NULL), '{}')
-    AS job_ids
+    AS job_ids,
+  COALESCE((SELECT array_agg(d.external_id ORDER BY d.external_id)
+            FROM ticket_link l JOIN ticket d ON d.id = l.to_ticket_id
+            WHERE l.from_ticket_id = t.id AND l.kind = 'discovered_from'
+              AND l.deleted_at IS NULL), '{}') AS discovered_from,
+  -- The live claim, from the ticket's most recent run. These sat on the ticket
+  -- in the JSON store and describe an EXECUTION, so they moved to `run`; the
+  -- compatibility shape puts them back where `reclaim` expects to find them.
+  -- Dormant today (`_is_stale_claim` returns early unless a ticket is `doing`,
+  -- and nothing is), but wrong-by-omission the moment the runner starts.
+  lr.lease_expires_at        AS lease_until,
+  lr.heartbeat_at            AS last_heartbeat,
+  lr.worker_pid              AS claim_pid
 FROM ticket t
 JOIN project p         ON p.id  = t.project_id
 JOIN workflow_state ws ON ws.id = t.state_id
 LEFT JOIN ticket_type ty ON ty.id = t.type_id
 LEFT JOIN ticket parent  ON parent.id = t.parent_id
+LEFT JOIN LATERAL (
+    SELECT r.lease_expires_at, r.heartbeat_at, r.worker_pid
+      FROM run r WHERE r.ticket_id = t.id
+     ORDER BY r.started_at DESC NULLS LAST LIMIT 1
+) lr ON true
 WHERE t.deleted_at IS NULL
 """
+
+# The ticket TYPE name, back to the legacy `execution` token. `execution` gates
+# the unattended queue (`tasks.py` checks `!= "code"`), so losing it in the
+# compatibility shape would silently change which tickets a sweep may pick up.
+_TYPE_TO_EXECUTION = {"Code": "code", "Judgement": "judgement",
+                      "External": "external"}
 
 
 def _row_to_legacy(row: Any) -> dict:
@@ -160,7 +185,9 @@ def _row_to_legacy(row: Any) -> dict:
         "touches": list(m["touches"] or []),
         "blocked_reason": m["blocked_reason"],
         "acceptance": m["acceptance"],
-        "claim_token": m["claim_token"],
+        # 0 is the column default and means "never claimed"; the legacy
+        # record spelled that None, and `reclaim` reads it either way.
+        "claim_token": m["claim_token"] or None,
         "labels": list(m["labels"] or []),
         "evidence": list(m["evidence"] or []),
         "scoped_by": m["scoped_by"],
@@ -173,6 +200,14 @@ def _row_to_legacy(row: Any) -> dict:
         # the real column for when assignment starts meaning something.
         "assignee": "operator",
         "owner": "operator",
+        "execution": _TYPE_TO_EXECUTION.get(m["type_name"] or ""),
+        # A scalar on the JSON record, a list here. First one wins, which is
+        # lossless: only 2 of 112 have one and neither has two.
+        "discovered_from": (list(m["discovered_from"]) or [None])[0],
+        "lease_until": m["lease_until"].isoformat() if m["lease_until"] else None,
+        "last_heartbeat": (m["last_heartbeat"].isoformat()
+                           if m["last_heartbeat"] else None),
+        "claim_pid": m["claim_pid"],
         "created": m["created"].isoformat() if m["created"] else None,
         "updated": m["updated"].isoformat() if m["updated"] else None,
         "closed": m["closed"].isoformat() if m["closed"] else None,

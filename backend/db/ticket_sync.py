@@ -40,13 +40,31 @@ def _json(value):
     import json as _j
     return None if value is None else _j.dumps(value)
 
+
+def _ts(value):
+    """An ISO string from the JSON record as a tz-aware datetime, or None.
+
+    A naive timestamp is read as UTC, which is what the JSON store has always
+    meant by one. Unparseable returns None and the statement's COALESCE falls
+    back to now(), so a hand-mangled date costs the ticket its history and not
+    the whole write.
+    """
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
 __all__ = ["mirror", "scope_for_root"]
 
 # Fields worth a history row. Deliberately not every field: `updated` changes on
 # every write by definition, and recording that it changed says nothing.
 _TRACKED = ("title", "body", "status", "priority", "effort", "type", "parent",
             "source_kind", "source_ref", "spec_hash", "touches",
-            "blocked_reason", "acceptance", "claim_token")
+            "blocked_reason", "acceptance", "claim_token", "created",
+            "updated")
 
 # Of those, the ones worth a history row when they change. A `spec_hash` moving
 # is a restatement of a title or body change already recorded, and a
@@ -170,6 +188,13 @@ def _legacy_view(task: dict) -> dict:
         "blocked_reason": task.get("blocked_reason") or None,
         "acceptance": task.get("acceptance") or None,
         "claim_token": int(task.get("claim_token") or 0),
+        # The ticket's OWN creation time. Compared so an existing row whose
+        # timestamp is the migration's insert time repairs itself, rather than
+        # needing a one-off script nobody runs twice.
+        "created": _ts(task.get("created")),
+        # Compared too, so the row carries the ticket's own modified
+        # time rather than the migration's. Every list sorts by this.
+        "updated": _ts(task.get("updated")),
     }
 
 
@@ -191,12 +216,14 @@ def _row_view(row) -> dict:
         "blocked_reason": m["blocked_reason"],
         "acceptance": m["acceptance"],
         "claim_token": m["claim_token"],
+        "created": m["created_at"],
+        "updated": m["updated_at"],
     }
 
 
 _CURRENT = """
 SELECT t.id, t.external_id, t.title, t.body, t.priority::text AS priority,
-       t.effort, t.closed_at, ws.name AS state_name, ty.name AS type_name,
+       t.effort, t.closed_at, t.created_at, t.updated_at, ws.name AS state_name, ty.name AS type_name,
        parent.external_id AS parent_legacy,
        t.source_kind, t.source_ref, t.spec_hash, t.touches, t.blocked_reason,
        t.acceptance, t.claim_token
@@ -309,28 +336,40 @@ def _sync_history(s, org_id, ticket_pk, task: dict) -> int:
     """
     from db.ids import uuid7
 
+    rows = s.execute(text(
+        "SELECT id, verb, field, new_value, created_at FROM ticket_event "
+        " WHERE ticket_id = :t AND verb IN ('noted', 'scoped')"),
+        {"t": ticket_pk}).all()
     have = {(r._mapping["verb"], r._mapping["field"], r._mapping["new_value"])
-            for r in s.execute(text(
-                "SELECT verb, field, new_value FROM ticket_event "
-                " WHERE ticket_id = :t AND verb IN ('noted', 'scoped')"),
-                {"t": ticket_pk}).all()}
+            for r in rows}
+
     changed = 0
     wanted = []
     for e in (task.get("evidence") or []):
         if isinstance(e, dict) and e.get("ref"):
+            # The entry's OWN `ts`, not the insert time: an evidence note
+            # records when the thing happened, and stamping it with the
+            # migration's clock loses the only ordering the worklog has.
             wanted.append(("noted", str(e.get("kind") or "note")[:64],
-                           str(e["ref"])[:8000]))
+                           str(e["ref"])[:8000], _ts(e.get("ts"))))
     if task.get("scoped_by"):
-        wanted.append(("scoped", "scoped_by", str(task["scoped_by"])[:8000]))
+        wanted.append(("scoped", "scoped_by", str(task["scoped_by"])[:8000], None))
 
-    for verb, field, value in wanted:
+    for verb, field, value, when in wanted:
         if (verb, field, value) in have:
+            # NOT repaired here, deliberately. The app role has no UPDATE on
+            # `ticket_event` because an audit log that the application can
+            # rewrite is not an audit log, and the database refused this exact
+            # statement. Rows written before the entry's own `ts` was carried
+            # are repaired by `backfill.repair_derived_events()`, which runs as
+            # the owner.
             continue
         s.execute(text(
             "INSERT INTO ticket_event (id, org_id, ticket_id, actor_type, verb, "
-            "field, new_value) VALUES (:i, :o, :t, 'system', :v, :f, :nv)"),
+            "field, new_value, created_at) "
+            "VALUES (:i, :o, :t, 'system', :v, :f, :nv, COALESCE(:ts, now()))"),
             {"i": uuid7(), "o": org_id, "t": ticket_pk, "v": verb, "f": field,
-             "nv": value})
+             "nv": value, "ts": when})
         have.add((verb, field, value))
         changed += 1
     return changed
@@ -506,9 +545,11 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                     "body, state_id, type_id, priority, effort, closed_at, "
                     "source_kind, source_ref, spec_hash, touches, "
                     "blocked_reason, acceptance, claim_token, "
+                    "created_at, updated_at, "
                     "external_source, external_id) VALUES (:i, :o, :p, :n, :ti, "
                     ":bo, :st, :ty, CAST(:pr AS ticket_priority), :ef, :cl, "
                     ":sk, :sr, :sh, :tc, :br, CAST(:ac AS jsonb), :ct, "
+                    "COALESCE(:ca, now()), COALESCE(:ua, now()), "
                     "'workshop-json', :ex)"),
                     {"i": uuid7(), "o": org_id, "p": project_id, "n": number,
                      "ti": want["title"][:255] or "(untitled)", "bo": want["body"],
@@ -519,14 +560,24 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                      "br": want["blocked_reason"],
                      "ac": _json(want["acceptance"]),
                      "ct": want["claim_token"],
+                     # THE TICKET'S OWN TIMESTAMPS, not the row's. Without these
+                     # the migration relabels the whole backlog as created and
+                     # modified at the moment it ran, and `updated` is what
+                     # every list sorts by.
+                     "ca": _ts(task.get("created")),
+                     "ua": _ts(task.get("updated")),
                      "ex": legacy_id})
                 stats["inserted"] += 1
                 continue
 
             have = _row_view(row)
             have["status"] = STATE_TO_STATUS.get(have["status"], have["status"])
+            # A record with no timestamp of its own has no OPINION about the
+            # row's: comparing None against the stored value would report a
+            # change on every pass and rewrite every ticket forever.
             changed = {k: (have.get(k), want[k]) for k in _TRACKED
-                       if k != "parent" and have.get(k) != want[k]}
+                       if k != "parent" and have.get(k) != want[k]
+                       and not (k in ("created", "updated") and want[k] is None)}
             if not changed:
                 continue
             ticket_id = row._mapping["id"]
@@ -536,7 +587,8 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                 "effort = :ef, closed_at = :cl, source_kind = :sk, "
                 "source_ref = :sr, spec_hash = :sh, touches = :tc, "
                 "blocked_reason = :br, acceptance = CAST(:ac AS jsonb), "
-                "claim_token = :ct WHERE id = :i"),
+                "claim_token = :ct, updated_at = COALESCE(:ua, now()), "
+                "created_at = COALESCE(:ca, created_at) WHERE id = :i"),
                 {"ti": want["title"][:255] or "(untitled)", "bo": want["body"],
                  "st": state_id, "ty": type_id, "pr": want["priority"],
                  "ef": want["effort"],
@@ -546,6 +598,8 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                  "br": want["blocked_reason"],
                  "ac": _json(want["acceptance"]),
                  "ct": want["claim_token"],
+                 "ua": _ts(task.get("updated")),
+                 "ca": _ts(task.get("created")),
                  "i": ticket_id})
             stats["updated"] += 1
             for field, (old, new) in changed.items():

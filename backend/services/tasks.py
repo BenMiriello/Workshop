@@ -106,6 +106,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import re
 import uuid
@@ -115,6 +116,8 @@ from pathlib import Path
 
 from services import latitude as _latitude
 from services import todos
+
+log = logging.getLogger(__name__)
 
 # draft = filed but not yet ready to run (Triage/Backlog in every other tracker).
 # in_review = worker finished, operator is the gate; cancelled = dropped.
@@ -1133,9 +1136,53 @@ def _migrate_from_todo(root: Path) -> list[dict]:
     return tasks
 
 
+# Priority is a NAMED BAND in the schema and a signed integer in this API. The
+# band is the truth (ADR 0019: the integer held 38 distinct values across 112
+# tickets and none of the distinctions were meant); the integer is what the 18
+# callers, the CLI and the UI still read, so it is projected back here.
+#
+# The values are the FLOORS of the bands migration 769d64dbfa74 defined, so a
+# record that round-trips through the schema keeps its band, and any sort by
+# priority keeps its order. This mapping is lossy on purpose and in one
+# direction only: 87 and 92 both come back as 80, because they were always the
+# same priority and only looked different.
+_BAND_TO_INT = {"urgent": 100, "high": 80, "medium": 40, "low": 1, "none": 0}
+
+
+def _from_relational(root: Path) -> list[dict] | None:
+    """This scope's tickets out of Postgres, in the shape `_normalize` accepts.
+
+    Returns None when the relational store cannot answer for this root -- no
+    database configured, or a working tree this installation does not know --
+    and the caller falls back to the file. That is NOT a two-store design: it
+    is what lets a checkout with no Postgres (and the test suite) keep working
+    while the file is still being written alongside.
+    """
+    try:
+        from db import repo, ticket_sync
+        from services import tenancy
+        if not tenancy.available():
+            return None
+        scope = ticket_sync.scope_for_root(root)
+        if scope is None:
+            return None
+        org_id, _user = tenancy.org_and_user()
+        rows = repo.list_tickets(org_id, scope=scope)
+    except Exception:
+        log.warning("relational read failed for %s; falling back to the file",
+                    root, exc_info=True)
+        return None
+    for row in rows:
+        row["priority"] = _BAND_TO_INT.get(row.get("priority"), 0)
+    return [_normalize(r) for r in rows]
+
+
 def _load(root: Path) -> list[dict]:
     """Load the authoritative task list, migrating from TODO.md on first access.
     Does NOT reconcile (callers that want the healed view call reconcile first)."""
+    relational = _from_relational(root)
+    if relational is not None:
+        return relational
     raw = _read_store(root)
     if raw is None:
         # Protected root with no store yet: return empty WITHOUT migrating (which

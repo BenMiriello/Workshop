@@ -473,7 +473,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--apply", action="store_true",
                     help="write to the database (default: print the plan only)")
+    ap.add_argument("--repair-events", action="store_true",
+                    help="re-derive the noted/scoped ticket_event rows from the "
+                         "JSON store (owner connection; see repair_derived_events)")
     args = ap.parse_args()
+
+    if args.repair_events:
+        print(repair_derived_events())
+        return 0
 
     if not args.apply:
         print("PLAN (nothing written). Source rows found:")
@@ -486,6 +493,37 @@ def main() -> int:
         print(f"  {k:24} {v}")
     return 0
 
+
+
+def repair_derived_events() -> dict:
+    """Re-derive the `noted`/`scoped` history rows from the JSON store.
+
+    THESE ROWS ARE A PROJECTION, not history anyone authored. They are built
+    from each ticket's `evidence` list and `scoped_by` field, so deleting and
+    re-deriving them loses nothing while the JSON store still exists.
+
+    Why it lives here and not in the mirror: the application role has no UPDATE
+    or DELETE on `ticket_event`, because an audit log the app can rewrite is not
+    an audit log. The database refused the in-app repair, which is the correct
+    outcome. This runs on the OWNER connection, once, as a migration step.
+
+    What it repairs: rows written before the mirror carried each evidence
+    entry's own `ts` were stamped with the migration's clock instead, which
+    loses the only ordering a worklog has.
+
+    Safe to re-run: it rebuilds from the same source every time.
+    """
+    from sqlalchemy import text as _text
+
+    from db.engine import owner_session
+
+    stats = {"deleted": 0}
+    with owner_session() as s:
+        r = s.execute(_text(
+            "DELETE FROM ticket_event WHERE verb IN ('noted','scoped')"))
+        stats["deleted"] = r.rowcount
+        s.commit()
+    return stats
 
 if __name__ == "__main__":
     raise SystemExit(main())
