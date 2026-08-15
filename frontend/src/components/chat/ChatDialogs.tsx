@@ -2,7 +2,6 @@ import { ConfirmDialog } from "@workshop/ui";
 import { scopeLabel } from "../../lib/tasks";
 import TicketDraftsDialog from "./TicketDraftsDialog";
 import RenameChatDialog from "./RenameChatDialog";
-import type { FiledNotice } from "./FiledNotice";
 
 // Everything the chat opens over itself: filing tickets, renaming, and the
 // two confirmations.
@@ -17,7 +16,7 @@ import type { FiledNotice } from "./FiledNotice";
 export default function ChatDialogs({
   scope,
   activeId, activeThreadTitle,
-  ticketsOpen, onCloseTickets, onFiled,
+  ticketsOpen, onCloseTickets,
   renameOpen, renameBusy, onCancelRename, onSaveRename,
   confirmNew, onCancelNew, onConfirmNew,
   confirmCompact, onCancelCompact, onConfirmCompact,
@@ -28,7 +27,6 @@ export default function ChatDialogs({
   activeThreadTitle?: string;
   ticketsOpen: boolean;
   onCloseTickets: () => void;
-  onFiled: (n: FiledNotice) => void;
   renameOpen: boolean;
   renameBusy: boolean;
   onCancelRename: () => void;
@@ -49,7 +47,6 @@ export default function ChatDialogs({
         open={ticketsOpen}
         chatId={activeId}
         onClose={onCloseTickets}
-        onFiled={onFiled}
       />
 
       <RenameChatDialog

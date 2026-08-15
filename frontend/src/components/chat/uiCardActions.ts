@@ -15,8 +15,9 @@
 // so a second submit after reload is safe and idempotent.
 
 import type { TaskProposalSpec } from "@shared/types";
-import { pickupFor, pickupNote, scopeIsRunnable, type PickupMap } from "../../lib/scopePickup";
-import { ticketHref } from "../../lib/tasks";
+import { scopeIsRunnable } from "../../lib/scopePickup";
+import { scopeLabel, ticketHref } from "../../lib/tasks";
+import { runHref } from "../../lib/jobs";
 import { shortHttpError } from "../../lib/httpError";
 
 // ---- Wire shape (matches the A.1 contract) ---------------------------------
@@ -59,20 +60,20 @@ export type UiCardSpec = {
   title?: string;
   fields?: UiCardField[];
   actions?: UiCardAction[];
-  // Server-emitted `job-status` cards carry these instead of fields: the live
-  // run to poll, and where it came from (for the links).
-  job_id?: string;
-  task_id?: string;
-  scope?: string;
 };
 
 // Kinds the client knows how to render as a live, interactive card. Anything
-// else falls back to an inert (read-only, no-button) card. `job-status` is
-// rendered by a dedicated poller (see UiCard.tsx), not the generic form path.
+// else falls back to an inert (read-only, no-button) card.
+//
+// `job-status` was the third, and it is gone. The server stopped appending that
+// card in C12 (2026-07-18) and nothing has emitted one since, so the poller
+// behind it had no card to poll for; the live run now shows on the ticket card
+// the filing produced, which is where the operator was already looking. A
+// `job-status` block in an archived thread renders as the inert fallback, which
+// is what an unknown kind is for.
 export const KNOWN_KINDS = new Set<string>([
   "project-proposal",
   "task-proposal",
-  "job-status",
 ]);
 
 // ---- Handler contract ------------------------------------------------------
@@ -100,6 +101,9 @@ export type UiCardCtx = {
 export type CardResult =
   | {
       status: "success";
+      /** The identifier of the thing this card created: a project's slug, or a
+       *  ticket's id. One of the three fields the card-state sidecar keeps, so
+       *  it is also the only way a card still knows its subject after a reload. */
       slug?: string;
       title?: string;
       note?: string;
@@ -268,27 +272,27 @@ async function fileTicket(
   return (await r.json()) as CreatedTask;
 }
 
-// GET /api/tasks/scopes carries a `pickup` map: per scope, whether a worker can
-// be launched by hand and whether ANYTHING picks tickets up unattended. Best
-// effort — a failed read falls back to the pure predicate in lib/scopePickup.
-async function fetchPickupMap(): Promise<PickupMap | null> {
-  try {
-    const r = await fetch("/api/tasks/scopes");
-    if (!r.ok) return null;
-    const j = await r.json();
-    return (j.pickup ?? null) as PickupMap | null;
-  } catch {
-    return null;
-  }
-}
+// The only follow-up a filed ticket still needs from this registry: the case
+// where the server filed something and told us no id. The card cannot track a
+// ticket it cannot name, so it falls back to the old heading plus this one
+// button, and the label says honestly that the destination is a list.
+const filedActions: UiCardAction[] = [
+  { id: "openWork", label: "Open in Work", variant: "primary" },
+];
 
-// The follow-up buttons a filed ticket offers. `openTicket` goes to the ticket
-// when the server told us its id, which is the only thing "Open ticket" can
-// honestly mean; without an id it is a filtered list and says so.
-function filedActions(taskId: string | null): UiCardAction[] {
-  return taskId
-    ? [{ id: "openTicket", label: "Open ticket", variant: "primary" }]
-    : [{ id: "openWork", label: "Open in Work", variant: "primary" }];
+// THE CARD'S DURABLE HANDLE ON WHAT IT FILED, and why it is spelled `slug`.
+//
+// A filed card has to still be about its ticket after a reload, and the
+// card-state sidecar the server keeps has exactly three string slots: `slug`,
+// `title` and `note` (routes/chat.CardState). `slug` means "the identifier of
+// the thing this card created": a project's slug on a project card, a ticket's
+// id here. So the id rides there and `TicketCard` reads it back. Before the
+// first reload the same id is in `values.__task_id`, and the card takes
+// whichever it has.
+
+/** The filed ticket's title, for a card whose store has not answered yet. */
+function filedTitle(v: Record<string, string>): string {
+  return (v.title || "").trim() || composeTaskText(v).split("\n")[0]?.trim() || "";
 }
 
 const addTasks: UiCardHandler = async (state, ctx) => {
@@ -301,18 +305,23 @@ const addTasks: UiCardHandler = async (state, ctx) => {
   }
   try {
     const j = await fileTicket(state.values, ctx.threadId, false);
-    const decided = j.decision && j.decision !== "distinct" ? ` (${j.message ?? j.decision})` : "";
     // The scope the SERVER filed into — see addTasksAndRun.
     const scope = (j.scope || asked).trim();
     const taskId = j.task?.id || "";
-    // A ticket filed to a project scope is picked up by nothing today. Saying
-    // "Filed" and stopping there lets it read as queued when it is not.
-    const warn = pickupNote(pickupFor(await fetchPickupMap(), scope));
+    const merged = j.decision === "merge" || j.decision === "exact";
     return {
       status: "success",
-      note: `Filed a ticket in ${scope}${decided}.${warn ? ` ${warn}` : ""}`,
-      values: { scope, __task_id: taskId ?? "" } as Record<string, string>,
-      actions: filedActions(taskId || null),
+      slug: taskId || undefined,
+      title: filedTitle(state.values),
+      // ONLY WHAT THE TICKET CANNOT SAY FOR ITSELF. The card names the ticket,
+      // its scope and its key, so a note repeating "Filed a ticket in X" under
+      // it is the duplication this pass exists to remove. A merge is a fact
+      // about the FILING rather than about the surviving ticket, so it stays.
+      // The pickup warning left too: the card reads it live from the scope map
+      // instead of freezing the answer at the moment of filing.
+      note: merged ? `Merged into an existing ticket in ${scopeLabel(scope)}.` : undefined,
+      values: { scope, __task_id: taskId } as Record<string, string>,
+      actions: taskId ? undefined : filedActions,
     };
   } catch (e) {
     return { status: "error", message: String(e) };
@@ -353,38 +362,29 @@ const addTasksAndRun: UiCardHandler = async (state, ctx) => {
   // that does not contain it. The server returns the scope it used; that is the
   // only one worth repeating. (TicketDraftsDialog already reads it this way.)
   const scope = (created.scope || asked).trim();
-  const taskId = created.task?.id ?? null;
+  const taskId = created.task?.id ?? "";
   // A merge folded into an existing ticket, so the server deliberately does not
   // run it: re-running work that already exists would be a surprise.
-  if (created.decision === "merge" || created.decision === "exact") {
-    return {
-      status: "success",
-      note: `Merged into an existing ticket in ${scope}; did not start a new run.`,
-      values: { scope, __task_id: taskId ?? "" } as Record<string, string>,
-      actions: filedActions(taskId),
-    };
-  }
-  if (created.run_error) {
-    // The ticket IS filed; only the immediate run failed (commonly a busy tree).
-    return {
-      status: "success",
-      note: `Filed the ticket in ${scope}, but could not run it now: ${created.run_error}`,
-      values: { scope, __task_id: taskId ?? "" } as Record<string, string>,
-      actions: filedActions(taskId),
-    };
-  }
+  const merged = created.decision === "merge" || created.decision === "exact";
   return {
     status: "success",
-    note: `Filed and running in ${scope}.`,
+    slug: taskId || undefined,
+    title: filedTitle(state.values),
+    // The three sentences the card cannot re-derive from the ticket, and
+    // nothing else. "Filed and running" is not one of them: the card's Run
+    // group says it, live, and says it correctly a minute later too.
+    note: merged
+      ? `Merged into an existing ticket in ${scopeLabel(scope)}. It did not start a new run.`
+      : created.run_error
+        // The ticket IS filed; only the immediate run failed (commonly a busy tree).
+        ? `Could not run it now: ${created.run_error}`
+        : undefined,
     values: {
       scope,
-      __task_id: taskId ?? "",
+      __task_id: taskId,
       __job_id: String(created.job_id || ""),
     } as Record<string, string>,
-    actions: [
-      { id: "viewRun", label: "View run", variant: "primary" },
-      ...filedActions(taskId),
-    ],
+    actions: taskId ? undefined : filedActions,
   };
 };
 
@@ -394,17 +394,23 @@ const openWork: UiCardHandler = async (state, ctx) => {
   return { status: "noop" };
 };
 
-// The ticket, not the list it is somewhere inside.
+// The ticket, not the list it is somewhere inside. `slug` is the same id after
+// a reload has emptied `__task_id`; see `filedTitle` above for why it lives
+// there.
 const openTicket: UiCardHandler = async (state, ctx) => {
-  const taskId = (state.values.__task_id || "").trim();
+  const taskId = (state.values.__task_id || state.values.slug || "").trim();
   const scope = (state.values.scope || "workshop").trim();
   ctx.navigate(taskId ? ticketHref(scope, taskId) : `/work?scope=${encodeURIComponent(scope)}`);
   return { status: "noop" };
 };
 
+// `runHref`, not a hand-spelled path. This said `/jobs/<id>` while the deleted
+// JobStatusCard said `/runs/<id>`: two spellings of one destination, both
+// working through a redirect, and a reader could not tell whether the
+// difference meant anything. It does not.
 const viewRun: UiCardHandler = async (state, ctx) => {
   const jid = (state.values.__job_id || "").trim();
-  ctx.navigate(jid ? `/jobs/${encodeURIComponent(jid)}` : "/work");
+  ctx.navigate(jid ? runHref(jid) : "/work");
   return { status: "noop" };
 };
 

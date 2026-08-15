@@ -52,18 +52,24 @@ export default function TicketDraftsDialog({
   open,
   chatId,
   onClose,
-  onFiled,
 }: {
   open: boolean;
   chatId: string | null;
   onClose: () => void;
-  onFiled: (msg: { text: string; scope: string; ran: boolean; runError?: string }) => void;
 }) {
   const [payload, setPayload] = useState<Payload | null>(null);
   const [scope, setScope] = useState<{ scope: string; runnable: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [proposing, setProposing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // APPROVING REPORTS HERE, in the dialog, and nowhere else.
+  //
+  // It used to raise the `FiledBar` above the transcript, which is deleted: a
+  // filing now says so on the ticket card in the answer that produced it. This
+  // path has no card, because nothing in the transcript proposed these drafts,
+  // so the report belongs to the surface the operator is looking at. The Work
+  // panel's "This chat" section carries it from there.
+  const [approved, setApproved] = useState<string | null>(null);
   // One draft expanded at a time. A ticket body plus acceptance criteria is
   // several lines; four of those fully expanded is a wall, and the operator
   // asked for exactly this — show the line, expand for the detail.
@@ -104,6 +110,9 @@ export default function TicketDraftsDialog({
   // reopening is instant and never silently re-derives.
   useEffect(() => {
     if (!open || !chatId) return;
+    // A report describes the last thing the operator did in this dialog. Opening
+    // it again is a new visit, so it does not carry the old one in.
+    setApproved(null);
     let cancelled = false;
     (async () => {
       await loadStored();
@@ -148,14 +157,17 @@ export default function TicketDraftsDialog({
       );
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
-      onFiled({ text: d.title, scope: payload.scope, ran: !!j.run?.job_id });
+      const where = scopeLabel(payload.scope);
+      setApproved(j.run?.job_id
+        ? `"${d.title}" is filed in ${where} and running.`
+        : `"${d.title}" is filed in ${where}.`);
       await loadStored();
     } catch (e) {
       setErr(`Couldn't approve "${d.title}": ${String(e)}`);
     } finally {
       setBusy(null);
     }
-  }, [chatId, payload, onFiled, loadStored]);
+  }, [chatId, payload, loadStored]);
 
   const drafts = payload?.drafts ?? [];
 
@@ -193,6 +205,8 @@ export default function TicketDraftsDialog({
             drafted. Re-read the chat to refresh them.
           </span>
         )}
+
+        {approved && <Notice>{approved}</Notice>}
 
         {err && (
           <Notice

@@ -1316,18 +1316,6 @@ a.ws-ref--link:hover > svg { color: var(--you); }
   margin-top: 0.3rem; font-size: var(--fs-sm); color: var(--muted);
 }
 
-/* "Turn into task" confirmation: a calm one-line note under the toolbar. */
-.chat-spawn-note {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.4rem 0.8rem; font-size: 0.8rem;
-  background: var(--accent-soft); color: var(--fg);
-  border-bottom: 1px solid var(--border);
-}
-.chat-spawn-note.is-error { background: transparent; color: var(--danger); }
-.chat-spawn-note__body { flex: 1 1 auto; min-width: 0; }
-.chat-spawn-note a { color: var(--accent); text-decoration: none; }
-.chat-spawn-note a:hover { text-decoration: underline; }
-
 /* A chat-scoped failure, wherever it lands: the slot above the composer, the
    log's own error state, or the inbox panel. Layout only — the thing inside is
    the kit's `Notice` (a line, the default) or `StateBlock variant="error"` (a
@@ -2255,6 +2243,71 @@ p.chat-work__note { margin: 0; }
 .chat-work__mode-name { font-size: var(--fs-sm); }
 .chat-work__mode-gloss { color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; }
 .chat-work__props { margin-top: var(--space-2); }
+
+/* ---- The ticket card in an answer --------------------------------------
+   One ticket, the work it names, and how that work is going, rendered inside
+   the assistant's reply that filed it. Deliberately sharing the panel row's
+   content classes (.chat-work__title, .ws-ticket-key): a row in the panel and
+   this card's header are the same ticket seen twice and must not become two
+   designs of it. The geometry differs because the affordances do — a row is a
+   link, this header is a disclosure — and only the geometry differs. */
+.chat-ticket-card { display: flex; flex-direction: column; gap: var(--space-2); }
+/* Collapsed, this IS the card: one line, in the measure of the prose above it. */
+.chat-ticket-card__head {
+  width: calc(100% + var(--space-2) * 2);
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 0.15rem var(--space-2);
+  margin-inline: calc(var(--space-2) * -1);
+  background: transparent; border: none; border-radius: var(--radius-sm);
+  color: inherit; font: inherit; font-size: var(--fs-sm);
+  text-align: left; cursor: pointer;
+}
+.chat-ticket-card__head:hover { background: var(--card-hover); }
+/* Neutral at rest, both of them: a control is not content, and the glyph is a
+   constant on every one of these cards, so it labels nothing by being coloured. */
+.chat-ticket-card__glyph { flex: 0 0 auto; color: var(--muted); }
+.chat-ticket-card__caret {
+  flex: 0 0 auto; color: var(--muted);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.chat-ticket-card__caret.is-open { transform: rotate(90deg); }
+.chat-ticket-card__head:hover .chat-ticket-card__caret { color: var(--fg); }
+
+.chat-ticket-card__body {
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.chat-ticket-card__group { display: flex; flex-direction: column; gap: var(--space-1); }
+.chat-ticket-card__task {
+  margin: 0; font-size: var(--fs-sm); line-height: 1.5; white-space: pre-wrap;
+}
+.chat-ticket-card__run {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2);
+  font-size: var(--fs-sm);
+}
+.chat-ticket-card__meta { color: var(--muted); font-size: var(--fs-xs); }
+/* The one hue in the Run group, and it is LIVE: still going. It goes the moment
+   the run ends, because a clock that keeps its tone says the work has not. */
+.chat-ticket-card__elapsed {
+  color: var(--live); font-size: var(--fs-xs); font-variant-numeric: tabular-nums;
+}
+.chat-ticket-card__actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+}
+/* UNDER the card, not in it: it is a fact about the work rather than a field of
+   the ticket, and it is client-rendered from tracked state rather than being a
+   message in the log. */
+.chat-ticket-card__note {
+  margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--fs-xs);
+}
+.chat-ticket-card__answer {
+  padding: 0.15rem 0.3rem; margin-inline: -0.3rem;
+  color: inherit; background: transparent; border: none;
+  border-radius: var(--radius-sm);
+  font: inherit; font-size: var(--fs-xs); cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.chat-ticket-card__answer:hover { color: var(--you); text-decoration-color: currentColor; }
 
 /* ---- Ticket drafts dialog ---------------------------------------------
    A list of proposals, collapsed to one line each. Expanding is how you read

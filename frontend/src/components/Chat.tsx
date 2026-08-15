@@ -5,7 +5,7 @@ import { WifiOff, ArrowDown, Paperclip, Unplug } from "lucide-react";
 import { Notice } from "@workshop/ui";
 import WorkPanel from "./chat/work/WorkPanel";
 import { useChatWork } from "./chat/work/useChatWork";
-import { FiledBar, type FiledNotice } from "./chat/FiledNotice";
+import { ChatWorkProvider, type ChatWorkAccess } from "./chat/work/TicketCard";
 import ChatComposer from "./chat/ChatComposer";
 import { useAttachments, dragHasFiles, filesFromTransfer } from "./chat/useAttachments";
 import { canSendWith } from "./chat/attachments";
@@ -113,9 +113,10 @@ export default function Chat({
   // It carries the endpoint that failed and, where retrying is a real action, a
   // retry, because that is what the error state owes the operator.
   const [err, setErr] = useState<ChatProblem | null>(null);
-  // Set only when this chat files a ticket — see chat/FiledNotice for why that
-  // is the only thing allowed above the log.
-  const [notice, setNotice] = useState<FiledNotice | null>(null);
+  // NOTHING SITS ABOVE THE LOG ANY MORE. There used to be a `FiledBar` here
+  // saying "Filed in X" over the transcript, and the ticket card in the answer
+  // now says the same thing in the place the filing happened. Two of them was
+  // the duplication this pass exists to remove.
 
   // The two URL intents — `?new=1` (start blank) and `?thread=<id>` (open this
   // conversation) — are ONE-SHOT: each is something the operator just clicked,
@@ -486,12 +487,7 @@ export default function Chat({
     compact: async () => { setConfirmCompact(true); },
     clear: async () => { setConfirmClear(true); },
     setErr,
-    onSend: () => {
-      // A note describes the LAST thing the operator did. Sending makes it
-      // stale, so it goes with the error it sits beside.
-      setNotice(null);
-      followLatest();
-    },
+    onSend: () => { followLatest(); },
     // `/new` ASKS. It opens the same dialog the toolbar button does rather than
     // abandoning the conversation on a four-character keystroke.
     onNewChat: () => thread.setConfirmNew(true),
@@ -595,10 +591,17 @@ export default function Chat({
 
   // ---- Drawers, pickers, mentions ------------------------------------------
   const [drawer, setDrawer] = useState<ChatDrawer>(null);
+  // Which question the panel should open ON, when something outside it asked
+  // for one. Cleared as the panel closes, so reopening it lands on the list
+  // rather than back inside the question the operator just left.
+  const [workFocus, setWorkFocus] = useState<string | null>(null);
   // Stable, because the panel holds it in an Escape-key effect and in memoised
   // callbacks; a fresh lambda per render would re-bind both every time a
   // character is typed.
-  const setWorkOpen = useCallback((on: boolean) => setDrawer(on ? "work" : null), []);
+  const setWorkOpen = useCallback((on: boolean) => {
+    setDrawer(on ? "work" : null);
+    if (!on) setWorkFocus(null);
+  }, []);
   const [ticketsOpen, setTicketsOpen] = useState(false);
   // The context breakdown, opened from the meter. It replaced /context, which
   // dumped sixty lines of table into the transcript.
@@ -619,6 +622,7 @@ export default function Chat({
   const workProps = {
     open: drawer === "work",
     onOpenChange: setWorkOpen,
+    focusItem: workFocus,
     work,
     scope: taskScope,
     chatMode: thread.chatMode,
@@ -869,6 +873,27 @@ export default function Chat({
     [navigate, contextKey, activeId, thread.cardStates, recordCardState],
   );
 
+  // WHAT A TICKET CARD READS, and it is NOT `UiCardCtx`. The work store returns
+  // a fresh object on every render of this component, so putting it on the card
+  // context would change that context's identity on every keystroke and re-render
+  // the whole transcript through the four memo boundaries that exist to stop
+  // exactly that. Every field below is stable until the data actually moves, so
+  // a card re-renders when its ticket does and at no other time.
+  const openQuestion = useCallback((itemId: string) => {
+    // Not inside the tap. This app has lost taps to its own reflow before.
+    requestAnimationFrame(() => { setWorkFocus(itemId); setDrawer("work"); });
+  }, []);
+  const workAccess = useMemo<ChatWorkAccess>(
+    () => ({
+      ticket: work.ticket,
+      inbox: work.data.inbox,
+      cold: work.cold,
+      reload: work.reload,
+      openQuestion,
+    }),
+    [work.ticket, work.data.inbox, work.cold, work.reload, openQuestion],
+  );
+
   // Going back to a point in the conversation (ADR 0020).
   //
   // Built here rather than inside the transcript because the transcript is
@@ -943,7 +968,6 @@ export default function Chat({
       activeThreadTitle={thread.activeThreadTitle}
       ticketsOpen={ticketsOpen}
       onCloseTickets={() => setTicketsOpen(false)}
-      onFiled={setNotice}
       renameOpen={thread.renameOpen}
       renameBusy={thread.renameBusy}
       onCancelRename={() => thread.setRenameOpen(false)}
@@ -1245,7 +1269,6 @@ export default function Chat({
         </div>
       ) : (
       <>
-      {notice && <FiledBar notice={notice} onDismiss={() => setNotice(null)} />}
       <div className="chat-log-wrap">
         {/* The NARROW host: a sheet that floats over the top of the log instead
             of pushing it down. It used to sit in flow and shove the whole
@@ -1310,8 +1333,12 @@ export default function Chat({
     </div>
   );
 
+  // Every ticket card in the transcript reads the chat's one work store through
+  // here, rather than opening a poll of its own for its ticket and its run.
+  const panel = <ChatWorkProvider value={workAccess}>{panelInner}</ChatWorkProvider>;
+
   if (variant === "full") {
-    return <div className="ws-chat-full">{panelInner}</div>;
+    return <div className="ws-chat-full">{panel}</div>;
   }
-  return panelInner;
+  return panel;
 }

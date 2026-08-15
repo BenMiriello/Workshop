@@ -66,6 +66,11 @@ export type WorkPanelProps = {
   trigger?: ReactElement<Record<string, unknown>>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Open ON this inbox item rather than on the list. Set when something
+   *  outside the panel named a question: a ticket card's Answer link is the
+   *  only caller today. Null is the ordinary case, and the caller clears it as
+   *  the panel closes so reopening lands on the list again. */
+  focusItem?: string | null;
   work: ChatWork;
   /** The chat's task scope, or null for a chat with no queue. */
   scope: string | null;
@@ -165,9 +170,10 @@ function useNow(active: boolean): number {
 
 function WorkBody({
   work, scope, chatMode, onChooseChatMode, onFileTicket, onNavigate, onOpenChange,
+  focusItem,
 }: WorkPanelProps) {
   const [view, setView] = useState<"list" | "settings">("list");
-  const [questionId, setQuestionId] = useState<string | null>(null);
+  const [questionId, setQuestionId] = useState<string | null>(focusItem ?? null);
   // Null until the operator picks one, so the default can follow the first
   // payload in rather than being computed against the zeroes that are on screen
   // before it lands.
@@ -180,6 +186,15 @@ function WorkBody({
     if (cold || chip !== null) return;
     setChip(defaultChip(counts));
   }, [cold, chip, counts]);
+
+  // Named from outside while the panel was ALREADY open. The initial state
+  // above covers the ordinary case (the body mounts with the panel), and this
+  // covers a card's Answer link pressed with the panel sitting on its list.
+  useEffect(() => {
+    if (!focusItem) return;
+    setQuestionId(focusItem);
+    setView("list");
+  }, [focusItem]);
 
   const close = useCallback(() => onOpenChange(false), [onOpenChange]);
   const openSettings = useCallback(() => { setQuestionId(null); setView("settings"); }, []);
