@@ -316,6 +316,13 @@ function WorkBody({
         ))}
       </div>
 
+      {/* ONLY THE LIST SCROLLS. The head, the chips and the footer are the
+          panel's chrome and stay put, because the footer carries the policy and
+          the way to change it: with the whole panel scrolling, a scope with more
+          than a handful of tickets pushed both below the fold, where nothing
+          announces them and nobody scrolls a popover to look. Seen on the real
+          screen at 21 tickets. */}
+      <div className="chat-workpanel__scroll">
       {problem}
 
       {cold && loading ? (
@@ -358,6 +365,7 @@ function WorkBody({
         {list.overflow > 0 ? `${board.label} (${list.overflow} more)` : board.label}
         <ChevronRight size={13} strokeWidth={1.8} aria-hidden />
       </Link>
+      </div>
 
       {/* The policy in words, and the second way into the settings. Two ways in
           is deliberate: the gear is where you look for settings, and this is

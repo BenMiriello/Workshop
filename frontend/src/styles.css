@@ -2061,7 +2061,24 @@ button.chat-attach {
    one removed on 2026-08-14 because a collapsed turn paid 4px for a panel that
    was not there and the copy and branch buttons sat 4px low. The operator
    reported it. Do not name anything in this block `.chat-work*`. */
-.chat-workpanel { display: flex; flex-direction: column; gap: var(--space-1); }
+.chat-workpanel { display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; }
+/* THE CHROME STAYS, THE LIST SCROLLS. The panel used to be one scrolling box,
+   so on a scope with real work in it (21 tickets on the day this shipped) the
+   footer that carries the policy and its Change link sat below the fold of a
+   popover. Nothing announces a scrollbar in a 360px surface, so that footer was
+   effectively unreachable. The head, the chips and the footer are chrome; only
+   the rows between them move.
+
+   The popover's own cap is what bounds this, so it is read from the surface
+   rather than repeated here: repeating it is how the two drift and the footer
+   ends up clipped instead of pinned. */
+.ws-popover__surface:has(> .chat-workpanel) { overflow: hidden; display: flex; }
+.ws-popover__surface:has(> .chat-workpanel) > .chat-workpanel { flex: 1 1 auto; }
+.chat-workpanel__scroll {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; gap: var(--space-1);
+  overflow-y: auto; overscroll-behavior: contain;
+}
 .chat-workpanel--sheet {
   /* Floats above the log but BELOW the toolbar's dropdowns. It used to sit at
      --z-dropdown, the same layer the scope/tickets/actions menus use, so with
@@ -2071,7 +2088,9 @@ button.chat-attach {
      top of it. */
   position: absolute; top: 0; left: 0; right: 0; z-index: var(--z-sticky);
   max-height: 40vh;
-  overflow-y: auto; overscroll-behavior: contain;
+  /* Bounded here, scrolled by __scroll inside, so the footer stays pinned on a
+     phone for the same reason it does on a desktop. */
+  overflow: hidden;
   padding: var(--space-2) var(--space-3);
   background: var(--bg-inset);
   box-shadow: var(--shadow-md);
