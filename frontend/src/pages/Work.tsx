@@ -27,7 +27,7 @@ import {
 import { type Task, cleanTitle, scopeLabel, ticketHref } from "../lib/tasks";
 import {
   PAGE_SIZE, apiQuery, clampPage, defaultFilters, isNarrowed, pageCount,
-  parseFilters, parsePage, parseSort, parseView, writeParams,
+  pageItems, parseFilters, parsePage, parseSort, parseView, writeParams,
   type TicketFilters, type TicketSort, type TicketView,
 } from "../lib/ticketFilters";
 import { orderScopes } from "../lib/devMode";
@@ -288,34 +288,49 @@ export default function Work() {
 
       <div className="ws-tickets__body">{body}</div>
 
-      {/* Real pages, not a growing limit. Always present once there are rows,
-          because "where am I in this set" is a question a list has to answer
-          whether or not there is a next page. */}
+      {/* Numbered pages. The count reads first because "how much is there" is
+          the question; the numbers are how you move. Which numbers appear is
+          `pageItems`, a tested rule, so a 2-page pager and a 400-page pager are
+          the same control rather than two cases. */}
       {!(wide && view === "board") && rows.length > 0 && (
         <div className="ws-tickets__end">
-          <span>
-            {total === 1 ? "1 ticket" : `${total} tickets`}
-            {pages > 1 && <> · page {page} of {pages}</>}
-          </span>
+          <span>{total === 1 ? "1 ticket" : `${total} tickets`}</span>
           {pages > 1 && (
-            <span className="ws-pager">
-              <Button
-                size="sm"
+            <nav className="ws-pager" aria-label="Pages">
+              <button
+                type="button"
+                className="ws-pager__step"
                 disabled={page <= 1}
-                loading={loading && page > 1}
+                aria-label="Previous page"
                 onClick={() => goToPage(page - 1)}
               >
-                <ChevronLeft aria-hidden /> Previous
-              </Button>
-              <Button
-                size="sm"
+                <ChevronLeft aria-hidden />
+              </button>
+              {pageItems(page, pages).map((it, i) =>
+                it === "gap" ? (
+                  <span key={`gap${i}`} className="ws-pager__gap" aria-hidden>...</span>
+                ) : (
+                  <button
+                    key={it}
+                    type="button"
+                    className="ws-pager__page"
+                    aria-current={it === page ? "page" : undefined}
+                    aria-label={`Page ${it}`}
+                    onClick={() => goToPage(it)}
+                  >
+                    {it}
+                  </button>
+                ))}
+              <button
+                type="button"
+                className="ws-pager__step"
                 disabled={page >= pages}
-                loading={loading && page < pages}
+                aria-label="Next page"
                 onClick={() => goToPage(page + 1)}
               >
-                Next <ChevronRight aria-hidden />
-              </Button>
-            </span>
+                <ChevronRight aria-hidden />
+              </button>
+            </nav>
           )}
         </div>
       )}

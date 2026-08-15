@@ -1691,11 +1691,20 @@ span.ws-filterchip__open { cursor: default; }
   display: flex; flex-direction: column; align-items: center; text-align: center;
   gap: var(--space-2); padding: var(--space-7) var(--space-4); color: var(--muted);
   border: 1px dashed var(--border); border-radius: var(--radius-lg);
+  /* A flex child defaults to min-width: auto, which refuses to shrink below
+     its content's width. A StateBlock dropped into a flex/grid track (a card,
+     a narrow column) must still be able to shrink to the track, not force it
+     wider and scroll the page sideways. */
+  min-width: 0;
 }
 .ws-state__icon { color: var(--faint); }
 .ws-state__icon svg { width: 28px; height: 28px; stroke-width: 1.5; }
 .ws-state__title { color: var(--fg); font-weight: var(--fw-medium); font-size: var(--fs-md); }
-.ws-state__hint { font-size: var(--fs-sm); max-width: 38ch; }
+/* overflow-wrap: anywhere so a long unbroken token in the hint (an id, a raw
+   response body a caller forgot to cap) wraps inside max-width instead of
+   forcing the region wider than its column and scrolling the page sideways
+   on a phone. */
+.ws-state__hint { font-size: var(--fs-sm); max-width: 38ch; overflow-wrap: anywhere; }
 .ws-state__hint code { font-family: var(--font-mono); font-size: 0.92em; background: var(--bg-inset); padding: 0.1em 0.35em; border-radius: var(--radius-sm); }
 .ws-state--error { border-style: solid; border-color: var(--danger-soft); }
 .ws-state--error .ws-state__icon { color: var(--danger); }
@@ -3094,8 +3103,43 @@ span.ws-filterchip__open { cursor: default; }
    tighter under the keys than the sheet's section gap would put it. */
 .ws-filtersheet__dir { margin-top: var(--space-2); }
 
-/* Page controls at the end of a list. Pushed right so the count reads first:
-   where you are is the answer, moving is the action. */
-.ws-pager { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
+/* Numbered page controls at the end of a list. Pushed right so the count reads
+   first: how much there is is the answer, the numbers are how you move.
+   The current page is the ONE thing here that takes a hue, because it is the
+   only thing on the control that is a state rather than a destination. */
+.ws-pager {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+}
+.ws-pager__page, .ws-pager__step {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: var(--control-h-sm); height: var(--control-h-sm);
+  padding: 0 var(--space-2);
+  appearance: none; background: none; border: 0;
+  border-radius: var(--radius-sm);
+  font: inherit; font-size: var(--fs-sm); font-variant-numeric: tabular-nums;
+  color: var(--muted); cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
+}
+.ws-pager__page:hover, .ws-pager__step:hover:not([disabled]) {
+  color: var(--fg); background-color: var(--bg-inset);
+}
+.ws-pager__page[aria-current="page"] {
+  color: var(--accent); background-color: var(--accent-soft);
+  font-weight: var(--fw-semi);
+}
+.ws-pager__step svg { width: 15px; height: 15px; }
+.ws-pager__step[disabled] { opacity: 0.35; cursor: default; }
+.ws-pager__gap {
+  min-width: var(--control-h-sm); text-align: center;
+  color: var(--faint); font-size: var(--fs-sm);
+}
+/* A phone gets the numbers on their own line rather than crushed beside the
+   count. */
+@media (max-width: 560px) {
+  .ws-tickets__end { flex-wrap: wrap; }
+  .ws-pager { margin-left: 0; width: 100%; }
+}
 .ws-tt__c-assignee { width: 130px; }
 .ws-tt__ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

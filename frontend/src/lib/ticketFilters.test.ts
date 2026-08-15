@@ -3,7 +3,7 @@ import {
   ACTIVE_STATUSES, BOARD_STATUSES, DEFAULT_SORT, DEFAULT_VIEW, PAGE_SIZE,
   apiQuery, boardLanes, chipsFor, clampPage, clearField, defaultFilters,
   defaultStatuses, isDefaultStatus, isNarrowed, laneQuery, listGroups, pageCount,
-  parseFilters, parsePage, parseSort, parseView, toggleValue, writeParams,
+  pageItems, parseFilters, parsePage, parseSort, parseView, toggleValue, writeParams,
 } from "./ticketFilters";
 import type { TaskStatus } from "./tasks";
 
@@ -294,5 +294,48 @@ describe("the board asks per lane", () => {
       expect(laneQuery(defaultFilters("board"), DEFAULT_SORT, status, 25).get("status"))
         .toBe(status);
     }
+  });
+});
+
+// One control at every size, so the windowing is a rule and not a set of cases.
+describe("the numbered pager", () => {
+  const nums = (items: ReturnType<typeof pageItems>) => items.filter((i) => i !== "gap");
+
+  it("draws every page while they fit", () => {
+    expect(pageItems(1, 1)).toEqual([1]);
+    expect(pageItems(2, 3)).toEqual([1, 2, 3]);
+    expect(pageItems(3, 5)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("keeps both ends and a window around here", () => {
+    const items = pageItems(8, 42);
+    expect(items[0]).toBe(1);
+    expect(items[items.length - 1]).toBe(42);
+    for (const p of [6, 7, 8, 9, 10]) expect(items).toContain(p);
+  });
+
+  it("elides a RANGE, never a single page", () => {
+    // 8 pages at page 4: the window reaches 6, and the only thing between 6 and
+    // the last page is 7. A gap hiding one page costs the same width as the
+    // page and removes a destination, so 7 is drawn instead.
+    expect(pageItems(4, 8)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // 20 pages at page 3: the hole is 6..19, which is a real range.
+    expect(pageItems(3, 20)).toEqual([1, 2, 3, 4, 5, "gap", 20]);
+    expect(pageItems(1, 5)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("never repeats a page and stays in order", () => {
+    for (const [here, pages] of [[1, 40], [20, 40], [40, 40], [2, 9], [7, 7]]) {
+      const ns = nums(pageItems(here, pages)) as number[];
+      expect(new Set(ns).size).toBe(ns.length);
+      expect([...ns].sort((a, b) => a - b)).toEqual(ns);
+      expect(ns[0]).toBe(1);
+      expect(ns[ns.length - 1]).toBe(pages);
+    }
+  });
+
+  it("clamps a current page outside the range rather than drawing it", () => {
+    expect(pageItems(99, 3)).toEqual([1, 2, 3]);
+    expect(pageItems(0, 3)).toEqual([1, 2, 3]);
   });
 });

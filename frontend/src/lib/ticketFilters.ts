@@ -355,3 +355,36 @@ export function listGroups<T extends { status?: string }>(
 ): { status: string; items: T[] }[] {
   return boardLanes(tasks, lanes).filter((g) => g.items.length > 0);
 }
+
+// ---- the numbered pager ------------------------------------------------------
+// Which page numbers to draw. A pager for 2 pages and a pager for 400 are the
+// same control, so the windowing is a rule rather than a special case per size:
+//
+//   1 2 [3] 4 5            (small: every page)
+//   1 … 6 7 [8] 9 10 … 42  (large: the ends, and a window around here)
+//
+// `gap` is a skipped RANGE, never a skipped single page: replacing one number
+// with an ellipsis costs the same width and takes away a destination, so a gap
+// is only drawn where it hides two or more.
+export type PageItem = number | "gap";
+
+export function pageItems(current: number, pages: number, span = 2): PageItem[] {
+  if (pages <= 1) return [1];
+  const here = Math.min(Math.max(1, current), pages);
+  const wanted = new Set<number>([1, pages]);
+  for (let p = here - span; p <= here + span; p++) {
+    if (p >= 1 && p <= pages) wanted.add(p);
+  }
+  const sorted = [...wanted].sort((a, b) => a - b);
+
+  const out: PageItem[] = [];
+  let prev = 0;
+  for (const p of sorted) {
+    // A hole of exactly one page is filled rather than elided.
+    if (prev && p - prev === 2) out.push(prev + 1);
+    else if (prev && p - prev > 2) out.push("gap");
+    out.push(p);
+    prev = p;
+  }
+  return out;
+}
