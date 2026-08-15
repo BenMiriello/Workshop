@@ -3,7 +3,8 @@ import { usePoll } from "../lib/usePoll";
 import { useNavigate } from "react-router-dom";
 import { WifiOff, ArrowDown, Paperclip, Unplug } from "lucide-react";
 import { Notice } from "@workshop/ui";
-import WorkDrawer from "./chat/WorkDrawer";
+import WorkPanel from "./chat/work/WorkPanel";
+import { useChatWork } from "./chat/work/useChatWork";
 import { FiledBar, type FiledNotice } from "./chat/FiledNotice";
 import ChatComposer from "./chat/ChatComposer";
 import { useAttachments, dragHasFiles, filesFromTransfer } from "./chat/useAttachments";
@@ -191,7 +192,13 @@ export default function Chat({
   const runActiveRef = useRef(runActive);
   runActiveRef.current = runActive;
 
-  const [taskRefetchKey, setTaskRefetchKey] = useState(0);
+  // THE CHAT'S WORK, READ ONCE. The toolbar badge, the Work panel and (from
+  // package D) every ticket card in the transcript read this one copy, which is
+  // what stops the three of them describing one ticket three ways. It lives
+  // here rather than in the panel because the badge has to be live while the
+  // panel is closed, and a panel that stays mounted purely to hold a poll is a
+  // poll wearing a component.
+  const work = useChatWork(activeId);
 
   // Changing the scope MOVES this conversation. It does not walk away from it.
   //
@@ -263,7 +270,11 @@ export default function Chat({
     onTurnEnd: () => {
       void thread.refreshThreads();
       thread.scheduleAutoNameRefetch(wasFirstExchange(stateRef.current));
-      setTaskRefetchKey((k) => k + 1);
+      // A turn that filed a ticket must show it without waiting out the poll.
+      // `onTurnEnd` is held in a ref that is rewritten every render, so this
+      // reads the CURRENT thread's reader rather than the one the stream opened
+      // with.
+      work.reload();
       // The finished turn applied a provider action (e.g. an app persona editing
       // a budget plan); it rides in the committed message's meta.notes.
       const msgs = committedMessages(stateRef.current);
@@ -584,14 +595,10 @@ export default function Chat({
 
   // ---- Drawers, pickers, mentions ------------------------------------------
   const [drawer, setDrawer] = useState<ChatDrawer>(null);
-  const workOpen = drawer === "work";
-  // Inbox items waiting on the operator in this chat. The toolbar badge, and
-  // ONLY that: the drawer's ticket zone is ambient, so it does not count here.
-  const [needsYouCount, setNeedsYouCount] = useState(0);
-  // Stable, because the drawer holds it in an Escape-key effect and in a
-  // memoised callback; a fresh lambda per render would re-bind both every time
-  // a character is typed.
-  const closeDrawer = useCallback(() => setDrawer(null), []);
+  // Stable, because the panel holds it in an Escape-key effect and in memoised
+  // callbacks; a fresh lambda per render would re-bind both every time a
+  // character is typed.
+  const setWorkOpen = useCallback((on: boolean) => setDrawer(on ? "work" : null), []);
   const [ticketsOpen, setTicketsOpen] = useState(false);
   // The context breakdown, opened from the meter. It replaced /context, which
   // dumped sixty lines of table into the transcript.
@@ -604,6 +611,23 @@ export default function Chat({
   const [mentionSel, setMentionSel] = useState(0);
   const slug = buildSlug(contextKey);
   const taskScope = taskScopeFor(contextKey);
+
+  // ONE PANEL, TWO MOUNT POINTS, one set of props. The toolbar hosts it as a
+  // popover anchored to the Tickets button on a wide screen; the log wrap hosts
+  // it as the top sheet on a narrow one. WorkPanel decides which of the two
+  // renders (`useIsWide`), so exactly one ever does.
+  const workProps = {
+    open: drawer === "work",
+    onOpenChange: setWorkOpen,
+    work,
+    scope: taskScope,
+    chatMode: thread.chatMode,
+    onChooseChatMode: thread.chooseChatMode,
+    // Filing this chat is an action on an existing conversation, so it only
+    // exists once one does.
+    onFileTicket: activeId ? () => setTicketsOpen(true) : undefined,
+    onNavigate: navigate,
+  };
 
   // P3: agents this chat may @-mention. Server-resolved (the rule is opt-in +
   // scope reach, which is policy, not display), refreshed when the thread moves.
@@ -891,15 +915,12 @@ export default function Chat({
       activeProvider={scopeState.activeProvider}
       onChooseProvider={chooseScope}
       runActive={runActive}
-      chatMode={thread.chatMode}
-      onChooseChatMode={thread.chooseChatMode}
       drawer={drawer}
-      onSetDrawer={setDrawer}
-      needsYouCount={needsYouCount}
+      needsYouCount={work.data.counts.needs_you}
       taskScope={taskScope}
+      workAnchor={(trigger) => <WorkPanel host="anchor" trigger={trigger} {...workProps} />}
       onBack={back}
       onOpenWorkbench={() => navigate(`/agents/${slug}/chat`)}
-      onFileTicket={() => setTicketsOpen(true)}
       onEditTitle={() => thread.setRenameOpen(true)}
       // Route rather than select in place. The chat you picked can be bound to
       // any scope, and the loader already reads `?thread=` as a link to fetch by
@@ -1227,22 +1248,17 @@ export default function Chat({
       <>
       {notice && <FiledBar notice={notice} onDismiss={() => setNotice(null)} />}
       <div className="chat-log-wrap">
-        {/* Floats over the top of the log instead of pushing it down — it used
-            to sit in flow and shove the whole transcript downward every time an
-            agent raised something, which shifted the log out from under wherever
-            the operator was reading right as a new item arrived.
+        {/* The NARROW host: a sheet that floats over the top of the log instead
+            of pushing it down. It used to sit in flow and shove the whole
+            transcript downward every time an agent raised something, which
+            moved the log out from under wherever the operator was reading right
+            as a new item arrived. This wrap is its positioned ancestor, which is
+            why it is mounted here and not beside the toolbar.
 
-            Always mounted, even closed: it owns the inbox poll that feeds the
-            toolbar badge. The ticket list inside it is read only while open. */}
-        <WorkDrawer
-          chatId={activeId}
-          scope={taskScope}
-          open={workOpen}
-          refetchKey={taskRefetchKey}
-          onCountChange={setNeedsYouCount}
-          onClose={closeDrawer}
-          onNavigate={navigate}
-        />
+            It unmounts when closed, which the drawer it replaces could not do:
+            the drawer owned the inbox poll that fed the badge, and that poll is
+            `useChatWork` above now. */}
+        <WorkPanel host="sheet" {...workProps} />
         {logView}
         {jumpToLatest}
       </div>

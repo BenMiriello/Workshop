@@ -2040,17 +2040,33 @@ button.chat-attach {
 .chat-tasks__add .ws-input { font-size: 1rem; }
 
 
-/* ---- Inbox panel: agents needing the operator -------------------------
-   A panel behind a toolbar toggle, floating OVER the top of the log rather
-   than pushing it down — .chat-log-wrap (see .chat-log-wrap) is its
-   positioned ancestor. Every dimension is still bounded: at most 4 rows
-   render, the panel caps at a fraction of the viewport and scrolls inside
-   itself, and a collapsed row is exactly one line. The first version was an
-   unbounded inline stack of full-size cards, which on a phone pushed the log
-   and composer off-screen; this version can't push anything, because it no
-   longer takes flow space at all. The shadow reads as "floating above",
-   which is genuinely what it's doing now. */
-.chat-inbox {
+/* ---- Work panel: what is waiting, running, or was filed from this chat ----
+   ONE PANEL, TWO HOSTS (components/chat/work/WorkPanel). Wide: the kit's
+   Popover, anchored to the toolbar's Tickets button, where .ws-popover__surface
+   supplies the card, the padding and the height cap and nothing below does.
+   Narrow: the sheet, which is the geometry the inbox drawer already had and
+   which is kept deliberately.
+
+   TOP-ANCHORED, FLOATING OVER THE LOG rather than pushing it down —
+   .chat-log-wrap (see .chat-log-wrap) is its positioned ancestor, which is why
+   the sheet is mounted there and not beside the toolbar. It used to sit in flow
+   and shove the whole transcript downward every time an agent raised something,
+   which moved the log out from under wherever the operator was reading right as
+   a new item arrived.
+
+   AND IT MUST NOT BECOME A BOTTOM SHEET. It holds a text field, and an
+   on-screen keyboard shrinks the viewport from the bottom, so a bottom-anchored
+   panel with a field in it spends its life being shoved by the keyboard it
+   raised.
+
+   Every dimension is still bounded: at most 8 rows render (workRows.MAX_ROWS),
+   the sheet caps at a fraction of the viewport and scrolls inside itself, and a
+   row is one line plus one line of meta. The first version was an unbounded
+   inline stack of full-size cards, which on a phone pushed the log and the
+   composer off-screen; this cannot push anything, because it takes no flow
+   space at all. The shadow reads as "floating above", which is what it does. */
+.chat-work { display: flex; flex-direction: column; gap: var(--space-1); }
+.chat-work--sheet {
   /* Floats above the log but BELOW the toolbar's dropdowns. It used to sit at
      --z-dropdown, the same layer the scope/tickets/actions menus use, so with
      equal z-index the later sibling won and this panel covered any menu opened
@@ -2058,7 +2074,6 @@ button.chat-attach {
      --z-sticky keeps it over the transcript (base) and lets those menus open on
      top of it. */
   position: absolute; top: 0; left: 0; right: 0; z-index: var(--z-sticky);
-  display: flex; flex-direction: column;
   max-height: 40vh;
   overflow-y: auto; overscroll-behavior: contain;
   padding: var(--space-2) var(--space-3);
@@ -2067,83 +2082,179 @@ button.chat-attach {
 }
 @media (max-width: 640px) {
   /* Tighter on a phone: the log is the point of the screen, not the panel. */
-  .chat-inbox { max-height: 34vh; }
+  .chat-work--sheet { max-height: 34vh; }
 }
-.chat-inbox__empty {
-  color: var(--muted); font-size: var(--fs-xs);
-  padding: var(--space-2) var(--space-1);
+/* Between the log and the sheet. A press anywhere on the transcript dismisses,
+   which is what the wide host gets for free from the popover's own
+   outside-pointerdown rule. */
+.chat-work__scrim {
+  position: absolute; inset: 0; z-index: calc(var(--z-sticky) - 1);
+  background: var(--scrim);
 }
-.chat-inbox__list { list-style: none; margin: 0; padding: 0; }
-.chat-inbox__item { border-radius: var(--radius-sm); }
-.chat-inbox__item + .chat-inbox__item { margin-top: 1px; }
-/* Only the two kinds that WANT something are marked. A notification is the
-   quiet default; marking everything would mark nothing. */
-.chat-inbox__item--question .chat-inbox__kind { color: var(--muted); }
-.chat-inbox__item--review .chat-inbox__kind { color: var(--muted); }
-.chat-inbox__item--notify .chat-inbox__kind { color: var(--muted); }
 
-.chat-inbox__row { display: flex; align-items: center; gap: var(--space-1); }
-.chat-inbox__row:hover { background: var(--card-hover); border-radius: var(--radius-sm); }
-/* The whole row is the expander. One line, never two: min-width:0 on the flex
-   child plus ellipsis on the title is what stops a long title from wrapping and
-   silently doubling every row's height. */
-.chat-inbox__toggle {
-  flex: 1 1 auto; min-width: 0;
+.chat-work__head {
   display: flex; align-items: center; gap: var(--space-2);
-  padding: 0.4rem 0.45rem;
-  background: transparent; border: none; border-radius: var(--radius-sm);
-  color: var(--fg); font: inherit; font-size: var(--fs-sm);
-  text-align: left; cursor: pointer;
+  min-height: var(--control-h);
 }
-.chat-inbox__kind { flex: 0 0 auto; }
-.chat-inbox__agent {
-  flex: 0 0 auto; max-width: 8rem;
-  color: var(--muted); font-size: var(--fs-xs);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.chat-work__heading { font-size: var(--fs-sm); font-weight: var(--fw-semi); }
+.chat-work__spacer { flex: 1 1 auto; }
+.chat-work__count { margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
+/* Back is chrome: muted at rest, --fg on hover, and it NAMES its destination
+   rather than being a bare chevron. */
+.chat-work__back {
+  display: inline-flex; align-items: center; gap: 0.2rem;
+  padding: 0.2rem 0.3rem; margin-left: -0.3rem;
+  color: var(--muted); background: transparent; border: none;
+  border-radius: var(--radius-sm);
+  font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
-.chat-inbox__title {
-  flex: 1 1 auto; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.chat-inbox__caret {
-  flex: 0 0 auto; color: var(--muted);
-  /* --motion-fast is not a token in this system and never was, so this fell
-     through to the literal 120ms and, more to the point, was never zeroed by
-     the reduced-motion block that rewrites --dur-*. */
-  transition: transform var(--dur-fast) var(--ease-in-out);
-}
-.chat-inbox__caret.is-open { transform: rotate(90deg); }
-.chat-inbox__dismiss {
+.chat-work__back:hover { color: var(--fg); background: var(--card-hover); }
+.chat-work__iconbtn {
   flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   width: 1.75rem; height: 1.75rem; padding: 0;
   color: var(--muted); background: transparent; border: none;
   border-radius: var(--radius-sm); cursor: pointer;
 }
-.chat-inbox__dismiss:hover { color: var(--fg); background: var(--card-hover); }
+.chat-work__iconbtn:hover { color: var(--fg); background: var(--card-hover); }
 
-.chat-inbox__detail { padding: 0 0.45rem 0.5rem 2rem; }
-.chat-inbox__body {
-  margin: 0 0 var(--space-2);
-  color: var(--muted); font-size: var(--fs-sm); line-height: 1.45;
-  /* Clamped: a long body must not turn the panel into a document. Expanding a
-     row is a preview, not the full record. */
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+/* FilterChip's DEFAULT is the "on" look. Everywhere else a chip exists only
+   while its filter is applied, so it is always accent-soft; here all four are
+   always present and exactly one is chosen, so the rest go neutral and only the
+   selected one keeps the MINE tone. A zero chip still renders: its absence
+   would slide the other three sideways the moment work arrived. */
+.chat-work__chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.chat-work__chip { background-color: var(--bg-inset); height: var(--control-h-sm); }
+.chat-work__chip .ws-filterchip__open {
+  color: var(--muted); padding-inline: var(--space-2);
+}
+.chat-work__chip:hover .ws-filterchip__open { color: var(--fg); }
+.chat-work__chip.is-on { background-color: var(--accent-soft); }
+.chat-work__chip.is-on .ws-filterchip__open,
+.chat-work__chip.is-on .ws-filterchip__key { color: var(--accent); }
+
+.chat-work__group { display: flex; flex-direction: column; }
+.chat-work__list { list-style: none; margin: 0; padding: 0; }
+.chat-work__item { border-radius: var(--radius-sm); }
+.chat-work__item + .chat-work__item { margin-top: 1px; }
+/* One row, two lines: the fact, then its meta. A whole row that goes somewhere
+   is a LINK (middle-click, new tab, a tab stop), and hierarchy comes from the
+   hover background rather than a border or an underline, exactly as
+   .ws-ticket-link does it. min-width:0 plus ellipsis on the title is what stops
+   a long one wrapping and silently doubling every row's height. */
+.chat-work__row {
+  /* Bleeds into the panel's own padding so the hover surface reaches the edge,
+     and the width is stated rather than left to `auto`: a <button> is
+     shrink-to-fit in the UA sheet and a needs-you row IS a button. Border-box
+     comes from the .ws-root reset. */
+  width: calc(100% + var(--space-2) * 2);
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: 0.35rem var(--space-2);
+  margin-inline: calc(var(--space-2) * -1);
+  background: transparent; border: none; border-radius: var(--radius-sm);
+  color: inherit; font: inherit; font-size: var(--fs-sm);
+  text-align: left; text-decoration: none; cursor: pointer;
+}
+.chat-work__row:hover { background: var(--card-hover); }
+.chat-work__row > .ws-dot { flex: 0 0 auto; margin-top: 0.3rem; }
+.chat-work__icon, .chat-work__caret { flex: 0 0 auto; margin-top: 0.15rem; color: var(--muted); }
+.chat-work__rowbody { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.chat-work__line { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.chat-work__title { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); }
+.chat-work__agent {
+  flex: 0 0 auto; max-width: 8rem;
+  color: var(--muted); font-size: var(--fs-xs);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* THE STATE WORD IN PLAIN TEXT. A row's status dot is not enough on its own:
+   "is this blocked or just queued" is what a ticket list is read for, and a
+   colour answers that only for someone who has already learned the five hues. */
+.chat-work__meta {
+  min-width: 0; color: var(--muted); font-size: var(--fs-xs);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The one hue on a row, and it is LIVE: still going. It is absent the moment
+   the run ends, because a clock that keeps its tone says the work has not. */
+.chat-work__elapsed {
+  margin-left: var(--space-2);
+  color: var(--live); font-variant-numeric: tabular-nums;
+}
+
+.chat-work__loading {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+/* Prose, not a StateBlock. The sentence says what puts something here, which is
+   the whole job of an empty state; a dashed bordered region around one sentence
+   inside a 360px panel is the "huge and blocky" shape this app spent a pass
+   removing. Same reasoning keeps a failure here to a Notice line. */
+.chat-work__empty {
+  margin: 0; color: var(--muted); font-size: var(--fs-xs);
+  padding: var(--space-2) var(--space-1);
+}
+.chat-work__subject { margin: 0; font-size: var(--fs-sm); }
+.chat-work__body {
+  margin: 0; color: var(--muted); font-size: var(--fs-sm); line-height: 1.45;
+  /* Clamped: a long question must not turn the panel into a document. */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6;
   overflow: hidden;
 }
-.chat-inbox__actions {
+.chat-work__actions {
   display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
 }
-.chat-inbox__actions .ws-input { flex: 1 1 9rem; min-width: 0; }
-.chat-inbox__more {
+.chat-work__actions .ws-input { flex: 1 1 9rem; min-width: 0; }
+.chat-work__actions--foot { margin-top: var(--space-1); }
+.chat-work__note { color: var(--muted); font-size: var(--fs-xs); }
+p.chat-work__note { margin: 0; }
+.chat-work__more {
   display: inline-flex; align-items: center; gap: 0.2rem;
   align-self: flex-start;
   margin-top: var(--space-1); padding: 0.3rem 0.45rem;
+  margin-inline-start: -0.45rem;
+  color: var(--muted); background: transparent; border: none;
+  border-radius: var(--radius-sm);
+  font: inherit; font-size: var(--fs-xs); text-decoration: none; cursor: pointer;
+}
+.chat-work__more:hover { color: var(--fg); background: var(--card-hover); }
+.chat-work__foot {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+/* A text button, so it is neutral at rest and --fg on hover: a control is not
+   content. The Link beside it is a real link and takes the link treatment
+   instead, underlined at rest and MINE on hover. */
+.chat-work__change {
+  padding: 0.2rem 0.3rem; margin-inline: -0.3rem;
   color: var(--muted); background: transparent; border: none;
   border-radius: var(--radius-sm);
   font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
-.chat-inbox__more:hover { color: var(--fg); background: var(--card-hover); }
+.chat-work__change:hover { color: var(--fg); background: var(--card-hover); }
+.chat-work__link-out {
+  color: inherit; font-size: var(--fs-xs);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.chat-work__link-out:hover { color: var(--you); }
+
+.chat-work__modes { display: flex; flex-direction: column; }
+.chat-work__mode {
+  width: calc(100% + var(--space-2) * 2);
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-2); margin-inline: calc(var(--space-2) * -1);
+  background: transparent; border: none; border-radius: var(--radius-sm);
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.chat-work__mode:hover { background: var(--card-hover); }
+.chat-work__mode[aria-pressed="true"] { background: var(--accent-soft); }
+.chat-work__mode-mark {
+  flex: 0 0 auto; width: 14px; height: 14px; margin-top: 0.15rem;
+  color: var(--accent);
+}
+.chat-work__mode-body { display: flex; flex-direction: column; min-width: 0; }
+.chat-work__mode-name { font-size: var(--fs-sm); }
+.chat-work__mode-gloss { color: var(--muted); font-size: var(--fs-xs); line-height: 1.4; }
+.chat-work__props { margin-top: var(--space-2); }
 
 /* ---- Ticket drafts dialog ---------------------------------------------
    A list of proposals, collapsed to one line each. Expanding is how you read

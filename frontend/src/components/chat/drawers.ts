@@ -1,7 +1,7 @@
-// ONE auxiliary drawer at a time, selected from the toolbar.
+// ONE auxiliary panel at a time, selected from the toolbar.
 //
-// There is exactly one now: the work drawer (WorkDrawer), reached from the
-// toolbar's Tickets button. It got here in two steps.
+// There is exactly one now: the Work panel (chat/work/WorkPanel), reached from
+// the toolbar's Tickets button. It got here in three steps.
 //
 // First the slot became exclusive. The inbox and the task list used to be
 // independent booleans, so both could be open at once, stacking 40vh of inbox
@@ -15,7 +15,13 @@
 // remains a rule is that the top of the chat cannot grow without limit, which
 // is why this stays a single selection rather than becoming a set.
 //
-// The drawer stays MOUNTED while unselected, so it keeps polling the inbox and
-// reporting its count and the toolbar badge stays live without the operator
-// opening anything to find out whether it should.
+// Then the zones became four filter chips over ONE list, and the panel took the
+// chat's ticket policy with it (2026-08-15). This type is what is left of the
+// arrangement: a single nullable selection, held by Chat, read by the toolbar
+// for the button's tone and by the panel for whether it renders.
+//
+// IT NO LONGER STAYS MOUNTED WHILE CLOSED. It used to, because it owned the
+// inbox poll that kept the toolbar badge live. That poll is `useChatWork` in
+// Chat now, read by the badge, the panel and every ticket card from one copy, so
+// the panel is free to be nothing at all when it is shut.
 export type ChatDrawer = "work" | null;

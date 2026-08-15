@@ -1,16 +1,15 @@
 import {
-  Archive, ChevronLeft, ListPlus, Maximize2, MessagesSquare,
+  Archive, ChevronLeft, Maximize2, MessagesSquare,
   MoreVertical, PanelsTopLeft, Pencil, Plus, Ticket,
 } from "lucide-react";
-import type { ReactNode } from "react";
-import { Menu, MenuItem, MenuLabel, MenuSeparator, Toggle } from "@workshop/ui";
+import type { ReactElement, ReactNode } from "react";
+import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@workshop/ui";
 import type { Provider, ThreadSummary } from "../../lib/chat";
 import {
   SCOPE_GROUPS, scopeKind, scopeLabel, scopeName,
   type ChatMode, type ChatVariant,
 } from "./chatScope";
 import type { ChatDrawer } from "./drawers";
-import { chatModeDef, type ChatModeId } from "./chatModes";
 import { keepFocusOnTap } from "./keepFocus";
 import RecentChatsMenu from "./RecentChatsMenu";
 import ScopeIcon from "./ScopeIcon";
@@ -40,22 +39,40 @@ import ScopeIcon from "./ScopeIcon";
 //    "Tickets" menu that was not a list at all (it held the mode toggle plus
 //    file-as-ticket), and this overflow. "Tickets" and "Tasks" are synonyms on
 //    two different KINDS of control, wearing near-identical glyphs six pixels
-//    apart. The bell and the Tasks drawer are now ONE drawer named Tickets, and
-//    the mode toggle moved into the overflow below.
+//    apart. The bell and the Tasks drawer became ONE drawer named Tickets, and
+//    the mode toggle moved into the overflow.
+//  - ANY work control at all, as of 2026-08-15. The overflow used to hold the
+//    last two, and both are gone from it:
 //
-// The overflow menu holds only what is genuinely rare or destructive, plus what
-// is a property of the CONVERSATION rather than a thing you do to it: whether
-// this chat's work leaves as tickets is a setting, and a setting does not get a
-// toolbar icon. Actions you take ON a conversation stay on the row where you
-// can see them.
+//      "Run work as tickets", a Toggle. It was never a boolean. "Draft it and
+//      ask me" and "File it and run it" are two different answers to the same
+//      question, and the second had no stored value, so a three-way choice was
+//      being asked as a switch. It is the three-way policy in Work settings now
+//      (chatModes gained `auto`), one tap inside the panel that lists what the
+//      policy produces.
+//
+//      "File this chat as a ticket". An action on this chat's work, sitting two
+//      controls away from the list of this chat's work. It is the panel header's
+//      action now. The dialog it opens (TicketDraftsDialog) is unchanged: only
+//      the entry point moved.
+//
+// So the Tickets button is the ONLY work affordance on this bar, and it is now
+// the panel's own trigger rather than a toggle the toolbar owns: it is handed
+// UNWIRED to WorkPanel (see `workAnchor`), which is a Popover on a wide screen
+// and a top sheet on a narrow one and attaches the click that fits. The toolbar
+// keeps the badge, and the badge rule is unchanged and load-bearing: needs-you
+// only, never an open-ticket count.
+//
+// The overflow menu now holds only what is genuinely rare or destructive:
+// All chats, Open full screen, Archive chat. Actions you take ON a conversation
+// stay on the row where you can see them.
 
 export default function ChatToolbar({
   variant, mode, slug, hideExpand,
   activeId, activeThreadTitle, branchPicker,
   showProviderPicker, providers, activeProvider, onChooseProvider, runActive,
-  chatMode, onChooseChatMode,
-  drawer, onSetDrawer, needsYouCount, taskScope,
-  onBack, onOpenWorkbench, onFileTicket, onEditTitle, onOpenThread,
+  drawer, needsYouCount, taskScope, workAnchor,
+  onBack, onOpenWorkbench, onEditTitle, onOpenThread,
   onNewChat, onArchive, onPopOut, onNavigate,
 }: {
   variant: ChatVariant;
@@ -76,22 +93,22 @@ export default function ChatToolbar({
   // OTHER row is disabled (not hidden — the picker still shows where you'd go)
   // rather than left selectable and refused after the fact.
   runActive: boolean;
-  // A ChatModeId (see chatModes). Absent handler hides the control — a chat
-  // with no thread yet has nothing to set it on.
-  chatMode?: string;
-  onChooseChatMode?: (mode: ChatModeId) => void;
+  /** Which drawer is open. Read for the button's `is-active` tone only: the
+   *  panel owns opening and closing itself, through `workAnchor`. */
   drawer: ChatDrawer;
-  onSetDrawer: (next: (d: ChatDrawer) => ChatDrawer) => void;
   // The BADGE. Inbox items waiting on the operator in this chat, and nothing
   // else. It deliberately does not count open tickets: a badge is an alarm, and
   // forty open tickets is the normal state of a working queue.
   needsYouCount: number;
   // The task-store scope this chat maps to, or null when it has no queue. The
-  // drawer's second zone needs one; its first does not.
+  // panel's ticket rows need one; its needs-you rows do not.
   taskScope: string | null;
+  /** Wraps the Tickets button in the Work panel. A render prop rather than
+   *  eight forwarded props, because the toolbar's business is the BUTTON: it
+   *  builds the trigger and knows nothing about what hangs off it. */
+  workAnchor?: (trigger: ReactElement<Record<string, unknown>>) => ReactNode;
   onBack: () => void;
   onOpenWorkbench: () => void;
-  onFileTicket: () => void;
   onEditTitle: () => void;
   /** Switch to another conversation from the name menu. It may live under a
    *  different scope, so the caller routes rather than setting local state. */
@@ -109,9 +126,6 @@ export default function ChatToolbar({
   onNavigate: (to: string) => void;
 }) {
   const workOpen = drawer === "work";
-  const toggle = (which: Exclude<ChatDrawer, null>) =>
-    onSetDrawer((d) => (d === which ? null : which));
-  const orchestrated = chatModeDef(chatMode).id === "orchestrated";
 
   return (
     // Same rule as the composer's action row: with the keyboard up, a tap here
@@ -229,21 +243,22 @@ export default function ChatToolbar({
           just left of it has already given up the room instead. */}
       <span className="chat-tb__spacer" />
 
-      {/* ONE work button. It opens the one drawer, which holds both zones:
-          what needs the operator, and what is under way in this scope. The
-          badge is the first zone only. Shown once there is a thread to have an
-          inbox for, or a scope to have a queue in. */}
-      {(activeId || taskScope) && (
+      {/* ONE work button, and it stays exactly where it has been. It carries no
+          onClick: WorkPanel attaches the one that fits its host, so the panel
+          and the button can never hold two opinions about whether it is open.
+          `data-chat-work-trigger` is how the narrow sheet finds its way back
+          here on Escape. Shown once there is a thread to have an inbox for, or
+          a scope to have a queue in. */}
+      {(activeId || taskScope) && workAnchor?.(
         <button
+          data-chat-work-trigger=""
           className={`chat-tb__btn${workOpen ? " is-active" : ""}`}
-          onClick={() => toggle("work")}
           title={needsYouCount ? `Tickets. ${needsYouCount} waiting on you` : "Tickets"}
           aria-label="Tickets"
-          aria-expanded={workOpen}
         >
           <Ticket size={16} aria-hidden />
           {needsYouCount > 0 && <span className="chat-tb__badge">{needsYouCount}</span>}
-        </button>
+        </button>,
       )}
       <button className="chat-tb__btn" onClick={onNewChat} title="Start a new chat" aria-label="New chat">
         <Plus size={16} aria-hidden />
@@ -257,38 +272,6 @@ export default function ChatToolbar({
           </button>
         }
       >
-        {/* On/off, not a two-way choice: whether this chat's work leaves as
-            tickets run by agents, or stays in the conversation. Commits on
-            change — cheap, reversible, re-stated to the model every turn, so
-            flipping it takes effect mid-conversation. Shown on a BLANK chat too
-            (no `activeId` guard): the mode decides where the FIRST message's
-            work goes, so hiding the control until a thread exists would hide it
-            until after that decision had already been made — on a blank chat
-            the choice is held client-side and applied when the thread is
-            created.
-
-            It is worded as what it DOES rather than as "Tickets": that word now
-            belongs to the drawer that lists tickets, and two controls sharing a
-            name is the collision this pass exists to remove. */}
-        {onChooseChatMode && (
-          <>
-            <div className="ws-menu__row" title={chatModeDef(chatMode).title}>
-              <span>Run work as tickets</span>
-              <Toggle
-                checked={orchestrated}
-                onChange={(on) => onChooseChatMode(on ? "orchestrated" : "direct")}
-              />
-            </div>
-            {/* Filing this chat as a ticket is a one-off action on an existing
-                conversation, so it only appears once one exists. */}
-            {activeId && (
-              <MenuItem icon={<ListPlus size={14} aria-hidden />} onSelect={onFileTicket}>
-                File this chat as a ticket
-              </MenuItem>
-            )}
-            <MenuSeparator />
-          </>
-        )}
         <MenuItem icon={<MessagesSquare size={14} />} onSelect={() => onNavigate("/chats")}>
           All chats
         </MenuItem>
