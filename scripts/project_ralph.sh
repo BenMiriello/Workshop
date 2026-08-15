@@ -530,7 +530,11 @@ unset ANTHROPIC_API_KEY
 # trusts the caller's decision to run it (mode gate does not apply). Otherwise
 # resolve the project dir + autonomy mode from the registry.
 if [[ -n "$DIR_ARG" ]]; then
-  DIR="$DIR_ARG"; MODE="on"
+  # Absolute, for the reason ralph.sh --dir gives: this path is handed to a
+  # child that cds into the tree, so a relative one silently means two
+  # different directories before and after that cd. The registry path below is
+  # already absolute; this is the branch that was not.
+  DIR="$(cd "$DIR_ARG" 2>/dev/null && pwd -P || printf '%s' "$DIR_ARG")"; MODE="on"
 else
 read -r DIR MODE < <(python3 - "$SLUG" <<'PYEOF'
 import json, sys

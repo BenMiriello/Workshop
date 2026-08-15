@@ -93,7 +93,15 @@ LATITUDE_ARG=""   # --latitude <strict|standard|open>: the INVOCATION level of t
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --baseline-rev)  BASELINE="$2"; shift 2 ;;
-    --dir)           DIR="$2"; shift 2 ;;
+    # ABSOLUTE, always. This script cds into the tree it drives and then keeps
+    # using $DIR and $RUNTIME for the log, the per-iteration output file and the
+    # store. A RELATIVE --dir resolves against the caller's cwd for the first
+    # use and against the driven tree for every use after the cd, so the log
+    # writes fail, the iteration output file cannot be created, and the run
+    # exits 1 in about a second. Measured 2026-08-14 with
+    # `--dir projects/autonomy-smoke`: three attempts, all "No such file or
+    # directory", no worker ever started.
+    --dir)           DIR="$(cd "$2" 2>/dev/null && pwd -P || printf '%s' "$2")"; shift 2 ;;
     --max-iter)      MAX_ITER="$2"; shift 2 ;;
     --max-wall)      MAX_WALL="$2"; shift 2 ;;
     --bill-project)  BILL_PROJECT="$2"; shift 2 ;;
@@ -433,6 +441,31 @@ if (( ${#DENY_TOOLS[@]} > 0 )); then
 else
   log "irreversible-action gate: NOT APPLIED (agent_authority produced no patterns)"
 fi
+
+# --- WHY THIS LOOP HAS NEVER WRITTEN A FILE (open decision, 2026-08-14) -------
+#
+# `claude -p` below is invoked with NO permission mode, so it takes the CLI
+# default, which can stop and ask. There is nobody here to ask: an unattended
+# worker has no approval channel. services/model_caps states the consequence
+# exactly: "the CLI accepts the mode and then silently auto-denies every gated
+# call, which is the worst available outcome". build_streaming only escapes it
+# by wiring --permission-prompt-tool stdio and answering the request itself.
+#
+# Measured on the first end-to-end tier-1 run of this loop: the worker was asked
+# to create a one-line file, tried Write three times and a Bash redirect once,
+# was denied every time, wrote "All write operations require user permission
+# approval ... contradicts the autonomous operation model" into the project's
+# TODO, and exited claiming completion. The reviewer correctly rejected it. No
+# file was created, on any attempt, for any task.
+#
+# The one-line fix is `--permission-mode bypassPermissions`, because that is the
+# ONLY mode not needing an approval channel (model_caps.NEEDS_APPROVAL_CHANNEL
+# is every other mode). It is deliberately NOT applied here, because it is the
+# operator's call, not a worker's: ticket SEC-A1 records that every autonomous
+# turn already runs as clawd-a, in the docker group, unsandboxed, with full tree
+# write and the OAuth token, and this flag is what makes that reachable. Turn it
+# on together with a decision about A1's execution boundary, not before.
+
 
 # --- the search tool, for a worker that cannot ask anybody --------------------
 #
