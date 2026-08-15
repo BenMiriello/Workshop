@@ -31,8 +31,15 @@ function memoryStorage(): Storage {
   } as Storage;
 }
 
-const send = (text: string, clientId: string, ts = "2026-08-09T19:00:00.000Z"): OutboxSend =>
+// RELATIVE TO NOW, not a fixed date. `readOutbox` drops entries older than
+// OUTBOX_MAX_AGE_MS, so a hardcoded stamp silently becomes expired as the
+// calendar moves and every test here starts asserting against an empty list.
+// This default means "a send made just now", which is what these cases are about.
+const send = (text: string, clientId: string, ts = new Date().toISOString()): OutboxSend =>
   ({ text, clientId, ts, status: "failed", at: 1, afterSeq: 0 });
+
+const agedTs = (ms: number) => new Date(Date.now() - ms).toISOString();
+const HOUR = 60 * 60 * 1000;
 
 beforeEach(() => {
   Object.defineProperty(globalThis, "localStorage", {
@@ -160,5 +167,47 @@ describe("resolveScope", () => {
 
   it("a linked thread's home still outranks the dev default", () => {
     expect(resolveScope({ ...base, linkedThreadHome: "budget" }, true)).toBe("budget");
+  });
+});
+
+describe("a failed send does not stay on offer forever", () => {
+  // Reported 2026-08-14: opening a chat showed one old failed message, alone on
+  // screen, every time. Nothing ever cleared it -- there was no age bound, and
+  // `SendOutbox.forget()` has never had a caller.
+
+  it("keeps a recent one, because that is still worth retrying", () => {
+    writeOutbox("t1", [send("just now", "c1", agedTs(2 * HOUR))]);
+    expect(readOutbox("t1").map((s) => s.text)).toEqual(["just now"]);
+  });
+
+  it("drops one older than a day", () => {
+    writeOutbox("t1", [send("last week", "c1", agedTs(30 * HOUR))]);
+    expect(readOutbox("t1")).toEqual([]);
+  });
+
+  it("drops only the stale ones, keeping the rest of the key", () => {
+    writeOutbox("t1", [
+      send("stale", "c1", agedTs(72 * HOUR)),
+      send("fresh", "c2", agedTs(1 * HOUR)),
+    ]);
+    expect(readOutbox("t1").map((s) => s.text)).toEqual(["fresh"]);
+  });
+
+  it("keeps an entry whose stamp cannot be read", () => {
+    // It cannot be SHOWN to be old, and dropping it would throw away text the
+    // operator wrote. Real sends always carry an ISO ts (dispatchSend stamps
+    // it), so this only covers a corrupted entry.
+    writeOutbox("t1", [send("no stamp", "c1", "")]);
+    expect(readOutbox("t1").map((s) => s.text)).toEqual(["no stamp"]);
+    writeOutbox("t2", [send("bad stamp", "c2", "not-a-date")]);
+    expect(readOutbox("t2").map((s) => s.text)).toEqual(["bad stamp"]);
+  });
+
+  it("ages on the clock, never on `at`", () => {
+    // `at` is a monotonic ORDERING counter, not a timestamp (see PendingSend).
+    // Reading it as an age would expire every entry immediately, since a small
+    // integer is always "long ago" as a epoch millisecond.
+    writeOutbox("t1", [{ ...send("recent", "c1", agedTs(HOUR)), at: 1 }]);
+    expect(readOutbox("t1").map((s) => s.text)).toEqual(["recent"]);
   });
 });
