@@ -119,6 +119,16 @@
      Anything that is the full width of a page indents by this and nothing else.
      Narrowed with the viewport in the mobile block at the end of components.css. */
   --page-pad-x: var(--space-5);
+  /* The scroller's BOTTOM padding, as a token rather than a number written into
+     one rule. A page that pins something to the bottom of the scrollport has to
+     know this value: `position: sticky; bottom: 0` measures from the
+     scrollport's CONTENT edge, so a bar with no knowledge of this padding hangs
+     that far above the real bottom and the list scrolls visibly through the gap
+     underneath it. Reported 2026-08-14: "it floats above the bottom and you can
+     see the list scroll down below it."
+     Narrowed, and given the home-indicator inset, in the mobile block at the
+     end of components.css. */
+  --page-pad-b: var(--space-8);
 
   /* Z-index layers */
   --z-base:     0;

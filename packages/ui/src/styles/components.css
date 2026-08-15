@@ -652,23 +652,36 @@ a.ws-btn { text-decoration: none; }
 /* The phone's primary action: at the thumb, and STUCK there. It used to sit at
    the natural end of the page, which on a list of any length means filing a
    ticket costs a scroll to the bottom first (operator, 2026-08-14).
-   Sticky rather than fixed, so it belongs to the page rather than to the
-   viewport: it cannot cover another route's content, and it lands in its own
-   space at the true end of the list instead of hovering over it forever. */
+   Sticky rather than fixed, so it belongs to the page rather than the viewport:
+   it cannot cover another route, and it scrolls away with the page it is part
+   of instead of hovering over whatever replaces it.
+   THE BAR MUST REACH THE BOTTOM EDGE. `bottom: 0` measures from the
+   scrollport's CONTENT edge, and <main> pads its bottom by --page-pad-b, so on
+   its own this bar hangs that far up with the list scrolling through the gap
+   underneath (operator: "it floats above the bottom and you can see the list
+   scroll down below it"). The page cancels that padding with a negative margin
+   below, which puts the bar's RESTING position at the true bottom, so it is
+   flush both while pinned and at the end of the scroll: no gap, and no jump
+   when it un-pins. */
 .ws-tickets__foot {
   position: sticky; bottom: 0; z-index: var(--z-sticky);
   padding-top: var(--space-2);
+  /* The page's inset is cancelled, so the bar carries the home-indicator inset
+     itself. This is not double counting: the page no longer pays it. */
   padding-bottom: max(var(--space-2), env(safe-area-inset-bottom));
   background: var(--bg);
   border-top: 1px solid var(--border);
-  /* The page's own inset, undone and redone, so the bar's surface reaches the
-     screen edges while its button stays on the content measure. */
+  /* Full-bleed surface, content still on the page measure. */
   margin-inline: calc(var(--page-pad-x) * -1);
   padding-inline: var(--page-pad-x);
 }
-/* Room for the pinned bar to sit over, so the last rows are not under it while
-   the list is still scrolling. */
-.ws-tickets:has(.ws-tickets__foot) .ws-tickets__body { padding-bottom: var(--space-5); }
+/* Cancels the scroller's bottom padding for THIS page only, so the sticky bar
+   above can rest flush against the bottom edge. Set from the component (not
+   `:has`) so the page says out loud that it owns a bottom bar. */
+.ws-tickets--footed { margin-bottom: calc(var(--page-pad-b) * -1); }
+/* Room under the last row, so it is readable rather than tight against the bar
+   once the list is scrolled to the end. */
+.ws-tickets--footed .ws-tickets__end { padding-bottom: var(--space-2); }
 
 /* Where the list ends, said plainly. "Load more" only appears when there IS
    more, so a list that fitted in one page ended in silence and the only thing
@@ -1883,7 +1896,7 @@ span.ws-filterchip__open { cursor: default; }
      --page-max; once the viewport is narrower than --page-max the term goes
      negative and the base inset wins, so nothing special happens on mobile. One
      rule, no wrapper element, no per-page class. */
-  padding: var(--space-6) max(var(--page-pad-x), (100% - var(--page-max)) / 2) var(--space-8);
+  padding: var(--space-6) max(var(--page-pad-x), (100% - var(--page-max)) / 2) var(--page-pad-b);
 }
 /* APPS own their width. A route under /apps/<name> gets --appfull on the shell,
    which drops the centred cap so the app fills the viewport (minus the standard
@@ -2593,9 +2606,16 @@ span.ws-filterchip__open { cursor: default; }
      separate numbers here and drifted apart. The scroller is <main>, so its
      bottom padding adds the home-indicator inset (viewport-fit=cover). The
      topnav stays one row (never wraps → never grows taller). */
-  :root { --page-pad-x: var(--space-4); }
+  :root {
+    --page-pad-x: var(--space-4);
+    /* Was written straight into <main>'s rule below. It is a token now because
+       a page that pins a bar to the bottom of the scrollport has to subtract
+       exactly this, and a second copy of the number is a second thing to get
+       wrong. */
+    --page-pad-b: calc(var(--space-4) + env(safe-area-inset-bottom));
+  }
   .ws-topnav { gap: var(--space-3); }
-  .ws-app .ws-app__body > main { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); padding-top: var(--space-4); }
+  .ws-app .ws-app__body > main { padding-top: var(--space-4); }
 
   /* A segmented control is inline-flex with no wrap and no scroller, so a
      five-option filter (the Runs tab's) simply overflowed the viewport and

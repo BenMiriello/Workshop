@@ -232,3 +232,43 @@ describe("a select's caret cannot be animated away by a background shorthand", (
     expect(rule).toContain("background-position: right var(--space-2) center");
   });
 });
+
+// A bar pinned to the bottom of the page has to know the scroller's bottom
+// padding, and there is exactly one place that number is allowed to live.
+//
+// `position: sticky; bottom: 0` measures from the scrollport's CONTENT edge,
+// not its border edge. <main> is the scroller and it pads its bottom, so a bar
+// that does not subtract that padding hangs that far above the real bottom and
+// the list scrolls visibly through the gap underneath it. Reported 2026-08-14:
+// "it floats above the bottom and you can see the list scroll down below it."
+//
+// The padding is also NOT one value: the mobile block narrows it and adds the
+// home-indicator inset. So the fix cannot be a number written at the call site,
+// and this pins the token instead.
+describe("a bottom-pinned bar reaches the bottom", () => {
+  it("keeps the scroller's bottom padding in a token, not a literal", () => {
+    const main = kitRule(".ws-app .ws-app__body > main");
+    expect(main).toContain("var(--page-pad-b)");
+    // The literal it replaced. If this comes back, the bar and the scroller
+    // have two different ideas of where the bottom is.
+    expect(main).not.toContain("/ 2) var(--space-8)");
+  });
+
+  it("re-tokenises the same padding on mobile rather than restating it", () => {
+    // The mobile block is where the number differs (narrower, plus the
+    // home-indicator inset), which is exactly where a second copy would rot.
+    const at = kit.indexOf("--page-pad-b: calc(");
+    expect(at, "mobile block does not set --page-pad-b").toBeGreaterThan(-1);
+    expect(kit.slice(at, at + 120)).toContain("env(safe-area-inset-bottom)");
+    // <main>'s mobile rule must no longer carry its own bottom padding.
+    const mob = kit.slice(kit.indexOf(".ws-app .ws-app__body > main { padding-top"));
+    expect(mob.slice(0, 120)).not.toContain("padding-bottom");
+  });
+
+  it("cancels that padding on the page that pins a bar", () => {
+    expect(kitRule(".ws-tickets--footed")).toContain("calc(var(--page-pad-b) * -1)");
+    const foot = kitRule(".ws-tickets__foot");
+    expect(foot).toContain("position: sticky");
+    expect(foot).toContain("bottom: 0");
+  });
+});

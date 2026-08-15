@@ -222,7 +222,9 @@ export default function Work() {
   const more = rows.length < total;
 
   return (
-    <div className="ws-tickets">
+    // `--footed` cancels the scroller's bottom padding so the pinned New ticket
+    // bar can rest flush against the bottom edge. See .ws-tickets__foot.
+    <div className={`ws-tickets${!wide ? " ws-tickets--footed" : ""}`}>
       {/* The header band: what this list is, how many, and how to look at it.
           One band, not a PageHeader plus a separate control row: the count and
           the switcher are about the list below them, so they belong to it. */}
