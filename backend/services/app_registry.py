@@ -22,6 +22,7 @@ platform-core file — this catalog is the built-in library, not the install lis
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 import time
@@ -546,6 +547,38 @@ def installed_snapshots() -> list[Callable[[], str]]:
     return [spec.chat_snapshot for spec in installed_specs() if spec.chat_snapshot]
 
 
+# WHICH SCOPE this turn's search tool reaches. Mirrors `ownership`'s pattern
+# exactly (a request-scoped contextvar, pinned once by the caller, read here
+# rather than threaded as an argument through every function that might spawn
+# this server): `_platform_mcp_servers` used to read
+# `os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop")`, which is the BACKEND
+# PROCESS's own environment. Nothing ever set that key in it, so every chat,
+# on every turn, searched as `workshop` regardless of which chat it actually
+# was -- and since `reach("workshop")` deliberately excludes `development`,
+# the net effect was a DEVELOPMENT chat losing the ability to search
+# development-scoped content, which is most of the platform's own history.
+#
+# The value pinned here is the chat's `context_key` ("general", "development",
+# "project:birds", ...), not a resolved scope_key: `workshop_query_server.py`
+# already does that translation (`knowledge.scope_for_context`) on the
+# subprocess side, and it must stay the only place that does, per the design
+# doc's two-namespace note (sec 7.1).
+_query_scope_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "workshop_query_scope", default=None
+)
+
+
+def set_current_query_scope(context_key: str | None) -> None:
+    """Pin the chat's context_key for whatever spawns the workshop MCP server
+    next. Called at the turn-start seam, where the real chat is known, exactly
+    where `ownership.set_current_owner` is called for the same reason."""
+    _query_scope_ctx.set(context_key)
+
+
+def current_query_scope() -> str | None:
+    return _query_scope_ctx.get()
+
+
 # Platform-level MCP servers, always available (not tied to an installed app):
 # the read-only workshop-query tool the general chat uses to answer "what is
 # going on" from the task + knowledge digest (Stage 7 / 2e). It is NOT a
@@ -560,8 +593,15 @@ def _platform_mcp_servers() -> dict[str, dict]:
     )
     env = {
         "PYTHONPATH": str(backend_dir),
-        "WORKSHOP_QUERY_SCOPE": os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop"),
     }
+    # WHICH scope this turn's search tool reaches. `current_query_scope()` is
+    # None for a caller that never pinned one (a background pass with no chat
+    # behind it, a CLI invocation) -- the env var is OMITTED rather than
+    # guessed, exactly like WORKSHOP_QUERY_OWNER below, and the subprocess's
+    # own fallback (`workshop`, never `development`) applies.
+    scope = current_query_scope()
+    if scope:
+        env["WORKSHOP_QUERY_SCOPE"] = scope
     # WHOSE digest this turn gets. The server is a separate stdio subprocess —
     # it does not inherit this process's request-scoped `ownership` contextvar,
     # so it used to hardcode itself to the operator ("Single-operator system")

@@ -918,8 +918,10 @@ def status() -> dict:
 # configuration.
 
 def mcp_config_json(servers: list[str] | None = None,
-                    *, owner_id: int | None = None) -> str:
-    """The `--mcp-config` document for `servers`, with the owner pinned.
+                    *, owner_id: int | None = None,
+                    context_key: str | None = None) -> str:
+    """The `--mcp-config` document for `servers`, with the owner and the
+    caller's scope pinned.
 
     `servers=None` means every installed server. An unknown name is an error
     rather than a silent omission: a caller asking for `workshop` and getting an
@@ -933,6 +935,16 @@ def mcp_config_json(servers: list[str] | None = None,
     oid = owner_id if owner_id is not None else auth_store.operator_id()
     if oid is not None:
         ownership.set_current_owner(int(oid))
+    # Same seam, for scope: a caller that knows which chat this is
+    # (build_streaming._build_cmd) hands its thread's context_key down
+    # explicitly. A caller that does not -- scripts/ralph.sh's CLI use, or any
+    # other background pass with no chat behind it -- leaves this None, and
+    # `_platform_mcp_servers` omits WORKSHOP_QUERY_SCOPE rather than guessing;
+    # the subprocess's own fallback ("workshop", never "development") applies.
+    # See `app_registry.set_current_query_scope`'s docstring for why this used
+    # to always resolve to "workshop": it was reading THIS process's own
+    # environment, which nothing had ever set.
+    app_registry.set_current_query_scope(context_key)
     available = app_registry.installed_mcp_servers()
     if servers is None:
         chosen = dict(available)

@@ -1716,6 +1716,26 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
         # difference between a chat that is waiting and one that looks broken.
         "--replay-user-messages",
     ]
+    # WHICH SCOPE this turn's search tool reaches (memory-and-documentation-
+    # model-2026-08-14.md sec C). Pinned here, once, before EITHER tool-surface
+    # branch below might spawn the workshop MCP server -- the narrow branch via
+    # `llm_router.tool_flags`, the full-agentic branch via
+    # `llm_router.mcp_config_json` -- exactly where the owner is pinned for the
+    # same reason. `_platform_mcp_servers` used to read this straight out of
+    # the BACKEND PROCESS's own environment, which nothing ever set, so every
+    # turn searched as `workshop` regardless of which chat it actually was; see
+    # `app_registry.set_current_query_scope`'s docstring.
+    #
+    # `chat_store.get_thread` failing (a thread deleted between claiming the
+    # run and building this argv) leaves `ctx_key` None, which is exactly the
+    # "no chat behind this" case the pin already handles: the env var is
+    # omitted and the subprocess falls back to `workshop`, never `development`.
+    from services import app_registry, chat_store
+    try:
+        ctx_key = (chat_store.get_thread(meta.get("thread_id")) or {}).get("context_key")
+    except Exception:
+        ctx_key = None
+    app_registry.set_current_query_scope(ctx_key)
     # Effort is validated by the CLI against one fixed list for EVERY model, so a
     # level the model doesn't honour is accepted and quietly does nothing. The
     # caller resolves against services/model_caps before this point; by here a
@@ -1798,7 +1818,7 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
         else:
             try:
                 cmd.extend(["--mcp-config", llm_router.mcp_config_json(
-                    ["workshop"], owner_id=_owner)])
+                    ["workshop"], owner_id=_owner, context_key=ctx_key)])
             except Exception as e:  # noqa: BLE001 - a search tool is not worth a dead turn
                 log.warning("workshop MCP config unavailable for this turn: %s", e)
         cmd.extend(["--permission-mode", mode])
