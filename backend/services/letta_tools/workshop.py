@@ -44,29 +44,24 @@ def wkshp_read_todo(section: str = "all", max_items: int = 20) -> str:
 
 
 def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
-    """Append a new `[ ] task` line to ~/workshop/TODO.md.
+    """File a new ticket on the workshop task store.
 
     Args:
         task_text: One-line task description. Must be concrete and actionable.
-        urgency: One of "low", "normal", "high". High-urgency tasks are
-            inserted at the top of the open list; normal/low are appended.
+        urgency: One of "low", "normal", "high". "high" files at the top of the
+            `high` priority band; normal/low file at the default priority.
 
     Returns:
-        Confirmation string with the line that was added.
+        Confirmation string naming the ticket that was filed, or why it was not.
     """
-    import fcntl
     import re
     import os
     from pathlib import Path
 
     _root = Path(os.environ.get("WORKSHOP_ROOT") or (Path.home() / "workshop"))
     todo_path = _root / "TODO.md"
-    lock_path = _root / ".runtime" / "TODO.lock"
     if not task_text or len(task_text.strip()) < 5:
         return "ERROR: task_text too short"
-    if not todo_path.exists():
-        return "ERROR: TODO.md does not exist"
-    line = f"[ ] {task_text.strip()} (proposed by overseer, {urgency})"
 
     # Topic signature = the significant words of a task, so two reworded versions
     # of the same task ("Onboard new bank for Plaid MCP as per project_plaid_mcp.md"
@@ -81,132 +76,127 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
     def _stem(w: str) -> str:
         # Light plural fold so "bank"/"banks", "line"/"lines" match.
         return w[:-1] if len(w) > 3 and w.endswith("s") else w
-    def _sig(text: str) -> frozenset:
-        return frozenset(
-            _stem(w) for w in re.findall(r"[a-z0-9]+", text.lower())
-            if w not in _stop and len(w) > 1
+    # FILED THROUGH THE STORE, not appended to TODO.md. This used to do its own
+    # read-modify-write of the export under its own flock, which made it a
+    # SECOND WRITER to a file the store regenerates -- and for the two migrated
+    # scopes TODO.md is now a one-way rendering, so an appended line would be
+    # erased by the next write and never become a ticket at all.
+    #
+    # The spam filters below are kept verbatim: they are the reason this tool
+    # stopped filling the backlog with "review the highest-priority open todo",
+    # and nothing else in the filing path does that job. What goes is the
+    # hand-rolled near-duplicate check, which compared against lines of a text
+    # file; `task_dedup.dedup_add` compares against the actual open tickets in
+    # the scope and is the same path the chat surface files through.
+    content = todo_path.read_text() if todo_path.exists() else ""
+    norm = " ".join(task_text.strip().lower().split())
+    # Reject vacuous, self-referential meta-tasks. Reviewing/prioritizing the
+    # list IS the overseer's job, not a deliverable; these slip past dedupe
+    # because each is worded slightly differently. Concrete tasks don't match.
+    #
+    # SINGLE SOURCE OF TRUTH: the marker list lives in shared/meta_reject.txt
+    # so this filter, scripts/work_generator.sh, and scripts/graduate_proposals.sh
+    # all reject the same spam. Read it at runtime (the Letta sandbox can't
+    # import shared/), with a minimal inline fallback covering the known spam
+    # variants if the file is ever unreadable — so we never silently allow it.
+    _reject_path = _root / "shared" / "meta_reject.txt"
+    try:
+        vacuous_markers = tuple(
+            s.strip().lower()
+            for s in _reject_path.read_text().splitlines()
+            if s.strip() and not s.strip().startswith("#")
         )
-
-    # Single-flight: serialize the read-modify-write so concurrent overseer ticks
-    # (and any other automated writer) can't clobber each other's append.
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "w") as _lk:
-        fcntl.flock(_lk, fcntl.LOCK_EX)
-        content = todo_path.read_text()
-        norm = " ".join(task_text.strip().lower().split())
-        # Reject vacuous, self-referential meta-tasks. Reviewing/prioritizing the
-        # list IS the overseer's job, not a deliverable; these slip past dedupe
-        # because each is worded slightly differently. Concrete tasks don't match.
-        #
-        # SINGLE SOURCE OF TRUTH: the marker list lives in shared/meta_reject.txt
-        # so this filter, scripts/work_generator.sh, and scripts/graduate_proposals.sh
-        # all reject the same spam. Read it at runtime (the Letta sandbox can't
-        # import shared/), with a minimal inline fallback covering the known spam
-        # variants if the file is ever unreadable — so we never silently allow it.
-        _reject_path = _root / "shared" / "meta_reject.txt"
-        try:
-            vacuous_markers = tuple(
-                s.strip().lower()
-                for s in _reject_path.read_text().splitlines()
-                if s.strip() and not s.strip().startswith("#")
-            )
-        except Exception:
-            vacuous_markers = (
-                "verify / finish caveat", "highest-priority open todo",
-                "highest priority open todo", "reduce backlog", "reduce the backlog",
-                "reduce the todo backlog", "most urgent open", "open todos",
-                "prioritize the top", "from the todo list",
-            )
-        if any(m in norm for m in vacuous_markers):
-            return ("skipped (vacuous self-referential task. Just do the work, "
-                    f"don't propose reviewing the list): {task_text.strip()}")
-        # Backstop for the reworded-meta spam the marker list keeps missing
-        # ("Reduce todo backlog by …", "Review and unblock todos", "Review and
-        # finalize the documentation for the new feature release"). A concrete
-        # task always names a concrete referent (a file, service, endpoint,
-        # feature by name). A vacuous meta-task is built ENTIRELY from
-        # list-management vocabulary — management verbs applied to the todo list
-        # itself. So: strip stopwords, then if every remaining word is generic
-        # management vocab with nothing concrete left, reject it. Real tasks
-        # survive because they carry at least one domain word.
-        _meta_vocab = {
-            # management verbs
-            "review", "reviewing", "unblock", "unblocking", "resolve", "resolving",
-            "reduce", "reducing", "prioritize", "prioritizing", "address",
-            "addressing", "escalate", "escalating", "investigate", "investigating",
-            "finalize", "finalizing", "evaluate", "evaluating", "complete",
-            "completing", "process", "processing", "categorize", "categorizing",
-            "streamline", "streamlining", "begin", "identify", "identifying",
-            "analyze", "analyzing", "summarize", "summarizing", "handle", "clear",
-            "clean", "cleanup", "triage", "sort", "organize",
-            # list-referential / generic-filler nouns
-            "backlog", "blocked", "block", "blocker", "open", "priority",
-            "prioritized", "urgent", "urgency", "oldest", "newest", "top", "next",
-            "step", "root", "cause", "critical", "high", "low", "normal",
-            "remaining", "current", "multiple", "several", "clear", "progress",
-            "workflow", "immediate", "pending", "actionable", "backlog",
-            "documentation", "document", "doc", "draft", "feature", "release",
-            "design", "presentation", "escalation", "unblocking", "number",
-            "highest", "lowest", "topmost", "possible", "necessary", "clearly",
-            # temporal / quantifier fillers — pure adverbs of time/degree with no
-            # concrete referent ("the CURRENTLY blocked tasks", "the MOST urgent
-            # task"). A real task never leans on these to carry its meaning.
-            "currently", "current", "now", "presently", "recently", "latest",
-            "most", "more", "less", "least", "some", "few", "many", "various",
-            "certain", "specific", "relevant", "outstanding", "existing", "each",
-            "all", "any", "first", "second", "third", "fourth", "fifth", "last",
-            # bare numerals / count words the tokenizer keeps
-            "1", "2", "3", "4", "5", "one", "two", "three", "four", "five",
-            # generic connectors/fillers the stopword set doesn't cover
-            "by", "up", "out", "if", "so", "then", "else", "via", "at", "not",
-        }
-        _content = [
-            _stem(w) for w in re.findall(r"[a-z0-9]+", norm)
-            if w not in _stop and len(w) > 1
-        ]
-        if _content and all(_stem(w) in _meta_vocab or w in _meta_vocab for w in _content):
-            return ("skipped (vacuous meta-task: pure list-management vocabulary "
-                    "with no concrete referent. Just do the work): "
-                    f"{task_text.strip()}")
-        # Near-duplicate dedupe: skip if an open task shares most of its topic
-        # signature with this one (containment ≥ 0.7 of the smaller set, ≥ 2 words
-        # shared). Catches the reworded-same-task spam that exact-match misses.
-        new_sig = _sig(task_text)
-        for l in content.splitlines():
-            if not l.startswith("[ ] "):
-                continue
-            ex = _sig(re.split(r"\s+(?:\(|— )proposed by", l[4:])[0])
-            inter = len(new_sig & ex)
-            if inter >= 2 and inter / min(len(new_sig), len(ex)) >= 0.6:
-                return f"skipped (near-duplicate of an existing open task): {task_text.strip()}"
-
-        lines = content.splitlines()
-        if urgency == "high":
-            # Top of the open list.
-            for i, l in enumerate(lines):
-                if l.startswith("[ ] "):
-                    lines.insert(i, line)
-                    break
-            else:
-                lines.append(line)
-        else:
-            # End of the task area — before the "## Log" section so proposals
-            # don't pile up after the log. Fall back to EOF if there's no Log.
-            log_idx = next((i for i, l in enumerate(lines) if l.strip() == "## Log"), None)
-            if log_idx is None:
-                lines.append(line)
-            else:
-                at = log_idx
-                while at > 0 and lines[at - 1].strip() == "":
-                    at -= 1
-                lines.insert(at, line)
-        todo_path.write_text("\n".join(lines).rstrip() + "\n")
-        # Wake the queue runner so newly filed tasks start in seconds.
-        try:
-            (_root / ".runtime" / "queue-runner.wake").touch()
-        except OSError:
-            pass
-    return f"added: {line}"
+    except Exception:
+        vacuous_markers = (
+            "verify / finish caveat", "highest-priority open todo",
+            "highest priority open todo", "reduce backlog", "reduce the backlog",
+            "reduce the todo backlog", "most urgent open", "open todos",
+            "prioritize the top", "from the todo list",
+        )
+    if any(m in norm for m in vacuous_markers):
+        return ("skipped (vacuous self-referential task. Just do the work, "
+                f"don't propose reviewing the list): {task_text.strip()}")
+    # Backstop for the reworded-meta spam the marker list keeps missing
+    # ("Reduce todo backlog by …", "Review and unblock todos", "Review and
+    # finalize the documentation for the new feature release"). A concrete
+    # task always names a concrete referent (a file, service, endpoint,
+    # feature by name). A vacuous meta-task is built ENTIRELY from
+    # list-management vocabulary — management verbs applied to the todo list
+    # itself. So: strip stopwords, then if every remaining word is generic
+    # management vocab with nothing concrete left, reject it. Real tasks
+    # survive because they carry at least one domain word.
+    _meta_vocab = {
+        # management verbs
+        "review", "reviewing", "unblock", "unblocking", "resolve", "resolving",
+        "reduce", "reducing", "prioritize", "prioritizing", "address",
+        "addressing", "escalate", "escalating", "investigate", "investigating",
+        "finalize", "finalizing", "evaluate", "evaluating", "complete",
+        "completing", "process", "processing", "categorize", "categorizing",
+        "streamline", "streamlining", "begin", "identify", "identifying",
+        "analyze", "analyzing", "summarize", "summarizing", "handle", "clear",
+        "clean", "cleanup", "triage", "sort", "organize",
+        # list-referential / generic-filler nouns
+        "backlog", "blocked", "block", "blocker", "open", "priority",
+        "prioritized", "urgent", "urgency", "oldest", "newest", "top", "next",
+        "step", "root", "cause", "critical", "high", "low", "normal",
+        "remaining", "current", "multiple", "several", "clear", "progress",
+        "workflow", "immediate", "pending", "actionable", "backlog",
+        "documentation", "document", "doc", "draft", "feature", "release",
+        "design", "presentation", "escalation", "unblocking", "number",
+        "highest", "lowest", "topmost", "possible", "necessary", "clearly",
+        # temporal / quantifier fillers — pure adverbs of time/degree with no
+        # concrete referent ("the CURRENTLY blocked tasks", "the MOST urgent
+        # task"). A real task never leans on these to carry its meaning.
+        "currently", "current", "now", "presently", "recently", "latest",
+        "most", "more", "less", "least", "some", "few", "many", "various",
+        "certain", "specific", "relevant", "outstanding", "existing", "each",
+        "all", "any", "first", "second", "third", "fourth", "fifth", "last",
+        # bare numerals / count words the tokenizer keeps
+        "1", "2", "3", "4", "5", "one", "two", "three", "four", "five",
+        # generic connectors/fillers the stopword set doesn't cover
+        "by", "up", "out", "if", "so", "then", "else", "via", "at", "not",
+    }
+    _content = [
+        _stem(w) for w in re.findall(r"[a-z0-9]+", norm)
+        if w not in _stop and len(w) > 1
+    ]
+    if _content and all(_stem(w) in _meta_vocab or w in _meta_vocab for w in _content):
+        return ("skipped (vacuous meta-task: pure list-management vocabulary "
+                "with no concrete referent. Just do the work): "
+                f"{task_text.strip()}")
+    # Filed through the deduping store path, which is what the chat
+    # surface uses. `urgency` becomes a priority band rather than a position
+    # in a text file: "high" maps to the floor of the `high` band so the
+    # scheduler orders it, which is what inserting at the top of the list
+    # was trying to approximate.
+    from services import task_dedup
+    try:
+        res = task_dedup.dedup_add(
+            _root, text=task_text.strip(),
+            source={"kind": "agent", "ref": "wkshp_propose_task"},
+            priority=80 if urgency == "high" else 0,
+            scoped_by="agent",
+        )
+    except Exception as e:
+        return f"ERROR: could not file the task: {e}"
+    # `dedup_add` returns {decision, task, matched_id, cosine, message}, and on a
+    # merge `task` IS the existing ticket. Reporting "added" there would claim a
+    # new ticket was filed and hand back an id this call did not create.
+    # Measured while testing: three phrasings of the same request all came back
+    # with the same id, and all three said "added".
+    decision = res.get("decision")
+    task = res.get("task") or {}
+    if decision in ("merge", "exact"):
+        return (f"merged into existing ticket {res.get('matched_id')}: "
+                f"{task_text.strip()}")
+    # Wake the queue runner so newly filed tasks start in seconds.
+    try:
+        (_root / ".runtime" / "queue-runner.wake").touch()
+    except OSError:
+        pass
+    filed = f"filed {task.get('id', '?')}: {task_text.strip()}"
+    return filed + (f" (related to {res.get('matched_id')})"
+                    if decision == "related" else "")
 
 
 def wkshp_write_log(entry: str, agent_name: str = "agent") -> str:

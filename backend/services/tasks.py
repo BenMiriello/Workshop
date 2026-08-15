@@ -1149,6 +1149,64 @@ def _migrate_from_todo(root: Path) -> list[dict]:
 _BAND_TO_INT = {"urgent": 100, "high": 80, "medium": 40, "low": 1, "none": 0}
 
 
+def is_relational(root: Path) -> bool:
+    """Whether this working tree's tickets live in Postgres rather than a file.
+
+    True for the two migrated scopes (`development`, `workshop`) when a database
+    is reachable; False for every project tree, which is still file-backed, and
+    for any checkout with no database.
+
+    THE SPLIT IS BY ROOT, NOT BY INSTALLATION, and that is why this is a
+    function rather than a flag. `projects/<slug>/` trees keep their own
+    `.tasks.json` and their own `TODO.md` inbox, so the file paths below are
+    live code, not legacy. Deleting them wholesale would break every project.
+    """
+    try:
+        from db import ticket_sync
+        from services import tenancy
+        return (tenancy.available()
+                and ticket_sync.scope_for_root(root) is not None)
+    except Exception:
+        return False
+
+
+def has_store(root: Path) -> bool:
+    """Whether this working tree has a ticket store at all, either kind.
+
+    For the two shell callers that used `(root / ".tasks.json").exists()` as
+    their guard. That test answers "is there a file", which stops being the same
+    question as "is there a store" the moment a scope's tickets live in
+    Postgres.
+    """
+    return is_relational(root) or _store_path(root).exists()
+
+
+def last_modified(root: Path) -> datetime | None:
+    """When this store last changed, whichever store it is.
+
+    `dispatch_triggers` compared `.tasks.json`'s MTIME against a job's end time
+    to decide whether anything had moved since. A file that is no longer written
+    has a frozen mtime, so that comparison would quietly answer "nothing
+    changed" forever and the sweep would stop re-opening work that had in fact
+    been updated.
+    """
+    if is_relational(root):
+        rows = _from_relational(root) or []
+        stamps = [r.get("updated") for r in rows if r.get("updated")]
+        if not stamps:
+            return None
+        try:
+            newest = max(stamps)
+            dt = datetime.fromisoformat(str(newest).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    store = _store_path(root)
+    if not store.exists():
+        return None
+    return datetime.fromtimestamp(store.stat().st_mtime, timezone.utc)
+
+
 def _from_relational(root: Path) -> list[dict] | None:
     """This scope's tickets out of Postgres, in the shape `_normalize` accepts.
 
@@ -1359,7 +1417,22 @@ def reconcile(root: Path) -> bool:
     on an unchanged hash. Checkbox flips apply to the matching store task
     (normalized-text match); unmatched new checklist lines import as new tasks;
     lines missing from the file are ignored (the store wins on deletion). Returns
-    True if anything changed. The store remains the single authority."""
+    True if anything changed. The store remains the single authority.
+
+    INERT FOR A RELATIONAL ROOT, which is what retiring the file store means in
+    practice. `TODO.md` there is a one-way export: healing it back in is the
+    second write path that made it a store rather than a rendering, and it is
+    the read-back ADR 0019 removes.
+
+    The evidence for switching it off rather than keeping it as insurance: 22
+    commits in history changed `TODO.md` without `.tasks.json`, the last on
+    2026-07-18, and they cluster on a single day of an agent annotating lines by
+    hand. The repo's own CLAUDE.md already forbids editing it. Project trees are
+    still file-backed and still heal, so this is a per-root behaviour, not a
+    deletion.
+    """
+    if is_relational(root):
+        return False
     if _is_protected(root):
         return False  # never heal/persist a protected root's mixed TODO.md
     export = _export_path(root)
@@ -2324,7 +2397,18 @@ def export_markdown(root: Path) -> str:
 
 def import_markdown(root: Path, content: str) -> None:
     """Legacy PUT /todo: write the body then reconcile it into the store (the
-    store stays authoritative). Non-destructive now, unlike the old re-key."""
+    store stays authoritative). Non-destructive now, unlike the old re-key.
+
+    REFUSED FOR A RELATIONAL ROOT. This is the other read-back path, and it is
+    reachable: the `development` project's directory IS the repository root, so
+    `PUT /projects/development/todo` would parse a rendered export back into the
+    store it was rendered from. Raising is better than a silent no-op, because
+    the caller believes it has just saved the operator's edit.
+    """
+    if is_relational(root):
+        raise ValueError(
+            "TODO.md is a generated export for this scope and cannot be "
+            "imported; edit the tickets themselves")
     with _locked(root):
         _atomic_write(
             _export_path(root),

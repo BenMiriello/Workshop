@@ -87,7 +87,10 @@ for root in roots:
     if key in seen or not root.is_dir():
         continue
     seen.add(key)
-    if not (root / ".tasks.json").exists():
+    # "Is there a store", not "is there a file": a scope whose tickets live in
+    # Postgres has no `.tasks.json` to find, and testing for the file skipped it
+    # silently, which is a watchdog that stops watching.
+    if not tasks.has_store(root):
         continue
     try:
         for r in tasks.reclaim(root):

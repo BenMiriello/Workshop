@@ -288,12 +288,15 @@ def awaiting_unchanged(slug: str, root: Path) -> bool:
         if not recent or recent[0].get("status") != "awaiting_input":
             return False
         ended = recent[0].get("ended_at") or ""
-        store = root / ".tasks.json"
-        if not store.exists():
+        # Asked of the STORE, not of a file's mtime. A scope whose tickets live
+        # in Postgres has no `.tasks.json` to stat, and a file that is written
+        # but no longer authoritative has a frozen mtime, so this comparison
+        # would answer "nothing changed" forever.
+        mtime = tasks.last_modified(root)
+        if mtime is None:
             return True
         import datetime as _dt
         end_dt = _dt.datetime.fromisoformat(ended) if ended else None
-        mtime = _dt.datetime.fromtimestamp(store.stat().st_mtime, _dt.timezone.utc)
         if end_dt and end_dt.tzinfo is None:
             end_dt = end_dt.replace(tzinfo=_dt.timezone.utc)
         return bool(end_dt and mtime <= end_dt)

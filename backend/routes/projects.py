@@ -606,7 +606,16 @@ async def get_todo(slug: str) -> dict:
 async def put_todo(slug: str, body: FileWriteIn) -> dict:
     # Legacy raw-markdown write: persist the body then re-derive the store
     # from it so the structured tasks stay authoritative and consistent.
-    tasks.import_markdown(_project_dir(slug), body.content)
+    #
+    # Refused for a scope whose tickets live in Postgres, where TODO.md is a
+    # one-way export (ADR 0019). That is reachable here rather than theoretical:
+    # the `development` project's directory IS the repository root. A 409 rather
+    # than a 500, because the caller believes it just saved an operator edit and
+    # should be told plainly that this surface no longer accepts one.
+    try:
+        tasks.import_markdown(_project_dir(slug), body.content)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     _touch(slug)
     return {"ok": True}
 
