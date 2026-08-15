@@ -12,6 +12,7 @@ import {
   StatusDot,
   catFor,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 // GrantPicker — the Store broker (Phase 4).
 //
@@ -76,7 +77,7 @@ export default function GrantPicker({
     try {
       const qs = type ? `?type=${encodeURIComponent(type)}` : "";
       const r = await fetch(`/api/stores${qs}`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const data = (await r.json()) as { stores: Store[] };
       setStores(Array.isArray(data.stores) ? data.stores : []);
     } catch (e) {
@@ -116,7 +117,7 @@ export default function GrantPicker({
           verbs,
         }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const grant = (await r.json()) as Grant;
       onGranted?.(grant);
       onClose();

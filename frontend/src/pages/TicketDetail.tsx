@@ -39,6 +39,7 @@ import { nextWorkParams } from "../lib/workParams";
 import {
   EditableBody, EditableTitle, PickEditor, PropRow, TextEditor,
 } from "../components/tickets/fields";
+import { shortHttpError } from "../lib/httpError";
 
 // A ticket can only be launched from `todo`.
 const RUNNABLE_STATUSES = new Set(["todo"]);
@@ -141,8 +142,8 @@ export default function TicketDetail() {
         fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}`),
         fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/jobs`),
       ]);
-      if (!tr.ok) throw new Error(`ticket ${tr.status} ${await tr.text()}`);
-      if (!jr.ok) throw new Error(`runs ${jr.status} ${await jr.text()}`);
+      if (!tr.ok) throw new Error(`ticket: ${shortHttpError(tr.status, tr.statusText, await tr.text().catch(() => ""))}`);
+      if (!jr.ok) throw new Error(`runs: ${shortHttpError(jr.status, jr.statusText, await jr.text().catch(() => ""))}`);
       setTask(await tr.json());
       const j = await jr.json();
       setRuns(j.jobs || []);
@@ -168,7 +169,7 @@ export default function TicketDetail() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(fields),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setTask(await r.json());
       return true;
     } catch (e) {
@@ -190,7 +191,7 @@ export default function TicketDetail() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ run: false }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       const gaps = j?.readiness?.missing?.length ?? 0;
       say(gaps
@@ -215,7 +216,7 @@ export default function TicketDetail() {
         fail(detail || "A sweep is already running against this scope. Wait for it to finish, or stop the queue runner in Settings.");
         return;
       }
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       say(j.job_id
         ? "Run started. It appears under Runs below."
@@ -231,7 +232,7 @@ export default function TicketDetail() {
   const deleteTask = useCallback(async () => {
     try {
       const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}`, { method: "DELETE" });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       nav(`/work?${nextWorkParams(new URLSearchParams(), { scope })}`, { replace: true });
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e));
@@ -250,7 +251,7 @@ export default function TicketDetail() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action: "approve", note: answer.trim() || null }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setAnswer("");
       say("Answered. The next attempt reads it in the ticket body.");
       await load();
@@ -272,7 +273,7 @@ export default function TicketDetail() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ text }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setTask(await r.json());
       setCommentDraft("");
     } catch (e) {

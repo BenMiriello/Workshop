@@ -5,6 +5,7 @@ import { AppGroupNav } from "../../components/appNav";
 import { Button, Field, Input, PageHeader, Select, Tabs } from "@workshop/ui";
 import Projection from "./budget/Projection";
 import AppChatDock from "../../components/AppChatDock";
+import { shortHttpError } from "../../lib/httpError";
 
 // Budget app — the planning layer over the raw Finance viewer. Implements the
 // operator's mental model as a priority waterfall: income flows down through
@@ -88,7 +89,7 @@ async function patchPlan(t: PatchTarget, value: number | string | null): Promise
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
 }
 
 function InlineNumber({

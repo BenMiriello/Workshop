@@ -6,6 +6,7 @@ import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill,
   Badge, Modal, Skeleton, type StatusKind,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 // Run: the single place a project becomes a running thing on this host. Drives
 // the backend app_runner — one app made of N services (each its own process +
@@ -111,7 +112,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
     setErr(null);
     try {
       const r = await fetch(`/api/base-apps/run/${slug}/manifest`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setManifest(await r.json());
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -136,7 +137,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
     setErr(null);
     try {
       const r = await fetch(`/api/base-apps/run/${slug}/${path}`, { method: "POST" });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setStatus(await r.json());
       // A start kicks off background work; nudge a couple of refreshes.
       setTimeout(loadStatus, 1500);

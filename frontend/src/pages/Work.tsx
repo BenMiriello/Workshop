@@ -39,6 +39,7 @@ import {
   TicketFilterBar, TicketFilterCompact, TicketFilterSheet, ViewSwitcher,
   type LabelCount,
 } from "../components/tickets/TicketFilters";
+import { shortHttpError } from "../lib/httpError";
 
 type TasksResp = { tasks: Task[]; count: number; total: number };
 
@@ -136,7 +137,7 @@ export default function Work() {
     try {
       const params = apiQuery(urlFilters, sort, PAGE_SIZE, (page - 1) * PAGE_SIZE);
       const r = await fetch(`/api/tasks?${params.toString()}`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setData(await r.json());
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -414,7 +415,7 @@ function CreateTicket({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ scope, title: clean, body: body.trim() }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       onCreated(await r.json());
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

@@ -25,6 +25,7 @@ import {
   StatusPill,
   type StatusKind,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 // Home — three bands per operator direction 2026-07-18: Apps + Chats +
 // Projects, each capped to the four most-recently-active items. No
@@ -106,7 +107,7 @@ function RecentChats() {
   const load = useCallback(async () => {
     try {
       const r = await fetch("/api/chat/threads");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const list = (await r.json()) as ThreadSummary[];
       setThreads(Array.isArray(list) ? list.slice(0, 4) : []);
       setErr(null);
@@ -171,7 +172,7 @@ function PinnedApps() {
   const load = useCallback(async () => {
     try {
       const r = await fetch("/api/base-apps/launcher");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = (await r.json()) as { apps?: LauncherApp[] };
       setApps((j.apps ?? []).slice(0, 4));
       setErr(null);
@@ -244,7 +245,7 @@ function RecentProjects() {
   const load = useCallback(async () => {
     try {
       const r = await fetch("/api/projects/");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const list = (await r.json()) as ProjectLite[];
       const sorted = [...list].sort((a, b) =>
         Date.parse(b.last_touched ?? "") - Date.parse(a.last_touched ?? ""),

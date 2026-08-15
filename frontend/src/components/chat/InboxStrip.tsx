@@ -11,6 +11,7 @@ import {
   inboxElsewhere, inboxUrl, type InboxCounts, type InboxMode,
 } from "../../lib/inbox";
 import ChatProblemBlock from "./ChatProblemBlock";
+import { shortHttpError } from "../../lib/httpError";
 
 // Items an agent raised that need the operator: the "Needs you" zone of the
 // chat's one work drawer (WorkDrawer).
@@ -124,7 +125,7 @@ export function useInboxItems(chatId: string | null, mode: InboxMode = "chat"): 
     try {
       const r = await fetch(url);
       if (!r.ok) {
-        setErr(`${r.status} ${await r.text().catch(() => "")}`.trim());
+        setErr(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")).trim());
         setItems((v) => v ?? []);
         return;
       }
@@ -172,7 +173,7 @@ export function useInboxItems(chatId: string | null, mode: InboxMode = "chat"): 
       // be refused (a proposal already granted, a task that moved on). Say so:
       // the re-fetch below puts the row back, and a row reappearing with no
       // explanation is the thing that made this surface untrustworthy.
-      if (!r.ok) setErr(`Couldn't ${what}: ${r.status} ${await r.text().catch(() => "")}`.trim());
+      if (!r.ok) setErr(`Couldn't ${what}: ${shortHttpError(r.status, r.statusText, await r.text().catch(() => ""))}`.trim());
       else setErr(null);
     } catch (e) {
       setErr(`Couldn't ${what}: ${String(e)}`);
@@ -196,7 +197,7 @@ export function useInboxItems(chatId: string | null, mode: InboxMode = "chat"): 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ preset }),
       });
-      if (!r.ok) setErr(`Couldn't snooze that: ${r.status} ${await r.text().catch(() => "")}`.trim());
+      if (!r.ok) setErr(`Couldn't snooze that: ${shortHttpError(r.status, r.statusText, await r.text().catch(() => ""))}`.trim());
       else setErr(null);
     } catch (e) {
       setErr(`Couldn't snooze that: ${String(e)}`);

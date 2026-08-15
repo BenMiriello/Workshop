@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { BaseApp } from "@shared/types";
 import { Card, CardGrid, PageHeader, StateBlock } from "@workshop/ui";
+import { shortHttpError } from "../../lib/httpError";
 
 // Base Apps — the foundational tooling and services that make up the tenant
 // (workshop itself, clawdbot, openclaw, infra repos). Tenant-level diagnostic
@@ -14,7 +15,7 @@ export default function BaseApps() {
   useEffect(() => {
     fetch("/api/base-apps/")
       .then(async (r) => {
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         return r.json();
       })
       .then(setItems)

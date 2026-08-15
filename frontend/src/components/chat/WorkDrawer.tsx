@@ -9,6 +9,7 @@ import {
 } from "../../lib/tasks";
 import ChatProblemBlock from "./ChatProblemBlock";
 import InboxStrip, { useInboxItems, type Inbox } from "./InboxStrip";
+import { shortHttpError } from "../../lib/httpError";
 
 // THE CHAT'S ONE WORK DRAWER. Two zones, two questions:
 //
@@ -143,7 +144,7 @@ export default function WorkDrawer({
     if (!scope) { setRows(null); return; }
     try {
       const r = await fetch(scopeTicketsUrl(scope));
-      if (!r.ok) { setErr(`${r.status} ${await r.text().catch(() => "")}`.trim()); return; }
+      if (!r.ok) { setErr(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")).trim()); return; }
       const j = (await r.json()) as { tasks?: Task[] };
       setErr(null);
       setRows(j.tasks ?? []);

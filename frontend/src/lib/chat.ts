@@ -19,6 +19,8 @@
  *  index into it, snapped it to that delegation's end, and dropped the SECOND
  *  delegation below a message typed after it was launched. "After this segment"
  *  cannot move. See docs/decisions/0018. */
+import { shortHttpError } from "./httpError";
+
 type CutAfter = { cut_after?: string[] };
 
 export type ChatSegment =
@@ -450,32 +452,11 @@ async function j<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-// Build a short, human error line from an HTTP failure. A gateway/CDN 5xx (e.g.
-// a Cloudflare 502 while the origin restarts) returns a full HTML page as the
-// body; never surface that — it renders as a giant red wall taking over the UI.
-export function shortHttpError(status: number, statusText: string, body: string): string {
-  const b = unwrapDetail((body || "").trim());
-  const looksHtml = b.startsWith("<") || b.toLowerCase().includes("<!doctype");
-  if (status >= 502 && status <= 504) return `Server unavailable (${status}). Retrying.`;
-  const detail = !looksHtml && b && b.length <= 200 ? b : "";
-  return detail ? `${status} ${detail}` : (`${status} ${statusText || "request failed"}`).trim();
-}
-
-// FastAPI raises as `{"detail": "..."}`, so the sentence the backend wrote for
-// the operator arrived wrapped in its own JSON and was shown that way. The
-// refusal a chat gets for a developer-mode scope is a written sentence naming
-// the flag; on screen it read `403 {"detail":"developer mode is off, ..."}`.
-function unwrapDetail(body: string): string {
-  if (!body.startsWith("{")) return body;
-  try {
-    const parsed = JSON.parse(body);
-    const d = parsed?.detail;
-    if (typeof d === "string" && d.trim()) return d.trim();
-  } catch {
-    /* not JSON, or not ours: the raw body is still the best thing to show */
-  }
-  return body;
-}
+// The shared HTTP-failure-to-error-line helper lives in ./httpError (a pure
+// module with no chat dependency, so any page or lib can use it without
+// pulling in this whole client). Re-exported here since existing callers
+// import it from this module.
+export { shortHttpError };
 
 export type ProviderRole = "assistant" | "builder";
 

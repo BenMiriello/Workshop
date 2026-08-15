@@ -32,6 +32,7 @@ import {
   type SegmentedOption,
   type StatusKind,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 // Apps page: a uniform grid of cards. Every app — internal or external — looks
 // the same here. Tap a card to enter the app. Privacy-on-glance: cards show
@@ -186,7 +187,7 @@ function AgentButtonSetting({ appId }: { appId: string }) {
         setState({ kind: "absent" });
         return;
       }
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const m = await r.json();
       setState({ kind: "ready", on: m?.ui?.agent_button !== false });
     } catch (e) {
@@ -209,7 +210,7 @@ function AgentButtonSetting({ appId }: { appId: string }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ agent_button: next }),
         });
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         const m = await r.json();
         setState({ kind: "ready", on: m?.ui?.agent_button !== false });
       } catch (e) {
@@ -383,7 +384,7 @@ export default function Apps() {
     setLauncher({ kind: "loading" });
     try {
       const r = await fetch("/api/base-apps/launcher");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = (await r.json()) as { apps?: LauncherApp[] };
       setLauncher({ kind: "loaded", apps: j.apps || [] });
     } catch (e) {
@@ -397,7 +398,7 @@ export default function Apps() {
     setProjects({ kind: "loading" });
     try {
       const r = await fetch("/api/projects/");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const list = (await r.json()) as ProjectLite[];
       setProjects({ kind: "loaded", slugs: new Set(list.map((p) => p.slug)) });
     } catch (e) {
@@ -435,7 +436,7 @@ export default function Apps() {
             template: "blank",
           }),
         });
-        if (!r.ok && r.status !== 409) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok && r.status !== 409) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         nav(`/projects/${slug}`);
       } catch (e) {
         setProjects({ kind: "error", message: e instanceof Error ? e.message : String(e) });

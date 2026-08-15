@@ -24,9 +24,11 @@
 const DETAIL_MAX = 160;
 
 /** The words a 401/403 carries when it has nothing to add: HTTP's own reason
- *  phrases and FastAPI's stock detail. */
+ *  phrases, FastAPI's stock detail, and `shortHttpError`'s own mapped
+ *  sentence for a bare 401/403 (no body at all). None of these are a REASON;
+ *  they are the protocol restating the status code in words. */
 const BARE_AUTH_REASON =
-  /^(unauthorized|forbidden|not authenticated|authentication required|access denied)\.?$/i;
+  /^(unauthorized|forbidden|not authenticated|authentication required|access denied|not signed in|not allowed)\.?$/i;
 
 function messageOf(e: unknown): string {
   if (typeof e === "string") return e.trim();

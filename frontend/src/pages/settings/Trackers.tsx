@@ -5,6 +5,7 @@ import {
   Select, Skeleton, Stack, StateBlock, StatusDot, StatusPill, Tag, catFor,
 } from "@workshop/ui";
 import { scopeLabel } from "../../lib/tasks";
+import { shortHttpError } from "../../lib/httpError";
 
 // Settings -> Trackers: the one external ticket integration, and its triage.
 //
@@ -121,7 +122,7 @@ export default function Trackers() {
         headers: { "content-type": "application/json" },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       await load();
       return j;

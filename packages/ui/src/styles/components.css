@@ -1737,8 +1737,10 @@ span.ws-filterchip__open { cursor: default; }
 .ws-notice--warn .ws-notice__icon { color: var(--warn-solid); }
 .ws-notice__body { flex: 1 1 auto; min-width: 0; }
 /* The cause reads as part of the same sentence, not as a second paragraph: it
-   is one thought and it should cost one line whenever it fits. */
-.ws-notice__detail { color: var(--muted); }
+   is one thought and it should cost one line whenever it fits. overflow-wrap
+   so a detail carrying an unbroken token (same class of bug as the state
+   block hint above) wraps inside the line instead of pushing it wide. */
+.ws-notice__detail { color: var(--muted); overflow-wrap: anywhere; }
 .ws-notice__where {
   font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--faint);
   overflow-wrap: anywhere;

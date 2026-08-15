@@ -14,6 +14,7 @@ import {
   startDeviceTracking,
   stopDeviceTracking,
 } from "../../native/location";
+import { shortHttpError } from "../../lib/httpError";
 
 // Location app page — read-only view of operator position fed by Owntracks
 // iOS. Web geolocation is gone; this page is a viewer.
@@ -180,7 +181,7 @@ export default function Location() {
     setLoading(true);
     try {
       const r = await fetch(`/api/location/history?limit=${PAGE_SIZE}&offset=0`);
-      if (!r.ok) throw new Error(await r.text());
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = (await r.json()) as HistoryResp;
       setRecords(j.history || []);
       setTotal(j.total ?? null);
@@ -209,7 +210,7 @@ export default function Location() {
     setLoading(true);
     try {
       const r = await fetch(`/api/location/history?limit=${PAGE_SIZE}&offset=${records.length}`);
-      if (!r.ok) throw new Error(await r.text());
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = (await r.json()) as HistoryResp;
       setRecords((prev) => [...prev, ...(j.history || [])]);
       setTotal(j.total ?? null);
@@ -234,7 +235,7 @@ export default function Location() {
     setClearing(true);
     try {
       const r = await fetch("/api/location/history", { method: "DELETE" });
-      if (!r.ok) throw new Error(await r.text());
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       await Promise.all([loadLatest(), loadFirstPage(), loadTrack()]);
       setConfirmClear(false);
     } catch (e) {

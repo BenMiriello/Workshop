@@ -6,6 +6,7 @@ import {
   Badge, Tag, Skeleton, Field, Input, Modal, ConfirmDialog, type StatusKind,
 } from "@workshop/ui";
 import { TableScroll, Table } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 // /deploys — cross-project index of every hosted target across the workshop.
 // Each row is a Deploy: which project, which target, which branch, what's
@@ -67,8 +68,8 @@ export default function Deploys() {
         fetch("/api/deploys"),
         fetch("/api/deploys/autonomy/override"),
       ]);
-      if (!dr.ok) throw new Error(`deploys ${dr.status} ${await dr.text()}`);
-      if (!or.ok) throw new Error(`override ${or.status} ${await or.text()}`);
+      if (!dr.ok) throw new Error(`deploys: ${shortHttpError(dr.status, dr.statusText, await dr.text().catch(() => ""))}`);
+      if (!or.ok) throw new Error(`override: ${shortHttpError(or.status, or.statusText, await or.text().catch(() => ""))}`);
       const dj = await dr.json();
       const oj = await or.json();
       setDeploys(dj.deploys || []);
@@ -89,7 +90,7 @@ export default function Deploys() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ reason: engageReason || null, by: "operator" }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setOverride(await r.json());
       setEngageOpen(false);
       setEngageReason("");
@@ -103,7 +104,7 @@ export default function Deploys() {
   const clearOverride = useCallback(async () => {
     try {
       const r = await fetch("/api/deploys/autonomy/override", { method: "DELETE" });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setOverride(await r.json());
       setClearConfirm(false);
     } catch (e) {

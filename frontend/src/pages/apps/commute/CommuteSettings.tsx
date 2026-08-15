@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { TrainFront } from "lucide-react";
 import { StatusDot } from "@workshop/ui";
 import { SettingsSection, SettingsRow as Row } from "../../../components/AppSettings";
+import { shortHttpError } from "../../../lib/httpError";
 
 // Commute app settings — 511 key status + home/work coordinates. Moved verbatim
 // out of the platform Settings page (Phase 5 settings split). Renders inside the
@@ -94,7 +95,7 @@ function CoordsRow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, lat: parseFloat(lat), lon: parseFloat(lon) }),
       });
-      if (!r.ok) throw new Error(await r.text());
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setEditing(false);
       onSaved();
     } catch (e) {

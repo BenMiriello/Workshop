@@ -29,6 +29,7 @@ import {
 import DelegatesSection from "../components/DelegatesSection";
 import { triggerSummary, nextScheduled, agentAgency, type UnifiedAgent } from "../lib/agentTriggers";
 import { latitudeDesc, type Latitude } from "../lib/tasks";
+import { shortHttpError } from "../lib/httpError";
 
 // Roster item enriched with the O6/O7 autonomy fields the backend now returns on
 // GET /api/agents/ (autonomy preset + role + latitude). Kept local so the shared
@@ -118,7 +119,7 @@ function FromTemplateModal({
     setLoadErr(null);
     fetch("/api/agents/templates")
       .then(async (r) => {
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         return r.json();
       })
       .then((c: TemplateCatalog) => setCat(c))
@@ -142,7 +143,7 @@ function FromTemplateModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const res = await r.json();
       if (tab === "groups") {
         const skipped = (res.skipped || []) as { template: string; reason: string }[];
@@ -270,7 +271,7 @@ export default function Agents() {
         fetch("/api/projects/"),
         fetch("/api/jobs?limit=200"),
       ]);
-      if (!aR.ok) throw new Error(`${aR.status} ${await aR.text()}`);
+      if (!aR.ok) throw new Error(shortHttpError(aR.status, aR.statusText, await aR.text().catch(() => "")));
       setAgents((await aR.json()) as RosterAgent[]);
       setProjects(pR.ok ? await pR.json() : []);
       setJobs(jR.ok ? (await jR.json()).jobs || [] : []);

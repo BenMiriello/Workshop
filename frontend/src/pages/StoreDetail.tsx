@@ -7,6 +7,7 @@ import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot,
   Badge, Tag, Skeleton, Field, Input, Textarea,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 
 type Store = {
@@ -66,7 +67,7 @@ export default function StoreDetail() {
         fetch("/api/stores/policies"),
         fetch("/api/grants"),
       ]);
-      if (!sr.ok) throw new Error(`stores ${sr.status} ${await sr.text()}`);
+      if (!sr.ok) throw new Error(`stores: ${shortHttpError(sr.status, sr.statusText, await sr.text().catch(() => ""))}`);
       const sj = await sr.json();
       const found = (sj.stores as Store[]).find((s) => s.owner_app === app && s.name === name);
       if (!found) { setErr("store not declared"); setLoading(false); return; }
@@ -101,7 +102,7 @@ export default function StoreDetail() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setContents(await r.json());
     } catch (e) {
       setBanner(e instanceof Error ? e.message : String(e));
@@ -116,7 +117,7 @@ export default function StoreDetail() {
     setBanner(null);
     try {
       const r = await fetch(`/api/stores/export?uri=${encodeURIComponent(store.uri)}`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       setBanner(`Exported to ${j.path}`);
     } catch (e) {

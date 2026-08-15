@@ -8,6 +8,7 @@ import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot,
   Badge, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Menu, MenuItem, type StatusKind,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 
 type Deploy = {
@@ -89,7 +90,7 @@ export default function DeployDetail() {
       // We only know the deploy_id in the URL; look up which project it belongs
       // to via the cross-project list, then fetch the per-project routes.
       const listR = await fetch("/api/deploys");
-      if (!listR.ok) throw new Error(`list ${listR.status} ${await listR.text()}`);
+      if (!listR.ok) throw new Error(`list: ${shortHttpError(listR.status, listR.statusText, await listR.text().catch(() => ""))}`);
       const listJ = await listR.json();
       const rec = (listJ.deploys as Deploy[]).find((d) => d.id === id);
       if (!rec) { setErr("deploy not found"); setLoading(false); return; }
@@ -135,7 +136,7 @@ export default function DeployDetail() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(draft),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setDeploy(await r.json());
       setEditing(false);
     } catch (e) {
@@ -155,7 +156,7 @@ export default function DeployDetail() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ref: null }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       setBanner(`Deploy started: ${j.job_id}.`);
       await load();
@@ -177,7 +178,7 @@ export default function DeployDetail() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ to_run_id: run.id }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       setBanner(`Rollback started: ${j.job_id}.`);
       await load();
@@ -193,7 +194,7 @@ export default function DeployDetail() {
     if (!deploy) return;
     try {
       const r = await fetch(`/api/projects/${encodeURIComponent(deploy.project_slug)}/deploys/${encodeURIComponent(deploy.id)}`, { method: "DELETE" });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       nav("/deploys", { replace: true });
     } catch (e) {
       setBanner(e instanceof Error ? e.message : String(e));
@@ -206,7 +207,7 @@ export default function DeployDetail() {
     setLogText("Loading...");
     try {
       const r = await fetch(`/api/deploys/${encodeURIComponent(deploy.id)}/log/${encodeURIComponent(run.id)}?tail=500`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       setLogText(j.log || "(empty)");
     } catch (e) {

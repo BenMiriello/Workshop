@@ -3,6 +3,7 @@ import { KeyRound, ExternalLink, RefreshCw, Pencil, X } from "lucide-react";
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, Badge, Skeleton, Field, Input,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 // Environment / secrets panel for a project. The app manifest declares env
 // REQUIREMENTS (key + metadata, no values); the operator fills VALUES here; the
@@ -59,7 +60,7 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
     setErr(null);
     try {
       const r = await fetch(`/api/base-apps/run/${slug}/env`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setData(await r.json());
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -81,7 +82,7 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
         method: "PUT", headers: { "content-type": "application/json" },
         body: JSON.stringify({ values }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setData(await r.json());
       setDraft({}); setEditing(false);
     } catch (e) {

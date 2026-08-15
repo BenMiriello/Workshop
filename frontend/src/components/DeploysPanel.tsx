@@ -9,6 +9,7 @@ import {
   Badge, Tag, Skeleton, Field, Input, Select, Modal, ConfirmDialog, type StatusKind,
   Notice,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 // Deploys panel — per-project target bindings.
 //
@@ -105,8 +106,8 @@ export default function DeploysPanel({ slug }: { slug: string }) {
         fetch(`/api/projects/${encodeURIComponent(slug)}/deploys`),
         fetch(`/api/deploys/providers`),
       ]);
-      if (!dr.ok) throw new Error(`deploys ${dr.status} ${await dr.text()}`);
-      if (!pr.ok) throw new Error(`providers ${pr.status} ${await pr.text()}`);
+      if (!dr.ok) throw new Error(`deploys ${shortHttpError(dr.status, dr.statusText, await dr.text().catch(() => ""))}`);
+      if (!pr.ok) throw new Error(`providers ${shortHttpError(pr.status, pr.statusText, await pr.text().catch(() => ""))}`);
       const dj = await dr.json();
       const pj = await pr.json();
       setDeploys(dj.deploys || []);
@@ -123,7 +124,7 @@ export default function DeploysPanel({ slug }: { slug: string }) {
     setRunsLoading(deploy.id);
     try {
       const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/deploys/${encodeURIComponent(deploy.id)}/runs`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       setRunsCache((c) => ({ ...c, [deploy.id]: j.runs || [] }));
     } catch (e) {
@@ -151,7 +152,7 @@ export default function DeploysPanel({ slug }: { slug: string }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ref: null, message: null }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setBanner(`Deploy started for ${deploy.name}. Watch it in Runs.`);
       await load();
       if (openRunsFor === deploy.id) await loadRuns(deploy);
@@ -171,7 +172,7 @@ export default function DeploysPanel({ slug }: { slug: string }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ to_run_id: run.id }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setBanner(`Rollback started for ${deploy.name} to ${short(run.evidence?.commit_sha)}.`);
       await load();
       if (openRunsFor === deploy.id) await loadRuns(deploy);
@@ -188,7 +189,7 @@ export default function DeploysPanel({ slug }: { slug: string }) {
       const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/deploys/${encodeURIComponent(deploy.id)}`, {
         method: "DELETE",
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       await load();
     } catch (e) {
       setBanner(e instanceof Error ? e.message : String(e));
@@ -488,7 +489,7 @@ function AddTargetModal({
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       await onCreated();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

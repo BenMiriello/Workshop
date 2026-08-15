@@ -10,6 +10,7 @@ import {
   useEditMode, type StatusKind, type SegmentedOption,
 } from "@workshop/ui";
 import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib/tasks";
+import { shortHttpError } from "../lib/httpError";
 
 // Autonomy = how a scope (a project OR an agent) decides when to work its own
 // task queue through the Ralph loop. The PRIMARY control is a preset (Section
@@ -255,7 +256,7 @@ export default function AutonomyPanel({
   const load = useCallback(async () => {
     try {
       const r = await fetch(getUrl);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const raw = await r.json();
       const cfgNext: Autonomy = {
         autonomy: isPreset(raw.autonomy) ? raw.autonomy : "off",
@@ -317,7 +318,7 @@ export default function AutonomyPanel({
       body: JSON.stringify(body),
     });
     if (!r.ok) {
-      const msg = `${r.status} ${await r.text()}`;
+      const msg = shortHttpError(r.status, r.statusText, await r.text().catch(() => ""));
       setSaveErr(msg);
       throw new Error(msg);
     }
@@ -335,7 +336,7 @@ export default function AutonomyPanel({
         body: JSON.stringify({ triggers: draft.triggers }),
       });
       if (!r.ok) {
-        const msg = `${r.status} ${await r.text()}`;
+        const msg = shortHttpError(r.status, r.statusText, await r.text().catch(() => ""));
         setSaveErr(msg);
         throw new Error(msg);
       }
@@ -348,7 +349,7 @@ export default function AutonomyPanel({
     setSaveErr(null);
     try {
       const r = await fetch(runUrl, { method: "POST" });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setTimeout(load, 1200);
       setTimeout(load, 3500);
     } catch (e) {

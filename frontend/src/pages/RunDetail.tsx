@@ -18,6 +18,7 @@ import {
 import type { StatusKind } from "@workshop/ui";
 import { type Job, jobIsLive, jobStatusKind } from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
+import { shortHttpError } from "../lib/httpError";
 
 // One RUN's detail: its binding, trigger, timing, outcome, and freeform
 // evidence. Linked from Work's Runs tab, Home attention cards, and an agent's
@@ -234,7 +235,7 @@ export default function JobDetail() {
         setJob(null);
         return;
       }
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setJob(await r.json());
       // A coordinator sweep has child Jobs (one per task it ran); fetch them so
       // the sweep detail can nest them. A leaf run simply returns none.
@@ -273,7 +274,7 @@ export default function JobDetail() {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ action }),
         });
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         await refresh();
       } catch (e) {
         setActErr(e instanceof Error ? e.message : String(e));
@@ -289,7 +290,7 @@ export default function JobDetail() {
     setActErr(null);
     try {
       const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/dismiss`, { method: "POST" });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       nav("/runs");
     } catch (e) {
       setActErr(e instanceof Error ? e.message : String(e));

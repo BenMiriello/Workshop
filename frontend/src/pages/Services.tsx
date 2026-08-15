@@ -15,6 +15,7 @@ import {
   StatusPill,
   type StatusKind,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 type ServiceStatus = {
   name: string;
@@ -126,7 +127,7 @@ export default function Services() {
     setErr(null);
     try {
       const r = await fetch("/api/services/");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setData(await r.json());
     } catch (e) {
       setErr(String(e));

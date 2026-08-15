@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { RefreshCw, Plus, Pencil, Trash2, FileText, ShieldCheck } from "lucide-react";
+import {
+  RefreshCw, Plus, Pencil, Trash2, FileText, BookOpen, MessageSquare, Pin,
+  ShieldCheck,
+} from "lucide-react";
 import {
   Button,
   Card,
@@ -17,11 +20,13 @@ import {
   Modal,
   ConfirmDialog,
   StateBlock,
+  Notice,
   Skeleton,
   StatusDot,
   Table,
   TableScroll,
   Tag,
+  Checkbox,
   catFor,
   type SegmentedOption,
 } from "@workshop/ui";
@@ -31,15 +36,25 @@ import AttachmentViewer from "../components/chat/AttachmentViewer";
 import { Ref } from "../components/Ref";
 import { backlinksFor } from "../lib/refs";
 import { useResolvedRefs } from "../lib/useResolvedRefs";
+import { shortHttpError } from "../lib/httpError";
 
-// The Notes surface (notes-system plan Phase N1): one /notes page over the
-// EXISTING scoped knowledge store. A note IS a knowledge note; the per-note CRUD
-// routes stay `/api/knowledge/{scope}/notes/{id}`. This page only adds the
-// cross-scope list (GET /api/notes) + a scope filter + an editor drawer.
+// The Memory surface (memory-and-documentation-model-2026-08-14.md sec 11):
+// one page over three substrates that used to be scattered -- the scoped
+// knowledge store (Notes), the committed docs/ tree (Documents), and chat
+// threads (Chats) -- unified into one filterable list, plus the Vault
+// (a frozen Apple Notes export, kept separate per sec 9) and Files (chat
+// attachments) as their own tabs.
 //
-// Notes mirror Work: same Segmented/filter/list/drawer language, four list
-// states, Edit-mode for writes, ConfirmDialog for delete. Tokens not hex, lucide
-// not emoji, per frontend/CLAUDE.md.
+// Same Segmented/filter/list/drawer language as Work. Tokens not hex, lucide
+// not emoji, per frontend/CLAUDE.md. Four list states, Edit-mode for writes,
+// ConfirmDialog for delete.
+
+// A helper for the `${r.status} ${await r.text()}` -> shortHttpError swap: a
+// small, throwaway wrapper so every fetch call site below reads the same way
+// rather than repeating the `.catch(() => "")` dance six times.
+async function httpFail(r: Response): Promise<Error> {
+  return new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+}
 
 type Note = {
   id: string;
@@ -47,13 +62,22 @@ type Note = {
   hook: string;
   updated?: string | null;
   scope: string;
+  // Provenance and the ranked-digest facets (design doc sec 5, sec 11):
+  // who wrote it, its type (decision/fact/reference/preference), and whether
+  // it is pinned. Absent on a note written before this metadata existed --
+  // `author` renders as "Unknown author" and `type`/`pinned` default like the
+  // backend does (fact / not pinned).
+  author?: string;
+  type?: string;
+  pinned?: boolean;
 };
 
 type NotesResp = { notes: Note[]; count: number; scopes?: number };
 
-// A doc from the read-only docs index (GET /api/documents). Notes are editable scoped
-// knowledge; docs are committed markdown under docs/, surfaced read-only here so
-// the operator sees notes and documents from one place (notes-system plan N3).
+// A doc from the docs/ index (GET /api/documents). Committed markdown; edits
+// land in the working tree (PUT /api/documents/file) and are NOT auto-
+// committed -- the operator commits them on their own schedule, same as any
+// other tracked-file edit.
 type Doc = {
   path: string;
   title: string;
@@ -61,6 +85,24 @@ type Doc = {
   mtime?: string | null;
 };
 type DocsResp = { docs: Doc[]; count: number };
+
+// A thread summary (GET /api/chat/threads). Chats are the third source in
+// the unified list -- shown, not edited here; a row navigates to the chat.
+type ChatSummary = {
+  id: string;
+  title: string;
+  context_key: string;
+  scope?: string;
+  created_at?: string | null;
+  last_user_at?: string | null;
+  archived_at?: string | null;
+};
+
+// One entry in the scope filter (GET /api/notes/scopes/tree). `parent` is the
+// containing scope, or null at a root; `depth` is how far under a visible
+// root this scope sits. Root-first, depth-first order from the backend, so
+// rendering it as a flat, indented list already reads as a tree.
+type ScopeNode = { key: string; parent: string | null; depth: number };
 
 // One note in the ~/notes vault, served through the Store door
 // (POST /api/stores/notes:vault/read). The vault is a plain folder of Markdown a
@@ -80,16 +122,47 @@ type StoreRead = {
 
 const OVERFLOW_AT = 100;
 
-// Filter view: all scopes or one scope. The Segmented over scopes would grow
-// unbounded (a scope per project + agent), so scope is a Select. The Segmented
-// switches between the editable Notes list and the read-only Documents index.
-type Tab = "notes" | "vault" | "docs" | "files";
+// Vault and Files stay their own tabs (sec 9: the vault is a dead one-time
+// import and explicitly out of the unified list). Notes, Documents and Chats
+// merge into "library", one list with a source badge per row and a filter
+// over it (sec 11).
+type Tab = "library" | "vault" | "files";
 const TABS: SegmentedOption<Tab>[] = [
-  { value: "notes", label: "Notes" },
+  { value: "library", label: "Library" },
   { value: "vault", label: "Vault" },
-  { value: "docs", label: "Documents" },
   { value: "files", label: "Files" },
 ];
+
+type Source = "note" | "doc" | "chat";
+type SourceFilter = "all" | Source;
+const SOURCE_OPTIONS: SegmentedOption<SourceFilter>[] = [
+  { value: "all", label: "All" },
+  { value: "note", label: "Notes" },
+  { value: "doc", label: "Documents" },
+  { value: "chat", label: "Chats" },
+];
+const SOURCE_ICON: Record<Source, typeof FileText> = {
+  note: FileText,
+  doc: BookOpen,
+  chat: MessageSquare,
+};
+const SOURCE_LABEL: Record<Source, string> = { note: "Note", doc: "Document", chat: "Chat" };
+
+function SourceBadge({ source }: { source: Source }) {
+  const Icon = SOURCE_ICON[source];
+  return (
+    <Tag hue={catFor(source)}>
+      <Icon size={12} strokeWidth={1.8} aria-hidden /> {SOURCE_LABEL[source]}
+    </Tag>
+  );
+}
+
+const NOTE_TYPES = ["decision", "fact", "reference", "preference"] as const;
+type NoteType = (typeof NOTE_TYPES)[number];
+function noteTypeLabel(t?: string): string {
+  const v = (t || "fact").trim().toLowerCase();
+  return v.charAt(0).toUpperCase() + v.slice(1);
+}
 
 // A file the operator attached to a chat (GET /api/chat/attachments).
 //
@@ -118,6 +191,32 @@ function fmtTs(ts?: string | null): string {
   return isNaN(d.getTime()) ? "" : d.toLocaleString();
 }
 
+// Who wrote it (design doc sec 5, sec 11): `author` is an origin string
+// (services/origin on the backend) -- "operator", "self", "agent:<slug>",
+// "derived:<model>", "tool:<name>", or "" on a note written before this
+// metadata existed.
+function authorLabel(author?: string): string {
+  const a = (author || "").trim();
+  if (!a) return "Unknown author";
+  if (a === "operator") return "You";
+  if (a === "self") return "The assistant";
+  if (a.startsWith("agent:")) return `Agent: ${a.slice(6)}`;
+  if (a.startsWith("derived:")) return `Distilled by ${a.slice(8)}`;
+  if (a.startsWith("tool:")) return `Tool: ${a.slice(5)}`;
+  return a;
+}
+
+// Any `workshop:chat/...` refs named in a note's body -- the note's OWN
+// provenance, not "referenced by" (see ReferencedBy below, which is the
+// reverse direction). Refs are written into note bodies by agents that file a
+// note from a chat (design doc sec 10); this renders whichever ones are
+// there as navigable chips instead of leaving them as inert text.
+const CHAT_REF_RE = /workshop:chat\/[^\s)\]"'<>]+/g;
+function chatRefsIn(body: string): string[] {
+  const found = body.match(CHAT_REF_RE) ?? [];
+  return Array.from(new Set(found));
+}
+
 // A note id must match the store's slug rule ([a-z0-9] segments joined by "-").
 // Derive one from the title, fall back to "note", and always append a base36
 // timestamp so a fresh note never collides with an existing file.
@@ -131,27 +230,88 @@ function freshNoteId(title: string): string {
   return `${base}-${Date.now().toString(36)}`;
 }
 
+// Every scope `root`'s descendants, per the tree endpoint -- the frontend half
+// of "everything below it" (sec 4.2's `reach`, sec 11's scope filter). Notes
+// are already filtered this way server-side (`GET /api/notes?scope=` calls
+// `scope_tree.reach`); chats have no such endpoint, so the same containment
+// is recomputed here from the same tree data and applied client-side.
+function reachSetFrom(nodes: ScopeNode[], root: string): Set<string> {
+  const children = new Map<string, string[]>();
+  for (const n of nodes) {
+    if (n.parent) {
+      const arr = children.get(n.parent) ?? [];
+      arr.push(n.key);
+      children.set(n.parent, arr);
+    }
+  }
+  const out = new Set<string>([root]);
+  const frontier = [root];
+  while (frontier.length) {
+    const k = frontier.pop()!;
+    for (const c of children.get(k) ?? []) {
+      if (!out.has(c)) {
+        out.add(c);
+        frontier.push(c);
+      }
+    }
+  }
+  return out;
+}
+
 // ---- Page ------------------------------------------------------------------
 
 export default function Notes() {
   const [searchParams] = useSearchParams();
-  // Honour ?tab=. The attachment viewer links here with ?tab=files, and without
-  // this the link landed on Notes and the operator had to find the tab again.
+  // Honour ?tab=. `?tab=docs` is a still-live deep link (routes/refs.py's doc
+  // resolver hands it out) from before Notes and Documents merged into one
+  // Library tab; it now just means "open Library with the Documents filter".
   const urlTab = searchParams.get("tab");
   const [tab, setTab] = useState<Tab>(
-    TABS.some((t) => t.value === urlTab) ? (urlTab as Tab) : "notes",
+    urlTab === "vault" || urlTab === "files" ? (urlTab as Tab) : "library",
   );
-  const [data, setData] = useState<NotesResp | null>(null);
-  const [scopes, setScopes] = useState<string[]>([]);
+  const initialSource: SourceFilter = urlTab === "docs" ? "doc" : "all";
+
+  return (
+    <div>
+      <PageHeader
+        title="Memory"
+        sub="Notes, documents and chats in one place, filterable by scope. What agents read and write."
+      />
+      <div style={{ marginBottom: "var(--space-4)" }}>
+        <Segmented<Tab> ariaLabel="Memory view" value={tab} onChange={setTab} options={TABS} />
+      </div>
+      {tab === "vault" ? (
+        <VaultNotes />
+      ) : tab === "files" ? (
+        <Files />
+      ) : (
+        <Library initialSource={initialSource} />
+      )}
+    </div>
+  );
+}
+
+// ---- Library (Notes + Documents + Chats, unified) --------------------------
+
+function Library({ initialSource }: { initialSource: SourceFilter }) {
+  const [searchParams] = useSearchParams();
+  const [notesData, setNotesData] = useState<NotesResp | null>(null);
+  const [docsData, setDocsData] = useState<DocsResp | null>(null);
+  const [chatsData, setChatsData] = useState<ChatSummary[] | null>(null);
+  const [scopeTree, setScopeTree] = useState<ScopeNode[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  // Honor a ?scope= deep link (the "View all in Notes" links from Project and
-  // Agent detail pass the scope so the operator lands pre-filtered).
+  // Honor a ?scope= deep link (a resolved note ref, or "View all in Memory"
+  // links from Project and Agent detail).
   const [scope, setScope] = useState<string>(searchParams.get("scope") || "all");
+  const [source, setSource] = useState<SourceFilter>(initialSource);
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [open, setOpen] = useState<
-    { mode: "create" } | { mode: "edit"; note: Note } | null
+    | { mode: "create" }
+    | { mode: "editNote"; note: Note }
+    | { mode: "editDoc"; doc: Doc }
+    | null
   >(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -162,10 +322,18 @@ export default function Notes() {
       const params = new URLSearchParams();
       if (scope !== "all") params.set("scope", scope);
       if (applied.trim()) params.set("q", applied.trim());
-      const q = params.toString();
-      const r = await fetch(`/api/notes${q ? `?${q}` : ""}`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setData(await r.json());
+      const qs = params.toString();
+      const [notesR, docsR, chatsR] = await Promise.all([
+        fetch(`/api/notes${qs ? `?${qs}` : ""}`),
+        fetch("/api/documents"),
+        fetch("/api/chat/threads"),
+      ]);
+      if (!notesR.ok) throw await httpFail(notesR);
+      if (!docsR.ok) throw await httpFail(docsR);
+      if (!chatsR.ok) throw await httpFail(chatsR);
+      setNotesData(await notesR.json());
+      setDocsData(await docsR.json());
+      setChatsData(await chatsR.json());
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -178,35 +346,90 @@ export default function Notes() {
   }, [refresh]);
 
   useEffect(() => {
-    // `orderScopes` puts Development above Workshop and drops it entirely from
-    // a non-dev bundle, so a bundle built without VITE_DEV_MODE never offers the
-    // scope even when the API it is talking to is a developer install. Same call
-    // Work.tsx makes on its own scope list. ADR 0014.
-    fetch("/api/notes/scopes")
+    fetch("/api/notes/scopes/tree")
       .then((r) => (r.ok ? r.json() : { scopes: [] }))
-      .then((j) => setScopes(orderScopes(j.scopes ?? [])))
-      .catch(() => setScopes([]));
+      .then((j) => setScopeTree(j.scopes ?? []))
+      .catch(() => setScopeTree([]));
   }, []);
 
-  const notes = data?.notes ?? [];
+  const scopeOptions = useMemo(
+    () => orderScopes(scopeTree.map((n) => n.key)).map((key) => {
+      const node = scopeTree.find((n) => n.key === key);
+      const depth = node?.depth ?? 0;
+      return { key, label: "  ".repeat(depth) + scopeLabel(key) };
+    }),
+    [scopeTree],
+  );
 
-  // Open the note a `?note=` deep link names, once. A chat receipt links here
-  // ("Saved a note to workshop" used to be a dead sentence), and landing on a
-  // filtered grid still leaves the operator hunting for the one note they
-  // clicked. Fires once per id: without the guard, closing the modal would
-  // immediately reopen it, since the param is still in the URL.
+  const reachSet = useMemo(
+    () => (scope === "all" ? null : reachSetFrom(scopeTree, scope)),
+    [scope, scopeTree],
+  );
+
+  const notes = notesData?.notes ?? [];
+
+  // Documents have no scope of their own (docs/ is a single committed tree),
+  // so the scope filter does not apply to them -- only the source filter and
+  // the search do. Chats DO have a scope, filtered client-side against the
+  // same reach set the notes endpoint already applied server-side.
+  const q = applied.trim().toLowerCase();
+  const docs = (docsData?.docs ?? []).filter(
+    (d) => !q || d.title.toLowerCase().includes(q) || d.path.toLowerCase().includes(q),
+  );
+  const chats = (chatsData ?? []).filter((c) => !c.archived_at)
+    .filter((c) => !q || c.title.toLowerCase().includes(q))
+    .filter((c) => !reachSet || reachSet.has(c.scope || "workshop"));
+
+  type Item = {
+    key: string;
+    source: Source;
+    sortKey: string;
+    note?: Note;
+    doc?: Doc;
+    chat?: ChatSummary;
+  };
+  const items: Item[] = useMemo(() => {
+    const out: Item[] = [];
+    if (source === "all" || source === "note") {
+      for (const n of notes) out.push({ key: `note:${n.scope}:${n.id}`, source: "note", sortKey: n.updated || "", note: n });
+    }
+    if (source === "all" || source === "doc") {
+      for (const d of docs) out.push({ key: `doc:${d.path}`, source: "doc", sortKey: d.mtime || "", doc: d });
+    }
+    if (source === "all" || source === "chat") {
+      for (const c of chats) out.push({ key: `chat:${c.id}`, source: "chat", sortKey: c.last_user_at || c.created_at || "", chat: c });
+    }
+    out.sort((a, b) => (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0));
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesData, docsData, chatsData, source, applied, reachSet]);
+
+  // Open the note/doc a deep link names, once. A chat receipt or a `<Ref>`
+  // chip links here ("Saved a note to workshop", a doc chip in a note body),
+  // and landing on a filtered list still leaves the operator hunting for the
+  // one item they clicked. Fires once per id: without the guard, closing the
+  // modal would immediately reopen it, since the param is still in the URL.
   const wantNote = searchParams.get("note");
+  const wantPath = searchParams.get("path");
   const openedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!wantNote || openedRef.current === wantNote || !notes.length) return;
-    const hit = notes.find((n) => n.id === wantNote);
-    if (!hit) return;
-    openedRef.current = wantNote;
-    setOpen({ mode: "edit", note: hit });
-  }, [wantNote, notes]);
+    if (wantNote && openedRef.current !== `note:${wantNote}` && notes.length) {
+      const hit = notes.find((n) => n.id === wantNote);
+      if (hit) {
+        openedRef.current = `note:${wantNote}`;
+        setOpen({ mode: "editNote", note: hit });
+      }
+    } else if (wantPath && openedRef.current !== `doc:${wantPath}` && docs.length) {
+      const hit = docs.find((d) => d.path === wantPath);
+      if (hit) {
+        openedRef.current = `doc:${wantPath}`;
+        setOpen({ mode: "editDoc", doc: hit });
+      }
+    }
+  }, [wantNote, wantPath, notes, docs]);
 
-  const overflow = notes.length > OVERFLOW_AT;
-  const shown = overflow ? notes.slice(0, OVERFLOW_AT) : notes;
+  const overflow = items.length > OVERFLOW_AT;
+  const shown = overflow ? items.slice(0, OVERFLOW_AT) : items;
 
   const onChanged = useCallback(
     (msg?: string) => {
@@ -224,15 +447,20 @@ export default function Notes() {
     [query],
   );
 
+  const filtered = scope !== "all" || source !== "all" || applied.trim() !== "";
+
   const filterBar = (
     <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
       <Field label="Scope" inline>
         <Select value={scope} onChange={(e) => setScope(e.target.value)} aria-label="Filter by scope">
           <option value="all">All scopes</option>
-          {scopes.map((s) => (
-            <option key={s} value={s}>{scopeLabel(s)}</option>
+          {scopeOptions.map((s) => (
+            <option key={s.key} value={s.key}>{s.label}</option>
           ))}
         </Select>
+      </Field>
+      <Field label="Source" inline>
+        <Segmented<SourceFilter> ariaLabel="Filter by source" value={source} onChange={setSource} options={SOURCE_OPTIONS} />
       </Field>
       <Field label="Search" inline>
         <form onSubmit={submitSearch} style={{ display: "flex", gap: "var(--space-2)" }}>
@@ -240,7 +468,7 @@ export default function Notes() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Find in title or body"
-            aria-label="Search notes"
+            aria-label="Search"
           />
           <Button size="sm" type="submit">Search</Button>
         </form>
@@ -254,19 +482,17 @@ export default function Notes() {
     </Row>
   );
 
-  const filtered = scope !== "all" || applied.trim() !== "";
-
   let body: JSX.Element;
   if (err) {
     body = (
       <StateBlock
         variant="error"
-        title="Couldn't load notes"
-        hint={<><code>/api/notes</code> ({err})</>}
+        title="Couldn't load Memory"
+        hint={err}
         action={<Button size="sm" onClick={refresh}>Retry</Button>}
       />
     );
-  } else if (!data) {
+  } else if (!notesData || !docsData || !chatsData) {
     body = (
       <CardGrid>
         {[0, 1, 2, 3].map((i) => (
@@ -280,13 +506,13 @@ export default function Notes() {
         ))}
       </CardGrid>
     );
-  } else if (notes.length === 0) {
+  } else if (items.length === 0) {
     body = (
       <StateBlock
-        title={filtered ? "No notes match these filters" : "No notes yet"}
+        title={filtered ? "Nothing matches these filters" : "Nothing here yet"}
         hint={
           filtered ? (
-            <>Nothing matches. Reset <strong>Scope</strong> to <strong>All</strong> or clear the search to see every note.</>
+            <>Nothing matches. Reset <strong>Scope</strong> and <strong>Source</strong> to <strong>All</strong>, or clear the search.</>
           ) : (
             <>Notes are shared with your agents. Create one with <strong>New note</strong>, or an agent will leave one as it works.</>
           )
@@ -299,30 +525,69 @@ export default function Notes() {
       <>
         {overflow && (
           <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>
-            Showing the first {OVERFLOW_AT} of {notes.length} notes. Narrow by scope or search to see the rest.
+            Showing the first {OVERFLOW_AT} of {items.length}. Narrow by scope, source or search to see the rest.
           </p>
         )}
         <CardGrid className="ws-notes-grid">
-          {shown.map((n) => (
-            <li key={`${n.scope}:${n.id}`}>
-              <Card
-                interactive
-                compact
-                onClick={() => { setNotice(null); setOpen({ mode: "edit", note: n }); }}
-                style={{ cursor: "pointer" }}
-                className="ws-note-card"
-              >
-                <Stack gap="sm">
-                  <span className="ws-note-card__title">{n.title || n.id}</span>
-                  <span className="ws-note-card__hook">{n.hook || ""}</span>
-                  <Row wrap className="ws-note-card__footer" style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-                    <Tag hue={catFor(n.scope || "workshop")}>{scopeLabel(n.scope)}</Tag>
-                    {n.updated && (
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(n.updated)}</span>
+          {shown.map((it) => (
+            <li key={it.key}>
+              {it.source === "note" && it.note ? (
+                <Card
+                  interactive
+                  compact
+                  onClick={() => { setNotice(null); setOpen({ mode: "editNote", note: it.note! }); }}
+                  style={{ cursor: "pointer" }}
+                  className="ws-note-card"
+                >
+                  <Stack gap="sm">
+                    <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                      <SourceBadge source="note" />
+                      {it.note.pinned && <Pin size={13} strokeWidth={1.8} aria-hidden />}
+                    </Row>
+                    <span className="ws-note-card__title">{it.note.title || it.note.id}</span>
+                    <span className="ws-note-card__hook">{it.note.hook || ""}</span>
+                    <Row wrap className="ws-note-card__footer" style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                      <Tag hue={catFor(it.note.scope || "workshop")}>{scopeLabel(it.note.scope)}</Tag>
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{noteTypeLabel(it.note.type)}</span>
+                      {it.note.updated && (
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(it.note.updated)}</span>
+                      )}
+                    </Row>
+                  </Stack>
+                </Card>
+              ) : it.source === "doc" && it.doc ? (
+                <Card
+                  interactive
+                  compact
+                  onClick={() => { setNotice(null); setOpen({ mode: "editDoc", doc: it.doc! }); }}
+                  style={{ cursor: "pointer" }}
+                  className="ws-doc-card"
+                >
+                  <Stack gap="sm">
+                    <SourceBadge source="doc" />
+                    <span className="ws-note-card__title">{it.doc.title}</span>
+                    <span className="ws-doc-card__path">{it.doc.path}</span>
+                    {it.doc.mtime && (
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(it.doc.mtime)}</span>
                     )}
-                  </Row>
-                </Stack>
-              </Card>
+                  </Stack>
+                </Card>
+              ) : it.chat ? (
+                <Link to={`/chat/${encodeURIComponent(it.chat.context_key)}?thread=${encodeURIComponent(it.chat.id)}`} className="ws-note-card__link">
+                  <Card interactive compact className="ws-note-card">
+                    <Stack gap="sm">
+                      <SourceBadge source="chat" />
+                      <span className="ws-note-card__title">{it.chat.title || "Chat"}</span>
+                      <Row wrap className="ws-note-card__footer" style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                        <Tag hue={catFor(it.chat.scope || "workshop")}>{scopeLabel(it.chat.scope)}</Tag>
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                          {fmtTs(it.chat.last_user_at || it.chat.created_at)}
+                        </span>
+                      </Row>
+                    </Stack>
+                  </Card>
+                </Link>
+              ) : null}
             </li>
           ))}
         </CardGrid>
@@ -332,36 +597,36 @@ export default function Notes() {
 
   return (
     <div>
-      <PageHeader title="Notes" sub="Scoped markdown notes across every scope, read and written by the operator and agents alike." />
-      <div style={{ marginBottom: "var(--space-4)" }}>
-        <Segmented<Tab> ariaLabel="Notes view" value={tab} onChange={setTab} options={TABS} />
-      </div>
-      {tab === "docs" ? (
-        <Documents />
-      ) : tab === "vault" ? (
-        <VaultNotes />
-      ) : tab === "files" ? (
-        <Files />
-      ) : (
-        <>
-          {notice && (
-            <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>{notice}</p>
-          )}
-          <div style={{ marginBottom: "var(--space-4)" }}>{filterBar}</div>
-          {body}
-        </>
+      {notice && (
+        <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>{notice}</p>
       )}
+      <div style={{ marginBottom: "var(--space-2)" }}>{filterBar}</div>
+      {scope !== "all" ? (
+        <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginBottom: "var(--space-4)" }}>
+          Showing {scopeLabel(scope)} and everything below it.
+        </p>
+      ) : (
+        <div style={{ marginBottom: "var(--space-4)" }} />
+      )}
+      {body}
       {open?.mode === "create" && (
         <CreateNote
-          scopes={scopes}
+          scopes={scopeTree.map((n) => n.key)}
           initialScope={scope !== "all" ? scope : undefined}
           onClose={() => setOpen(null)}
           onCreated={(msg) => { setOpen(null); onChanged(msg); }}
         />
       )}
-      {open?.mode === "edit" && (
+      {open?.mode === "editNote" && (
         <EditNote
           note={open.note}
+          onClose={() => setOpen(null)}
+          onChanged={(msg) => { setOpen(null); onChanged(msg); }}
+        />
+      )}
+      {open?.mode === "editDoc" && (
+        <EditDoc
+          doc={open.doc}
           onClose={() => setOpen(null)}
           onChanged={(msg) => { setOpen(null); onChanged(msg); }}
         />
@@ -388,6 +653,8 @@ function CreateNote({
   const [title, setTitle] = useState("");
   const [hook, setHook] = useState("");
   const [content, setContent] = useState("");
+  const [noteType, setNoteType] = useState<NoteType>("fact");
+  const [pinned, setPinned] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -402,16 +669,19 @@ function CreateNote({
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ title: title.trim(), content, hook: hook.trim() }),
+          body: JSON.stringify({
+            title: title.trim(), content, hook: hook.trim(),
+            author: "operator", note_type: noteType, pinned,
+          }),
         },
       );
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw await httpFail(r);
       onCreated(`Note saved to ${scopeLabel(scope)}.`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setBusy(false);
     }
-  }, [scope, title, hook, content, onCreated]);
+  }, [scope, title, hook, content, noteType, pinned, onCreated]);
 
   return (
     <Modal
@@ -450,6 +720,19 @@ function CreateNote({
             placeholder="One-line summary (optional)"
           />
         </Field>
+        <Row wrap style={{ gap: "var(--space-4)" }}>
+          <Field label="Type" htmlFor="new-note-type" inline>
+            <Select id="new-note-type" value={noteType} onChange={(e) => setNoteType(e.target.value as NoteType)}>
+              {NOTE_TYPES.map((t) => (
+                <option key={t} value={t}>{noteTypeLabel(t)}</option>
+              ))}
+            </Select>
+          </Field>
+          <Checkbox checked={pinned} onChange={setPinned} label="Pinned" />
+        </Row>
+        <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+          Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope.
+        </p>
         <Field label="Body" htmlFor="new-note-body" optional>
           <Textarea
             id="new-note-body"
@@ -493,9 +776,25 @@ function ReferencedBy({ scope, noteId }: { scope: string; noteId: string }) {
   );
 }
 
+// Provenance: author, timestamp, and the originating chat if the body names
+// one. Never a raw path or a copyable URL (design doc sec 10's acceptance
+// test) -- a chat ref renders as a `<Ref>` chip that navigates, exactly like
+// ReferencedBy above.
+function Provenance({ author, updated, body }: { author?: string; updated?: string | null; body: string }) {
+  const chatRefs = useMemo(() => chatRefsIn(body), [body]);
+  const resolved = useResolvedRefs(chatRefs);
+  return (
+    <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+      <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{authorLabel(author)}</span>
+      {updated && <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{fmtTs(updated)}</span>}
+      {chatRefs.map((r) => <Ref key={r} resolved={resolved[r]} />)}
+    </Row>
+  );
+}
+
 // ---- Edit drawer -----------------------------------------------------------
 
-type EditDraft = { title: string; hook: string; content: string };
+type EditDraft = { title: string; hook: string; content: string; type: NoteType; pinned: boolean };
 
 function EditNote({
   note,
@@ -510,14 +809,21 @@ function EditNote({
   const idPath = `${encodeURIComponent(scope)}/notes/${encodeURIComponent(note.id)}`;
   const [editing, setEditing] = useState(false);
   const [content, setContent] = useState<string | null>(null);
-  const [draft, setDraft] = useState<EditDraft>({ title: note.title, hook: note.hook, content: "" });
+  const [meta, setMeta] = useState<{ author: string; type: NoteType; pinned: boolean }>(
+    { author: note.author || "", type: (note.type as NoteType) || "fact", pinned: !!note.pinned },
+  );
+  const [draft, setDraft] = useState<EditDraft>({
+    title: note.title, hook: note.hook, content: "", type: "fact", pinned: false,
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Load the note body (the list carries only title/hook/updated).
+  // Load the note body plus its provenance (the list carries only
+  // id/title/hook/updated/author/type/pinned -- the last three summary-level,
+  // the body and the confirmed-fresh meta come from the per-note GET).
   useEffect(() => {
     let live = true;
     setLoading(true);
@@ -526,18 +832,26 @@ function EditNote({
       .then((j) => {
         if (!live) return;
         const bodyText = j?.content ?? "";
+        const m = {
+          author: j?.author ?? note.author ?? "",
+          type: (j?.type as NoteType) ?? (note.type as NoteType) ?? "fact",
+          pinned: j?.pinned ?? !!note.pinned,
+        };
         setContent(bodyText);
-        setDraft({ title: note.title, hook: note.hook, content: bodyText });
+        setMeta(m);
+        setDraft({ title: note.title, hook: note.hook, content: bodyText, type: m.type, pinned: m.pinned });
       })
       .catch(() => { if (live) setContent(""); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
-  }, [idPath, note.title, note.hook]);
+  }, [idPath, note.title, note.hook, note.author, note.type, note.pinned]);
 
   const setField = <K extends keyof EditDraft>(k: K, v: EditDraft[K]) =>
     setDraft((d) => ({ ...d, [k]: v }));
 
-  const baseDraft: EditDraft = { title: note.title, hook: note.hook, content: content ?? "" };
+  const baseDraft: EditDraft = {
+    title: note.title, hook: note.hook, content: content ?? "", type: meta.type, pinned: meta.pinned,
+  };
   const dirty = editing && JSON.stringify(draft) !== JSON.stringify(baseDraft);
 
   const save = useCallback(async () => {
@@ -547,10 +861,17 @@ function EditNote({
       const r = await fetch(`/api/knowledge/${idPath}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: draft.title.trim(), content: draft.content, hook: draft.hook.trim() }),
+        body: JSON.stringify({
+          title: draft.title.trim(), content: draft.content, hook: draft.hook.trim(),
+          // `author` is deliberately omitted: an edit does not reassign who
+          // wrote the note. `note_type`/`pinned` are sent explicitly, since
+          // the operator just chose them.
+          note_type: draft.type, pinned: draft.pinned,
+        }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw await httpFail(r);
       setContent(draft.content);
+      setMeta((m) => ({ ...m, type: draft.type, pinned: draft.pinned }));
       setEditing(false);
       setFlash(true);
       window.setTimeout(() => setFlash(false), 2000);
@@ -566,7 +887,7 @@ function EditNote({
     setSaving(true);
     try {
       const r = await fetch(`/api/knowledge/${idPath}`, { method: "DELETE" });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw await httpFail(r);
       onChanged("Note deleted.");
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -610,6 +931,19 @@ function EditNote({
             <Field label="Hook" htmlFor="edit-note-hook" optional help="A one-line summary shown in the index and lists.">
               <Input id="edit-note-hook" value={draft.hook} onChange={(e) => setField("hook", e.target.value)} />
             </Field>
+            <Row wrap style={{ gap: "var(--space-4)" }}>
+              <Field label="Type" htmlFor="edit-note-type" inline>
+                <Select id="edit-note-type" value={draft.type} onChange={(e) => setField("type", e.target.value as NoteType)}>
+                  {NOTE_TYPES.map((t) => (
+                    <option key={t} value={t}>{noteTypeLabel(t)}</option>
+                  ))}
+                </Select>
+              </Field>
+              <Checkbox checked={draft.pinned} onChange={(v) => setField("pinned", v)} label="Pinned" />
+            </Row>
+            <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+              Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope.
+            </p>
             <Field label="Body" htmlFor="edit-note-body" optional>
               <Textarea id="edit-note-body" rows={12} value={draft.content} onChange={(e) => setField("content", e.target.value)} />
             </Field>
@@ -626,7 +960,10 @@ function EditNote({
               ) : (
                 <Tag hue={catFor(scope)}>{scopeLabel(scope)}</Tag>
               )}
-              {note.updated && <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{fmtTs(note.updated)}</span>}
+              <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{noteTypeLabel(meta.type)}</span>
+              {meta.pinned && (
+                <StatusDot status="ok"><Pin size={12} strokeWidth={1.8} aria-hidden /> Pinned</StatusDot>
+              )}
             </Row>
             {note.hook && <p className="ws-muted" style={{ margin: 0 }}>{note.hook}</p>}
             {loading ? (
@@ -636,6 +973,7 @@ function EditNote({
             ) : (
               <p className="ws-muted" style={{ margin: 0 }}>This note has no body yet.</p>
             )}
+            {!loading && <Provenance author={meta.author} updated={note.updated} body={content ?? ""} />}
             {!loading && <ReferencedBy scope={scope} noteId={note.id} />}
             {flash && <p className="ws-muted" style={{ margin: 0 }}>Saved.</p>}
             {err && <p className="ws-field__error">{err}</p>}
@@ -656,11 +994,118 @@ function EditNote({
   );
 }
 
-// ---- Documents (read-only docs/ index) -------------------------------------
+// ---- Document editor ---------------------------------------------------------
+// Docs stay committed markdown under docs/ (git history and editor-openability
+// are the point); this modal reads and writes the raw file through
+// GET/PUT /api/documents/file, with the same path containment on both sides.
+// A save lands in the working tree only -- there is no commit here, and the
+// modal says so, so a save does not look lost.
+function EditDoc({
+  doc,
+  onClose,
+  onChanged,
+}: {
+  doc: Doc;
+  onClose: () => void;
+  onChanged: (msg?: string) => void;
+}) {
+  const [content, setContent] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-// The read-only bridge to the committed docs/ tree (GET /api/documents). Plans and
-// decision records stay versioned markdown; this view only indexes and opens
-// them so the operator discovers documents alongside notes. No editing here.
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setErr(null);
+    fetch(`/api/documents/file?path=${encodeURIComponent(doc.path)}`)
+      .then(async (r) => {
+        if (!r.ok) throw await httpFail(r);
+        return r.json();
+      })
+      .then((j) => { if (live) { setContent(j?.content ?? ""); setDraft(j?.content ?? ""); } })
+      .catch((e) => { if (live) setErr(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (live) setLoading(false); });
+    return () => { live = false; };
+  }, [doc.path]);
+
+  const dirty = editing && draft !== (content ?? "");
+
+  const save = useCallback(async () => {
+    setSaving(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/documents/file", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: doc.path, content: draft }),
+      });
+      if (!r.ok) throw await httpFail(r);
+      setContent(draft);
+      setEditing(false);
+      onChanged("Saved. Not committed; commit it yourself when ready.");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [doc.path, draft, onChanged]);
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={doc.title}
+      size="lg"
+      actions={
+        editing ? (
+          <>
+            <Button onClick={() => { setEditing(false); setDraft(content ?? ""); }}>Cancel</Button>
+            <Button variant="primary" loading={saving} disabled={!dirty} onClick={save}>Save</Button>
+          </>
+        ) : (
+          <>
+            <Button onClick={onClose}>Close</Button>
+            <Button variant="primary" disabled={loading} onClick={() => setEditing(true)}>
+              <Pencil aria-hidden /> Edit
+            </Button>
+          </>
+        )
+      }
+    >
+      <Stack gap="lg">
+        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", wordBreak: "break-all" }}>{doc.path}</span>
+        {editing && (
+          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+            Saving edits the file on disk. It is not committed; commit it yourself when ready.
+          </p>
+        )}
+        {loading ? (
+          <Stack gap="sm">
+            <Skeleton width="80%" />
+            <Skeleton width="90%" />
+            <Skeleton width="60%" />
+          </Stack>
+        ) : err ? (
+          <Notice tone="error" where={<code>/api/documents/file</code>} detail={err}>Couldn't load this document.</Notice>
+        ) : editing ? (
+          <Textarea
+            rows={20}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            data-autofocus
+            style={{ fontFamily: "var(--font-mono, monospace)" }}
+          />
+        ) : (
+          <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, fontSize: "var(--fs-sm)" }}>{content}</p>
+        )}
+      </Stack>
+    </Modal>
+  );
+}
+
 // ---- Vault -----------------------------------------------------------------
 // The ~/notes vault, read through the Store door rather than through a route of
 // the notes app's own. That is the point: the notes app no longer owns its gate.
@@ -689,7 +1134,7 @@ function VaultNotes() {
           ? JSON.stringify({ verb: "search", selector: { query: applied.trim() } })
           : JSON.stringify({ verb: "list", selector: {} }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw await httpFail(r);
       setData(await r.json());
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -837,7 +1282,7 @@ function Files() {
       if (applied.trim()) params.set("q", applied.trim());
       const qs = params.toString();
       const r = await fetch(`/api/chat/attachments${qs ? `?${qs}` : ""}`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw await httpFail(r);
       setData(await r.json());
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -854,7 +1299,7 @@ function Files() {
       const r = await fetch(`/api/chat/attachments/${encodeURIComponent(f.id)}`, {
         method: "DELETE",
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw await httpFail(r);
       setConfirm(null);
       await refresh();
     } catch (e) {
@@ -1059,184 +1504,4 @@ function fmtBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function Documents() {
-  const [searchParams] = useSearchParams();
-  const [data, setData] = useState<DocsResp | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [openDoc, setOpenDoc] = useState<Doc | null>(null);
-
-  // Open the doc a `?path=` deep link names, once. A resolved `workshop:doc/...`
-  // ref (lib/refs.ts) points here so a doc chip opens the actual document
-  // rather than landing on the tab and leaving the operator to find it again --
-  // the same gesture `?note=` already does for notes above.
-  const wantPath = searchParams.get("path");
-  const openedRef = useRef<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      const r = await fetch("/api/documents");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setData(await r.json());
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const docs = data?.docs ?? [];
-
-  useEffect(() => {
-    if (!wantPath || openedRef.current === wantPath || !docs.length) return;
-    const hit = docs.find((d) => d.path === wantPath);
-    if (!hit) return;
-    openedRef.current = wantPath;
-    setOpenDoc(hit);
-  }, [wantPath, docs]);
-
-  // Group by top-level section (loose top-level files go under "Top level").
-  const groups = new Map<string, Doc[]>();
-  for (const d of docs) {
-    const key = d.section || "";
-    const list = groups.get(key) ?? [];
-    list.push(d);
-    groups.set(key, list);
-  }
-  const sections = Array.from(groups.keys()).sort((a, b) => {
-    if (a === "") return -1;
-    if (b === "") return 1;
-    return a.localeCompare(b);
-  });
-
-  let body: JSX.Element;
-  if (err) {
-    body = (
-      <StateBlock
-        variant="error"
-        title="Couldn't load documents"
-        hint={<><code>/api/documents</code> ({err})</>}
-        action={<Button size="sm" onClick={refresh}>Retry</Button>}
-      />
-    );
-  } else if (!data) {
-    body = (
-      <CardGrid>
-        {[0, 1, 2, 3].map((i) => (
-          <Card key={i}>
-            <Stack gap="sm">
-              <Skeleton width="60%" />
-              <Skeleton width="40%" />
-            </Stack>
-          </Card>
-        ))}
-      </CardGrid>
-    );
-  } else if (docs.length === 0) {
-    body = (
-      <StateBlock
-        title="No documents yet"
-        hint="Long-form plans and decision records show up here once they are written."
-      />
-    );
-  } else {
-    body = (
-      <Stack gap="lg">
-        {sections.map((section) => (
-          <div key={section || "top"}>
-            <SectionLabel>{section || "Top level"}</SectionLabel>
-            <CardGrid className="ws-notes-grid">
-              {(groups.get(section) ?? []).map((d) => (
-                <li key={d.path}>
-                  <Card
-                    interactive
-                    compact
-                    onClick={() => setOpenDoc(d)}
-                    style={{ cursor: "pointer" }}
-                    className="ws-doc-card"
-                  >
-                    <Stack gap="sm">
-                      <Row style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-                        <FileText size={14} aria-hidden />
-                        <span className="ws-note-card__title">{d.title}</span>
-                      </Row>
-                      <span className="ws-doc-card__path">{d.path}</span>
-                    </Stack>
-                  </Card>
-                </li>
-              ))}
-            </CardGrid>
-          </div>
-        ))}
-      </Stack>
-    );
-  }
-
-  return (
-    <>
-      <div style={{ marginBottom: "var(--space-4)" }}>
-        <Row wrap style={{ gap: "var(--space-3)" }}>
-          <Button size="sm" onClick={refresh} loading={loading}>
-            <RefreshCw aria-hidden /> Refresh
-          </Button>
-        </Row>
-      </div>
-      {body}
-      {openDoc && <DocViewer doc={openDoc} onClose={() => setOpenDoc(null)} />}
-    </>
-  );
-}
-
-function DocViewer({ doc, onClose }: { doc: Doc; onClose: () => void }) {
-  const [content, setContent] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    setErr(null);
-    fetch(`/api/documents/file?path=${encodeURIComponent(doc.path)}`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-        return r.json();
-      })
-      .then((j) => { if (live) setContent(j?.content ?? ""); })
-      .catch((e) => { if (live) setErr(e instanceof Error ? e.message : String(e)); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-  }, [doc.path]);
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={doc.title}
-      size="lg"
-      actions={<Button variant="primary" onClick={onClose}>Close</Button>}
-    >
-      <Stack gap="lg">
-        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", wordBreak: "break-all" }}>{doc.path}</span>
-        {loading ? (
-          <Stack gap="sm">
-            <Skeleton width="80%" />
-            <Skeleton width="90%" />
-            <Skeleton width="60%" />
-          </Stack>
-        ) : err ? (
-          <StateBlock variant="error" title="Couldn't load this document" hint={<code>{err}</code>} />
-        ) : (
-          <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, fontSize: "var(--fs-sm)" }}>{content}</p>
-        )}
-      </Stack>
-    </Modal>
-  );
 }

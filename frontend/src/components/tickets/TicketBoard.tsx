@@ -24,6 +24,7 @@ import {
   type TicketFilters, type TicketSort,
 } from "../../lib/ticketFilters";
 import { TagStrip, TicketKey, TicketMeta } from "./bits";
+import { shortHttpError } from "../../lib/httpError";
 
 type LaneState = {
   rows: Task[];
@@ -50,7 +51,7 @@ function Lane({
     try {
       const p = laneQuery(filters, sort, status, limit);
       const r = await fetch(`/api/tasks?${p.toString()}`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       setState({ rows: j.tasks ?? [], total: j.total ?? 0, loading: false, err: null });
     } catch (e) {

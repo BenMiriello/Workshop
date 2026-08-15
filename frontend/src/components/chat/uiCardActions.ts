@@ -17,6 +17,7 @@
 import type { TaskProposalSpec } from "@shared/types";
 import { pickupFor, pickupNote, scopeIsRunnable, type PickupMap } from "../../lib/scopePickup";
 import { ticketHref } from "../../lib/tasks";
+import { shortHttpError } from "../../lib/httpError";
 
 // ---- Wire shape (matches the A.1 contract) ---------------------------------
 export type UiCardFieldType =
@@ -169,7 +170,7 @@ const createProject: UiCardHandler = async (state) => {
       ],
     };
   }
-  return { status: "error", message: `${r.status} ${await r.text()}` };
+  return { status: "error", message: shortHttpError(r.status, r.statusText, await r.text().catch(() => "")) };
 };
 
 const openProject: UiCardHandler = async (state, ctx) => {
@@ -263,7 +264,7 @@ async function fileTicket(
       run,
     }),
   });
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
   return (await r.json()) as CreatedTask;
 }
 

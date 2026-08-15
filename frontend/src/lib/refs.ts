@@ -1,3 +1,4 @@
+import { shortHttpError } from "./httpError";
 // The one ref format, resolved in-app (memory-and-documentation-model-
 // 2026-08-14.md sec 10). A ref names another entity as `workshop:<kind>/...`
 // -- never a file path, never a copyable URL -- and this is the ONLY place the
@@ -15,7 +16,7 @@ export type ResolvedRef = {
 };
 
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
   return r.json() as Promise<T>;
 }
 

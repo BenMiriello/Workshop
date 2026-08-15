@@ -15,6 +15,7 @@ import {
   type SegmentedOption,
 } from "@workshop/ui";
 import { type Job, jobStatusKind as statusKind } from "../lib/jobs";
+import { shortHttpError } from "../lib/httpError";
 
 // The Jobs feed: one list for every bounded execution (cron task, drained
 // event, project sweep, supervisor heartbeat, manual run). Reads /api/jobs
@@ -107,7 +108,7 @@ export default function JobsFeed() {
     try {
       const q = filter === "all" ? "" : `&status=${filter}`;
       const r = await fetch(`/api/jobs?limit=100${q}`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setData(await r.json());
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

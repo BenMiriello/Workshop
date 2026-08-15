@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Circle, RefreshCw, CalendarClock, Check, Play, Dot,
   ChevronDown, ChevronRight, Inbox, Sparkles } from "lucide-react";
 import { ConfirmDialog, Stepper, Tabs } from "@workshop/ui";
+import { shortHttpError } from "../../../lib/httpError";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -391,7 +392,7 @@ function ScheduleTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data: doc }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setSaved(true);
       setTimeout(() => setSaved(false), 1800);
     } catch (e) {

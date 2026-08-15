@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
 import { Button, PageHeader, Row, StateBlock, StatusDot, Skeleton } from "@workshop/ui";
 import { useCrumbLabel } from "../components/appNav";
+import { shortHttpError } from "../lib/httpError";
 
 // Embedded preview of a running app service. The service binds 127.0.0.1; this
 // frames it through the backend reverse proxy inside the Workshop chrome, so there
@@ -54,7 +55,7 @@ export default function AppPreview() {
         fetch(`/api/base-apps/run/${slug}/status`),
         fetch(`/api/base-apps/run/${slug}/manifest`),
       ]);
-      if (!rs.ok) throw new Error(`${rs.status} ${await rs.text()}`);
+      if (!rs.ok) throw new Error(shortHttpError(rs.status, rs.statusText, await rs.text().catch(() => "")));
       setStatus(await rs.json());
       if (rm.ok) setManifest(await rm.json());
     } catch (e) {

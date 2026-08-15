@@ -39,6 +39,7 @@ import {
   type UnifiedAgent,
 } from "../lib/agentTriggers";
 import { ticketHref } from "../lib/tasks";
+import { shortHttpError } from "../lib/httpError";
 
 // One Agent, one config surface. `runtime` is a field, not a separate noun.
 // This page is the definition (editable), triggers, the grant set
@@ -304,7 +305,7 @@ function CreateAgent() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ slug, name: name.trim(), purpose: purpose.trim(), project_slug: projectSlug }),
         });
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         const a = await r.json();
         nav(`/agents/${encodeURIComponent(a.slug)}/chat`);
       } else {
@@ -320,7 +321,7 @@ function CreateAgent() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         const a = await r.json();
         nav(`/agents/${encodeURIComponent(a.id)}`);
       }
@@ -420,7 +421,7 @@ function AgentNotes({ slug }: { slug: string }) {
     setNotesErr(null);
     try {
       const r = await fetch(`/api/knowledge/${encodeURIComponent(scope)}/notes`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setNotes(await r.json());
     } catch (e) {
       setNotesErr(String(e));
@@ -445,7 +446,7 @@ function AgentNotes({ slug }: { slug: string }) {
           body: JSON.stringify({ title: t, content: body, hook: "" }),
         },
       );
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setTitle("");
       setBody("");
       await load();
@@ -558,7 +559,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     setErr(null);
     try {
       const r = await fetch(`/api/agents/${encodeURIComponent(agentId)}`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const a: AgentDetailData = await r.json();
       setAgent(a);
     } catch (e) {
@@ -580,7 +581,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     setGrants(null);
     try {
       const r = await fetch("/api/grants");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const data = (await r.json()) as { resource_grants?: ResourceGrant[] };
       const to = `agent:${agentId}`;
       setGrants((data.resource_grants || []).filter((g) => g.to === to));
@@ -610,7 +611,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
           participants: [`agent:${a.slug}`],
         }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const t = await r.json();
       nav(`/chat/${encodeURIComponent(contextKey)}?thread=${encodeURIComponent(t.id)}`);
     } catch (e) {
@@ -653,7 +654,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
           definition: dBody,
         }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setEditing(false);
       setFlash(true);
       setTimeout(() => setFlash(false), 2000);

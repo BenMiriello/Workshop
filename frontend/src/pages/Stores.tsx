@@ -6,6 +6,7 @@ import {
   Skeleton, Field, Input, Select, catFor,
 } from "@workshop/ui";
 import { TableScroll, Table } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 
 type Store = {
@@ -34,7 +35,7 @@ export default function Stores() {
     setErr(null);
     try {
       const r = await fetch("/api/stores");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       setStores(j.stores || []);
       setTypes(j.types || []);

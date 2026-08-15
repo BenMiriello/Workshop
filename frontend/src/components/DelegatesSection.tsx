@@ -3,6 +3,7 @@ import { Workflow } from "lucide-react";
 import {
   Badge, Card, CardGrid, Row, SectionLabel, Skeleton, Stack, StateBlock, Tag, catFor,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 // Who can be CALLED, as opposed to who runs.
 //
@@ -40,7 +41,7 @@ export default function DelegatesSection() {
     let live = true;
     fetch("/api/agents/delegates")
       .then(async (r) => {
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         return r.json();
       })
       .then((d) => { if (live) setItems(d.delegates || []); })

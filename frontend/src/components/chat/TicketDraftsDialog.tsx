@@ -6,6 +6,7 @@ import {
   Notice,
 } from "@workshop/ui";
 import { scopeLabel } from "../../lib/tasks";
+import { shortHttpError } from "../../lib/httpError";
 
 // Turning a conversation into tickets, as a review step.
 //
@@ -89,7 +90,7 @@ export default function TicketDraftsDialog({
     setErr(null);
     try {
       const r = await fetch(`/api/chat/threads/${encodeURIComponent(chatId)}/ticket-drafts`, { method: "POST" });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       setPayload({ ...j, messages_since: 0 });
     } catch (e) {
@@ -145,7 +146,7 @@ export default function TicketDraftsDialog({
           body: JSON.stringify({ run }),
         },
       );
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = await r.json();
       onFiled({ text: d.title, scope: payload.scope, ran: !!j.run?.job_id });
       await loadStored();

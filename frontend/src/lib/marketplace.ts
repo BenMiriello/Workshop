@@ -1,3 +1,4 @@
+import { shortHttpError } from "./httpError";
 // Client for the local app + kit registry (the marketplace).
 // Backend: /api/base-apps/registry/* (docs/workshop-v1/03-ui-kit-and-marketplace.md).
 // Local-now, remote-later: the same interface backs both, so this client does
@@ -28,7 +29,7 @@ export type InstalledProject = {
 };
 
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
   return r.json() as Promise<T>;
 }
 

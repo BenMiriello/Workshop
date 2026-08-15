@@ -27,6 +27,7 @@ import {
 } from "@workshop/ui";
 import Chat from "../components/Chat";
 import { useCrumbLabel } from "../components/appNav";
+import { shortHttpError } from "../lib/httpError";
 
 // Build-agent surface = chat-first. Opening a builder lands you in the CHAT (the
 // primary surface, full-width). The coding tools — file tree, editor, live
@@ -234,7 +235,7 @@ function NewBranchModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ branch_slug: slug }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       onCreated(slug);
     } catch (e) {
       setErr(String(e));
@@ -362,7 +363,7 @@ export default function AgentBuild() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: renameName.trim(), purpose: renamePurpose.trim() }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const updated: BuildAgent = await r.json();
       setAgent(updated);
       setRenameOpen(false);
@@ -381,7 +382,7 @@ export default function AgentBuild() {
         fetch(`/api/agents/build/${slug}/brief`),
         fetch(`/api/agents/build/${slug}/interventions`),
       ]);
-      if (!aR.ok) throw new Error(`agent: ${aR.status} ${await aR.text()}`);
+      if (!aR.ok) throw new Error(`agent: ${shortHttpError(aR.status, aR.statusText, await aR.text().catch(() => ""))}`);
       setAgent(await aR.json());
       const tj = tR.ok ? await tR.json() : { tree: [] };
       setTree(tj.tree || []);
@@ -433,7 +434,7 @@ export default function AgentBuild() {
       const r = await fetch(`/api/agents/build/${slug}/file?path=${encodeURIComponent(path)}`);
       if (!r.ok) {
         if (r.status === 415) setFileContent("(binary file - preview not supported)");
-        else setFileContent(`(${r.status} ${await r.text()})`);
+        else setFileContent(`(${shortHttpError(r.status, r.statusText, await r.text().catch(() => ""))})`);
         setFileDirty(false);
         return;
       }
@@ -546,8 +547,7 @@ export default function AgentBuild() {
         body: JSON.stringify({ command: cmd, port: previewPort }),
       });
       if (!r.ok) {
-        const t = await r.text();
-        setPreviewLog(`(start failed: ${t})`);
+        setPreviewLog(`(start failed: ${shortHttpError(r.status, r.statusText, await r.text().catch(() => ""))})`);
       }
       await loadPreview();
     } finally {

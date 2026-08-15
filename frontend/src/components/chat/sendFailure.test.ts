@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isTransientSendFailure, sendFailureText } from "./sendFailure";
+import { shortHttpError } from "../../lib/httpError";
 
 // The bug this pins: `setErr(String(e))` put "TypeError: Failed to fetch" on
 // screen as the app's explanation of what happened to a message.
@@ -91,6 +92,17 @@ describe("a message that did not send", () => {
 
   it("does not send you to reload for a 403, since that cannot help", () => {
     expect(sendFailureText(new Error("403 Forbidden"))).not.toMatch(/Reload the page/);
+  });
+
+  // `shortHttpError` now maps a bare 401/403 (no body) to its own short
+  // sentence ("Not signed in.", "Not allowed.") instead of echoing the
+  // browser's statusText. BARE_AUTH_REASON has to recognise that sentence too,
+  // or a bare refusal starts reading as a real, backend-written reason.
+  it("still reads shortHttpError's own bare-401/403 sentence as no real reason", () => {
+    expect(sendFailureText(new Error(shortHttpError(401, "Unauthorized", "")))).toMatch(/not signed in/);
+    const s403 = sendFailureText(new Error(shortHttpError(403, "Forbidden", "")));
+    expect(s403).not.toMatch(/not signed in/);
+    expect(s403).toMatch(/still signed in/);
   });
 });
 

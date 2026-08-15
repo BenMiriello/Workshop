@@ -18,6 +18,7 @@ import {
   type StatusKind,
   Notice,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 const SENS_OPTIONS: SegmentedOption<ProjectSensitivity>[] = [
   { value: "private", label: "Private" },
@@ -65,7 +66,7 @@ function ImportFromGitModal({
           sensitivity,
         }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const p = await r.json();
       onImported(p.slug || effectiveSlug);
     } catch (e) {
@@ -159,7 +160,7 @@ export default function Projects() {
   useEffect(() => {
     fetch("/api/projects/")
       .then(async (r) => {
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         return r.json();
       })
       .then(setProjects)

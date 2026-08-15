@@ -1,3 +1,4 @@
+import { shortHttpError } from "./httpError";
 // Usage API — the rolling 5-hour token budget for autonomous background work.
 // Backed by GET /api/usage (backend routes/usage -> services.usage_ledger.status).
 // Interactive chat turns are never metered, so they never appear here; only
@@ -45,7 +46,7 @@ export type UsageSeries = {
 export const usageApi = {
   status: (window: UsageWindow = "5h"): Promise<UsageStatus> =>
     fetch(`/api/usage?window=${encodeURIComponent(window)}`).then(async (r) => {
-      if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => r.statusText)}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       return r.json() as Promise<UsageStatus>;
     }),
   setBudget: (patch: BudgetPatch): Promise<UsageStatus> =>
@@ -54,12 +55,12 @@ export const usageApi = {
       headers: { "Content-Type": "application/json", "x-workshop-client": "1" },
       body: JSON.stringify(patch),
     }).then(async (r) => {
-      if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => r.statusText)}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       return r.json() as Promise<UsageStatus>;
     }),
   timeseries: (window: UsageWindow = "5h"): Promise<UsageSeries> =>
     fetch(`/api/usage/timeseries?window=${encodeURIComponent(window)}`).then(async (r) => {
-      if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => r.statusText)}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       return r.json() as Promise<UsageSeries>;
     }),
 };

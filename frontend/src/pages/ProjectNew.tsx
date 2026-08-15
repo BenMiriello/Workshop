@@ -17,6 +17,7 @@ import {
 import { Markdown } from "@workshop/ui/markdown";
 import type { ProjectSensitivity } from "@shared/types";
 import { slugify } from "../components/chat/uiCardActions";
+import { shortHttpError } from "../lib/httpError";
 
 // New-project flow. Single form. Submits to POST /api/projects/ which
 // scaffolds from the chosen template, writes the brief into PROJECT.md,
@@ -72,7 +73,7 @@ export default function ProjectNew() {
     setTemplatesErr(null);
     fetch("/api/projects/templates")
       .then(async (r) => {
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         return r.json();
       })
       .then((items: TemplateInfo[]) => {
@@ -107,7 +108,7 @@ export default function ProjectNew() {
           brief: brief.trim(),
         }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const p = await r.json();
       nav(`/projects/${p.slug}`);
     } catch (e) {

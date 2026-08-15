@@ -31,6 +31,7 @@ import {
   description as taskDescription,
   cleanTitle,
 } from "../lib/tasks";
+import { shortHttpError } from "../lib/httpError";
 
 // Reusable task panel over the canonical cross-scope Task API. It renders EVERY
 // shipped status (todo/doing/in_review/blocked/parked/done/cancelled) through the
@@ -155,7 +156,7 @@ export default function TaskPanel({
     setErr(null);
     try {
       const r = await fetch(endpoint);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = (await r.json()) as { tasks?: Task[] };
       setTasks(j.tasks ?? []);
     } catch (e) {
@@ -202,7 +203,7 @@ export default function TaskPanel({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ scope, text, priority: 0 }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setNewText("");
       await load();
     } catch (e) {
@@ -273,7 +274,7 @@ export default function TaskPanel({
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
         });
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         setEditingId(null);
         setDraft(null);
         await load();
@@ -296,7 +297,7 @@ export default function TaskPanel({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ status: "done" }),
         });
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         await load();
       } catch (e) {
         setRowErr(e instanceof Error ? e.message : String(e));
@@ -322,7 +323,7 @@ export default function TaskPanel({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ action }),
         });
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         await load();
       } catch (e) {
         setRowErr(e instanceof Error ? e.message : String(e));
@@ -359,7 +360,7 @@ export default function TaskPanel({
             body: JSON.stringify({ action, note: answer }),
           },
         );
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         setReplyId(null);
         setReplyText("");
         await load();
@@ -380,7 +381,7 @@ export default function TaskPanel({
         const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(t.id)}`, {
           method: "DELETE",
         });
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
         setConfirmDel(null);
         await load();
       } catch (e) {

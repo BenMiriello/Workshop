@@ -17,6 +17,7 @@ import {
   catFor,
 } from "@workshop/ui";
 import GrantPicker from "../../components/GrantPicker";
+import { shortHttpError } from "../../lib/httpError";
 
 // Platform / Grants: operator-facing access-control editor.
 // app-platform-plan.md §3.2 + workshop-v1/01-agents-and-chat.md §2.
@@ -94,11 +95,11 @@ export default function Grants() {
       // grants). It supersedes the /base-apps/grants alias.
       const [g, m] = await Promise.all([
         fetch("/api/grants").then(async (r) => {
-          if (!r.ok) throw new Error(`grants: ${r.status} ${await r.text()}`);
+          if (!r.ok) throw new Error(`grants: ${shortHttpError(r.status, r.statusText, await r.text().catch(() => ""))}`);
           return r.json() as Promise<GrantsDoc & { resource_grants?: ResourceGrant[] }>;
         }),
         fetch("/api/base-apps/manifests").then(async (r) => {
-          if (!r.ok) throw new Error(`manifests: ${r.status} ${await r.text()}`);
+          if (!r.ok) throw new Error(`manifests: ${shortHttpError(r.status, r.statusText, await r.text().catch(() => ""))}`);
           return r.json() as Promise<{ apps: Manifests }>;
         }),
       ]);
@@ -120,7 +121,7 @@ export default function Grants() {
     setStores(null);
     try {
       const r = await fetch("/api/stores");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const data = (await r.json()) as { stores: StoreRow[] };
       setStores(Array.isArray(data.stores) ? data.stores : []);
     } catch (e) {
@@ -133,7 +134,7 @@ export default function Grants() {
     setStoresErr(null);
     try {
       const r = await fetch(`/api/stores/export?uri=${encodeURIComponent(uri)}`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const data = (await r.json()) as { path: string };
       setExported((cur) => ({ ...cur, [uri]: data.path }));
     } catch (e) {
@@ -151,7 +152,7 @@ export default function Grants() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: grant.id }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setResourceGrants((cur) => cur.filter((g) => g.id !== grant.id));
     } catch (e) {
       setErr(`Revoke failed: ${String(e)}`);
@@ -200,7 +201,7 @@ export default function Grants() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(doc),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       setBaseline(JSON.stringify(doc));
       setFlash(true);
       window.setTimeout(() => setFlash(false), 2000);

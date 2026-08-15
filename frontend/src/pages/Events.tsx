@@ -17,6 +17,7 @@ import {
   TableScroll,
   TimeCell,
 } from "@workshop/ui";
+import { shortHttpError } from "../lib/httpError";
 
 type EventRec = {
   ts: string;
@@ -52,8 +53,8 @@ export default function Events() {
         fetch(`/api/events/recent${qs}`),
         fetch("/api/events/subscriptions"),
       ]);
-      if (!evResp.ok) throw new Error(`events ${evResp.status} ${await evResp.text()}`);
-      if (!subResp.ok) throw new Error(`subs ${subResp.status} ${await subResp.text()}`);
+      if (!evResp.ok) throw new Error(`events: ${shortHttpError(evResp.status, evResp.statusText, await evResp.text().catch(() => ""))}`);
+      if (!subResp.ok) throw new Error(`subs: ${shortHttpError(subResp.status, subResp.statusText, await subResp.text().catch(() => ""))}`);
       setData(await evResp.json());
       setSubs(await subResp.json());
     } catch (e) {

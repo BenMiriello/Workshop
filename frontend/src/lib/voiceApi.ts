@@ -1,8 +1,9 @@
 // Thin client for the per-owner voice prefs + voice catalog.
 import type { VoicePrefs } from "./voice/modes";
+import { shortHttpError } from "./httpError";
 
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
   return r.json() as Promise<T>;
 }
 
