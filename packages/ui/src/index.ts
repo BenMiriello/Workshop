@@ -52,6 +52,7 @@ export { Segmented, type SegmentedOption } from "./Segmented";
 export { Stepper } from "./Stepper";
 export { Modal, ConfirmDialog } from "./Modal";
 export { OverlayHost, useOverlayHost } from "./OverlayHost";
+export { PageActionBar } from "./PageActionBar";
 export { Menu, MenuItem, MenuCheckItem, MenuSeparator, MenuLabel } from "./Menu";
 export { StateBlock, Notice, Skeleton, ActionBar, CopyButton, RevealField } from "./feedback";
 export { TableScroll, Table, NumCell, TimeCell } from "./Table";

@@ -261,6 +261,7 @@ async def list_all(
     scope: str | None = None,
     labels: str | None = None,
     effort: str | None = None,
+    assignee: str | None = None,
     include_done: bool = True,
     q: str | None = None,
     ready: bool | None = None,
@@ -276,8 +277,9 @@ async def list_all(
     the UI's Active / Backlog / Done views actually mean, expanded to statuses
     here), `scope` (restrict to a single scope key), `labels` (comma-separated,
     a row matches if it carries ANY of them), `effort` (comma-separated, from
-    tasks.EFFORTS), `q` (case-insensitive substring of title or body), `ready`
-    (only what the scheduler could pick up, or only what it could not).
+    tasks.EFFORTS), `assignee` (comma-separated, `operator` or `agent:<slug>`),
+    `q` (case-insensitive substring of title or body), `ready` (only what the
+    scheduler could pick up, or only what it could not).
     Ordering: `sort` (one of tasks.SORT_KEYS, including `queue` = the
     scheduler's own order) + `desc`. Paging: `limit`/`offset`.
 
@@ -308,8 +310,11 @@ async def list_all(
     want_status = _csv_filter(status, tasks.STATUSES, "status")
     want_type = _csv_filter(state_type, tasks.STATE_TYPES, "state_type")
     want_effort = _csv_filter(effort, tasks.EFFORTS, "effort")
-    # Free text, so it is split but not validated (see the docstring).
+    # Free text, so these are split but not validated (see the docstring). An
+    # assignee is `operator` or `agent:<slug>`, and the set of agents is open,
+    # so there is no closed vocabulary to check against.
     want_labels = {v.strip() for v in (labels or "").split(",") if v.strip()} or None
+    want_assignee = {v.strip() for v in (assignee or "").split(",") if v.strip()} or None
     out: list[dict] = []
     scopes = 0
     lat_cache: dict[str, str | None] = {}
@@ -345,6 +350,9 @@ async def list_all(
                     tasks.state_type(t.get("status")) not in want_type:
                 continue
             if want_effort is not None and t.get("effort") not in want_effort:
+                continue
+            if want_assignee is not None and \
+                    str(t.get("assignee") or "") not in want_assignee:
                 continue
             # ANY, not ALL: picking two tags means "either of these", which is
             # what a multi-value chip reads as everywhere else in the bar.
@@ -430,6 +438,30 @@ async def list_labels(scope: str | None = None) -> dict:
                     counts[key] = counts.get(key, 0) + 1
     ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     return {"labels": [{"label": k, "count": n} for k, n in ordered]}
+
+
+@router.get("/assignees")
+async def list_assignees(scope: str | None = None) -> dict:
+    """Every assignee in use, with how many tickets each holds.
+
+    Same shape and same reason as `/labels`: an assignee is `operator` or
+    `agent:<slug>`, the set of agents is open, and there is no registry that
+    knows which of them hold tickets. The filter menu needs that, and so does
+    any surface that wants to offer "assigned to" without inventing a list."""
+    counts: dict[str, int] = {}
+    for skey, root in _scope_roots():
+        if scope and skey != scope:
+            continue
+        try:
+            items = tasks.list_tasks(root)
+        except Exception:
+            continue
+        for t in items:
+            key = str(t.get("assignee") or "").strip()
+            if key:
+                counts[key] = counts.get(key, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return {"assignees": [{"label": k, "count": n} for k, n in ordered]}
 
 
 # ---- Autonomy scopes: REMOVED ----------------------------------------------

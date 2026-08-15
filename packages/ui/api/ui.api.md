@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.5.8
+Version: 0.5.9
 
 ## @workshop/ui
 
@@ -57,6 +57,7 @@ Source: `src/index.ts`
 - Notice
 - NumCell
 - OverlayHost
+- PageActionBar
 - PageHeader
 - PALETTE_META
 - PalettePicker

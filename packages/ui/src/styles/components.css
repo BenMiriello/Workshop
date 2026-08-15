@@ -649,39 +649,10 @@ a.ws-btn { text-decoration: none; }
 .ws-tickets__count { font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--muted); }
 .ws-tickets__body { min-width: 0; }
 
-/* The phone's primary action: at the thumb, and STUCK there. It used to sit at
-   the natural end of the page, which on a list of any length means filing a
-   ticket costs a scroll to the bottom first (operator, 2026-08-14).
-   Sticky rather than fixed, so it belongs to the page rather than the viewport:
-   it cannot cover another route, and it scrolls away with the page it is part
-   of instead of hovering over whatever replaces it.
-   THE BAR MUST REACH THE BOTTOM EDGE. `bottom: 0` measures from the
-   scrollport's CONTENT edge, and <main> pads its bottom by --page-pad-b, so on
-   its own this bar hangs that far up with the list scrolling through the gap
-   underneath (operator: "it floats above the bottom and you can see the list
-   scroll down below it"). The page cancels that padding with a negative margin
-   below, which puts the bar's RESTING position at the true bottom, so it is
-   flush both while pinned and at the end of the scroll: no gap, and no jump
-   when it un-pins. */
-.ws-tickets__foot {
-  position: sticky; bottom: 0; z-index: var(--z-sticky);
-  padding-top: var(--space-2);
-  /* The page's inset is cancelled, so the bar carries the home-indicator inset
-     itself. This is not double counting: the page no longer pays it. */
-  padding-bottom: max(var(--space-2), env(safe-area-inset-bottom));
-  background: var(--bg);
-  border-top: 1px solid var(--border);
-  /* Full-bleed surface, content still on the page measure. */
-  margin-inline: calc(var(--page-pad-x) * -1);
-  padding-inline: var(--page-pad-x);
-}
-/* Cancels the scroller's bottom padding for THIS page only, so the sticky bar
-   above can rest flush against the bottom edge. Set from the component (not
-   `:has`) so the page says out loud that it owns a bottom bar. */
-.ws-tickets--footed { margin-bottom: calc(var(--page-pad-b) * -1); }
-/* Room under the last row, so it is readable rather than tight against the bar
-   once the list is scrolled to the end. */
-.ws-tickets--footed .ws-tickets__end { padding-bottom: var(--space-2); }
+/* Reserve for the bottom action bar, so the last row is readable instead of
+   sitting under it. The bar is OUTSIDE the scroller (see .ws-pagebar), so
+   nothing about it lengthens the page: the page has to leave the room. */
+.ws-tickets--footed { padding-bottom: var(--ws-pagebar-h); }
 
 /* Where the list ends, said plainly. "Load more" only appears when there IS
    more, so a list that fitted in one page ended in silence and the only thing
@@ -1885,6 +1856,41 @@ span.ws-filterchip__open { cursor: default; }
      pointer events back on for itself. */
   pointer-events: none;
 }
+
+/* ---- PAGE ACTION BAR ------------------------------------------------------
+   A page's primary action, pinned to the bottom of the content region.
+   It renders into `.ws-overlay-host`, which is `position: absolute; inset: 0`
+   on `.ws-app__body`, so `bottom: 0` here is the bottom of that region BY
+   CONSTRUCTION. That is the reason this is not a sticky bar inside <main>:
+   sticky lands relative to the scrollport and the scroller's own padding, and
+   two attempts at it (2026-08-14) both left the bar hovering above the bottom
+   with the list scrolling through the strip underneath. There is nothing left
+   here to compensate for.
+   The height is a token because the PAGE has to reserve exactly this much room
+   at the end of its content: the bar is outside the scroller, so it cannot
+   push the page longer itself. One number, two readers. */
+:root {
+  --ws-pagebar-h: calc(44px + var(--space-2) * 2 + env(safe-area-inset-bottom));
+}
+.ws-pagebar {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  z-index: var(--z-sticky);
+  pointer-events: auto;
+  padding: var(--space-2) var(--page-pad-x);
+  padding-bottom: max(var(--space-2), env(safe-area-inset-bottom));
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+/* The surface is full-bleed, the content sits on the page measure, exactly like
+   the shell's own rule for <main>. */
+.ws-pagebar__inner {
+  width: 100%; max-width: var(--page-max); margin-inline: auto;
+  display: flex; align-items: center; gap: var(--space-2);
+}
+.ws-pagebar__inner > .ws-btn { flex: 1 1 auto; }
+/* No host (tests, the springer entry): it renders inline at the end of the page
+   rather than disappearing. */
+.ws-app__body > main .ws-pagebar { position: static; padding-inline: 0; }
 .ws-app .ws-app__body > main {
   flex: 1 1 auto;
   min-height: 0;
@@ -3087,3 +3093,9 @@ span.ws-filterchip__open { cursor: default; }
 /* The sheet's two sort groups read as one control, so the direction sits
    tighter under the keys than the sheet's section gap would put it. */
 .ws-filtersheet__dir { margin-top: var(--space-2); }
+
+/* Page controls at the end of a list. Pushed right so the count reads first:
+   where you are is the answer, moving is the action. */
+.ws-pager { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
+.ws-tt__c-assignee { width: 130px; }
+.ws-tt__ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

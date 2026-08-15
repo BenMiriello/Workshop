@@ -19,15 +19,16 @@
 // /work so existing links keep resolving.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import {
-  Button, Card, Field, Input, Modal, Row, Select, Skeleton, Stack, StateBlock,
-  Textarea,
+  Button, Card, Field, Input, Modal, PageActionBar, Row, Select, Skeleton, Stack,
+  StateBlock, Textarea,
 } from "@workshop/ui";
 import { type Task, cleanTitle, scopeLabel, ticketHref } from "../lib/tasks";
 import {
-  apiQuery, defaultFilters, isNarrowed, parseFilters, parseSort, parseView,
-  writeParams, type TicketFilters, type TicketSort, type TicketView,
+  PAGE_SIZE, apiQuery, clampPage, defaultFilters, isNarrowed, pageCount,
+  parseFilters, parsePage, parseSort, parseView, writeParams,
+  type TicketFilters, type TicketSort, type TicketView,
 } from "../lib/ticketFilters";
 import { orderScopes } from "../lib/devMode";
 import { useIsWide } from "../lib/useMediaQuery";
@@ -38,14 +39,6 @@ import {
   TicketFilterBar, TicketFilterCompact, TicketFilterSheet, ViewSwitcher,
   type LabelCount,
 } from "../components/tickets/TicketFilters";
-
-// One page of tickets. The endpoint sorts and pages, so this is a real page size.
-const PAGE_SIZE = 50;
-
-// A board is read as a whole, so paging it row by row makes no sense: a lane
-// that is short because of a page boundary looks like a lane that is short.
-// Ask for enough to draw the whole board and say so when it is still cut off.
-const BOARD_SIZE = 300;
 
 type TasksResp = { tasks: Task[]; count: number; total: number };
 
@@ -63,6 +56,7 @@ export default function Work() {
   const view: TicketView = urlView;
   const sort = parseSort(search);
   const urlFilters = parseFilters(search, view);
+  const page = parsePage(search);
 
   // The one piece of filter state that is NOT read straight from the URL.
   // Typing must not push a history entry per keystroke or refetch per letter.
@@ -92,18 +86,23 @@ export default function Work() {
   const [data, setData] = useState<TasksResp | null>(null);
   const [scopes, setScopes] = useState<string[]>([]);
   const [labels, setLabels] = useState<LabelCount[]>([]);
+  const [assignees, setAssignees] = useState<LabelCount[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [limit, setLimit] = useState(PAGE_SIZE);
   const [creating, setCreating] = useState(false);
   const [sheet, setSheet] = useState(false);
 
-  const pageSize = view === "board" ? BOARD_SIZE : PAGE_SIZE;
-
+  // Any change to WHAT is being asked for returns to page 1: staying on page 7
+  // of a set that just shrank to two pages is how a filter reads as "no
+  // results". `writeUrl` therefore takes the page explicitly and defaults to 1.
   const writeUrl = useCallback(
-    (f: TicketFilters, s: TicketSort, v: TicketView) =>
-      setSearch((prev) => writeParams(f, s, v, prev), { replace: true }),
+    (f: TicketFilters, s: TicketSort, v: TicketView, nextPage = 1) =>
+      setSearch((prev) => writeParams(f, s, v, prev, nextPage), { replace: true }),
     [setSearch]);
+
+  const goToPage = useCallback((nextPage: number) =>
+    writeUrl(urlFilters, sort, view, nextPage),
+    [urlFilters, sort, view, writeUrl]);
 
   const applyFilters = useCallback((next: TicketFilters) => {
     // A change to the text is the debounce's business; anything else commits
@@ -127,14 +126,15 @@ export default function Work() {
     writeUrl({ ...carried, q: urlFilters.q }, sort, next);
   }, [urlFilters, sort, view, search, writeUrl]);
 
-  // A new filter starts at the first page again.
-  useEffect(() => { setLimit(pageSize); }, [search, pageSize]);
-
+  // ONE PAGE, always. This used to grow its own `limit` and refetch, which on a
+  // large queue asks the server for every row it has and renders all of them.
+  // The board does not use this at all: it pages per lane (TicketBoard).
   const refresh = useCallback(async () => {
+    if (view === "board") return;
     setLoading(true);
     setErr(null);
     try {
-      const params = apiQuery(urlFilters, sort, limit);
+      const params = apiQuery(urlFilters, sort, PAGE_SIZE, (page - 1) * PAGE_SIZE);
       const r = await fetch(`/api/tasks?${params.toString()}`);
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setData(await r.json());
@@ -145,9 +145,17 @@ export default function Work() {
     }
     // urlFilters is rebuilt each render; its VALUE is what matters here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, limit]);
+  }, [search, view, page]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // A page the data cannot support (filtered down while sitting on page 9) is
+  // corrected rather than shown empty.
+  useEffect(() => {
+    if (!data) return;
+    const safe = clampPage(page, data.total);
+    if (safe !== page) goToPage(safe);
+  }, [data, page, goToPage]);
 
   useEffect(() => {
     fetch("/api/tasks/scopes")
@@ -165,10 +173,18 @@ export default function Work() {
       .then((r) => (r.ok ? r.json() : { labels: [] }))
       .then((j) => setLabels(j.labels ?? []))
       .catch(() => setLabels([]));
+    // Same shape, same reason: an assignee is `operator` or `agent:<slug>`,
+    // agents are registered at runtime, and nothing else knows which of them
+    // hold tickets in this scope.
+    fetch(`/api/tasks/assignees${p}`)
+      .then((r) => (r.ok ? r.json() : { assignees: [] }))
+      .then((j) => setAssignees(j.assignees ?? []))
+      .catch(() => setAssignees([]));
   }, [urlFilters.scope]);
 
   const rows = data?.tasks ?? [];
   const total = data?.total ?? 0;
+  const pages = pageCount(total);
   const narrowed = isNarrowed(urlFilters, view);
   // The board draws its own scope-spanning rows; the table only shows the scope
   // column when the list actually spans more than one.
@@ -178,7 +194,12 @@ export default function Work() {
     () => writeUrl(defaultFilters(view), sort, view), [view, sort, writeUrl]);
 
   let body: React.ReactNode;
-  if (err) {
+  if (wide && view === "board") {
+    // The board owns its own fetching: one paged request PER LANE. A single
+    // query cannot fill a board, because the server pages the whole set and a
+    // large queue comes back as one status' worth of rows.
+    body = <TicketBoard filters={urlFilters} sort={sort} />;
+  } else if (err) {
     body = (
       <StateBlock
         variant="error"
@@ -213,13 +234,10 @@ export default function Work() {
     );
   } else if (!wide) {
     body = <TicketList tasks={rows} />;
-  } else if (view === "board") {
-    body = <TicketBoard tasks={rows} />;
   } else {
     body = <TicketTable tasks={rows} showScope={showScope} />;
   }
 
-  const more = rows.length < total;
 
   return (
     // `--footed` cancels the scroller's bottom padding so the pinned New ticket
@@ -251,6 +269,7 @@ export default function Work() {
             view={view}
             scopes={scopes}
             labels={labels}
+            assignees={assignees}
             count={total}
             onFilters={applyFilters}
             onSort={applySort}
@@ -269,26 +288,33 @@ export default function Work() {
 
       <div className="ws-tickets__body">{body}</div>
 
-      {/* Where the list ends. `Load more` only exists when there IS more, so
-          without the count beside it a list that fitted in one page ended in
-          silence and the New ticket button was the only thing at the bottom,
-          which reads as the end of the PAGE rather than the end of the list. */}
-      {rows.length > 0 && (
+      {/* Real pages, not a growing limit. Always present once there are rows,
+          because "where am I in this set" is a question a list has to answer
+          whether or not there is a next page. */}
+      {!(wide && view === "board") && rows.length > 0 && (
         <div className="ws-tickets__end">
-          {more ? (
-            <>
+          <span>
+            {total === 1 ? "1 ticket" : `${total} tickets`}
+            {pages > 1 && <> · page {page} of {pages}</>}
+          </span>
+          {pages > 1 && (
+            <span className="ws-pager">
               <Button
                 size="sm"
-                loading={loading}
-                onClick={() => setLimit((n) => n + pageSize)}
+                disabled={page <= 1}
+                loading={loading && page > 1}
+                onClick={() => goToPage(page - 1)}
               >
-                Load more
+                <ChevronLeft aria-hidden /> Previous
               </Button>
-              <span>Showing {rows.length} of {total}</span>
-            </>
-          ) : (
-            <span>
-              {total === 1 ? "1 ticket" : `All ${total} tickets`}
+              <Button
+                size="sm"
+                disabled={page >= pages}
+                loading={loading && page < pages}
+                onClick={() => goToPage(page + 1)}
+              >
+                Next <ChevronRight aria-hidden />
+              </Button>
             </span>
           )}
         </div>
@@ -296,14 +322,15 @@ export default function Work() {
 
       {/* A phone reaches New ticket here rather than in the bar: the bar is two
           controls wide there, and the primary action of the screen belongs at
-          the thumb. Pinned to the bottom (see .ws-tickets__foot) so filing one
-          never costs a scroll to the end of the list first. */}
+          the thumb. `PageActionBar` renders into the shell's overlay host, so
+          it sits at the bottom of the content region by construction rather
+          than by compensating for the scroller's padding. */}
       {!wide && (
-        <div className="ws-tickets__foot">
+        <PageActionBar>
           <Button block variant="primary" onClick={() => setCreating(true)}>
             <Plus aria-hidden /> New ticket
           </Button>
-        </div>
+        </PageActionBar>
       )}
 
       <TicketFilterSheet
@@ -313,6 +340,7 @@ export default function Work() {
         sort={sort}
         scopes={scopes}
         labels={labels}
+        assignees={assignees}
         count={total}
         onFilters={applyFilters}
         onSort={applySort}

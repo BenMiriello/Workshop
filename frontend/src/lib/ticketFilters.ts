@@ -64,6 +64,9 @@ export type TicketFilters = {
   /** A row matches if it carries ANY of these. */
   labels: string[];
   effort: string[];
+  /** `operator` or `agent:<slug>`. Open set: agents are registered at runtime
+   *  and a deployment has as many people as it has. */
+  assignee: string[];
 };
 
 export type TicketSort = { key: TaskSort; dir: "asc" | "desc" };
@@ -72,7 +75,10 @@ export const DEFAULT_SORT: TicketSort = { key: "updated", dir: "desc" };
 
 /** The filter set a view opens on, before the URL says otherwise. */
 export function defaultFilters(view: TicketView): TicketFilters {
-  return { q: "", status: defaultStatuses(view), scope: null, labels: [], effort: [] };
+  return {
+    q: "", status: defaultStatuses(view), scope: null,
+    labels: [], effort: [], assignee: [],
+  };
 }
 
 // Two sets, same members, order-independent. Used to decide whether a status
@@ -87,7 +93,7 @@ export const isDefaultStatus = (f: TicketFilters, view: TicketView): boolean =>
 /** Is anything narrowing the list beyond the view's own default? */
 export function isNarrowed(f: TicketFilters, view: TicketView): boolean {
   return !!f.q || !!f.scope || f.labels.length > 0 || f.effort.length > 0
-    || !isDefaultStatus(f, view);
+    || f.assignee.length > 0 || !isDefaultStatus(f, view);
 }
 
 // ---- URL round trip ----------------------------------------------------------
@@ -137,13 +143,35 @@ export function parseFilters(params: URLSearchParams, view: TicketView): TicketF
     scope: params.get("scope") || null,
     labels: csv(params.get("tag")),
     effort: csv(params.get("effort")),
+    assignee: csv(params.get("assignee")),
   };
 }
+
+// ---- paging ------------------------------------------------------------------
+// A PAGE, not a growing limit. The list used to raise its own `limit` and
+// re-fetch, which means a big queue eventually asks the server for every row it
+// has and puts all of them in one DOM. That is fine at 188 tickets and wrong at
+// any number this is actually built for.
+export const PAGE_SIZE = 50;
+
+/** 1-based, because it is in the URL and `?page=1` is the first page. */
+export function parsePage(params: URLSearchParams): number {
+  const n = Number(params.get("page"));
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+}
+
+export const pageCount = (total: number, size = PAGE_SIZE): number =>
+  Math.max(1, Math.ceil(total / Math.max(1, size)));
+
+/** The page a given one clamps to once `total` is known. A filter that shrinks
+ *  the set must not strand the reader on an empty page 9. */
+export const clampPage = (page: number, total: number, size = PAGE_SIZE): number =>
+  Math.min(Math.max(1, page), pageCount(total, size));
 
 /** The next URL for a filter/sort/view change, dropping anything at its default. */
 export function writeParams(
   filters: TicketFilters, sort: TicketSort, view: TicketView,
-  base?: URLSearchParams,
+  base?: URLSearchParams, page = 1,
 ): URLSearchParams {
   // Anything this module does not own (a deep link's own params) survives.
   const p = new URLSearchParams(base ?? undefined);
@@ -154,11 +182,14 @@ export function writeParams(
   set("scope", filters.scope);
   set("tag", filters.labels.join(",") || null);
   set("effort", filters.effort.join(",") || null);
+  set("assignee", filters.assignee.join(",") || null);
   set("status", isDefaultStatus(filters, view)
     ? null
     : (filters.status.length === 0 ? ALL : filters.status.join(",")));
   set("sort", sort.key === DEFAULT_SORT.key ? null : sort.key);
   set("dir", sort.dir === DEFAULT_SORT.dir ? null : sort.dir);
+  // Page 1 is the default, so it is spelled by leaving the param off.
+  set("page", page > 1 ? String(page) : null);
   return p;
 }
 
@@ -168,30 +199,51 @@ export function writeParams(
 // unnarrowed set and pages against it, so the number beside the title
 // contradicts the rows beneath it.
 export function apiQuery(
-  filters: TicketFilters, sort: TicketSort, limit: number,
+  filters: TicketFilters, sort: TicketSort, limit: number, offset = 0,
 ): URLSearchParams {
   const p = new URLSearchParams();
   if (filters.status.length) p.set("status", filters.status.join(","));
   if (filters.scope) p.set("scope", filters.scope);
   if (filters.labels.length) p.set("labels", filters.labels.join(","));
   if (filters.effort.length) p.set("effort", filters.effort.join(","));
+  if (filters.assignee.length) p.set("assignee", filters.assignee.join(","));
   if (filters.q) p.set("q", filters.q);
   p.set("sort", sort.key);
   p.set("desc", sort.dir === "desc" ? "true" : "false");
   p.set("limit", String(limit));
+  if (offset > 0) p.set("offset", String(offset));
   return p;
+}
+
+// ---- the board asks per LANE -------------------------------------------------
+// One query per column, not one query for the board.
+//
+// A single query cannot fill a board. The server sorts and pages the whole set,
+// so `limit: 300` on a queue of 5,000 can legitimately come back as 300 done
+// tickets and nothing else: the lanes that matter render empty while the data
+// says they are full. Asking per lane makes each column its own paged list,
+// which is what a column IS, and the lane's `total` is the honest count for its
+// heading whatever is being displayed under it.
+export const LANE_SIZE = 25;
+
+export function laneQuery(
+  filters: TicketFilters, sort: TicketSort, status: string, limit: number,
+): URLSearchParams {
+  // The lane IS the status filter. Everything else narrows it as usual.
+  return apiQuery({ ...filters, status: [status as TaskStatus] }, sort, limit);
 }
 
 // ---- chips -------------------------------------------------------------------
 // One chip per ACTIVE filter, each removable. The key reads muted and the value
 // reads in the accent, so a row of chips scans as "Status · 2  Scope Development".
-export type TicketFilterField = "status" | "scope" | "tag" | "effort";
+export type TicketFilterField = "status" | "scope" | "tag" | "effort" | "assignee";
 
 export const FILTER_FIELDS: { field: TicketFilterField; label: string }[] = [
   { field: "status", label: "Status" },
   { field: "scope", label: "Scope" },
   { field: "tag", label: "Tag" },
   { field: "effort", label: "Effort" },
+  { field: "assignee", label: "Assignee" },
 ];
 
 export type FilterChipSpec = {
@@ -238,6 +290,11 @@ export function chipsFor(
   } else if (filters.effort.length > 1) {
     chips.push({ field: "effort", label: "Effort", value: many(filters.effort.length) });
   }
+  if (filters.assignee.length === 1) {
+    chips.push({ field: "assignee", label: "Assignee", value: filters.assignee[0] });
+  } else if (filters.assignee.length > 1) {
+    chips.push({ field: "assignee", label: "Assignee", value: many(filters.assignee.length) });
+  }
   return chips;
 }
 
@@ -250,14 +307,17 @@ export function clearField(f: TicketFilters, field: TicketFilterField): TicketFi
     case "scope": return { ...f, scope: null };
     case "tag": return { ...f, labels: [] };
     case "effort": return { ...f, effort: [] };
+    case "assignee": return { ...f, assignee: [] };
   }
 }
 
 /** Toggle one value of a multi-value filter. */
 export function toggleValue(
-  f: TicketFilters, field: "status" | "tag" | "effort", value: string,
+  f: TicketFilters, field: "status" | "tag" | "effort" | "assignee", value: string,
 ): TicketFilters {
-  const key = field === "status" ? "status" : field === "tag" ? "labels" : "effort";
+  const key = field === "status" ? "status"
+    : field === "tag" ? "labels"
+    : field === "effort" ? "effort" : "assignee";
   const cur = f[key] as string[];
   const next = cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value];
   return { ...f, [key]: next } as TicketFilters;

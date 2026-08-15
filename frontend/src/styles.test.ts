@@ -265,10 +265,20 @@ describe("a bottom-pinned bar reaches the bottom", () => {
     expect(mob.slice(0, 120)).not.toContain("padding-bottom");
   });
 
-  it("cancels that padding on the page that pins a bar", () => {
-    expect(kitRule(".ws-tickets--footed")).toContain("calc(var(--page-pad-b) * -1)");
-    const foot = kitRule(".ws-tickets__foot");
-    expect(foot).toContain("position: sticky");
-    expect(foot).toContain("bottom: 0");
+  // The sticky bar is GONE, and the fix that compensated for the scroller's
+  // padding with a negative page margin went with it. Both were guesses at
+  // where a scrollport's bottom is; the bar now renders into the shell's
+  // overlay host, where `bottom: 0` is the bottom of the content region by
+  // construction. What is pinned is that it stays out of the scroller.
+  it("puts a page's bottom bar outside the scroller, not sticky inside it", () => {
+    const bar = kitRule(".ws-pagebar");
+    expect(bar).toContain("position: absolute");
+    expect(bar).toContain("bottom: 0");
+    expect(bar).not.toContain("position: sticky");
+    // The page reserves room for it, because a bar outside the scroller cannot
+    // lengthen the page itself.
+    expect(kitRule(".ws-tickets--footed")).toContain("var(--ws-pagebar-h)");
+    // The compensating negative margin must not come back.
+    expect(kit).not.toContain("margin-bottom: calc(var(--page-pad-b) * -1)");
   });
 });

@@ -1,12 +1,13 @@
 // The table view. Fixed layout inside the design system's TableScroll, so a
 // narrow desktop scrolls the columns rather than crushing the title.
 //
-// SEVEN COLUMNS, NOT THE DESIGN'S EIGHT. The handoff drew an Assignee column;
-// `assignee` is the string "operator" on 177 of 177 live tickets, so the column
-// could only ever repeat itself down the page. A column that says the same word
-// on every row is width spent to say nothing, and this surface was cut back
-// once already for exactly that (2026-08-12, measured occupancy). The field is
-// untouched in the store and comes back the moment it varies.
+// ASSIGNEE IS A COLUMN. It was cut in the first pass of this redesign because
+// it is the string "operator" on every ticket in THIS install, which was the
+// wrong test: the field varies per deployment (agents are registered at runtime,
+// and an install has as many people as it has), so measuring one store's current
+// contents and deleting the column is designing for a snapshot. Occupancy is a
+// reason to drop a field that is dead by DESIGN, not one that happens to be
+// uniform today. It renders muted, and blank when unset.
 //
 // The design's "Size" is our `effort` (quick | standard | deep), which is the
 // name the store, the API and the ticket page all use.
@@ -29,6 +30,7 @@ export function TicketTable({ tasks, showScope }: { tasks: Task[]; showScope: bo
           {showScope && <col className="ws-tt__c-scope" />}
           <col className="ws-tt__c-prio" />
           <col className="ws-tt__c-effort" />
+          <col className="ws-tt__c-assignee" />
           <col className="ws-tt__c-time" />
         </colgroup>
         <thead>
@@ -41,6 +43,7 @@ export function TicketTable({ tasks, showScope }: { tasks: Task[]; showScope: bo
             {showScope && <th scope="col">Scope</th>}
             <th scope="col" className="ws-tt__num">Priority</th>
             <th scope="col">Effort</th>
+            <th scope="col">Assignee</th>
             <th scope="col" className="ws-tt__num">Updated</th>
           </tr>
         </thead>
@@ -66,6 +69,9 @@ export function TicketTable({ tasks, showScope }: { tasks: Task[]; showScope: bo
                 {typeof t.priority === "number" && t.priority !== 0 ? t.priority : ""}
               </td>
               <td className="ws-tt__muted">{t.effort ?? ""}</td>
+              <td className="ws-tt__muted ws-tt__ellipsis" title={t.assignee ?? ""}>
+                {t.assignee ?? ""}
+              </td>
               <td className="ws-tt__num ws-tt__time" title={t.updated}>{ago(t.updated)}</td>
             </tr>
           ))}

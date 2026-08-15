@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  ACTIVE_STATUSES, BOARD_STATUSES, DEFAULT_SORT, DEFAULT_VIEW,
-  apiQuery, boardLanes, chipsFor, clearField, defaultFilters, defaultStatuses,
-  isDefaultStatus, isNarrowed, listGroups, parseFilters, parseSort, parseView,
-  toggleValue, writeParams,
+  ACTIVE_STATUSES, BOARD_STATUSES, DEFAULT_SORT, DEFAULT_VIEW, PAGE_SIZE,
+  apiQuery, boardLanes, chipsFor, clampPage, clearField, defaultFilters,
+  defaultStatuses, isDefaultStatus, isNarrowed, laneQuery, listGroups, pageCount,
+  parseFilters, parsePage, parseSort, parseView, toggleValue, writeParams,
 } from "./ticketFilters";
 import type { TaskStatus } from "./tasks";
 
@@ -54,7 +54,7 @@ describe("the URL is the filter state", () => {
   it("round-trips a fully specified state", () => {
     const filters = {
       q: "oauth", status: ["todo", "blocked"] as TaskStatus[], scope: "project:birds",
-      labels: ["design", "chat-reported"], effort: ["quick"],
+      labels: ["design", "chat-reported"], effort: ["quick"], assignee: ["agent:builder"],
     };
     const sort = { key: "priority", dir: "asc" } as const;
     const p = writeParams(filters, sort, "board");
@@ -93,12 +93,13 @@ describe("every filter reaches the server", () => {
   it("sends each active filter as a query param", () => {
     const p = apiQuery({
       q: "oauth", status: ["todo", "blocked"], scope: "workshop",
-      labels: ["design"], effort: ["quick", "deep"],
+      labels: ["design"], effort: ["quick", "deep"], assignee: ["operator"],
     }, { key: "priority", dir: "asc" }, 50);
     expect(p.get("status")).toBe("todo,blocked");
     expect(p.get("scope")).toBe("workshop");
     expect(p.get("labels")).toBe("design");
     expect(p.get("effort")).toBe("quick,deep");
+    expect(p.get("assignee")).toBe("operator");
     expect(p.get("q")).toBe("oauth");
     expect(p.get("sort")).toBe("priority");
     expect(p.get("desc")).toBe("false");
@@ -106,7 +107,8 @@ describe("every filter reaches the server", () => {
   });
 
   it("omits a filter that is not set, rather than sending an empty one", () => {
-    const p = apiQuery({ q: "", status: [], scope: null, labels: [], effort: [] },
+    const p = apiQuery(
+      { q: "", status: [], scope: null, labels: [], effort: [], assignee: [] },
       DEFAULT_SORT, 50);
     expect(p.has("status")).toBe(false);
     expect(p.has("scope")).toBe(false);
@@ -138,9 +140,10 @@ describe("chips say what is narrowing the list", () => {
 
   it("keeps a fixed chip order as filters come and go", () => {
     const chips = chipsFor({
-      q: "", status: ["todo"], scope: "workshop", labels: ["design"], effort: ["quick"],
+      q: "", status: ["todo"], scope: "workshop", labels: ["design"],
+      effort: ["quick"], assignee: ["operator"],
     }, "table", fmt);
-    expect(chips.map((c) => c.field)).toEqual(["status", "scope", "tag", "effort"]);
+    expect(chips.map((c) => c.field)).toEqual(["status", "scope", "tag", "effort", "assignee"]);
   });
 
   it("drops the chip whose filter is cleared", () => {
@@ -168,6 +171,7 @@ describe("narrowing is what the empty state has to explain", () => {
     expect(isNarrowed({ ...base, scope: "workshop" }, "table")).toBe(true);
     expect(isNarrowed({ ...base, labels: ["design"] }, "table")).toBe(true);
     expect(isNarrowed({ ...base, effort: ["quick"] }, "table")).toBe(true);
+    expect(isNarrowed({ ...base, assignee: ["operator"] }, "table")).toBe(true);
     expect(isNarrowed({ ...base, status: ["done"] }, "table")).toBe(true);
   });
 
@@ -225,5 +229,70 @@ describe("the board never loses a ticket", () => {
     const groups = listGroups(rows);
     expect(groups.every((g) => g.items.length > 0)).toBe(true);
     expect(groups.reduce((n, g) => n + g.items.length, 0)).toBe(rows.length);
+  });
+});
+
+// The list must not answer "how many tickets are there" by loading all of them.
+describe("paging asks for one page", () => {
+  it("reads page 1 from a URL that does not say", () => {
+    expect(parsePage(q(""))).toBe(1);
+    expect(parsePage(q("page=0"))).toBe(1);
+    expect(parsePage(q("page=nonsense"))).toBe(1);
+    expect(parsePage(q("page=4"))).toBe(4);
+  });
+
+  it("leaves page 1 out of the URL and writes any other", () => {
+    const f = defaultFilters("table");
+    expect(writeParams(f, DEFAULT_SORT, "table", undefined, 1).toString()).toBe("");
+    expect(writeParams(f, DEFAULT_SORT, "table", undefined, 3).get("page")).toBe("3");
+  });
+
+  it("sends an offset for later pages and none for the first", () => {
+    const f = defaultFilters("table");
+    expect(apiQuery(f, DEFAULT_SORT, PAGE_SIZE, 0).has("offset")).toBe(false);
+    expect(apiQuery(f, DEFAULT_SORT, PAGE_SIZE, 100).get("offset")).toBe("100");
+    expect(apiQuery(f, DEFAULT_SORT, PAGE_SIZE).get("limit")).toBe(String(PAGE_SIZE));
+  });
+
+  it("counts pages from the total, never fewer than one", () => {
+    expect(pageCount(0)).toBe(1);
+    expect(pageCount(50)).toBe(1);
+    expect(pageCount(51)).toBe(2);
+    expect(pageCount(5000)).toBe(100);
+  });
+
+  it("clamps a page that a narrowed filter left stranded", () => {
+    // Sitting on page 9 and then filtering down to 12 rows must not show an
+    // empty page with no way back.
+    expect(clampPage(9, 12)).toBe(1);
+    expect(clampPage(3, 5000)).toBe(3);
+    expect(clampPage(0, 5000)).toBe(1);
+  });
+});
+
+// A board is N paged lists, not one paged list drawn in columns.
+describe("the board asks per lane", () => {
+  it("pins the query to exactly one status", () => {
+    const p = laneQuery(defaultFilters("board"), DEFAULT_SORT, "blocked", 25);
+    expect(p.get("status")).toBe("blocked");
+    expect(p.get("limit")).toBe("25");
+  });
+
+  it("keeps every other filter on the lane", () => {
+    const f = { ...defaultFilters("board"), scope: "workshop", labels: ["design"], q: "oauth" };
+    const p = laneQuery(f, DEFAULT_SORT, "todo", 25);
+    expect(p.get("scope")).toBe("workshop");
+    expect(p.get("labels")).toBe("design");
+    expect(p.get("q")).toBe("oauth");
+  });
+
+  it("never asks one query to fill every lane", () => {
+    // The failure this replaces: one `limit: 300` query on a large queue comes
+    // back as 300 done tickets, so the lanes that matter render empty while the
+    // data says they are full.
+    for (const status of BOARD_STATUSES) {
+      expect(laneQuery(defaultFilters("board"), DEFAULT_SORT, status, 25).get("status"))
+        .toBe(status);
+    }
   });
 });

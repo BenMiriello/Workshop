@@ -12,6 +12,24 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.9 — 2026-08-14 — a bottom bar that is actually at the bottom
+
+**Compatible (one name added).** `PageActionBar`: a page's primary action,
+pinned to the bottom of the shell's content region.
+
+It renders into the `OverlayHost` the shell already provides, so
+`position: absolute; bottom: 0` is the bottom of that region BY CONSTRUCTION.
+That is the point. The two attempts before it were sticky bars inside `<main>`,
+which is the scroller, so where they landed depended on the scrollport's exact
+box and the scroller's own padding; both left the bar hovering above the bottom
+with the list scrolling through the strip underneath, and the second added a
+page-level negative margin to compensate, which is the shape of a fix that is
+guessing. There is nothing left to compensate for.
+
+`--ws-pagebar-h` is a token because a bar outside the scroller cannot lengthen
+the page, so the PAGE has to reserve exactly that much room at the end of its
+content. One number, two readers.
+
 ## 0.5.8 — 2026-08-14 — a filter row, a board, a quiet tag, and a caret that stops running away
 
 **Compatible (six names added, one optional prop, one CSS fix).**

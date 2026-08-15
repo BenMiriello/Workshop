@@ -31,6 +31,7 @@ type Props = {
   view: TicketView;
   scopes: string[];
   labels: LabelCount[];
+  assignees: LabelCount[];
   count: number;
   onFilters: (next: Filters) => void;
   onSort: (next: TicketSort) => void;
@@ -38,8 +39,8 @@ type Props = {
 };
 
 // The field menu, shared by the desktop bar and (as a flat body) by the sheet.
-function FieldMenuBody({ filters, scopes, labels, onFilters }: {
-  filters: Filters; scopes: string[]; labels: LabelCount[];
+function FieldMenuBody({ filters, scopes, labels, assignees, onFilters }: {
+  filters: Filters; scopes: string[]; labels: LabelCount[]; assignees: LabelCount[];
   onFilters: (next: Filters) => void;
 }) {
   return (
@@ -64,6 +65,21 @@ function FieldMenuBody({ filters, scopes, labels, onFilters }: {
           {e}
         </MenuCheckItem>
       ))}
+      {assignees.length > 0 && (
+        <>
+          <MenuLabel>Assignee</MenuLabel>
+          {assignees.map((a) => (
+            <MenuCheckItem
+              key={a.label}
+              checked={filters.assignee.includes(a.label)}
+              count={a.count}
+              onToggle={() => onFilters(toggleValue(filters, "assignee", a.label))}
+            >
+              {a.label}
+            </MenuCheckItem>
+          ))}
+        </>
+      )}
       {labels.length > 0 && (
         <>
           <MenuLabel>Tag</MenuLabel>
@@ -148,7 +164,7 @@ function SortMenu({ sort, onSort }: { sort: TicketSort; onSort: (s: TicketSort) 
 
 /** The desktop filter row. */
 export function TicketFilterBar({
-  filters, sort, view, scopes, labels, count, onFilters, onSort, onNew,
+  filters, sort, view, scopes, labels, assignees, count, onFilters, onSort, onNew,
 }: Props) {
   const chips = chipsFor(filters, view, {
     scope: scopeLabel,
@@ -185,7 +201,13 @@ export function TicketFilterBar({
             </button>
           }
         >
-          <FieldMenuBody filters={filters} scopes={scopes} labels={labels} onFilters={onFilters} />
+          <FieldMenuBody
+            filters={filters}
+            scopes={scopes}
+            labels={labels}
+            assignees={assignees}
+            onFilters={onFilters}
+          />
         </Menu>
       }
       actions={
@@ -249,10 +271,12 @@ export function TicketFilterCompact({
 
 /** The phone's filter and sort sheet. */
 export function TicketFilterSheet({
-  open, onClose, filters, sort, scopes, labels, count, onFilters, onSort, onReset,
+  open, onClose, filters, sort, scopes, labels, assignees, count,
+  onFilters, onSort, onReset,
 }: {
   open: boolean; onClose: () => void;
   filters: Filters; sort: TicketSort; scopes: string[]; labels: LabelCount[];
+  assignees: LabelCount[];
   count: number;
   onFilters: (next: Filters) => void;
   onSort: (next: TicketSort) => void;
@@ -311,6 +335,26 @@ export function TicketFilterSheet({
             ))}
           </div>
         </section>
+
+        {assignees.length > 0 && (
+          <section>
+            <div className="ws-section-label">Assignee</div>
+            <div className="ws-pillset">
+              {assignees.map((a) => (
+                <button
+                  key={a.label}
+                  type="button"
+                  className="ws-selectpill"
+                  aria-pressed={filters.assignee.includes(a.label)}
+                  onClick={() => onFilters(toggleValue(filters, "assignee", a.label))}
+                >
+                  {a.label}
+                  <span className="ws-selectpill__count">{a.count}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {labels.length > 0 && (
           <section>
