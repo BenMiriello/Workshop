@@ -66,3 +66,10 @@ export const jobStatusKind = (status?: string): StatusKind =>
 const JOB_LIVE_STATES = new Set(["running", "queued"]);
 
 export const jobIsLive = (status?: string): boolean => JOB_LIVE_STATES.has(status ?? "");
+
+// The route to a run. `/jobs/:id` still redirects here, so both spellings work
+// and that is exactly the problem: the path was hand-written in nine places in
+// two spellings, and a reader could not tell whether the difference meant
+// anything. It does not. One helper, the way `ticketHref` is the only way to
+// build a ticket URL.
+export const runHref = (id: string): string => `/runs/${encodeURIComponent(id)}`;
