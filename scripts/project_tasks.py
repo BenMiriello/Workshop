@@ -15,7 +15,14 @@ Verbs (all take a scope directory as the first positional):
   add <dir> "text" [--priority N] [--depends-on id,id] [--assignee A]
       [--touches glob,glob] [--acceptance-cmd CMD] [--criterion 'desc::cmd::expect']
       [--max-attempts N] [--effort s|m|l] [--latitude strict|standard|open]
-      [--discovered-from id] [--provenance KEY] [--source KIND]
+      [--execution code|judgement|external]
+      # --execution is the UNATTENDED selection predicate. Unset = unclassified
+      # = never picked up by a sweep (fail closed). It never narrows what a
+      # human may run. Filing without it is why chat-filed tickets sat inert.
+      [--discovered-from id] [--provenance KEY] [--source KIND] [--source-ref REF]
+      # --source-ref is what the ticket came FROM (a chat thread id for
+      # --source chat). Omit it and the ticket is orphaned: nothing links it
+      # back to the conversation that asked for it.
       # --latitude is what the worker may do where THIS ticket does not say.
       # Omit it to INHERIT the scope's setting (that is not the same as
       # `--latitude standard`, which pins the default onto the ticket).
@@ -147,7 +154,20 @@ def main(argv: list[str]) -> int:
     sp.add_argument("--latitude", default=None, choices=(None, *_LATITUDES))
     sp.add_argument("--discovered-from", default=None)
     sp.add_argument("--provenance", default=None)
+    sp.add_argument("--execution", default=None,
+                    choices=("code", "judgement", "external"),
+                    help="can a machine do this at all: code (a change to a "
+                         "tree a worker can write) | judgement (a decision, "
+                         "design or audit) | external (needs root, another "
+                         "host user, a vendor console). Unset means "
+                         "unclassified, which is INELIGIBLE for unattended "
+                         "dispatch. Fail-closed on purpose.")
     sp.add_argument("--source", default="agent")
+    sp.add_argument("--source-ref", default=None,
+                    help="what this ticket came FROM: a chat thread id for "
+                         "--source chat. Without it the ticket is orphaned and "
+                         "neither the ticket page nor the chat can link to the "
+                         "other.")
 
     sp = sub.add_parser("set-status"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("status")
@@ -211,9 +231,17 @@ def main(argv: list[str]) -> int:
                 root, text=a.text, priority=a.priority, depends_on=_csv(a.depends_on),
                 assignee=a.assignee, touches=_csv(a.touches), acceptance=acceptance,
                 max_attempts=a.max_attempts, effort=a.effort,
+                execution=a.execution,
                 latitude=a.latitude,
                 discovered_from=a.discovered_from, provenance=a.provenance,
-                source={"kind": a.source, "ref": None},
+                # ref is what makes a ticket navigable back to where it came
+                # from: the ticket page links to the chat, and the chat lists
+                # the work it filed. Hardcoding None here (until 2026-08-14)
+                # meant every ticket filed from a chat through this CLI arrived
+                # orphaned, while the same ticket filed through the API kept its
+                # thread id. That is why the August tickets are unlinked and the
+                # July ones are not.
+                source={"kind": a.source, "ref": a.source_ref},
             )
             print(json.dumps(_slim(t)))
             return 0
