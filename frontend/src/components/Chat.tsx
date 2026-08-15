@@ -178,7 +178,10 @@ export default function Chat({
 
   // The conversation itself: one store, fed by one endpoint from a cursor.
   const log = useThreadLog({ threadId: activeId, onError: setErr });
-  const { state, stateRef, dispatch, transcript, sync, runActive, hydrated, stale, branch } = log;
+  const {
+    state, stateRef, dispatch, transcript, sync, runActive, hydrated, stale, branch,
+    loadOlder, loadingOlder, olderError,
+  } = log;
   // Sends this browser has made that the server has not taken. The ONLY chat
   // state the browser still owns on its own, and it owns it because the server
   // has never heard of it: a request that did not land. Everything else — the
@@ -422,7 +425,7 @@ export default function Chat({
   // following mid-utterance, which is the one time the operator is not touching
   // the screen to scroll it themselves.
   const {
-    scrollRef, composerRef, inputRef, showJumpToLatest, onLogScroll, followLatest,
+    scrollRef, composerRef, inputRef, showJumpToLatest, onLogScroll, followLatest, holdForOlder,
   } = useLogScroll({
     input,
     inputFocused,
@@ -445,7 +448,20 @@ export default function Chat({
     // before the drag is reapplied. Nothing is saved under the null key: the
     // save is guarded on a non-null key, and an unmounted log fires no scroll.
     restoreKey: files.dragging ? null : activeId,
+    // Changes exactly when older history is prepended (never on an ordinary
+    // append at the tail, which does not touch `order[0]`), which is the one
+    // moment `holdForOlder`'s captured geometry needs to be applied.
+    oldestSeq: state.order.length ? state.order[0] : null,
   });
+
+  // Capture scroll geometry BEFORE the fetch that will grow the log upward,
+  // then ask for the page. `loadOlder` itself does not know about scrolling —
+  // useLogScroll owns that — so the two are composed here, where both are in
+  // scope.
+  const onLoadOlder = useCallback(() => {
+    holdForOlder();
+    void loadOlder();
+  }, [holdForOlder, loadOlder]);
 
   const pipeline = useSendPipeline({
     scope, selectedModel, selectedEffort: scopeState.selectedEffort,
@@ -1041,6 +1057,10 @@ export default function Chat({
       onScroll={onLogScroll}
       loading={logLoading}
       error={chatProblem}
+      hasMoreOlder={state.hasMoreOlder}
+      loadingOlder={loadingOlder}
+      olderError={olderError}
+      onLoadOlder={onLoadOlder}
       blocks={transcript}
       isBuild={build}
       inFlight={runActive || pipeline.starting}

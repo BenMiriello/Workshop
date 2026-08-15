@@ -10,6 +10,23 @@
 // anything, or tell me to change the plan." That is the "my chat opens blank"
 // report, and it is why `loading` now covers hydration too.
 //
+// LOADING IS CHECKED FIRST, BEFORE EMPTINESS. It used to be the other way
+// round — "if there are blocks, show nothing, whatever `loading` says" — on
+// the reasoning that content on screen speaks for itself. It does not when the
+// only "content" is a pending send the outbox restored SYNCHRONOUSLY, on
+// thread select, while the actual history is still loading asynchronously
+// (useChatThread's `adoptSettings` → `outboxRef.current.bind`, versus
+// useThreadLog's async fetch). `empty` was `blocks.length === 0`, and a
+// restored pending block made that false before the log had said anything at
+// all — so a single old failed message rendered ALONE, with no loading
+// indicator, looking like the whole conversation rather than like a page still
+// in flight. Reported 2026-08-14. `loading` already means "this thread has not
+// hydrated yet" (see useThreadLog's `hydrated`); checking it first fixes this
+// at the root instead of teaching this function to recognize one particular
+// KIND of block. Once loading clears, a real empty conversation still reaches
+// "empty" exactly as before — this only changes what happens while the answer
+// is not settled yet.
+//
 // Pure so the rule can be executed instead of watched: chatLogState.test.ts.
 
 export type LogPlaceholder = "loading" | "error" | "empty" | null;
@@ -24,8 +41,8 @@ export function logPlaceholder(input: {
   /** A run is in flight, so "nothing here" is false even with no blocks yet. */
   inFlight: boolean;
 }): LogPlaceholder {
-  if (!input.empty) return null;
   if (input.loading) return "loading";
+  if (!input.empty) return null;
   if (input.error) return "error";
   if (input.inFlight) return null;
   return "empty";

@@ -103,6 +103,10 @@ export type LogScroll = {
   // Return to the bottom and resume following. Used by send and by the
   // jump-to-latest button.
   followLatest: () => void;
+  // Call synchronously, BEFORE triggering a fetch that will PREPEND older
+  // content above the top of the log. See the `oldestSeq` param below for how
+  // the other half of the pair fires once that content has actually painted.
+  holdForOlder: () => void;
 };
 
 export function useLogScroll({
@@ -121,6 +125,11 @@ export function useLogScroll({
   // while it is: the two would fight over the same inline height, and the
   // operator's chosen size must win over the content's.
   expanded = false,
+  // The seq of the oldest block currently on screen. Watched, not read: a
+  // change in it (and only a change in it — see the effect below) is what
+  // says "older content just landed above the fold", which is the one moment
+  // `holdForOlder`'s captured geometry needs to be applied.
+  oldestSeq = null,
 }: {
   input: string;
   inputFocused: boolean;
@@ -128,6 +137,7 @@ export function useLogScroll({
   hasContent: boolean;
   restoreKey?: string | null;
   expanded?: boolean;
+  oldestSeq?: number | null;
 }): LogScroll {
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
@@ -198,6 +208,34 @@ export function useLogScroll({
     scrollToBottom(true);
   }, [scrollToBottom]);
 
+  // PRESERVE READING POSITION WHEN OLDER CONTENT IS PREPENDED. The browser
+  // keeps `scrollTop` fixed in PIXELS when something is inserted above the
+  // viewport, which shoves whatever the operator was reading further down the
+  // screen — the classic infinite-scroll-upward jump. `holdForOlder` captures
+  // the geometry right before the fetch that will grow the log upward; the
+  // layout effect below applies the correction once that content has actually
+  // painted (a real DOM commit, keyed on `oldestSeq` changing — not a fixed
+  // delay, which would race the render).
+  const olderHoldRef = useRef<{ top: number; height: number } | null>(null);
+  const holdForOlder = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) olderHoldRef.current = { top: el.scrollTop, height: el.scrollHeight };
+  }, []);
+  useLayoutEffect(() => {
+    const hold = olderHoldRef.current;
+    olderHoldRef.current = null;
+    const el = scrollRef.current;
+    if (!hold || !el) return;
+    // The content grew by exactly this many pixels above where the operator
+    // was; shifting scrollTop by the same amount keeps the same pixel of the
+    // same message under the same point on screen, rather than re-deriving a
+    // "where was I" from geometry that has already changed underneath it.
+    el.scrollTop = hold.top + (el.scrollHeight - hold.height);
+    // Not a follow: the operator was reading further up, at rest, and this
+    // does not touch atBottomRef or the jump-to-latest affordance either way.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [oldestSeq]);
+
   // Drive the view to the restore target and HOLD it there while the transcript
   // finishes reflowing. The clamps and their observers change heights for a frame
   // or two after first paint, so a one-shot scroll lands against a stale height —
@@ -262,6 +300,12 @@ export function useLogScroll({
       targetRef.current = saved;
       atBottomRef.current = saved ? saved.atBottom : true;
       setShowJumpToLatest(saved ? !saved.atBottom : false);
+      // A hold captured for the thread being LEFT describes a DOM that is
+      // about to be torn down (a fresh scroll container mounts for the new
+      // thread, scrolled to the top). Applying it to the new thread's geometry
+      // once its own `oldestSeq` happens to change would be a scroll jump with
+      // no operator action behind it.
+      olderHoldRef.current = null;
     }
     if (key && restoredForRef.current !== key && hasContent) {
       restoredForRef.current = key;
@@ -336,5 +380,7 @@ export function useLogScroll({
   }, [expanded]);
   useLayoutEffect(() => { autosize(); }, [input, autosize]);
 
-  return { scrollRef, composerRef, inputRef, showJumpToLatest, onLogScroll, followLatest };
+  return {
+    scrollRef, composerRef, inputRef, showJumpToLatest, onLogScroll, followLatest, holdForOlder,
+  };
 }

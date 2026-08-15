@@ -35,6 +35,72 @@ describe("eventsReceived", () => {
   });
 });
 
+describe("hasMoreOlder", () => {
+  it("is set by a fresh (tail) page that says hasMore", () => {
+    const s = apply(initialThreadState("t"),
+      { type: "eventsReceived", events: [ev(20)], lastSeq: 20, activeRun: null, hasMore: true });
+    expect(s.hasMoreOlder).toBe(true);
+  });
+
+  it("is left alone by an ordinary cursor sync, which never carries hasMore", () => {
+    // The bug this guards: a page fetched with `after=cursor` (every poll once
+    // a thread has loaded) always answers `has_more: false` server-side,
+    // because it never asked the question. Applying that unconditionally would
+    // flip the "load older" affordance off on the very next poll after the
+    // initial tail load turned it on.
+    const s = apply(initialThreadState("t"),
+      { type: "eventsReceived", events: [ev(20)], lastSeq: 20, activeRun: null, hasMore: true },
+      { type: "eventsReceived", events: [ev(21)], lastSeq: 21, activeRun: null });
+    expect(s.hasMoreOlder).toBe(true);
+  });
+
+  it("a fresh page can also turn it off, once nothing more is behind it", () => {
+    const s = apply(initialThreadState("t"),
+      { type: "eventsReceived", events: [ev(20)], lastSeq: 20, activeRun: null, hasMore: true },
+      { type: "reset", threadId: "t2" },
+      { type: "eventsReceived", events: [ev(5)], lastSeq: 5, activeRun: null, hasMore: false });
+    expect(s.hasMoreOlder).toBe(false);
+  });
+});
+
+describe("olderEventsReceived", () => {
+  it("prepends a page of history in ascending seq order", () => {
+    const s = apply(initialThreadState("t"),
+      { type: "eventsReceived", events: [ev(20), ev(21)], lastSeq: 21, activeRun: null },
+      { type: "olderEventsReceived", events: [ev(18), ev(19)], hasMore: true });
+    expect(committedEvents(s).map((e) => e.seq)).toEqual([18, 19, 20, 21]);
+    expect(s.hasMoreOlder).toBe(true);
+  });
+
+  it("does not duplicate an event the page already holds", () => {
+    const s = apply(initialThreadState("t"),
+      { type: "eventsReceived", events: [ev(19), ev(20)], lastSeq: 20, activeRun: null },
+      { type: "olderEventsReceived", events: [ev(19), ev(18)], hasMore: false });
+    expect(committedEvents(s).map((e) => e.seq)).toEqual([18, 19, 20]);
+  });
+
+  it("never moves the cursor, so incremental sync is untouched", () => {
+    const s = apply(initialThreadState("t"),
+      { type: "eventsReceived", events: [ev(20)], lastSeq: 20, activeRun: null },
+      { type: "olderEventsReceived", events: [ev(1)], hasMore: false });
+    expect(s.cursor).toBe(20);
+  });
+
+  it("sets hasMoreOlder false once the server says there is nothing further back", () => {
+    const s = apply(initialThreadState("t"),
+      { type: "eventsReceived", events: [ev(20)], lastSeq: 20, activeRun: null, hasMore: true },
+      { type: "olderEventsReceived", events: [ev(1)], hasMore: false });
+    expect(s.hasMoreOlder).toBe(false);
+  });
+
+  it("does not reconcile pending sends -- nothing in a backward page can be this tab's own send", () => {
+    const s = apply(initialThreadState("t"),
+      { type: "sendStarted", clientId: "c1", text: "hello", ts: "t" },
+      { type: "olderEventsReceived", events: [ev(1)], hasMore: false });
+    expect(pendingSends(s).map((p) => p.clientId)).toEqual(["c1"]);
+  });
+});
+
 describe("optimistic sends reconcile by client id", () => {
   it("drops the pending copy when its committed event arrives", () => {
     const s = apply(initialThreadState("t"),

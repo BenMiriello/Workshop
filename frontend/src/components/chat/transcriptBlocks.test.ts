@@ -426,6 +426,39 @@ describe("a cut the server recorded", () => {
   });
 });
 
+// PHASE 3b: opening a thread now fetches only its newest slice
+// (useThreadLog's `INITIAL_TAIL`), so a reply whose interrupting message
+// landed further back than the window's floor can be in view while the
+// message that interrupted it is not (yet) loaded -- the reply is always the
+// more recent of the two, so a tail window either has both or the message
+// alone, never the reply without it. This does not need a special case: a
+// `cut_after` token with no matching event among the CURRENTLY HELD interrupts
+// simply does not split there (see `cutPieces`'s `byToken`), which degrades to
+// the reply rendering as one contiguous block -- the honest "we do not have
+// that part" -- rather than a fragment that misrepresents a partial turn as a
+// whole one.
+describe("a tail window straddling a turn", () => {
+  const segments = [{ ...text("before"), cut_after: ["c1"] }, text("after")];
+
+  it("splits normally once the interrupting message is loaded", () => {
+    const full = stateOf([
+      user("go"),
+      user("wait", { during_run: "r1", cut_id: "c1" }),
+      reply("done", { turn_id: "r1", segments }),
+    ]);
+    expect(shape(selectTranscript(full)))
+      .toEqual(["user:go", "assistant:before", "user:wait", "assistant:after"]);
+  });
+
+  it("renders one contiguous block when the interrupting message fell below the window", () => {
+    // Same reply, same recorded cut token -- but the tail window's floor sat
+    // between the interrupting message and the reply, so this tab was never
+    // sent the message at all.
+    const windowed = stateOf([reply("done", { turn_id: "r1", segments })]);
+    expect(shape(selectTranscript(windowed))).toEqual(["assistant:beforeafter"]);
+  });
+});
+
 describe("pending sends and the context cut", () => {
 
   it("renders pending sends last, below even the live turn", () => {

@@ -135,6 +135,14 @@ export type ThreadState = {
   activeRun: ActiveRun | null;
   /** Bumped on every pending write, so `at` is strictly increasing. */
   clock: number;
+  /** Is there more history older than `order[0]`? Set from the server's
+   *  `has_more` on a tail/before page ONLY (see `eventsReceived`'s `hasMore`);
+   *  a plain cursor sync (`after>0`) never touches it, so an ordinary poll
+   *  cannot flip the "load older" affordance off. `order[0]` doubles as the
+   *  next `before` to send — the oldest seq this tab holds is exactly the
+   *  floor of the last page it read, whether that page arrived as the initial
+   *  tail or as an older page prepended since. */
+  hasMoreOlder: boolean;
 };
 
 export type ThreadAction =
@@ -160,6 +168,25 @@ export type ThreadAction =
        *  one), and they can resolve out of order. Without this, a response
        *  computed before a run started could land after it and blank the run. */
       requestedAt?: number;
+      /** The server's `has_more`, but ONLY when this response came from a
+       *  tail/before page (the first read of a thread, or a branch-change
+       *  re-read). `undefined` on an ordinary cursor sync, which leaves
+       *  `hasMoreOlder` exactly as it was — that page never asked the
+       *  question, so it must not answer it. See `hasMoreOlder`. */
+      hasMore?: boolean;
+    }
+  | {
+      // A page further into this thread's PAST, fetched with `before` after the
+      // operator (or an auto-loader) asked for more. Distinct from
+      // `eventsReceived` on purpose: this never touches `cursor` (which means
+      // "newest seen", and stays that way so incremental sync is untouched),
+      // never reconciles pending sends (nothing here can be this tab's own
+      // send — a send is always at the tail), and always PREPENDS rather than
+      // appends.
+      type: "olderEventsReceived";
+      events: LogEvent[];
+      /** Whether the server says there is more behind even this page. */
+      hasMore: boolean;
     }
   | {
       type: "sendStarted"; clientId: string; text: string; ts: string;
@@ -206,6 +233,7 @@ export function initialThreadState(threadId: string | null = null): ThreadState 
     cut: null,
     activeRun: null,
     clock: 0,
+    hasMoreOlder: false,
   };
 }
 
@@ -440,6 +468,42 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         // pending here either: it was OUR send, arriving late.
         pending: reconcilePending(state.pending, action.events, action.queued),
         activeRun,
+        hasMoreOlder: action.hasMore !== undefined ? action.hasMore : state.hasMoreOlder,
+      };
+    }
+
+    case "olderEventsReceived": {
+      // Same dedupe-by-id and no-copy-until-new discipline as `eventsReceived`,
+      // mirrored for the front of the array: an empty or fully-replayed page
+      // (a retried `before` after a network error, say) costs nothing.
+      let byId = state.byId;
+      let idBySeq = state.idBySeq;
+      let added = false;
+      const newSeqs: number[] = [];
+      for (const ev of action.events) {
+        if (!ev || typeof ev.seq !== "number" || !ev.id) continue;
+        if (byId[ev.id]) continue;
+        if (!added) {
+          byId = { ...state.byId };
+          idBySeq = { ...state.idBySeq };
+          added = true;
+        }
+        byId[ev.id] = ev;
+        idBySeq[ev.seq] = ev.id;
+        newSeqs.push(ev.seq);
+      }
+      if (!added) {
+        return state.hasMoreOlder === action.hasMore
+          ? state : { ...state, hasMoreOlder: action.hasMore };
+      }
+      // The page arrives newest-first-of-the-batch in seq order already (the
+      // server reads it off the same seq-ordered log), but sorted defensively
+      // rather than assumed, the same as `eventsReceived` does for the tail.
+      newSeqs.sort((a, b) => a - b);
+      return {
+        ...state, byId, idBySeq,
+        order: [...newSeqs, ...state.order],
+        hasMoreOlder: action.hasMore,
       };
     }
 

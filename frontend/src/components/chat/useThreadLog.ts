@@ -35,6 +35,21 @@ import { isStale } from "./staleNotice";
 // arrived up to ten seconds late on every other device.
 const POLL_MS = 60_000;
 
+// THE NEWEST SLICE, FIRST. Opening a thread used to fetch `events?after=0` —
+// the whole log, unbounded, measured at 4.9MB on the operator's longest
+// thread — and painted nothing until all of it had arrived and been parsed.
+// `tail=INITIAL_TAIL` asks for only the newest events of the current branch
+// path (backend/routes/chat.py `_tail_page`), which the operator can start
+// reading immediately; the rest loads outward on demand (see `loadOlder`
+// below and LoadOlderNote). 30 is a round number a bit above one ordinary
+// exchange (a message, a multi-step reply, maybe a follow-up), chosen so the
+// common case needs no second fetch at all; it is not load-bearing on
+// correctness; any positive size behaves the same way. A branch change also
+// re-reads through this path (see the `branchChanged` fetch in `sync`) rather
+// than a bespoke "first load" flag, since it is exactly the same situation —
+// this tab has nothing of the newly-selected line yet.
+const INITIAL_TAIL = 30;
+
 // When the chat says it has gone quiet lives in `staleNotice`: a run of
 // failures AND real elapsed silence. Counting failures alone was not enough —
 // sync runs on stream events and on writes too, not only on the poll, so three
@@ -68,6 +83,16 @@ export type ThreadLog = {
    *  (ADR 0020). `id` is null when this chat cannot be branched, which is the
    *  signal the transcript uses to leave the control off entirely. */
   branch: { id: string | null; name: string; count: number; head: string | null };
+  /** Fetch the next page further into this thread's past and PREPEND it.
+   *  No-op while a page is already in flight, or before anything has loaded
+   *  at all. See LoadOlderNote and threadStore's `hasMoreOlder`. */
+  loadOlder: () => void;
+  /** A `loadOlder` page is in flight. */
+  loadingOlder: boolean;
+  /** The last `loadOlder` page failed, in a sentence. The transcript below it
+   *  is still on screen and still correct — a `Notice`, not a `StateBlock`;
+   *  see frontend/CLAUDE.md, "A region or a line". */
+  olderError: string | null;
 };
 
 export function useThreadLog({
@@ -115,6 +140,43 @@ export function useThreadLog({
     { id: string | null; name: string; count: number; head: string | null }>(
     { id: null, name: "", count: 0, head: null });
 
+  // LOADING OLDER: a page further into this thread's past, on demand. Kept
+  // out of `stateRef`/the reducer's own bookkeeping on purpose — whether a
+  // fetch is IN FLIGHT is this hook's business, not the transcript's, and a
+  // `Notice` for a failed page needs somewhere to live that a later successful
+  // sync (which touches unrelated fields) does not clear out from under it.
+  const loadingOlderRef = useRef(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState<string | null>(null);
+
+  const loadOlder = useCallback(async () => {
+    const id = threadIdRef.current;
+    if (!id || loadingOlderRef.current) return;
+    // The oldest seq this tab currently holds IS the floor of the last page it
+    // read (the initial tail, or an earlier "older" page), so it is exactly
+    // the `before` the contract asks for — see `hasMoreOlder` in threadStore.
+    // Nothing to page before if nothing has loaded yet.
+    const before = stateRef.current.order[0];
+    if (before === undefined) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    setOlderError(null);
+    try {
+      const page = await chatApi.threadEvents(id, 0, { tail: INITIAL_TAIL, before });
+      if (threadIdRef.current !== id) return;
+      dispatch({
+        type: "olderEventsReceived",
+        events: page.events || [],
+        hasMore: page.has_more ?? false,
+      });
+    } catch (e) {
+      if (threadIdRef.current === id) setOlderError(`Couldn't load earlier messages: ${e}`);
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  }, []);
+
   const sync = useCallback(async () => {
     const id = threadIdRef.current;
     if (!id) return;
@@ -131,8 +193,18 @@ export function useThreadLog({
     // state of the world from a current one. Several of these are legitimately
     // in flight at once and they do not resolve in order.
     const requestedAt = Date.now();
+    // `after === 0` is a re-read from scratch (a branch change, or a sync
+    // raced against a thread switch that has not committed its reset yet —
+    // see `after` above), which is exactly the situation the tail read is for:
+    // this tab has nothing of the line it is now asking about. A real cursor
+    // (`after > 0`) is the ordinary incremental sync and must stay exactly
+    // that; `tail`/`before` are ignored server-side once `after` is real, but
+    // there is no reason to send them and every reason not to imply this is a
+    // paging request when it is not.
+    const isFreshRead = after === 0;
     try {
-      const page = await chatApi.threadEvents(id, after);
+      const page = await chatApi.threadEvents(
+        id, after, isFreshRead ? { tail: INITIAL_TAIL } : undefined);
       if (threadIdRef.current !== id) return;
       const nextBranch = page.branch?.id ?? null;
       if (branchRef.current.id !== nextBranch) {
@@ -171,6 +243,9 @@ export function useThreadLog({
         clearedThrough: page.cleared_through,
         cutMode: page.cut_mode,
         requestedAt,
+        // Only a fresh (tail) read answers "is there more behind this",
+        // because only a fresh read asked. See `hasMoreOlder` in threadStore.
+        hasMore: isFreshRead ? (page.has_more ?? false) : undefined,
       });
       // A poll landed, so whatever this chat is showing is current.
       failuresRef.current = 0;
@@ -214,9 +289,14 @@ export function useThreadLog({
     if (!threadId) return;
     let cancelled = false;
     const requestedAt = Date.now();
+    // Clean slate for the older-page state too: a stale error or a stray
+    // "there's more" from the thread just left must not bleed into this one.
+    loadingOlderRef.current = false;
+    setLoadingOlder(false);
+    setOlderError(null);
     (async () => {
       try {
-        const page = await chatApi.threadEvents(threadId, 0);
+        const page = await chatApi.threadEvents(threadId, 0, { tail: INITIAL_TAIL });
         if (cancelled || threadIdRef.current !== threadId) return;
         dispatch({
           type: "eventsReceived",
@@ -229,6 +309,7 @@ export function useThreadLog({
           clearedThrough: page.cleared_through,
           cutMode: page.cut_mode,
           requestedAt,
+          hasMore: page.has_more ?? false,
         });
       } catch (e) {
         if (!cancelled) {
@@ -326,5 +407,5 @@ export function useThreadLog({
   );
 
   return { state, stateRef, dispatch, transcript, sync, runActive: !!state.activeRun,
-           hydrated, stale, branch };
+           hydrated, stale, branch, loadOlder, loadingOlder, olderError };
 }

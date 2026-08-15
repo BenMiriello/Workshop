@@ -419,6 +419,14 @@ export type ThreadEventsPage = {
   events: LogEvent[];
   last_seq: number;
   active_run: ActiveRunPayload;
+  /** Whether more VISIBLE events exist further back than this page. Only
+   *  meaningful on a `tail`/`before` page (a plain `after=0` read returns the
+   *  whole log, so it is always `false` there); see backend/routes/chat.py
+   *  `_tail_page`. Never a guess — exact, and never under-reports. */
+  has_more: boolean;
+  /** The lowest seq in `events`, or `null` when `events` is empty. Feed this
+   *  straight back as `before` to page one window further into the past. */
+  first_seq: number | null;
 } & QueueState & CutState & BranchState;
 
 // This browser's id for one send, stamped before the request leaves and reused
@@ -617,9 +625,19 @@ export const chatApi = {
   // THE SYNC ENDPOINT. The thread's event log from a cursor, plus the run in
   // flight. Called on mount, on focus, on reconnect, and after any write; the
   // client merges it with nothing except the live SSE for the active run.
-  threadEvents: (id: string, after = 0) =>
-    fetch(`/api/chat/threads/${encodeURIComponent(id)}/events?after=${after}`)
-      .then(j<ThreadEventsPage>),
+  //
+  // `opts.tail`/`opts.before` page BACKWARD from the newest events instead of
+  // reading from a cursor — see backend/routes/chat.py `thread_events`. They
+  // are only honoured by the server when `after` is 0; useThreadLog uses them
+  // for the first paint of a thread (and for paging further into its history),
+  // never alongside a real cursor.
+  threadEvents: (id: string, after = 0, opts?: { tail?: number; before?: number }) => {
+    const q = new URLSearchParams({ after: String(after) });
+    if (opts?.tail !== undefined) q.set("tail", String(opts.tail));
+    if (opts?.before !== undefined) q.set("before", String(opts.before));
+    return fetch(`/api/chat/threads/${encodeURIComponent(id)}/events?${q.toString()}`)
+      .then(j<ThreadEventsPage>);
+  },
 
   // Every line this conversation has taken. Empty when the relational store is
   // not reachable, which is a chat that cannot be branched rather than an error.
