@@ -123,6 +123,11 @@ function cutPieces(
     if (id) byToken.set(id, m);
   }
   const recorded = !!cutHead?.length || segments.some((s) => s.cut_after?.length);
+  // A LIVE RUN REACHES THE LEGACY PATH ONLY IF ITS MARKER IS MISSING, and for a
+  // day and a half every live run did, because the frame carrying it had no
+  // listener (see streamWire.ts). That is the drift the operator kept seeing:
+  // an index resolved against a segment list still growing under it. The frame
+  // is subscribed now, so this is the fallback it was always meant to be.
   if (!recorded || !byToken.size) return legacyPieces(segments, interrupts);
 
   const out: Piece[] = [];

@@ -484,7 +484,12 @@ input[type="range"].grad::-moz-range-thumb {
    practice — the scope name is already hidden and everything else is a
    fixed-width icon, so it is the only thing actually competing for room. */
 @media (max-width: 640px) {
-  .chat-toolbar { flex-wrap: nowrap; }
+  /* Tighter vertically than on a desktop: the controls are 2rem tall and set
+     their own breathing room, so the bar's own padding is the only thing
+     between them and the transcript, and 8px above and below spent more of a
+     short screen on the frame than on the conversation. One step down the
+     scale, not a new value. */
+  .chat-toolbar { flex-wrap: nowrap; padding-block: var(--space-1); }
   /* Here the row genuinely cannot grow: wrapping is off, so something has to
      give, and the name is the right thing to clip because it is the only
      element that still reads at half its width. This is the one width where

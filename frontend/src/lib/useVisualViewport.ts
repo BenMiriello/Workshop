@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { keyboardInset, updateBaseline, type ViewportBaseline } from "./keyboardInset";
 
 // Pin a full-height shell to the *visual* viewport, so a composer sits right
 // above the mobile keyboard and the content above it stays put.
@@ -26,6 +27,9 @@ export function useVisualViewport(active: boolean = true): void {
     const vv = window.visualViewport;
     const root = document.documentElement.style;
     let timers: number[] = [];
+    // The resting height for this orientation, which is what the keyboard is
+    // measured against. See lib/keyboardInset.
+    let baseline: ViewportBaseline = null;
 
     const set = () => {
       const h = vv ? vv.height : window.innerHeight;
@@ -38,7 +42,17 @@ export function useVisualViewport(active: boolean = true): void {
       // which meant the composer changed height during the blur, in the middle
       // of a tap. Focus is a proxy for the keyboard and a bad one; this is the
       // real thing, and it is only ever written outside a gesture.
-      root.setProperty("--app-kb", `${Math.max(0, Math.round(window.innerHeight - h))}px`);
+      //
+      // THE ARITHMETIC IS NOT INLINE ANY MORE, and that is the point. It used to
+      // be `innerHeight - h`, which is zero on this document by construction:
+      // index.html asks for `interactive-widget=resizes-content`, so the
+      // keyboard shrinks BOTH viewports and the difference between them never
+      // moves. The padding therefore never collapsed, and nothing said so,
+      // because "no keyboard" is what the wrong answer looks like. The rule is a
+      // tested function over numbers now; both viewport models are pinned.
+      const reading = { viewportHeight: h, innerHeight: window.innerHeight, width: window.innerWidth };
+      baseline = updateBaseline(baseline, reading);
+      root.setProperty("--app-kb", `${keyboardInset(reading, baseline)}px`);
     };
     // Re-measure after the keyboard animation settles, not just when the event
     // fires. Without this the shell keeps a mid-animation height and the gap it

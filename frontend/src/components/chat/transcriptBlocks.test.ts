@@ -256,15 +256,40 @@ describe("a message sent mid-turn closes the assistant's block", () => {
 
 describe("the live turn", () => {
 
+  // A LIVE SPLIT COMES FROM THE `cut` FRAME, exactly as the committed one comes
+  // from the recorded token. This test used to drive `at_segment` because the
+  // live path had no other source: the server pushed a `cut` frame and no
+  // listener existed, so the streaming tab could only ever resolve an index.
+  // See streamWire.ts and useTurnStream's handler table.
   it("splits the same way while it is still running", () => {
-    let s = stateOf([user("go"), user("wait", { during_run: "r1", at_segment: 1 })]);
+    let s = stateOf([user("go"), user("wait", { during_run: "r1", cut_id: "c1" })]);
     s = threadReducer(s, { type: "runStarted", runId: "r1" });
     s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "first" } });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
     s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "tool", name: "Read" } });
-    // The store folded "first" and a tool call into two segments; the message
-    // landed after the first, so it closes that block.
+    // The message landed after "first" and before the tool call, so it closes
+    // that block and the work that followed starts a new one.
     expect(shape(selectTranscript(s))).toEqual([
       "user:go", "live:first", "user:wait", "live:[tool]*",
+    ]);
+  });
+
+  // THE STREAMING TAB'S OWN FAILURE, pinned. Reported 2026-08-14: "I AGAIN see
+  // user messages showing up ABOVE system messages that preceded my message."
+  //
+  // The marker could not arrive: nothing subscribed to the frame carrying it,
+  // so a live reply had no recorded position and the index was resolved against
+  // a segment list still growing under it. The message drifted upward through
+  // work that had already happened when it was sent. The frame is subscribed
+  // now, and this pins the placement it produces.
+  it("puts the message where the marker says once the frame arrives", () => {
+    let s = stateOf([user("go"), user("and also", { during_run: "r1", cut_id: "c1", at_unit: 0 })]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "first" } });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "tool", name: "Read" } });
+    expect(shape(selectTranscript(s))).toEqual([
+      "user:go", "live:first", "user:and also", "live:[tool]*",
     ]);
   });
 
@@ -275,9 +300,10 @@ describe("the live turn", () => {
   });
 
   it("marks only the last block as the one still working", () => {
-    let s = stateOf([user("wait", { during_run: "r1", at_segment: 1 })]);
+    let s = stateOf([user("wait", { during_run: "r1", cut_id: "c1" })]);
     s = threadReducer(s, { type: "runStarted", runId: "r1" });
     s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "a" } });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
     const live = selectTranscript(s).filter((b) => b.kind === "live");
     expect(live.map((b) => (b as { working: boolean }).working)).toEqual([false, true]);
   });
@@ -314,9 +340,10 @@ describe("the live turn", () => {
   // The common case must not move: work emitted before the message stays above
   // it, and the still-running edge stays below it.
   it("leaves work emitted before the message above it", () => {
-    let s = stateOf([user("go"), user("and also", { during_run: "r1", at_unit: 1 })]);
+    let s = stateOf([user("go"), user("and also", { during_run: "r1", cut_id: "c1" })]);
     s = threadReducer(s, { type: "runStarted", runId: "r1" });
     s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "ok" } });
+    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
     expect(shape(selectTranscript(s))).toEqual(["user:go", "live:ok", "user:and also", "live:*"]);
   });
 });

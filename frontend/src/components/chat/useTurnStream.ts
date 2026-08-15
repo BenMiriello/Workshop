@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ThreadAction, ThreadState } from "./threadStore";
 import type { ChatProblem } from "./chatProblem";
+import { CONSUMED_WIRE_KINDS, type ConsumedWireKind } from "./streamWire";
 
 // The live turn's SSE channel, and nothing else.
 //
@@ -153,101 +154,128 @@ export function useTurnStream({
       }
     };
 
-    es.addEventListener("text", (e) => {
-      markAlive();
-      const p = parse(e);
-      cb.current.dispatch({
-        type: "runDelta", runId: turnId,
-        event: { kind: "text", content: String(p.content || ""), parent: p.parent as string | null },
-      });
-    });
-    es.addEventListener("tool", (e) => {
-      markAlive();
-      const p = parse(e);
-      cb.current.dispatch({
-        type: "runDelta", runId: turnId,
-        event: {
-          kind: "tool",
-          name: p.name as string, input: p.input as string, detail: p.detail as string | null,
-          id: p.id as string, agent: p.agent as string | null, parent: p.parent as string | null,
-        },
-      });
-    });
-    // Only a subagent's own result is rendered (it closes that subagent's
-    // segment); every other tool result is plumbing the operator already sees
-    // the effect of, and the reducer drops it.
-    es.addEventListener("tool_result", (e) => {
-      markAlive();
-      const p = parse(e);
-      cb.current.dispatch({
-        type: "runDelta", runId: turnId,
-        event: {
-          kind: "tool_result", tool_use_id: p.tool_use_id as string, text: p.text as string,
+    // ONE TABLE, KEYED BY THE WIRE VOCABULARY. `Record<ConsumedWireKind, ...>`
+    // is exhaustive, so a kind declared consumed in streamWire.ts and not
+    // handled here does not compile, and the listeners are registered by
+    // iterating this table below, so a handler cannot be written and left
+    // unsubscribed. Both halves of how `cut` went missing for a day and a half.
+    const handlers: Record<ConsumedWireKind, (e: Event) => void> = {
+      text: (e) => {
+        markAlive();
+        const p = parse(e);
+        cb.current.dispatch({
+          type: "runDelta", runId: turnId,
+          event: { kind: "text", content: String(p.content || ""), parent: p.parent as string | null },
+        });
+      },
+      tool: (e) => {
+        markAlive();
+        const p = parse(e);
+        cb.current.dispatch({
+          type: "runDelta", runId: turnId,
+          event: {
+            kind: "tool",
+            name: p.name as string, input: p.input as string, detail: p.detail as string | null,
+            id: p.id as string, agent: p.agent as string | null, parent: p.parent as string | null,
+          },
+        });
+      },
+      // Only a subagent's own result is rendered (it closes that subagent's
+      // segment); every other tool result is plumbing the operator already sees
+      // the effect of, and the reducer drops it.
+      tool_result: (e) => {
+        markAlive();
+        const p = parse(e);
+        cb.current.dispatch({
+          type: "runDelta", runId: turnId,
+          event: {
+            kind: "tool_result", tool_use_id: p.tool_use_id as string, text: p.text as string,
           // WITHOUT THIS EVERY LIVE STEP READS AS SUCCEEDED. The server sends
           // `is_error` and this listener used to drop it, so `ok: !is_error`
           // was unconditionally true while the turn ran: a failed step merged
           // into a collapsed group, never auto-opened, and carried no failure
           // tag, then flipped to red the moment the turn committed and the
           // server's own segments replaced these. The outcome only ever
-          // existed after the fact, which is the opposite of when it matters.
-          is_error: Boolean(p.is_error),
-          parent: (p.parent as string) || null,
-        },
-      });
-    });
-    // The turn is blocked, asking. This is the one event the operator MUST see:
-    // nothing else will unblock the run.
-    es.addEventListener("permission", (e) => {
-      markAlive();
-      const p = parse(e);
-      cb.current.dispatch({
-        type: "runDelta", runId: turnId,
-        event: {
-          kind: "permission",
-          id: p.id as string, tool: p.tool as string, label: p.label as string,
-          detail: p.detail as string,
-          input: (p.input || {}) as Record<string, unknown>,
-          suggestions: (p.suggestions || []) as { type?: string; mode?: string }[],
-        },
-      });
-    });
-    es.addEventListener("permission_resolved", (e) => {
-      markAlive();
-      const p = parse(e);
-      cb.current.dispatch({
-        type: "runDelta", runId: turnId,
-        event: {
-          kind: "permission_resolved",
-          id: p.id as string, state: p.state as string, stale: Boolean(p.stale),
-        },
-      });
-    });
-    // The model's own report of how full its window is, sent whenever the
-    // number changes. This is the ONLY live source: the thread's stored
-    // reading is written at finalize, so without this event the meter cannot
-    // move during a turn at all.
-    es.addEventListener("context", (e) => {
-      markAlive();
-      const p = parse(e);
-      const tokens = Number(p.tokens);
-      if (Number.isFinite(tokens) && tokens > 0) {
-        cb.current.dispatch({ type: "runContext", runId: turnId, tokens });
-      }
-    });
-    es.addEventListener("ping", markAlive); // server heartbeat (~1s) keeps this warm
-    es.addEventListener("error", (e) => {
-      // An in-band error EVENT (carries data) — a turn-level error from the
-      // server, NOT a connection drop (that is es.onerror, which has no data).
-      try {
-        const d = JSON.parse((e as MessageEvent).data || "{}");
-        if (d.payload?.detail) {
-          cb.current.onError({
-            text: String(d.payload.detail),
-            endpoint: `/api/chat/turns/${turnId}/stream`,
-          });
+            // existed after the fact, which is the opposite of when it matters.
+            is_error: Boolean(p.is_error),
+            parent: (p.parent as string) || null,
+          },
+        });
+      },
+      // The turn is blocked, asking. This is the one event the operator MUST
+      // see: nothing else will unblock the run.
+      permission: (e) => {
+        markAlive();
+        const p = parse(e);
+        cb.current.dispatch({
+          type: "runDelta", runId: turnId,
+          event: {
+            kind: "permission",
+            id: p.id as string, tool: p.tool as string, label: p.label as string,
+            detail: p.detail as string,
+            input: (p.input || {}) as Record<string, unknown>,
+            suggestions: (p.suggestions || []) as { type?: string; mode?: string }[],
+          },
+        });
+      },
+      permission_resolved: (e) => {
+        markAlive();
+        const p = parse(e);
+        cb.current.dispatch({
+          type: "runDelta", runId: turnId,
+          event: {
+            kind: "permission_resolved",
+            id: p.id as string, state: p.state as string, stale: Boolean(p.stale),
+          },
+        });
+      },
+      // WHERE A MESSAGE SENT MID-TURN LANDED, and the reason this table exists.
+      //
+      // The reducer has handled this since the cut design shipped and nothing
+      // ever subscribed to it, so on the streaming tab — the one the operator
+      // watches a turn run in — the live reply carried no recorded cut position
+      // at all and fell back to the unit index decision 0018 replaced. That
+      // index is resolved against a segment list that keeps growing, so a
+      // message drifted upward as the turn worked and ended up ABOVE work that
+      // had already happened when it was sent. Reported 2026-08-14, and
+      // 2026-08-12 before that against the committed half, which is why it read
+      // as a fix that did not hold: two halves, one of them never connected.
+      cut: (e) => {
+        markAlive();
+        const p = parse(e);
+        const ref = String(p.ref || "");
+        if (ref) cb.current.dispatch({ type: "runDelta", runId: turnId, event: { kind: "cut", ref } });
+      },
+      // The model's own report of how full its window is, sent whenever the
+      // number changes. This is the ONLY live source: the thread's stored
+      // reading is written at finalize, so without this event the meter cannot
+      // move during a turn at all.
+      context: (e) => {
+        markAlive();
+        const p = parse(e);
+        const tokens = Number(p.tokens);
+        if (Number.isFinite(tokens) && tokens > 0) {
+          cb.current.dispatch({ type: "runContext", runId: turnId, tokens });
         }
-      } catch { /* ignore */ }
-    });
+      },
+      ping: markAlive, // server heartbeat (~1s) keeps this warm
+      error: (e) => {
+        // An in-band error EVENT (carries data) — a turn-level error from the
+        // server, NOT a connection drop (that is es.onerror, which has no data).
+        try {
+          const d = JSON.parse((e as MessageEvent).data || "{}");
+          if (d.payload?.detail) {
+            cb.current.onError({
+              text: String(d.payload.detail),
+              endpoint: `/api/chat/turns/${turnId}/stream`,
+            });
+          }
+        } catch { /* ignore */ }
+      },
+      // Defined below, once `finish` exists.
+      done: () => { void finish(); },
+      end: () => { void finish(); },
+    };
 
     const finish = async () => {
       if (finishingRef.current) return;
@@ -292,8 +320,11 @@ export function useTurnStream({
       // own queue when the turn ends (services/chat_drain); the sync above is
       // how this tab finds out.
     };
-    es.addEventListener("done", finish);
-    es.addEventListener("end", finish);
+    // REGISTERED BY ITERATING THE TABLE, so a handler cannot be written and
+    // left unsubscribed. Ignored kinds (started, result, checkpoint, meta,
+    // user_echo) are declared in streamWire.ts with the reason; they arrive and
+    // nothing listens, deliberately.
+    for (const kind of CONSUMED_WIRE_KINDS) es.addEventListener(kind, handlers[kind]);
 
     const handleDrop = async () => {
       if (finishingRef.current) return;
