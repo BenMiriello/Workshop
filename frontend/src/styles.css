@@ -1029,10 +1029,20 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-group, .chat-tool, .chat-agent { --chat-rail-nudge: 5.5px; }
 .chat-group, .chat-tool { --chat-head-pad: 0.35rem; }
 .chat-agent { --chat-head-pad: 0.5rem; }
-.chat-tool { margin: 0; min-width: 0; border-radius: var(--radius-sm); }
+/* A STEP IS A BORDERED CHIP (4a, f-4a-s2). The handoff draws every step as a
+   small outlined row on an inset fill, and that is the thing that makes a turn's
+   machine work read as a tight cluster of chips above the answer rather than as
+   a stack of wide bars competing with the prose. It was a bare transparent row,
+   which is why our turn looked nothing like the design even though the parts
+   were all present. */
+.chat-tool {
+  margin: 0; min-width: 0;
+  background: var(--bg-inset);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
 .chat-tool__head {
   display: flex; align-items: center; gap: 0.4rem;
-  width: 100%; min-width: 0; padding: 0.2rem var(--chat-head-pad);
+  width: 100%; min-width: 0; padding: 0.3rem 0.5rem;
   background: transparent; border: none; color: var(--muted);
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
   border-radius: var(--radius-sm);
@@ -1188,7 +1198,7 @@ input[type="range"].grad::-moz-range-thumb {
      measuring the thing being complained about; it is now 1.25, and the value
      sits as far out as the ink on this surface allows. */
   background: var(--bg-block);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   /* Vertical only. The horizontal inset is the head's own padding, which the
      rail's offset is derived from; adding a second one here would move the head
      and the rail apart. */
@@ -1202,6 +1212,16 @@ input[type="range"].grad::-moz-range-thumb {
    0.2rem gap is the only spacing a single step ever had. No fill either: the
    fill is what says "these belong together", and one step belongs with nothing. */
 .chat-group.is-bare { margin: 0; background: none; padding: 0; }
+/* A CHIP ONLY WHERE IT IS THE OUTERMOST THING. 4a draws two shapes and no more:
+   a lone step is an outlined chip on an inset fill (its `Read` and `Grep`), and
+   a container of steps (its `ralph` subagent) is an outlined block whose steps
+   sit inside behind a rail with no frames of their own. So the border comes off
+   the moment a step is already inside one, or the list turns into boxes drawn
+   inside boxes, which is the thing the whole step block was trying to stop. */
+.chat-group:not(.is-bare) .chat-tool,
+.chat-agent .chat-tool {
+  background: none; border-color: transparent;
+}
 .chat-group__head {
   display: flex; align-items: center; gap: 0.4rem;
   width: 100%; min-width: 0; padding: 0.2rem var(--chat-head-pad);

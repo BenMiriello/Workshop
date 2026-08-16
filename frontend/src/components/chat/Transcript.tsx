@@ -554,11 +554,18 @@ function StepRun({ items, cfg, nowMs, openGroups, arrived, current, onAnswerPerm
 // they ask. Drawing every group of every historical turn would be a density
 // regression on a long thread: today an old turn shows exactly one line for all
 // of its work, and that is the right amount.
-function SettledWork({ work, cfg, nowMs, tookMs, onAnswerPermission }: {
+function SettledWork({
+  work, cfg, nowMs, tookMs, defaultOpen, streaming, expanded, onAnswerPermission,
+}: {
   work: ChatSegment[]; cfg: ModelDisplay; nowMs: number; tookMs?: number;
+  /** Open on first paint. Set while the turn is still being written, so live
+   *  progress is legible without a click; it settles closed on the next turn. */
+  defaultOpen?: boolean;
+  streaming?: boolean;
+  expanded?: boolean;
   onAnswerPermission?: AnswerPermission;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!defaultOpen);
   const id = useId();
   // THE TURN'S TOTAL LIVES HERE, on the line that already summarises the turn's
   // work, rather than in a footer row of its own. A turn nobody waited on does
@@ -573,7 +580,10 @@ function SettledWork({ work, cfg, nowMs, tookMs, onAnswerPermission }: {
   // A turn blocked on a decision is never summarised away, even when it is no
   // longer the latest: the buttons are the only thing that can restart it.
   const pending = work.some((s) => s.t === "approval" && s.state === "pending");
-  if (pending) return <TurnWork work={work} cfg={cfg} nowMs={nowMs} onAnswerPermission={onAnswerPermission} />;
+  if (pending) {
+    return <TurnWork work={work} cfg={cfg} nowMs={nowMs} expanded={expanded}
+                     streaming={streaming} onAnswerPermission={onAnswerPermission} />;
+  }
   return (
     <div className="chat-work">
       <button
@@ -593,6 +603,7 @@ function SettledWork({ work, cfg, nowMs, tookMs, onAnswerPermission }: {
           Operator-agreed, 2026-08-12. */}
       <Reveal open={open} id={id}>
         <TurnWork work={work} cfg={cfg} nowMs={nowMs} openGroups
+                  expanded={expanded} streaming={streaming}
                   onAnswerPermission={onAnswerPermission} />
       </Reveal>
     </div>
@@ -670,11 +681,26 @@ export function AssistantTurn({
   const clock = nowMs ?? 0;
   return (
     <>
-      {work.length > 0 && (isLatest
-        ? <TurnWork work={work} cfg={cfg} nowMs={clock} expanded streaming={streaming}
-                    onAnswerPermission={onAnswerPermission} />
-        : <SettledWork work={work} cfg={cfg} nowMs={clock} tookMs={tookMs}
-                       onAnswerPermission={onAnswerPermission} />)}
+      {/* ONE TOGGLE AT THE TOP OF THE BUBBLE, on every turn, which is 4a's
+          defining rule and the reason it was chosen over 3a ("right data model,
+          wrong turn rendering"). The handoff states it directly: the turn splits
+          at the last run of text, everything before is work, everything after is
+          the answer, "with one toggle at the top of the bubble, that is the only
+          thing that collapses a turn's steps, and it never touches the answer".
+
+          The latest turn used to skip the toggle and render its work INTERLEAVED
+          with the prose, so a turn's steps ran down the middle of its own answer
+          and there was no single control for them. That is what made our chat
+          look nothing like the design even though every part existed.
+
+          It opens itself while the turn is still being written, because live
+          progress has to be legible without a click, and settles closed once the
+          turn is done. */}
+      {work.length > 0 && (
+        <SettledWork work={work} cfg={cfg} nowMs={clock} tookMs={tookMs}
+                     defaultOpen={!!streaming} streaming={streaming} expanded={isLatest}
+                     onAnswerPermission={onAnswerPermission} />
+      )}
       {answer.map((s, i) =>
         s.t === "text" && s.text.trim() ? (
           <AnswerBody key={i} source={s.text} cfg={cfg} expanded={isLatest} cardCtx={cardCtx} streaming={streaming} />
