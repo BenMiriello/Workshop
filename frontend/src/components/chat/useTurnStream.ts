@@ -190,6 +190,9 @@ export function useTurnStream({
           type: "runDelta", runId: turnId,
           event: {
             kind: "tool_result", tool_use_id: p.tool_use_id as string, text: p.text as string,
+            // The server's own reading of whether this result is an outcome or
+            // the stop cutting the call off. See segments.closeStep.
+            interrupted: Boolean(p.interrupted),
           // WITHOUT THIS EVERY LIVE STEP READS AS SUCCEEDED. The server sends
           // `is_error` and this listener used to drop it, so `ok: !is_error`
           // was unconditionally true while the turn ran: a failed step merged

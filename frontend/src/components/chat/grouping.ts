@@ -98,8 +98,36 @@ export function hadErrorResult(seg: ChatSegment): boolean {
  *
  *  The AI SDK draws the same line, with `output-denied` as a state distinct
  *  from `output-error`. */
+// A STOP WEARS THE SAME WORDS AS A REFUSAL, so this does not match them.
+//
+// When the operator presses Stop, the harness cuts the call in flight and
+// answers it with "The user doesn't want to proceed with this tool use. The
+// tool use was rejected" -- worded as a considered refusal, and it is not one:
+// the operator ended the turn and never saw that call. Matching it put "needs
+// approval" on the last step of every stopped turn, asking for an answer to a
+// question nobody was posed. Reported 2026-08-16: the interruption state was
+// bleeding into the approval state.
+//
+// Measured across the operator's whole corpus before removing it: that wording
+// appears three times, all Bash, all in one thread, and never once as a
+// considered refusal. It is the interrupt's signature and nothing else's.
+//
+// Nothing is lost by dropping it. A refusal the operator actually MADE came
+// through the approval channel, so it is an `approval` segment sitting right
+// there reading "Denied" (ApprovalBlock), and a second mark on the tool row
+// would only say it twice. What this still matches is the harness refusing on
+// its own account: a disabled tool, a policy block, an approval never granted.
+//
+// The turn's own outcome is said once, by the turn: `meta.stopped` and
+// stopReason.ts. A step does not repeat it. Same principle that deleted the
+// positional "stopped here" mark below.
+//
+// The backend also records the stop case as outcome-unknown now, so a step cut
+// off this way carries no `ok` at all and never reaches this test
+// (build_streaming._stop_interrupted). This is the second of the two layers,
+// and it is the one that covers transcripts already on disk.
 const DENIED =
-  /no such tool available|is disabled|permission denied|not permitted|requires approval|user (?:rejected|doesn't want|refused)|operation not permitted|blocked by/i;
+  /no such tool available|is disabled|permission denied|not permitted|requires approval|operation not permitted|blocked by/i;
 
 export type StepAlert = "blocked";
 
@@ -153,7 +181,7 @@ export function stepAlert(seg: ChatSegment): StepAlert | null {
 export function blockedLabel(seg: ChatSegment): string {
   if (!stepAlert(seg)) return "";
   const e = seg.t === "tool" ? seg.error || "" : "";
-  if (/requires approval|user (?:rejected|doesn't want|refused)/i.test(e)) return "needs approval";
+  if (/requires approval/i.test(e)) return "needs approval";
   if (/no such tool available|is disabled/i.test(e)) return "tool disabled";
   return "denied";
 }

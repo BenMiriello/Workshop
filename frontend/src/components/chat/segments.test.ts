@@ -281,3 +281,49 @@ describe("tool outcomes close their own step", () => {
     expect((segs[1] as { steps: { ok?: boolean }[] }).steps[0].ok).toBe(false);
   });
 });
+
+// A STOP IS NOT AN OUTCOME.
+//
+// The harness answers our interrupt by rejecting the call in flight, in exactly
+// the words it uses when the operator declines one at an approval prompt. Left
+// as a failure, `grouping.stepAlert` reads that as a refusal and the row asks
+// for an approval nobody is waiting on. Reported 2026-08-16: pressing Stop left
+// the last step saying it needed review.
+//
+// The server decides (it is the only side that knows it sent the interrupt) and
+// says so with `interrupted`; both sides then close the step the same way.
+describe("a step cut off by Stop", () => {
+  const cut = (extra: Record<string, unknown> = {}) => {
+    const segs = applyStreamEvent([], { kind: "tool", name: "Bash", input: "sleep 60", id: "t1" });
+    return applyStreamEvent(segs, {
+      kind: "tool_result", tool_use_id: "t1", is_error: true,
+      text: "The user doesn't want to proceed with this tool use. The tool use was rejected",
+      interrupted: true, ...extra,
+    })[0] as Extract<ChatSegment, { t: "tool" }>;
+  };
+
+  it("has no outcome at all: not ok, not failed", () => {
+    expect(cut().ok).toBeUndefined();
+  });
+
+  it("keeps no rejection text, because the operator rejected nothing", () => {
+    expect(cut().error).toBeUndefined();
+  });
+
+  it("stops running, so nothing ticks against a clock that stopped", () => {
+    const seg = cut();
+    expect(seg.at).toBeUndefined();
+    expect(seg.ms).toBeUndefined();
+  });
+
+  it("still settles an ordinary failure that lands after a stop", () => {
+    // Only the harness's own interrupt rejection is reclassified. A command
+    // that genuinely failed is still a failure, whenever its result arrived.
+    let segs = applyStreamEvent([], { kind: "tool", name: "Bash", input: "x", id: "t2" });
+    segs = applyStreamEvent(segs, {
+      kind: "tool_result", tool_use_id: "t2", text: "Exit code 1", is_error: true,
+    });
+    expect((segs[0] as Extract<ChatSegment, { t: "tool" }>).ok).toBe(false);
+    expect((segs[0] as Extract<ChatSegment, { t: "tool" }>).error).toBe("Exit code 1");
+  });
+});

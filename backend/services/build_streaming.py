@@ -917,17 +917,57 @@ def _seg_tool(turn: "Turn", name, inp, tool_id: str = "") -> None:
         turn.tool_segs[tool_id] = seg
 
 
-def _close_tool(turn: "Turn", tool_id: str, text: str, is_error: bool) -> bool:
+# THE HARNESS ANSWERS OUR STOP BY REJECTING THE CALL IN FLIGHT, in the same
+# words it uses when the OPERATOR refuses one at an approval prompt. The two are
+# indistinguishable in the text, and they are opposite facts:
+#
+#   a refusal   the operator considered this action and declined it. The
+#               transcript marks it, because the operator is the remedy.
+#   a stop      the operator ended the turn. This call was never considered at
+#               all; it was simply cut off, and there is nothing to approve.
+#
+# Only the backend can tell them apart, because only the backend knows it sent
+# the interrupt. Reported 2026-08-16: pressing Stop left the last step reading
+# "needs approval", which invites an answer to a question nobody asked.
+_STOP_REJECTION = re.compile(
+    r"user doesn't want to proceed|tool use was rejected|request interrupted",
+    re.I,
+)
+
+
+def _stop_interrupted(turn: "Turn", text: str, is_error: bool) -> bool:
+    """Is this result the harness cutting a call off for OUR stop, rather than a
+    refusal the operator actually made? Both conditions are required: after a
+    stop, an ordinary failure is still an ordinary failure."""
+    return bool(is_error and turn.stop_requested and _STOP_REJECTION.search(text or ""))
+
+
+def _close_tool(turn: "Turn", tool_id: str, text: str, is_error: bool,
+                *, interrupted: bool = False) -> bool:
     """Close a top-level tool segment with its outcome and how long it took.
 
     A FAILED step is never merged into a group and never collapses, so `ok` is
     the single field the whole disclosure state machine turns on. `ms` is
     dropped when the result arrives without a recorded start (a journal tailed
     from mid-stream), rather than being invented as zero.
+
+    `interrupted` is the stop case, and it is closed EXACTLY as `_close_open_tools`
+    closes a call that never reported at all: `at` dropped so nothing ticks
+    against a clock that stopped, and `ok` left UNSET, which every reader takes
+    as "outcome unknown" rather than as either outcome. That the two stop paths
+    (no result, and a result that is the stop's own rejection) end up identical
+    is the point: both mean the turn was stopped here, and a step should not
+    look different depending on which side of the interrupt its result landed.
+    The failure text is dropped with it. It says the user rejected the call,
+    which is not what happened, and how the TURN ended is already said once, by
+    the turn (`meta.stopped`, stopReason.ts).
     """
     seg = turn.tool_segs.pop(tool_id, None)
     if seg is None:
         return False
+    if interrupted:
+        seg.pop("at", None)
+        return True
     seg["ok"] = not is_error
     started = seg.pop("at", None)
     if isinstance(started, (int, float)):
@@ -1056,9 +1096,19 @@ def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:
         # Every OTHER tool result closes its own step. Not rendered as content:
         # what it sets is the step's outcome and duration, which is what decides
         # whether the step merges into a group, collapses, or stays open in red.
-        if rid and _close_tool(turn, rid, payload.get("text") or "",
-                               bool(payload.get("is_error"))):
-            return True
+        if rid:
+            text = payload.get("text") or ""
+            is_error = bool(payload.get("is_error"))
+            interrupted = _stop_interrupted(turn, text, is_error)
+            if interrupted:
+                # ON THE WIRE TOO. The streaming tab closes its own copy of this
+                # step from the frame below, and it cannot make this call: it
+                # does not know a stop was requested. Deciding it once, here,
+                # is what keeps the live view and the reloaded one from
+                # disagreeing about the same step.
+                payload["interrupted"] = True
+            if _close_tool(turn, rid, text, is_error, interrupted=interrupted):
+                return True
     return False
 
 

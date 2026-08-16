@@ -142,3 +142,72 @@ def test_a_delegates_step_does_not_close_another_delegates():
     })
     assert "ok" not in turn.segments[0]["steps"][0]
     assert turn.segments[1]["steps"][0]["ok"] is False
+
+
+# THE OTHER HALF OF A STOP, and the one that was wrong.
+#
+# `_close_open_tools` above covers a call whose result never came. The commoner
+# shape is a result that DOES come: the harness answers our interrupt by
+# rejecting the call in flight, using the same words it uses when the operator
+# declines one at an approval prompt. Stored as a failure, the transcript's
+# alert rule reads it as a refusal and the row says "needs approval", inviting an
+# answer to a question nobody asked. Reported 2026-08-16.
+#
+# Only this side can tell the two apart, because only this side knows it sent
+# the interrupt.
+
+_REJECTED = ("The user doesn't want to proceed with this tool use. "
+             "The tool use was rejected (eg. if it was a file edit).")
+
+
+def _stopping_turn() -> bs.Turn:
+    turn = _turn()
+    turn.stop_requested = True
+    return turn
+
+
+def test_a_call_cut_off_by_stop_has_no_outcome_and_no_rejection_text():
+    turn = _stopping_turn()
+    bs._segment_ingest(turn, "tool", {"name": "Bash", "input": "sleep 600", "id": "t1"})
+    bs._segment_ingest(turn, "tool_result", {"tool_use_id": "t1", "text": _REJECTED, "is_error": True})
+    seg = turn.segments[0]
+    # Identical to the no-result case above: both mean "the turn was stopped
+    # here", so a step must not look different depending on which side of the
+    # interrupt its result landed.
+    assert "ok" not in seg
+    assert "error" not in seg
+    assert "at" not in seg
+    assert "ms" not in seg
+    assert turn.tool_segs == {}
+
+
+def test_the_wire_carries_the_same_reading_so_the_live_view_agrees():
+    # The streaming tab closes its own copy of the step and cannot make this
+    # call: it does not know a stop was requested. The payload it is sent says so.
+    turn = _stopping_turn()
+    bs._segment_ingest(turn, "tool", {"name": "Bash", "input": "sleep 600", "id": "t1"})
+    payload = {"tool_use_id": "t1", "text": _REJECTED, "is_error": True}
+    bs._segment_ingest(turn, "tool_result", payload)
+    assert payload["interrupted"] is True
+
+
+def test_a_real_refusal_is_still_a_refusal_when_no_stop_was_requested():
+    # The operator declined this at an approval prompt. Same words, opposite
+    # fact, and the mark is the whole point: they are the remedy.
+    turn = _turn()                       # stop_requested is False
+    bs._segment_ingest(turn, "tool", {"name": "Bash", "input": "rm -rf x", "id": "t1"})
+    bs._segment_ingest(turn, "tool_result", {"tool_use_id": "t1", "text": _REJECTED, "is_error": True})
+    seg = turn.segments[0]
+    assert seg["ok"] is False
+    assert "rejected" in seg["error"]
+
+
+def test_an_ordinary_failure_after_a_stop_is_still_a_failure():
+    # Only the harness's own interrupt rejection is reclassified. A command that
+    # genuinely failed keeps its outcome whenever its result arrived.
+    turn = _stopping_turn()
+    bs._segment_ingest(turn, "tool", {"name": "Bash", "input": "false", "id": "t1"})
+    bs._segment_ingest(turn, "tool_result", {"tool_use_id": "t1", "text": "Exit code 1", "is_error": True})
+    seg = turn.segments[0]
+    assert seg["ok"] is False
+    assert seg["error"] == "Exit code 1"

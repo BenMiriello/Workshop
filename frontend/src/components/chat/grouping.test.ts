@@ -240,7 +240,28 @@ describe("what deserves a mark", () => {
       "<tool_use_error>Error: No such tool available: Bash. Bash is disabled for this session.</tool_use_error>",
     ))).toBe("blocked");
     expect(stepAlert(err("permission denied"))).toBe("blocked");
-    expect(stepAlert(err("The user rejected this tool call"))).toBe("blocked");
+    expect(stepAlert(err("This tool requires approval"))).toBe("blocked");
+  });
+
+  // PRESSING STOP IS NOT REFUSING A TOOL.
+  //
+  // The harness cuts the call in flight and answers it in the words of a
+  // considered refusal. Marking that put "needs approval" on the last step of
+  // every stopped turn, which asks the operator to answer a question they were
+  // never posed. Reported 2026-08-16. Measured across the whole corpus: this
+  // wording has never once been a refusal the operator actually made.
+  //
+  // A refusal they DID make arrives through the approval channel and is an
+  // `approval` segment reading "Denied", so nothing goes unsaid by this.
+  it("never marks a step the operator's Stop cut off", () => {
+    for (const e of [
+      "The user doesn't want to proceed with this tool use. The tool use was rejected",
+      "The user rejected this tool call",
+      "Request interrupted by user",
+    ]) {
+      expect(stepAlert(err(e)), e).toBeNull();
+      expect(blockedLabel(err(e)), e).toBe("");
+    }
   });
 
   // POSITION IS NOT A SIGNAL. The old `stopped` mark fired on "this failed step
@@ -261,11 +282,9 @@ describe("what deserves a mark", () => {
   it("a refused step is marked wherever it sits, and names the remedy", () => {
     const disabled = err("Bash is disabled for this session");
     const approval = err("This tool requires approval");
-    const rejected = err("The user rejected this tool call");
     const other = err("permission denied");
     expect(blockedLabel(disabled)).toBe("tool disabled");
     expect(blockedLabel(approval)).toBe("needs approval");
-    expect(blockedLabel(rejected)).toBe("needs approval");
     expect(blockedLabel(other)).toBe("denied");
     // A step with no mark has no label to render.
     expect(blockedLabel(err("Exit code 1 changes"))).toBe("");

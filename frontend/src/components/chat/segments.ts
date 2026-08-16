@@ -22,7 +22,14 @@ export type StreamEvent =
   // other top-level call it closes THAT STEP, setting its outcome and duration.
   // `is_error` is the field the whole disclosure rule turns on: a failed step is
   // never merged into a group and never collapses.
-  | { kind: "tool_result"; tool_use_id?: string | null; text?: string; is_error?: boolean; parent?: string | null }
+  // `interrupted` is set by the server when this result is the harness cutting
+  // the call off for a STOP, rather than an outcome the call reached. The two
+  // arrive in identical words and only the server can tell them apart, so it
+  // decides and says so here. See build_streaming._stop_interrupted.
+  | {
+      kind: "tool_result"; tool_use_id?: string | null; text?: string;
+      is_error?: boolean; interrupted?: boolean; parent?: string | null;
+    }
   // The turn is asking to use a tool and is BLOCKED until answered.
   | {
       kind: "permission";
@@ -221,11 +228,26 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
 
 /** Settle one open tool step: its outcome, how long it ran, and its failure
  *  text. `at` is dropped, because it is what marks a step as still running and
- *  a finished step that kept it would tick forever. */
+ *  a finished step that kept it would tick forever.
+ *
+ *  A STOP IS NOT AN OUTCOME. When the server says this result is the harness
+ *  cutting the call off for a stop, the step closes with NO `ok` at all, which
+ *  every reader takes as "outcome unknown": it did not succeed, it did not
+ *  fail, and it was not refused. `at` still goes, so it stops ticking; the
+ *  duration goes too, since it would measure the time until the interrupt
+ *  rather than the work; and the text goes, because it says the user rejected
+ *  the call and that is not what happened. This mirrors
+ *  build_streaming._close_tool exactly, so the live view and the reloaded one
+ *  settle on the same step. */
 function closeStep(
   open: Extract<ChatSegment, { t: "tool" }>,
-  ev: { is_error?: boolean; text?: string },
+  ev: { is_error?: boolean; text?: string; interrupted?: boolean },
 ): Extract<ChatSegment, { t: "tool" }> {
+  if (ev.interrupted) {
+    const cut = { ...open };
+    delete cut.at;
+    return cut;
+  }
   const closed: Extract<ChatSegment, { t: "tool" }> = { ...open, ok: !ev.is_error };
   if (typeof open.at === "number") closed.ms = Math.max(0, Math.round(Date.now() - open.at * 1000));
   delete closed.at;
