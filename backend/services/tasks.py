@@ -1184,10 +1184,27 @@ def is_relational(root: Path) -> bool:
     live code, not legacy. Deleting them wholesale would break every project.
     """
     try:
-        from db import ticket_sync
         from services import tenancy
-        return (tenancy.available()
-                and ticket_sync.scope_for_root(root) is not None)
+        return tenancy.available() and is_relational_scope(root)
+    except Exception:
+        return False
+
+
+def is_relational_scope(root: Path) -> bool:
+    """Whether this root's tickets BELONG in Postgres, regardless of whether the
+    database is reachable right now.
+
+    `is_relational` conflates two questions, and the conflation is a data hazard
+    on the write side. A scope whose tickets live in Postgres, during a moment
+    when the database is down, would answer False and quietly take the file
+    path: the write lands in `.tasks.json`, the database comes back, reads
+    resume from rows, and the write is gone. Belonging is a static fact about
+    the root (`ticket_sync.scope_for_root`), so the writer asks THIS and fails
+    closed instead, and only the reader asks whether the database answered.
+    """
+    try:
+        from db import ticket_sync
+        return ticket_sync.scope_for_root(root) is not None
     except Exception:
         return False
 
@@ -1305,25 +1322,51 @@ def _for_storage(task: dict) -> dict:
 
 
 def _persist(root: Path, tasks: list[dict]) -> None:
-    """Atomically write .tasks.json (version 2, with export_sha) AND regenerate
-    the TODO.md export. export_sha lets reconcile detect out-of-band edits."""
+    """Write the store, then regenerate the TODO.md export.
+
+    WHICH STORE depends on the root (ADR 0019 stage 2). A relational scope
+    writes Postgres and does NOT write `.tasks.json`; every other root writes
+    the file exactly as before. `TODO.md` is rendered either way, as the one-way
+    export it is now the only remaining job of.
+
+    Reads moved to Postgres before writes did, which left the authoritative
+    write on a file that no reader consulted: a mirror that skipped produced a
+    ticket that was filed and did not exist, and a writer that could not reach
+    the database (the CLI under the wrong interpreter, e7b758a) wrote a file
+    nothing read. Both are the same defect, and this is where it ends.
+
+    A relational write RAISES on failure (`ticket_sync.WriteFailed`) rather than
+    falling back to the file. Falling back is what produced the divergence: the
+    write would land on disk, the database would come back, and reads would
+    resume from rows that never saw it.
+    """
     if _is_protected(root):
         # Never regenerate a protected root's TODO.md (would wipe its prose
         # sections). Inert until O7 migrates it properly.
         return
-    # Captured BEFORE the write below overwrites it: the set of ids this store
-    # held last time, so a ticket dropped from `tasks` (deleted, or merged into
-    # another) can have its backlink row cleaned up further down instead of
-    # being left as a source that no longer exists.
-    try:
-        old_ids = {t.get("id") for t in json.loads(_store_path(root).read_text())
-                   .get("tasks", []) if t.get("id")}
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        old_ids = set()
     rendered = render_markdown(tasks)
-    payload = {"version": STORE_VERSION, "tasks": [_for_storage(t) for t in tasks],
-               "export_sha": _sha(rendered)}
-    _atomic_write(_store_path(root), json.dumps(payload, indent=2) + "\n")
+    relational = is_relational_scope(root)
+
+    if relational:
+        from db import ticket_sync
+        stats = ticket_sync.mirror(root, tasks, required=True)
+        # What left the store, reported by the writer, for the backlink cleanup
+        # below. The file diff that used to answer this is gone with the file.
+        old_ids = set(stats.get("deleted_ids") or [])
+    else:
+        # Captured BEFORE the write below overwrites it: the set of ids this
+        # store held last time, so a ticket dropped from `tasks` (deleted, or
+        # merged into another) can have its backlink row cleaned up further down
+        # instead of being left as a source that no longer exists.
+        try:
+            old_ids = {t.get("id") for t in json.loads(_store_path(root).read_text())
+                       .get("tasks", []) if t.get("id")}
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            old_ids = set()
+        payload = {"version": STORE_VERSION,
+                   "tasks": [_for_storage(t) for t in tasks],
+                   "export_sha": _sha(rendered)}
+        _atomic_write(_store_path(root), json.dumps(payload, indent=2) + "\n")
     _atomic_write(_export_path(root), rendered)
     # Announce the change to the scope, here rather than at the nine call sites
     # that reach this function: one write path, one bump, no way to add a tenth
@@ -1338,30 +1381,10 @@ def _persist(root: Path, tasks: list[dict]) -> None:
     except Exception:
         # Never let bookkeeping fail a write that already landed on disk.
         pass
-    # Mirror into the relational store (ADR 0019 P3). Here, at the single write
-    # path, for the same reason the version bump is here: there is no way to add
-    # a caller that silently skips it. `mirror` swallows its own failures and
-    # returns counts; it cannot raise into a write that has already landed.
+    # The relational write happened at the top of this function, before the
+    # export was rendered, because for those roots it IS the write. There is no
+    # mirror step here any more and no second store to keep in step.
     #
-    # THE COMMENT HERE USED TO SAY "nothing reads the mirror yet", and that has
-    # been false since tickets began reading from Postgres. It matters, because
-    # it inverts what a mirror failure costs. On a RELATIONAL root the file is
-    # still the authoritative write but `_load` reads the rows, so a mirror that
-    # skips leaves a write that landed on disk and is invisible to every reader:
-    # the ticket is filed and does not appear. That is not a background
-    # bookkeeping failure and it must not pass quietly. Logged at ERROR, naming
-    # the scope, so it is findable the moment it happens. Retiring the file for
-    # these roots is what actually removes the failure mode, and it is tracked.
-    try:
-        from db import ticket_sync
-        stats = ticket_sync.mirror(root, tasks)
-        if is_relational(root) and stats.get("skipped"):
-            log.error(
-                "ticket mirror skipped %d records for %s; this root READS from "
-                "Postgres, so those writes are not visible to any reader",
-                stats["skipped"], root)
-    except Exception:
-        log.exception("ticket mirror raised for %s", root)
     # Re-extract every ticket's outgoing refs into the backlink index (design
     # doc sec 10/7.2). `_persist` always receives the FULL current list, so
     # replacing each ticket's row here is what makes an edited-out ref

@@ -476,7 +476,31 @@ def main() -> int:
     ap.add_argument("--repair-events", action="store_true",
                     help="re-derive the noted/scoped ticket_event rows from the "
                          "JSON store (owner connection; see repair_derived_events)")
+    ap.add_argument("--force", action="store_true",
+                    help="run even though the JSON ticket stores are retired "
+                         "(they are a frozen backup, not the source)")
     args = ap.parse_args()
+
+    # THE SOURCE THIS READS IS NO LONGER THE STORE. Since ADR 0019 stage 2 a
+    # relational scope writes Postgres and stops writing `.tasks.json`, so the
+    # file it finds is whatever was there at cutover. Re-running the backfill
+    # against it would push a frozen snapshot over live rows: every ticket
+    # filed, closed or edited since would be reverted, silently and in one
+    # command. The backfill was a one-time move and its own guard has to say so.
+    if args.apply and not args.force:
+        import sys as _sys
+        _sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from services import tasks as _tasks
+        retired = [slug for slug, _n, _k, store_dir in SCOPES
+                   if _tasks.is_relational_scope(store_dir)]
+        if retired:
+            print("REFUSING: the JSON ticket store is retired for "
+                  f"{', '.join(retired)} (ADR 0019 stage 2). The file on disk is "
+                  "a frozen backup from the cutover, and applying it would "
+                  "revert every ticket written since.\n"
+                  "Pass --force only if you have confirmed the file is newer "
+                  "than the rows, which is not true in normal operation.")
+            return 2
 
     if args.repair_events:
         print(repair_derived_events())

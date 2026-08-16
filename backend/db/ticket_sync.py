@@ -478,27 +478,63 @@ def _sync_comments(s, org_id, user_id, ticket_pk, task: dict) -> int:
     return changed
 
 
-def mirror(root: Path, tasks: list[dict]) -> dict:
-    """Bring this project's rows in line with the JSON list it was just given.
+class WriteFailed(RuntimeError):
+    """A ticket write that had to reach Postgres did not.
 
-    Returns a counts dict for the caller to log or a test to assert on. Never
-    raises: a mirror failure is logged and the JSON store, which is still
-    authoritative, carries on alone.
+    Raised only in `required` mode. The caller must not report success: for a
+    relational scope there is no file behind this any more, so a swallowed
+    failure is a ticket that was filed and does not exist.
+    """
+
+
+def mirror(root: Path, tasks: list[dict], *, required: bool = False) -> dict:
+    """Bring this project's rows in line with the list it was just given.
+
+    This is the WRITE for a relational scope (ADR 0019 stage 2), and a
+    best-effort mirror for anything else. The difference is `required`:
+
+    - `required=False` (the default, and every legacy caller): never raises.
+      Used where a file is still the store, so a failure here costs a mirror
+      and nothing else.
+    - `required=True`: raises `WriteFailed` on any failure, including the
+      "skipped" outcomes that used to be indistinguishable from success in the
+      counts. `services/tasks._persist` passes it for a relational root, where
+      this call IS the write.
+
+    The docstring used to say "the JSON store, which is still authoritative,
+    carries on alone". That stopped being true when reads moved to Postgres:
+    from that moment a swallowed failure meant a write that landed on disk and
+    was invisible to every reader.
     """
     stats = {"inserted": 0, "updated": 0, "deleted": 0, "events": 0,
-             "skipped": 0}
+             "skipped": 0, "deleted_ids": []}
     try:
         from services import tenancy
         if not tenancy.available():
+            if required:
+                raise WriteFailed(
+                    f"tickets for {root} live in Postgres and the database is "
+                    f"not reachable; refusing to report a write that did not land")
             stats["skipped"] = len(tasks)
             return stats
         slug = scope_for_root(root)
         if slug is None:
+            if required:
+                raise WriteFailed(f"no relational scope maps to {root}")
             stats["skipped"] = len(tasks)
             return stats
         org_id, user_id = tenancy.org_and_user()
-        return _mirror(org_id, user_id, slug, tasks, stats)
-    except Exception:
+        out = _mirror(org_id, user_id, slug, tasks, stats)
+        if required and out.get("skipped"):
+            raise WriteFailed(
+                f"{out['skipped']} of {len(tasks)} tickets for {root} were not "
+                f"written (project row missing for scope {slug!r})")
+        return out
+    except WriteFailed:
+        raise
+    except Exception as exc:
+        if required:
+            raise WriteFailed(f"ticket write failed for {root}: {exc}") from exc
         log.warning("ticket mirror failed for %s", root, exc_info=True)
         stats["skipped"] = len(tasks)
         return stats
@@ -643,6 +679,11 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
             s.execute(text("UPDATE ticket SET deleted_at = :n WHERE id = ANY(:ids)"),
                       {"n": now, "ids": gone})
             stats["deleted"] = len(gone)
+            # The LEGACY ids of what just left, for the caller's backlink index.
+            # `_persist` used to learn this by diffing the `.tasks.json` it was
+            # about to overwrite; a relational scope no longer writes that file,
+            # so the writer reports it instead of the caller re-deriving it.
+            stats["deleted_ids"] = [ext for ext in existing if ext not in seen]
 
         s.commit()
     return stats
