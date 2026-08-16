@@ -2192,7 +2192,21 @@ button.chat-attach {
    reachable at a time". Covering the viewport also makes a press on the toolbar
    dismiss, which is what a sheet should do anyway. */
 .chat-workpanel__scrim {
-  position: fixed; inset: 0; z-index: calc(var(--z-sticky) - 1);
+  /* IT STARTS BELOW THE CHAT'S OWN TOOLBAR, and never reaches the global one.
+     A dim is a statement about what is behind the panel, and the app's chrome is
+     not behind it: the Workshop topnav and the chat toolbar are the frame you
+     are still in, so dimming them says the whole app is suspended when only the
+     conversation is. Operator, 2026-08-16.
+
+     `.chat-log-wrap` is the positioned ancestor and it begins under the toolbar,
+     so `top: 0` here IS "below the chrome". The height is a viewport unit rather
+     than `bottom: 0` because the wrap stops above the composer, and the composer
+     is exactly what this has to cover: the panel carries a text field and so
+     does the composer, and both being live at once is the bug this scrim exists
+     to prevent. The wrap does not clip, so the overhang lands on the composer as
+     intended. */
+  position: absolute; top: 0; left: 0; right: 0; height: 100vh;
+  z-index: calc(var(--z-sticky) - 1);
   background: var(--scrim);
 }
 
