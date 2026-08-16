@@ -14,17 +14,14 @@ Canonical Task (version 2)::
                                        # with its Objective / Output / Start from
                                        # / Boundaries sections as labelled lines
                                        # (services/ticket_format owns the labels)
-      "text": str,                     # PROJECTION of the pair, `title\\n\\nbody`.
-                                       # A ticket has been a title and a body
-                                       # since 010a9a4; `text` survives because
-                                       # the TODO.md export, reconcile, dedup,
-                                       # run_inbox and the shell CLI read it, and
-                                       # `_normalize` re-derives it on every read.
-                                       # It is still WRITTEN to disk as well, a
-                                       # transitional second copy of the same
-                                       # words; stopping that is a store-format
-                                       # change the Postgres backfill and sync
-                                       # readers have to move with.
+      "text": str,                     # PROJECTION of the pair, `title\\n\\nbody`,
+                                       # re-derived by `_normalize` on every read
+                                       # and NEVER stored (it is in
+                                       # _PROJECTED_KEYS). A ticket has been a
+                                       # title and a body since 010a9a4; `text`
+                                       # survives as the read shape the TODO.md
+                                       # export, reconcile, dedup, run_inbox and
+                                       # the shell CLI were written against.
       "status": "todo"|"doing"|"in_review"|"blocked"|"parked"|"done"|"cancelled",
       "assignee": None|"agent:<slug>"|"operator",   # the delegate (human owns)
       "parent": str | None,
@@ -38,7 +35,6 @@ Canonical Task (version 2)::
                      "criteria": [{"desc": str, "cmd": str, "expect": str}]}|None,
       "max_attempts": int | None,      # per-task cap on worker RUNS (sweep attempts);
                                        # distinct from ralph's inner iteration cap.
-                                       # Legacy stores' `max_iterations` reads in.
       "blocked_reason": str | None,   # the human line. UNCHANGED, still first-class.
       "awaiting": {...}|None,          # THE block record. See "The block record" below.
       "attempts": int,                 # worker runs spent on this task (cap enforcement)
@@ -130,7 +126,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from services import latitude as _latitude
-from services import todos
 
 log = logging.getLogger(__name__)
 
@@ -886,10 +881,11 @@ def _normalize(task: dict) -> dict:
         # external import. Deduped, order preserved.
         "labels": _norm_labels(task.get("labels")),
         "acceptance": acceptance,
-        # max_attempts is the per-task cap on worker RUNS (sweep attempts). Read
-        # legacy `max_iterations` for back-compat so old stores load unchanged.
-        "max_attempts": _as_int_or_none(
-            task.get("max_attempts", task.get("max_iterations"))),
+        # max_attempts is the per-task cap on worker RUNS (sweep attempts), and
+        # is distinct from ralph's inner iteration cap. It used to also read a
+        # legacy `max_iterations` key; measured 2026-08-15, that key is on 0
+        # records across all 27 stores, so the alias was reading for nobody.
+        "max_attempts": _as_int_or_none(task.get("max_attempts")),
         "blocked_reason": task.get("blocked_reason") or None,
         "awaiting": _normalize_awaiting(task.get("awaiting")),
         "attempts": _as_int(task.get("attempts"), 0),
@@ -1134,16 +1130,27 @@ def _as_int_or_none(v):
 
 
 def _migrate_from_todo(root: Path) -> list[dict]:
-    """Parse an existing TODO.md into operator-assigned tasks."""
+    """Build a store from an existing TODO.md, for a file-backed scope that has
+    an export but no `.tasks.json` (the store was deleted, or the directory
+    predates it).
+
+    It reads through `_parse_export_blocks`, the SAME parser `reconcile` uses.
+    It used to read `services/todos.py`, a second parser of the same file left
+    over from ADR-009, whose model was a checkbox: `done: bool`. The export has
+    written eight statuses since ADR 0019, so every draft, doing, in_review,
+    blocked, parked and cancelled line came back through it as plain `todo` or
+    `done`, and a multi-line detail block came back as its first line. One file,
+    one parser; the other one is deleted.
+    """
     export = _export_path(root)
     text = export.read_text() if export.exists() else ""
     now = _now()
     tasks: list[dict] = []
-    for item in todos.parse(text):
+    for status, item_text in _parse_export_blocks(text):
         tasks.append(_normalize({
             "id": _new_id(),
-            "text": item.get("text", ""),
-            "status": "done" if item.get("done") else "todo",
+            "text": item_text,
+            "status": status,
             "assignee": DEFAULT_OWNER,
             "created": now, "updated": now,
             "source": {"kind": "operator", "ref": "todo-migrate"},
@@ -1274,17 +1281,16 @@ def _load(root: Path) -> list[dict]:
 # Stripped on the way out; re-derived on the way in. `owner` is deliberately NOT
 # stripped: the shell CLI still reads it.
 #
-# `text` is deliberately NOT stripped either, and that is a transitional choice
-# rather than a permanent one. A reader running the PREVIOUS version of this
-# module — a long-lived uvicorn that has not restarted, a shell CLI in another
-# checkout — knows only `text`. Omitting it makes every ticket read as empty to
-# that reader, and `reconcile` then treats all of TODO.md as unmatched new work
-# and re-imports the lot, turning a shape change into duplicated tickets. Keeping
-# the key costs a little disk and makes the store readable by both generations.
-# Drift is not possible in the direction that matters: `_normalize` re-derives
-# `text` from title/body on EVERY read, so a stale stored copy is ignored and
-# rewritten. Remove from this exemption once no old reader can still be running.
-_PROJECTED_KEYS = ("exec", "blocked_request")
+# `text` was exempted from this list while title/body were landing (010a9a4), so
+# that a reader running the PREVIOUS version of this module could still see a
+# ticket's words. That exemption is now removed, and the condition it named is
+# the reason: it said to remove it "once no old reader can still be running".
+# Checked 2026-08-15 before cutting it — one copy of this module exists on the
+# box, one process imports it, and it had restarted onto the current code. What
+# the exemption cost meanwhile was measured: `text` was stored on 100% of the
+# records in all 27 stores, a second copy of the same words that a hand edit
+# could put out of step with the pair it is derived from.
+_PROJECTED_KEYS = ("exec", "blocked_request", "text")
 
 
 def _for_storage(task: dict) -> dict:
@@ -1334,16 +1340,28 @@ def _persist(root: Path, tasks: list[dict]) -> None:
         pass
     # Mirror into the relational store (ADR 0019 P3). Here, at the single write
     # path, for the same reason the version bump is here: there is no way to add
-    # a caller that silently skips it. `.tasks.json` above is still the
-    # authoritative write and nothing reads the mirror yet -- `db/shadow.py`
-    # compares the two so the relational side can be proven before it is
-    # switched over. `mirror` swallows its own failures and returns counts; it
-    # cannot raise into a write that has already landed on disk.
+    # a caller that silently skips it. `mirror` swallows its own failures and
+    # returns counts; it cannot raise into a write that has already landed.
+    #
+    # THE COMMENT HERE USED TO SAY "nothing reads the mirror yet", and that has
+    # been false since tickets began reading from Postgres. It matters, because
+    # it inverts what a mirror failure costs. On a RELATIONAL root the file is
+    # still the authoritative write but `_load` reads the rows, so a mirror that
+    # skips leaves a write that landed on disk and is invisible to every reader:
+    # the ticket is filed and does not appear. That is not a background
+    # bookkeeping failure and it must not pass quietly. Logged at ERROR, naming
+    # the scope, so it is findable the moment it happens. Retiring the file for
+    # these roots is what actually removes the failure mode, and it is tracked.
     try:
         from db import ticket_sync
-        ticket_sync.mirror(root, tasks)
+        stats = ticket_sync.mirror(root, tasks)
+        if is_relational(root) and stats.get("skipped"):
+            log.error(
+                "ticket mirror skipped %d records for %s; this root READS from "
+                "Postgres, so those writes are not visible to any reader",
+                stats["skipped"], root)
     except Exception:
-        pass
+        log.exception("ticket mirror raised for %s", root)
     # Re-extract every ticket's outgoing refs into the backlink index (design
     # doc sec 10/7.2). `_persist` always receives the FULL current list, so
     # replacing each ticket's row here is what makes an edited-out ref
