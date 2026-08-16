@@ -1,7 +1,8 @@
-import { ChevronLeft, ChevronRight, Clock, ListTodo, Play } from "lucide-react";
-import { Button, Input, SectionLabel } from "@workshop/ui";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Button, Input } from "@workshop/ui";
 import { runHref } from "../../../lib/jobs";
 import { ticketHref } from "../../../lib/tasks";
+import { AgentAvatar } from "./AgentAvatar";
 import type { ChatWork } from "./useChatWork";
 import { TicketRow } from "./TicketRow";
 import type { InboxItem } from "./workTypes";
@@ -99,7 +100,7 @@ export default function QuestionView({
           (a promotion proposal, a ticket in a scope this chat does not read) the
           title is the only statement of the subject there is. */}
       {about ? (
-        <ul className="chat-workpanel__list">
+        <ul className="chat-workpanel__list chat-workpanel__about">
           <li>
             <TicketRow
               ticket={about}
@@ -113,23 +114,48 @@ export default function QuestionView({
         item.title && <p className="chat-workpanel__subject">{item.title}</p>
       )}
 
-      {item.body && <p className="chat-workpanel__body">{item.body}</p>}
-
-      {item.options.length > 0 && (
-        <>
-          <SectionLabel>Answer</SectionLabel>
-          <div className="chat-workpanel__actions">
-            {item.options.map((o) => (
-              <Button key={o} size="sm" disabled={busy} onClick={() => send(o)}>
-                {o}
-              </Button>
-            ))}
-          </div>
-        </>
+      {/* WHO IS ASKING, beside what they asked. The same square the panel's
+          needs-you card carries, one size up, so the question reads as coming
+          from someone rather than from the surface. */}
+      {item.body && (
+        <div className="chat-workpanel__ask">
+          <AgentAvatar
+            name={item.agent}
+            tone={item.kind === "question" ? "warn" : "accent"}
+            size="lg"
+          />
+          <p className="chat-workpanel__body">{item.body}</p>
+        </div>
       )}
 
-      <SectionLabel>{item.options.length > 0 ? "Or write one" : "Answer"}</SectionLabel>
-      <div className="chat-workpanel__actions">
+      {item.options.length > 0 && (
+        <div className="chat-workpanel__group">
+          {/* Sentence case, matching the ticket card. See the note there. */}
+          <span className="chat-workpanel__label">Answer</span>
+          {/* FULL-WIDTH AND STACKED. An offered answer is a sentence, not a
+              word: side by side they truncate at the panel's 360px and the two
+              options become unreadable at exactly the moment they are being
+              chosen between. */}
+          <div className="chat-workpanel__options">
+            {item.options.map((o) => (
+              <button
+                key={o}
+                type="button"
+                className="chat-workpanel__option"
+                disabled={busy}
+                onClick={() => send(o)}
+              >
+                {o}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <span className="chat-workpanel__label">
+        {item.options.length > 0 ? "Or write one" : "Answer"}
+      </span>
+      <div className="chat-workpanel__write">
         <Input
           value={draft}
           onChange={(e) => work.setDraft(item.id, e.target.value)}
@@ -145,6 +171,16 @@ export default function QuestionView({
             send(draft);
           }}
         />
+      </div>
+      {/* THE HINT AND THE SEND SHARE A LINE, BELOW THE FIELD. They used to sit
+          either side of the input, which put a primary button between the field
+          and its own hint and left the field itself about half the panel wide.
+          4a gives the field the full measure and hangs the consequence and the
+          commit under it. */}
+      <div className="chat-workpanel__send">
+        <span className="chat-workpanel__note">
+          Sends to {item.agent} and unblocks the run.
+        </span>
         <Button
           size="sm"
           variant="primary"
@@ -154,40 +190,43 @@ export default function QuestionView({
           Send
         </Button>
       </div>
-      <p className="chat-workpanel__note">
-        Sends to {item.agent} and unblocks the run.
-      </p>
 
-      <div className="chat-workpanel__actions chat-workpanel__actions--foot">
+      {/* TEXT-WEIGHT, not four ghost buttons. These are ways out of the view,
+          and a rack of outlined rectangles under the one control that commits
+          reads as four more things to decide between. */}
+      <div className="chat-workpanel__foot chat-workpanel__foot--question">
         {item.ticket_id && (
-          <Button
-            size="sm"
-            variant="ghost"
+          <button
+            type="button"
+            className="chat-workpanel__change"
             onClick={() => { onClose(); onNavigate(ticketHref(item.scope, item.ticket_id!)); }}
           >
-            <ListTodo size={14} aria-hidden /> Open ticket
-          </Button>
+            Open ticket
+          </button>
         )}
         {item.run_id && (
-          <Button
-            size="sm"
-            variant="ghost"
+          <button
+            type="button"
+            className="chat-workpanel__change"
             onClick={() => { onClose(); onNavigate(runHref(item.run_id!)); }}
           >
-            <Play size={14} aria-hidden /> Open run
-          </Button>
+            View run
+          </button>
         )}
+        <span className="chat-workpanel__spacer" />
         {/* Deferral, not closure: the item stays open on the server and comes
             back on its own. */}
-        <Button
-          size="sm"
-          variant="ghost"
+        <button
+          type="button"
+          className="chat-workpanel__change"
           disabled={busy}
           onClick={() => { void work.snooze(item.id, "tomorrow"); onBack(); }}
         >
-          <Clock size={14} aria-hidden /> Snooze
-        </Button>
-        <Button size="sm" variant="ghost" onClick={onClose}>Later</Button>
+          Snooze
+        </button>
+        <button type="button" className="chat-workpanel__change" onClick={onClose}>
+          Later
+        </button>
       </div>
     </>
   );

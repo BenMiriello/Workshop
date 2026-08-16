@@ -2165,6 +2165,26 @@ button.chat-attach {
   background: var(--scrim);
 }
 
+/* THE SQUARE THAT SAYS WHO. Shared by the ticket card's run line, the panel's
+   needs-you card, a running row's second line and the question view, because
+   those are one mark at four scales. See AgentAvatar.tsx for why the two
+   non-accent tones are the `-soft` pair rather than 4a's solid fill with white
+   ink: `--accent` is the only tone in this palette with a paired foreground
+   token, and the palette contract guarantees AA for a status tone only as ink
+   on its own soft fill. */
+.chat-avatar {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  background: var(--accent); color: var(--accent-fg);
+  border-radius: var(--radius-sm);
+  font-size: 0.625rem; font-weight: var(--fw-semi); line-height: 1;
+}
+.chat-avatar--warn { background: var(--warn-soft); color: var(--warn); }
+.chat-avatar--muted { background: var(--bg-inset); color: var(--muted); }
+.chat-avatar--sm { width: 16px; height: 16px; font-size: 0.5625rem; }
+.chat-avatar--lg { width: 22px; height: 22px; font-size: 0.6875rem; }
+
 .chat-workpanel__head {
   display: flex; align-items: center; gap: var(--space-2);
   min-height: var(--control-h);
@@ -2210,18 +2230,26 @@ button.chat-attach {
 .chat-workpanel__list { list-style: none; margin: 0; padding: 0; }
 .chat-workpanel__item { border-radius: var(--radius-sm); }
 .chat-workpanel__item + .chat-workpanel__item { margin-top: 1px; }
-/* One row, two lines: the fact, then its meta. A whole row that goes somewhere
-   is a LINK (middle-click, new tab, a tab stop), and hierarchy comes from the
-   hover background rather than a border or an underline, exactly as
-   .ws-ticket-link does it. min-width:0 plus ellipsis on the title is what stops
-   a long one wrapping and silently doubling every row's height. */
+/* TWO WEIGHTS OF ROW, and which one a row gets is what the panel is FOR.
+   An ordinary ticket is one flat line and no chrome: dot, key, title, and the
+   state word pushed right. A row that is running, and one waiting on the
+   operator, become bordered cards with a second line naming the agent, so the
+   two things worth looking at stand off a list of things that are merely true.
+   (4a, outline line 620. The state word used to sit on a second line under
+   every title, which spent two lines per row to say one word and buried the
+   thing the panel is scanned for in the meta ink beneath it.)
+
+   A whole row that goes somewhere is a LINK (middle-click, new tab, a tab
+   stop), and hierarchy comes from the hover background rather than an
+   underline, exactly as .ws-ticket-link does it. min-width:0 plus ellipsis on
+   the title is what stops a long one wrapping and doubling the row's height. */
 .chat-workpanel__row {
   /* Bleeds into the panel's own padding so the hover surface reaches the edge,
      and the width is stated rather than left to `auto`: a <button> is
      shrink-to-fit in the UA sheet and a needs-you row IS a button. Border-box
      comes from the .ws-root reset. */
   width: calc(100% + var(--space-2) * 2);
-  display: flex; align-items: flex-start; gap: var(--space-2);
+  display: flex; flex-direction: column; gap: 0.15rem;
   padding: 0.35rem var(--space-2);
   margin-inline: calc(var(--space-2) * -1);
   background: transparent; border: none; border-radius: var(--radius-sm);
@@ -2229,16 +2257,60 @@ button.chat-attach {
   text-align: left; text-decoration: none; cursor: pointer;
 }
 .chat-workpanel__row:hover { background: var(--card-hover); }
-.chat-workpanel__row > .ws-dot { flex: 0 0 auto; margin-top: 0.3rem; }
-.chat-workpanel__icon, .chat-workpanel__caret { flex: 0 0 auto; margin-top: 0.15rem; color: var(--muted); }
+/* The card sits INSIDE the panel's padding rather than bleeding through it: a
+   border that ran under the panel's own edge would read as a seam. */
+.chat-workpanel__row--card {
+  width: 100%; margin-inline: 0;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.chat-workpanel__cardline {
+  display: flex; align-items: center; gap: var(--space-2); min-width: 0;
+}
+.chat-workpanel__cardline > .ws-dot { flex: 0 0 auto; }
+/* The running line: who is on it and for how long. */
+.chat-workpanel__cardbody {
+  display: flex; align-items: center; gap: var(--space-2); min-width: 0;
+  color: var(--muted); font-size: var(--fs-xs);
+}
+/* The ask itself, under the heading that says who asked it. */
+.chat-workpanel__cardtext {
+  display: block; min-width: 0;
+  color: var(--muted); font-size: var(--fs-sm);
+}
+.chat-workpanel__asks {
+  flex: 0 0 auto; font-size: var(--fs-sm); font-weight: var(--fw-semi);
+}
+/* The short handle on the right of a card's first line, and the ticket key on
+   the left of a flat row. Faint: it is how you cite the row, not what the row
+   says. */
+.chat-workpanel__handle { flex: 0 0 auto; color: var(--faint); font-size: var(--fs-xs); }
+.chat-workpanel__state {
+  flex: 0 0 auto; margin-left: auto; padding-left: var(--space-2);
+  color: var(--muted); font-size: var(--fs-xs);
+}
+.chat-workpanel__icon { flex: 0 0 auto; margin-top: 0.15rem; color: var(--muted); }
+.chat-workpanel__caret { flex: 0 0 auto; color: var(--faint); }
 .chat-workpanel__rowbody { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .chat-workpanel__line { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
 .chat-workpanel__title { flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); }
-.chat-workpanel__agent {
-  flex: 0 0 auto; max-width: 8rem;
-  color: var(--muted); font-size: var(--fs-xs);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* A GROUP HEADING CARRIES ITS COUNT ("This chat · 3"). The chip above already
+   named the filter, so the group's own size is the one thing the heading has
+   left to say. Uppercase and faint, which is the app's SectionLabel motif at
+   the panel's scale rather than the primitive itself: the primitive owns page
+   sections and this is a 360px popover. */
+.chat-workpanel__grouplabel {
+  padding: var(--space-2) 0 var(--space-1);
+  color: var(--faint); font-size: var(--fs-xs); text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
+/* SENTENCE CASE, in the question view only. It labels a field the operator is
+   about to fill in, not a section of a page, and 4a writes it as a word. Same
+   departure as the ticket card's group labels, for the same reason. */
+.chat-workpanel__label { color: var(--fg); font-size: var(--fs-xs); font-weight: var(--fw-medium); }
 /* THE STATE WORD IN PLAIN TEXT. A row's status dot is not enough on its own:
    "is this blocked or just queued" is what a ticket list is read for, and a
    colour answers that only for someone who has already learned the five hues. */
@@ -2272,11 +2344,41 @@ button.chat-attach {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6;
   overflow: hidden;
 }
-.chat-workpanel__actions {
-  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+/* WHAT THE QUESTION IS ABOUT, held in an inset panel. 4a draws the subject row
+   this way rather than as another row in a list: there is exactly one of it, it
+   is not part of anything to scan, and the panel is what says "this is the
+   thing we are talking about" without a second heading saying it in words. */
+.chat-workpanel__about .chat-workpanel__row {
+  width: 100%; margin-inline: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-inset); border-radius: var(--radius-md);
 }
-.chat-workpanel__actions .ws-input { flex: 1 1 9rem; min-width: 0; }
-.chat-workpanel__actions--foot { margin-top: var(--space-1); }
+/* The question, with the asking agent's square beside it. */
+.chat-workpanel__ask {
+  display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0;
+}
+/* FULL-WIDTH AND STACKED. An offered answer is a sentence ("Keep flagged for a
+   year, then downsample"), and two of those side by side inside a 360px panel
+   truncate at exactly the moment they are being chosen between. */
+.chat-workpanel__options { display: flex; flex-direction: column; gap: var(--space-2); }
+.chat-workpanel__option {
+  width: 100%;
+  padding: var(--space-3);
+  color: inherit; background: var(--bg-inset);
+  border: none; border-radius: var(--radius-md);
+  font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-medium);
+  text-align: center; cursor: pointer;
+}
+.chat-workpanel__option:hover { background: var(--card-hover); }
+.chat-workpanel__write { display: flex; }
+.chat-workpanel__write .ws-input { flex: 1 1 auto; min-width: 0; }
+/* The consequence on the left, the commit on the right, both UNDER the field.
+   The field gets the panel's full measure this way, which it did not when Send
+   shared its line. */
+.chat-workpanel__send {
+  display: flex; align-items: center; gap: var(--space-2);
+}
+.chat-workpanel__send .ws-btn { margin-left: auto; }
 .chat-workpanel__note { color: var(--muted); font-size: var(--fs-xs); }
 p.chat-workpanel__note { margin: 0; }
 .chat-workpanel__more {
@@ -2284,18 +2386,22 @@ p.chat-workpanel__note { margin: 0; }
   align-self: flex-start;
   margin-top: var(--space-1); padding: 0.3rem 0.45rem;
   margin-inline-start: -0.45rem;
-  color: var(--muted); background: transparent; border: none;
+  /* THE WAY OUT OF THE PANEL, and 4a paints it. This is the one control here
+     that leaves for a bigger surface, so it is the one that takes the tone;
+     everything else in the footer stays neutral chrome. */
+  color: var(--accent); background: transparent; border: none;
   border-radius: var(--radius-sm);
-  font: inherit; font-size: var(--fs-xs); text-decoration: none; cursor: pointer;
+  font: inherit; font-size: var(--fs-sm); text-decoration: none; cursor: pointer;
 }
-.chat-workpanel__more:hover { color: var(--fg); background: var(--card-hover); }
+.chat-workpanel__more:hover { background: var(--card-hover); }
 .chat-workpanel__foot {
   display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
   margin-top: var(--space-2);
 }
-/* A text button, so it is neutral at rest and --fg on hover: a control is not
-   content. The Link beside it is a real link and takes the link treatment
-   instead, underlined at rest and MINE on hover. */
+/* The question view's own footer: text-weight ways out, the deferrals pushed
+   right by a spacer so they do not read as more of the same. */
+.chat-workpanel__foot--question { gap: var(--space-3); }
+/* A text button, neutral at rest and --fg on hover: a control is not content. */
 .chat-workpanel__change {
   padding: 0.2rem 0.3rem; margin-inline: -0.3rem;
   color: var(--muted); background: transparent; border: none;
@@ -2303,6 +2409,12 @@ p.chat-workpanel__note { margin: 0; }
   font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-workpanel__change:hover { color: var(--fg); background: var(--card-hover); }
+/* Except the one in the policy footer, which 4a draws in the tone: the sentence
+   beside it is a statement, so without the tone there is nothing saying the
+   word is a control at all. */
+.chat-workpanel__foot > .chat-workpanel__change { color: var(--accent); }
+.chat-workpanel__foot--question > .chat-workpanel__change { color: var(--muted); }
+.chat-workpanel__foot--question > .chat-workpanel__change:hover { color: var(--fg); }
 .chat-workpanel__link-out {
   color: inherit; font-size: var(--fs-xs);
   text-decoration: underline;
@@ -2371,13 +2483,57 @@ p.chat-workpanel__note { margin: 0; }
   display: flex; flex-direction: column; gap: var(--space-3);
 }
 .chat-ticket-card__group { display: flex; flex-direction: column; gap: var(--space-1); }
+/* SENTENCE CASE, not the uppercase SectionLabel motif. Operator-directed
+   (2026-08-16) for this card and the question view only: 4a writes "Task",
+   "Ticket" and "Run" as ordinary words because they label the parts of one
+   dense object sitting inside a paragraph of prose, not sections of a page.
+   `SectionLabel` itself and every other screen are untouched. */
+.chat-ticket-card__label { color: var(--fg); font-size: var(--fs-xs); font-weight: var(--fw-medium); }
 .chat-ticket-card__task {
   margin: 0; font-size: var(--fs-sm); line-height: 1.5; white-space: pre-wrap;
 }
-.chat-ticket-card__run {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2);
-  font-size: var(--fs-sm);
+/* THE INSET PANEL. `--bg-inset` is this repo's name for 4a's `--inset`, and it
+   is what makes the ticket's fields and the run read as two objects held inside
+   the card rather than as six loose lines of it. */
+.chat-ticket-card__inset {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-inset); border-radius: var(--radius-md);
 }
+.chat-ticket-card__field {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  font-size: var(--fs-xs); min-width: 0;
+}
+/* Wide enough for the longest label we actually have ("Blocked by") and
+   nowrap, because a label that wraps puts its second word on a line of its own
+   beside a one-line value and the whole panel gains a row for nothing. */
+.chat-ticket-card__fieldlabel {
+  flex: 0 0 4.75rem; color: var(--muted); white-space: nowrap;
+}
+.chat-ticket-card__fieldvalue { min-width: 0; }
+.chat-ticket-card__tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+/* The run: who, which one, how it is going, and how long. The clock is pushed
+   right by the spacer, which is the shape 4a draws and the reason the line
+   stays readable when the agent's name is long. */
+.chat-ticket-card__runline {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--fs-xs); min-width: 0;
+}
+.chat-ticket-card__agent {
+  flex: 0 1 auto; min-width: 0;
+  font-size: var(--fs-xs); font-weight: var(--fw-medium);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-ticket-card__runid { flex: 0 0 auto; color: var(--faint); }
+.chat-ticket-card__runspacer { flex: 1 1 auto; }
+.chat-ticket-card__runline > .ws-dot { flex: 0 0 auto; font-size: var(--fs-xs); }
+/* 4a's second run line is a live tool call. There is no such data on a job, so
+   the receipt takes the slot: see the comment in TicketCard.tsx. */
+.chat-ticket-card__runstep {
+  display: flex; align-items: center; gap: var(--space-1);
+  color: var(--muted); font-size: var(--fs-xs);
+}
+.chat-ticket-card__runstep > svg { flex: 0 0 auto; color: var(--faint); }
 .chat-ticket-card__meta { color: var(--muted); font-size: var(--fs-xs); }
 /* The one hue in the Run group, and it is LIVE: still going. It goes the moment
    the run ends, because a clock that keeps its tone says the work has not. */
@@ -2387,6 +2543,21 @@ p.chat-workpanel__note { margin: 0; }
 .chat-ticket-card__actions {
   display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
 }
+/* CHIPS, not ghost buttons. Three outlined rectangles at the foot of a card
+   that is itself inside an assistant's paragraph read as a form; a filled chip
+   reads as a thing to press. The arrow glyph rides on the two that navigate
+   and is absent from `Run now`, which writes instead of going anywhere. */
+.chat-ticket-card__chip {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  color: inherit; background: var(--bg-inset);
+  border: none; border-radius: var(--radius-md);
+  font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-medium);
+  text-decoration: none; cursor: pointer;
+}
+.chat-ticket-card__chip:hover { background: var(--card-hover); }
+.chat-ticket-card__chip[disabled] { color: var(--muted); }
+.chat-ticket-card__chip > svg { flex: 0 0 auto; }
 /* UNDER the card, not in it: it is a fact about the work rather than a field of
    the ticket, and it is client-rendered from tracked state rather than being a
    message in the log. */

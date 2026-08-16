@@ -5,7 +5,7 @@ import {
 import { Link } from "react-router-dom";
 import { ChevronRight, ListPlus, Settings2 } from "lucide-react";
 import {
-  FilterChip, Popover, SectionLabel, Skeleton, Tag, catFor,
+  FilterChip, Popover, Skeleton, Tag, catFor,
 } from "@workshop/ui";
 import { jobIsLive } from "../../../lib/jobs";
 import { useIsWide } from "../../../lib/useMediaQuery";
@@ -338,7 +338,16 @@ function WorkBody({
       ) : (
         list.groups.map((g) => (
           <div key={g.key} className="chat-workpanel__group">
-            {list.headed && <SectionLabel>{g.label}</SectionLabel>}
+            {/* THE HEADING CARRIES ITS COUNT ("This chat · 3"), which is what
+                4a draws and what makes a heading worth its line: the chip above
+                already named the filter, so the group's own size is the only
+                thing left for it to say. A count of rows on screen, not of the
+                payload: the row cap is stated by the board link below. */}
+            {list.headed && (
+              <div className="chat-workpanel__grouplabel">
+                {g.label} · {g.rows.length}
+              </div>
+            )}
             <ul className="chat-workpanel__list">
               {g.rows.map((row) => (
                 <li key={row.id} className="chat-workpanel__item">
@@ -371,9 +380,10 @@ function WorkBody({
           is deliberate: the gear is where you look for settings, and this is
           where you are when you find out the policy is not what you wanted. */}
       <div className="chat-workpanel__foot">
-        <span className="chat-workpanel__note">
-          When work comes up: {chatModeDef(chatMode).action}.
-        </span>
+        {/* THE VALUE ALONE. "When work comes up:" was the question this answers,
+            and the footer of a panel about work is not a place that question
+            needs asking: 4a prints the setting and the way to change it. */}
+        <span className="chat-workpanel__note">{chatModeDef(chatMode).action}</span>
         <button type="button" className="chat-workpanel__change" onClick={openSettings}>
           Change
         </button>

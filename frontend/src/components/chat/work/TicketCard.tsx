@@ -2,11 +2,13 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, Ticket as TicketGlyph } from "lucide-react";
 import {
-  Button, Card, Clamp, Notice, Prop, Props, SectionLabel, Skeleton, StatusDot,
-  StatusPill,
+  ArrowUpRight, ChevronRight, FileDiff, Ticket as TicketGlyph,
+} from "lucide-react";
+import {
+  Button, Card, Clamp, Notice, Skeleton, StatusDot, StatusPill, Tag, catFor,
 } from "@workshop/ui";
+import { AgentAvatar } from "./AgentAvatar";
 import { jobIsLive, runHref } from "../../../lib/jobs";
 import { shortHttpError } from "../../../lib/httpError";
 import { ticketHref, type Task } from "../../../lib/tasks";
@@ -281,7 +283,13 @@ export default function TicketCard({
 
             {plan.groups.includes("task") && (
               <section className="chat-ticket-card__group">
-                <SectionLabel>Task</SectionLabel>
+                {/* SENTENCE CASE, not the app's uppercase `SectionLabel` motif.
+                    The 4a design writes these three as ordinary words, and this
+                    card is a dense object inside a paragraph of prose rather
+                    than a page section. Operator-directed, 2026-08-16, and it
+                    applies to this card and the question view only: nothing
+                    else changes and `SectionLabel` itself is untouched. */}
+                <span className="chat-ticket-card__label">Task</span>
                 {/* Clamped: a distilled spec is a page of text, and a card in a
                     transcript must not become one. */}
                 <Clamp max={160}>
@@ -292,39 +300,65 @@ export default function TicketCard({
 
             {plan.groups.includes("ticket") && (
               <section className="chat-ticket-card__group">
-                <SectionLabel>Ticket</SectionLabel>
-                {/* `Props`, not a column of `Field`s: these are read here and
-                    edited on the ticket page, and form ink on a read-only value
-                    is what made every rail look like a disabled form. */}
-                <Props>
+                <span className="chat-ticket-card__label">Ticket</span>
+                {/* AN INSET PANEL, not a `Props` list. The fields are read here
+                    and edited on the ticket page, so they keep read-only ink;
+                    what the panel adds is that they read as one object sitting
+                    inside the card rather than as four loose lines of it. */}
+                <div className="chat-ticket-card__inset">
                   {plan.props.map((p) => {
                     if (p.key === "key") {
                       return (
-                        <Prop key={p.key} label={p.label}>
-                          <span className="ws-muted">{p.scope}</span>
-                          {" / "}
-                          <span className="ws-ticket-key">{p.text}</span>
-                        </Prop>
+                        <div key={p.key} className="chat-ticket-card__field">
+                          <span className="chat-ticket-card__fieldlabel">{p.label}</span>
+                          <span className="chat-ticket-card__fieldvalue">
+                            {p.scope}
+                            {" / "}
+                            <span className="ws-ticket-key">{p.text}</span>
+                          </span>
+                        </div>
                       );
                     }
                     if (p.key === "blocked_by") {
                       return (
-                        <Prop key={p.key} label={p.label}>
-                          {p.links.map((l, i) => (
-                            <span key={l.id}>
-                              {i > 0 && ", "}
-                              <Link to={ticketHref(l.scope, l.id)}>{l.title || l.id.slice(0, 6)}</Link>
-                            </span>
-                          ))}
-                        </Prop>
+                        <div key={p.key} className="chat-ticket-card__field">
+                          <span className="chat-ticket-card__fieldlabel">{p.label}</span>
+                          <span className="chat-ticket-card__fieldvalue">
+                            {p.links.map((l, i) => (
+                              <span key={l.id}>
+                                {i > 0 && ", "}
+                                <Link to={ticketHref(l.scope, l.id)}>
+                                  {l.title || l.id.slice(0, 6)}
+                                </Link>
+                              </span>
+                            ))}
+                          </span>
+                        </div>
                       );
                     }
                     if (p.key === "labels") {
-                      return <Prop key={p.key} label={p.label}>{p.labels.join(", ")}</Prop>;
+                      return (
+                        <div key={p.key} className="chat-ticket-card__field">
+                          <span className="chat-ticket-card__fieldlabel">{p.label}</span>
+                          {/* The design draws these as dot-chips, which is what
+                              `Tag` already is: a categorical identity, hued by
+                              `catFor` so one label keeps one colour everywhere. */}
+                          <span className="chat-ticket-card__tags">
+                            {p.labels.map((l) => (
+                              <Tag key={l} hue={catFor(l)} variant="neutral">{l}</Tag>
+                            ))}
+                          </span>
+                        </div>
+                      );
                     }
-                    return <Prop key={p.key} label={p.label}>{p.text}</Prop>;
+                    return (
+                      <div key={p.key} className="chat-ticket-card__field">
+                        <span className="chat-ticket-card__fieldlabel">{p.label}</span>
+                        <span className="chat-ticket-card__fieldvalue">{p.text}</span>
+                      </div>
+                    );
                   })}
-                </Props>
+                </div>
               </section>
             )}
 
@@ -333,35 +367,61 @@ export default function TicketCard({
                 {/* THE RUN'S OWN SECTION, labelled, because its status is not the
                     ticket's. ADR 0009 allows two entities in one view only when
                     they are separated like this, and never in the same row. */}
-                <SectionLabel>Run</SectionLabel>
-                <div className="chat-ticket-card__run">
-                  <StatusDot status={plan.run.kind}>{plan.run.label}</StatusDot>
-                  <span className="chat-ticket-card__meta">
-                    {[plan.run.agent, plan.run.trigger].filter(Boolean).join(" · ")}
-                  </span>
-                  {plan.run.clock && (
-                    <span className={plan.run.clock.live ? "chat-ticket-card__elapsed" : "chat-ticket-card__meta"}>
-                      {plan.run.clock.text}
+                <span className="chat-ticket-card__label">Run</span>
+                <div className="chat-ticket-card__inset">
+                  {/* THE AGENT, THEN THE HANDLE, THEN THE CLOCK PUSHED RIGHT,
+                      exactly as 4a draws it. The state word sits before the
+                      clock because it is the RUN's, and ADR 0009 keeps it out
+                      of the header where the ticket's own status lives. */}
+                  <div className="chat-ticket-card__runline">
+                    <AgentAvatar name={plan.run.agent} />
+                    <span className="chat-ticket-card__agent">{plan.run.agent || "an agent"}</span>
+                    {/* The design's `8f2c`. We have no run numbering either, so
+                        this is the same six-hex handle `ticketKey` gives a
+                        ticket, for one vocabulary of short ids. */}
+                    <span className="ws-ticket-key chat-ticket-card__runid">
+                      {plan.run.id.slice(0, 6)}
                     </span>
+                    <span className="chat-ticket-card__runspacer" />
+                    <StatusDot status={plan.run.kind}>{plan.run.label}</StatusDot>
+                    {plan.run.clock && (
+                      <span className={plan.run.clock.live ? "chat-ticket-card__elapsed" : "chat-ticket-card__meta"}>
+                        {plan.run.clock.text}
+                      </span>
+                    )}
+                  </div>
+                  {/* THE DESIGN'S SECOND LINE IS A LIVE TOOL CALL, and there is
+                      no such data: tool events belong to a chat turn, a job
+                      record carries no step list, and there is no run stream to
+                      read one from. The receipt is what we do have about the
+                      same work, so it takes the slot. Deviation 1 of the plan. */}
+                  {plan.run.receipt && (
+                    <div className="chat-ticket-card__runstep">
+                      <FileDiff size={12} strokeWidth={1.8} aria-hidden />
+                      {receiptText(plan.run.receipt)}
+                    </div>
                   )}
                 </div>
-                {plan.run.receipt && (
-                  <div className="chat-ticket-card__meta">{receiptText(plan.run.receipt)}</div>
-                )}
               </section>
             )}
 
             {plan.actions.length > 0 && (
               <div className="chat-ticket-card__actions">
+                {/* CHIPS, not ghost buttons. A ghost button is an outline, and
+                    four outlined rectangles at the foot of a card inside a
+                    paragraph read as a form. The two that navigate carry the
+                    arrow glyph 4a draws on them; `Run now` does not, because it
+                    writes rather than going anywhere. */}
                 {plan.actions.map((a) => {
                   if (a === "open") {
                     return (
                       <Link
                         key={a}
-                        className="ws-btn ws-btn--ghost ws-btn--sm"
+                        className="chat-ticket-card__chip"
                         to={ticketHref(ticketScope, id)}
                       >
                         {TICKET_CARD_ACTION_LABEL.open}
+                        <ArrowUpRight size={13} strokeWidth={1.8} aria-hidden />
                       </Link>
                     );
                   }
@@ -369,24 +429,24 @@ export default function TicketCard({
                     return plan.run ? (
                       <Link
                         key={a}
-                        className="ws-btn ws-btn--ghost ws-btn--sm"
+                        className="chat-ticket-card__chip"
                         to={runHref(plan.run.id)}
                       >
                         {TICKET_CARD_ACTION_LABEL.viewRun}
+                        <ArrowUpRight size={13} strokeWidth={1.8} aria-hidden />
                       </Link>
                     ) : null;
                   }
                   return (
-                    <Button
+                    <button
                       key={a}
-                      size="sm"
-                      variant="ghost"
-                      loading={runBusy}
+                      type="button"
+                      className="chat-ticket-card__chip"
                       disabled={runBusy}
                       onClick={() => void runNow()}
                     >
-                      {TICKET_CARD_ACTION_LABEL.runNow}
-                    </Button>
+                      {runBusy ? "Starting" : TICKET_CARD_ACTION_LABEL.runNow}
+                    </button>
                   );
                 })}
               </div>
