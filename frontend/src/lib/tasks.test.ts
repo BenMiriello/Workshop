@@ -174,6 +174,46 @@ describe("proposalGaps", () => {
     expect(gaps.map((g) => g.check)).not.toContain("entry_points");
   });
 
+  it("reads the sections out of one description", () => {
+    expect(proposalGaps({
+      title: "Fix the thing",
+      description: [
+        "Objective: the thing stops dropping messages under load.",
+        "Output: the reproduction script exits 0.",
+        "Start from: backend/services/chat.py",
+        "Boundaries: nothing under frontend/.",
+      ].join("\n"),
+    })).toEqual([]);
+  });
+
+  it("takes the labels a model actually writes", () => {
+    expect(proposalGaps({
+      title: "Fix the thing",
+      description: [
+        "**Objective:** the thing stops dropping messages under load.",
+        "## Done when - the reproduction script exits 0.",
+        "Begin with: backend/services/chat.py",
+        "Out of scope: anything under frontend/.",
+      ].join("\n"),
+    })).toEqual([]);
+  });
+
+  it("names the sections a description leaves out", () => {
+    const gaps = proposalGaps({
+      title: "Fix the thing",
+      description: "Objective: the thing stops dropping messages under load.",
+    });
+    expect(gaps.map((g) => g.check))
+      .toEqual(["acceptance", "entry_points", "boundaries"]);
+  });
+
+  it("does not read a section label out of prose that merely mentions it", () => {
+    expect(proposalGaps({
+      title: "Fix the thing",
+      description: "Objective: keep going until the output is correct.",
+    }).map((g) => g.check)).toContain("acceptance");
+  });
+
   it("produces gaps the line can render", () => {
     expect(readinessLine(proposalGaps({
       title: "Fix the thing",

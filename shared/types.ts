@@ -101,10 +101,18 @@ export type TaskEffort = "quick" | "standard" | "deep";
 export type TaskProposalSpec = {
   scope?: string;
   title?: string;
-  objective?: string; // one crisp sentence: the concrete outcome
-  output?: string; // done-looks-like: the artifact, format, or acceptance
-  entry_points?: string; // where to start: files, functions, or commands
-  boundaries?: string; // explicit out-of-scope / do-not-touch
+  // The description a worker acts on. Its sections (Objective / Output / Start
+  // from / Boundaries) are labelled lines inside it, not separate fields: a
+  // ticket is a title and a description, and every other field is edited on the
+  // ticket itself rather than a second time on the card.
+  description?: string;
+  // Legacy, still read so proposals stored in older transcripts keep filing:
+  // one field per section, plus priority and effort, which now live on the
+  // ticket page (TicketDetail's Details rail).
+  objective?: string;
+  output?: string;
+  entry_points?: string;
+  boundaries?: string;
   priority?: number;
   effort?: TaskEffort;
 };

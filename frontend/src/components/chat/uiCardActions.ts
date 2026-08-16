@@ -219,20 +219,32 @@ const SPEC_SECTIONS: { key: keyof TaskProposalSpec; label: string }[] = [
   { key: "boundaries", label: "Boundaries" },
 ];
 
-// Compose a card's editable values into the filed ticket body: the title as the
-// first line, then each filled spec section on its own line. Backward-compatible
-// by design: when no structured field is present it falls back to the plain
-// `text` field (title line + description), or a bare title, so an older or
-// minimal proposal still files unchanged.
+// Compose a card's editable values into the filed ticket text: the title as the
+// first line, then the description under it. The store splits that pair back
+// into its `title` and `body` fields, which is what a ticket has been since
+// 010a9a4.
+//
+// Three input shapes, one output, because a transcript is permanent. The card
+// emits `description` today. Proposals already on disk carry either one field
+// per spec section (composed in ORDER, exactly as before) or a plain `text`
+// body whose own first line was the title. All three still file, and file the
+// same way they did when they were written.
 export function composeTaskText(v: Record<string, string>): string {
   const sections = SPEC_SECTIONS
     .map((s) => ({ ...s, value: (v[s.key] || "").trim() }))
     .filter((s) => s.value.length > 0);
   const rawText = (v.text || "").trim();
+  const description = (v.description || "").trim();
   const title = (v.title || "").trim() || rawText.split("\n")[0]?.trim() || "";
   if (sections.length === 0) {
-    // No structured spec: use the plain text body, else just the title.
-    return rawText || title;
+    if (!description) return rawText || title; // legacy `text`, else a bare title
+    if (!title) return description;
+    // A description that already opens with the title must not repeat it: the
+    // store would read the second line as the body's first line either way, but
+    // the ticket would show its own name twice (3d09386).
+    const first = description.split("\n")[0]?.trim() ?? "";
+    if (first === title) return description;
+    return `${title}\n\n${description}`;
   }
   const lines = [title || "Untitled task", ""];
   for (const s of sections) lines.push(`${s.label}: ${s.value}`);

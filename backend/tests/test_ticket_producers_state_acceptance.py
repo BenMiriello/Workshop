@@ -80,11 +80,36 @@ class TestTheBuildChatRule:
         undoes the other."""
         card = chat_context.TASK_PROPOSAL_CARD
         assert "the rest are optional" not in card
-        assert "output and boundaries are" in card
+        assert "never empty" in card
 
-    def test_it_still_uses_the_shared_field_names(self):
+    def test_it_still_uses_the_shared_section_labels(self):
+        """The card asks for a description carrying labelled lines, and the
+        checker finds a section by its LABEL, so the label is what has to be
+        shared. Asserting the key name stopped meaning anything the moment the
+        sections stopped being separate fields."""
         for key in ticket_format.ORDER:
-            assert key in self.RULE or key in chat_context.TASK_PROPOSAL_CARD, key
+            label = ticket_format.FIELDS[key][0]
+            assert label in self.RULE or label in chat_context.TASK_PROPOSAL_CARD, key
+
+    def test_the_card_asks_for_a_description_the_checker_can_read(self):
+        """What the card tells the model to write must satisfy the checker that
+        reads the filed ticket. Composing the card's own instruction lines into
+        a body and running the real checker over it is the only way to know."""
+        card = chat_context.TASK_PROPOSAL_CARD
+        assert "description: type `textarea`" in card
+        body = "\n".join(
+            f"{ticket_format.FIELDS[key][0]}: something specific here."
+            for key in ticket_format.ORDER
+        )
+        for key in ticket_format.ORDER:
+            assert ticket_format.states(body, key), key
+
+    def test_the_card_asks_for_no_field_the_ticket_page_owns(self):
+        """A card that edits priority/effort is a second editor of fields the
+        ticket already owns, which is what the tickets-in-chat plan rules out."""
+        card = chat_context.TASK_PROPOSAL_CARD
+        assert "priority: type" not in card
+        assert "effort: type" not in card
 
 
 class TestTheDistiller:

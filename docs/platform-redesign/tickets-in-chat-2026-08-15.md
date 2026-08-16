@@ -141,7 +141,13 @@ alternative 0009 explicitly rejected.
 
 ### Every state the card can be in
 
-1. **Proposal, not yet filed** — the existing `task-proposal` edit form. Unchanged.
+1. **Proposal, not yet filed** — the `task-proposal` edit form: **scope, title,
+   description, and nothing else**. This section used to say "unchanged", and that was
+   the leftover the operator caught on 2026-08-15: the form still asked for objective,
+   output, entry_points, boundaries, priority and effort as six separate controls, which
+   is the pre-010a9a4 shape (a ticket is a title and a description) and a second editor
+   of fields §3 gives to `TicketDetail`. The four spec sections are labelled lines
+   inside the description, which is where the readiness checker reads them from anyway.
 2. **Filed, never run** — pill `to do`. No Run group. Actions: Open ticket, Run now.
 3. **Running** — pill `in progress`. Run group with a live elapsed clock in the LIVE
    tone. Actions: Open ticket, View run.

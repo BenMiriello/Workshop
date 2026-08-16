@@ -628,11 +628,17 @@ export function readinessLine(gaps: ReadinessGap[] | undefined | null): string {
 // at that point, so the four advisory checks are evaluated against the card's
 // own fields here.
 //
-// This is NOT a second checker. The card carries one field per labelled section
-// (Objective / Output / Start from / Boundaries), so "does the body state this
-// field" collapses to "is this field filled" and no label matching is needed.
-// The `why` strings are the checker's own, copied verbatim; if one changes in
-// services/ticket_readiness.py, change it here.
+// This is NOT a second checker. The `why` strings are the checker's own, copied
+// verbatim; if one changes in services/ticket_readiness.py, change it here.
+//
+// It used to collapse to "is this field filled", because the card carried one
+// editable field per labelled section. It no longer does: a ticket is a title
+// and a description (commit 010a9a4), the ticket page owns every other field,
+// and a card that re-edits them is the second editor the tickets-in-chat plan
+// rules out (§3). So the sections are structure INSIDE the description, and
+// this asks the same question the server asks: does the body state the field.
+// The per-section keys stay accepted for the proposals already sitting in
+// transcripts on disk, which re-render from their stored block.
 const READINESS_WHY = {
   title: "the ticket has no title",
   objective: "the body does not say what this is trying to achieve",
@@ -647,14 +653,55 @@ const READINESS_WHY = {
 const ENTRY_POINT_RE =
   /(?:[\w.\-/]+\/[\w.\-]+\.\w+)|(?:`[^`\n]+`)|(?:^\s{0,3}```)|(?:\b(?:run|npm|pytest|python3?|bash|curl|git|make)\s+\S+)/m;
 
+// The labels a section may be written under, ported from services/
+// ticket_format.py FIELDS. Same synonyms, same tolerance for the punctuation a
+// model actually emits ("**Output:**", "## Done when -"), because the producer
+// on both sides is a prompt. Adding a synonym is one edit in each file.
+const SECTION_LABELS = {
+  objective: ["objective", "goal", "why", "problem", "outcome"],
+  output: ["output", "done", "done when", "done looks like", "acceptance",
+    "accept", "verify", "proof", "definition of done"],
+  entry_points: ["start from", "entry points", "entrypoints", "begin with",
+    "starting point", "files"],
+  boundaries: ["boundaries", "out of scope", "do not touch", "don't touch",
+    "non-goals", "not in scope"],
+} as const;
+
+function labelRe(alts: readonly string[]): RegExp {
+  const escaped = [...alts]
+    .sort((a, b) => b.length - a.length)
+    .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  return new RegExp(
+    `^\\s{0,3}(?:#{1,6}\\s*)?(?:\\*\\*|__)?\\s*(?:${escaped})\\s*(?:\\*\\*|__)?\\s*[:\\-–—]`,
+    "im",
+  );
+}
+
+const SECTION_RE: Record<keyof typeof SECTION_LABELS, RegExp> = {
+  objective: labelRe(SECTION_LABELS.objective),
+  output: labelRe(SECTION_LABELS.output),
+  entry_points: labelRe(SECTION_LABELS.entry_points),
+  boundaries: labelRe(SECTION_LABELS.boundaries),
+};
+
+/** Does this body state the given section? `ticket_format.states`, ported. */
+export function statesSection(body: string, key: keyof typeof SECTION_LABELS): boolean {
+  return SECTION_RE[key].test(body || "");
+}
+
 export type TicketProposal = {
   title?: string;
+  // The ticket's description: the spec a worker acts on, with its sections
+  // written as labelled lines. This is the card's one body field.
+  description?: string;
+  effort?: string;
+  // Legacy: one field per section, and the unstructured fallback body. Kept for
+  // proposals stored in transcripts before the card became title + description.
   objective?: string;
   output?: string;
   entry_points?: string;
   boundaries?: string;
-  effort?: string;
-  // The unstructured fallback body, for a proposal that carries no sections.
   text?: string;
 };
 
@@ -664,18 +711,22 @@ export function proposalGaps(v: TicketProposal): ReadinessGap[] {
   const add = (check: keyof typeof READINESS_WHY) =>
     gaps.push({ check, why: READINESS_WHY[check] });
 
-  const body = [val("objective"), val("output"), val("entry_points"),
-    val("boundaries"), val("text")].filter(Boolean).join("\n");
+  const body = [val("description"), val("objective"), val("output"),
+    val("entry_points"), val("boundaries"), val("text")].filter(Boolean).join("\n");
+  // A section is stated when its own legacy field is filled, or when the
+  // description writes it under a recognized label.
+  const has = (k: keyof typeof SECTION_LABELS): boolean =>
+    !!val(k) || statesSection(body, k);
 
   if (!val("title") && !val("text")) add("title");
   // The checker also passes a body of 40 characters or more without the label.
-  if (!val("objective") && body.length < 40) add("objective");
-  if (!val("output")) add("acceptance");
+  if (!has("objective") && body.length < 40) add("objective");
+  if (!has("output")) add("acceptance");
   // A one-edit ticket does not have to name its entry points.
-  if (val("effort") !== "quick" && !val("entry_points") && !ENTRY_POINT_RE.test(body)) {
+  if (val("effort") !== "quick" && !has("entry_points") && !ENTRY_POINT_RE.test(body)) {
     add("entry_points");
   }
-  if (!val("boundaries")) add("boundaries");
+  if (!has("boundaries")) add("boundaries");
   return gaps;
 }
 
