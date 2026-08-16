@@ -326,3 +326,14 @@ shared row and store.
 Every package: `npm run typecheck` and `bash scripts/check_design.sh` clean, frontend
 tests pass, four list states on anything that lists, no inline hex, lucide only, no
 em-dash in any string a person reads.
+
+---
+
+**Superseded on appearance (2026-08-16).** This document is still accurate about
+what each surface DOES and why. Its visual decisions re-derived the handoff from
+our own primitives rather than building what option 4a drew, which the operator
+rejected: "the whole point of it was to style it and redesign it and you
+basically like changed it all". The visual spec now lives in
+`tickets-in-chat-visual-fidelity-2026-08-16.md`, with the design files kept
+alongside it in `tickets-in-chat-design/`. Where the two disagree about how
+something LOOKS, that one wins.
