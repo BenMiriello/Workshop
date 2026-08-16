@@ -1228,6 +1228,13 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         # assistant emitted mid-reply (services/task_scope), the triager turning
         # a note into a ticket, and imports from an external tracker.
         status="todo",
+        # SOMEONE IS WATCHING A SPINNER. This runs inside the click, so the
+        # same-work confirmation's cold-load cost (9-11s measured) is dead time
+        # on a button. Timing out downgrades a merge to a `related` link, which
+        # still files the ticket, so the worst case is a linked near-duplicate
+        # instead of an unresponsive UI. Every unattended caller keeps the long
+        # budget, where waiting is free and a false merge is not.
+        llm_timeout_s=task_dedup.INTERACTIVE_LLM_TIMEOUT_S,
     )
     resp = {
         "task": result["task"],

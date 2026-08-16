@@ -9,7 +9,22 @@ Canonical Task (version 2)::
 
     {
       "id": str,                       # uuid4 hex, stable across reorders
-      "text": str,
+      "title": str,                    # CANONICAL. One line, written not clamped
+      "body": str,                     # CANONICAL. The spec a worker acts on,
+                                       # with its Objective / Output / Start from
+                                       # / Boundaries sections as labelled lines
+                                       # (services/ticket_format owns the labels)
+      "text": str,                     # PROJECTION of the pair, `title\\n\\nbody`.
+                                       # A ticket has been a title and a body
+                                       # since 010a9a4; `text` survives because
+                                       # the TODO.md export, reconcile, dedup,
+                                       # run_inbox and the shell CLI read it, and
+                                       # `_normalize` re-derives it on every read.
+                                       # It is still WRITTEN to disk as well, a
+                                       # transitional second copy of the same
+                                       # words; stopping that is a store-format
+                                       # change the Postgres backfill and sync
+                                       # readers have to move with.
       "status": "todo"|"doing"|"in_review"|"blocked"|"parked"|"done"|"cancelled",
       "assignee": None|"agent:<slug>"|"operator",   # the delegate (human owns)
       "parent": str | None,

@@ -148,8 +148,9 @@ def test_an_unattended_filing_starts_as_a_draft(tmp_path, monkeypatch):
     into a ticket, or an import — not a button the operator pressed."""
     from services import task_dedup
     monkeypatch.setattr(task_dedup, "decide",
-                        lambda text, open_tasks: {"decision": "distinct",
-                                                  "matched_id": None, "cosine": None})
+                        lambda text, open_tasks, **kw: {"decision": "distinct",
+                                                        "matched_id": None,
+                                                        "cosine": None})
     res = task_dedup.dedup_add(tmp_path, text="Suggested by the assistant",
                                source={"kind": "chat", "ref": "t1"},
                                scoped_by="agent:chat", status="draft")
@@ -163,8 +164,9 @@ def test_filing_defaults_to_the_queue_for_callers_that_do_not_ask(tmp_path, monk
     they just read and edited is the "say the magic word" step to avoid."""
     from services import task_dedup
     monkeypatch.setattr(task_dedup, "decide",
-                        lambda text, open_tasks: {"decision": "distinct",
-                                                  "matched_id": None, "cosine": None})
+                        lambda text, open_tasks, **kw: {"decision": "distinct",
+                                                        "matched_id": None,
+                                                        "cosine": None})
     res = task_dedup.dedup_add(tmp_path, text="Filed by the operator",
                                source={"kind": "operator", "ref": "work-ui"})
     assert res["task"]["status"] == "todo"

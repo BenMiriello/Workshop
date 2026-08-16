@@ -67,6 +67,26 @@ _EMBED_MODEL = os.environ.get("WORKSHOP_EMBED_OLLAMA_MODEL", "bge-m3").strip()
 # (pure-cosine merge, the pre-hardening behavior).
 _DEDUP_LLM_MODEL = os.environ.get("WORKSHOP_DEDUP_LLM_MODEL", "llama3:latest").strip()
 
+# HOW LONG THE CONFIRMATION MAY TAKE, and why there are two answers.
+#
+# The check is a local Ollama call. Measured 2026-08-15 on this box: ~2.0s with
+# the model resident, 9-11s when it has to be loaded, which is every filing
+# after an idle stretch. `dedup_add` runs INSIDE the request, so an operator who
+# clicks File ticket pays that wall time watching a spinner on a dead button,
+# and that is exactly what was reported.
+#
+# The budget therefore belongs to the CALLER, because the two kinds of caller
+# want opposite things:
+#   - a sweep, a triager, an import: nobody is watching, and a false merge
+#     silently drops a unit of work, so wait for the answer.
+#   - a click: the answer is worth about as much as the wait. Timing out is not
+#     a failure here, it is the documented downgrade -- an unconfirmed match
+#     becomes a `related` link, so the ticket is created and nothing is lost.
+_LLM_TIMEOUT_S = float(os.environ.get("WORKSHOP_DEDUP_LLM_TIMEOUT_S", "45") or 45)
+# What a caller with someone waiting on it should pass. Comfortably above the
+# warm 2.0s, comfortably below the cold load.
+INTERACTIVE_LLM_TIMEOUT_S = 6.0
+
 # Hashing-vectorizer width. Small is fine: the task corpus per scope is tiny and
 # collisions only slightly blur cosine, never break the hash-exact merge path.
 _EMBED_DIM = 512
@@ -217,7 +237,7 @@ def _dedup_llm_check_enabled() -> bool:
     return os.environ.get("WORKSHOP_DEDUP_LLM_CHECK", "1").strip() not in ("0", "false", "no", "")
 
 
-def same_work_llm(a: str, b: str) -> bool | None:
+def same_work_llm(a: str, b: str, timeout_s: float | None = None) -> bool | None:
     """Ask a small local model whether two task lines are the SAME unit of work
     (same change, same target). Returns True/False, or None when the check is
     disabled or the model is unreachable (caller treats None as "cannot confirm").
@@ -244,7 +264,8 @@ def same_work_llm(a: str, b: str) -> bool | None:
             _OLLAMA_URL + "/api/generate",
             data=body, headers={"content-type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=45) as r:
+        budget = _LLM_TIMEOUT_S if timeout_s is None else float(timeout_s)
+        with urllib.request.urlopen(req, timeout=budget) as r:
             resp = json.loads(r.read()).get("response") or ""
         head = resp.strip().splitlines()[0].strip().upper() if resp.strip() else ""
         if head.startswith("YES"):
@@ -286,7 +307,8 @@ def _open_tasks(root: Path) -> list[dict]:
             and (t.get("text") or "").strip()]
 
 
-def decide(text: str, open_tasks: list[dict]) -> dict:
+def decide(text: str, open_tasks: list[dict], *,
+           llm_timeout_s: float | None = None) -> dict:
     """Classify a new task text against the scope's open tasks WITHOUT mutating
     anything. Returns {decision, matched_id, cosine, stage} where decision is one
     of exact | merge | related | distinct. `exact` and `merge` both mean "attach
@@ -320,7 +342,7 @@ def decide(text: str, open_tasks: list[dict]) -> dict:
         if not _dedup_llm_check_enabled():
             return {"decision": "merge", "matched_id": best_id, "cosine": best_cos,
                     "stage": "cosine"}
-        confirm = same_work_llm(text, best_text)
+        confirm = same_work_llm(text, best_text, timeout_s=llm_timeout_s)
         if confirm is True:
             return {"decision": "merge", "matched_id": best_id, "cosine": best_cos,
                     "stage": "cosine+llm"}
@@ -347,6 +369,7 @@ def dedup_add(
     labels: list[str] | None = None,
     scoped_by: str | None = None,
     status: str = "todo",
+    llm_timeout_s: float | None = None,
 ) -> dict:
     """Create a task from a chat, deduped against open tasks in this scope.
 
@@ -378,7 +401,7 @@ def dedup_add(
     src_ref = src.get("ref") or "chat"
     prov = provenance or canonical_hash(text)
 
-    d = decide(text, _open_tasks(root))
+    d = decide(text, _open_tasks(root), llm_timeout_s=llm_timeout_s)
     decision = d["decision"]
     matched_id = d.get("matched_id")
     cosine = d.get("cosine")

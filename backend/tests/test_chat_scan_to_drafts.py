@@ -53,8 +53,9 @@ def thread(monkeypatch, tmp_path):
     # The embedder is not available in the test env and is not what this is about.
     from services import task_dedup
     monkeypatch.setattr(task_dedup, "decide",
-                        lambda text, open_tasks: {"decision": "distinct",
-                                                  "matched_id": None, "cosine": None})
+                        lambda text, open_tasks, **kw: {"decision": "distinct",
+                                                        "matched_id": None,
+                                                        "cosine": None})
     yield t["id"], tmp_path / "store"
     ownership.clear_current_owner()
 
