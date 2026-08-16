@@ -54,7 +54,9 @@ Every command prints JSON on stdout (a task object, a list, or {} / {"error":...
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -62,8 +64,53 @@ from pathlib import Path
 _BACKEND = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(_BACKEND))
 
+# RUN UNDER THE BACKEND'S INTERPRETER, or this CLI writes to a store nothing
+# reads. The two migrated scopes read their tickets from Postgres; `tasks`
+# reaches that through sqlalchemy, and when the import is missing it falls back
+# to the file. Under the system python3 that fallback is silent: the command
+# prints the updated record and exits 0, the file says `done`, Postgres still
+# says `todo`, and the app shows `todo`. Reproduced 2026-08-15 by closing a
+# ticket with `python3 scripts/project_tasks.py set-status ... done`.
+#
+# Every doc, prompt and script spells the invocation `python3
+# scripts/project_tasks.py`, so making that spelling correct is the fix, rather
+# than asking thirty callers to remember a path. Re-exec once (the env flag is
+# the guard) into backend/.venv, and only when this interpreter cannot do the
+# job. A checkout with no venv still runs, file-backed, exactly as before.
+if (importlib.util.find_spec("sqlalchemy") is None
+        and not os.environ.get("WORKSHOP_TASKS_CLI_REEXEC")):
+    _VENV_PY = _BACKEND / ".venv" / "bin" / "python3"
+    if _VENV_PY.exists():
+        os.environ["WORKSHOP_TASKS_CLI_REEXEC"] = "1"
+        os.execv(str(_VENV_PY), [str(_VENV_PY), str(Path(__file__).resolve()), *sys.argv[1:]])
+
 from services import tasks  # noqa: E402
 from services.latitude import LATITUDES as _LATITUDES  # noqa: E402
+
+
+def _pin_owner() -> None:
+    """Pin the data owner, or the two migrated scopes fall back to the file.
+
+    `tasks._from_relational` needs an owner to resolve a tenant, and with none
+    pinned it logs the failure and reads the file instead. In a CLI that is a
+    silent wrong answer rather than an error: `set-status ... done` writes
+    `done` to a file nothing reads while the app keeps showing `todo`. Every
+    other automation set-point (db/shadow.py, db/chat_list_parity.py) pins an
+    owner for exactly this reason; this is the one that had not.
+
+    The id is LOOKED UP, never hardcoded: `auth_store.operator_id()` is the same
+    data lookup the bootstrap migration uses, so a fresh install with a
+    different id works and nothing machine-specific enters the source. Missing
+    auth store, or a checkout with no database, leaves the owner unpinned and
+    the file-backed behaviour exactly as it was.
+    """
+    try:
+        from services import auth_store, ownership
+        oid = auth_store.operator_id()
+        if oid is not None:
+            ownership.set_current_owner(oid)
+    except Exception:
+        pass  # no auth store: file-backed scopes still work unchanged
 
 
 def _csv(v: str | None) -> list[str]:
@@ -124,6 +171,7 @@ def _opt_int(v):
 
 
 def main(argv: list[str]) -> int:
+    _pin_owner()
     p = argparse.ArgumentParser(prog="project_tasks.py")
     sub = p.add_subparsers(dest="cmd", required=True)
 
