@@ -2116,3 +2116,80 @@ def list_providers(scope: str | None = None) -> list[dict]:
             BuildAgentContextProvider(slug), f"Build · agent · {slug}"
         ))
     return out
+
+
+# --------------------------------------------------- the instruction contract
+# A CLAUDE SESSION IS TOLD ITS PROTOCOLS ONCE, AT SPAWN, AND NEVER AGAIN.
+#
+# `routes.chat._assemble_full_prompt` sends the role preamble and the persona on
+# the FIRST turn; every later turn resumes that session and sends only the
+# volatile part (`_resumed_prompt`). That is the right shape: re-sending a 12KB
+# persona every turn would waste the window and fight the session's own memory.
+#
+# But those two blocks carry CONTRACTS, not just character: the ui-card format,
+# the task-proposal field list, the note and learning-note block formats. A
+# contract is a wire format between the prompt and the client, and it changes
+# when the code changes. Nothing re-stated it, so a session spawned before a
+# change kept obeying the old contract for its entire life.
+#
+# Measured 2026-08-16. The task-proposal card was cut from eight fields to three
+# at 01:45Z and the backend restarted onto it at 02:58Z. A chat spawned at
+# 22:03:28Z the previous evening was still emitting eight-field cards hours
+# later, while every chat spawned after the restart emitted three. Disk held one
+# copy of the contract the whole time and it was correct; the running sessions
+# were the stale thing, and nothing in the system could see that or say it.
+#
+# The fix is the mechanism already used twice in `_resumed_prompt` for exactly
+# this class of problem (`live_hash` supersession, `scope_version.changed_since`):
+# hash what the session was told, keep the digest on the thread, and re-state the
+# block ONLY when the hash moves. An unchanged contract costs one string compare
+# and emits nothing, which is the common case on every turn of every chat.
+
+
+def instruction_contract(provider: ContextProvider, *, enable_chat_tools: bool) -> str:
+    """The instruction surface a session is handed at spawn: the platform role
+    preamble (capabilities, the ui-card protocol, the style rule) plus the
+    provider's persona (the task-proposal contract, the note protocols).
+
+    ONE function so the fresh path and the resumed path cannot compute this
+    differently. If they could, a digest recorded by one and compared by the
+    other would differ forever and every turn would re-send the contract.
+    """
+    tools_active, tool_summary = capability_for(
+        provider, enable_chat_tools=enable_chat_tools)
+    is_build = is_build_provider(provider)
+    return (
+        role_preamble(
+            tools_active=tools_active,
+            tool_summary=tool_summary,
+            cwd=(str(provider.dir) if is_build else None),
+            is_build=is_build,
+        )
+        + "\n\n"
+        + provider.persona()
+    )
+
+
+def contract_digest(contract: str) -> str:
+    """Short stable digest of an instruction contract, for the thread's marks."""
+    import hashlib as _hashlib
+
+    return _hashlib.sha256(contract.encode("utf-8")).hexdigest()[:16]
+
+
+def contract_update_block(contract: str) -> str:
+    """What a resumed session reads when its contract has moved under it.
+
+    Worded as a REPLACEMENT rather than an addition, the same way the live
+    context block is: the old copy is still sitting in the session's history and
+    cannot be removed, so the only way to make the new one win is to say which
+    one counts.
+    """
+    return (
+        "=== PROTOCOL UPDATED ===\n"
+        "Your instructions changed after this conversation started. What follows "
+        "REPLACES the capabilities and protocol blocks you were given at the top "
+        "of this session. Where the two differ, this one is correct and the "
+        "earlier copy is out of date, so follow this one.\n\n"
+        + contract
+    )

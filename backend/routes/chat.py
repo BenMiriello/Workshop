@@ -1202,9 +1202,16 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         raise HTTPException(422, "could not derive a task from this chat; add a note first")
 
     acceptance = body.acceptance if isinstance(body.acceptance, dict) else None
-    # Cross-chat dedup (Stage 7 / 2e): fold a duplicate into the existing task
-    # (merge), link a near-match as related, or create fresh. The decision is
-    # returned so the chat can tell the operator what happened.
+    # Cross-chat dedup (Stage 7 / 2e): fold an exact duplicate into the existing
+    # task, or create fresh. The decision is returned so the chat can tell the
+    # operator what happened.
+    #
+    # ONLY THE FREE TIER RUNS HERE. The semantic tier embeds the new text
+    # against every open ticket and then asks a local model to confirm a merge;
+    # measured 2026-08-16, that was 17.5s on a cold vector cache and 2-10s on a
+    # warm one, all of it inside the click. "Why does creating tickets take
+    # several seconds" is that, and the answer is that a button must not wait
+    # for it. The canonical-hash tier is pure computation and stays.
     from services import task_dedup
     result = task_dedup.dedup_add(
         root, text=text, acceptance=acceptance,
@@ -1228,14 +1235,25 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         # assistant emitted mid-reply (services/task_scope), the triager turning
         # a note into a ticket, and imports from an external tracker.
         status="todo",
-        # SOMEONE IS WATCHING A SPINNER. This runs inside the click, so the
-        # same-work confirmation's cold-load cost (9-11s measured) is dead time
-        # on a button. Timing out downgrades a merge to a `related` link, which
-        # still files the ticket, so the worst case is a linked near-duplicate
-        # instead of an unresponsive UI. Every unattended caller keeps the long
-        # budget, where waiting is free and a false merge is not.
+        # SOMEONE IS WATCHING A SPINNER, so the comparison that costs seconds
+        # runs after this returns (below) instead of inside it.
+        semantic=False,
         llm_timeout_s=task_dedup.INTERACTIVE_LLM_TIMEOUT_S,
     )
+    # The semantic comparison, off the request. It LINKS a near-duplicate rather
+    # than merging one, because a merge decided after the operator has watched
+    # his ticket appear would take it away again.
+    _filed_id = (result.get("task") or {}).get("id")
+    if _filed_id and result.get("decision") not in ("exact", "merge"):
+        async def _link_after_response(root_=root, tid=_filed_id):
+            try:
+                out = await asyncio.to_thread(task_dedup.link_near_matches, root_, tid)
+                if out.get("status") == "linked":
+                    log.info("dedup linked %s to %s (cosine %s)",
+                             tid, out.get("matched_id"), out.get("cosine"))
+            except Exception:
+                log.warning("dedup link pass failed for %s", tid, exc_info=True)
+        asyncio.create_task(_link_after_response())
     resp = {
         "task": result["task"],
         "scope": scope_key,
@@ -2302,10 +2320,16 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     """Assemble the full turn prompt (role preamble + persona + capability facts +
     compacted history + this message) for either a data
     or a build provider. Shared by POST /messages (blocking) and POST /turns
-    (streaming) so the two never fork. Returns (prompt, is_build_mode); persists
-    nothing. Build providers on a resumed session use a runtime briefing instead
-    of this full assembly (the caller handles that); this is the first-turn /
-    stateless assembly.
+    (streaming) so the two never fork. Returns (prompt, is_build_mode). Build
+    providers on a resumed session use a runtime briefing instead of this full
+    assembly (the caller handles that); this is the first-turn / stateless
+    assembly.
+
+    Persists ONE bookkeeping mark and nothing else: the digest of the
+    instruction contract this prompt carries, so `_resumed_prompt` can tell
+    whether the session's protocols have since changed. It used to persist
+    nothing at all, which is exactly why a contract change could never reach a
+    session already running.
 
     Capability facts come from the SAME branch that decides the run config
     (capability_for mirrors the build/narrow/tools-off ladder), so the role
@@ -2381,6 +2405,19 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     # the operator's message, and the rule has to sit near it rather than
     # 322k characters back behind the whole transcript.
     prompt = prompt + "\n\n" + chat_context.turn_contract(CHAT_TIMEOUT_S)
+    # RECORD WHAT THIS SESSION HAS NOW BEEN TOLD. This prompt carries the role
+    # preamble and the persona in full, so the session holds the current
+    # contract; without this mark the very next (resumed) turn would compare
+    # against nothing and re-state a contract that arrived one turn ago.
+    # `_resumed_prompt` re-sends only when this digest moves.
+    try:
+        tid = t.get("id")
+        if tid:
+            chat_store.set_turn_marks(tid, contract_hash=chat_context.contract_digest(
+                chat_context.instruction_contract(
+                    provider, enable_chat_tools=ENABLE_CHAT_TOOLS)))
+    except Exception as e:  # noqa: BLE001 - bookkeeping must not fail a turn
+        log.warning("could not record the contract digest: %s", e)
     return prompt, is_build_mode
 
 
@@ -2437,6 +2474,27 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
     parts.append(chat_context.chat_mode_block(t.get("mode")))
     marks = chat_store.get_turn_marks(t)
     new_marks: dict[str, object] = {}
+    # THE CONTRACTS THIS SESSION WAS GIVEN AT SPAWN CAN CHANGE UNDER IT, and
+    # until 2026-08-16 nothing could tell it. The ui-card format and the
+    # task-proposal field list live in the role preamble and the persona, which
+    # are sent on the first turn and never again, so a chat open across a deploy
+    # kept emitting the previous contract for the rest of its life. See
+    # chat_context.instruction_contract for the measurement.
+    #
+    # A thread with no recorded digest gets the block once. That is deliberate:
+    # it is either a session from before this existed (stale by definition, and
+    # this is what heals it) or one whose fresh path did not record, and re-
+    # stating a contract the session already holds is harmless where staying
+    # silent about a changed one is not.
+    try:
+        contract = chat_context.instruction_contract(
+            provider, enable_chat_tools=ENABLE_CHAT_TOOLS)
+        c_digest = chat_context.contract_digest(contract)
+        if c_digest != marks.get("contract_hash"):
+            parts.append(chat_context.contract_update_block(contract))
+            new_marks["contract_hash"] = c_digest
+    except Exception as e:  # noqa: BLE001 - a protocol refresh is not worth a dead turn
+        log.warning("contract freshness check skipped for %s: %s", provider.key, e)
     briefing = chat_context.runtime_briefing(provider)
     if briefing:
         parts.append(briefing)
@@ -3224,7 +3282,24 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
             resume_flag = bool(sid and not is_new)
         elif sid and not is_new:
             briefing = chat_context.runtime_briefing(provider)
-            prompt = (briefing + "\n\n=== OPERATOR MESSAGE ===\n" + content) if briefing else content
+            head = [briefing] if briefing else []
+            # The same contract drift the thread path guards, on the branch that
+            # resumes an AGENT's session. Marks live on the thread while this
+            # session is keyed by agent slug and shared across that agent's
+            # chats, so two threads on one agent can each refresh it once. That
+            # is a few hundred wasted tokens on a deploy, against a session that
+            # otherwise obeys a retired contract forever.
+            try:
+                contract = chat_context.instruction_contract(
+                    provider, enable_chat_tools=ENABLE_CHAT_TOOLS)
+                c_digest = chat_context.contract_digest(contract)
+                if c_digest != chat_store.get_turn_marks(t).get("contract_hash"):
+                    head.append(chat_context.contract_update_block(contract))
+                    chat_store.set_turn_marks(thread_id, contract_hash=c_digest)
+            except Exception as e:  # noqa: BLE001 - never fail a turn over this
+                log.warning("agent contract refresh skipped for %s: %s", provider.key, e)
+            head.append("=== OPERATOR MESSAGE ===\n" + content)
+            prompt = "\n\n".join(head) if len(head) > 1 else content
             resume_flag = True
         else:
             prompt, _ = await _assemble_full_prompt(t, provider, content)

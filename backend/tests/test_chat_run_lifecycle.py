@@ -876,3 +876,87 @@ class TestThePickersSurviveAJoin:
             model_in="claude-haiku-4-5-20251001", effort_in="low"))
 
         assert chat_store.get_thread(tid)["effort"] is None
+
+
+class TestTheContractReachesAnOpenSession:
+    """A claude session is told its protocols ONCE, at spawn: the role preamble
+    and the persona go out on the first turn and every later turn resumes that
+    session with only the volatile part. So a contract inside them (the ui-card
+    format, the task-proposal field list) could change under a running chat and
+    never reach it.
+
+    Measured 2026-08-16: the task-proposal card was cut from eight fields to
+    three at 01:45Z and the backend restarted onto it at 02:58Z; a chat spawned
+    at 22:03Z the evening before was still emitting eight-field cards hours
+    later. Disk held one correct copy the whole time. The running sessions were
+    the stale thing and nothing could see it.
+    """
+
+    def _provider(self):
+        from services import chat_context
+        return chat_context.get_provider("general")
+
+    def test_an_unchanged_contract_says_nothing(self, thread):
+        import routes.chat as rc
+        from services import chat_context
+        tid = thread["id"]
+        provider = self._provider()
+        digest = chat_context.contract_digest(
+            chat_context.instruction_contract(provider, enable_chat_tools=rc.ENABLE_CHAT_TOOLS))
+        chat_store.set_turn_marks(tid, contract_hash=digest)
+
+        t = chat_store.get_thread(tid)
+        out = asyncio.run(rc._resumed_prompt(t, provider, "hello"))
+        assert "=== PROTOCOL UPDATED ===" not in out
+
+    def test_a_changed_contract_is_restated_as_a_replacement(self, thread):
+        import routes.chat as rc
+        tid = thread["id"]
+        # What a session spawned before the change holds: some other digest.
+        chat_store.set_turn_marks(tid, contract_hash="0000stale0000")
+
+        t = chat_store.get_thread(tid)
+        out = asyncio.run(rc._resumed_prompt(t, self._provider(), "hello"))
+        assert "=== PROTOCOL UPDATED ===" in out
+        # It must supersede rather than merely append: the retired copy is still
+        # in the session's history and cannot be removed.
+        assert "REPLACES" in out
+        # And it carries the contract that actually moved.
+        assert "TASK PROPOSAL CARD" in out
+
+    def test_the_refresh_happens_once_not_every_turn(self, thread):
+        """The mark is recorded when the block goes out, so the next turn is
+        silent again. Without this the contract would be re-sent on every turn
+        of every chat forever, which is the cost this design exists to avoid."""
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.set_turn_marks(tid, contract_hash="0000stale0000")
+        provider = self._provider()
+
+        first = asyncio.run(rc._resumed_prompt(chat_store.get_thread(tid), provider, "one"))
+        second = asyncio.run(rc._resumed_prompt(chat_store.get_thread(tid), provider, "two"))
+        assert "=== PROTOCOL UPDATED ===" in first
+        assert "=== PROTOCOL UPDATED ===" not in second
+
+    def test_a_session_that_never_recorded_one_is_healed(self, thread):
+        """A chat open from before this mechanism existed has no mark at all,
+        and is stale by definition. It gets the block once."""
+        import routes.chat as rc
+        tid = thread["id"]
+        assert "contract_hash" not in chat_store.get_turn_marks(chat_store.get_thread(tid))
+        out = asyncio.run(rc._resumed_prompt(chat_store.get_thread(tid), self._provider(), "hi"))
+        assert "=== PROTOCOL UPDATED ===" in out
+
+    def test_the_fresh_path_records_what_it_sent(self, thread):
+        """The first turn carries the contract in full, so the very next turn
+        must not re-state it. That only works if the fresh assembly records the
+        digest it just sent."""
+        import routes.chat as rc
+        tid = thread["id"]
+        t = chat_store.get_thread(tid)
+        asyncio.run(rc._assemble_full_prompt(t, self._provider(), "first message"))
+
+        marks = chat_store.get_turn_marks(chat_store.get_thread(tid))
+        assert marks.get("contract_hash")
+        out = asyncio.run(rc._resumed_prompt(chat_store.get_thread(tid), self._provider(), "second"))
+        assert "=== PROTOCOL UPDATED ===" not in out

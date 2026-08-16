@@ -1753,6 +1753,12 @@ def get_turn_marks(thread: dict) -> dict:
 
       live_hash          digest of the last live-context snapshot sent
       seen_scope_version the scope change-counter this thread last observed
+      contract_hash      digest of the instruction contract (role preamble +
+                         persona) this thread's claude session has been told.
+                         A session is given its protocols once, at spawn, so
+                         without this a contract change could never reach a
+                         conversation that was already open. See
+                         chat_context.instruction_contract.
 
     These are bookkeeping about the conversation, not part of it, which is why
     they live on the thread record rather than in the transcript."""
