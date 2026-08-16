@@ -1,6 +1,9 @@
 # Tickets in chat: build the design that was drawn (2026-08-16)
 
-**Status: PLAN, not built. Nothing in this document has been implemented.**
+**Status: BUILT, 2026-08-16, in `83264f9`.** All three surfaces below were
+implemented as written, with the three pre-approved deviations and no fourth.
+Two things the plan did not anticipate are recorded at the end under
+"What the build found".
 
 Implement option **4a** of the `tickets_in_chat` handoff. The behaviour shipped on
 2026-08-15; the VISUALS did not. This plan is only about closing that gap.
@@ -188,6 +191,35 @@ fourth case, put the reason in a comment naming the missing field.
   still did not look like the design, so the gates are necessary and not
   sufficient here.
 - `bash scripts/apply.sh` last, because the operator reads the built origin.
+
+## What the build found
+
+Two corrections to this plan, recorded so the next reader is not misled by it.
+
+1. **`--field` does not exist in this repo.** The token mapping above says it
+   does. It does not: the palette emits `--bg-inset` and no `--field`. Both of
+   the design's `--inset` and `--field` land on `--bg-inset`, which is correct
+   anyway, since in our palette a control fill and an inset surface are the same
+   step off `--card`.
+
+2. **The expanded card cannot be verified in the live app right now, and that is
+   a different bug.** `TicketCard` renders only once a proposal card has been
+   FILED, and no transcript on this box holds a filed card: the 22 chats with
+   `ui-card` blocks all still carry them in their proposal phase. That is the
+   already-queued `card_states` persistence defect ("Fix card_states persistence
+   in ticket filing from chat"), not anything in this work. So the card's open
+   state was compared against `f-4a-s3` in a harness driving the REAL stylesheet
+   (`scratch/tic-fidelity/`), its collapsed header was server-rendered from the
+   real component, and every class the four components emit was checked to
+   resolve to a rule. The Work panel WAS driven live and measured.
+
+   Anyone re-verifying the card in the browser should fix `card_states` first,
+   or file a fresh ticket from a card in a live turn.
+
+The measurement the plan asked for, taken in the real popover after the change:
+the right-aligned state word ends 13px inside the surface, and a long title
+still ellipsises (`clientWidth` 251 against `scrollWidth` 411), so the
+`min-width: 0` chain from `877b385` survives the row becoming two weights.
 
 There is a working recipe for driving the real app: mint a session with
 `auth_store.create_session` the way `scripts/smoke_chat.sh` does, drive
