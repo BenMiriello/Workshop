@@ -2249,7 +2249,7 @@ button.chat-attach {
      shrink-to-fit in the UA sheet and a needs-you row IS a button. Border-box
      comes from the .ws-root reset. */
   width: calc(100% + var(--space-2) * 2);
-  display: flex; flex-direction: column; gap: 0.15rem;
+  display: flex; align-items: flex-start; gap: var(--space-2);
   padding: 0.35rem var(--space-2);
   margin-inline: calc(var(--space-2) * -1);
   background: transparent; border: none; border-radius: var(--radius-sm);
@@ -2257,6 +2257,21 @@ button.chat-attach {
   text-align: left; text-decoration: none; cursor: pointer;
 }
 .chat-workpanel__row:hover { background: var(--card-hover); }
+/* THE DIRECTION IS A MODIFIER, NOT THE BASE, and that is not tidiness.
+   `TicketDraftsDialog` renders its own rows with `.chat-workpanel__row` on
+   purpose (a draft row and a panel row are one idiom), with an icon and a body
+   SIDE BY SIDE. Turning the base rule into a column to give the panel's rows
+   two lines therefore stranded that dialog's chevron on a line of its own above
+   the title and took the row from 40px to 69px: measured 2026-08-16, reported
+   as "the old interface, but a bad version of it". A shared rule may only carry
+   what every user of it shares. */
+/* `align-items: stretch` is required, not incidental: the base rule aligns to
+   flex-start for its side-by-side users, and in a COLUMN that stops each line
+   filling the row, which collapses the line and takes the right-aligned state
+   word with it. */
+.chat-workpanel__row--stack {
+  flex-direction: column; align-items: stretch; gap: 0.15rem;
+}
 /* The card sits INSIDE the panel's padding rather than bleeding through it: a
    border that ran under the panel's own edge would read as a seam. */
 .chat-workpanel__row--card {

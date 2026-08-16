@@ -61,7 +61,7 @@ export function NeedsYouRow({ item, onSelect }: {
   return (
     <button
       type="button"
-      className="chat-workpanel__row chat-workpanel__row--card"
+      className="chat-workpanel__row chat-workpanel__row--stack chat-workpanel__row--card"
       onClick={() => onSelect(item.id)}
       title={item.title}
     >
@@ -110,7 +110,7 @@ export function TicketRow({ ticket, fallbackScope, nowMs, onFollow }: {
   return (
     <Link
       to={ticketHref(ticket.scope || fallbackScope || "workshop", ticket.id)}
-      className={`chat-workpanel__row${live ? " chat-workpanel__row--card" : ""}`}
+      className={`chat-workpanel__row chat-workpanel__row--stack${live ? " chat-workpanel__row--card" : ""}`}
       onClick={onFollow}
       title={name}
     >
