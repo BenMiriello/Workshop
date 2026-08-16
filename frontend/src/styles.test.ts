@@ -282,3 +282,70 @@ describe("a bottom-pinned bar reaches the bottom", () => {
     expect(kit).not.toContain("margin-bottom: calc(var(--page-pad-b) * -1)");
   });
 });
+
+// A NAME CANNOT PUSH THE ROW IT SITS IN OFF THE SCREEN.
+//
+// The chat's name is the only unbounded string in the toolbar: everything else
+// is a fixed-size icon or a label that already truncates. So it is the one
+// element that can overflow the bar, and on 2026-08-15 it did — with
+// `flex-wrap: nowrap` on a phone, a long name carried the actions off the right
+// edge, where they cannot be reached at all.
+//
+// The rule was there and it was on the wrong element. `.chat-tb__titlemenu` was
+// given `flex: 0 1 auto` in the mobile block, but the toolbar's actual flex item
+// is `.chat-tb__namegroup` (the name and the pencil, clustered), which kept
+// `flex: 0 0 auto` at every width. A parent that will not shrink makes a
+// shrinkable child unreachable, so the declaration that looked like the fix
+// could never fire.
+//
+// Both are asserted, because the defect was the GAP between them: an unbroken
+// chain from the flex container to the text, or the name overflows again.
+describe("the chat toolbar cannot be pushed sideways by a long name", () => {
+  /** The body of a single rule in the app sheet, by exact selector. */
+  const appRule = (selector: string): string => {
+    const at = css.indexOf(`\n${selector} {`);
+    expect(at, `no rule for ${selector}`).toBeGreaterThan(-1);
+    return css.slice(at, css.indexOf("}", at));
+  };
+
+  it("lets the name cluster give up room, since it is the toolbar's flex item", () => {
+    const group = appRule(".chat-tb__namegroup");
+    expect(group).toContain("flex: 0 1 auto");
+    // Without this a flex item cannot shrink below its content, and the shrink
+    // factor above is decorative.
+    expect(group).toContain("min-width: 0");
+  });
+
+  it("lets the menu wrapper inside it give up room too", () => {
+    const menu = appRule(".chat-tb__titlemenu");
+    expect(menu).toContain("flex: 0 1 auto");
+    expect(menu).toContain("min-width: 0");
+  });
+
+  it("truncates the name rather than letting it set the width", () => {
+    const title = appRule(".chat-tb__title");
+    expect(title).toContain("min-width: 0");
+    expect(title).toContain("overflow: hidden");
+    expect(title).toContain("text-overflow: ellipsis");
+    expect(title).toContain("white-space: nowrap");
+  });
+
+  // `max-width: 100%` resolved against the TOOLBAR, so it allowed a name to fill
+  // the whole bar and push every control out of it. It read as a floor and was
+  // not one; the shrink chain is the floor.
+  it("does not cap the name against the toolbar and call that a floor", () => {
+    expect(appRule(".chat-tb__namegroup")).not.toContain("max-width: 100%");
+    expect(appRule(".chat-tb__titlemenu")).not.toContain("max-width: 100%");
+  });
+
+  // The two viewports differ by whether the row may take a second line, and
+  // nothing else. A shrink override scoped to one width is what hid the broken
+  // chain last time: it looked like the narrow case was handled.
+  it("carries the viewport difference in flex-wrap alone", () => {
+    const at = css.indexOf("@media (max-width: 640px) {\n  /* Tighter vertically");
+    expect(at, "no chat toolbar mobile block").toBeGreaterThan(-1);
+    const block = css.slice(at, css.indexOf("\n}", at));
+    expect(block).toContain("flex-wrap: nowrap");
+    expect(block).not.toContain("flex: 0 1 auto");
+  });
+});

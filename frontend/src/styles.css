@@ -406,28 +406,53 @@ input[type="range"].grad::-moz-range-thumb {
 /* Open state reads like every other quiet trigger in the chat (.chat-model,
    .chat-effort): background carries it, no border. */
 .chat-tb__title[aria-expanded="true"] { color: var(--fg); background: var(--card-hover); }
-/* THE NAME IS NOT TRUNCATED WHILE THERE IS ROOM FOR IT.
-   `overflow: hidden` gives a flex item an automatic minimum size of ZERO, so
-   the title was the one element in this row that could give up space, and it
-   therefore gave it up FIRST and alone: adding the rename button was enough to
-   start clipping a name on a desktop with hundreds of spare pixels.
-   So it does not shrink here. The toolbar already wraps on wide viewports (a
-   safety net it documents above), and wrapping a control to a second row is the
-   honest response to a full row; clipping the one string on the bar that says
-   which conversation you are in is not. `max-width: 100%` is the floor: a name
-   longer than the entire bar still ellipsises rather than pushing the layout
-   sideways, which is the only case where the space has genuinely run out. */
-.chat-tb__titlemenu { flex: 0 0 auto; min-width: 0; max-width: 100%; }
+/* THE NAME IS NOT TRUNCATED WHILE THERE IS ROOM FOR IT, AND IT NEVER PUSHES THE
+   ROW SIDEWAYS.
+
+   Those are two rules and they used to fight, because both were expressed on
+   this element with `flex-shrink` and a `max-width`. `flex-shrink: 0` bought the
+   first and gave up the second; `max-width: 100%` was supposed to be the floor
+   and is not one — it resolves against the TOOLBAR's width, so it permits a name
+   that fills the entire bar and shoves every control after it out of the row.
+   With `flex-wrap: nowrap` on a phone that is straight overflow: the actions
+   leave the screen to the right. Operator, 2026-08-15: "when the chat name is
+   too long it pushes the rest of the top row off to the right."
+
+   FLEX ALREADY SEPARATES THE TWO CASES, so neither needs a special rule.
+   Shrinking happens only once a line has overflowed; it is not what fills spare
+   room, so `flex-shrink: 1` cannot clip a name while the bar has space in it.
+   That was the real cause of the old clipping this note used to describe, and it
+   was never about shrink: the fix was giving `.chat-tb__spacer` the room to
+   grow. On a wide viewport the toolbar wraps, and WRAPPING IS TRIED BEFORE
+   SHRINKING, so a full row still moves a control to a second line rather than
+   truncating the name. Only a name too long for a whole line of its own is
+   shrunk, and ellipsising it there is exactly what the old `max-width` was
+   reaching for.
+
+   `min-width: 0` is what makes it possible at all: without it a flex item cannot
+   shrink below its content, which is why declaring shrink on the inner element
+   alone did nothing. See .chat-tb__namegroup — that is the toolbar's actual
+   flex item, and it is where this has to be true. */
+.chat-tb__titlemenu { flex: 0 1 auto; min-width: 0; }
 /* The name and the pencil are ONE object, and the toolbar's gap belongs around
    the pair, not inside it. Everything in this bar is spaced by the same
    --space-2, which is correct between independent controls and wrong between a
    name and the thing that renames it: at 8px the pencil read as another action
-   button that happened to sit there. The cluster takes the title's own
-   no-shrink rules so the pair still behaves as one item when the bar is tight. */
+   button that happened to sit there.
+
+   AND THIS IS THE TOOLBAR'S FLEX ITEM, so this is where the row's width is won
+   or lost. The pair inherited the title's `flex: 0 0 auto` when it was grouped,
+   which meant the cluster could not give up a pixel at any viewport width; the
+   rule that let the name shrink on a phone was written on `.chat-tb__titlemenu`,
+   one level INSIDE this, where a parent that refuses to shrink makes it
+   unreachable. So the name grew the cluster, the cluster grew the row, and with
+   wrapping off the rest of the bar went off the right edge. A shrink rule has to
+   be true of every element between the flex container and the text, or it is
+   true of none of them. */
 .chat-tb__namegroup {
   display: flex; align-items: center;
   gap: 0.1rem;
-  flex: 0 0 auto; min-width: 0; max-width: 100%;
+  flex: 0 1 auto; min-width: 0;
 }
 /* NOT a .chat-tb__btn any more. It carried the full button treatment (a border
    box, --radius-md, the 2rem square's hover) with only its width and height
@@ -490,12 +515,14 @@ input[type="range"].grad::-moz-range-thumb {
      short screen on the frame than on the conversation. One step down the
      scale, not a new value. */
   .chat-toolbar { flex-wrap: nowrap; padding-block: var(--space-1); }
-  /* Here the row genuinely cannot grow: wrapping is off, so something has to
-     give, and the name is the right thing to clip because it is the only
-     element that still reads at half its width. This is the one width where
-     truncating it is correct, which is why it is scoped to this query rather
-     than left on as the default. */
-  .chat-tb__titlemenu { flex: 0 1 auto; }
+  /* No shrink override here any more. It used to re-grant the name the ability
+     to shrink at this width only, on `.chat-tb__titlemenu` — inside a cluster
+     that refused to shrink at every width, so it never took effect and the row
+     overflowed instead. The name is shrinkable at all widths now (see
+     .chat-tb__namegroup), and the difference between the viewports is carried by
+     `flex-wrap` alone, which is the property that actually expresses it: wide
+     enough to wrap, so a full row takes a second line and the name is left
+     whole; too narrow to wrap, so the name gives up the room instead. */
 }
 
 /* Compaction fold marker. Compaction never drops raw messages, so this divider
