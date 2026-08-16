@@ -65,7 +65,15 @@ export default function WorkSettings({
           line and a description in it wins the width fight with the name; a
           settings row is two lines and the second one is where the difference
           between "draft it" and "run it" is actually explained. */}
-      <div className="chat-workpanel__modes">
+      {/* A RADIO GROUP, because this is one three-way choice. It was three
+          buttons carrying `aria-pressed`, which a screen reader announces as
+          three independent toggles that happen to look exclusive: nothing said
+          they were alternatives, nothing said how many there were, and arrow
+          keys did not move between them. Settings.tsx states the same choice
+          with the kit's `Segmented`; that primitive is one compact line per
+          option and each option here needs a second line of gloss, so the
+          semantics are matched rather than the component. */}
+      <div className="chat-workpanel__modes" role="radiogroup" aria-label="When work comes up">
         {CHAT_MODES.map((m) => {
           const on = m.id === chatMode;
           return (
@@ -73,7 +81,8 @@ export default function WorkSettings({
               key={m.id}
               type="button"
               className="chat-workpanel__mode"
-              aria-pressed={on}
+              role="radio"
+              aria-checked={on}
               onClick={() => onChooseChatMode(m.id)}
             >
               <span className="chat-workpanel__mode-mark">

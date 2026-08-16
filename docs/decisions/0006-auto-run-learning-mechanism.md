@@ -5,6 +5,19 @@ Status: Proposed
 Deciders: the operator
 Context doc: `docs/platform-redesign/chat-work-linkage-2026-07-18.md` §3
 
+> **Superseded for the chat-policy case (2026-08-15), and still Proposed for everything else.**
+> `docs/platform-redesign/tickets-in-chat-2026-08-15.md` §7 shipped a third chat
+> mode, `auto` ("File and run on its own"), as an **explicit per-chat operator
+> choice** stored on the thread record (`chat_store.CHAT_MODES`). That answers the
+> repetition this ADR is about, so read §7 before building anything here.
+>
+> What it did NOT build is this ADR's actual proposal: a per-kind preference
+> **learned** from past File-and-run choices and stored in the learnings store.
+> That stays Proposed and unbuilt. If it is ever picked up it must obey
+> `work-placement-and-preference-learning-2026-07-18.md:151-165` (an implicitly
+> learned preference may propose, never silently install) and it must not become
+> a second thing deciding what `auto` already decides explicitly.
+
 ---
 
 ## Context

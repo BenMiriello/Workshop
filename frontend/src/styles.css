@@ -2098,7 +2098,17 @@ button.chat-attach {
    one removed on 2026-08-14 because a collapsed turn paid 4px for a panel that
    was not there and the copy and branch buttons sat 4px low. The operator
    reported it. Do not name anything in this block `.chat-work*`. */
-.chat-workpanel { display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; }
+/* `min-width: 0` is load-bearing, not tidiness. The popover surface is a flex
+   container (below) and this panel is its item, so it inherits the flex default
+   `min-width: auto`, which refuses to shrink below its own max-content width.
+   A long ticket title therefore sized THIS box past the surface's 24rem cap:
+   measured 2026-08-16, a title box 411px wide inside a 384px surface, its right
+   edge 106.5px beyond the clip. `overflow: hidden` on the surface then cut the
+   text mid-word, and because the title had all the room it asked for
+   (scrollWidth === clientWidth) `.ws-truncate` never fired, so there was not
+   even an ellipsis to say text was missing. The phone sheet was always fine:
+   `left: 0; right: 0` gives it a definite width, so nothing shrink-wraps. */
+.chat-workpanel { display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; min-width: 0; }
 /* THE CHROME STAYS, THE LIST SCROLLS. The panel used to be one scrolling box,
    so on a scope with real work in it (21 tickets on the day this shipped) the
    footer that carries the policy and its Change link sat below the fold of a
@@ -2112,7 +2122,7 @@ button.chat-attach {
 .ws-popover__surface:has(> .chat-workpanel) { overflow: hidden; display: flex; }
 .ws-popover__surface:has(> .chat-workpanel) > .chat-workpanel { flex: 1 1 auto; }
 .chat-workpanel__scroll {
-  flex: 1 1 auto; min-height: 0;
+  flex: 1 1 auto; min-height: 0; min-width: 0;
   display: flex; flex-direction: column; gap: var(--space-1);
   overflow-y: auto; overscroll-behavior: contain;
 }
@@ -2136,11 +2146,22 @@ button.chat-attach {
   /* Tighter on a phone: the log is the point of the screen, not the panel. */
   .chat-workpanel--sheet { max-height: 34vh; }
 }
-/* Between the log and the sheet. A press anywhere on the transcript dismisses,
+/* Between the log and the sheet. A press anywhere outside the sheet dismisses,
    which is what the wide host gets for free from the popover's own
-   outside-pointerdown rule. */
+   outside-pointerdown rule.
+
+   FIXED, NOT ABSOLUTE, and that is the whole point of it. As `absolute` its
+   positioned ancestor was `.chat-log-wrap`, which holds the sheet and the
+   transcript and STOPS ABOVE THE COMPOSER — the composer is its sibling. So on
+   a phone the sheet's own reason for existing was false: the panel carries a
+   text field for answering an agent, the composer is another one, and both were
+   live at once with the sheet open (seen 2026-08-16: composer bright, focused
+   and typeable under an open sheet). tickets-in-chat-2026-08-15.md §5 states the
+   rule this restores: "the scrim makes it exclusive... only one text entry is
+   reachable at a time". Covering the viewport also makes a press on the toolbar
+   dismiss, which is what a sheet should do anyway. */
 .chat-workpanel__scrim {
-  position: absolute; inset: 0; z-index: calc(var(--z-sticky) - 1);
+  position: fixed; inset: 0; z-index: calc(var(--z-sticky) - 1);
   background: var(--scrim);
 }
 
@@ -2298,7 +2319,9 @@ p.chat-workpanel__note { margin: 0; }
   color: inherit; font: inherit; text-align: left; cursor: pointer;
 }
 .chat-workpanel__mode:hover { background: var(--card-hover); }
-.chat-workpanel__mode[aria-pressed="true"] { background: var(--accent-soft); }
+/* `aria-checked`, not `aria-pressed`: these rows are one radio group (three
+   alternatives), not three independent toggles. See WorkSettings.tsx. */
+.chat-workpanel__mode[aria-checked="true"] { background: var(--accent-soft); }
 .chat-workpanel__mode-mark {
   flex: 0 0 auto; width: 14px; height: 14px; margin-top: 0.15rem;
   color: var(--accent);
@@ -2383,27 +2406,34 @@ p.chat-workpanel__note { margin: 0; }
 /* ---- Ticket drafts dialog ---------------------------------------------
    A list of proposals, collapsed to one line each. Expanding is how you read
    and edit one; only one is open at a time, because a body plus acceptance is
-   several lines and four of those at once is a wall. */
+   several lines and four of those at once is a wall.
+
+   THE COLLAPSED LINE IS THE WORK PANEL'S ROW, not a second drawing of it: it
+   reuses .chat-workpanel__row and its content classes (__rowbody, __line,
+   __title, __meta, __icon) so a draft and a filed ticket are one visual
+   vocabulary. What used to be here was a parallel .tdraft__row/__toggle/__title
+   set that drifted from it, and it is deleted rather than hidden.
+
+   Only the bleed is overridden. A panel row widens past its container by the
+   panel's own padding so the hover surface reaches the panel edge; the modal
+   body is a scroll port with no inline padding of its own, so the same overflow
+   would give this dialog a horizontal scrollbar. */
 .tdraft__list { list-style: none; margin: 0; padding: 0; }
 .tdraft { border-radius: var(--radius-sm); }
 .tdraft + .tdraft { margin-top: 1px; }
-.tdraft.is-filed .tdraft__title { color: var(--muted); }
-.tdraft__row { display: flex; align-items: center; }
-.tdraft__row:hover { background: var(--card-hover); border-radius: var(--radius-sm); }
-.tdraft__toggle {
-  flex: 1 1 auto; min-width: 0;
-  display: flex; align-items: center; gap: var(--space-2);
-  padding: 0.45rem 0.45rem;
-  background: transparent; border: none; border-radius: var(--radius-sm);
-  color: var(--fg); font: inherit; font-size: var(--fs-sm);
-  text-align: left; cursor: pointer;
-}
-/* One line, always. min-width:0 + ellipsis is what stops a long title wrapping
-   and doubling the row height. */
-.tdraft__title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tdraft__caret { flex: 0 0 auto; color: var(--muted); transition: transform var(--dur-base) var(--ease-out); }
+.tdraft > .chat-workpanel__row { width: 100%; margin-inline: 0; }
+/* The panel's neutral control ink comes from .chat-workpanel__icon. This adds
+   only the disclosure turn, which a panel row has no equivalent of. */
+.tdraft__caret { transition: transform var(--dur-base) var(--ease-out); }
 .tdraft__caret.is-open { transform: rotate(90deg); }
+/* Indented to the row's text column: the row's own inline padding, the caret's
+   14px, and the gap between them. */
 .tdraft__detail {
   display: flex; flex-direction: column; gap: var(--space-3);
-  padding: var(--space-2) var(--space-1) var(--space-4) 1.7rem;
+  padding: var(--space-2) var(--space-1) var(--space-4) calc(var(--space-2) * 2 + 14px);
 }
+/* One muted line of plain text. Both replace inline font-size styles; the sizes
+   are the row's own (xs for a note beside the list, sm for the sentence under
+   the skeleton, which is the only prose in the dialog). */
+.tdraft__note { color: var(--muted); font-size: var(--fs-xs); }
+.tdraft__reading { color: var(--muted); font-size: var(--fs-sm); }

@@ -248,6 +248,12 @@ function noteFor(input: TicketCardInput): TicketCardNote | null {
       text: `${input.waiting.agent} is waiting on an answer`,
     };
   }
+  // The ranking below is deliberate and stays. Joining the filing note to the
+  // pickup warning was tried on 2026-08-16 and reverted: both lines are long
+  // sentences, so the pair rendered as a ~200-character run-on under a card
+  // whose whole point is to be one readable line. When a merge lands in a scope
+  // nothing polls, the merge is the more surprising fact and wins the line; the
+  // ticket page carries the rest.
   if (input.filedNote) return { kind: "muted", text: input.filedNote };
   if (input.ticket && !input.ticket.run && input.pickup) {
     const warn = pickupNote(input.pickup);
@@ -300,8 +306,18 @@ export function ticketCardPlan(input: TicketCardInput): TicketCardPlan {
   const actions: TicketCardActionId[] = ["open"];
   // Mutually exclusive by construction: `Run now` is offered only to a ticket
   // that has never run, and `View run` only to one that has.
+  //
+  // `run` being null is NOT the same question as "has this ticket ever run".
+  // The card's fallback read (`GET /api/tasks/{scope}/{id}`, TicketCard.tsx)
+  // carries no run summary at all, so a ticket reached that way arrives with
+  // `run: null` however many times it has run. Gating on that alone offered
+  // `Run now` on finished work, which is the one action here that WRITES, and
+  // it would have started a second run of something already done. The ticket
+  // records its own runs in `job_ids`, so absence of a summary and absence of a
+  // run are distinguishable, and only the second earns the button.
+  const everRan = (ticket.job_ids?.length ?? 0) > 0;
   if (run) actions.push("viewRun");
-  else if (input.pickup?.runnable) actions.push("runNow");
+  else if (!everRan && input.pickup?.runnable) actions.push("runNow");
 
   return {
     phase: "ready",

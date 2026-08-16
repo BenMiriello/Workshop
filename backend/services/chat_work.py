@@ -103,6 +103,16 @@ def _latest_run(task_id: str, names: dict[str, str]) -> dict | None:
 
     Filtered by `task_id` BEFORE the limit is applied, so a ticket whose only run
     is old is still found in a log that holds thousands of newer ones.
+
+    PER TICKET ON PURPOSE, and an attempt to index it in one pass was reverted on
+    2026-08-16. `jobs.read` copies and sorts the whole log per call, so indexing
+    looks like an easy win, but the only way to get every ticket's runs from one
+    call is to drop the `task_id` filter, and then `limit` cuts the log by
+    recency before this ticket is looked for. That is exactly the bug the
+    paragraph above describes: a ticket whose only run is old silently reads as
+    never run. Reaching past `read` into the private `_read_all` avoids that and
+    breaks the seam the tests stub. The scan is cached and the endpoint measured
+    50ms for 11 tickets; revisit only with a real index on the job store.
     """
     try:
         found = jobs.read(task_id=task_id, limit=1)

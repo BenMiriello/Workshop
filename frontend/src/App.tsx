@@ -1,4 +1,5 @@
 import { lazyPage } from "./lib/lazyPage";
+import { runHref } from "./lib/jobs";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { OverlayHost } from "@workshop/ui";
 import Agents from "./pages/Agents";
@@ -57,7 +58,10 @@ function AgentBuildRedirect() {
 // they keep resolving — to the canonical /runs/:id.
 function JobIdRedirect() {
   const { id = "" } = useParams();
-  return <Navigate to={`/runs/${encodeURIComponent(id)}`} replace />;
+  // Through `runHref` like every other caller. This was the last hand-spelled
+  // copy of the path, and it is the one place the two spellings meet, so it is
+  // the worst place for the canonical target to be written out by hand again.
+  return <Navigate to={runHref(id)} replace />;
 }
 
 // Voice is now an inline toggle inside the chat, not a screen. Old /voice/:key

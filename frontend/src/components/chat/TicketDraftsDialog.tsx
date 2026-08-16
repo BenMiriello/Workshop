@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight, RefreshCw, Trash2, Check } from "lucide-react";
+import { ChevronRight, RefreshCw, Trash2 } from "lucide-react";
 import {
-  Modal, Button, Stack, Row, Tag, Badge, Field, Input, Textarea,
+  Modal, Button, Stack, Row, Tag, Field, Input, Textarea,
   StateBlock, Skeleton, catFor,
   Notice,
 } from "@workshop/ui";
@@ -26,6 +26,33 @@ import { shortHttpError } from "../../lib/httpError";
 //
 // Scanning costs a model call and tens of seconds, so this never re-scans on its
 // own; the thread remembers when it last did, to report staleness.
+//
+// A DRAFT ROW AND A WORK PANEL ROW READ AS ONE SYSTEM, and this is how they
+// stay one (tickets-in-chat-2026-08-15 §3: the dialog is kept, "its rows adopt
+// the new ticket row idiom").
+//
+// SHARED, because it carries meaning and a draft has the same meaning to carry:
+// the row geometry and hover language (`chat-workpanel__row`), the title's ink
+// and truncation (`ws-truncate chat-workpanel__title`), the neutral control ink
+// on the caret (`chat-workpanel__icon`), and ONE meta line of plain text joined
+// with " · " (`chat-workpanel__meta`) instead of a rack of chips. That last one
+// is the rule from frontend/CLAUDE.md, "a record page is not a list page": what
+// you scan a list for belongs in words, not in a badge.
+//
+// NOT SHARED, deliberately:
+//
+//   - `TicketRow` itself. A row is a Link whose whole line navigates to the
+//     ticket page. A draft has no page to navigate to, and this line is a
+//     disclosure that opens an EDITOR under it, so sharing the component would
+//     mean one control doing two incompatible things. Same call `TicketCard`
+//     made for the collapsed card header, for the same reason.
+//   - `StatusDot` and `ws-ticket-key`. A draft has no status and no key yet.
+//     Rendering a dot for `draft` or a key from an id the operator has never
+//     seen would be a hue and a handle that say nothing, which fails the
+//     "does it vary / is it real" tests before it fails anything else.
+//   - Read-only-ness. §3a makes drafts the one editable exception in the chat
+//     surface: an unapproved draft is not yet a ticket, and its body is the
+//     entire spec the worker will read.
 export type Draft = {
   id: string;
   title: string;
@@ -46,6 +73,27 @@ type Payload = {
 function confidenceOf(d: Draft): string | null {
   const tag = (d.labels ?? []).find((l) => l.startsWith("confidence:"));
   return tag ? tag.slice("confidence:".length) : null;
+}
+
+/** The first line of a draft's body, for the row's second line. */
+function firstLine(body: string): string {
+  return (body || "").split("\n").map((s) => s.trim()).find(Boolean) ?? "";
+}
+
+/** The row's meta line: what the panel row says as a state word, said with the
+ *  facts a draft actually has. Same shape, plain text joined with " · ".
+ *
+ *  The scope is not in it. Every draft in this dialog files into the same one
+ *  and the header already names it, so repeating it per row tints the list
+ *  without labelling anything. */
+function draftMeta(d: Draft): string[] {
+  const merged = d.dedup === "merge" || d.dedup === "exact";
+  const confidence = confidenceOf(d);
+  return [
+    merged ? "merged into existing" : null,
+    confidence ? `confidence: ${confidence}` : null,
+    firstLine(d.body) || null,
+  ].filter((s): s is string => Boolean(s));
 }
 
 export default function TicketDraftsDialog({
@@ -189,10 +237,10 @@ export default function TicketDraftsDialog({
       <Stack>
         {scope && (
           <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Files into</span>
+            <span className="tdraft__note">Files into</span>
             <Tag hue={catFor(scope.scope)}>{scopeLabel(scope.scope)}</Tag>
             {!scope.runnable && (
-              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+              <span className="tdraft__note">
                 this scope can't run work directly
               </span>
             )}
@@ -200,7 +248,7 @@ export default function TicketDraftsDialog({
         )}
 
         {payload && payload.messages_since > 0 && drafts.length > 0 && (
-          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+          <span className="tdraft__note">
             {payload.messages_since} message{payload.messages_since === 1 ? "" : "s"} since these were
             drafted. Re-read the chat to refresh them.
           </span>
@@ -221,7 +269,7 @@ export default function TicketDraftsDialog({
         {proposing ? (
           <Stack gap="sm">
             <Skeleton />
-            <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+            <span className="tdraft__reading">
               Reading the conversation and working out what it actually asks for. A few seconds.
             </span>
           </Stack>
@@ -239,25 +287,27 @@ export default function TicketDraftsDialog({
           <ul className="tdraft__list">
             {drafts.map((d) => {
               const isOpen = expanded === d.id;
+              const meta = draftMeta(d);
               return (
                 <li key={d.id} className="tdraft">
-                  <div className="tdraft__row">
-                    <button
-                      type="button"
-                      className="tdraft__toggle"
-                      onClick={() => setExpanded(isOpen ? null : d.id)}
-                      aria-expanded={isOpen}
-                    >
-                      <ChevronRight size={14} aria-hidden
-                                    className={`tdraft__caret${isOpen ? " is-open" : ""}`} />
-                      <span className="tdraft__title">{d.title}</span>
-                      {d.dedup === "merge" || d.dedup === "exact" ? (
-                        <Badge><Check size={12} aria-hidden /> merged into existing</Badge>
-                      ) : confidenceOf(d) ? (
-                        <Badge>{confidenceOf(d)}</Badge>
-                      ) : null}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    className="chat-workpanel__row"
+                    onClick={() => setExpanded(isOpen ? null : d.id)}
+                    aria-expanded={isOpen}
+                    title={d.title}
+                  >
+                    <ChevronRight size={14} strokeWidth={1.8} aria-hidden
+                                  className={`chat-workpanel__icon tdraft__caret${isOpen ? " is-open" : ""}`} />
+                    <span className="chat-workpanel__rowbody">
+                      <span className="chat-workpanel__line">
+                        <span className="ws-truncate chat-workpanel__title">{d.title}</span>
+                      </span>
+                      {meta.length > 0 && (
+                        <span className="chat-workpanel__meta">{meta.join(" · ")}</span>
+                      )}
+                    </span>
+                  </button>
 
                   {isOpen && (
                     <div className="tdraft__detail">
@@ -298,7 +348,7 @@ export default function TicketDraftsDialog({
         )}
 
         {drafts.length > 0 && (
-          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+          <span className="tdraft__note">
             {drafts.length} waiting for approval. Nothing runs them until you approve;
             they are visible in Work either way.
           </span>

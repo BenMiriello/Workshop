@@ -98,6 +98,17 @@ describe("state 2: filed, never run", () => {
     expect(plan.actions).toEqual(["open", "runNow"]);
   });
 
+  it("does NOT offer Run now when the ticket records a run the payload did not carry", () => {
+    // The card's fallback read carries no run summary, so `run: null` there
+    // means "not read", not "never ran". Offering Run now on that reading
+    // started a second run of finished work: the only writing action the card
+    // has, fired on the strength of a field the reader never populated.
+    const ran = ticketCardPlan(input({
+      ticket: ticket({ job_ids: ["job-1"], run: null }),
+    }));
+    expect(ran.actions).toEqual(["open"]);
+  });
+
   it("carries the ticket's own status in the header", () => {
     expect(plan.status).toEqual({ label: "todo", kind: "stopped" });
   });
@@ -206,6 +217,20 @@ describe("state 8: merged into an existing ticket", () => {
       kind: "muted",
       text: "Merged into an existing ticket in Workshop.",
     });
+  });
+
+  it("keeps the merge as the single line even where the scope cannot run work", () => {
+    // Both facts are true here. The merge wins the line because it is the more
+    // surprising one, and because joining the two produced a ~200-character
+    // run-on under a card that exists to be read at a glance. Pinned so the
+    // "both lines" idea is not re-tried without reading why it was dropped.
+    const plan = ticketCardPlan(input({
+      scope: "general",
+      ticket: ticket({ scope: "general" }),
+      pickup: pickupFor(null, "general"),
+      filedNote: "Merged into an existing ticket in General.",
+    }));
+    expect(plan.note?.text).toBe("Merged into an existing ticket in General.");
   });
 });
 
