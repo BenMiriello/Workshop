@@ -49,12 +49,13 @@ TOOL_SCHEMA = {
 SEARCH_TOOL_NAME = "search"
 SEARCH_TOOL_DESC = (
     "Search the workshop's own writing by meaning: knowledge notes, everything "
-    "under docs/, and the full text of past chats. Returns ranked passages with "
-    "the text itself and where it came from, so you can read what you find. Use "
-    "it for 'have we decided X before', 'why is Y built this way', 'what did we "
-    "say about Z', and before designing anything that may already exist. "
-    "Returns nothing when nothing is genuinely relevant, which means an empty "
-    "result is an answer: there is no prior art in the workshop for that."
+    "under docs/, tickets, and the full text of past chats. Returns ranked "
+    "passages with the text itself and where it came from, so you can read what "
+    "you find. Use it for 'have we decided X before', 'why is Y built this way', "
+    "'what did we say about Z', 'is there already a ticket for this', and before "
+    "designing anything that may already exist. Returns nothing when nothing is "
+    "genuinely relevant, which means an empty result is an answer: there is no "
+    "prior art in the workshop for that."
 )
 SEARCH_TOOL_SCHEMA = {
     "type": "object",
@@ -65,9 +66,9 @@ SEARCH_TOOL_SCHEMA = {
         },
         "kinds": {
             "type": "array",
-            "items": {"type": "string", "enum": ["note", "doc", "chat", "vault"]},
+            "items": {"type": "string", "enum": ["note", "doc", "chat", "ticket", "vault"]},
             "description": (
-                "Restrict to some sources. Default: note, doc and chat. "
+                "Restrict to some sources. Default: note, doc, chat and ticket. "
                 "'vault' is the operator's personal Obsidian notes and is only "
                 "searched when you ask for it by name."
             ),

@@ -519,7 +519,8 @@ def _note_id_from_title(title: str) -> str:
 
 
 async def apply_note_block(context_key: str | None, reply: str,
-                           author: str = "") -> tuple[str, list[str], list[dict]]:
+                           author: str = "", thread_id: str | None = None,
+                           ) -> tuple[str, list[str], list[dict]]:
     """Find a ``note`` block, write its {scope, title, body} as a durable note in
     the knowledge store (the Notes substrate), strip the block, and return
     (cleaned_reply, labels, refs). No-op (reply unchanged, empty lists) when
@@ -528,6 +529,12 @@ async def apply_note_block(context_key: str | None, reply: str,
     apply_learning_note: server-side application, fence stripped, a
     human-readable outcome for meta.notes. An invalid scope is reported, not
     raised.
+
+    `thread_id` is WHICH CONVERSATION filed the note, mirroring the `thread_id`
+    parameter `apply_task_patch` already takes for the same reason (design doc
+    sec 5.2: "some retention of the chat that it came from ... so that at least
+    that is reconstructable later"). Passed straight to `knowledge.put_note` as
+    `chat_id`; never guessed or fabricated when absent.
 
     `refs` carries WHAT WAS WRITTEN, not just that something was. This function
     already knows the scope and the note id it just created and used to throw
@@ -572,7 +579,8 @@ async def apply_note_block(context_key: str | None, reply: str,
         # `author` is an origin string (services/origin): which speaker wrote
         # this. Without it, a note the assistant wrote, one an @mentioned agent
         # wrote, and one distilled from a compaction are identical on recall.
-        await knowledge.put_note(scope, note_id, title or note_id, body, author=author)
+        await knowledge.put_note(scope, note_id, title or note_id, body, author=author,
+                                 chat_id=thread_id or "")
     except ValueError as e:
         # Report what actually failed. put_note validates the scope AND the note
         # id, so blaming the scope for either sent the operator looking at a

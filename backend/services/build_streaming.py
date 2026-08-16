@@ -2841,6 +2841,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
                 new_text, nnotes, nrefs = await task_scope.apply_note_block(
                     ctx_key, new_text,
                     author=(_origin.agent(_speaker) if _is_agent and _speaker else _origin.SELF),
+                    thread_id=(thread or {}).get("id"),
                 )
                 applied_notes += nnotes
                 _receipt("note", nnotes, nrefs)

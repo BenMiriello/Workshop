@@ -78,12 +78,18 @@ CHUNK_OVERLAP = 150
 # A chat log is mostly short messages, so they are grouped up to the same size
 # rather than embedded one per message: 8,000 one-line chunks would rank noise
 # above substance and cost more to build.
-KINDS = ("note", "doc", "chat", "vault")
+#
+# `ticket` joins the corpus so "have we decided X" or "is there already a
+# ticket for Y" can actually find the work, not just the discussion and the
+# design doc (design doc sec 8: "kinds: [ticket] is how documentation and
+# tickets integrate without merging the stores: separate stores, separate
+# lifecycles, one query surface, one ref format").
+KINDS = ("note", "doc", "chat", "ticket", "vault")
 
 # The vault is the operator's own Obsidian folder. It is indexed only when asked
 # for by name: a search about routing code must never surface a personal note.
 # See the decision note in docs/memory-and-transcript-simplification-2026-08-12.md.
-DEFAULT_KINDS = ("note", "doc", "chat")
+DEFAULT_KINDS = ("note", "doc", "chat", "ticket")
 
 # Below this cosine score, a hit is not a hit and the search returns nothing.
 #
@@ -110,7 +116,7 @@ MIN_SCORE = 0.58
 
 @dataclass
 class Chunk:
-    kind: str     # note | doc | chat | vault
+    kind: str     # note | doc | chat | ticket | vault
     ref: str      # repo-relative path, or a thread id
     title: str
     scope: str    # knowledge scope or chat context_key; "" where there is none
@@ -389,10 +395,70 @@ def collect_vault() -> list[Chunk]:
     return out
 
 
+def collect_tickets() -> list[Chunk]:
+    """Every ticket, across every scope that has a task store.
+
+    Enumeration mirrors `routes.tasks_all.scope_roots()`: the sweep that
+    already covers development, workshop, every project, every registry
+    assistant scope and every build agent, deduped by resolved tree so a build
+    agent sharing a project's tree is not double-counted. It is the closest
+    thing to `knowledge.all_scope_dirs()` for tickets (no bulk enumerator
+    existed before it; see the design doc sec 8 and Phase 2's own note about
+    the gap). Imported lazily, matching `services/refs.py`'s existing
+    `from routes import tasks_all` (routes -> services is the normal
+    direction; this one call goes the other way on purpose, same as refs.py's
+    ticket resolver, because the sweep genuinely lives with the route).
+
+    `scope_roots()` can hand back `build:<slug>` for an UNBOUND build agent (one
+    with no linked project, so it was not already collapsed into a
+    `project:<slug>` entry). That is not a `scope_tree` key -- `reach()` and
+    `memory_policy` have never heard of the `build:` namespace -- so it is
+    translated through `knowledge.scope_for_context`, the SAME translation
+    `_resolve_chunk_scope` already applies to a chat's `context_key` below.
+    Every other scope `scope_roots()` returns (`development`, `workshop`,
+    `project:<slug>`, `agent:<slug>`) is already a real scope_tree key and
+    passes through unchanged.
+
+    A ticket's `ref` is its bare id (matching `refs.ticket_ref` / the
+    `workshop:ticket/<id>` format `services/refs.py` already resolves), and its
+    text is title + body, split like every other collector."""
+    from routes import tasks_all
+    from services import knowledge, tasks
+    out: list[Chunk] = []
+    try:
+        roots = tasks_all.scope_roots()
+    except Exception as e:
+        log.warning("ticket scopes unavailable: %s", e)
+        return out
+    for raw_scope, root in roots:
+        if raw_scope.startswith("build:"):
+            try:
+                scope = knowledge.scope_for_context(raw_scope)
+            except Exception:
+                scope = raw_scope
+        else:
+            scope = raw_scope
+        try:
+            items = tasks.list_tasks(root)
+        except Exception:
+            continue
+        for t in items:
+            tid = t.get("id")
+            if not tid:
+                continue
+            title = t.get("title") or tid
+            text = f"{title}\n\n{t.get('body') or ''}".strip()
+            ts = t.get("updated") or t.get("created") or ""
+            for c in _split(text):
+                out.append(Chunk("ticket", tid, title, scope, ts, c))
+    return out
+
+
 _COLLECTORS = {
     "note": collect_notes,
     "doc": collect_docs,
     "chat": collect_chats,
+    "ticket": collect_tickets,
     "vault": collect_vault,
 }
 
@@ -754,8 +820,13 @@ def _bm25_scores(query: str, meta: list[dict]) -> np.ndarray:
 # "budget", "development", ...), not a `scope_tree` scope_key: chats and
 # knowledge notes are two different namespaces (design doc sec 7.1), and
 # unifying them is a further migration this phase does not own. Only chats
-# need the translation; a note's `scope` is already a real scope_key (it came
-# straight off `knowledge.all_scope_dirs()`) and a doc's is always "".
+# need the translation HERE; a note's `scope` is already a real scope_key (it
+# came straight off `knowledge.all_scope_dirs()`) and a doc's is always "". A
+# ticket's `scope` is also already a real scope_key by the time it reaches
+# this function: `collect_tickets` resolves `scope_roots()`'s occasional
+# `build:<slug>` key at COLLECTION time (the same translation this function
+# applies to a chat, just applied once per rebuild instead of once per search),
+# so nothing ticket-shaped needs a case here.
 #
 # A chunk with no scope at all (every doc) is never excluded by a scope
 # filter: docs are cross-cutting reference material with no place in the
@@ -798,6 +869,9 @@ def _item_ref(kind: str, ref: str, resolved_scope: str) -> str | None:
         return f"workshop:note/{resolved_scope}/{note_id}" if resolved_scope else None
     if kind == "doc":
         return f"workshop:doc/{ref}"
+    if kind == "ticket":
+        from services import refs
+        return refs.ticket_ref(ref)
     return None
 
 
