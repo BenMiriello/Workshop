@@ -2153,13 +2153,24 @@ button.chat-attach {
      while it was showing. It is in-chat overlay content, not a top-level popover:
      --z-sticky keeps it over the transcript (base) and lets those menus open on
      top of it. */
-  position: absolute; top: 0; left: 0; right: 0; z-index: var(--z-sticky);
+  /* THE SHEET 4a DRAWS: it hangs from the toolbar, inset from both edges, with
+     its bottom corners rounded and a border on the three sides that are not
+     against the toolbar. It read as a full-bleed grey slab before, because it
+     spanned edge to edge on `--bg-inset` with no border and square corners, so
+     the one surface the operator opens from the top looked like part of the
+     chrome rather than a panel over the conversation. `--card` is the surface
+     the desktop popover already uses, which is what makes the two hosts one
+     panel seen two ways. */
+  position: absolute; top: 0; left: var(--space-2); right: var(--space-2);
+  z-index: var(--z-sticky);
   max-height: 40vh;
   /* Bounded here, scrolled by __scroll inside, so the footer stays pinned on a
      phone for the same reason it does on a desktop. */
   overflow: hidden;
   padding: var(--space-2) var(--space-3);
-  background: var(--bg-inset);
+  background: var(--card);
+  border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
   box-shadow: var(--shadow-md);
 }
 @media (max-width: 640px) {
@@ -2236,15 +2247,31 @@ button.chat-attach {
    always present and exactly one is chosen, so the rest go neutral and only the
    selected one keeps the MINE tone. A zero chip still renders: its absence
    would slide the other three sideways the moment work arrived. */
-.chat-workpanel__chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.chat-workpanel__chip { background-color: var(--bg-inset); height: var(--control-h-sm); }
+/* PILLS, AND THE CHOSEN ONE IS FILLED. 4a draws these as rounded pills with the
+   count inside the label, the selected one solid `--accent` on `--accent-fg` and
+   the rest `--muted` on the inset fill. It was a soft tint for the selected one,
+   which is a weaker mark than the design's and read as "slightly highlighted"
+   rather than "this is the one you are looking at".
+
+   The row is chrome, so it is separated from the list it filters by a rule, the
+   same way the footer below is. */
+.chat-workpanel__chips {
+  display: flex; flex-wrap: wrap; gap: var(--space-1);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.chat-workpanel__chip {
+  background-color: var(--bg-inset); height: var(--control-h-sm);
+  border-radius: var(--radius-pill);
+}
 .chat-workpanel__chip .ws-filterchip__open {
   color: var(--muted); padding-inline: var(--space-2);
+  border-radius: var(--radius-pill);
 }
 .chat-workpanel__chip:hover .ws-filterchip__open { color: var(--fg); }
-.chat-workpanel__chip.is-on { background-color: var(--accent-soft); }
+.chat-workpanel__chip.is-on { background-color: var(--accent); }
 .chat-workpanel__chip.is-on .ws-filterchip__open,
-.chat-workpanel__chip.is-on .ws-filterchip__key { color: var(--accent); }
+.chat-workpanel__chip.is-on .ws-filterchip__key { color: var(--accent-fg); }
 
 .chat-workpanel__group { display: flex; flex-direction: column; }
 .chat-workpanel__list { list-style: none; margin: 0; padding: 0; }
@@ -2429,10 +2456,17 @@ p.chat-workpanel__note { margin: 0; }
   font: inherit; font-size: var(--fs-sm); text-decoration: none; cursor: pointer;
 }
 .chat-workpanel__more:hover { background: var(--card-hover); }
+/* Chrome, and separated from the list like the chips row above it. 4a rules off
+   both ends of the panel so the rows between them read as the one thing that
+   scrolls. */
 .chat-workpanel__foot {
   display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
-  margin-top: var(--space-2);
+  margin-top: var(--space-2); padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
 }
+/* The question view's footer is inside the panel body, not its chrome, so it
+   keeps the rule but not the chips row's. */
+.chat-workpanel__foot--question { border-top: 1px solid var(--border); }
 /* The question view's own footer: text-weight ways out, the deferrals pushed
    right by a spacer so they do not read as more of the same. */
 .chat-workpanel__foot--question { gap: var(--space-3); }
