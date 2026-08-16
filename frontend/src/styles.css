@@ -512,9 +512,19 @@ input[type="range"].grad::-moz-range-thumb {
   /* Tighter vertically than on a desktop: the controls are 2rem tall and set
      their own breathing room, so the bar's own padding is the only thing
      between them and the transcript, and 8px above and below spent more of a
-     short screen on the frame than on the conversation. One step down the
-     scale, not a new value. */
-  .chat-toolbar { flex-wrap: nowrap; padding-block: var(--space-1); }
+     short screen on the frame than on the conversation.
+
+     HALF A STEP, AND DELIBERATELY OFF THE 4px GRID. It went to --space-1 first
+     and that was too tight; the operator asked for half way back (2026-08-16),
+     which is 6px, and there is no token there. Written as the midpoint of the
+     two steps it sits between rather than as `0.375rem`, so it reads as one
+     deliberate half-step off a scale it still refers to instead of as a magic
+     number somebody typed. Do NOT "correct" it back onto the grid: landing
+     between two steps is the whole point of it. */
+  .chat-toolbar {
+    flex-wrap: nowrap;
+    padding-block: calc((var(--space-1) + var(--space-2)) / 2);
+  }
   /* No shrink override here any more. It used to re-grant the name the ability
      to shrink at this width only, on `.chat-tb__titlemenu` — inside a cluster
      that refused to shrink at every width, so it never took effect and the row

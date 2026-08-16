@@ -348,4 +348,24 @@ describe("the chat toolbar cannot be pushed sideways by a long name", () => {
     expect(block).toContain("flex-wrap: nowrap");
     expect(block).not.toContain("flex: 0 1 auto");
   });
+
+  // THE MOBILE BAR'S PADDING IS HALF A STEP, ON PURPOSE.
+  //
+  // It was --space-2, went to --space-1, and the operator asked for half way
+  // back on 2026-08-16. That is 6px, and the 4px grid has no token there, so
+  // this is one deliberate exception to "use the steps" and it is the kind that
+  // a later tidy-up pass silently rounds back onto the grid. Expressed as the
+  // midpoint of the two steps it sits between, and pinned as that, so the
+  // reason survives the next reader.
+  it("keeps the mobile toolbar's padding a half step, not a grid step", () => {
+    const at = css.indexOf("@media (max-width: 640px) {\n  /* Tighter vertically");
+    const block = css.slice(at, css.indexOf("\n}", at));
+    expect(block).toContain("padding-block: calc((var(--space-1) + var(--space-2)) / 2)");
+    // The two values it is deliberately BETWEEN, and the bare literal it must
+    // not decay into. Matched as DECLARATIONS: the prose above it names all
+    // three, so a substring test on the block passes or fails on the comment.
+    expect(block).not.toContain("padding-block: var(--space-1)");
+    expect(block).not.toContain("padding-block: var(--space-2)");
+    expect(block).not.toContain("padding-block: 0.375rem");
+  });
 });
