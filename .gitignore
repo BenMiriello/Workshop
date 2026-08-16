@@ -121,7 +121,14 @@ shared/relay-corpus.jsonl
 
 # The work queue is instance state. A fresh clone starts empty, the way it
 # starts with no projects and no installed apps.
+#
+# `shared/queue/.tasks.json` was tracked until the ADR 0019 stage 2 cutover
+# (2026-08-16). Tickets for the relational scopes live in Postgres now and that
+# file stopped being written, so a tracked copy could only go stale in the diff
+# of every future commit. The file itself stays on disk as the cutover backup;
+# this untracks it rather than deleting it.
 /.tasks.json
+shared/queue/.tasks.json
 /TODO.md
 
 # Tenant operational records: bring-up playbook and security audits of one
