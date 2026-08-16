@@ -55,6 +55,14 @@ async def lifespan(app: FastAPI):
     # to read `running` forever. The backend outlives every run, so it reaps.
     from services import jobs as jobs_svc
     app.state._bg_job_reconcile = asyncio.create_task(jobs_svc.reconcile_loop())
+    # Dedup vectors: embed the open backlog so filing a ticket does not. `decide`
+    # compares a new ticket against every open one, and the embedder is one HTTP
+    # call per text, so a cold cache made the File ticket button wait 17.5s
+    # (measured 2026-08-16). The cache is a file and survives a restart, so this
+    # normally finds everything present and returns immediately.
+    from services import task_dedup as _task_dedup
+    app.state._bg_dedup_warm = asyncio.create_task(
+        asyncio.to_thread(_task_dedup.warm_vectors))
     # Crash/restart resilience: re-attach to any build turn that was still running
     # when the backend went down. Detached claude subprocesses keep working across
     # a restart; this tails their on-disk journals to completion (or finalizes a
