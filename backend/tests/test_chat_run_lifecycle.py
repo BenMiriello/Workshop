@@ -805,3 +805,74 @@ class TestTheRunMarkerIsFenced:
         chat_store.mark_run_started(tid, "run-1")
         kinds = [(e.get("kind"), e.get("state")) for e in chat_log.read_events(tid)]
         assert ("run", "started") in kinds
+
+
+class TestThePickersSurviveAJoin:
+    """Model, effort and permission mode all commit on change and apply to the
+    NEXT turn. A message sent while a turn is streaming JOINS that turn, and the
+    turn's argv is fixed at spawn, so none of the three can reach it. What must
+    still happen is that the pick is RECORDED, or the picker and the thread
+    disagree the moment the run ends.
+
+    Model was the odd one out and the only one that lost data: it was persisted
+    only by `_run_for_message`, which runs only when a message starts a fresh
+    turn. Picked mid-turn it was dropped outright, so the composer silently
+    snapped back to the old model on the next load.
+    """
+
+    def test_a_model_picked_mid_turn_is_recorded_on_the_thread(self, thread, monkeypatch):
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.begin_run(tid, "run-1")
+        _live("run-1", tid)
+        monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: True)
+
+        async def never(**kw):
+            raise AssertionError("this message must join, not start a rival run")
+        monkeypatch.setattr(rc, "_start_assistant_turn", never)
+
+        picked = "claude-opus-5"
+        out = asyncio.run(rc._send(tid, "switch while you work", model_in=picked))
+
+        # It joined the running turn ...
+        assert out["turn_id"] == "run-1"
+        assert out["injected"] is True
+        # ... and the pick still survived to the next turn.
+        assert chat_store.get_thread(tid)["model"] == picked
+
+    def test_effort_and_mode_picked_mid_turn_are_recorded_too(self, thread, monkeypatch):
+        """The two that already worked, pinned beside it so the three cannot
+        drift back apart.
+
+        The model is picked in the same send on purpose: effort resolves against
+        the model the operator is actually looking at, and the default chat model
+        has no effort ladder at all, so `low` against it correctly resolves to
+        None rather than riding along invisibly."""
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.begin_run(tid, "run-1")
+        _live("run-1", tid)
+        monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: True)
+
+        asyncio.run(rc._send(
+            tid, "and these", model_in="claude-opus-5", effort_in="low", mode_in="plan"))
+
+        t = chat_store.get_thread(tid)
+        assert t["effort"] == "low"
+        assert t["permission_mode"] == "plan"
+
+    def test_an_effort_the_picked_model_cannot_do_is_not_recorded(self, thread, monkeypatch):
+        """The other half of the same rule. Haiku has no effort ladder, so a
+        level sent against it drops to the model's own default instead of being
+        stored as a level the picker could never show."""
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.begin_run(tid, "run-1")
+        _live("run-1", tid)
+        monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: True)
+
+        asyncio.run(rc._send(
+            tid, "no ladder here",
+            model_in="claude-haiku-4-5-20251001", effort_in="low"))
+
+        assert chat_store.get_thread(tid)["effort"] is None

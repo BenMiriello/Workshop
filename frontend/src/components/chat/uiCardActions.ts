@@ -212,7 +212,7 @@ type CreatedTask = {
 // The structured spec sections a task-proposal card may carry, in the order
 // they compose into the ticket body. Names mirror TaskProposalSpec
 // (shared/types.ts); the label is the human prefix written into the task text.
-const SPEC_SECTIONS: { key: keyof TaskProposalSpec; label: string }[] = [
+export const SPEC_SECTIONS: { key: keyof TaskProposalSpec; label: string }[] = [
   { key: "objective", label: "Objective" },
   { key: "output", label: "Output" },
   { key: "entry_points", label: "Start from" },

@@ -3332,11 +3332,23 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    # Effort is a per-thread preference, so it is recorded HERE, before the
-    # join-or-start fork. A message that joins a run in flight cannot change that
-    # run's effort — the process is spawned and --effort is fixed at spawn — but
-    # the level the operator just picked still has to survive to the next turn,
-    # or the picker and the thread disagree the moment the run ends.
+    # THE THREE PICKERS COMMIT ON CHANGE AND APPLY TO THE NEXT TURN. Model,
+    # effort and permission mode are all per-thread preferences, so all three are
+    # recorded HERE, before the join-or-start fork. A message that joins a run in
+    # flight cannot change that run's settings (the process is spawned and its
+    # argv is fixed at spawn), but what the operator just picked still has to
+    # survive to the next turn, or the picker and the thread disagree the moment
+    # the run ends.
+    #
+    # MODEL USED TO BE THE ODD ONE OUT, and it was the only one that lost data.
+    # It was persisted only by `_run_for_message`, which runs ONLY when this
+    # message starts a fresh turn. A model picked while a turn was streaming was
+    # therefore dropped outright whenever the message joined that turn instead:
+    # never written, so the picker silently snapped back to the old model on the
+    # next thread load, with nothing on screen to say it had.
+    if model is not None and model != t.get("model"):
+        chat_store.set_thread_model(thread_id, model)
+        t = chat_store.get_thread(thread_id) or t
     if effort_in is not None:
         _eff = _resolve_effort(
             effort_in, t, _resolve_model(model, t, chat_context.get_provider(t.get("context_key"))))

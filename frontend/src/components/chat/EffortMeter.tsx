@@ -1,5 +1,6 @@
 import { Menu, MenuItem } from "@workshop/ui";
 import { effortHint, effortLabel, orderEfforts } from "./effort";
+import { nextTurnHint } from "./pickerTiming";
 
 // How hard the model works on this turn, as a ladder you can read without
 // opening it: one bar per level the MODEL offers, filled up to the level in use.
@@ -13,13 +14,15 @@ import { effortHint, effortLabel, orderEfforts } from "./effort";
 // promise that this model could work harder if only you were allowed to ask.
 
 export default function EffortMeter({
-  levels, value, onSelect,
+  levels, value, onSelect, streaming = false,
 }: {
   /** Levels this model honours, as declared by the backend. */
   levels: string[];
   /** The level in use: the operator's choice, or the model's default. */
   value: string;
   onSelect: (level: string) => void;
+  /** A turn is in flight, so a pick made now lands on the next message. */
+  streaming?: boolean;
 }) {
   const ordered = orderEfforts(levels);
   // The model has no effort control. This is NOT nothing: the default chat model
@@ -62,7 +65,7 @@ export default function EffortMeter({
           className="chat-effort"
           // Never blurs the textarea: the action row cancels pointerdown for
           // every control in it (see keepFocus).
-          title={`Effort: ${label}. ${effortHint(value)}`}
+          title={`Effort: ${label}. ${effortHint(value)}${nextTurnHint(streaming)}`}
           aria-label={`Effort: ${label}`}
           onKeyDown={(e) => {
             // Adjust without opening. The menu is for reading what the levels

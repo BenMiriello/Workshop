@@ -42,6 +42,7 @@ import {
   type UiCardField,
   type UiCardSpec,
 } from "./uiCardActions";
+import { normalizeCardSpec } from "./cardSchema";
 
 // ---- Extraction ------------------------------------------------------------
 // A parsed answer is an ordered list of markdown runs and ui-card blocks. A
@@ -355,14 +356,22 @@ function cardKey(raw: string): string {
   return `c${h.toString(16)}${raw.length.toString(16)}`;
 }
 
-export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: string; ctx: UiCardCtx }) {
+export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; raw: string; ctx: UiCardCtx }) {
+  // THE CLIENT OWNS THE FIELD LIST FOR A STORE-BOUND KIND. The model authors the
+  // card as free-form JSON, so without this a field name it invented would
+  // render as a real editable control whose value nothing reads. See cardSchema.
+  const normalized = useMemo(() => normalizeCardSpec(rawSpec), [rawSpec]);
+  const spec = normalized?.spec ?? null;
   const fields = useMemo(() => spec?.fields ?? [], [spec]);
   const key = useMemo(() => cardKey(raw), [raw]);
   // What the server says already happened to this card. This is what stops a
   // filed-and-run proposal from coming back as an untouched one after a reload.
   const recorded = ctx.cardStates?.[key];
   const [values, setValues] = useState<Record<string, string>>(() => {
-    const seed: Record<string, string> = {};
+    // Carried values first: a value the schema has no field for stays readable
+    // by the handler (an older transcript's `priority`/`effort` still file) but
+    // never becomes a control, and a canonical field always wins the key.
+    const seed: Record<string, string> = { ...(normalized?.carried ?? {}) };
     for (const f of fields) seed[f.name] = f.value ?? "";
     if (recorded?.slug) seed.slug = recorded.slug;
     return seed;

@@ -15,6 +15,7 @@ import { useVoiceComposer } from "./useVoiceComposer";
 import { modelLabel, orderModels } from "./models";
 import EffortMeter from "./EffortMeter";
 import { permissionModeDef } from "./permissionModes";
+import { nextTurnHint } from "./pickerTiming";
 import { keepFocusOnTap } from "./keepFocus";
 
 // Everything below the log: the type-ahead pickers, the voice strip, the input,
@@ -217,6 +218,7 @@ export default function ChatComposer({
           levels={effortLevels}
           value={effectiveEffort}
           onSelect={onSelectEffort}
+          streaming={streaming}
         />
 
         {/* How much this chat asks before acting. Sits between effort and model
@@ -229,7 +231,7 @@ export default function ChatComposer({
             trigger={
               <button
                 className="chat-mode"
-                title={`Mode: ${permissionModeDef(effectivePermissionMode).label}. ${permissionModeDef(effectivePermissionMode).hint}`}
+                title={`Mode: ${permissionModeDef(effectivePermissionMode).label}. ${permissionModeDef(effectivePermissionMode).hint}${nextTurnHint(streaming)}`}
                 aria-label={`Mode: ${permissionModeDef(effectivePermissionMode).label}`}
               >
                 {(() => {
@@ -273,7 +275,10 @@ export default function ChatComposer({
             label="Model"
             side="top"
             trigger={
-              <button className="chat-model" title="Model for this conversation">
+              <button
+                className="chat-model"
+                title={`Model for this conversation.${nextTurnHint(streaming)}`}
+              >
                 <BotMessageSquare size={14} aria-hidden />
                 <span className="chat-model__val">{modelLabel(selectedModel)}</span>
               </button>
