@@ -33,18 +33,35 @@ export type AttachmentRef = { id: string; name: string; kind: AttachmentKind };
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 export const MAX_ATTACHMENTS = 10;
 
-const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+// Only the four formats the model accepts as a native image block. Not bmp,
+// heic or tiff: the API would reject those, and delivering one relabelled as
+// png is a broken attachment that looks accepted. Converting them is a separate
+// job (an image library, a new code path), deferred until it is asked for.
+const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
 
 // Extensions we are confident a model can read as text. Deliberately a list and
 // not "anything without a known-binary extension": silently attaching a .zip
 // produces a file the agent opens and cannot use, which is worse than saying no.
+// Adding a text/code/markup extension here is free (it is inlined as UTF-8, no
+// worker step); archives and Office files are NOT here because they are binary
+// and would need server-side extraction. Keep this in sync with _TEXT_EXT in
+// backend/services/chat_attachments.py.
 const TEXT_EXT = new Set([
-  "txt", "md", "markdown", "rst", "log", "csv", "tsv",
-  "json", "jsonl", "ndjson", "yaml", "yml", "toml", "ini", "cfg", "conf", "env", "properties",
-  "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "go", "rs", "java", "kt", "swift",
-  "c", "h", "cc", "cpp", "hpp", "cs", "php", "lua", "pl", "r", "scala", "clj", "ex", "exs",
-  "sh", "bash", "zsh", "fish", "ps1", "sql", "graphql", "gql", "proto",
-  "html", "htm", "xml", "svg", "css", "scss", "sass", "less",
+  "txt", "text", "md", "markdown", "mdx", "rst", "adoc", "asciidoc", "org",
+  "tex", "latex", "bib", "srt", "vtt", "log", "csv", "tsv",
+  "json", "jsonl", "ndjson", "jsonc", "json5", "yaml", "yml", "toml",
+  "ini", "cfg", "conf", "env", "properties",
+  "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "py", "rb", "go", "rs",
+  "java", "kt", "kts", "swift", "vue", "svelte", "astro",
+  "c", "h", "cc", "cpp", "hpp", "cs", "php", "lua", "pl", "r", "scala",
+  "clj", "cljs", "cljc", "edn", "rkt", "scm", "lisp", "el",
+  "ex", "exs", "erl", "dart", "zig", "nim", "hs", "elm", "jl", "groovy", "gradle",
+  "fs", "fsx", "ml", "mli", "f90", "pas", "vb", "d", "sv", "vhd", "asm",
+  "m", "mm", "prisma", "sol",
+  "sh", "bash", "zsh", "fish", "ps1", "psm1", "psd1", "bat", "cmd", "tcl", "awk",
+  "sql", "graphql", "gql", "proto",
+  "tf", "tfvars", "hcl", "nix", "cmake",
+  "html", "htm", "xhtml", "xml", "svg", "css", "scss", "sass", "less",
   "diff", "patch", "gitignore", "dockerfile", "makefile", "lock",
 ]);
 

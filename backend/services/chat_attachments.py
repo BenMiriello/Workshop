@@ -104,15 +104,27 @@ def _sniff_image_media(data: bytes, name: str) -> str:
 # exist because both ends must refuse the same files: the client so the operator
 # gets an instant answer, the server because the client is not the only caller.
 _TEXT_EXT = {
-    "txt", "md", "markdown", "rst", "log", "csv", "tsv",
-    "json", "jsonl", "ndjson", "yaml", "yml", "toml", "ini", "cfg", "conf", "env", "properties",
-    "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "go", "rs", "java", "kt", "swift",
-    "c", "h", "cc", "cpp", "hpp", "cs", "php", "lua", "pl", "r", "scala", "clj", "ex", "exs",
-    "sh", "bash", "zsh", "fish", "ps1", "sql", "graphql", "gql", "proto",
-    "html", "htm", "xml", "svg", "css", "scss", "sass", "less",
+    "txt", "text", "md", "markdown", "mdx", "rst", "adoc", "asciidoc", "org",
+    "tex", "latex", "bib", "srt", "vtt", "log", "csv", "tsv",
+    "json", "jsonl", "ndjson", "jsonc", "json5", "yaml", "yml", "toml",
+    "ini", "cfg", "conf", "env", "properties",
+    "ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts", "py", "rb", "go", "rs",
+    "java", "kt", "kts", "swift", "vue", "svelte", "astro",
+    "c", "h", "cc", "cpp", "hpp", "cs", "php", "lua", "pl", "r", "scala",
+    "clj", "cljs", "cljc", "edn", "rkt", "scm", "lisp", "el",
+    "ex", "exs", "erl", "dart", "zig", "nim", "hs", "elm", "jl", "groovy", "gradle",
+    "fs", "fsx", "ml", "mli", "f90", "pas", "vb", "d", "sv", "vhd", "asm",
+    "m", "mm", "prisma", "sol",
+    "sh", "bash", "zsh", "fish", "ps1", "psm1", "psd1", "bat", "cmd", "tcl", "awk",
+    "sql", "graphql", "gql", "proto",
+    "tf", "tfvars", "hcl", "nix", "cmake",
+    "html", "htm", "xhtml", "xml", "svg", "css", "scss", "sass", "less",
     "diff", "patch", "gitignore", "dockerfile", "makefile", "lock",
 }
-_IMAGE_EXT = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+# Only the four formats the API accepts as a native image block. Not bmp/heic/
+# tiff: those would need conversion (a new code path), so they are refused
+# rather than delivered relabelled as png. Mirror of IMAGE_EXT on the client.
+_IMAGE_EXT = {"png", "jpg", "jpeg", "gif", "webp"}
 
 
 def kind_for(mime: str, name: str) -> str | None:
