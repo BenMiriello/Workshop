@@ -66,7 +66,12 @@ export type TranscriptBlock =
   // they all came from the one event. Anything that has to name this message to
   // the server (branching from it) uses `id`; anything that has to tell two
   // rendered blocks apart uses `key`.
-  | { kind: "message"; key: string; id: string; seq: number; msg: ChatMsg }
+  //
+  // `awaiting` marks a message the RUNNING TURN HAS NOT TAKEN UP YET: it is in
+  // the log, it was handed to the turn, and the turn has emitted nothing since.
+  // Set only inside a live run, and it clears itself the moment work lands
+  // below. See `liveBlocks`.
+  | { kind: "message"; key: string; id: string; seq: number; msg: ChatMsg; awaiting?: boolean }
   // The turn in flight. `working` marks the block the indicator belongs on —
   // the last one, because that is where the work is still happening.
   | { kind: "live"; key: string; runId: string; segments: ChatSegment[]; working: boolean }
@@ -310,7 +315,22 @@ function workingPieceIndex(pieces: Piece[]): number {
 
 /** The run in flight, cut the same way. One slice carries the working
  *  indicator, and it is emitted even when empty, because "a turn is running and
- *  has produced nothing yet" still has to be visible. */
+ *  has produced nothing yet" still has to be visible.
+ *
+ *  HAS THE TURN TAKEN THIS MESSAGE UP YET, and the answer is the transcript's
+ *  own shape: work below the message means the turn was writing after it was
+ *  handed it, and nothing below means it has not got to it. A message sent into
+ *  a running turn is not read the moment it commits — it is written to the
+ *  turn's stdin and sits there until the model reaches its next step, which on a
+ *  long tool call is minutes. Committed and read are two different events and
+ *  the bubble looked identical for both, so a message that had genuinely not
+ *  been picked up was indistinguishable from one that had been answered.
+ *  Reported 2026-08-16: "my latest message just sits unread by system".
+ *
+ *  This is derived, never stored, and it is the same fact the reader is already
+ *  using: `awaiting` only dims the bubble that has nothing under it. The moment
+ *  the turn emits its next segment the flag clears and the work renders below,
+ *  which is the standard contract and needs no second surface to announce it. */
 function liveBlocks(
   runId: string, segments: ChatSegment[], interrupts: LogEvent[],
   cutHead?: string[],
@@ -318,11 +338,18 @@ function liveBlocks(
   const pieces = cutPieces(segments, interrupts, cutHead);
   const out: TranscriptBlock[] = [];
   const workingAt = workingPieceIndex(pieces);
+  // The last stretch that actually carries work. A message after it has nothing
+  // below it; a message before it has been overtaken by the turn.
+  let lastWorkAt = -1;
+  pieces.forEach((p, i) => { if (isWork(p) && p.work.length) lastWorkAt = i; });
   for (let i = 0; i < pieces.length; i++) {
     const piece = pieces[i];
     if (!isWork(piece)) {
       const m = piece.msg;
-      out.push({ kind: "message", key: m.id, id: m.id, seq: m.seq, msg: msgFromEvent(m) });
+      out.push({
+        kind: "message", key: m.id, id: m.id, seq: m.seq, msg: msgFromEvent(m),
+        ...(i > lastWorkAt ? { awaiting: true } : {}),
+      });
       continue;
     }
     if (piece.work.length || i === workingAt) {

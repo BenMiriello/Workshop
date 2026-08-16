@@ -592,6 +592,77 @@ describe("nothing is lost or duplicated by a cut", () => {
   });
 });
 
+describe("a message the running turn has not taken up yet", () => {
+  const cut = (s: ChatSegment, ...refs: string[]): ChatSegment =>
+    ({ ...s, cut_after: refs });
+
+  /** A live run holding one mid-turn message, with `segments` emitted so far. */
+  const midRun = (segments: ChatSegment[], live?: Record<string, unknown>): ThreadState => {
+    let s = stateOf([user("are you reading this", { during_run: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    return threadReducer(s, {
+      type: "eventsReceived", events: [], lastSeq: 0,
+      activeRun: { run_id: "r1", live: { meta: { segments, ...(live || {}) } } },
+    });
+  };
+
+  const awaitingFlags = (s: ThreadState) =>
+    selectTranscript(s)
+      .filter((b) => b.kind === "message" && b.msg.role === "user")
+      .map((b) => (b as { awaiting?: boolean }).awaiting === true);
+
+  it("is marked awaiting while nothing has been emitted after it", () => {
+    // The cut is on the last segment the turn had written, so the message sits
+    // at the bottom with an empty stretch under it. Nothing has come since.
+    const s = midRun([cut(text("a"), "c1")]);
+    expect(awaitingFlags(s)).toEqual([true]);
+    expect(shape(selectTranscript(s)))
+      .toEqual(["live:a", "user:are you reading this", "live:*"]);
+  });
+
+  it("stops being awaiting the moment the turn writes below it", () => {
+    const s = midRun([cut(text("a"), "c1"), text("understood")]);
+    expect(awaitingFlags(s)).toEqual([false]);
+    // And the work it produced afterwards renders BELOW the message, which is
+    // the half of the contract that was already true.
+    expect(shape(selectTranscript(s)))
+      .toEqual(["live:a", "user:are you reading this", "live:understood*"]);
+  });
+
+  it("is awaiting when the turn has emitted nothing at all, and still sits under the indicator", () => {
+    // `cut_head`: it arrived before the run had written a word. The run was
+    // already in flight, so its indicator stays ABOVE the message (the floor
+    // rule in workingPieceIndex) and the message below it reads as waiting.
+    const s = midRun([], { cut_head: ["c1"] });
+    expect(awaitingFlags(s)).toEqual([true]);
+    expect(shape(selectTranscript(s))).toEqual(["live:*", "user:are you reading this"]);
+  });
+
+  it("does not mark a message the turn has already written past", () => {
+    let s = stateOf([
+      user("first", { during_run: "r1", cut_id: "c1" }),
+      user("second", { during_run: "r1", cut_id: "c2" }),
+    ]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, {
+      type: "eventsReceived", events: [], lastSeq: 0,
+      activeRun: { run_id: "r1", live: { meta: { segments: [
+        cut(text("a"), "c1"), cut(text("b"), "c2"),
+      ] } } },
+    });
+    // `first` was overtaken (work below it), `second` has nothing under it yet.
+    expect(awaitingFlags(s)).toEqual([false, true]);
+  });
+
+  it("never marks a committed reply's messages: the turn is over, nothing is pending", () => {
+    const s = stateOf([
+      user("mid", { during_run: "r1", cut_id: "c1" }),
+      reply("", { turn_id: "r1", segments: [cut(text("a"), "c1")] }),
+    ]);
+    expect(awaitingFlags(s)).toEqual([false]);
+  });
+});
+
 describe("a pending send's place in the log", () => {
   const failed = (s: ThreadState, clientId: string, text: string): ThreadState =>
     threadReducer(
