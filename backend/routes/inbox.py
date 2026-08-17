@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from services import inbox, chat_store, knowledge, memory_promotion
+from services import inbox, chat_store, knowledge
 
 log = logging.getLogger(__name__)
 # Bare prefix, NOT "/api/inbox". The edge proxy strips the leading `/api`
@@ -188,16 +188,6 @@ async def resolve_inbox(item_id: str, body: ResolveIn):
     it = inbox.resolve_item(item_id, answer=body.answer, dismissed=body.dismissed)
     if it is None:
         raise HTTPException(404, "item not found")
-    # An approved promotion is the one answer that performs a write. Everything
-    # else is just a recorded decision.
-    key = (before or {}).get("dedupe_key") or ""
-    if not body.dismissed and _is_approval(body.answer) and key.startswith("promote:"):
-        try:
-            done = memory_promotion.approve(key)
-            it = {**it, "promoted": done}
-        except Exception as e:
-            log.warning("inbox: promotion apply failed for %s: %s", key, e)
-            it = {**it, "promoted": False}
     if reviewed is not None:
         # What actually happened to the work, so the caller can say so rather
         # than inferring it from a closed row.

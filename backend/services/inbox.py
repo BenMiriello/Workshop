@@ -479,13 +479,6 @@ def reconcile() -> None:
         run_inbox.sync(scope_roots())
     except Exception as e:
         log.warning("inbox: awaiting-task sync failed: %s", e)
-    # A lesson learned in three separate scopes is no longer a local lesson.
-    # Proposed, never written automatically — see services/memory_promotion.
-    try:
-        from services import memory_promotion
-        memory_promotion.sweep()
-    except Exception as e:
-        log.warning("inbox: promotion sweep failed: %s", e)
     # An autonomous run that ended with nobody watching. Reconciled from the job
     # log for the same reason blocked work is: the runs are closed by shell
     # workers in another process, against a per-owner store that process has

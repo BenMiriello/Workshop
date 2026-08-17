@@ -1,17 +1,16 @@
 """The inbox as a stream: approve actually writes, snooze actually hides, and an
 autonomous run that ended with nobody watching actually shows up.
 
-Three defects, one surface:
+Two defects, one surface (a third, the memory-promotion approve write path,
+was pinned here until the `memory_promotion` module it served was deleted —
+`PROMOTE_AT` could never be satisfied, see
+docs/platform-redesign/memory-consolidation-2026-08-16.md D9):
 
-  * **Approve wrote nothing.** The panel posted `"approved"` and the route
-    compared against `"approve"`, so approving a memory promotion closed the row
-    as answered and performed no write. Pinned HERE rather than over a `.tsx`
-    string literal, which is why the backend comparison is tolerant.
   * **Snooze had to filter in the store.** `counts()` is built by calling
     `list_items` and the chat badge reads `counts()`, so a filter anywhere above
     the store leaves a badge counting rows the panel refuses to show.
-  * **The surface was empty.** Only blocked tickets and memory promotions raised
-    anything, so an autonomous run could fail at 3am and say so nowhere.
+  * **The surface was empty.** Only blocked tickets raised anything, so an
+    autonomous run could fail at 3am and say so nowhere.
 """
 from __future__ import annotations
 
@@ -27,7 +26,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from routes import inbox as inbox_routes  # noqa: E402
-from services import inbox, jobs, memory_promotion, ownership  # noqa: E402
+from services import inbox, jobs, ownership  # noqa: E402
 
 
 @pytest.fixture
@@ -52,62 +51,6 @@ def client(store, monkeypatch):
     app = FastAPI()
     app.include_router(inbox_routes.router, prefix="/api")
     return TestClient(app)
-
-
-def _review(dedupe_key="promote:workshop:a-lesson"):
-    return inbox.raise_item(
-        kind="review", agent="memory-keeper", scope="workshop",
-        title="Promote “A lesson” to workshop?", body="Learned in 3 scopes.",
-        options=["Approve", "Reject"], dedupe_key=dedupe_key,
-    )
-
-
-# ---------------------------------------------------------------------------
-# 1. Approve performs the write
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("answer", ["approved", "Approve", "  APPROVED ", "approve"])
-def test_every_spelling_of_yes_performs_the_promotion(client, monkeypatch, answer):
-    """The literal that shipped was `"approved"` and the comparison was
-    `== "approve"`. Both spellings, either case, stray whitespace: all yes."""
-    applied: list[str] = []
-    monkeypatch.setattr(memory_promotion, "approve",
-                        lambda key: applied.append(key) or True)
-    item = _review()
-
-    r = client.post(f"/api/inbox/{item['id']}/resolve",
-                    json={"answer": answer, "dismissed": False})
-
-    assert r.status_code == 200, r.text
-    assert applied == ["promote:workshop:a-lesson"], "the promotion was not written"
-    assert r.json()["promoted"] is True
-    assert inbox.get_item(item["id"])["state"] == "answered"
-
-
-def test_rejecting_closes_the_row_and_writes_nothing(client, monkeypatch):
-    """The other half of the same bug: a tolerant comparison must not become a
-    comparison that says yes to everything."""
-    applied: list[str] = []
-    monkeypatch.setattr(memory_promotion, "approve",
-                        lambda key: applied.append(key) or True)
-    item = _review()
-
-    r = client.post(f"/api/inbox/{item['id']}/resolve",
-                    json={"answer": "Reject", "dismissed": False})
-
-    assert r.status_code == 200, r.text
-    assert applied == []
-    assert "promoted" not in r.json()
-    assert inbox.get_item(item["id"])["state"] == "answered"
-
-
-def test_dismissing_an_approved_looking_answer_still_writes_nothing(client, monkeypatch):
-    monkeypatch.setattr(memory_promotion, "approve", lambda key: pytest.fail("wrote"))
-    item = _review()
-    r = client.post(f"/api/inbox/{item['id']}/resolve",
-                    json={"answer": "approved", "dismissed": True})
-    assert r.status_code == 200, r.text
-    assert inbox.get_item(item["id"])["state"] == "dismissed"
 
 
 # ---------------------------------------------------------------------------
