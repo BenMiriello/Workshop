@@ -294,3 +294,49 @@ Research done for this doc, beyond the ontology review's own list.
 
 **Migration** ·
 [Strangler fig](https://learn.microsoft.com/en-us/azure/architecture/patterns/strangler-fig)
+
+---
+
+## 10. Build log
+
+Per R1. A thread is listed only once committed AND independently verified, not when
+a worker reported it done.
+
+| Thread | Commits | Landed | What it actually did |
+|---|---|---|---|
+| **S0** ticket field loss | `fe4719b` | 08-16 | Five fields (`latitude`, `max_attempts`, `attempts`, `awaiting`, `assignee`) were silently dropped by the relational write path. Migration `e9c4a71f0d38`. Round-trip test failed before, passes after. Kept all five: occupancy at rest is the wrong test when a live writer exists, and `PATCH /tasks` accepts all five. |
+| **S0** PLAID_ENV | `565c45e` (swept) | 08-16 | The documented, required knob was read by nothing while the real switch defaulted to production. Now resolves, and refuses to guess when unset. Operator was already on production and intended to be. |
+| **T1** memory | see `memory-consolidation-2026-08-16.md` §9 | 08-16 | 11 substrates to 4. The GC could never fire; the index never learned about chat/ticket/doc writes; Letta's 18 blocks exported before teardown. 15/15 acceptance. |
+| **T3** one scope module | `13294b2` | 08-17 | Five disagreeing mappings collapsed into `scope_tree.scope_for_context`. Damage was **33 threads, not the 27 estimated here**: 27 stamped `app:development` plus 6 development chats stamped `workshop`. `thread.scope` is now derived on read and never stored, so staleness after a rescope is unrepresentable rather than fixed. `scope_locked` deleted (no API could set it; one reader). |
+| **T2** chat is the session | `007c44c` | 08-17 | `_promotion_patch` deleted, so `agent:<slug>` is a durable context key answered by that agent. Verified independently: the key survives creation and two patches and resolves to `AssistantAgentContextProvider`, not the general assistant. `participants` deleted end to end; the 15 threads carrying one had their slug moved to `agent_id` rather than dropped. `build:` folds to `agent:` at the store and the provider; `chat_context.py:2033`'s `runtime == "builder"` is gone. |
+| **T4** dead schema | `eb66a7c` | 08-17 | `run` (2,753 rows, zero readers) and `agent` (zero reads, zero writes) tables dropped, migration `def2cbf58df8`, proven reversible on a throwaway database. `job_ids`, `lease_until`, `last_heartbeat` and `claim_pid` were being dropped by the mirror exactly like the S0 five: made real tracked columns rather than derived from a table nothing wrote. `db/backfill.py` updated, since it was a loaded gun for the next fresh install. |
+| **T5** one definition | `61afeb9`, `c50cf35`, `53fa1a0`, `b9b7c1d`, `604a38d` | 08-17 | 17 date implementations collapsed into `frontend/src/lib/time.ts` (CommutePages' missing day tier fixed, so 48h no longer reads "48h ago"). 3 status mappers to 1, including the `queued -> running` drift. Zero-caller routes deleted (`/redact`, `/restore`, `/skills`, `/backlog`, `/auto-pr`, two `/environment`, `GET|POST /inbox`). Autonomy enum 4 declarations to 1. `ReviewDialogs.tsx` deleted after tracing that its bug cannot recur. |
+| **T6** the ratchet | (with T5 commits) | 08-17 | `scripts/doc_status.py`, `scripts/check_one_definition.py`, `field_occupancy.py` extended with a per-store split and `--fail-on-new-zero` against a committed baseline. Wired into `reviewer.sh`. Docs with no status: **22 to 14**. Four misleading NOT-BUILT banners corrected; none now disputes an artifact that exists. |
+
+### Corrections this work forced on the plan above
+
+- §3 said the five dropped fields were the bug. T4 found **four more** on the same
+  path (`job_ids`, `lease_until`, `last_heartbeat`, `claim_pid`). Same defect class,
+  missed by this doc.
+- §5 estimated 27 damaged threads. It was 33.
+- §5's T5 line named `RUN_TRIGGERS` missing `discord` as a live constraint bug. It
+  resolved itself: the `run` table and its enum were deleted by T4.
+- §2's table implies `participants` could simply be deleted. It could, but 15 threads
+  carried real agent identity in it; that had to be migrated to `agent_id`, not dropped.
+
+### Still open
+
+- **`AgentDetail.tsx:699`** still branches on `agent.runtime === "builder"`, gating five
+  UI branches including navigation. The honest conversion is
+  `role === "maker" && !!project_slug`, not a bare role check, which would send a
+  project-less maker to a work pane that does not exist. Its own pass.
+- **`AgentBuild.tsx:703`** still sends `contextKey="build:<slug>"`. The server folds it
+  so the page works, but retiring the spelling needs `chatScope.deriveMode` to learn
+  maker-ness some other way.
+- **`Thread.state`** (`idle | working | awaiting | done | failed`) is deliberately NOT
+  built. It is the one new field that makes the inbox derivable and the escalation
+  reachable, and it deserves its own pass rather than riding T2.
+- **`tasks.STATE_TYPES` vs `db/models.STATE_CATEGORIES`** remain two identical tuples.
+  Consolidating forces SQLAlchemy into every `tasks` import, which costs more than the
+  duplicate. Recorded rather than forced.
+- The root-owned **Letta process on :8283** is still running. Needs the operator.
