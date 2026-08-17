@@ -27,7 +27,16 @@ import jwt
 from jwt.algorithms import ECAlgorithm
 
 
-PLAID_BASE = os.environ.get("PLAID_ENV_URL", "https://production.plaid.com")
+# PLAID_ENV picks the Plaid host: sandbox/development/production. PLAID_ENV_URL
+# is an explicit override for anyone who needs a custom host and always wins.
+# There is deliberately no default — see _plaid_base() — because guessing
+# production for an unset/unrecognized PLAID_ENV would silently verify
+# webhooks against the wrong environment.
+_PLAID_HOSTS = {
+    "sandbox": "https://sandbox.plaid.com",
+    "development": "https://development.plaid.com",
+    "production": "https://production.plaid.com",
+}
 PLAID_CLIENT_ID = os.environ.get("PLAID_CLIENT_ID", "")
 PLAID_SECRET = os.environ.get("PLAID_SECRET", "")
 MAX_AGE_S = 300  # 5 min — replay protection
@@ -36,13 +45,35 @@ MAX_AGE_S = 300  # 5 min — replay protection
 _key_cache: dict[str, tuple[dict, float]] = {}
 
 
+def _plaid_base() -> str:
+    """Resolve the Plaid API host. Raises rather than defaulting to production
+    when PLAID_ENV is unset or not one of sandbox/development/production."""
+    override = os.environ.get("PLAID_ENV_URL", "").strip()
+    if override:
+        return override
+    env = os.environ.get("PLAID_ENV", "").strip().lower()
+    host = _PLAID_HOSTS.get(env)
+    if host is None:
+        raise RuntimeError(
+            "PLAID_ENV is not set to sandbox/development/production "
+            "(refusing to guess a Plaid host). Set PLAID_ENV, or PLAID_ENV_URL "
+            "for an explicit custom host."
+        )
+    return host
+
+
 def _fetch_key(kid: str) -> dict | None:
-    """POST /webhook_verification_key/get → returns the JWK or None on error."""
+    """POST /webhook_verification_key/get → returns the JWK or None on error.
+
+    Any misconfiguration (missing creds, unset/unknown PLAID_ENV) also
+    returns None here rather than raising: this is on the webhook-receive
+    path, where the right failure mode is "drop the webhook", not a 500.
+    """
     if not (PLAID_CLIENT_ID and PLAID_SECRET):
         return None
     try:
         r = httpx.post(
-            f"{PLAID_BASE}/webhook_verification_key/get",
+            f"{_plaid_base()}/webhook_verification_key/get",
             json={"client_id": PLAID_CLIENT_ID, "secret": PLAID_SECRET, "key_id": kid},
             timeout=5.0,
         )

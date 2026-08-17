@@ -30,12 +30,39 @@ import httpx
 
 from services import ownership, plaid_store
 
-PLAID_BASE = os.environ.get("PLAID_ENV_URL", "https://production.plaid.com")
+# PLAID_ENV picks the Plaid host: sandbox/development/production. PLAID_ENV_URL
+# is an explicit override for anyone who needs a custom host (proxy, mock
+# server) and always wins over PLAID_ENV. There is deliberately no default —
+# see _plaid_base() — because guessing production for an unset/unrecognized
+# PLAID_ENV would silently route a "sandbox" intent at real bank connections.
+_PLAID_HOSTS = {
+    "sandbox": "https://sandbox.plaid.com",
+    "development": "https://development.plaid.com",
+    "production": "https://production.plaid.com",
+}
 # The redirect/webhook the SPA Link flow uses; Plaid posts item updates here.
 PLAID_WEBHOOK = os.environ.get("WORKSHOP_PLAID_WEBHOOK_URL", "")
 # Plaid Link products + country. Transactions is what budget needs.
 _PRODUCTS = [p for p in os.environ.get("PLAID_PRODUCTS", "transactions").split(",") if p]
 _COUNTRY = [c for c in os.environ.get("PLAID_COUNTRY_CODES", "US").split(",") if c]
+
+
+def _plaid_base() -> str:
+    """Resolve the Plaid API host. Raises rather than defaulting to production
+    when PLAID_ENV is unset or not one of sandbox/development/production."""
+    override = os.environ.get("PLAID_ENV_URL", "").strip()
+    if override:
+        return override
+    env = os.environ.get("PLAID_ENV", "").strip().lower()
+    host = _PLAID_HOSTS.get(env)
+    if host is None:
+        raise RuntimeError(
+            "PLAID_ENV is not set to sandbox/development/production "
+            "(refusing to guess a Plaid host — an unset PLAID_ENV must never "
+            "silently resolve to production). Set PLAID_ENV, or PLAID_ENV_URL "
+            "for an explicit custom host."
+        )
+    return host
 
 
 def _creds() -> tuple[str, str]:
@@ -48,9 +75,10 @@ def _creds() -> tuple[str, str]:
 
 async def _post(path: str, payload: dict[str, Any], *, timeout: float = 30.0) -> dict[str, Any]:
     cid, secret = _creds()
+    base = _plaid_base()
     body = {"client_id": cid, "secret": secret, **payload}
     async with httpx.AsyncClient(timeout=timeout) as client:
-        r = await client.post(f"{PLAID_BASE}{path}", json=body)
+        r = await client.post(f"{base}{path}", json=body)
     if r.status_code >= 400:
         # Surface Plaid's error_message but never the request body (has secrets).
         try:

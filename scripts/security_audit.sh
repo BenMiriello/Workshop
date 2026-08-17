@@ -80,9 +80,23 @@ if [ -z "$leaks" ]; then pass "no production tokens/secrets in group/world-reada
   fail "secret material in readable files:"$'\n'"$leaks" "chmod 600 the listed file(s) or move the secret to $CFG/*.env"; fi
 
 hdr "4. Plaid environment + token sanity"
+# The code (services/finance_plaid.py, services/plaid_verify.py) has no
+# default host: PLAID_ENV must be sandbox/development/production, or
+# PLAID_ENV_URL must be set as an explicit override, or Plaid calls refuse.
+# An unset/unrecognized PLAID_ENV is therefore a FAIL here, not a pass with
+# an assumed default — a silent "defaults to production" is the exact bug
+# this check used to paper over.
 if [ -f "$CFG/plaid-auth.env" ]; then
   env_val=$(grep -E '^PLAID_ENV=' "$CFG/plaid-auth.env" | cut -d= -f2)
-  pass "PLAID_ENV=${env_val:-production(default)} (production = real money; expected)"
+  url_val=$(grep -E '^PLAID_ENV_URL=' "$CFG/plaid-auth.env" | cut -d= -f2)
+  if [ -n "$url_val" ]; then
+    pass "PLAID_ENV_URL override set (host=$url_val) — takes precedence over PLAID_ENV"
+  elif [ "$env_val" = "sandbox" ] || [ "$env_val" = "development" ] || [ "$env_val" = "production" ]; then
+    pass "PLAID_ENV=${env_val}$( [ "$env_val" = "production" ] && echo " (real money; expected)" )"
+  else
+    fail "PLAID_ENV='${env_val}' is not sandbox/development/production" \
+      "set PLAID_ENV=sandbox|development|production (or PLAID_ENV_URL) in $CFG/plaid-auth.env — Plaid calls refuse until it is"
+  fi
 fi
 
 hdr "5. Plaid MCP must never leak access_token in tool output"

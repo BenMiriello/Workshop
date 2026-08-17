@@ -37,6 +37,20 @@ PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 _results: list[tuple[str, str, str]] = []
 
 
+def _await(value):
+    """Run a coroutine to completion; pass anything else straight through.
+
+    Several knowledge-store verbs are async. A check that forgets to await one
+    passes trivially while doing nothing, so this is applied at every call site
+    rather than assumed."""
+    import asyncio
+    import inspect as _inspect
+
+    if _inspect.isawaitable(value):
+        return asyncio.run(value)
+    return value
+
+
 def check(name: str, status: str, detail: str = "") -> None:
     _results.append((status, name, detail))
     mark = {PASS: "  ok  ", FAIL: " FAIL ", SKIP: " skip "}[status]
@@ -110,23 +124,34 @@ def c_scope_filter_reaches_the_model(name: str) -> None:
 def c_index_knows_about_note_writes(name: str) -> None:
     from services import knowledge, semantic_index as si
 
-    probe_title = f"memory-verify probe {uuid.uuid4().hex[:8]}"
+    probe_id = f"memory-verify-probe-{uuid.uuid4().hex[:10]}"
     stale = Path(si.index_dir()) / "index.stale"
-    before = stale.read_text() if stale.exists() else ""
+    # mark_stale debounces on the marker's existence, so an already-stale index
+    # would swallow the very signal being tested. Clear it first. The index is
+    # left stale either way, because the probe's own delete_note marks it again
+    # on the way out, so this never leaves the index looking fresher than it is.
+    if stale.exists():
+        stale.unlink()
     note_id = None
     try:
-        rec = knowledge.put_note("workshop", title=probe_title,
-                                 body="Written by scripts/verify_memory.py. Safe to delete.")
-        note_id = rec.get("id") if isinstance(rec, dict) else None
+        # put_note/delete_note are coroutines. Calling them without awaiting
+        # returns a coroutine object and does nothing at all, silently, which
+        # is exactly the sort of green-but-hollow check this script exists to
+        # avoid, so it is spelled out rather than hidden in a helper.
+        _await(knowledge.put_note(
+            "workshop", probe_id,
+            title=f"memory-verify probe {probe_id[-10:]}",
+            content="Written by scripts/verify_memory.py. Safe to delete."))
+        note_id = probe_id
         after = stale.read_text() if stale.exists() else ""
-        if not stale.exists() or after == before:
+        if not stale.exists():
             check(name, FAIL, "a note write did not mark the index stale")
             return
         check(name, PASS, f"note write marked stale: {after.strip()[:70]}")
     finally:
         if note_id:
             try:
-                knowledge.delete_note("workshop", note_id)
+                _await(knowledge.delete_note("workshop", note_id))
             except Exception as e:
                 print(f"         (probe note {note_id} not cleaned up: {e})")
 

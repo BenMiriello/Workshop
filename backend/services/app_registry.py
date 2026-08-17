@@ -296,7 +296,7 @@ def _finance_spec() -> AppSpec:
         event_sources=("plaid",),
         tools=("plaid",),
         edge_blocked_prefixes=("/plaid/webhook",),
-        secret_env=("PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV"),
+        secret_env=("PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV", "PLAID_ENV_URL"),
         stores=(
             ("plaid-items", lambda: _owner_file("plaid-items.json"), "Finance", True),
             ("transactions", lambda: _owner_file("finance-cache.json"), "Finance", True),
