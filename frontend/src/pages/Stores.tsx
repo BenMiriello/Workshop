@@ -7,6 +7,7 @@ import {
 } from "@workshop/ui";
 import { TableScroll, Table } from "@workshop/ui";
 import { shortHttpError } from "../lib/httpError";
+import { tierKind } from "../lib/stores";
 
 
 type Store = {
@@ -25,6 +26,7 @@ type Store = {
 export default function Stores() {
   const [stores, setStores] = useState<Store[] | null>(null);
   const [types, setTypes] = useState<string[]>([]);
+  const [tiers, setTiers] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [type, setType] = useState<string>("all");
@@ -39,6 +41,7 @@ export default function Stores() {
       const j = await r.json();
       setStores(j.stores || []);
       setTypes(j.types || []);
+      setTiers(j.tiers || []);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -60,13 +63,6 @@ export default function Stores() {
       return true;
     });
   }, [stores, type, tier, q]);
-
-  const tierKind = (t?: string) => {
-    if (t === "open") return "ok" as const;
-    if (t === "mediated") return "warn" as const;
-    if (t === "closed") return "danger" as const;
-    return "stopped" as const;
-  };
 
   return (
     <div>
@@ -91,9 +87,7 @@ export default function Stores() {
           <Field label="Tier">
             <Select value={tier} onChange={(e) => setTier(e.target.value)}>
               <option value="all">All tiers</option>
-              <option value="open">open</option>
-              <option value="mediated">mediated</option>
-              <option value="closed">closed</option>
+              {tiers.map((t) => <option key={t} value={t}>{t}</option>)}
             </Select>
           </Field>
         </Row>

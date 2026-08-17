@@ -8,6 +8,7 @@ import {
   Badge, Tag, Skeleton, Field, Input, Textarea,
 } from "@workshop/ui";
 import { shortHttpError } from "../lib/httpError";
+import { tierKind as tierKindFor } from "../lib/stores";
 
 
 type Store = {
@@ -125,13 +126,7 @@ export default function StoreDetail() {
     }
   }, [store]);
 
-  const tierKind = useMemo(() => {
-    if (!store?.tier) return "stopped" as const;
-    if (store.tier === "open") return "ok" as const;
-    if (store.tier === "mediated") return "warn" as const;
-    if (store.tier === "closed") return "danger" as const;
-    return "stopped" as const;
-  }, [store?.tier]);
+  const tierKind = useMemo(() => tierKindFor(store?.tier), [store?.tier]);
 
   return (
     <div>

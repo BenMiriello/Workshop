@@ -56,7 +56,12 @@ async def list_stores(type: str | None = None, app: str | None = None, project: 
     `app` and `project` narrow by host (entity-model 2026-07-18 §8.3);
     used by B11's "Storage and access" section inside App / Project detail.
     Registers from every source on each read so a newly installed app's
-    stores show up. {"stores": [...], "types": [...]}."""
+    stores show up. {"stores": [...], "types": [...], "tiers": [...]}.
+
+    `tiers` is `policy.TIERS` itself rather than a list the client keeps. The
+    Stores page hardcoded its own copy until 2026-08-17 and it had drifted: it
+    offered a `closed` tier that does not exist and omitted `gated`, which does,
+    so a gated store could not be filtered for at all."""
     stores.register_all()
     if app or project:
         matched = stores.by_host(app=app, project=project)
@@ -67,7 +72,7 @@ async def list_stores(type: str | None = None, app: str | None = None, project: 
         if type is not None and s.type != type:
             continue
         out.append({**s.to_dict(), "tier": _tier(s.uri)})
-    return {"stores": out, "types": stores.types()}
+    return {"stores": out, "types": stores.types(), "tiers": list(policy.TIERS)}
 
 
 @router.get("/stores/policies")
