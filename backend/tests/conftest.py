@@ -106,3 +106,51 @@ def _delete_test_orgs(org_ids) -> None:
                 f"prefix: {unsafe}. A test fixture is holding a real org id.")
         s.execute(text("DELETE FROM organization WHERE id = ANY(CAST(:ids AS uuid[]))"),
                   {"ids": ids})
+
+
+# A user is NOT cleaned up by deleting its organization. `user_account` carries
+# no `org_id` (it is the one tenant table that cannot, since a user exists before
+# any membership), so nothing cascades to it and a fixture that only deletes its
+# org leaks its user forever.
+#
+# That is not hypothetical. Measured 2026-08-17: 3,826 rows in `user_account`, of
+# which ONE is a real person. Two fixtures created a UserAccount and cleaned up
+# only the org (`test_db_chat.py`, `test_chat_tree_turns.py`), so every full suite
+# run minted roughly 100 more. The daily histogram was 1,271 / 348 / 170 / 2,036,
+# rising, because the rate tracks how often anyone runs the tests.
+#
+# The rows were invisible to the application, since RLS requires a shared
+# membership and these have none. Invisible is not harmless: they were in the
+# production table, and "tests must not share owner storage" was already a
+# recorded lesson from the file stores. This is the same lesson, one layer down.
+#
+# One helper, called by all three fixtures, rather than the inline DELETE that
+# existed in exactly one of them.
+_TEST_EMAIL_DOMAIN = "@example.test"
+
+
+def _delete_test_users(user_ids) -> None:
+    """Delete by id, but only for accounts in the reserved test domain.
+
+    RFC 2606 reserves `example.test`, so no real address can end in it. The guard
+    mirrors the organization prefix guard above and exists for the same reason: a
+    fixture holding a real id must fail loudly rather than delete a person.
+    """
+    from sqlalchemy import text
+
+    from db.engine import owner_session
+
+    ids = [str(u) for u in user_ids if u]
+    if not ids:
+        return
+    with owner_session() as s:
+        rows = s.execute(text(
+            "SELECT id, email FROM user_account WHERE id = ANY(CAST(:ids AS uuid[]))"),
+            {"ids": ids}).all()
+        unsafe = [email for _, email in rows if not (email or "").endswith(_TEST_EMAIL_DOMAIN)]
+        if unsafe:
+            raise AssertionError(
+                f"refusing to delete accounts outside {_TEST_EMAIL_DOMAIN!r}: "
+                f"{unsafe}. A test fixture is holding a real user id.")
+        s.execute(text("DELETE FROM user_account WHERE id = ANY(CAST(:ids AS uuid[]))"),
+                  {"ids": ids})

@@ -36,7 +36,7 @@ def two_orgs():
     from db.ids import uuid7
     from db.models import Organization, Project, Ticket, UserAccount, WorkflowState
 
-    from tests.conftest import DB_ORG_PREFIX, _delete_test_orgs
+    from tests.conftest import DB_ORG_PREFIX, _delete_test_orgs, _delete_test_users
 
     tag = uuid.uuid4().hex[:8]
     ids: dict = {}
@@ -83,10 +83,10 @@ def two_orgs():
         # teardown never runs and the rows it already created leak. That is how
         # stale organizations accumulated in this database.
         _delete_test_orgs([ids.get("a"), ids.get("b")])
-        if ids.get("user"):
-            with owner_session() as s:
-                s.execute(text("DELETE FROM user_account WHERE id = :u"),
-                          {"u": ids["user"]})
+        # This fixture was the only one of three that deleted its user, and it
+        # did so with an inline DELETE, so the other two never inherited the
+        # rule. Now it is one helper with a guard on the reserved test domain.
+        _delete_test_users([ids.get("user")])
 
 
 def test_the_app_role_is_not_privileged():

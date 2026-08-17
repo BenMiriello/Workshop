@@ -28,11 +28,20 @@ WHAT MAKES A ROW SAFE TO DELETE. Four conditions, ALL required:
      erase the author of a comment or the actor on an audit row. That is
      unrecoverable, and it is the reason this condition is derived rather than
      listed.
-  4. `legacy_user_id` IS NULL. That column is the bridge to the SQLite
-     credential store in `.runtime/auth.db`; a row holding one is claiming to
-     shadow a real login, and whether it does is a question about a different
-     database. 100 of the synthetic rows carry one, and they are REPORTED AND
-     KEPT rather than deleted.
+  4. `legacy_user_id` does not resolve in the SQLite credential store. That
+     column is the bridge to `.runtime/auth.db`; a row holding one is CLAIMING
+     to shadow a real login, and the first version of this script kept every
+     such row because whether the claim was true "is a question about a
+     different database".
+
+     That question has since been answered by asking it. `auth.db` contains
+     exactly one user, id 6 (the operator). The 103 synthetic rows carrying a
+     legacy id carry randomly generated values in the 900,000 range, which
+     resolve to nothing. So the guard is now the real check rather than a proxy
+     for it: a row is kept if its legacy id EXISTS in auth.db, and a row whose
+     legacy id resolves to nothing is as orphaned as one with no legacy id at
+     all. If auth.db cannot be opened the script keeps every legacy-bearing row,
+     because an unanswerable question goes back to being a reason to stop.
 
 Anything meeting 1 but failing 2, 3 or 4 is reported and kept, the same way
 `prune_test_threads.py` keeps an orphaned thread that does not match a fixture
@@ -52,6 +61,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # never as a substring: `%example.test` would also match `notexample.test`, and
 # `%example%` would match a real address at `example-corp.com`.
 _SYNTHETIC_DOMAIN = "example.test"
+
+
+def _legacy_ids_in_auth_db() -> set[int] | None:
+    """Every real user id in the SQLite credential store, or None if unreadable.
+
+    None and the empty set mean opposite things here, which is why this does not
+    just return a set. Empty means "asked, and there are no users, so no legacy
+    id shadows anything". None means "could not ask", and the caller must then
+    keep every legacy-bearing row rather than assume the answer.
+
+    The path comes from `services.auth_store.DB_PATH` rather than being spelled
+    again, because a path spelled twice is a path that will be wrong in one of
+    them.
+    """
+    import sqlite3
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    try:
+        from services.auth_store import DB_PATH
+    except Exception:
+        return None
+    if not Path(DB_PATH).exists():
+        return None
+    try:
+        with sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True) as c:
+            return {int(r[0]) for r in c.execute("SELECT id FROM users")}
+    except Exception:
+        return None
 
 _TABLE = "user_account"
 
@@ -101,9 +140,14 @@ def _report(session, refs: list[tuple[str, str]]) -> dict:
     """), {"pat": f"%@{_SYNTHETIC_DOMAIN}"}).mappings().all()
 
     total = session.scalar(text(f"SELECT count(*) FROM {_TABLE}"))
+    real_legacy = _legacy_ids_in_auth_db()
     deletable, kept = [], []
     for r in rows:
-        if r["refs"] == 0 and r["legacy_user_id"] is None:
+        lid = r["legacy_user_id"]
+        # `real_legacy is None` means auth.db was unreadable, so every claim to
+        # shadow a login is treated as true and the row is kept.
+        shadows_a_login = lid is not None and (real_legacy is None or lid in real_legacy)
+        if r["refs"] == 0 and not shadows_a_login:
             deletable.append(r)
         else:
             kept.append(r)

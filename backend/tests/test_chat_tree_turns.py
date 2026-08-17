@@ -104,10 +104,11 @@ def tree_thread(tmp_path, monkeypatch):
     from db.models import Membership, Organization, UserAccount
     from db import chat_repo
     from services import tenancy
-    from tests.conftest import DB_ORG_PREFIX, _delete_test_orgs
+    from tests.conftest import DB_ORG_PREFIX, _delete_test_orgs, _delete_test_users
 
     tag = uuid.uuid4().hex[:8]
     oid = None
+    uid = None
     try:
         with owner_session() as s:
             o = Organization(id=uuid7(), slug=f"{DB_ORG_PREFIX}tt-{tag}", name="Turn tree")
@@ -205,7 +206,10 @@ def tree_thread(tmp_path, monkeypatch):
     finally:
         ownership.clear_current_owner()
         build_streaming.TURNS.clear()
+        # Org first so membership cascades, then the user, which nothing
+        # cascades to. See conftest._delete_test_users.
         _delete_test_orgs([oid])
+        _delete_test_users([uid])
 
 
 @pytestmark_db

@@ -35,10 +35,11 @@ def chat():
     from db.models import Membership, Organization, UserAccount
     from db import chat_repo
 
-    from tests.conftest import DB_ORG_PREFIX, _delete_test_orgs
+    from tests.conftest import DB_ORG_PREFIX, _delete_test_orgs, _delete_test_users
 
     tag = uuid.uuid4().hex[:8]
     oid = None
+    uid = None
     try:
         with owner_session() as s:
             o = Organization(id=uuid7(), slug=f"{DB_ORG_PREFIX}c-{tag}",
@@ -58,7 +59,10 @@ def chat():
                                         scope="workshop")
         yield {"org": oid, "user": uid, "thread": t["id"]}
     finally:
+        # Order matters: the org goes first so membership cascades, then the
+        # user, which nothing cascades to. See conftest._delete_test_users.
         _delete_test_orgs([oid])
+        _delete_test_users([uid])
 
 
 def _say(s, thread, role, content, **kw):
