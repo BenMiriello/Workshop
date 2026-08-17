@@ -23,9 +23,9 @@ from services.ownership import user_runtime_dir
 log = logging.getLogger("workshop.voice")
 router = APIRouter()
 
-# NOTE: enter_interrupts / typing_hold_ms / eager_silence_ms / verbosity are no
-# longer surfaced in the settings UI (Phase 4 rework) — kept here for compat so
-# existing stored prefs files and API clients still round-trip.
+# NOTE: enter_interrupts / typing_hold_ms / verbosity are no longer surfaced in
+# the settings UI (Phase 4 rework) — kept here for compat so existing stored
+# prefs files and API clients still round-trip.
 _PREFS_DEFAULTS = {
     "enabled": True,
     "tts_provider": "auto",   # auto | server | browser | off
@@ -46,31 +46,22 @@ _PREFS_DEFAULTS = {
     "typing_hold": True,      # typing defers the voice endpoint
     "typing_hold_ms": 3000,
     "enter_interrupts": True,  # Enter sends and interrupts ongoing speech
-    # Trailing silence that ends an utterance (server VAD).
-    #
-    # This was raised to 1400ms to stop a mid-thought pause splitting one sentence
-    # into several messages. That was the wrong lever: it bought fewer splits by
-    # making every single turn wait longer, which read as sluggish, and it still
-    # split anyone who paused for longer than the threshold.
-    #
-    # Firing early is RECOVERABLE now (see voiceTurnAction / reclaimTurn: carrying
-    # on speaking takes the turn back and merges), so the threshold can go back to
-    # being responsive. It no longer has to be right, only close.
-    "endpoint_silence_ms": 1000,
-    "eager_endpoint": True,   # speculative endpointing: think during an early pause
-    "eager_silence_ms": 400,  # the early-pause threshold (< endpoint_silence_ms)
     "barge_in": True,
-    "barge_sensitivity": 0.5,  # 0..1 VAD threshold knob (client-side)
-    # How soon it takes a turn: snappy | natural | patient. ONE number, applied
-    # as a bias on the turn-end model's threshold and its silence ceiling.
+    # How soon it takes a turn: snappy | natural | patient. ONE setting, applied
+    # as a bias on the turn-end model's threshold and its silence ceiling
+    # (services/voice/runtime.py). This is the only turn-taking knob that is
+    # read by anything.
     #
-    # It replaces four knobs that all tried to answer this question with timers
-    # and could not: endpoint_silence_ms (no value works — short splits a
-    # thought, long makes every turn sluggish), eager_endpoint and
-    # eager_silence_ms (speculative drafts, which semantic endpointing makes
-    # unnecessary), and barge_sensitivity, which was labelled as an interruption
-    # preference and was actually the master gate on whether you were heard at
-    # all. The four above are kept only so stored prefs files still round-trip.
+    # It replaced four timers that all tried to answer this question and could
+    # not: endpoint_silence_ms (no value works — short splits a thought, long
+    # makes every turn sluggish), eager_endpoint and eager_silence_ms
+    # (speculative drafts, which semantic endpointing makes unnecessary), and
+    # barge_sensitivity, which was labelled as an interruption preference and
+    # was actually the master gate on whether you were heard at all. Those four
+    # are GONE from the route and the persisted shape as of 2026-08-17: they had
+    # zero readers, so accepting and storing them told the operator a setting
+    # existed that changed nothing. A stored prefs file that still carries them
+    # simply loses them on the next write.
     "reply_pace": "natural",
     # rolling adaptation signal — updated by the client per session
     "interrupt_rate": 0.0,
@@ -111,13 +102,18 @@ def _load_prefs() -> dict:
     stored: dict = {}
     if p.exists():
         try:
-            stored = json.loads(p.read_text())
+            raw = json.loads(p.read_text())
+            # ONLY keys this route still honours. A file written before a knob
+            # was retired must not keep serving it back out: a pref that is read
+            # by nothing but still appears in GET /voice/prefs is a setting the
+            # operator can believe in and the system will never act on.
+            stored = {k: v for k, v in raw.items() if k in _PREFS_DEFAULTS}
             data.update(stored)
-        except (ValueError, OSError):
+        except (ValueError, OSError, AttributeError):
             stored = {}
     # A file written before the matrix existed carries only the booleans; let
     # them define the modes rather than silently resetting to the default.
-    return _normalize_modes(data, {k: v for k, v in stored.items() if k in _PREFS_DEFAULTS})
+    return _normalize_modes(data, stored)
 
 
 def _save_prefs(patch: dict) -> dict:
@@ -171,11 +167,7 @@ class PrefsBody(BaseModel):
     typing_hold: bool | None = None
     typing_hold_ms: int | None = None
     enter_interrupts: bool | None = None
-    endpoint_silence_ms: int | None = None
-    eager_endpoint: bool | None = None
-    eager_silence_ms: int | None = None
     barge_in: bool | None = None
-    barge_sensitivity: float | None = None
     reply_pace: str | None = None
     interrupt_rate: float | None = None
 

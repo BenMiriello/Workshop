@@ -1144,8 +1144,10 @@ def merge_live(base: dict | None, draft: dict | None) -> dict | None:
 
 # ---- migration -------------------------------------------------------------
 #
-# One shot, idempotent, non-destructive. Runs at startup and by hand
-# (`python -m services.chat_log migrate`).
+# Idempotent and non-destructive, and reached ON DEMAND: chat_store.list_threads
+# and chat_store.get_thread fold a legacy document in on first touch. The
+# all-owners startup sweep is gone — it had nothing left to find (58 threads
+# migrated, zero legacy documents on any owner, measured 2026-08-17).
 
 MIGRATED_SUFFIX = ".migrated"
 
@@ -1256,40 +1258,3 @@ def migrate_owner() -> dict:
     if migrated:
         log.info("chat migration: %d thread(s) moved to the event log", migrated)
     return {"migrated": migrated, "skipped": skipped}
-
-
-def migrate_all_owners() -> dict:
-    """Migrate every owner's threads. Safe to run repeatedly; a thread that has
-    already been migrated has no legacy file left to find."""
-    root = ownership._RUNTIME / "users"
-    totals = {"migrated": 0, "skipped": 0}
-    if not root.exists():
-        return totals
-    for user_dir in sorted(root.iterdir()):
-        if not user_dir.is_dir() or not user_dir.name.isdigit():
-            continue
-        prior = ownership.owner_or_none()
-        ownership.set_current_owner(int(user_dir.name))
-        try:
-            res = migrate_owner()
-        except Exception as e:
-            log.error("chat migration failed for owner %s: %s", user_dir.name, e)
-            res = {"migrated": 0, "skipped": 0}
-        finally:
-            if prior is None:
-                ownership.clear_current_owner()
-            else:
-                ownership.set_current_owner(prior)
-        totals["migrated"] += res["migrated"]
-        totals["skipped"] += res["skipped"]
-    return totals
-
-
-if __name__ == "__main__":  # pragma: no cover — manual entry point
-    import sys
-
-    if len(sys.argv) > 1 and sys.argv[1] == "migrate":
-        logging.basicConfig(level=logging.INFO)
-        print(json.dumps(migrate_all_owners(), indent=2))
-    else:
-        print("usage: python -m services.chat_log migrate")

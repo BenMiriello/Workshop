@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from services import app_overlay, app_registry, app_runner, gc, local_runner, manifests, permissions, port_registry, registry
+from services import app_overlay, app_registry, app_runner, gc, manifests, permissions, port_registry, registry
 
 router = APIRouter()
 
@@ -232,47 +232,22 @@ async def gc_run(body: GcRunIn = Body(default=GcRunIn())):
     return gc.run(apply=body.apply)
 
 
-# ---- Deploy: LocalRunner standalone surface (doc 05 section 2) ---------------
-# Start/stop/status a project's STANDALONE deployment as a scoped local
-# subprocess. The app runs in its project dir, on an allocated port, with a
-# SCOPED env (allowlist + PORT only — the platform's secret env is never
-# passed). See services/local_runner.py. INTEGRATED route-mount (needs frontend
-# route injection) and the RemoteRunner (containers) are out of scope for v1.
-
-
-@router.post("/deploy/{slug}/start")
-async def deploy_start(slug: str):
-    """Start the project's standalone deploy. Returns
-    {running, port, url, pid, command}. 400 if no run command can be detected,
-    404 if the project is unknown, 503 if no deploy port is free."""
-    try:
-        return local_runner.start_deploy(slug)
-    except local_runner.DeployError as e:
-        raise HTTPException(e.status, e.message)
-
-
-@router.post("/deploy/{slug}/stop")
-async def deploy_stop(slug: str):
-    """Stop the project's standalone deploy. Idempotent: {stopped: true} even if
-    it was not running."""
-    return local_runner.stop_deploy(slug)
-
-
-@router.get("/deploy/{slug}/status")
-async def deploy_status(slug: str):
-    """Status of the project's standalone deploy:
-    {running, port?, url?, pid?, command?}."""
-    return local_runner.deploy_status(slug)
-
-
 # ---- Run: multi-service app runner (services/app_runner.py) ------------------
-# Start/stop/status an app made of SEVERAL cooperating services (e.g. a backend
-# API + a frontend + a worker, plus docker deps). Each service is a scoped
-# subprocess on a centrally-allocated port; build + spawn run on a background
-# thread (status reflects a live state machine). A service that crashes is brought
-# back by docker's restart policy, and its restart count comes from docker. This
-# supersedes single-process /deploy for multi-service apps; /deploy stays for
-# trivial one-process projects.
+# Start/stop/status an app, whether it is one process or several cooperating
+# services (a backend API + a frontend + a worker, plus docker deps). Each
+# service is a scoped subprocess on a centrally-allocated port; build + spawn run
+# on a background thread (status reflects a live state machine). A service that
+# crashes is brought back by docker's restart policy, and its restart count comes
+# from docker.
+#
+# THIS IS THE ONLY DEPLOY SURFACE. `/base-apps/deploy/{slug}/{start,stop,status}`
+# (the LocalRunner standalone routes from doc 05 section 2) sat beside it until
+# 2026-08-17 with zero clients anywhere in the repo, against 14 for
+# `/base-apps/run`. app_runner covers the single-process case those routes were
+# kept for, and it does it through the same central port registry. The
+# local_runner MODULE stays: app_runner builds on its command resolution
+# (resolve_command / DeployError), its scoped env (scoped_env), its projects
+# registry constant and its surface reflection (_reflect_surface).
 
 
 @router.get("/run/{slug}/manifest")

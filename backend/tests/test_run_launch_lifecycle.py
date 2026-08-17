@@ -6,9 +6,11 @@ Three things were wrong on this path and each one hid the next:
     pid, `reconcile_stuck` cannot probe the process and falls back to a two-hour
     age ceiling, so every manual and chat-launched run that died read `running`
     for two hours. Five such Jobs were sitting in the live store.
-  * `reconcile_stuck` had no caller that ever ran. Its two shell callers are the
-    dispatcher (which exits early whenever the autonomy brake is engaged) and
-    liveness_watchdog.sh (not in crontab).
+  * `reconcile_stuck` had no caller that ever ran. Its shell caller is the
+    dispatcher, which exits early whenever the autonomy brake is engaged. (A
+    second shell caller, a watchdog script that was never in crontab, was
+    deleted in 2026-08-17; `jobs.reconcile_loop` in the backend is the caller
+    that actually runs.)
   * The chat's "file and run" called `launch_task_run` directly, skipping the
     readiness gate the /run route applied, so a BROKEN ticket launched from a card.
 """

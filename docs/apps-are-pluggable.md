@@ -109,7 +109,7 @@ no shell edit.
 - **Remove**: drop the id (or `installed_apps.remove(id)`) and restart.
 - **A brand-new app** (not in the built-in catalog): build it as a Project with a
   `workshop.app.json` runtime manifest and deploy it through the Runner
-  (`/base-apps/deploy/<slug>/…`), served from its own proxied origin. Register its
+  (`/base-apps/run/<slug>/…`), served from its own proxied origin. Register its
   identity manifest so discovery sees it. See `docs/app-platform-runner.md` and
   `docs/app-platform-plan.md`. No step edits a platform-core file.
 

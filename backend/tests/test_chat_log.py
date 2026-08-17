@@ -625,17 +625,28 @@ class TestMigration:
         assert chat_store.get_thread(tid)["messages"] == _LEGACY_MESSAGES
         assert _seqs(tid) == [1, 2, 3, 4]
 
-    def test_every_owner_is_migrated(self, tmp_path, monkeypatch):
+    def test_each_owner_is_migrated_on_first_touch(self, tmp_path, monkeypatch):
+        """There is no all-owners startup sweep any more. Every owner still gets
+        its own legacy documents folded in the first time it reads a thread, and
+        one owner's read never migrates (or even sees) another owner's."""
         monkeypatch.setattr(ownership, "_RUNTIME", tmp_path)
         ids = {}
         for owner in (1, 2):
             ownership.set_current_owner(owner)
             ids[owner], _ = _write_legacy()
         ownership.clear_current_owner()
-        assert chat_log.migrate_all_owners()["migrated"] == 2
-        for owner, tid in ids.items():
-            ownership.set_current_owner(owner)
-            try:
-                assert chat_store.get_thread(tid)["messages"] == _LEGACY_MESSAGES
-            finally:
-                ownership.clear_current_owner()
+
+        # Owner 1 touches its thread: its document folds in, owner 2's does not.
+        ownership.set_current_owner(1)
+        try:
+            assert chat_store.get_thread(ids[1])["messages"] == _LEGACY_MESSAGES
+            assert chat_store.get_thread(ids[2]) is None
+        finally:
+            ownership.clear_current_owner()
+
+        ownership.set_current_owner(2)
+        try:
+            assert (tmp_path / "users" / "2" / "chat" / f"{ids[2]}.json").exists()
+            assert chat_store.get_thread(ids[2])["messages"] == _LEGACY_MESSAGES
+        finally:
+            ownership.clear_current_owner()

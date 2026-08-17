@@ -1855,7 +1855,7 @@ def backfill_cuts() -> int:
     before 2026-08-12 carry `boundary_seq` and no count; without this the
     divider would vanish from them while the prompt kept honouring the cut.
 
-    IT ITERATES OWNERS EXPLICITLY, like `chat_log.migrate_all_owners`. Every
+    IT ITERATES OWNERS EXPLICITLY. Every
     read here is owner-scoped and startup has no owner in context, so the
     obvious version ran against nothing at all and reported success: measured
     2026-08-12, zero threads resolved on a box with sixty of them.

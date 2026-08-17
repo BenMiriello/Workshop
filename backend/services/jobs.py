@@ -353,8 +353,10 @@ def reconcile_stuck(*, min_age_sec: int = 120, max_age_sec: int = 7200,
     avoid racing a just-opened Job) AND either its recorded ``pid`` is no longer
     alive, or it has no pid and is older than ``max_age_sec`` (a hard age ceiling
     for legacy records that predate pid recording). Returns the list of Jobs it
-    failed. Reclaiming the associated Task is the task store's job (tasks.reclaim);
-    this only fixes the Job record."""
+    failed. Reclaiming the associated Task is the task store's job:
+    `tasks.next_ready` calls `tasks.reclaim` unconditionally before it hands out
+    work, so a strand is released at the moment it would otherwise block a
+    dispatch. This only fixes the Job record."""
     now = now or datetime.now(timezone.utc)
     failed: list[dict] = []
     for rec in read(status="running", limit=1000):
@@ -385,7 +387,8 @@ async def reconcile_loop(interval_s: int = RECONCILE_INTERVAL_S) -> None:
 
     Until this existed, reconcile had no caller that actually ran: the dispatcher
     call sits after an early exit that fires whenever autonomy is engaged, and
-    liveness_watchdog.sh is not in crontab. So a crashed run stayed `running`
+    the shell watchdog that was meant to be the backstop was never in crontab
+    (it has since been deleted, 2026-08-17). So a crashed run stayed `running`
     indefinitely and the operator watched a dead job spin. The backend is already
     the process that survives everything else, so it is the right owner.
     """

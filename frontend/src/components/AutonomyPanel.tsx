@@ -10,13 +10,12 @@ import {
   useEditMode, type StatusKind, type SegmentedOption,
 } from "@workshop/ui";
 import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib/tasks";
-import { isAutonomyMode, type AutonomyMode } from "../lib/autonomy";
 import { jobStatusKind } from "../lib/jobs";
 import { timeAbsolute } from "../lib/time";
 import { shortHttpError } from "../lib/httpError";
 
-// Autonomy = how a scope (a project OR an agent) decides when to work its own
-// task queue through the Ralph loop. The PRIMARY control is a preset (Section
+// Autonomy = how a PROJECT decides when to work its own task queue through the
+// Ralph loop. The PRIMARY control is a preset (Section
 // 10.4 of orchestration-and-autonomy.md), not a raw trigger list:
 //
 //   off         no automatic runs; manual "Run now" only
@@ -40,14 +39,15 @@ import { shortHttpError } from "../lib/httpError";
 // (docs/system-honesty-plan-2026-08-10.md, item 19). Don't add them back
 // without the code that honors them.
 //
-// The panel serves BOTH scopes off one prop set: a project (default) writes the
-// preset directly to PUT /projects/{slug}/autonomy; an agent expands the preset
-// to triggers and writes PUT /agents/{id}. The project callsite keeps working
-// unchanged; agent scope is opt-in via the optional `scope`/`agentId` props.
+// PROJECT SCOPE ONLY. This panel used to carry a second `scope="agent"` branch
+// that wrote PUT /agents/{id}, along with a client-side mirror of the backend's
+// triggers.preset_to_triggers. Nothing ever passed `scope`: the single callsite
+// (ProjectDetail) takes the project default, and per-agent triggers are edited
+// by AgentDetail's TriggerEditor, which is the live surface for that job. The
+// two had already drifted apart in what they called the same trigger, which is
+// what a second unused implementation of one job buys. Deleted 2026-08-17.
 
 type Preset = "off" | "on-demand" | "scheduled" | "continuous";
-// AutonomyMode (the per-agent axis, distinct from the cadence preset above)
-// comes from lib/autonomy, which owns that vocabulary.
 
 type TriggerKind = "manual" | "cron" | "event" | "loop";
 
@@ -81,9 +81,6 @@ type Job = {
 
 type Autonomy = {
   autonomy: Preset;
-  // Per-agent autonomy mode from the 2026-07-18 model. Populated for scope=
-  // "agent"; ignored for scope="project" (project is a scope, not an agent).
-  autonomy_mode?: AutonomyMode;
   // null = this scope sets none, so work here inherits the default. Kept null
   // (never defaulted to "standard") so the scope never claims a setting it lacks.
   latitude: Latitude | null;
@@ -98,9 +95,6 @@ type Autonomy = {
 
 type PrimaryDraft = {
   preset: Preset;
-  // Agent-scope autonomy mode. For project scope this field is present but the
-  // control is not rendered and the Save path drops it.
-  autonomy_mode: AutonomyMode;
   // The draft carries the default rather than null: the control always shows a
   // position. Saving `standard` clears the stored value back to null, which is
   // the same behavior — the scope stops asserting a latitude.
@@ -118,18 +112,6 @@ const PRESET_OPTIONS: SegmentedOption<Preset>[] = [
   { value: "scheduled", label: "Scheduled" },
   { value: "continuous", label: "Continuous" },
 ];
-
-const AUTONOMY_MODE_OPTIONS: SegmentedOption<AutonomyMode>[] = [
-  { value: "reactive", label: "Reactive" },
-  { value: "supervised", label: "Supervised" },
-  { value: "autonomous", label: "Autonomous" },
-];
-
-const AUTONOMY_MODE_DESC: Record<AutonomyMode, string> = {
-  reactive: "Never runs in the background. Manual invocation only.",
-  supervised: "Fires on triggers; results land in Review before commit.",
-  autonomous: "Fires on triggers; results commit directly.",
-};
 
 const LATITUDE_OPTIONS: SegmentedOption<Latitude>[] = LATITUDES.map((v) => ({
   value: v,
@@ -154,23 +136,6 @@ function isLatitude(v: unknown): v is Latitude {
 function cronFromTriggers(triggers?: Trigger[]): string {
   const cron = (triggers || []).find((t) => t.kind === "cron");
   return cron?.cron_expression ?? "";
-}
-
-// Client mirror of backend triggers.preset_to_triggers, used for the agent
-// scope (whose PUT accepts a trigger list, not a preset). The project scope
-// sends the preset directly and lets the backend expand it.
-function presetToTriggers(preset: Preset, cron: string, limits: Limits): Trigger[] {
-  if (preset === "continuous") {
-    return [{
-      kind: "loop",
-      max_iterations: limits.max_iterations ?? 20,
-      budget: limits.budget ?? { max_wall_s: 3000 },
-      completion_gate: limits.completion_gate ?? "reviewer",
-    }];
-  }
-  if (preset === "scheduled") return [{ kind: "cron", cron_expression: cron || "" }];
-  if (preset === "on-demand") return [{ kind: "manual" }];
-  return [];
 }
 
 function draftLimits(draft: PrimaryDraft): Limits {
@@ -207,24 +172,8 @@ function triggerSummary(t: Trigger): string {
 
 // ---- Component -------------------------------------------------------------
 
-export default function AutonomyPanel({
-  slug,
-  scope = "project",
-  agentId,
-}: {
-  slug: string;
-  // Which scope this panel governs. Defaults to "project" so the existing
-  // project callsite keeps its exact behavior. "agent" points the same UI at
-  // the agent autonomy endpoints instead.
-  scope?: "project" | "agent";
-  // Agent identifier for scope === "agent". Falls back to `slug` when omitted,
-  // so a caller can pass the agent id as `slug` alone if it prefers.
-  agentId?: string;
-}) {
-  const scopeId = scope === "agent" ? (agentId ?? slug) : slug;
-  const getUrl = scope === "agent"
-    ? `/api/agents/${encodeURIComponent(scopeId)}`
-    : `/api/projects/${encodeURIComponent(slug)}/autonomy`;
+export default function AutonomyPanel({ slug }: { slug: string }) {
+  const getUrl = `/api/projects/${encodeURIComponent(slug)}/autonomy`;
   const putUrl = getUrl;
   const runUrl = `/api/projects/${encodeURIComponent(slug)}/autonomy/run`;
 
@@ -242,7 +191,6 @@ export default function AutonomyPanel({
       const raw = await r.json();
       const cfgNext: Autonomy = {
         autonomy: isPreset(raw.autonomy) ? raw.autonomy : "off",
-        autonomy_mode: isAutonomyMode(raw.autonomy_mode) ? raw.autonomy_mode : "reactive",
         latitude: isLatitude(raw.latitude) ? raw.latitude : null,
         limits: (raw.limits && typeof raw.limits === "object") ? raw.limits : {},
         triggers: Array.isArray(raw.triggers) ? raw.triggers : [],
@@ -267,7 +215,6 @@ export default function AutonomyPanel({
   // Primary preset config: the main control. Edit-mode + explicit Save.
   const primaryModel = useMemo<PrimaryDraft>(() => ({
     preset: cfg?.autonomy ?? "off",
-    autonomy_mode: cfg?.autonomy_mode ?? "reactive",
     latitude: cfg?.latitude ?? DEFAULT_LATITUDE,
     cron: cronFromTriggers(cfg?.triggers),
     maxIterations: cfg?.limits?.max_iterations != null ? String(cfg.limits.max_iterations) : "",
@@ -277,22 +224,15 @@ export default function AutonomyPanel({
   const pedit = useEditMode<PrimaryDraft>(primaryModel, async (draft) => {
     setSaveErr(null);
     const limits = draftLimits(draft);
-    let body: unknown;
-    if (scope === "agent") {
-      body = {
-        triggers: presetToTriggers(draft.preset, draft.cron, limits),
-        autonomy: draft.autonomy_mode,
-        latitude: draft.latitude,
-        limits,
-      };
-    } else {
-      body = {
-        preset: draft.preset,
-        cron: draft.preset === "scheduled" ? draft.cron : undefined,
-        latitude: draft.latitude,
-        limits,
-      };
-    }
+    // The preset goes over the wire as a preset. The backend expands it
+    // (triggers.preset_to_triggers) so there is exactly one expansion, on the
+    // side that owns the trigger vocabulary.
+    const body = {
+      preset: draft.preset,
+      cron: draft.preset === "scheduled" ? draft.cron : undefined,
+      latitude: draft.latitude,
+      limits,
+    };
     const r = await fetch(putUrl, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -374,13 +314,11 @@ export default function AutonomyPanel({
       <Row between style={{ marginBottom: "var(--space-3)" }}>
         <SectionLabel icon={<Repeat aria-hidden />}>Autonomy</SectionLabel>
         <Row wrap style={{ gap: "var(--space-2)" }}>
-          {cfg && (scope === "project" ? (
+          {cfg && (
             <StatusPill status={running ? "running" : jobStatusKind(last?.status)}>
               {running ? "running" : (last?.status ?? "never run")}
             </StatusPill>
-          ) : (
-            <Tag hue={catFor(preset)}>{preset}</Tag>
-          ))}
+          )}
           <Button size="sm" variant="ghost" onClick={load}>
             <RefreshCw aria-hidden /> Refresh
           </Button>
@@ -389,17 +327,15 @@ export default function AutonomyPanel({
               <SlidersHorizontal aria-hidden /> Edit
             </Button>
           )}
-          {scope === "project" && (
-            <Button
-              size="sm"
-              variant="primary"
-              loading={busy && !running}
-              disabled={busy || running || anyEditing}
-              onClick={runNow}
-            >
-              <Play aria-hidden /> Run now
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="primary"
+            loading={busy && !running}
+            disabled={busy || running || anyEditing}
+            onClick={runNow}
+          >
+            <Play aria-hidden /> Run now
+          </Button>
         </Row>
       </Row>
 
@@ -418,25 +354,12 @@ export default function AutonomyPanel({
             {/* ---- Primary preset control ---- */}
             {pedit.editing ? (
               <Stack>
-                {scope === "agent" && (
-                  <Field
-                    label="Autonomy mode"
-                    help={AUTONOMY_MODE_DESC[pedit.draft.autonomy_mode]}
-                  >
-                    <Segmented
-                      ariaLabel="Per-agent autonomy mode"
-                      options={AUTONOMY_MODE_OPTIONS}
-                      value={pedit.draft.autonomy_mode}
-                      onChange={(v) => pedit.set("autonomy_mode", v)}
-                    />
-                  </Field>
-                )}
                 <Field
-                  label={scope === "agent" ? "Trigger cadence" : "Autonomy"}
+                  label="Autonomy"
                   help={PRESET_DESC[pedit.draft.preset]}
                 >
                   <Segmented
-                    ariaLabel={scope === "agent" ? "Trigger cadence" : "Autonomy preset"}
+                    ariaLabel="Autonomy preset"
                     options={PRESET_OPTIONS}
                     value={pedit.draft.preset}
                     onChange={(v) => pedit.set("preset", v)}
@@ -504,16 +427,8 @@ export default function AutonomyPanel({
               </Stack>
             ) : (
               <Stack gap="sm">
-                {scope === "agent" && cfg?.autonomy_mode && (
-                  <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                    <Tag hue={catFor(cfg.autonomy_mode)}>{cfg.autonomy_mode}</Tag>
-                    <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                      {AUTONOMY_MODE_DESC[cfg.autonomy_mode]}
-                    </span>
-                  </Row>
-                )}
                 <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                  <Tag hue={catFor(preset)}>{scope === "agent" ? `cadence: ${preset}` : preset}</Tag>
+                  <Tag hue={catFor(preset)}>{preset}</Tag>
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{PRESET_DESC[preset]}</span>
                 </Row>
                 <Row wrap style={{ gap: "var(--space-4)" }}>
@@ -541,12 +456,12 @@ export default function AutonomyPanel({
                 {cfg?.updated && (
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Updated {timeAbsolute(cfg.updated)}</span>
                 )}
-                {scope === "project" && running && last?.trigger && (
+                {running && last?.trigger && (
                   <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
                     Sweep running (trigger <span className="ws-mono">{last.trigger}</span>, started {timeAbsolute(last.started_at)}).
                   </p>
                 )}
-                {scope === "project" && !running && last && (
+                {!running && last && (
                   <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
                     Last run {timeAbsolute(last.started_at)}: {last.status}
                     {typeof last.tasks_done === "number" ? `, ${last.tasks_done} done` : ""}

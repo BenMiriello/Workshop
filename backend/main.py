@@ -49,10 +49,10 @@ async def lifespan(app: FastAPI):
     # moves forward at the git remote. Respects both autonomy overrides.
     from services import deploy_watcher
     app.state._bg_deploy_watcher = asyncio.create_task(deploy_watcher.watcher_loop())
-    # Job liveness: close Jobs left `running` by a process that died. Its two
-    # shell callers never fire (the dispatcher exits early while autonomy is
-    # engaged, and liveness_watchdog.sh is not in crontab), so a crashed run used
-    # to read `running` forever. The backend outlives every run, so it reaps.
+    # Job liveness: close Jobs left `running` by a process that died. Its only
+    # shell caller never fires (the dispatcher exits early while autonomy is
+    # engaged), so a crashed run used to read `running` forever. The backend
+    # outlives every run, so it reaps.
     from services import jobs as jobs_svc
     app.state._bg_job_reconcile = asyncio.create_task(jobs_svc.reconcile_loop())
     # Dedup vectors: embed the open backlog so filing a ticket does not. `decide`
@@ -67,15 +67,13 @@ async def lifespan(app: FastAPI):
     # when the backend went down. Detached claude subprocesses keep working across
     # a restart; this tails their on-disk journals to completion (or finalizes a
     # dead one) so a chat is never left stuck mid-turn.
-    # Chat threads moved from one JSON document each to an append-only event log
-    # (docs/chat-rebuild-spec-2026-08-09.md). One shot, idempotent, non-
-    # destructive: a thread already on the log has no legacy file left to find,
-    # and a migration that fails leaves the original where it was.
-    try:
-        from services import chat_log
-        chat_log.migrate_all_owners()
-    except Exception as e:
-        log.error("chat log migration failed at startup: %s", e)
+    #
+    # The chat-log migration (one JSON document per thread -> an append-only
+    # event log, docs/chat-rebuild-spec-2026-08-09.md) USED to run here on every
+    # boot. It is finished: 58 threads migrated, zero legacy documents left on
+    # any owner, measured 2026-08-17. The per-owner fold-in stays where it can
+    # still matter (chat_store.list_threads / get_thread), so a straggler is
+    # still absorbed on first touch without a startup pass over every owner.
     try:
         from services import build_streaming
         build_streaming.reattach_running_turns()
