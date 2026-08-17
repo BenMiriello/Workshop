@@ -134,6 +134,62 @@ def _org_target(table: str) -> UniqueConstraint:
     return UniqueConstraint("id", "org_id", name=f"uq_{table}_id_org")
 
 
+def _org_ref(child: str, column: str, target: str, *,
+             ondelete: str) -> ForeignKeyConstraint:
+    """`FOREIGN KEY (<column>, org_id) REFERENCES <target> (id, org_id)`.
+
+    The other half of `_org_target`, and the reason this is a function rather
+    than 15 hand-spelled `ForeignKeyConstraint`s: a single-column FK here is
+    indistinguishable at a glance from a composite one, and the composite form
+    is the only thing that stops a row in org A pointing at a row in org B.
+    Between 2026-08-05 and 2026-08-17 the live database carried all fifteen and
+    this file declared one, so `alembic revision --autogenerate` emitted a
+    migration that dropped every one of them. Add a tenant-scoped reference
+    through here and that cannot happen again.
+
+    ON DELETE SET NULL NAMES ITS COLUMN. A composite key's bare `SET NULL` nulls
+    every column in the key, `org_id` included, and `org_id` is NOT NULL -- so
+    the delete raises instead of clearing the pointer. Postgres 15+ takes a
+    column list; see the same note on `chat_branch`, where it was measured.
+    """
+    return ForeignKeyConstraint(
+        [column, "org_id"], [f"{target}.id", f"{target}.org_id"],
+        name=f"{child}_{column}_org_fkey", ondelete=ondelete)
+
+
+def _actor_consistent(type_column: str, user_column: str,
+                      name: str) -> CheckConstraint:
+    """A `user` actor names a user row; an `agent` or `system` actor does not.
+
+    Both halves matter. Without the first, a comment attributed to a person
+    carries no person and the activity feed silently renders "user" with no
+    name; without the second, a machine-written row can point at whichever
+    account happened to be in scope, which is worse -- it is a false
+    attribution that reads as a true one. Nullable-plus-CHECK rather than two
+    tables, because the pair is one fact about one row.
+    """
+    return CheckConstraint(
+        f"({type_column} = 'user' AND {user_column} IS NOT NULL) OR "
+        f"({type_column} <> 'user' AND {user_column} IS NULL)", name=name)
+
+
+def _one_default(table: str) -> Index:
+    """At most one row per project may be the default. A partial unique index,
+    because "default" is a property of the live set and a soft-deleted row must
+    not hold the slot."""
+    return Index(f"uq_{table}_one_default", "project_id", unique=True,
+                 postgresql_where=text("is_default AND deleted_at IS NULL"))
+
+
+def _external_target(table: str) -> Index:
+    """`UNIQUE (org_id, external_source, external_id)` over live rows. How the
+    mirror finds a row it already wrote, and what makes a re-run idempotent."""
+    return Index(f"uq_{table}_external", "org_id", "external_source",
+                 "external_id", unique=True,
+                 postgresql_where=text(
+                     "external_id IS NOT NULL AND deleted_at IS NULL"))
+
+
 def _thread_target(table: str) -> UniqueConstraint:
     """`UNIQUE (id, thread_id)`, the same trick one level narrower.
 
@@ -259,6 +315,7 @@ class Project(Base, Timestamps, SoftDelete):
         Integer, nullable=False, server_default="1")
 
     __table_args__ = (
+        _org_target("project"),
         Index("uq_project_slug", "org_id", "slug", unique=True, postgresql_where=_ALIVE),
         Index("uq_project_key", "org_id", "key", unique=True, postgresql_where=_ALIVE),
     )
@@ -272,8 +329,7 @@ class WorkflowState(Base, Timestamps, SoftDelete):
     id: Mapped[uuid.UUID] = _pk()
     org_id: Mapped[uuid.UUID] = _org_fk()
     project_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"),
-        nullable=False)
+        PgUUID(as_uuid=True), nullable=False)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     category: Mapped[str] = mapped_column(String(16), nullable=False)
     position: Mapped[float] = mapped_column(Float, nullable=False, server_default="65535")
@@ -283,8 +339,11 @@ class WorkflowState(Base, Timestamps, SoftDelete):
     __table_args__ = (
         CheckConstraint(_one_of("category", STATE_CATEGORIES),
                         name="ck_workflow_state_category"),
+        _org_target("workflow_state"),
+        _org_ref("workflow_state", "project_id", "project", ondelete="CASCADE"),
         Index("uq_workflow_state_name", "project_id", "name", unique=True,
               postgresql_where=_ALIVE),
+        _one_default("workflow_state"),
         Index("ix_workflow_state_project", "org_id", "project_id", "position"),
     )
 
@@ -297,8 +356,7 @@ class TicketType(Base, Timestamps, SoftDelete):
 
     id: Mapped[uuid.UUID] = _pk()
     org_id: Mapped[uuid.UUID] = _org_fk()
-    project_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"))
+    project_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     is_default: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
@@ -309,8 +367,11 @@ class TicketType(Base, Timestamps, SoftDelete):
         nullable=False, server_default=text("false"))
 
     __table_args__ = (
+        _org_target("ticket_type"),
+        _org_ref("ticket_type", "project_id", "project", ondelete="CASCADE"),
         Index("uq_ticket_type_name", "org_id", "project_id", "name", unique=True,
               postgresql_where=_ALIVE),
+        _one_default("ticket_type"),
     )
 
 
@@ -320,26 +381,22 @@ class Ticket(Base, Timestamps, SoftDelete):
     id: Mapped[uuid.UUID] = _pk()
     org_id: Mapped[uuid.UUID] = _org_fk()
     project_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"),
-        nullable=False)
+        PgUUID(as_uuid=True), nullable=False)
     number: Mapped[int] = mapped_column(Integer, nullable=False)
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
 
     state_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("workflow_state.id", ondelete="RESTRICT"),
-        nullable=False)
-    type_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("ticket_type.id", ondelete="SET NULL"))
+        PgUUID(as_uuid=True), nullable=False)
+    type_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
 
     priority: Mapped[str] = mapped_column(
         SAEnum(*PRIORITIES, name="ticket_priority"),
         nullable=False, server_default="none")
     effort: Mapped[str | None] = mapped_column(String(16))
 
-    parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("ticket.id", ondelete="SET NULL"))
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
 
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("user_account.id", ondelete="SET NULL"))
@@ -465,6 +522,13 @@ class Ticket(Base, Timestamps, SoftDelete):
             name="ck_ticket_source_kind"),
         CheckConstraint("parent_id IS NULL OR parent_id <> id",
                         name="ck_ticket_not_own_parent"),
+        _org_target("ticket"),
+        _org_ref("ticket", "project_id", "project", ondelete="CASCADE"),
+        _org_ref("ticket", "state_id", "workflow_state", ondelete="RESTRICT"),
+        _org_ref("ticket", "type_id", "ticket_type",
+                 ondelete="SET NULL (type_id)"),
+        _org_ref("ticket", "parent_id", "ticket",
+                 ondelete="SET NULL (parent_id)"),
         Index("uq_ticket_number", "project_id", "number", unique=True),
         # The list view: newest-first within a project.
         Index("ix_ticket_updated", "org_id", "project_id", "updated_at"),
@@ -474,6 +538,13 @@ class Ticket(Base, Timestamps, SoftDelete):
         Index("ix_ticket_queue", "org_id", "project_id", "priority", "created_at",
               postgresql_where=text("closed_at IS NULL AND deleted_at IS NULL")),
         Index("ix_ticket_parent", "parent_id"),
+        # "which tickets did this conversation file", the query `source_kind` /
+        # `source_ref` exist to make possible. Partial on the one kind that
+        # carries a thread id.
+        Index("ix_ticket_source_chat", "org_id", "source_ref",
+              postgresql_where=text(
+                  "source_kind = 'chat' AND source_ref IS NOT NULL "
+                  "AND deleted_at IS NULL")),
     )
 
 
@@ -485,11 +556,9 @@ class TicketLink(Base, Timestamps, SoftDelete):
     id: Mapped[uuid.UUID] = _pk()
     org_id: Mapped[uuid.UUID] = _org_fk()
     from_ticket_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("ticket.id", ondelete="CASCADE"),
-        nullable=False)
+        PgUUID(as_uuid=True), nullable=False)
     to_ticket_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("ticket.id", ondelete="CASCADE"),
-        nullable=False)
+        PgUUID(as_uuid=True), nullable=False)
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("user_account.id", ondelete="SET NULL"))
@@ -497,6 +566,11 @@ class TicketLink(Base, Timestamps, SoftDelete):
     __table_args__ = (
         CheckConstraint(_one_of("kind", LINK_KINDS), name="ck_ticket_link_kind"),
         CheckConstraint("from_ticket_id <> to_ticket_id", name="ck_ticket_link_not_self"),
+        # No `_org_target` here: nothing references a link, so there is no pair
+        # to expose. Both ENDS are composite, which is the property that matters
+        # -- a link cannot join a ticket in one org to a ticket in another.
+        _org_ref("ticket_link", "from_ticket_id", "ticket", ondelete="CASCADE"),
+        _org_ref("ticket_link", "to_ticket_id", "ticket", ondelete="CASCADE"),
         Index("uq_ticket_link", "from_ticket_id", "to_ticket_id", "kind",
               unique=True, postgresql_where=_ALIVE),
         # The readiness predicate reads edges by target, so index both directions.
@@ -509,12 +583,13 @@ class Label(Base, Timestamps, SoftDelete):
 
     id: Mapped[uuid.UUID] = _pk()
     org_id: Mapped[uuid.UUID] = _org_fk()
-    project_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("project.id", ondelete="CASCADE"))
+    project_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     color: Mapped[str | None] = mapped_column(String(32))
 
     __table_args__ = (
+        _org_target("label"),
+        _org_ref("label", "project_id", "project", ondelete="CASCADE"),
         Index("uq_label_name", "org_id", "project_id", "name", unique=True,
               postgresql_where=_ALIVE),
     )
@@ -524,14 +599,16 @@ class TicketLabel(Base):
     __tablename__ = "ticket_label"
 
     ticket_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("ticket.id", ondelete="CASCADE"),
-        primary_key=True)
+        PgUUID(as_uuid=True), primary_key=True)
     label_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("label.id", ondelete="CASCADE"),
-        primary_key=True)
+        PgUUID(as_uuid=True), primary_key=True)
     org_id: Mapped[uuid.UUID] = _org_fk()
 
-    __table_args__ = (Index("ix_ticket_label_label", "label_id"),)
+    __table_args__ = (
+        _org_ref("ticket_label", "ticket_id", "ticket", ondelete="CASCADE"),
+        _org_ref("ticket_label", "label_id", "label", ondelete="CASCADE"),
+        Index("ix_ticket_label_label", "label_id"),
+    )
 
 
 class Comment(Base, Timestamps, SoftDelete):
@@ -546,10 +623,8 @@ class Comment(Base, Timestamps, SoftDelete):
     id: Mapped[uuid.UUID] = _pk()
     org_id: Mapped[uuid.UUID] = _org_fk()
     ticket_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("ticket.id", ondelete="CASCADE"),
-        nullable=False)
-    parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("comment.id", ondelete="CASCADE"))
+        PgUUID(as_uuid=True), nullable=False)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
     author_type: Mapped[str] = mapped_column(String(16), nullable=False)
     # Nullable because a `system` (or `agent`, see above) author has no row to
     # point at.
@@ -565,7 +640,13 @@ class Comment(Base, Timestamps, SoftDelete):
 
     __table_args__ = (
         CheckConstraint(_one_of("author_type", ACTOR_TYPES), name="ck_comment_author_type"),
+        _actor_consistent("author_type", "author_user_id",
+                          "ck_comment_actor_is_consistent"),
+        _org_target("comment"),
+        _org_ref("comment", "ticket_id", "ticket", ondelete="CASCADE"),
+        _org_ref("comment", "parent_id", "comment", ondelete="CASCADE"),
         Index("ix_comment_ticket", "ticket_id", "created_at"),
+        _external_target("comment"),
     )
 
 
@@ -585,8 +666,7 @@ class TicketEvent(Base):
     id: Mapped[uuid.UUID] = _pk()
     org_id: Mapped[uuid.UUID] = _org_fk()
     ticket_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("ticket.id", ondelete="CASCADE"),
-        nullable=False)
+        PgUUID(as_uuid=True), nullable=False)
     actor_type: Mapped[str] = mapped_column(String(16), nullable=False)
     # Nullable because a `system` (or `agent`; see `Comment.author_user_id`
     # for why there is no `actor_agent_id`) actor has no row to point at.
@@ -596,13 +676,18 @@ class TicketEvent(Base):
     field: Mapped[str | None] = mapped_column(String(64))
     old_value: Mapped[str | None] = mapped_column(Text)
     new_value: Mapped[str | None] = mapped_column(Text)
-    comment_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("comment.id", ondelete="SET NULL"))
+    comment_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (
         CheckConstraint(_one_of("actor_type", ACTOR_TYPES), name="ck_ticket_event_actor_type"),
+        _actor_consistent("actor_type", "actor_user_id",
+                          "ck_ticket_event_actor_is_consistent"),
+        # No `_org_target`: an audit row is never referenced.
+        _org_ref("ticket_event", "ticket_id", "ticket", ondelete="CASCADE"),
+        _org_ref("ticket_event", "comment_id", "comment",
+                 ondelete="SET NULL (comment_id)"),
         Index("ix_ticket_event_ticket", "ticket_id", "created_at"),
     )
 
@@ -759,7 +844,10 @@ class ChatThread(Base, Timestamps, SoftDelete):
         # is the thread's own id, matched against chat_branch.thread_id.
         ForeignKeyConstraint(
             ["current_branch_id", "id"], ["chat_branch.id", "chat_branch.thread_id"],
-            name="chat_thread_current_branch_fkey", ondelete="SET NULL",
+            name="chat_thread_current_branch_fkey",
+            # Names its column, for the reason spelled out on `chat_branch`
+            # below: a bare SET NULL on a composite key also nulls `id`.
+            ondelete="SET NULL (current_branch_id)",
             use_alter=True),
         Index("uq_chat_thread_external", "external_id", unique=True,
               postgresql_where=text("external_id IS NOT NULL AND deleted_at IS NULL")),
@@ -954,7 +1042,7 @@ class ChatMessage(Base, Timestamps, SoftDelete):
             name="chat_message_parent_fkey", ondelete="CASCADE"),
         ForeignKeyConstraint(
             ["turn_id", "thread_id"], ["chat_turn.id", "chat_turn.thread_id"],
-            name="chat_message_turn_fkey", ondelete="SET NULL"),
+            name="chat_message_turn_fkey", ondelete="SET NULL (turn_id)"),
         Index("uq_chat_message_seq", "thread_id", "seq", unique=True),
         Index("uq_chat_message_client", "thread_id", "client_id", unique=True,
               postgresql_where=text("client_id IS NOT NULL AND deleted_at IS NULL")),
