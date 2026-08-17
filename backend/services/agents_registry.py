@@ -149,7 +149,12 @@ DEFAULT_LATITUDE = _latitude.DEFAULT_LATITUDE
 # Default `reactive` per §1.1: background execution is opt-in. Existing agents
 # with declared triggers keep working via the compat path in dispatch (C5 will
 # flip to strict enforcement).
-AUTONOMY = ("reactive", "supervised", "autonomous")
+# ONE definition, not a fourth restatement. This tuple was declared identically
+# in four places (here, services/triggers.py, services/deploys.py and the schema)
+# with nothing keeping them in step. T5 pointed deploys.py at triggers.py; this
+# is the third. `triggers` is already imported at module scope above, so this
+# costs nothing and `scripts/check_one_definition.py` stops counting it.
+AUTONOMY = triggers.AUTONOMY_MODES
 DEFAULT_AUTONOMY = "reactive"
 
 # CLOSED ENUM (final-plan P0). `role` used to be a free-form tag, which meant a

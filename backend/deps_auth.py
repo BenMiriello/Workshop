@@ -8,7 +8,7 @@ FAILED OPEN when no token was configured — is removed.
 
 What remains here is a deliberately narrow guard for genuinely internal
 machine-to-machine infrastructure endpoints that carry NO personal data and are
-NOT exposed through the public proxy (relay/services/events/auto_pr): they accept
+NOT exposed through the public proxy (relay, services, events): they accept
 calls only from the loopback interface. There is no CGNAT trust, no fail-open, and
 no path by which this guard grants access to any personal-data router.
 """
@@ -52,9 +52,10 @@ def _is_internal(host: str) -> bool:
 
 
 async def require_loopback(request: Request) -> None:
-    """Allow only loopback callers. For internal infra routers (relay/services/
-    events/auto_pr) that hold no personal data and are never reachable from the
-    public origin — backend self-calls reach these from 127.0.0.1."""
+    """Allow only loopback callers. For internal infra routers (relay, services,
+    events) that hold no personal data and are never reachable from the public
+    origin: backend self-calls reach these from 127.0.0.1. The auto_pr router
+    this also named was deleted on 2026-08-17 (T5, zero callers)."""
     peer = request.client.host if request.client else ""
     if _is_loopback(peer):
         return

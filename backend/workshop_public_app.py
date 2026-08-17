@@ -54,10 +54,15 @@ _DIST_ROOT = DIST.resolve()
 # them by origin would be the network-position anti-pattern this whole redesign
 # removed, and it broke the operator using those pages on the public web.
 _BLOCKED_PREFIXES = (
-    # internal / loopback-trusted machine endpoints (no user auth). NOTE the router
-    # prefix is "/auto-pr" (routes/auto_pr.py); "/auto" alone did NOT match it since
-    # blocking is segment-exact after normalize, so /api/auto-pr was proxied through
-    # and inherited loopback trust. Fixed 2026-07-18 (security-audit-2026-07-18 H1).
+    # internal / loopback-trusted machine endpoints (no user auth).
+    #
+    # "/auto-pr" is kept deliberately even though routes/auto_pr.py was deleted on
+    # 2026-08-17 (T5, zero callers). A blocklist entry for a route that no longer
+    # exists costs nothing and fails safe if the router is ever restored; removing
+    # it is how the original bug came back. That bug is worth remembering: the
+    # entry read "/auto", which did NOT match, because blocking is segment-exact
+    # after normalize, so /api/auto-pr was proxied straight through and inherited
+    # loopback trust (security-audit-2026-07-18 H1, fixed 2026-07-18).
     "/tools", "/relay", "/services", "/events", "/auto-pr",
 )
 
