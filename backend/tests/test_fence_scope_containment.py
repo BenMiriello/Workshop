@@ -53,8 +53,14 @@ def _note(scope: str) -> str:
 
 
 def _learning(scope: str) -> str:
-    return ('ok\n\n```learning-note\n{"note": "prefers brevity", "scope": "%s"}\n```\n'
-            % scope)
+    # A real guardrail, not a two-word placeholder. Since ADR 0022 the learnings
+    # write path refuses candidates that are not instructional guidance, and
+    # "prefers brevity" is refused as too thin. These tests are about which
+    # SCOPE a learning lands in, so the note has to survive the gate for the
+    # scope assertion to mean anything.
+    return ('ok\n\n```learning-note\n{"note": "Prefer brief replies: answer the '
+            'question asked and do not restate the request back.", '
+            '"scope": "%s"}\n```\n' % scope)
 
 
 class TestNoteFence:
