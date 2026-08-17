@@ -498,9 +498,24 @@ def apply_learning_note(context_key: str | None, reply: str) -> tuple[str, list[
 
     from services import learnings
     try:
-        learnings.record_feedback(note, source="chat", scope=scope)
+        res = learnings.record_feedback(note, source="chat", scope=scope)
     except ValueError as e:
         return cleaned, [f"(learning note skipped: {e})"]
+    # The write path reconciles and can decline (ADR 0022): a candidate that is
+    # not instructional guidance is refused at the door, and one that restates
+    # an existing rule supersedes it or is a noop. Reporting "captured" for all
+    # of those was the exact failure the reconciliation exists to stop, just
+    # moved one layer out: the store stays clean and the operator is told
+    # something untrue about it.
+    res = res if isinstance(res, dict) else {}
+    resolution = res.get("resolution")
+    if resolution == "refused":
+        reason = res.get("reason") or "not a durable guardrail"
+        return cleaned, [f"(learning note not captured: {reason})"]
+    if resolution in ("supersede", "update"):
+        return cleaned, [f"Updated an existing preference in learnings ({scope})."]
+    if resolution == "noop":
+        return cleaned, [f"Preference already recorded in learnings ({scope})."]
     return cleaned, [f"Captured a preference in learnings ({scope})."]
 
 

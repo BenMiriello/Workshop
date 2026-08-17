@@ -13,6 +13,7 @@ cross-scope aggregation and scope enumeration.
 Scope keys mirror `knowledge.scope_dir`:
   workshop        -> shared/knowledge/
   development     -> shared/knowledge/development/   (developer mode only)
+  role:<role>     -> shared/knowledge/roles/<role>/
   project:<slug>  -> projects/<slug>/knowledge/
   app:<name>      -> apps/<name>/knowledge/
   agent:<slug>    -> .runtime/agents/<slug>/knowledge/
@@ -50,11 +51,22 @@ def _project_slugs() -> list[str]:
     return list((reg.get("projects") or {}).keys())
 
 
+def _resolved(d: Path) -> Path | None:
+    """`d.resolve()`, or None when the filesystem refuses to answer. Resolving
+    does NOT require the path to exist, which is what lets the two fixed scopes
+    (`workshop`, `development`) be surfaced before their directory does."""
+    try:
+        return d.resolve()
+    except OSError:
+        return None
+
+
 def _scope_roots() -> list[tuple[str, Path]]:
     """Every knowledge scope that actually has a directory, deduped by resolved
-    path. Priority order: workshop root, projects (registry then any stray on
-    disk), apps, agents. Only an existing knowledge dir is surfaced, so listing
-    never creates a scope."""
+    path. Priority order: workshop root, development, roles, projects (registry
+    then any stray on disk), apps, agents. Apart from the two fixed scopes of
+    an installation (`workshop` and `development`), only an existing knowledge
+    dir is surfaced, so listing never creates a scope."""
     seen: set[str] = set()
     order: list[tuple[str, Path]] = []
 
@@ -74,8 +86,35 @@ def _scope_roots() -> list[tuple[str, Path]]:
     root = knowledge._root()
     runtime = knowledge._runtime()
 
-    ws = root / "shared" / "knowledge"
-    add("workshop", ws)
+    # THE CURRENT OWNER'S shared/knowledge, not the tracked one. This used to be
+    # spelled `root / "shared" / "knowledge"` inline, which is the operator's
+    # copy for everybody. It did not disclose anybody's notes, because the
+    # listing reads contents through `knowledge.list_notes_meta(scope_key)` and
+    # that resolves per-owner via `knowledge._shared_knowledge_root()` — but the
+    # ENUMERATION was still answering "does this scope exist?" about somebody
+    # else's directory, so a second account's `workshop` and `development`
+    # scopes were listed (or not) on the strength of the operator's disk. One
+    # function owns where the layer lives; this asks it.
+    try:
+        ws = knowledge._shared_knowledge_root()
+    except Exception:
+        # No owner pinned and no bootstrap yet. Fall back to the tracked layer,
+        # which is exactly what `_shared_knowledge_root` itself returns in that
+        # state, rather than dropping every shared scope from the listing.
+        ws = root / "shared" / "knowledge"
+
+    # `workshop` is surfaced whether or not its directory exists yet, for the
+    # same reason `development` is (see below): it is a fixed scope of every
+    # installation, not one that comes and goes with a project. Enumerating it
+    # from disk was harmless while the only reader was the operator, whose
+    # `shared/knowledge/` has always existed. It stops being harmless the moment
+    # the layer is per-owner: a second account starts with no directory, so the
+    # scope would be missing from the filter and from the New note dialog, and
+    # writing the first note is the only thing that would create the directory.
+    wsr = _resolved(ws)
+    if wsr is not None and str(wsr) not in seen:
+        seen.add(str(wsr))
+        order.append(("workshop", wsr))
 
     # `development` is surfaced whether or not its directory exists yet, and ONLY
     # in developer mode (ADR 0014).
@@ -109,6 +148,28 @@ def _scope_roots() -> list[tuple[str, Path]]:
         if key not in seen:
             seen.add(key)
             order.append(("development", dev))
+
+    # `role:<role>` — the SECOND AXIS (see the knowledge.py module docstring and
+    # scope_tree's "TWO AXES, NOT ONE"). A role scope is a real, writable
+    # knowledge scope: `knowledge.scope_dir` maps it to shared/knowledge/roles/
+    # <role>/, `scope_tree.parse` accepts it, and `scope_tree.govern` puts it in
+    # every agent's prompt between the house layer and the agent's own place.
+    # It was missing from this enumeration entirely, so the one thing it holds
+    # (`roles/reviewer/review-evidence.md`) reached every reviewer's prompt and
+    # could not be listed, opened or edited from the Notes UI. Injected and
+    # invisible is the worst combination a memory layer can have.
+    #
+    # Enumerated from disk like every other non-fixed scope: the set of roles an
+    # installation has written notes for is not a fixed list, and asking
+    # `knowledge.scope_dir` about a candidate role would CREATE its directory
+    # just by looking.
+    roles_base = ws / "roles"
+    if roles_base.is_dir():
+        for child in sorted(roles_base.iterdir()):
+            if child.is_dir() and knowledge._SLUG_RE.fullmatch(child.name):
+                # A role scope IS its directory: it already lives under
+                # shared/knowledge, so there is no nested `knowledge/`.
+                add(f"role:{child.name.lower()}", child)
 
     # Projects: the registry order first (mirrors tasks_all), then a filesystem
     # sweep so a project with a knowledge dir but no registry entry is not hidden.

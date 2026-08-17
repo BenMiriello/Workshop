@@ -1043,6 +1043,14 @@ async def put_note(scope_key: str, note_id: str, title: str, content: str, hook:
     # index (design doc sec 10/7.2). Replace, not append: an edit that removed
     # a `[[Title]]` or a `workshop:...` ref must drop the corresponding
     # backlink, not just accumulate new ones on top of stale old ones.
+    #
+    # WARNING, not debug, when it fails. The other best-effort blocks above
+    # recover on their own (the next search rebuilds the index; the next turn
+    # re-reads the scope version). A dropped backlink write does not: the row
+    # stays wrong until this note is edited again, and `referenced_by` is an
+    # index, not a grep, so nothing downstream notices. A silent debug line is
+    # how "the backlink index holds no note rows" becomes a mystery instead of
+    # a log entry.
     try:
         from services import backlinks, refs
         backlinks.set_source(
@@ -1050,8 +1058,9 @@ async def put_note(scope_key: str, note_id: str, title: str, content: str, hook:
             refs.extract_refs(content, note_scope=scope_key),
         )
     except Exception:
-        log.debug("backlink index update skipped for %s/%s", scope_key, note_id,
-                  exc_info=True)
+        log.warning("backlink index update FAILED for %s/%s; its outgoing refs "
+                    "are now stale until the note is written again",
+                    scope_key, note_id, exc_info=True)
 
     return {"scope": scope_key, "note_id": note_id}
 
@@ -1086,8 +1095,9 @@ async def delete_note(scope_key: str, note_id: str) -> dict:
         from services import backlinks, refs
         backlinks.remove_source(refs.note_ref(scope_key, note_id))
     except Exception:
-        log.debug("backlink index cleanup skipped for %s/%s", scope_key, note_id,
-                  exc_info=True)
+        log.warning("backlink index cleanup FAILED for %s/%s; a deleted note "
+                    "still lists targets in referenced_by",
+                    scope_key, note_id, exc_info=True)
 
     return {"scope": scope_key, "note_id": note_id, "existed": existed}
 
@@ -1176,7 +1186,19 @@ def register_knowledge_stores() -> None:
     """Declare each existing knowledge scope as a Store of type "Note".
 
     Enumerates the on-disk scope directories (never creating one) and registers a
-    Store per scope under owner_app "knowledge". Best-effort and idempotent."""
+    Store per scope under owner_app "knowledge". Best-effort and idempotent.
+
+    THE TRACKED PATH BELOW IS DELIBERATE; do not "fix" it to
+    `_shared_knowledge_root()`. `services.stores._REGISTRY` is a process-global
+    dict keyed by store URI, and `register_all()` runs on every `/stores` read,
+    so a per-owner path here would let whichever owner called last rewrite
+    `knowledge:workshop` for the whole process — turning a store catalog that is
+    merely operator-shaped into one that actually serves one account's directory
+    to another. The routes that reach this are operator-only (`main.py` mounts
+    the stores router behind the operator dependency), and with the operator
+    pinned `_shared_knowledge_root()` returns exactly this path anyway. Making
+    the catalog per-owner is a change to the REGISTRY's shape, not to this
+    enumeration."""
     try:
         from services import stores
     except Exception:

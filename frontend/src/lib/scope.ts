@@ -50,7 +50,15 @@ export function scopeLabel(scope?: string): string {
   if (scope === "workshop") return "Workshop";
   const [kind, slug] = scope.split(":", 2);
   if (!slug) return scope;
-  const kindLabel = kind === "project" ? "Project" : kind === "agent" ? "Agent" : kind === "build" ? "Build" : kind;
+  // `role` is the SECOND AXIS, not a tree node (see backend scope_tree's "TWO
+  // AXES, NOT ONE"). It labels like any other kind; it just sits at the root of
+  // the scope picker because it has no parent.
+  const kindLabel =
+    kind === "project" ? "Project"
+    : kind === "agent" ? "Agent"
+    : kind === "build" ? "Build"
+    : kind === "role" ? "Role"
+    : kind;
   return `${kindLabel}: ${slug}`;
 }
 
