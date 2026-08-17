@@ -46,9 +46,6 @@ PLATFORM_SERVICES: list[Service] = [
             os.environ.get("WORKSHOP_BACKEND_URL", "http://127.0.0.1:8000"), "/healthz"),
     Service("workshop-frontend", "core",
             os.environ.get("WORKSHOP_FRONTEND_URL", "http://127.0.0.1:5173"), "/"),
-    Service("letta", "memory",
-            os.environ.get("LETTA_URL", "http://127.0.0.1:8283"), "/v1/health/",
-            expect_status=(200, 404)),
     Service("ollama", "models",
             os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434"), "/api/tags"),
 ]

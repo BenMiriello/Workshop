@@ -331,8 +331,6 @@ for f in "${WORKSHOP_AUTH_ENV:-$HOME/.config/workshop/auth.env}" "${WORKSHOP_CON
   done < "$f"
 done
 # Defaults the unit would otherwise provide.
-envv+=("LETTA_URL=${LETTA_URL:-http://127.0.0.1:8283}")
-envv+=("LETTA_SERVER_PASS=${LETTA_SERVER_PASS:-workshop-local}")
 envv+=("WORKSHOP_PROJECTS_ROOT=${WORKSHOP_PROJECTS_ROOT:-$HOME}")
 envv+=("WORKSHOP_ROOT=${WORKSHOP_ROOT:-$REPO_ROOT}")
 envv+=("HOME=$HOME" "PATH=$PATH")

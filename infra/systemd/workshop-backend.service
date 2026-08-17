@@ -40,8 +40,6 @@ WorkingDirectory=@WORKSHOP_ROOT@/backend
 EnvironmentFile=-%h/.config/workshop/secrets.env
 EnvironmentFile=-%h/.config/workshop/instance.env
 Environment=WORKSHOP_ROOT=@WORKSHOP_ROOT@
-Environment=LETTA_URL=http://127.0.0.1:8283
-Environment=LETTA_SERVER_PASS=workshop-local
 # Rootless docker, so the app runner can manage container apps. %t is the user's
 # runtime dir, which is how this stays correct for any uid instead of pinning
 # one. Harmless when docker is absent: container_runtime falls back.

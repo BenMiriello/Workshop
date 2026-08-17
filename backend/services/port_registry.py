@@ -55,7 +55,6 @@ WINDOWS: dict[str, tuple[int, int]] = {
 RESERVED: frozenset[int] = frozenset({
     8000,   # workshop backend (uvicorn)
     5173, 5174, 5175,  # workshop frontend (vite) + alternates
-    8283,   # letta
     11434, 11435,  # ollama
     8443, 8445, 8446, 8447,  # tailscale serve mounts
 })
