@@ -178,9 +178,12 @@ DEFAULT_AUTONOMY = "reactive"
 #   broker   — adjudicates resource access on DEMAND. Never dispatched.
 ROLES = ("maker", "reviewer", "triager", "keeper", "broker")
 
-# Back-compat: `role: memory` predates the enum and is live on agents/memory-keeper.md.
-# It reads as `keeper` so an existing definition keeps dispatching unchanged.
-ROLE_ALIASES = {"memory": "keeper"}
+# There is no alias table. `role: memory` predated the enum and survived only
+# because agents/memory-keeper.md still spelled it that way; that definition was
+# migrated to `role: keeper` on 2026-08-17 and the table deleted with it. A
+# second accepted spelling for one value is how a vocabulary grows a shadow.
+# Note the unrelated `memory:` FIELD below is a different thing entirely (which
+# memory backend an agent uses) and is untouched by this.
 
 # How an agent may be INTERACTED WITH, as two independent opt-ins. Prior art:
 # Linear's agent SDK splits exactly this way (`app:mentionable` /
@@ -295,14 +298,14 @@ def _validate_latitude(v: object) -> str | None:
 def _coerce_role(v: object) -> str | None:
     """Read-side coercion: a canonical role, or None (no role -> default dispatch).
 
-    Aliases resolve to their canonical name. Anything else (unset, junk, a typo)
-    is None, which the dispatcher reads as "use the default handler".
+    A role is exactly one of ROLES; there are no aliases and no second accepted
+    spelling. Anything else (unset, junk, a typo) is None, which the dispatcher
+    reads as "use the default handler".
     Writes go through `_validate_role`, which raises instead of coercing, so a
     typo can only ever enter the tree by hand-editing a definition file."""
     if not isinstance(v, str):
         return None
     r = v.strip().lower()
-    r = ROLE_ALIASES.get(r, r)
     return r if r in ROLES else None
 
 
@@ -317,7 +320,6 @@ def _validate_role(v: object) -> str | None:
     r = v.strip().lower()
     if not r:
         return None
-    r = ROLE_ALIASES.get(r, r)
     if r not in ROLES:
         raise ValueError(f"unknown role {v!r}; must be one of {ROLES}")
     return r
