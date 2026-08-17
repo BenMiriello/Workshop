@@ -611,7 +611,7 @@ def create_thread(s: Session, org_id: UUID | str, owner_user_id: UUID | str, *,
             "owner_user_id": str(owner_user_id), "context_key": context_key,
             "scope": scope, "external_id": external_id, "title": title}
     allowed = ("mode", "model", "effort", "permission_mode", "seed_title",
-               "title_source", "agent_slug", "scope_locked", "summary",
+               "title_source", "agent_slug", "summary",
                "claude_session", "voice_session", "context_tokens",
                "archived_at", "created_at", "updated_at")
     for k, v in fields.items():
@@ -677,18 +677,19 @@ def _thread_fields(meta: dict) -> dict:
     # module through chat_log -> chat_branches -> chat_repo, so a top-level
     # import would close that loop.
     from services.chat_store import CHAT_MODES, DEFAULT_CHAT_MODE
+    from services import scope_tree
 
-    scope = meta.get("scope")
     ctx = meta.get("context_key") or "general"
-    if not scope:
-        # chat_store._scope_from_context_key, in one line: a bare context key
-        # is the workshop scope, anything prefixed carries its own.
-        scope = "workshop" if ctx in ("general", "") else (
-            ctx if ":" in ctx else f"app:{ctx}")
     return {
         "context_key": ctx,
-        "scope": scope,
-        "scope_locked": bool(meta.get("scope_locked")),
+        # DERIVED, and derived by the one module that owns the rule. This line
+        # used to be `chat_store._scope_from_context_key, in one line` -- a
+        # deliberate hand re-spelling of a function that was itself wrong, and
+        # it fell back to the STORED value first, so the mirror faithfully
+        # carried `app:development` into the `chat_thread.scope` column for
+        # every one of the 27 damaged threads. The mirror now self-heals: it
+        # writes the current derivation on every sync.
+        "scope": scope_tree.scope_for_context(ctx),
         # THE DEFAULT COMES FROM chat_store, it is not restated here. A thread
         # whose meta carries no `mode` key at all is the common case (nothing
         # writes one until the operator switches modes), so this fallback IS
@@ -763,7 +764,7 @@ def sync_thread_fields(s: Session, tid: UUID | str, meta: dict) -> None:
     s.execute(text(
         "UPDATE chat_thread SET "
         "  context_key = :context_key, scope = :scope, "
-        "  scope_locked = :scope_locked, mode = :mode, title = :title, "
+        "  mode = :mode, title = :title, "
         "  seed_title = :seed_title, model = :model, effort = :effort, "
         "  permission_mode = :permission_mode, summary = :summary, "
         "  context_tokens = :context_tokens, claude_session = :claude_session, "
@@ -836,7 +837,10 @@ head_msg AS (
       FROM msgs
      ORDER BY thread_id, depth ASC
 )
-SELECT t.id, t.external_id, t.context_key, t.scope, t.scope_locked, t.mode,
+-- NOT `t.scope`. The caller derives it from `t.context_key` through
+-- `scope_tree.scope_for_context`, the same way the file fold does, so selecting
+-- the column would only offer a second answer that can be stale.
+SELECT t.id, t.external_id, t.context_key, t.mode,
        t.agent_slug, t.model, t.title, t.seed_title, t.state,
        t.created_at, t.updated_at, t.archived_at,
        COALESCE(agg.message_count, 0) AS message_count,

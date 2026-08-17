@@ -954,9 +954,12 @@ def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
 # when it does run (it always writes the current meta, not a delta), so nothing
 # here loses accuracy -- this only decides WHEN a patch earns the trip.
 _LIST_RELEVANT_META_FIELDS = frozenset({
-    "title", "_seed_title", "archived_at", "mode", "scope", "scope_locked",
+    "title", "_seed_title", "archived_at", "mode",
     "model", "agent_id", "context_key", "participants",
 })
+# NOT `scope`/`scope_locked`. Nothing writes either key any more: the mirror's
+# `scope` column is DERIVED from `context_key` (which is in this set, so a
+# rescope still earns its round trip), and `scope_locked` is gone.
 
 
 def _mirror_meta(thread_id: str, meta: dict) -> None:

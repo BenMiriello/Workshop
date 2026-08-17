@@ -6,6 +6,7 @@
 // component.
 import type { ChatMsg } from "../../lib/chat";
 import { DEV_MODE, DEVELOPMENT_SCOPE } from "../../lib/devMode";
+import { scopeForContext, scopeHasQueue } from "../../lib/scope";
 
 export type ChatMode = "data" | "build";
 export type ChatVariant = "dock" | "panel" | "full";
@@ -25,11 +26,12 @@ export function buildSlug(contextKey: string): string | null {
 // chat list and the toolbar's scope picker both name the same scopes and must
 // never name them differently.
 //
-// Related but deliberately separate: `scopeLabel` in lib/tasks.ts names TASK
-// scope keys, a near-identical key space that differs in two ways (the workshop
-// root is `workshop` there and `general` here, and it has no notion of app
-// scopes). Unifying them means settling the context_key/scope axis, which is a
-// migration, not a rename. Do not add a third naming function in the meantime.
+// Related but deliberately separate: `scopeLabel` in lib/scope.ts names SCOPE
+// keys, a near-identical key space that differs in two ways (the root is
+// `workshop` there and `general` here, and it has no `build:`). The two spaces
+// are now bridged by ONE function, `scopeForContext` in lib/scope.ts; these
+// stay because they LABEL a context key, which is a different job from
+// translating one. Do not add a third naming function.
 
 export type ScopeKind = "development" | "workshop" | "project" | "app" | "agent" | "other";
 
@@ -124,24 +126,22 @@ export const SCOPE_GROUPS = scopeGroups();
 
 // The task-store scope a chat maps to, or null when the chat has no task queue
 // (general chat, app docks). build/project/agent chats all get the shared
-// TaskPanel; the contextKey IS the scope key for those.
+// TaskPanel.
 //
-// `development` is in the list because it owns a queue like any other work
-// scope: the platform repo's own 93 tickets, 16 of them open. It was omitted
-// when the scope was added, so the ONE scope with the most work was the only
-// work scope whose chat could not see its own tickets. No panel, no Tickets
-// button in the toolbar, nothing. That single omission is most of what made
-// developer mode read as superficial on first use.
+// It used to answer with the contextKey itself, off its own four-branch prefix
+// test. That was the client's copy of a mapping the backend had five copies of,
+// and the copies disagreed: `development` came out of `chat_store` as
+// `app:development` and got stamped onto 27 live threads. Both sides now go
+// through one function -- `scopeForContext` in lib/scope.ts here,
+// `scope_tree.scope_for_context` there.
+//
+// `development` still resolves to a queue, and that is deliberate: it owns one
+// like any other work scope (the platform repo's own tickets). It was once
+// omitted, so the ONE scope with the most work was the only work scope whose
+// chat could not see its own tickets.
 export function taskScopeFor(contextKey: string): string | null {
-  if (
-    contextKey === "development" ||
-    contextKey.startsWith("build:") ||
-    contextKey.startsWith("project:") ||
-    contextKey.startsWith("agent:")
-  ) {
-    return contextKey;
-  }
-  return null;
+  const scope = scopeForContext(contextKey);
+  return scopeHasQueue(scope) ? scope : null;
 }
 
 // "12s" under a minute, "1m 05s" beyond — for the live working indicator.

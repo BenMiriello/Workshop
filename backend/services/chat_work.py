@@ -27,7 +27,7 @@ import json
 import logging
 from typing import Any
 
-from services import chat_store, inbox, jobs, knowledge, tasks
+from services import chat_store, inbox, jobs, knowledge, scope_tree, tasks
 
 log = logging.getLogger(__name__)
 
@@ -39,19 +39,30 @@ SCOPE_CAP = 8
 ACTIVE_STATE_TYPES = ("unstarted", "started")
 
 
+# The scope KINDS with no task queue of their own. The workshop root has one
+# (`shared/queue`) but a chat is not put in front of it just for being unbound:
+# showing a general chat the root backlog would make every chat in the system
+# look like it owned the same work. An app dock has no queue at all.
+_QUEUELESS_SCOPES = ("workshop",)
+_QUEUELESS_PREFIXES = ("app:",)
+
+
 def task_scope_for(context_key: str | None) -> str | None:
     """The task-store scope a chat files into, or None when it has none.
 
-    Mirrors `taskScopeFor` in `frontend/src/components/chat/chatScope.ts`. A
-    general chat and an app dock have no task queue, so they get None here and
-    an empty `scope` list rather than the workshop queue: showing a general chat
-    the root backlog would make every chat in the system look like it owned the
-    same work.
+    The SCOPE comes from `scope_tree.scope_for_context` like every other scope
+    question in the system; the only thing decided here is which scopes a chat
+    gets a queue for. It used to return the raw `context_key`, which meant
+    `build:<slug>` came out as `build:<slug>` -- a string `scope_tree.parse`
+    rejects and `reach()` can never yield -- and an unknown key came out as
+    itself rather than resolving to the root.
+
+    Mirrors `taskScopeFor` in `frontend/src/components/chat/chatScope.ts`.
     """
-    key = (context_key or "").strip()
-    if key == "development" or key.startswith(("build:", "project:", "agent:")):
-        return key
-    return None
+    scope = scope_tree.scope_for_context(context_key)
+    if scope in _QUEUELESS_SCOPES or scope.startswith(_QUEUELESS_PREFIXES):
+        return None
+    return scope
 
 
 def _evidence_dict(ev: Any) -> dict | None:

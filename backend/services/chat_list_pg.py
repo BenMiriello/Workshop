@@ -50,11 +50,11 @@ def _shape_row(row: dict) -> dict:
     the SAME functions the file fold uses is what keeps the two paths from
     drifting apart the moment one of those rules changes.
     """
+    from services import scope_tree
     from services.chat_store import (
         DEFAULT_CHAT_MODE,
         _normalize_participants,
         _participants_from_context_key,
-        _scope_from_context_key,
     )
 
     ck = row.get("context_key") or "general"
@@ -72,8 +72,10 @@ def _shape_row(row: dict) -> dict:
     return {
         "id": row["external_id"],
         "context_key": ck,
-        "scope": row.get("scope") or _scope_from_context_key(ck),
-        "scope_locked": bool(row.get("scope_locked", False)),
+        # DERIVED, not the column, exactly as `chat_store._summary_row` derives
+        # it -- so a stale mirror row cannot make the PG path and the file path
+        # disagree about where a chat lives.
+        "scope": scope_tree.scope_for_context(ck),
         "mode": row.get("mode") or DEFAULT_CHAT_MODE,
         "participants": participants,
         "agent_id": row.get("agent_slug"),

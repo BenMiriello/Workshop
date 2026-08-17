@@ -124,6 +124,100 @@ def parse(scope_key: str) -> Scope:
     raise ValueError(f"unknown scope_key: {scope_key!r}")
 
 
+# --- context_key -> scope: the ONE mapping between the two namespaces ---------
+#
+# A chat is bound by a `context_key`; everything downstream of it is addressed
+# by a `scope_key`. Those are two namespaces (design doc sec 7.1) and the
+# translation between them lives here and nowhere else.
+#
+# It used to live in FIVE places, and on 2026-08-16 they disagreed:
+#
+#   chat_store._scope_from_context_key   `development` -> `app:development`
+#   knowledge.scope_for_context          `development` -> `development`
+#   chat_repo._thread_fields             the same rule "in one line", by hand
+#   chat_work.task_scope_for             the context_key, unmapped
+#   mentions.home_scope                  its own three-prefix allowlist
+#
+# `app:development` is the address no other module in the system recognises:
+# `parse()` accepts it, `reach()` can never contain it (there is no installed
+# app called `development`), so the 27 threads stamped with it dropped out of
+# every reach-filtered surface -- `Memory.tsx`'s chat list among them -- and
+# labelled themselves "App: development". `development` is the platform repo
+# and is its OWN root (ADR 0014, `task_scope.WORKSHOP_ROOT`), not an app.
+#
+# All five now call `scope_for_context`. Do not add a sixth.
+def _project_exists(slug: str) -> bool:
+    return (paths.projects_root() / slug).exists()
+
+
+def _installed_app_ids() -> set[str]:
+    """Context keys that name an installed app (`budget`, `finance`, ...).
+
+    Off the catalog rather than a list here: a key naming an app this instance
+    does not have is a scope nothing can reach, and an app installed tomorrow
+    would otherwise need an edit to this file."""
+    from services import app_registry
+    try:
+        return set(app_registry.installed_app_ids())
+    except Exception:
+        return set()
+
+
+# The bare context keys that mean "the root organising layer". `general` is the
+# unbound chat, `new-project` is the pre-creation draft chat, and `workshop`
+# names itself.
+ROOT_CONTEXT_KEYS = ("", "general", "workshop", "new-project")
+
+
+def scope_for_context(context_key: str | None) -> str:
+    """The scope a chat `context_key` addresses. Total: every input answers.
+
+      ``, `general`, `workshop`, `new-project`  -> `workshop`
+      `development`                             -> `development`
+      `project:<slug>`                          -> `project:<slug>`
+      `app:<name>` / `agent:<slug>`             -> unchanged
+      `build:<slug>`  -> `project:<slug>` if that project exists on disk, else
+                         `agent:<slug>`. A build agent linked to a project
+                         shares the project's scope; a freestanding one gets
+                         its own. `build:` is not a scope kind (`parse` rejects
+                         it), so it can never come out the other side.
+      a bare installed app id (`budget`)        -> `app:<id>`
+      anything else                             -> `workshop`
+
+    THE LAST LINE IS THE LOAD-BEARING ONE. An unrecognised bare key is NOT an
+    app. It used to mint `app:<key>` regardless, and since `knowledge.scope_dir`
+    mkdirs on demand, the first ambient-index read of a chat keyed `zzz` created
+    `apps/zzz/knowledge/` inside the tracked tree -- an unknown name inventing a
+    store rather than resolving to one. Installed apps are matched by name off
+    the actual catalog, above.
+
+    NOT gated on developer mode, unlike `parse`. Where a chat is bound is a fact
+    about the chat; whether that scope resolves to a working tree is a separate
+    question the gate answers once, at `task_scope.root_for_context`. Returning
+    `workshop` here with the flag off would silently re-home the operator's
+    development chats onto the root queue.
+    """
+    ck = (context_key or "general").strip()
+    if ck == DEVELOPMENT_SCOPE:
+        return DEVELOPMENT_SCOPE
+    if ck in ROOT_CONTEXT_KEYS:
+        return WORKSHOP_SCOPE
+    if ":" in ck:
+        kind, _, slug = ck.partition(":")
+        if not slug:
+            return WORKSHOP_SCOPE
+        if kind == "project":
+            return f"project:{slug}"
+        if kind == "build":
+            return f"project:{slug}" if _project_exists(slug) else f"agent:{slug}"
+        if kind in ("app", "agent"):
+            return ck
+        return WORKSHOP_SCOPE
+    if ck in _installed_app_ids():
+        return f"app:{ck}"
+    return WORKSHOP_SCOPE
+
+
 # --- the stored parent-edge override ------------------------------------------
 _overrides_cache: tuple[tuple, dict[str, str]] | None = None
 

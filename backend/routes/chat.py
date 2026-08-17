@@ -121,7 +121,10 @@ class CreateThread(BaseModel):
     # Entity-model 2026-07-18 §7 (P1). An agent joins the chat as a participant,
     # not as its home scope. Optional at create; UI can add/remove after.
     participants: list[str] | None = None
-    scope: str | None = None
+    # NO `scope`. It was accepted here, never sent by any client, and passed
+    # straight into the stored field as a second answer to a question
+    # `context_key` already answers. A chat's scope is derived from its
+    # context_key on every read now (services.scope_tree.scope_for_context).
     # How this chat handles work (direct | orchestrated | auto). Omitted means
     # "use the operator's default for new chats" — the toolbar sends it only
     # when the mode was chosen before the first message, which is the whole
@@ -380,7 +383,7 @@ async def new_thread(body: CreateThread):
         raise HTTPException(400, f"mode must be one of {list(chat_context.CHAT_MODES)}")
     return chat_store.create_thread(
         context_key=body.context_key, title=body.title, agent_id=body.agent_id,
-        scope=body.scope, participants=body.participants, mode=body.mode,
+        participants=body.participants, mode=body.mode,
     )
 
 

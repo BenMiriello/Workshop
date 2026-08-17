@@ -5,16 +5,59 @@
 // scopeHref); both now call this module instead. Every export those two files
 // carried keeps working unchanged, so no page or component needed to move.
 //
-// This does NOT cover `src/components/chat/chatScope.ts`. That module keys off
-// a chat's `context_key` (which includes aliases this tree does not model, like
-// bare app ids and `general`), and its own docstring already says "unifying
-// them means settling the context_key/scope axis, which is a migration, not a
-// rename. Do not add a third naming function in the meantime." Phase 1 leaves
-// it alone on purpose.
+// `src/components/chat/chatScope.ts` keys off a chat's `context_key`, which is
+// a DIFFERENT namespace: it carries aliases this tree does not model (bare app
+// ids, `general`, `build:`). The translation between the two namespaces is
+// `scopeForContext` below, and it is the only one; chatScope.ts calls it rather
+// than carrying a second copy.
 //
 // The one name that resolves to the platform repo (ADR 0014). There used to be
 // five.
 export const DEVELOPMENT_SCOPE = "development";
+export const WORKSHOP_SCOPE = "workshop";
+
+// The bare context keys that mean "the root organising layer": `general` is the
+// unbound chat, `new-project` the pre-creation draft chat, `workshop` names
+// itself.
+const ROOT_CONTEXT_KEYS = ["", "general", "workshop", "new-project"];
+
+// context_key -> scope. The client half of `scope_tree.scope_for_context`
+// (backend/services/scope_tree.py), which is the single owner of this mapping;
+// the table there is authoritative and this must not grow a branch of its own.
+//
+// ONE DELIBERATE DIVERGENCE, and it is the only thing the client cannot know:
+// the server resolves `build:<slug>` to `project:<slug>` when a project of that
+// slug exists on disk, and to `agent:<slug>` otherwise. There is no catalog of
+// projects in the bundle, so this always returns the freestanding answer. It
+// costs nothing today: `build:` is a retired context kind (all 8 build agents
+// are retired, no live thread carries one) and every surface that needs the
+// resolved value reads it off a server payload, never off this function.
+//
+// A bare key is an installed app id here, where the backend checks it against
+// the catalog and falls back to `workshop`. The client only ever holds bare keys
+// that came from the server's own provider list, so it has no junk to reject.
+export function scopeForContext(contextKey: string | null | undefined): string {
+  const ck = (contextKey ?? "general").trim();
+  if (ck === DEVELOPMENT_SCOPE) return DEVELOPMENT_SCOPE;
+  if (ROOT_CONTEXT_KEYS.includes(ck)) return WORKSHOP_SCOPE;
+  const i = ck.indexOf(":");
+  if (i < 0) return `app:${ck}`;
+  const kind = ck.slice(0, i);
+  const slug = ck.slice(i + 1);
+  if (!slug) return WORKSHOP_SCOPE;
+  if (kind === "project" || kind === "app" || kind === "agent") return ck;
+  if (kind === "build") return `agent:${slug}`;
+  return WORKSHOP_SCOPE;
+}
+
+// The scopes a chat gets no task queue for. The workshop root HAS one
+// (`shared/queue`), but a chat is not put in front of it just for being unbound:
+// showing a general chat the root backlog would make every chat in the system
+// look like it owned the same work. An app dock has no queue at all.
+// `chat_work._QUEUELESS_SCOPES` is the same rule on the server.
+export function scopeHasQueue(scope: string): boolean {
+  return scope !== WORKSHOP_SCOPE && !scope.startsWith("app:");
+}
 
 // Scope keys that exist only in a developer build. Empty otherwise -- the
 // scope is absent, not present-and-disabled, because a disabled control still

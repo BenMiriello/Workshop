@@ -165,8 +165,22 @@ def resolve(content: str, chat_scope: str) -> dict | None:
 
 
 def home_scope(agent: dict[str, Any]) -> str:
-    """The scope address an agent lives in, from its registry record."""
+    """The scope address an agent lives in, from its registry record.
+
+    A project link wins: `agents_registry` writes `project_slug` for every agent
+    whose definition file sits in a project tree, and that binding is what
+    `scope_tree._default_parent` already reads.
+
+    Otherwise the record's own `scope` goes through the ONE context_key -> scope
+    mapping. This used to be a three-prefix allowlist that fell to `workshop`
+    for everything else, so an agent declaring `development` was homed in
+    `workshop` -- mentionable from every chat in the install and never `local`
+    to the one chat it belongs to -- and one declaring a bare app id (`budget`)
+    landed in `workshop` rather than `app:budget`. Both answers now match what
+    the chat on the other side of `scope_allows` is being compared against,
+    which is `scope_for_context(thread.context_key)`.
+    """
     if agent.get("project_slug"):
         return f"project:{agent['project_slug']}"
-    scope = (agent.get("scope") or "").strip()
-    return scope if scope.startswith(("project:", "app:", "agent:")) else "workshop"
+    from services import scope_tree
+    return scope_tree.scope_for_context(agent.get("scope"))

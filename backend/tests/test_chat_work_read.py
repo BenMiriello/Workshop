@@ -76,8 +76,21 @@ class TestScopeKey:
         """Mirrors `taskScopeFor` in frontend/src/components/chat/chatScope.ts.
         `development` is in the list; it was once the only work scope whose chat
         could not see its own tickets."""
-        for key in ("development", "project:demo", "build:x", "agent:y"):
+        for key in ("development", "project:demo", "agent:y"):
             assert chat_work.task_scope_for(key) == key
+
+    def test_a_build_key_comes_out_as_a_real_scope(self, env):
+        """`build:` is a context_key, never a scope: `scope_tree.parse` rejects
+        it and `reach()` can never yield it. This used to return it verbatim, so
+        the work panel compared a string against a scope-root list that could
+        not contain it."""
+        assert chat_work.task_scope_for("build:x") == "agent:x"
+
+    def test_an_unknown_key_does_not_become_its_own_queue(self, env):
+        """It used to be returned verbatim for anything prefixed. Unknown
+        resolves to `workshop`, which is queueless for a chat, so: None."""
+        assert chat_work.task_scope_for("zzz-not-a-scope") is None
+        assert chat_work.task_scope_for("role:maker") is None
 
     def test_a_chat_with_no_task_scope_still_reports_what_it_filed(self, env):
         """A general chat cannot pick a scope, but a ticket filed from it before

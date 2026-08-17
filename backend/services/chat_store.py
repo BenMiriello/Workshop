@@ -33,7 +33,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import chat_log, ownership  # noqa: F401  (ownership re-exported for tests)
+from . import chat_log, ownership, scope_tree  # noqa: F401  (ownership re-exported for tests)
 
 log = logging.getLogger("workshop.chat_store")
 
@@ -241,16 +241,20 @@ def _promotion_patch(meta: dict) -> dict:
     shape without a data-migration pass.
 
     Never touches a chat whose participants have been explicitly diverged from
-    the context_key (scope_locked = True, or a participants list that is empty
-    or has more than one entry, or an entry that doesn't match). That way an
-    operator-authored intentional agent:<slug>-scope chat stays as-is."""
+    the context_key (a participants list that is empty or has more than one
+    entry, or an entry that doesn't match). That way an operator-authored
+    intentional agent:<slug>-scope chat stays as-is.
+
+    The other escape hatch used to be `scope_locked`, and it was never reachable:
+    no route and no client could set it, so the flag was declared in five places,
+    enforced here, and always False. It is gone. This whole function goes with it
+    in thread T2, which makes `agent:<slug>` a durable context key rather than
+    something to migrate away from."""
     ck = meta.get("context_key", "")
     if ":" not in ck:
         return {}
     kind, rest = ck.split(":", 1)
     if kind not in ("agent", "build"):
-        return {}
-    if meta.get("scope_locked"):
         return {}
     parts = _normalize_participants(meta.get("participants") or [])
     canon = f"agent:{rest}"
@@ -269,12 +273,9 @@ def _promotion_patch(meta: dict) -> dict:
             project_slug = rec.get("project_slug") or None
     except Exception:
         project_slug = None
-    if project_slug:
-        patch["context_key"] = f"project:{project_slug}"
-        patch["scope"] = f"project:{project_slug}"
-    else:
-        patch["context_key"] = "general"
-        patch["scope"] = "workshop"
+    # Only `context_key` moves. `scope` follows from it on every read, so
+    # writing a second copy here would be the first place for the two to drift.
+    patch["context_key"] = f"project:{project_slug}" if project_slug else "general"
     return patch
 
 
@@ -497,10 +498,18 @@ def _document(meta: dict, messages: list[dict], seqs: list[int], cut_seq: int = 
     # Persisted-vs-derived is not observable to callers: an unset stored field
     # reads as the derived value.
     ck = t.get("context_key", "general")
-    if not t.get("scope"):
-        t["scope"] = _scope_from_context_key(ck)
-    if "scope_locked" not in t:
-        t["scope_locked"] = False
+    # SCOPE IS DERIVED, NOT STORED. It used to be back-filled only when the
+    # stored field was absent, which made it stale from the moment anything
+    # moved: `rescope_thread` writes `context_key` and nothing else, so a chat
+    # rebound from `general` to `project:birds` went on reporting `workshop`
+    # for the rest of its life. Reads that trusted the stored value are what
+    # carried `app:development` (see scope_tree.scope_for_context) onto 27
+    # threads and out to `Memory.tsx`, which filters the chat list against
+    # `reach()` and can never match an address `reach()` does not mint.
+    #
+    # There is now one source of truth for where a chat lives, and it is
+    # `context_key`. A stored copy is written by nobody and trusted by nobody.
+    t["scope"] = scope_tree.scope_for_context(ck)
     if not t.get("mode"):
         t["mode"] = DEFAULT_CHAT_MODE
     if t.get("participants") is None:
@@ -567,29 +576,30 @@ def create_thread(
     title: str = "",
     agent_id: str | None = None,
     model: str | None = None,
-    scope: str | None = None,
-    scope_locked: bool = False,
     mode: str | None = None,
     participants: list[str] | None = None,
 ) -> dict:
     tid = uuid.uuid4().hex
     # Entity-model 2026-07-18 §7 fields (C11, P1):
-    # - scope: the Scope this chat lives in (workshop / project:X / app:Y).
-    # - scope_locked: refuses to re-scope silently; the UI must confirm.
     # - mode: direct (the default), orchestrated, or auto. See CHAT_MODES.
     # - participants: agent slugs (as `agent:<slug>`) in this chat. Under the
     #   new model an Agent is a PARTICIPANT of a chat, not the chat's home.
     #   A legacy `agent:<slug>` context_key back-fills this list on read so old
     #   chats still surface the agent inline.
-    resolved_scope = scope or _scope_from_context_key(context_key or "general")
+    #
+    # NO `scope` AND NO `scope_locked`. The Scope a chat lives in is derived
+    # from its `context_key` on every read (see `_document`), so an explicit
+    # scope at creation could only ever be a second answer to a question that
+    # already has one -- which is how `app:development` got stamped onto 27
+    # threads. `scope_locked` was the flag that made such a divergence
+    # permanent; nothing could set it and nothing but `_promotion_patch` read
+    # it, so it is gone rather than wired.
     parts = _normalize_participants(participants) if participants is not None \
         else _participants_from_context_key(context_key or "general")
     now = _now_iso()
     meta = {
         "id": tid,
         "context_key": context_key or "general",
-        "scope": resolved_scope,
-        "scope_locked": bool(scope_locked),
         # An explicit mode wins; otherwise the operator's default for new chats.
         "mode": _clamp_mode(mode) if mode is not None else get_default_mode(),
         "participants": parts,
@@ -725,12 +735,9 @@ def _summary_row(thread_id: str) -> dict | None:
     return {
         "id": meta["id"],
         "context_key": ck,
-        # Entity-model 2026-07-18 §7 fields (C11, P1). Existing threads
-        # without stored scope/mode/participants lift them from the legacy
-        # context_key so a data migration isn't needed; new writes persist
-        # them explicitly.
-        "scope": meta.get("scope") or _scope_from_context_key(ck),
-        "scope_locked": bool(meta.get("scope_locked", False)),
+        # Entity-model 2026-07-18 §7 fields (C11, P1). `scope` is DERIVED, never
+        # stored -- see `_document`.
+        "scope": scope_tree.scope_for_context(ck),
         "mode": meta.get("mode") or DEFAULT_CHAT_MODE,
         "participants": _normalize_participants(meta.get("participants"))
             if meta.get("participants") is not None
@@ -945,26 +952,6 @@ def _participants_from_context_key(context_key: str) -> list[str]:
     if kind == "build":
         return [f"agent:{rest}"]
     return []
-
-
-def _scope_from_context_key(context_key: str) -> str:
-    """Best-effort mapping from the legacy context_key convention to the entity-
-    model scope address (§2). Preserves existing threads without a data
-    migration: a thread that has no explicit `scope` field lifts one from the
-    prefix on first read."""
-    if not context_key or context_key == "general":
-        return "workshop"
-    if ":" in context_key:
-        kind, rest = context_key.split(":", 1)
-        if kind == "build":
-            # build:<slug> and agent:<slug> are both agent-scope chats,
-            # differing only in runtime (per entity-model §6, §7).
-            return f"agent:{rest}"
-        if kind in ("project", "agent", "app"):
-            return context_key
-        return context_key
-    # Bare non-general = app id.
-    return f"app:{context_key}"
 
 
 def set_thread_mode(thread_id: str, mode: str) -> dict | None:
@@ -1256,7 +1243,12 @@ def save_thread(thread: dict) -> dict:
 
     fields: dict = {}
     for k, v in thread.items():
-        if k in ("messages", "cleared_through", "id"):
+        # `scope` sits with `messages` and `cleared_through`: things `_document`
+        # DERIVES for the caller. Writing one back would persist a copy of an
+        # answer that is already computed on every read, and a persisted copy is
+        # what went stale after a rescope and put `app:development` on 27
+        # threads. A round-trip of the document must not be able to re-create it.
+        if k in ("messages", "cleared_through", "id", "scope"):
             continue
         if meta.get(k) != v:
             fields[k] = v

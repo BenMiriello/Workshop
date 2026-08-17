@@ -29,17 +29,6 @@ from services import paths
 
 log = logging.getLogger("workshop.knowledge")
 
-def app_context_keys() -> set[str]:
-    """Context keys that map onto an `app:<key>` scope.
-
-    Read from the installed apps rather than listed here: a key naming an app
-    the instance does not have is a scope nothing can reach, and an app added
-    tomorrow would otherwise need an edit to this file.
-    """
-    from services import app_registry
-
-    return set(app_registry.installed_app_ids())
-
 # note_id: kebab/hex slug, lowercase, no path separators or dots -> no traversal.
 _NOTE_ID_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _SLUG_RE = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", re.IGNORECASE)
@@ -83,51 +72,17 @@ def _shared_knowledge_root() -> Path:
 
 
 # --- scope mapping -----------------------------------------------------------
-def _project_exists(slug: str) -> bool:
-    root = paths.projects_root()
-    return (root / slug / "knowledge").parent.exists() or (root / slug).exists()
-
-
 def scope_for_context(context_key: str) -> str:
     """Map a chat context_key to a knowledge scope_key.
 
-    - `general`, `workshop`, `new-project` -> `workshop`
-    - `budget`/`finance`/`commute`/`location` -> `app:<key>`
-    - `project:<slug>` -> `project:<slug>`
-    - `build:<slug>` -> `project:<slug>` if that project exists, else `agent:<slug>`
-      (a build agent linked to a project shares the project scope; a freestanding
-      one gets its own agent scope)
-    - already-scoped `app:<name>` / `agent:<id>` -> passed through
-    - any other bare key -> `app:<key>` (treated as an app provider)
+    The rule itself lives in `services.scope_tree`, the single owner of the
+    scope model, alongside `parse`/`reach`/`govern`. This spelling stays because
+    it is the name ~15 call sites already use; it must never grow a branch of
+    its own. See `scope_tree.scope_for_context` for the table and for the five
+    disagreeing copies it replaced.
     """
-    ck = (context_key or "general").strip()
-    if ck == "development":
-        return "development"
-    # `workshop` names itself. It was missing from this list, so the bare key
-    # fell all the way to the `app:<key>` catch-all below and resolved to
-    # `app:workshop` -> `apps/workshop/knowledge/`, a THIRD directory for a name
-    # that already means `shared/queue` in task_scope and `shared/knowledge`
-    # here. `scope_dir` mkdirs on demand, so simply opening such a chat created
-    # it inside the tracked tree.
-    if ck in ("general", "workshop", "new-project"):
-        return "workshop"
-    if ck in app_context_keys():
-        return f"app:{ck}"
-    if ":" in ck:
-        prefix, _, slug = ck.partition(":")
-        if prefix == "project":
-            return f"project:{slug}"
-        if prefix == "build":
-            return f"project:{slug}" if _project_exists(slug) else f"agent:{slug}"
-        if prefix in ("app", "agent"):
-            return ck
-    # An unrecognized bare key is NOT an app. It used to mint `app:<key>`
-    # regardless, and since a thread's `context_key` is stored verbatim at
-    # creation and `scope_dir` mkdirs on demand, the first ambient-index read of
-    # a chat keyed `zzz` created `apps/zzz/knowledge/` inside the tracked tree —
-    # an unknown name inventing a store rather than resolving to one. Installed
-    # apps are matched above, by name, off the actual catalog.
-    return "workshop"
+    from services import scope_tree
+    return scope_tree.scope_for_context(context_key)
 
 
 def _parse_scope(scope_key: str) -> tuple[str, str]:

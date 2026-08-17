@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { scopeLabel, scopeHref, orderScopes } from "./scope";
+import { scopeLabel, scopeHref, orderScopes, scopeForContext } from "./scope";
+import { taskScopeFor } from "../components/chat/chatScope";
 
 // `role:<r>` is the SECOND AXIS of the knowledge store (backend scope_tree:
 // "TWO AXES, NOT ONE"). It reaches every reviewer's prompt through
@@ -32,5 +33,84 @@ describe("a role scope is named like every other scope", () => {
   it("sorts after the two fixed scopes in a picker", () => {
     expect(orderScopes(["role:reviewer", "workshop", "development"], true))
       .toEqual(["development", "workshop", "role:reviewer"]);
+  });
+});
+
+// One context_key -> scope mapping, matching `scope_tree.scope_for_context`
+// (T3 of docs/platform-redesign/coherence-overhaul-2026-08-16.md). There used
+// to be five copies on the backend and one here, and they disagreed:
+// `development` came out of `chat_store` as `app:development`, an address
+// nothing else recognises, and it was stamped onto 27 live threads.
+//
+// The table below is the same table as `backend/tests/test_one_scope_mapping.py`
+// `KEY_FORMS`, minus the two rows the client genuinely cannot answer (see the
+// comment on `scopeForContext`).
+describe("context_key resolves to one scope", () => {
+  const forms: [string, string][] = [
+    ["", "workshop"],
+    ["general", "workshop"],
+    ["workshop", "workshop"],
+    ["new-project", "workshop"],
+    ["development", "development"],
+    ["project:birds", "project:birds"],
+    ["app:budget", "app:budget"],
+    ["agent:masini", "agent:masini"],
+    ["budget", "app:budget"],
+    ["role:maker", "workshop"],
+    ["project:", "workshop"],
+  ];
+
+  for (const [key, scope] of forms) {
+    it(`maps ${JSON.stringify(key)} to ${scope}`, () => {
+      expect(scopeForContext(key)).toBe(scope);
+    });
+  }
+
+  it("treats a missing key as the unbound chat", () => {
+    expect(scopeForContext(null)).toBe("workshop");
+    expect(scopeForContext(undefined)).toBe("workshop");
+  });
+
+  it("never yields the address that damaged 27 threads", () => {
+    for (const [key] of forms) expect(scopeForContext(key)).not.toBe("app:development");
+    expect(scopeForContext("development")).toBe("development");
+  });
+
+  it("resolves build: to a real scope kind", () => {
+    // `build:` is a context_key kind, never a scope kind. The server also
+    // checks for a project of that slug; the client has no project catalog, so
+    // it always gives the freestanding answer.
+    expect(scopeForContext("build:solo")).toBe("agent:solo");
+  });
+});
+
+describe("which scopes a chat gets a task queue for", () => {
+  it("gives no queue to the root or to an app dock", () => {
+    // Showing a general chat the root backlog would make every chat in the
+    // system look like it owned the same work.
+    expect(taskScopeFor("general")).toBeNull();
+    expect(taskScopeFor("workshop")).toBeNull();
+    expect(taskScopeFor("budget")).toBeNull();
+    expect(taskScopeFor("app:budget")).toBeNull();
+  });
+
+  it("gives a work scope its own queue, under its scope key", () => {
+    expect(taskScopeFor("development")).toBe("development");
+    expect(taskScopeFor("project:birds")).toBe("project:birds");
+    expect(taskScopeFor("agent:masini")).toBe("agent:masini");
+    // It used to hand `build:solo` straight back, which is a string the
+    // backend's scope list can never contain.
+    expect(taskScopeFor("build:solo")).toBe("agent:solo");
+  });
+
+  it("never opens a queue for an unrecognised key", () => {
+    expect(taskScopeFor("zzz-not-a-scope")).toBeNull();
+    expect(taskScopeFor("role:maker")).toBeNull();
+  });
+
+  it("agrees with scopeForContext wherever it answers", () => {
+    for (const key of ["development", "project:birds", "agent:masini", "build:solo"]) {
+      expect(taskScopeFor(key)).toBe(scopeForContext(key));
+    }
   });
 });

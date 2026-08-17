@@ -240,10 +240,11 @@ export type ChatMsg = {
 export type ThreadSummary = {
   id: string;
   context_key: string;
-  // Entity-model 2026-07-18 §7 (C11 + P1). Derived from context_key for legacy
-  // threads on read; persisted explicitly on new writes.
+  // Entity-model 2026-07-18 §7 (C11 + P1). ALWAYS derived from `context_key`,
+  // server-side, by the one module that owns that mapping. Never stored, so it
+  // cannot go stale after a rescope. `scope_locked` sat beside it, was settable
+  // by no client and read by one migration helper, and is gone.
   scope?: string;
-  scope_locked?: boolean;
   mode?: ChatModeId;
   // Canonical form: `agent:<slug>`. Legacy agent:<slug> chats back-fill
   // to [that slug]; workshop/project chats start empty and grow when

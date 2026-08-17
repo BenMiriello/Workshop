@@ -106,7 +106,10 @@ describe("the development scope owns a queue like any other work scope", () => {
   it("still maps the other work scopes", () => {
     expect(taskScopeFor("project:birds")).toBe("project:birds");
     expect(taskScopeFor("agent:triager")).toBe("agent:triager");
-    expect(taskScopeFor("build:x")).toBe("build:x");
+    // `build:x` used to come back verbatim. It is a context_key kind, not a
+    // scope kind, so no scope list the backend builds can contain it; it
+    // resolves to the agent scope it always meant. See scope.test.ts.
+    expect(taskScopeFor("build:x")).toBe("agent:x");
   });
 
   it("still returns null for a chat with no queue", () => {
