@@ -1,0 +1,8 @@
+{
+  "_measured_against": 218,
+  "big_file_count": 21,
+  "function_local_imports": 451,
+  "largest_scc_size": 58,
+  "scc_count": 3,
+  "upward_violations": 41
+}

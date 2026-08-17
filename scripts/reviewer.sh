@@ -18,7 +18,16 @@
 #     "reasons":    [string, ...]
 #     "one_definition":    "ok|fail|skipped",   // R3: duplicate enum value-set touching this diff
 #     "occupancy_notice":  string|null,         // R2: NEW zero-occupancy field since baseline (advisory)
-#     "doc_status_notice": string|null          // R1: a changed doc has no status / a misleading banner (advisory)
+#     "doc_status_notice": string|null,         // R1: a changed doc has no status / a misleading banner (advisory)
+#     "module_layout":       "ok|fail|skipped", // ADR 0024: function-local imports / import cycles /
+#                                                // upward layering / big-file count, each ratcheted
+#                                                // against scripts/module_layout_baseline.json
+#     "no_process_globals":  "ok|fail|skipped", // tenancy clause (target-architecture-2026-08-17.md
+#                                                // §2.6 item 3): count of module-level mutable globals
+#                                                // in backend/, ratcheted against
+#                                                // scripts/no_process_globals_baseline.json
+#     "response_model":      "ok|fail|skipped"  // ADR 0023: routes/ lacking response_model=, ratcheted
+#                                                // per-file against scripts/response_model_baseline.json
 #   }
 #
 # This gate judges the DIFF and executed evidence ONLY. The worker's own
@@ -35,6 +44,14 @@
 #   - no enum value-set touching this diff is declared in two places (R3, only
 #     when the diff introduces or touches an existing same-language duplicate —
 #     see check_one_definition.py's own header for why it is not unconditional)
+#   - no module-layout metric (function-local imports, import-cycle SCC size,
+#     upward layering violations, files over 800 lines) is worse than the
+#     pinned baseline (ADR 0024; see check_module_layout.py's own header)
+#   - no new process-local mutable global in backend/ (tenancy clause; see
+#     check_no_process_globals.py's own header)
+#   - no routes/ file touched by this diff has MORE routes lacking
+#     response_model= than the pinned baseline (ADR 0023; see
+#     check_response_model.py's own header)
 #   - every executed acceptance criterion passed, when REVIEWER_CRITERIA_FILE points
 #     at a JSON results array (machine-checkable assertions run by project_ralph.sh)
 #
@@ -309,6 +326,65 @@ if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(backend/.*\.py|frontend/src/.*\.ts
   fi
 fi
 
+# 4.6c-ii Module-layout ratchet (ADR 0024, target-architecture-2026-08-17.md
+# §2.2/§4 item 7). Gated on touching a backend .py file — same precondition
+# shape as the one-definition check above, and for the same reason: a
+# frontend-only or docs-only diff has nothing this check could move. Full
+# whole-backend measurement either way (~1.5s), not scoped to the diff,
+# because the metrics themselves (SCC size, upward-violation count, ...) are
+# properties of the WHOLE graph, not of one file — see the script's own
+# header for why this is a pinned-baseline ratchet rather than an absolute
+# gate.
+MODULE_LAYOUT_CHECK="skipped"
+if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/.*\.py$'; then
+  if [[ -f "$WORKSHOP/scripts/check_module_layout.py" && -f "$WORKSHOP/scripts/module_layout_baseline.json" ]]; then
+    if python3 "$WORKSHOP/scripts/check_module_layout.py" >/dev/null 2>&1; then
+      MODULE_LAYOUT_CHECK="ok"
+    else
+      MODULE_LAYOUT_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("module_layout_check_unavailable")
+  fi
+fi
+
+# 4.6c-iii No new process-local mutable globals (tenancy clause, §2.6 item 3).
+# Same gating precondition and same reasoning as module-layout above: this is
+# a whole-backend property (a global declared in file A can be mutated from
+# file B), not a per-file one, so it is not scoped to the diff — only gated
+# on whether there is any backend .py change to re-measure against.
+NO_PROCESS_GLOBALS_CHECK="skipped"
+if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/.*\.py$'; then
+  if [[ -f "$WORKSHOP/scripts/check_no_process_globals.py" && -f "$WORKSHOP/scripts/no_process_globals_baseline.json" ]]; then
+    if python3 "$WORKSHOP/scripts/check_no_process_globals.py" >/dev/null 2>&1; then
+      NO_PROCESS_GLOBALS_CHECK="ok"
+    else
+      NO_PROCESS_GLOBALS_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("no_process_globals_check_unavailable")
+  fi
+fi
+
+# 4.6c-iv response_model= on every route (ADR 0023, §2.4). Gated on touching a
+# routes/ file specifically (narrower than the two checks above, because this
+# one IS scoped per-file) and uses `--only-changed` exactly like
+# check_one_definition.py: FAILURE is restricted to route files this diff
+# actually touches, so pre-existing routes/ debt elsewhere never blocks
+# unrelated work — see the script's own header.
+RESPONSE_MODEL_CHECK="skipped"
+if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/routes/.*\.py$'; then
+  if [[ -f "$WORKSHOP/scripts/check_response_model.py" && -f "$WORKSHOP/scripts/response_model_baseline.json" ]]; then
+    if python3 "$WORKSHOP/scripts/check_response_model.py" --only-changed "$BASELINE" >/dev/null 2>&1; then
+      RESPONSE_MODEL_CHECK="ok"
+    else
+      RESPONSE_MODEL_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("response_model_check_unavailable")
+  fi
+fi
+
 # 4.6d Field-occupancy ratchet (R2) and doc-status ratchet (R1) are measurement,
 # not gates — R2 is explicit that a newly-introduced zero-occupancy field must
 # be reported loudly, not fail the build on first introduction (a design that
@@ -411,6 +487,18 @@ if [[ "$ONE_DEF_CHECK" == "fail" ]]; then
   REASONS+=("duplicate_definitions:${ONE_DEF_COUNT}")
   COMPLETE="false"
 fi
+if [[ "$MODULE_LAYOUT_CHECK" == "fail" ]]; then
+  REASONS+=("module_layout_regression")
+  COMPLETE="false"
+fi
+if [[ "$NO_PROCESS_GLOBALS_CHECK" == "fail" ]]; then
+  REASONS+=("process_globals_regression")
+  COMPLETE="false"
+fi
+if [[ "$RESPONSE_MODEL_CHECK" == "fail" ]]; then
+  REASONS+=("response_model_regression")
+  COMPLETE="false"
+fi
 # OCCUPANCY_NOTICE and DOC_STATUS_NOTICE are deliberately NOT checked here —
 # both are measurement (R1/R2), not gates. See their computation above for why.
 
@@ -475,6 +563,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
+export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -502,6 +591,13 @@ out = {
     "one_definition": os.environ.get("ONE_DEF_CHECK", "skipped"),
     "occupancy_notice": os.environ.get("OCCUPANCY_NOTICE") or None,
     "doc_status_notice": os.environ.get("DOC_STATUS_NOTICE") or None,
+    # Target-architecture item 7 ratchets (target-architecture-2026-08-17.md
+    # §4). All three GATE, same as `one_definition` above: each is a pinned
+    # baseline that fails on regression, not an absolute count, for the
+    # reasons each script's own header explains.
+    "module_layout": os.environ.get("MODULE_LAYOUT_CHECK", "skipped"),
+    "no_process_globals": os.environ.get("NO_PROCESS_GLOBALS_CHECK", "skipped"),
+    "response_model": os.environ.get("RESPONSE_MODEL_CHECK", "skipped"),
     # executed machine-checkable acceptance assertions (empty unless the caller
     # passed REVIEWER_CRITERIA_FILE); surfaced so the Work UI shows what was checked.
     "criteria":  criteria,
@@ -519,7 +615,7 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi
