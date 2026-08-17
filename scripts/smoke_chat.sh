@@ -28,10 +28,19 @@ curl -sf -o /dev/null "$ORIGIN/" || { echo "smoke: nothing serving the app at $O
 # A session for the operator, minted locally. The app is cookie-authenticated
 # and there is no test-only bypass, which is correct; this is the local owner
 # asking for a session on his own machine.
-TOKEN=$(cd backend && .venv/bin/python -c "
-import sys; sys.path.insert(0, '.')
+#
+# The address comes from the environment with NO default. It used to default to
+# this deployment's own operator, which is the thing check_no_hardcoding.sh
+# exists to catch: a second install running this script would silently try to
+# mint a session for a person who is not its owner. Falling back to the single
+# account in auth.db keeps it zero-config here without naming anyone.
+SMOKE_EMAIL="${SMOKE_EMAIL:-}"
+TOKEN=$(cd backend && SMOKE_EMAIL="$SMOKE_EMAIL" .venv/bin/python -c "
+import os, sys; sys.path.insert(0, '.')
 from services import auth_store
-u = auth_store.get_by_email('${SMOKE_EMAIL:-benmiriello@gmail.com}')
+email = os.environ.get('SMOKE_EMAIL') or ''
+oid = auth_store.operator_id()
+u = auth_store.get_by_email(email) if email else (auth_store.get_by_id(oid) if oid else None)
 print(auth_store.create_session(u['id'], user_agent='smoke') if u else '')
 " 2>/dev/null | tail -1)
 [ -n "$TOKEN" ] || { echo "smoke: could not mint a session"; exit 3; }

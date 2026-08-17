@@ -69,8 +69,8 @@ describe("deriveMode", () => {
 
 describe("naming a context key", () => {
   it("has one agent kind, and `build:` is not it", () => {
-    expect(scopeKind("agent:masini")).toBe("agent");
-    expect(scopeKind("build:masini")).toBe("other");
-    expect(scopeLabel("agent:masini")).toBe("Agent · masini");
+    expect(scopeKind("agent:scribe")).toBe("agent");
+    expect(scopeKind("build:scribe")).toBe("other");
+    expect(scopeLabel("agent:scribe")).toBe("Agent · scribe");
   });
 });

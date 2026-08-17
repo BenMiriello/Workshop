@@ -54,7 +54,7 @@ describe("context_key resolves to one scope", () => {
     ["development", "development"],
     ["project:birds", "project:birds"],
     ["app:budget", "app:budget"],
-    ["agent:masini", "agent:masini"],
+    ["agent:scribe", "agent:scribe"],
     ["budget", "app:budget"],
     ["role:maker", "workshop"],
     ["project:", "workshop"],
@@ -97,7 +97,7 @@ describe("which scopes a chat gets a task queue for", () => {
   it("gives a work scope its own queue, under its scope key", () => {
     expect(taskScopeFor("development")).toBe("development");
     expect(taskScopeFor("project:birds")).toBe("project:birds");
-    expect(taskScopeFor("agent:masini")).toBe("agent:masini");
+    expect(taskScopeFor("agent:scribe")).toBe("agent:scribe");
   });
 
   it("never opens a queue for an unrecognised key", () => {
@@ -106,7 +106,7 @@ describe("which scopes a chat gets a task queue for", () => {
   });
 
   it("agrees with scopeForContext wherever it answers", () => {
-    for (const key of ["development", "project:birds", "agent:masini"]) {
+    for (const key of ["development", "project:birds", "agent:scribe"]) {
       expect(taskScopeFor(key)).toBe(scopeForContext(key));
     }
   });

@@ -56,7 +56,7 @@ KEY_FORMS: list[tuple[str, str]] = [
     ("development", "development"),
     ("project:birds", "project:birds"),
     ("app:budget", "app:budget"),
-    ("agent:masini", "agent:masini"),
+    ("agent:scribe", "agent:scribe"),
     # `build:<slug>` was a second spelling of `agent:<slug>` and is DELETED, so
     # it is now an unrecognised kind like any other and resolves to the root.
     ("build:unlinked", "workshop"),

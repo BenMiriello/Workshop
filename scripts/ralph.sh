@@ -462,7 +462,7 @@ fi
 # ONLY mode not needing an approval channel (model_caps.NEEDS_APPROVAL_CHANNEL
 # is every other mode). It is deliberately NOT applied here, because it is the
 # operator's call, not a worker's: ticket SEC-A1 records that every autonomous
-# turn already runs as clawd-a, in the docker group, unsandboxed, with full tree
+# turn already runs as the invoking user, in the docker group, unsandboxed, with full tree
 # write and the OAuth token, and this flag is what makes that reachable. Turn it
 # on together with a decision about A1's execution boundary, not before.
 

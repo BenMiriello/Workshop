@@ -16,7 +16,7 @@ const base: Pick<ThreadSummary, "context_key" | "agent_id"> = {
 
 describe("threadAgent", () => {
   it("names the agent that answers an agent-bound chat", () => {
-    expect(threadAgent({ ...base, context_key: "agent:masini" })).toBe("masini");
+    expect(threadAgent({ ...base, context_key: "agent:scribe" })).toBe("scribe");
   });
 
   it("names the agent a re-homed chat was with", () => {
@@ -27,8 +27,8 @@ describe("threadAgent", () => {
   });
 
   it("prefers the responder over the historical record when both are set", () => {
-    expect(threadAgent({ context_key: "agent:masini", agent_id: "someone-else" }))
-      .toBe("masini");
+    expect(threadAgent({ context_key: "agent:scribe", agent_id: "someone-else" }))
+      .toBe("scribe");
   });
 
   it("is null for a chat no agent answers", () => {
