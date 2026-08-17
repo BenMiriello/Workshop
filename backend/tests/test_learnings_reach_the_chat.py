@@ -37,21 +37,20 @@ class _Provider:
 
 
 def _isolate(tmp_path: Path, monkeypatch) -> None:
-    """Redirect BOTH stores a write touches.
+    """Redirect the store a write touches.
 
-    `_dir()` alone is not enough, and finding that out cost a polluted repo:
-    `record()` also calls `_mirror_to_md`, which resolves through
-    `_legacy_md()` -> `knowledge._root()` and appends to the TRACKED
-    `shared/learnings.md`. The first run of this file put a line reading
-    "A global guardrail. [src:test]" into that file and into the live
-    `.runtime/learnings/global.jsonl`, where it would have ridden into every
-    prompt in the workspace. Both were removed by hand.
+    A test that writes a learning must redirect it, for the same reason a test
+    that authenticates as a real owner must redirect its storage. The first run
+    of this file put a line reading "A global guardrail. [src:test]" into the
+    live `.runtime/learnings/global.jsonl`, where it would have ridden into
+    every prompt in the workspace; it was removed by hand.
 
-    A test that writes a learning must redirect both paths, for the same reason
-    a test that authenticates as a real owner must redirect its storage.
+    Redirecting `_dir()` is now sufficient. It was not while `record()` also
+    mirrored global entries into the TRACKED `shared/learnings.md` through a
+    second root, which polluted the repo as well; that mirror is gone and the
+    JSONL is the only store.
     """
     monkeypatch.setattr(learnings, "_dir", lambda: tmp_path)
-    monkeypatch.setattr(learnings, "_legacy_md", lambda: tmp_path / "learnings.md")
 
 
 def test_workshop_scope_learnings_reach_the_prompt(tmp_path, monkeypatch):

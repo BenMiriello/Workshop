@@ -6,8 +6,9 @@
 #   log_learning.sh "pattern text" [source] [scope]
 # Source is a short label (verifier|reviewer|cron|discord). Scope defaults to
 # `global` (the workspace guardrails store). This delegates to
-# services.learnings (structured, deduped JSONL) which ALSO mirrors global
-# entries into shared/learnings.md so the SessionStart hook keeps seeing them.
+# services.learnings (structured, deduped JSONL), which is the only store: the
+# SessionStart hook renders its guardrail block from the same `global` scope via
+# `services.learnings block`.
 
 set -u
 PATTERN=${1:?usage: log_learning.sh <pattern> [source] [scope]}

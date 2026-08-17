@@ -20,9 +20,9 @@ Each test below pins one of those three, plus the guards that keep the fix from
 becoming a new failure: a near-miss pair must NOT merge, and a rule the operator
 wrote must NOT age out.
 
-Every test redirects BOTH the store dir and the legacy md, for the reason
-`test_learnings_reach_the_chat._isolate` documents at length: `record()` mirrors
-global entries into the TRACKED `shared/learnings.md`.
+Every test redirects the store dir, for the reason
+`test_learnings_reach_the_chat._isolate` documents at length: a write that is not
+redirected lands in the live store and rides into every prompt in the workspace.
 """
 from __future__ import annotations
 
@@ -43,7 +43,6 @@ def store(tmp_path, monkeypatch) -> Path:
     d = tmp_path / "learnings"
     d.mkdir()
     monkeypatch.setattr(learnings, "_dir", lambda: d)
-    monkeypatch.setattr(learnings, "_legacy_md", lambda: tmp_path / "learnings.md")
     # Render bookkeeping is throttled by the store file's mtime, which in a test
     # is always "just now". Zero the window so a render's counters are visible.
     monkeypatch.setattr(learnings, "_RETRIEVAL_THROTTLE_SEC", 0)
@@ -436,15 +435,30 @@ def test_tidy_moves_store_dir_junk_without_deleting_it(store, tmp_path, monkeypa
     assert (evicted / "project-autonomy-smoke.jsonl").exists()
 
 
-def test_the_legacy_md_cannot_reintroduce_refused_lines(store, tmp_path):
-    """`_read(global)` folds `shared/learnings.md` back in on every read. Without
-    the gate on that path, archiving a status token resurrects it on the next
-    turn."""
-    (tmp_path / "learnings.md").write_text(
-        "## Failure patterns the worker has hit before\n\n"
-        "- Ralph rejected: ts_typecheck_fail [src:ralph sha:556e56b10480]\n"
-        "- DO NOT modify a file you did not read first this tick. [src:legacy-md]\n"
-    )
-    texts = _texts()
-    assert len(texts) == 1
-    assert texts[0].startswith("DO NOT modify")
+def test_an_archived_row_does_not_come_back_on_the_next_read(store):
+    """Archiving is final, because the JSONL is the only store.
+
+    This is the surviving half of the check that used to be written against
+    `shared/learnings.md`. That file was a SECOND ORIGIN, not a mirror: writes
+    appended to it and `_read(global)` folded it back in, so a status token the
+    quality sweep had just archived reappeared live on the very next read. Both
+    the markdown and the fold-back are deleted; a read is now a read of one
+    file, and this pins that."""
+    _fixture_rows(store, [
+        {"id": "ts", "hash": "ts", "scope": "global", "source": "ralph",
+         "text": "Ralph rejected: ts_typecheck_fail",
+         "created_at": "2026-07-15T12:53:01Z",
+         "provenance": [{"source": "ralph", "at": "2026-07-15T12:53:01Z"}]},
+        {"id": "keep", "hash": "keep", "scope": "global", "source": "legacy-md",
+         "text": "DO NOT modify a file you did not read first this tick.",
+         "created_at": "2026-07-15T12:53:01Z",
+         "provenance": [{"source": "legacy-md", "at": "2026-07-15T12:53:01Z"}]},
+    ])
+
+    learnings.sweep_quality("global", apply=True)
+    assert [t for t in _texts()] == ["DO NOT modify a file you did not read first this tick."]
+    assert [e["text"] for e in _archive(store)] == ["Ralph rejected: ts_typecheck_fail"]
+
+    # The read that used to resurrect it.
+    assert len(_texts()) == 1
+    assert not any("typecheck_fail" in t for t in _texts())

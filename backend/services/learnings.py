@@ -10,20 +10,22 @@ the same lesson is not recorded twice.
 Scopes
 ------
 - `global`: the workspace-wide guardrails store. Injected into every agent's
-  context. This is where cross-project corrections and the seed rules live. The
-  legacy `shared/learnings.md` is mirrored here (readable, hook-injected) and
-  migrated in on first read.
+  context, and rendered by `memory_block` for the SessionStart hook so a CLI
+  agent sees the same guardrails a Workshop agent does. This is where
+  cross-project corrections and the seed rules live.
 - `project:<slug>` / `agent:<slug>` / `app:<name>` / `workshop`: a scope's own
   accumulated memory, mirroring the knowledge scope keys. Injected only into
   that scope's chats and sweeps (see chat_context.learnings_context).
 
 Storage
 -------
-Structured JSONL under `.runtime/learnings/<safe-scope>.jsonl` is the source of
-truth (one object per line, append-ordered so a stable prefix stays byte-stable
-for prompt caching). The `global` scope additionally mirrors human-readable
-entries into `shared/learnings.md` so the existing SessionStart hook keeps
-seeing them.
+Structured JSONL under `.runtime/learnings/<safe-scope>.jsonl` is the ONLY store
+(one object per line, append-ordered so a stable prefix stays byte-stable for
+prompt caching). `global` used to be mirrored into `shared/learnings.md` for the
+SessionStart hook, and that mirror was bidirectional in practice: writes appended
+to it and every global read folded it back in, so the markdown was a second
+origin, not an archive — an archived row returned from it on the next read. The
+markdown is deleted and the hook renders `memory_block(GLOBAL)` instead.
 
 Write-time reconciliation
 -------------------------
@@ -187,10 +189,6 @@ def _dir() -> Path:
     d = ownership.workspace_path(knowledge._runtime() / "learnings", "learnings")
     d.mkdir(parents=True, exist_ok=True)
     return d
-
-
-def _legacy_md() -> Path:
-    return knowledge._root() / "shared" / "learnings.md"
 
 
 def _valid_scope(scope_key: str) -> str:
@@ -483,8 +481,6 @@ def _read(scope_key: str) -> list[dict]:
                 continue
             if isinstance(obj, dict) and obj.get("text"):
                 out.append(_normalize(obj))
-    if scope_key == GLOBAL:
-        _migrate_legacy_md(out, p)
     return out
 
 
@@ -511,126 +507,21 @@ def _archive_append(scope_key: str, entries: list[dict]) -> None:
     """Append demoted/merged-away entries to the scope's archive JSONL so history
     stays inspectable (age-out demotes, it does not destroy).
 
-    For `global` this ALSO drops the entry's line from `shared/learnings.md`.
-    That mirror is folded back into the store on every read, so archiving a row
-    without unmirroring it resurrects the row on the very next turn — which is
-    not a hypothetical: it is how the superseded restart guardrail came back as a
-    second live entry a month after it was revised."""
+    Archiving is final because the JSONL is the only store. It once was not: a
+    `shared/learnings.md` mirror was folded back in on every read, so a row
+    archived here reappeared live on the very next turn unless it was also
+    deleted from the markdown — which is how the superseded restart guardrail
+    came back as a second entry a month after it was revised."""
     if not entries:
         return
     p = _archive_path(scope_key)
     with p.open("a") as f:
         for e in entries:
             f.write(json.dumps(e, sort_keys=True) + "\n")
-    if _valid_scope(scope_key) == GLOBAL:
-        _unmirror_from_md([e.get("text", "") for e in entries])
 
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-# --- legacy shared/learnings.md bridge ---------------------------------------
-_LEGACY_LINE_RE = re.compile(r"^-\s+(?P<text>.*?)(?:\s+\[src:(?P<src>[^\s\]]+)(?:\s+sha:(?P<sha>[a-f0-9]+))?\])?\s*$")
-
-
-def _migrate_legacy_md(entries: list[dict], global_path: Path) -> None:
-    """One-time fold of `shared/learnings.md` bullet lines into the global JSONL
-    store, so nothing already learned is lost. Runs when the md holds lines the
-    JSONL does not yet have (matched by canonical hash). Idempotent."""
-    md = _legacy_md()
-    if not md.exists():
-        return
-    have = {e.get("hash") for e in entries}
-    added = False
-    for raw in md.read_text().splitlines():
-        raw = raw.rstrip()
-        if not raw.startswith("- "):
-            continue
-        m = _LEGACY_LINE_RE.match(raw)
-        # `_md_line_text` also strips the trailing " - <timestamp>" the legacy
-        # shell writer appended (hyphen or the legacy em-dash separator).
-        text = _md_line_text(raw) if m else None
-        if not text:
-            continue
-        h = _canon_hash(text)
-        if h in have:
-            continue
-        src = m.group("src") or "legacy-md"
-        # The md is hook-injected and hand-edited, so it is a write path like any
-        # other and gets the same gate. Without this, archiving a machine-status
-        # row from the JSONL resurrects it from the md on the very next read.
-        if quality_refusal(text, source=src):
-            continue
-        have.add(h)
-        entries.append({
-            "id": h,
-            "hash": h,
-            "text": text,
-            "source": src,
-            "tags": [],
-            "scope": GLOBAL,
-            "created_at": _now(),
-            "provenance": [{"source": src, "at": _now()}],
-        })
-        added = True
-    if added:
-        _write_all(GLOBAL, entries)
-
-
-def _md_line_text(raw: str) -> str | None:
-    """The learning text carried by a `- ...` bullet in the legacy md, or None."""
-    m = _LEGACY_LINE_RE.match(raw.rstrip())
-    if not m:
-        return None
-    text = re.sub("\\s+[-\\u2014]\\s+\\d{4}-\\d{2}-\\d{2}T[0-9:]+Z?$", "",
-                  m.group("text").strip()).strip()
-    return text or None
-
-
-def _unmirror_from_md(texts: list[str]) -> None:
-    """Drop bullets from `shared/learnings.md` whose text matches one of these,
-    by canonical hash. Best-effort: the md is a mirror, not the source of truth."""
-    md = _legacy_md()
-    if not md.exists() or not texts:
-        return
-    drop = {_canon_hash(t) for t in texts if t}
-    try:
-        lines = md.read_text().splitlines()
-        keep = []
-        removed = False
-        for raw in lines:
-            t = _md_line_text(raw) if raw.startswith("- ") else None
-            if t and _canon_hash(t) in drop:
-                removed = True
-                continue
-            keep.append(raw)
-        if removed:
-            md.write_text("\n".join(keep) + "\n")
-    except OSError:
-        pass
-
-
-def _mirror_to_md(text: str, source: str, h: str) -> None:
-    """Append a global learning to shared/learnings.md so the SessionStart hook
-    (which injects that file) keeps seeing new lessons. Dedup by the sha the
-    legacy writer used. Best-effort."""
-    md = _legacy_md()
-    try:
-        md.parent.mkdir(parents=True, exist_ok=True)
-        existing = md.read_text() if md.exists() else ""
-        if h in existing:
-            return
-        section = "## Failure patterns the worker has hit before"
-        if section not in existing:
-            existing += f"\n{section}\n\n"
-        # Keep the exact `- <text> [src:<source> sha:<hash>]` shape the legacy
-        # writer + _LEGACY_LINE_RE agree on, so a migration round-trip extracts
-        # the original text and dedups on hash instead of re-ingesting the line.
-        line = f"- {text} [src:{source} sha:{h}]\n"
-        md.write_text(existing + line)
-    except OSError:
-        pass
 
 
 # --- public API --------------------------------------------------------------
@@ -776,8 +667,6 @@ def record(
         target["revised_at"] = _now()
         _absorb(target, source=source, tags=tags)
         _write_all(scope, entries)
-        if scope == GLOBAL:
-            _mirror_to_md(text, source, target["hash"])
         return {"id": target["id"], "scope": scope, "recorded": False, "deduped": False,
                 "resolution": "update", "similarity": round(sim, 3)}
 
@@ -804,16 +693,12 @@ def record(
                                  "archived_reason": f"superseded by a revision (sim {sim:.2f})",
                                  "superseded_by": entry["id"]}])
         _write_all(scope, entries)
-        if scope == GLOBAL:
-            _mirror_to_md(text, source, h)
         return {"id": entry["id"], "scope": scope, "recorded": True, "deduped": False,
                 "resolution": "supersede", "superseded": target.get("id"),
                 "similarity": round(sim, 3)}
 
     _absorb(entry, source=source, tags=tags)
     _append_line(scope, entry)
-    if scope == GLOBAL:
-        _mirror_to_md(text, source, h)
     return {"id": entry["id"], "scope": scope, "recorded": True, "deduped": False,
             "resolution": "add", "similarity": round(sim, 3)}
 
@@ -1208,8 +1093,8 @@ def merge_duplicates(scope: str = GLOBAL, *, threshold: float | None = None,
                        for e in c["members"] if e.get("text") != winner.get("text")]
 
     if merged_count and apply:
-        # Archive first: for `global` that is also what clears the losers' lines
-        # out of the md mirror, which would otherwise re-migrate them back in.
+        # Archive the losers before rewriting the store, so a crash between the
+        # two loses nothing.
         _archive_append(scope, losers)
         _write_all(scope, out)
     return {"scope": scope, "before": len(entries), "after": len(out), "merged": merged_count}
