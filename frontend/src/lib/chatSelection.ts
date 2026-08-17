@@ -13,6 +13,7 @@
 // has to survive a reload just as much as "I am in thread X" does.
 
 import { DEV_MODE, DEVELOPMENT_SCOPE } from "./devMode";
+import { userStorage } from "./storage";
 
 const SEL_PREFIX = "ws-chat-sel:";
 const PROVIDER_PREFIX = "ws-chat-provider:";
@@ -32,20 +33,12 @@ export const DEFAULT_SCOPE = "general";
 // Thread selection is keyed by SCOPE (the provider / context whose thread list
 // the picker shows), because that is the list the selection indexes into.
 export function readSelection(scope: string): string | null {
-  try {
-    return localStorage.getItem(SEL_PREFIX + scope);
-  } catch {
-    return null;
-  }
+  return userStorage.local.getItem(SEL_PREFIX + scope);
 }
 
 export function writeSelection(scope: string, sel: string | null): void {
-  try {
-    if (sel) localStorage.setItem(SEL_PREFIX + scope, sel);
-    else localStorage.removeItem(SEL_PREFIX + scope);
-  } catch {
-    /* private mode / storage disabled — selection just won't survive reload */
-  }
+  if (sel) userStorage.local.setItem(SEL_PREFIX + scope, sel);
+  else userStorage.local.removeItem(SEL_PREFIX + scope);
 }
 
 // The route that starts a BLANK chat on a surface. Every "New chat" button
@@ -106,19 +99,11 @@ export function resolveScope(input: {
 // focused chat reopens on the provider you left it on instead of snapping back
 // to its default and hiding every thread you started under the other one.
 export function readProvider(contextKey: string): string | null {
-  try {
-    return localStorage.getItem(PROVIDER_PREFIX + contextKey);
-  } catch {
-    return null;
-  }
+  return userStorage.local.getItem(PROVIDER_PREFIX + contextKey);
 }
 
 export function writeProvider(contextKey: string, providerKey: string): void {
-  try {
-    localStorage.setItem(PROVIDER_PREFIX + contextKey, providerKey);
-  } catch {
-    /* see writeSelection */
-  }
+  userStorage.local.setItem(PROVIDER_PREFIX + contextKey, providerKey);
 }
 
 
@@ -203,7 +188,7 @@ function outboxExpired(ts: string, now: number): boolean {
 
 export function readOutbox(key: string): OutboxSend[] {
   try {
-    const raw = localStorage.getItem(OUTBOX_PREFIX + key);
+    const raw = userStorage.local.getItem(OUTBOX_PREFIX + key);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -241,12 +226,8 @@ export function readOutbox(key: string): OutboxSend[] {
 }
 
 export function writeOutbox(key: string, sends: OutboxSend[]): void {
-  try {
-    if (sends.length) localStorage.setItem(OUTBOX_PREFIX + key, JSON.stringify(sends));
-    else localStorage.removeItem(OUTBOX_PREFIX + key);
-  } catch {
-    /* see writeSelection */
-  }
+  if (sends.length) userStorage.local.setItem(OUTBOX_PREFIX + key, JSON.stringify(sends));
+  else userStorage.local.removeItem(OUTBOX_PREFIX + key);
 }
 
 /** TWO TABS ON ONE THREAD MUST NOT DESTROY EACH OTHER'S OUTBOX.

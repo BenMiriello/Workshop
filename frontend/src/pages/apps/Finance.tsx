@@ -5,6 +5,7 @@ import { AppGroupNav } from "../../components/appNav";
 import { AppSettings } from "../../components/AppSettings";
 import FinanceSettings from "./finance/FinanceSettings";
 import { ConnectBankButton } from "./finance/PlaidLink";
+import { userStorage } from "../../lib/storage";
 import {
   Button,
   Card,
@@ -30,15 +31,13 @@ const LS_TXN = "ws_finance_txn";
 
 function lsGet<T>(key: string): { data: T; ts: number } | null {
   try {
-    return JSON.parse(localStorage.getItem(key) ?? "null");
+    return JSON.parse(userStorage.local.getItem(key) ?? "null");
   } catch {
     return null;
   }
 }
 function lsSet<T>(key: string, data: T) {
-  try {
-    localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));
-  } catch {}
+  userStorage.local.setItem(key, JSON.stringify({ data, ts: Date.now() }));
 }
 
 type Account = {

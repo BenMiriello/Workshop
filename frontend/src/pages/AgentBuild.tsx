@@ -28,6 +28,7 @@ import {
 import Chat from "../components/Chat";
 import { useCrumbLabel } from "../components/appNav";
 import { shortHttpError } from "../lib/httpError";
+import { userStorage } from "../lib/storage";
 
 // Build-agent surface = chat-first. Opening a builder lands you in the CHAT (the
 // primary surface, full-width). The coding tools — file tree, editor, live
@@ -293,14 +294,13 @@ export default function AgentBuild() {
   // secondary panel, closed by default so you land in pure chat. Persisted so it
   // stays where you left it. This single toggle is the ONLY view control on the
   // page — there is no separate chat expander.
-  const [workbenchOpen, setWorkbenchOpen] = useState<boolean>(() => {
-    if (typeof localStorage === "undefined") return false;
-    return localStorage.getItem(WORKBENCH_KEY) === "open";
-  });
+  const [workbenchOpen, setWorkbenchOpen] = useState<boolean>(
+    () => userStorage.local.getItem(WORKBENCH_KEY) === "open",
+  );
   const toggleWorkbench = useCallback(() => {
     setWorkbenchOpen((cur) => {
       const next = !cur;
-      try { localStorage.setItem(WORKBENCH_KEY, next ? "open" : "closed"); } catch { /* ignore */ }
+      userStorage.local.setItem(WORKBENCH_KEY, next ? "open" : "closed");
       return next;
     });
   }, []);

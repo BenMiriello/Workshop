@@ -7,6 +7,7 @@
 // nothing private leaves the device. Results are cached in localStorage with a
 // TTL; misses are negatively cached so we do not refetch every render.
 import { useEffect, useState } from "react";
+import { userStorage } from "../../../lib/storage";
 
 export type BirdInfo = {
   scientific_name: string;
@@ -27,7 +28,7 @@ type Cached = { at: number; info: BirdInfo };
 
 function readCache(sci: string): BirdInfo | null {
   try {
-    const raw = localStorage.getItem(CACHE_PREFIX + sci);
+    const raw = userStorage.local.getItem(CACHE_PREFIX + sci);
     if (!raw) return null;
     const c = JSON.parse(raw) as Cached;
     const ttl = c.info.found ? TTL_MS : MISS_TTL_MS;
@@ -37,7 +38,7 @@ function readCache(sci: string): BirdInfo | null {
 }
 
 function writeCache(sci: string, info: BirdInfo) {
-  try { localStorage.setItem(CACHE_PREFIX + sci, JSON.stringify({ at: Date.now(), info })); } catch { /* quota */ }
+  userStorage.local.setItem(CACHE_PREFIX + sci, JSON.stringify({ at: Date.now(), info }));
 }
 
 function wikiTitle(url: string | null): string | null {

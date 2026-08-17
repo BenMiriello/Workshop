@@ -9,6 +9,7 @@ import { Skeleton, StateBlock, ChartTooltip, CHART_TARGET } from "@workshop/ui";
 import BirdsHeader from "./BirdsHeader";
 import { API, hh, CHART_SERIES } from "./ui";
 import { wx, OUTLOOK, localTime, dayLen, type Level } from "./forecastUtil";
+import { userStorage } from "../../../lib/storage";
 
 // The 7-day BIRD forecast: the bird activity is the subject. A week-activity graph
 // up top, bird-first day cards (predicted activity level + species count, weather
@@ -54,7 +55,7 @@ export default function ForecastWeek() {
   const [err, setErr] = useState(false);
   const [sel, setSel] = useState(0);
   const [locationId] = useState(() => {
-    const ls = localStorage.getItem("birds-source");
+    const ls = userStorage.local.getItem("birds-source");
     if (ls) { try { const v = JSON.parse(ls); if (v?.kind === "loc" && v.id) return Number(v.id); } catch { /* ignore */ } }
     return 6; // the yard station is the default place
   });

@@ -3,6 +3,7 @@ import {
 } from "react";
 import { reverseGeocode } from "./geocode";
 import { localizeEvents, type SpecCol, type SpeciesEvent, type Sample } from "./specLocalize";
+import { userStorage } from "../../../lib/storage";
 
 // App-root recorder: captures THIS device's mic and streams live BirdNET
 // detections. Lives above the router so listening keeps running while you move
@@ -97,13 +98,13 @@ export const useRecorder = () => {
 // backend is the source of truth, so a device's mode set from any screen (or the
 // Pi's admin view) drives this device too — localStorage no longer wins.
 function loadDevice(): Device {
-  let token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem("birdStationToken") || "";
+  let token = userStorage.local.getItem(TOKEN_KEY) || userStorage.local.getItem("birdStationToken") || "";
   if (!token) token = crypto.randomUUID?.() || String(Math.random()).slice(2);
-  localStorage.setItem(TOKEN_KEY, token);
-  const name = localStorage.getItem(NAME_KEY) ?? localStorage.getItem("birdStationLabel") ?? "";
-  const mode = (localStorage.getItem(MODE_KEY) as DeviceMode) || "adaptive";
-  const fixedLocationId = localStorage.getItem(FIXED_KEY) || "";
-  const shared = localStorage.getItem(SHARED_KEY) === "1";
+  userStorage.local.setItem(TOKEN_KEY, token);
+  const name = userStorage.local.getItem(NAME_KEY) ?? userStorage.local.getItem("birdStationLabel") ?? "";
+  const mode = (userStorage.local.getItem(MODE_KEY) as DeviceMode) || "adaptive";
+  const fixedLocationId = userStorage.local.getItem(FIXED_KEY) || "";
+  const shared = userStorage.local.getItem(SHARED_KEY) === "1";
   return { token, name, mode, fixedLocationId, shared };
 }
 
@@ -178,7 +179,7 @@ const SESS_SPECIES_KEY = "birdSessionSpecies";
 const SESS_LOG_KEY = "birdSessionLog";
 const WAS_KEY = "birdWasListening";
 function loadJSON<T>(k: string, fallback: T): T {
-  try { const r = localStorage.getItem(k); return r ? (JSON.parse(r) as T) : fallback; } catch { return fallback; }
+  try { const r = userStorage.local.getItem(k); return r ? (JSON.parse(r) as T) : fallback; } catch { return fallback; }
 }
 
 // Metres between two lat/lon points - used to decide when an adaptive device has
@@ -208,7 +209,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [elapsed, setElapsed] = useState(0);
   const [location, setLocation] = useState<string | null>(null);
   const [needsLocation, setNeedsLocation] = useState(false);
-  const [wasListening, setWasListening] = useState<boolean>(() => localStorage.getItem(WAS_KEY) === "1");
+  const [wasListening, setWasListening] = useState<boolean>(() => userStorage.local.getItem(WAS_KEY) === "1");
   const [nowHearing, setNowHearing] = useState<Det[]>([]);
   const [liveLog, setLiveLog] = useState<LogEntry[]>(() => loadJSON<LogEntry[]>(SESS_LOG_KEY, []));
   const [sessionSpecies, setSessionSpecies] = useState<SpeciesRow[]>(() => loadJSON<SpeciesRow[]>(SESS_SPECIES_KEY, []));
@@ -297,10 +298,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
         const fixedLocationId = sd.fixed_location_id ? String(sd.fixed_location_id) : "";
         const shared = !!sd.shared;
         const name = sd.name || deviceRef.current.name;
-        localStorage.setItem(MODE_KEY, mode);
-        localStorage.setItem(FIXED_KEY, fixedLocationId);
-        localStorage.setItem(SHARED_KEY, shared ? "1" : "0");
-        if (name) localStorage.setItem(NAME_KEY, name);
+        userStorage.local.setItem(MODE_KEY, mode);
+        userStorage.local.setItem(FIXED_KEY, fixedLocationId);
+        userStorage.local.setItem(SHARED_KEY, shared ? "1" : "0");
+        if (name) userStorage.local.setItem(NAME_KEY, name);
         setDevice((d) => ({ ...d, mode, fixedLocationId, shared, name }));
       })
       .catch(() => { /* offline: keep cache */ });
@@ -414,30 +415,30 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     return () => { if (specRafRef.current) cancelAnimationFrame(specRafRef.current); };
   }, [recording]);
 
-  // Mirror the live session view to localStorage so a reload restores it.
-  useEffect(() => { try { localStorage.setItem(SESS_LOG_KEY, JSON.stringify(liveLog.slice(0, 200))); } catch { /* quota */ } }, [liveLog]);
-  useEffect(() => { try { localStorage.setItem(SESS_SPECIES_KEY, JSON.stringify(sessionSpecies)); } catch { /* quota */ } }, [sessionSpecies]);
+  // Mirror the live session view to storage so a reload restores it.
+  useEffect(() => { userStorage.local.setItem(SESS_LOG_KEY, JSON.stringify(liveLog.slice(0, 200))); }, [liveLog]);
+  useEffect(() => { userStorage.local.setItem(SESS_SPECIES_KEY, JSON.stringify(sessionSpecies)); }, [sessionSpecies]);
 
   const setDeviceName = useCallback((n: string) => {
     const name = n.trim();
-    localStorage.setItem(NAME_KEY, name);
+    userStorage.local.setItem(NAME_KEY, name);
     setDevice((d) => { const nd = { ...d, name }; postDevice(nd); return nd; });
   }, []);
   const adoptDevice = useCallback((token: string, name: string) => {
-    localStorage.setItem(TOKEN_KEY, token);
-    localStorage.setItem(NAME_KEY, name);
+    userStorage.local.setItem(TOKEN_KEY, token);
+    userStorage.local.setItem(NAME_KEY, name);
     setDevice((d) => { const nd = { ...d, token, name }; postDevice(nd); return nd; });
   }, []);
   const setMode = useCallback((mode: DeviceMode) => {
-    localStorage.setItem(MODE_KEY, mode);
+    userStorage.local.setItem(MODE_KEY, mode);
     setDevice((d) => { const nd = { ...d, mode }; postDevice(nd); return nd; });
   }, []);
   const setFixedLocation = useCallback((id: string) => {
-    localStorage.setItem(FIXED_KEY, id);
+    userStorage.local.setItem(FIXED_KEY, id);
     setDevice((d) => { const nd = { ...d, fixedLocationId: id }; postDevice(nd); return nd; });
   }, []);
   const setShared = useCallback((shared: boolean) => {
-    localStorage.setItem(SHARED_KEY, shared ? "1" : "0");
+    userStorage.local.setItem(SHARED_KEY, shared ? "1" : "0");
     setDevice((d) => { const nd = { ...d, shared }; postDevice(nd); return nd; });
   }, []);
 
@@ -564,13 +565,13 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     specMarkersRef.current = []; specHistRef.current = []; seriesRef.current.clear();
     setMarkerEpoch((e) => e + 1);
     setRecording(false); setStatus("idle"); setNowHearing([]); setNeedsLocation(false);
-    setWasListening(false); localStorage.setItem(WAS_KEY, "0");
+    setWasListening(false); userStorage.local.setItem(WAS_KEY, "0");
   }, []);
 
   const start = useCallback(async () => {
     setErr(null); setLiveLog([]); setSessionSpecies([]); setNowHearing([]);
     setElapsed(0); setLocation(null); setNeedsLocation(false);
-    setWasListening(true); localStorage.setItem(WAS_KEY, "1");
+    setWasListening(true); userStorage.local.setItem(WAS_KEY, "1");
     posRef.current = null;
     const dev = deviceRef.current;
     postDevice(dev);

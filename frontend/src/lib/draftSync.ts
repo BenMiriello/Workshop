@@ -45,6 +45,7 @@
 // durable cross-device copy and the arbiter.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { userStorage } from "./storage";
 
 /** A file already uploaded and sitting in the composer. */
 export type DraftAttachment = { id: string; name: string; kind: "image" | "pdf" | "text" };
@@ -89,7 +90,7 @@ type DraftValue = { text: string; ts: number; attachments: DraftAttachment[] };
 
 function lsRead(key: string): DraftValue {
   try {
-    const raw = localStorage.getItem(LS_PREFIX + key);
+    const raw = userStorage.local.getItem(LS_PREFIX + key);
     if (raw) {
       const v = JSON.parse(raw);
       if (typeof v?.text === "string") {
@@ -105,13 +106,11 @@ function lsRead(key: string): DraftValue {
 }
 
 function lsWrite(key: string, text: string, ts: number, attachments: DraftAttachment[] = []) {
-  try {
-    // A CLEAR IS STORED, NOT DELETED. The timestamp is what makes "this was
-    // cleared at T" comparable with a write from before T; removing the row
-    // threw that away, so a late write looked like the first thing anyone had
-    // said about this key and won.
-    localStorage.setItem(LS_PREFIX + key, JSON.stringify({ text, ts, attachments }));
-  } catch { /* quota / disabled — server + state still hold it */ }
+  // A CLEAR IS STORED, NOT DELETED. The timestamp is what makes "this was
+  // cleared at T" comparable with a write from before T; removing the row
+  // threw that away, so a late write looked like the first thing anyone had
+  // said about this key and won.
+  userStorage.local.setItem(LS_PREFIX + key, JSON.stringify({ text, ts, attachments }));
 }
 
 async function serverGet(key: string): Promise<DraftValue | null> {

@@ -3,6 +3,7 @@ import {
   mergeOutbox, readOutbox, resolveScope, writeOutbox,
   type OutboxSend,
 } from "./chatSelection";
+import { _resetCurrentUserForTest, namespacedKey, setCurrentUser } from "./storage";
 
 // THE OUTBOX: sends this browser made that the server has not taken.
 //
@@ -41,10 +42,18 @@ const send = (text: string, clientId: string, ts = new Date().toISOString()): Ou
 const agedTs = (ms: number) => new Date(Date.now() - ms).toISOString();
 const HOUR = 60 * 60 * 1000;
 
+// A fixed signed-in user, same for every test here: these tests are about the
+// outbox/selection rules, not about namespacing (storage.test.ts covers that).
+// Set explicitly rather than relying on the pre-auth "anon" default so a
+// change to that default can't silently change what these tests exercise.
+const TEST_USER = 1;
+
 beforeEach(() => {
   Object.defineProperty(globalThis, "localStorage", {
     value: memoryStorage(), configurable: true, writable: true,
   });
+  _resetCurrentUserForTest();
+  setCurrentUser(TEST_USER);
 });
 
 describe("a send the server never took", () => {
@@ -87,11 +96,11 @@ describe("a send the server never took", () => {
   it("leaves no key behind when there is nothing left to hold", () => {
     writeOutbox("t1", [send("hello", "c1")]);
     writeOutbox("t1", []);
-    expect(localStorage.getItem("ws-chat-outbox:t1")).toBeNull();
+    expect(localStorage.getItem(namespacedKey(TEST_USER, "ws-chat-outbox:t1"))).toBeNull();
   });
 
   it("reads unparseable storage as empty rather than throwing", () => {
-    localStorage.setItem("ws-chat-outbox:t1", "{not json");
+    localStorage.setItem(namespacedKey(TEST_USER, "ws-chat-outbox:t1"), "{not json");
     expect(readOutbox("t1")).toEqual([]);
   });
 });

@@ -14,6 +14,7 @@ import {
 
 import * as auth from "../lib/auth";
 import type { AuthUser } from "../lib/auth";
+import { setCurrentUser } from "../lib/storage";
 
 type Status = "loading" | "authed" | "anon";
 
@@ -39,6 +40,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!alive) return;
       setUser(me);
       setStatus(me ? "authed" : "anon");
+      // Namespaces every browser storage key to this user, and migrates any
+      // legacy un-namespaced key into that namespace the first time a real
+      // id resolves. See lib/storage.ts's header for why this call, here, is
+      // what closes the pre-auth read case.
+      setCurrentUser(me?.id ?? null);
     })();
     return () => {
       alive = false;
@@ -49,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const u = await auth.login(email, password);
     setUser(u);
     setStatus("authed");
+    setCurrentUser(u.id);
   }, []);
 
   const register = useCallback(
@@ -56,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const u = await auth.register(email, password, name);
       setUser(u);
       setStatus("authed");
+      setCurrentUser(u.id);
     },
     [],
   );
@@ -64,6 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await auth.logout(everywhere);
     setUser(null);
     setStatus("anon");
+    setCurrentUser(null);
   }, []);
 
   const changePassword = useCallback(async (current: string, next: string) => {

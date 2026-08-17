@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import {
   FOLLOW_SLOP, restoresToBottom, type ScrollPos as ScrollPosRule,
 } from "./scrollRestore";
+import { userStorage } from "../../lib/storage";
 
 // Following the conversation: when the log sticks to the bottom, and when it
 // must not.
@@ -54,7 +55,7 @@ type ScrollPos = ScrollPosRule;
 
 function loadScrollPos(key: string): ScrollPos | null {
   try {
-    const raw = sessionStorage.getItem(SCROLL_STORE_PREFIX + key);
+    const raw = userStorage.session.getItem(SCROLL_STORE_PREFIX + key);
     if (!raw) return null;
     const v = JSON.parse(raw);
     if (typeof v?.top === "number" && typeof v?.atBottom === "boolean") return v;
@@ -77,8 +78,7 @@ let pendingScroll: { key: string; pos: ScrollPos } | null = null;
 let scrollFrame = 0;
 
 function writeScrollPos(key: string, pos: ScrollPos): void {
-  try { sessionStorage.setItem(SCROLL_STORE_PREFIX + key, JSON.stringify(pos)); }
-  catch { /* storage full or blocked — position memory is best-effort */ }
+  userStorage.session.setItem(SCROLL_STORE_PREFIX + key, JSON.stringify(pos));
 }
 
 function flushScrollPos(): void {

@@ -1,5 +1,6 @@
 import { Component, lazy, type ComponentType, type ReactNode } from "react";
 import { Button, Skeleton, StateBlock, Stack } from "@workshop/ui";
+import { userStorage } from "./storage";
 
 // A LAZY ROUTE THAT FAILS TO LOAD MUST NOT BE A BLANK PAGE.
 //
@@ -27,23 +28,21 @@ import { Button, Skeleton, StateBlock, Stack } from "@workshop/ui";
 const RELOADED_KEY = "ws-chunk-reloaded";
 
 function isFreshLoad(): boolean {
-  try {
-    return sessionStorage.getItem(RELOADED_KEY) !== "1";
-  } catch {
-    // Private mode or a blocked store. Treat as already-reloaded: showing the
-    // error is recoverable, an unbounded reload loop is not.
-    return false;
-  }
+  // Blocked storage (private mode, a cookies-off policy) can't remember that a
+  // reload already happened here, so treat it as already-reloaded: showing the
+  // error is recoverable, an unbounded reload loop is not.
+  if (!userStorage.session.available()) return false;
+  return userStorage.session.getItem(RELOADED_KEY) !== "1";
 }
 
 function markReloaded(): void {
-  try { sessionStorage.setItem(RELOADED_KEY, "1"); } catch { /* nothing to do */ }
+  userStorage.session.setItem(RELOADED_KEY, "1");
 }
 
 /** Clear the one-shot reload guard. Called once the app has successfully
  *  rendered, so a stale-chunk reload weeks apart each get their own attempt. */
 export function clearChunkReloadGuard(): void {
-  try { sessionStorage.removeItem(RELOADED_KEY); } catch { /* nothing to do */ }
+  userStorage.session.removeItem(RELOADED_KEY);
 }
 
 /** `lazy()`, but a load failure reloads the document once before giving up.

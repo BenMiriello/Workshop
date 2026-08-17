@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Toggle } from "@workshop/ui";
 import { jget } from "./ui";
+import { userStorage } from "../../../lib/storage";
 import { createAviary, type AviaryApi } from "./aviary/aviary-engine.js";
 import { AviaryVoxel } from "./aviary/aviary-voxel.js";
 import { SPECIES_NA } from "./aviary/species-na.js";
@@ -47,7 +48,7 @@ export default function Aviary({ fullscreen = false }: { fullscreen?: boolean })
   // per-poll union would fly birds out and back in every few seconds.
   const lastSeenRef = useRef<Record<string, number>>({});
 
-  const [nameTags, setNameTags] = useState<boolean>(() => localStorage.getItem(TAGS_KEY) === "1");
+  const [nameTags, setNameTags] = useState<boolean>(() => userStorage.local.getItem(TAGS_KEY) === "1");
 
   // Mount the engine once. Register the full NA species set, keep the demo
   // simulation OFF (real detections drive the scene), then tear down on unmount.
@@ -57,7 +58,7 @@ export default function Aviary({ fullscreen = false }: { fullscreen?: boolean })
     const api = createAviary({ stage, scenery, field, countchip: chipRef.current });
     api.registerSpecies(SPECIES_NA);
     api.simulate(false);
-    api.setNameTags(localStorage.getItem(TAGS_KEY) === "1");
+    api.setNameTags(userStorage.local.getItem(TAGS_KEY) === "1");
     apiRef.current = api;
     if (import.meta.env.DEV) (window as unknown as { __aviary?: AviaryApi }).__aviary = api;
     return () => { api.destroy(); apiRef.current = null; };
@@ -65,7 +66,7 @@ export default function Aviary({ fullscreen = false }: { fullscreen?: boolean })
 
   // Name-tags toggle is a view preference: commit on change, persist, push to engine.
   useEffect(() => {
-    localStorage.setItem(TAGS_KEY, nameTags ? "1" : "0");
+    userStorage.local.setItem(TAGS_KEY, nameTags ? "1" : "0");
     apiRef.current?.setNameTags(nameTags);
   }, [nameTags]);
 
