@@ -14,6 +14,15 @@ describe("the line shown for a failed request", () => {
     expect(s).toBe("403 developer mode is off here");
   });
 
+  it("unwraps the ADR 0023 detail object (code/message/hint), not just a bare string", () => {
+    const s = shortHttpError(
+      404,
+      "Not Found",
+      '{"detail":{"code":"ticket_not_found","message":"no ticket 0f8c","hint":null}}',
+    );
+    expect(s).toBe("404 no ticket 0f8c");
+  });
+
   it("leaves a body that is not FastAPI's shape alone", () => {
     expect(shortHttpError(400, "Bad Request", "empty message")).toBe("400 empty message");
     expect(shortHttpError(400, "Bad Request", "{not json")).toBe("400 {not json");

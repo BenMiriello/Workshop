@@ -99,13 +99,15 @@ def test_per_user_stores_are_isolated(env):
     requires_app("location")
     op = _client_for("operator@example.com", "password1")
     member = _client_for("member@example.com", "password2")
-    # Operator records a location ping into THEIR partition.
+    # Operator records a location ping into THEIR partition. ADR 0023: a POST
+    # that creates answers 201, and a single-resource response is the
+    # resource itself, unwrapped (no {"latest": ...} / {"metrics": ...}).
     r = op.post("/location/update", json={"lat": 37.44, "lng": -122.14}, headers=CSRF)
-    assert r.status_code == 200, r.text
-    assert op.get("/location/latest").json()["latest"]["lat"] == 37.44
+    assert r.status_code == 201, r.text
+    assert op.get("/location/latest").json()["lat"] == 37.44
     # The member sees only their own (empty) partition — never the operator's.
-    assert member.get("/location/latest").json()["latest"] is None
-    assert member.get("/health/latest").json() == {"metrics": {}}
+    assert member.get("/location/latest").json() is None
+    assert member.get("/health/latest").json() == {}
     # Budget is per-user: the operator edits THEIR plan; the member's plan is a
     # separate default and never reflects the operator's edit.
     op_plan = op.get("/budget/plan").json()

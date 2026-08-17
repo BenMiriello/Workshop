@@ -14,11 +14,9 @@
     "backend/routes/events.py": 3,
     "backend/routes/finance.py": 8,
     "backend/routes/grants.py": 4,
-    "backend/routes/health.py": 5,
     "backend/routes/inbox.py": 2,
     "backend/routes/jobs.py": 4,
     "backend/routes/knowledge.py": 6,
-    "backend/routes/location.py": 4,
     "backend/routes/mcp.py": 1,
     "backend/routes/memory_policy.py": 4,
     "backend/routes/notes.py": 9,
@@ -38,6 +36,6 @@
     "backend/routes/worktrees.py": 8
   },
   "total_routes": 411,
-  "with_response_model": 4,
-  "without_response_model": 407
+  "with_response_model": 13,
+  "without_response_model": 398
 }

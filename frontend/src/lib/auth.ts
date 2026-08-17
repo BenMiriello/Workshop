@@ -74,8 +74,13 @@ export function installAuthFetch(): void {
 async function errorMessage(res: Response, fallback: string): Promise<string> {
   try {
     const data = await res.json();
-    if (typeof data?.detail === "string") return data.detail;
-    if (Array.isArray(data?.detail) && data.detail[0]?.msg) return data.detail[0].msg;
+    const d = data?.detail;
+    if (typeof d === "string") return d;
+    // ADR 0023 (docs/decisions/0023-the-http-contract.md): the backend's
+    // registered handler upgrades a string `detail` into
+    // `{code, message, hint}` from one place, covering every raise site.
+    if (d && typeof d === "object" && typeof d.message === "string" && d.message) return d.message;
+    if (Array.isArray(d) && d[0]?.msg) return d[0].msg;
   } catch {
     /* non-JSON body */
   }

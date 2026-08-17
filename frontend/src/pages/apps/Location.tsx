@@ -33,13 +33,9 @@ type LocationRecord = {
   source?: string;
 };
 
-type HistoryResp = {
-  history: LocationRecord[];
-  total: number;
-  has_more: boolean;
-  offset: number;
-  limit: number;
-};
+// ADR 0023 envelope: {"items": [...], "page": {"limit", "next_cursor", "total", "offset"}}.
+type PageMeta = { limit: number; next_cursor: string | null; total: number | null; offset: number | null };
+type HistoryResp = { items: LocationRecord[]; page: PageMeta };
 
 const PAGE_SIZE = 25;
 // The map draws the full recent breadcrumb, not just the first table page.
@@ -163,8 +159,8 @@ export default function Location() {
   const loadLatest = useCallback(async () => {
     try {
       const r = await fetch("/api/location/latest");
-      const j = r.ok ? await r.json() : { latest: null };
-      setLatest((j.latest as LocationRecord) || null);
+      const j = r.ok ? await r.json() : null;
+      setLatest((j as LocationRecord) || null);
     } catch (e) {
       setErr(String(e));
     }
@@ -176,9 +172,10 @@ export default function Location() {
       const r = await fetch(`/api/location/history?limit=${PAGE_SIZE}&offset=0`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = (await r.json()) as HistoryResp;
-      setRecords(j.history || []);
-      setTotal(j.total ?? null);
-      setHasMore(!!j.has_more);
+      const items = j.items || [];
+      setRecords(items);
+      setTotal(j.page?.total ?? null);
+      setHasMore(j.page?.total != null && (j.page.offset ?? 0) + items.length < j.page.total);
       setErr(null);
     } catch (e) {
       setErr(String(e));
@@ -193,7 +190,7 @@ export default function Location() {
       const r = await fetch(`/api/location/history?limit=${MAP_TRACK_LIMIT}&offset=0`);
       if (!r.ok) return;
       const j = (await r.json()) as HistoryResp;
-      setTrackRecords(j.history || []);
+      setTrackRecords(j.items || []);
     } catch {
       /* map just falls back to the table page if this fails */
     }
@@ -205,9 +202,10 @@ export default function Location() {
       const r = await fetch(`/api/location/history?limit=${PAGE_SIZE}&offset=${records.length}`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const j = (await r.json()) as HistoryResp;
-      setRecords((prev) => [...prev, ...(j.history || [])]);
-      setTotal(j.total ?? null);
-      setHasMore(!!j.has_more);
+      const items = j.items || [];
+      setRecords((prev) => [...prev, ...items]);
+      setTotal(j.page?.total ?? null);
+      setHasMore(j.page?.total != null && (j.page.offset ?? 0) + items.length < j.page.total);
     } catch (e) {
       setErr(String(e));
     } finally {

@@ -245,7 +245,10 @@ export default function AutonomyControls() {
         // The backend hands back the run-target gate's own words, which are the
         // same words cron writes into queue-runner.log. Show them verbatim.
         const j = await r.json().catch(() => null);
-        setRunnerError((j && (j.detail as string)) || `start failed (${r.status})`);
+        // `detail` is either a plain string, or (ADR 0023) `{code, message, hint}`.
+        const d = j?.detail;
+        const detailMsg = typeof d === "string" ? d : typeof d?.message === "string" ? d.message : null;
+        setRunnerError(detailMsg || `start failed (${r.status})`);
       }
       await load();
       await loadScope();

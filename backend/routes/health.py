@@ -2,22 +2,31 @@
 
 POST /health/ingest        body: HAE JSON (data.metrics, data.workouts)
                             auth: HTTP Basic (~/.config/clawdbot/health-auth.env)
-                            response: {"ok": true, "stored": true, "metrics_seen": int}
+                            response: {"stored": true, "metrics_seen": int}
 
-GET  /health/latest         per-metric most-recent value index
-GET  /health/history?limit&offset    paginated raw ingest records
+GET  /health/latest         per-metric most-recent value index, keyed by name
+GET  /health/history?limit&offset    a page of raw ingest records
 DELETE /health/history      wipe all stored data (operator privacy toggle)
 GET  /health/owntracks-helper  (no — this is just owntracks; reserved name guarded against)
 GET  /health                 GET helper for accidental browser visits to /ingest
+
+Exemplar conversion for ADR 0023 (`docs/decisions/0023-the-http-contract.md`):
+picked alongside `location.py` because `history()` already returned the only
+correct pagination metadata in the codebase (`{records, total, has_more}`), so
+this is the smallest honest diff onto the ADR's shape.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from pydantic import BaseModel
 
 from deps_user import require_user
 from services import health, auth_store, ownership
+from wsplatform.http import DEFAULT_PAGE, MAX_PAGE, Page, PageMeta
+
 
 def _viewer_url(path: str) -> str:
     """Where a human would go to see this, on THIS deployment.
@@ -33,6 +42,34 @@ def _viewer_url(path: str) -> str:
 router = APIRouter(prefix="/health", tags=["health"])
 
 
+class IngestHelp(BaseModel):
+    hint: str
+    viewer: str
+
+
+class IngestResult(BaseModel):
+    stored: bool
+    metrics_seen: int
+
+
+class MetricLatest(BaseModel):
+    """One metric's most-recent reading. `qty` is `Any`: Health Auto Export's
+    own payload shape varies by metric (a bare number for most, a structured
+    object for some, e.g. blood pressure's systolic/diastolic pair), and this
+    route stores whatever it was handed rather than picking a schema HAE
+    itself does not commit to."""
+
+    ts: str | None = None
+    date: str | None = None
+    qty: Any = None
+    units: str | None = None
+
+
+class HistoryRecord(BaseModel):
+    ts: str
+    payload: dict[str, Any]
+
+
 def _pin_ingest_owner() -> None:
     """Health ingest (Basic auth) writes to the recorded health-data owner's
     partition. Fail closed if bootstrap hasn't assigned one."""
@@ -42,21 +79,20 @@ def _pin_ingest_owner() -> None:
     ownership.set_current_owner(owner)
 
 
-@router.get("/ingest")
-async def ingest_help() -> dict[str, Any]:
-    return {
-        "ok": False,
-        "hint": "POST-only endpoint. Health Auto Export iOS publishes here.",
-        "viewer": _viewer_url("/settings"),
-    }
+@router.get("/ingest", response_model=IngestHelp)
+async def ingest_help() -> IngestHelp:
+    return IngestHelp(
+        hint="POST-only endpoint. Health Auto Export iOS publishes here.",
+        viewer=_viewer_url("/settings"),
+    )
 
 
-@router.post("/ingest")
+@router.post("/ingest", response_model=IngestResult)
 async def post_ingest(
     request: Request,
     response: Response,
     authorization: str | None = Header(default=None),
-) -> dict[str, Any]:
+) -> IngestResult:
     if not health.verify_basic_auth(authorization):
         response.headers["WWW-Authenticate"] = 'Basic realm="workshop-health"'
         raise HTTPException(status_code=401, detail="invalid health auth")
@@ -68,30 +104,32 @@ async def post_ingest(
         raise HTTPException(status_code=400, detail="expected object payload")
     _pin_ingest_owner()
     result = health.ingest(payload)
-    return {"ok": True, **result}
+    return IngestResult(**result)
 
 
-@router.get("/latest")
-async def get_latest(user: dict = Depends(require_user)) -> dict[str, Any]:
-    return {"metrics": health.latest()}
+@router.get("/latest", response_model=dict[str, MetricLatest])
+async def get_latest(user: dict = Depends(require_user)) -> dict[str, MetricLatest]:
+    return health.latest()
 
 
-@router.get("/history")
+@router.get("/history", response_model=Page[HistoryRecord])
 async def get_history(
     user: dict = Depends(require_user),
-    limit: int = Query(25, ge=1, le=500),
+    limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE),
     offset: int = Query(0, ge=0),
-) -> dict[str, Any]:
+) -> Page[HistoryRecord]:
+    # Offset survives here on purpose (ADR 0023 clause 2: "offset survives
+    # only where it already is") -- this route was already offset-paginated
+    # and nothing has migrated it to a cursor yet. `page.offset` carries it
+    # forward inside the one allowed envelope instead of as a third
+    # top-level key.
     page = health.history(limit=limit, offset=offset)
-    return {
-        "history": page["records"],
-        "total": page["total"],
-        "has_more": page["has_more"],
-        "offset": offset,
-        "limit": limit,
-    }
+    return Page[HistoryRecord](
+        items=[HistoryRecord(**r) for r in page["records"]],
+        page=PageMeta(limit=limit, total=page["total"], offset=offset),
+    )
 
 
-@router.delete("/history")
-async def delete_history(user: dict = Depends(require_user)) -> dict[str, Any]:
-    return {"ok": True, **health.clear()}
+@router.delete("/history", status_code=204, response_model=None)
+async def delete_history(user: dict = Depends(require_user)) -> None:
+    health.clear()

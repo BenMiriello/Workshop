@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Depends
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from deps_auth import require_loopback, require_internal_caller
 from deps_user import (
@@ -139,6 +141,49 @@ app = FastAPI(
     redoc_url="/redoc" if _DOCS else None,
     openapi_url="/openapi.json" if _DOCS else None,
 )
+
+
+# ADR 0023 clause 3: one error model, from one place, covering all 348
+# existing `raise HTTPException` sites with zero edits to any of them. The
+# wire shape stays `{"detail": ...}` -- what FastAPI already produces -- and
+# `detail` becomes `{"code", "message", "hint"}` here. These are the first
+# exception handlers this app has ever registered.
+#
+# `starlette.exceptions.HTTPException`, not `fastapi.HTTPException`: every
+# `fastapi.HTTPException` IS one (it's a subclass), and catching the
+# Starlette base also catches the ones the framework raises itself (an
+# unmatched route's 404, a wrong-method 405) rather than only the ones this
+# codebase wrote by hand.
+#
+# This does not touch SSE or WebSocket framing. A `StreamingResponse` that
+# has already started sending bytes cannot be intercepted by an exception
+# handler at all (Starlette can no longer replace a response once
+# `http.response.start` has been sent) — this only ever fires for an
+# HTTPException raised before a streaming response begins, e.g. an auth
+# check, which already produced a plain JSON error and continues to.
+# WebSocket routes don't raise HTTPException in the first place (there's no
+# HTTP response to carry one); a `WebSocketException` is a different type
+# entirely and is untouched by this handler.
+from wsplatform.http import error_body, validation_error_body  # noqa: E402
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    return JSONResponse(
+        {"detail": error_body(exc.status_code, exc.detail)},
+        status_code=exc.status_code,
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    return JSONResponse(
+        {"detail": validation_error_body(exc.errors())},
+        status_code=422,
+    )
 
 
 # Response compression. SSE-safe by construction -- see middleware/compression.py

@@ -27,8 +27,8 @@ export default function LocationSettings() {
   const load = useCallback(async () => {
     try {
       const r = await fetch("/api/location/latest");
-      const j = r.ok ? await r.json() : { latest: null };
-      setLatest((j.latest as LocationLatest) || null);
+      const j = r.ok ? await r.json() : null;
+      setLatest((j as LocationLatest) || null);
     } catch {
       setLatest(null);
     }

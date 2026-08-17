@@ -22,8 +22,8 @@ export default function HealthSettings() {
   const load = useCallback(async () => {
     try {
       const r = await fetch("/api/health/latest");
-      const j = r.ok ? await r.json() : { metrics: {} };
-      setMetrics(j.metrics || {});
+      const j = r.ok ? await r.json() : {};
+      setMetrics(j || {});
     } catch {
       setMetrics({});
     }

@@ -7,6 +7,15 @@
 // raises as `{"detail": "..."}`, so the sentence the backend actually wrote
 // FOR the operator also needs unwrapping from around its own JSON.
 //
+// Since ADR 0023 (docs/decisions/0023-the-http-contract.md), the backend's
+// own registered handler upgrades that string into an object --
+// `{"detail": {"code", "message", "hint"}}` -- from ONE place, covering
+// every `raise HTTPException` site in the app with no per-site edit. The
+// edge shim (workshop_public_app.py) is a separate process that answers a
+// handful of its own failures (backend unreachable, frontend not built) and
+// still sends a bare string in `detail`, so both shapes reach the browser
+// and both are unwrapped here.
+//
 // Rule: a body is only ever worth showing when it reads like a real,
 // short API error message. HTML, non-JSON noise, or anything longer than
 // ERROR_BODY_CAP is dropped in favour of the status and a short sentence.
@@ -33,6 +42,12 @@ function unwrapDetail(body: string): string {
     const parsed = JSON.parse(body);
     const d = parsed?.detail;
     if (typeof d === "string" && d.trim()) return d.trim();
+    // ADR 0023 shape: `detail` is `{code, message, hint}`. `message` is the
+    // sentence the raise site wrote; show it the same way a plain string
+    // detail always was.
+    if (d && typeof d === "object" && typeof d.message === "string" && d.message.trim()) {
+      return d.message.trim();
+    }
   } catch {
     /* not JSON, or not ours: the raw body is still the best thing to show */
   }

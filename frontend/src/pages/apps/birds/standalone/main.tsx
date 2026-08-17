@@ -91,6 +91,16 @@ function Gate() {
   if (state === "loading") return null;
   if (state === "authed") return <BirdsApp />;
 
+  // `detail` is either a plain string, or (ADR 0023) `{code, message, hint}`.
+  const detailMessage = (j: unknown): string | undefined => {
+    const d = (j as { detail?: unknown } | null)?.detail;
+    if (typeof d === "string") return d;
+    if (d && typeof d === "object" && typeof (d as { message?: unknown }).message === "string") {
+      return (d as { message: string }).message;
+    }
+    return undefined;
+  };
+
   const shell = (children: React.ReactNode) => (
     <div className="ws-root" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "1rem" }}>
       <div className="ws-card ws-card--pad-lg" style={{ width: "100%", maxWidth: 360 }}>{children}</div>
@@ -103,7 +113,7 @@ function Gate() {
       const fd = new FormData(); fd.append("email", email.trim()); fd.append("password", pw);
       const r = await fetch("/api/auth/login", { method: "POST", body: fd, credentials: "same-origin" });
       if (r.ok) { setState("authed"); return; }
-      setErr((await r.json().catch(() => ({})))?.detail || "Sign in failed");
+      setErr(detailMessage(await r.json().catch(() => ({}))) || "Sign in failed");
     } catch { setErr("Network error"); } finally { setBusy(false); }
   };
 
@@ -117,7 +127,7 @@ function Gate() {
       const r = await fetch(`/api/auth/invite/${encodeURIComponent(inviteToken)}`,
         { method: "POST", body: fd, credentials: "same-origin" });
       if (r.ok) { window.history.replaceState({}, "", "/"); setState("authed"); return; }
-      setErr((await r.json().catch(() => ({})))?.detail || "Could not set password");
+      setErr(detailMessage(await r.json().catch(() => ({}))) || "Could not set password");
     } catch { setErr("Network error"); } finally { setBusy(false); }
   };
 

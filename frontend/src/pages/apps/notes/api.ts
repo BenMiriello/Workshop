@@ -61,7 +61,10 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     let detail = "";
     try {
       const j = await res.json();
-      detail = j?.detail ? `: ${j.detail}` : "";
+      // `detail` is either a plain string, or (ADR 0023) `{code, message, hint}`.
+      const d = j?.detail;
+      const msg = typeof d === "string" ? d : typeof d?.message === "string" ? d.message : "";
+      detail = msg ? `: ${msg}` : "";
     } catch {
       /* non-JSON error body */
     }
