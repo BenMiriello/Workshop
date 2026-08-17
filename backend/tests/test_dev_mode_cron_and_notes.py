@@ -36,9 +36,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from routes import notes_all  # noqa: E402
-from services import app_runner, knowledge  # noqa: E402
+from services import knowledge  # noqa: E402
+from wsplatform import dev_mode  # noqa: E402
 
-REPO = app_runner.WORKSHOP_ROOT
+REPO = dev_mode.WORKSHOP_ROOT
 SCRIPTS = REPO / "scripts"
 
 # Every entrypoint cron starts that can reach a run target. Each must load the
@@ -52,14 +53,14 @@ CRON_ENTRYPOINTS = [
 
 @pytest.fixture(autouse=True)
 def dev_mode_off(monkeypatch):
-    monkeypatch.delenv(app_runner.DEV_MODE_ENV, raising=False)
-    assert not app_runner.dev_mode_on()
+    monkeypatch.delenv(dev_mode.DEV_MODE_ENV, raising=False)
+    assert not dev_mode.dev_mode_on()
 
 
 @pytest.fixture
 def dev_mode_on(monkeypatch):
-    monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
-    assert app_runner.dev_mode_on()
+    monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
+    assert dev_mode.dev_mode_on()
 
 
 class TestTheFlagReachesCron:
@@ -96,7 +97,7 @@ class TestDoorSevenIsGated:
     def test_the_loop_has_a_dev_mode_branch(self):
         text = (SCRIPTS / "dispatch_triggers.sh").read_text(encoding="utf-8")
         assert "skip-dev-mode" in text, "the project loop has no dev-mode branch"
-        assert "app_runner.is_self_dir" in text, (
+        assert "dev_mode.is_self_dir" in text, (
             "the branch must gate the resolved directory, not the slug: the "
             "platform repo is reachable under at least five names"
         )
@@ -121,21 +122,21 @@ class TestDoorSevenIsGated:
         rows = json.loads(registry.read_text(encoding="utf-8")).get("projects") or {}
 
         def skipped() -> list[str]:
-            dev = app_runner.dev_mode_on()
+            dev = dev_mode.dev_mode_on()
             return sorted(
                 slug for slug, p in rows.items()
                 if not dev and (p.get("self")
-                                or (p.get("dir") and app_runner.is_self_dir(p["dir"])))
+                                or (p.get("dir") and dev_mode.is_self_dir(p["dir"])))
             )
 
         selves = sorted(
             slug for slug, p in rows.items()
-            if p.get("self") or (p.get("dir") and app_runner.is_self_dir(p["dir"]))
+            if p.get("self") or (p.get("dir") and dev_mode.is_self_dir(p["dir"]))
         )
         assert selves, "no self row in the registry; door 7 has nothing to gate"
         assert skipped() == selves
 
-        monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
+        monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
         assert skipped() == []
 
     def test_the_agent_launch_asserts_its_run_target(self):

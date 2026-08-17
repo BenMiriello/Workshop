@@ -353,10 +353,10 @@ async def queue_runner_targets():
     from. The platform repo appears only when developer mode is on: offering it
     and then having the gate refuse it would be another control that lies.
     """
-    from services import app_runner
+    from wsplatform import dev_mode
 
     out: list[dict] = []
-    if app_runner.dev_mode_on():
+    if dev_mode.dev_mode_on():
         out.append({
             "key": "development",
             "label": "development (the Workshop itself)",
@@ -369,7 +369,7 @@ async def queue_runner_targets():
         data = {}
     for slug, raw in sorted((data.get("projects") or {}).items()):
         d = (raw or {}).get("dir")
-        if not d or app_runner.is_self_dir(d):
+        if not d or dev_mode.is_self_dir(d):
             continue
         out.append({
             "key": slug,

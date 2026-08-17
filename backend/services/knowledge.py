@@ -1166,9 +1166,9 @@ def register_knowledge_stores() -> None:
     if ws.exists():
         found.append(("workshop", ws))
 
-    from services import app_runner
+    from wsplatform import dev_mode
     dev = ws / "development"
-    if dev.is_dir() and app_runner.dev_mode_on():
+    if dev.is_dir() and dev_mode.dev_mode_on():
         found.append(("development", dev))
 
     for kind, base in (("project", root / "projects"), ("app", root / "apps")):

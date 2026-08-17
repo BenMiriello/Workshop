@@ -27,6 +27,10 @@ DERIVED = [
     ("services.app_runner", "STATE_STORE"),
     ("services.app_runner", "LOG_ROOT"),
     ("services.app_runner", "WORKSHOP_ROOT"),
+    # The interlock's own copy (target-architecture-2026-08-17.md §2.2, ADR
+    # 0024): moved out of app_runner, independently derived here too rather
+    # than imported across, so it must independently follow a relocated root.
+    ("wsplatform.dev_mode", "WORKSHOP_ROOT"),
     ("services.port_registry", "STORE"),
     ("services.local_runner", "PROJECTS_REGISTRY"),
     ("services.local_runner", "RUNTIME_STORE"),

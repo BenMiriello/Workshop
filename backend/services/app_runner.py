@@ -72,113 +72,16 @@ def is_self_project(slug: str) -> bool:
         return False
 
 
-def is_self_dir(path: str | Path) -> bool:
-    """True if a working dir resolves to the Workshop monorepo root (the self
-    project). Since ADR 0014 this is the developer-mode predicate: the one thing
-    every route to the platform repo has in common.
-
-    For "would writing here touch the platform repo", use `is_in_self_repo`,
-    which is the containment question rather than the identity one."""
-    try:
-        return Path(path).resolve() == WORKSHOP_ROOT
-    except OSError:
-        return False
-
-
-def is_in_self_repo(path: str | Path) -> bool:
-    """True if `path` lies INSIDE the platform's git repo, at any depth.
-
-    `is_self_dir` asks whether a path IS the root, which is the wrong question
-    for anything about committing. `backend/`, `shared/`, `apps/` and
-    `branches/` all resolve to the platform repo, and `git add -A` is repo-wide
-    no matter which subdirectory it runs from -- so a turn working in any of
-    them passed the exact-equality check and then auto-committed the entire
-    monorepo, including whatever every other agent had open at that moment.
-    Observed 2026-08-13 in commit cf3eabd. `projects/*` are excluded correctly
-    either way: they carry their own .git, so their toplevel is themselves.
-
-    Resolved through git rather than by string prefix so a symlinked or bind-
-    mounted path cannot sneak past, and so a nested repo is correctly treated as
-    its own tree.
-    """
-    try:
-        r = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=15,
-        )
-        if r.returncode != 0:
-            return False
-        return Path(r.stdout.strip()).resolve() == WORKSHOP_ROOT
-    except Exception:
-        # Undecidable means "do not auto-commit": the failure this guards is
-        # committing other people's work, which is not undoable by waiting.
-        return True
-
-
-# ---- Developer mode (ADR 0014) ----------------------------------------------
-#
-# Developer mode is ONE question: is the platform repo permitted as a run target?
-#
-# The gate is the resolved working directory, not the scope name, because the
-# platform repo is reachable under at least five names through four subsystems
-# (docs/platform-redesign/dev-mode-and-development-scope-2026-08-09.md §2).
-# Gating a name closes one door and leaves eight open; gating the directory
-# closes all of them at once, with a predicate that already existed.
-#
-# THIS IS A PRODUCT CAPABILITY BOUNDARY AND A SAFETY INTERLOCK, NOT A SECURITY
-# BOUNDARY. Anyone with a shell on this box can edit the source directly; real
-# confinement is a separate execution identity ([SEC-A1], still open). What it
-# buys is that a normal build cannot be used to modify the app it is running,
-# that the always-on loops cannot silently rewrite the platform, and that "edit
-# the Workshop" is a named visible mode instead of an emergent property of a
-# default value. Do not describe it as confinement, here or in the UI.
-#
-# One flag per side, read in one place each: this function is the backend's,
-# `dev_mode_on` in scripts/dev_mode_gate.sh is the shell's, and `DEV_MODE` in
-# frontend/src/lib/devMode.ts is the build-time frontend's. All three apply the
-# identical rule so there is one answer, not three.
-
-DEV_MODE_ENV = "WORKSHOP_DEV_MODE"
-
-
-def dev_mode_on() -> bool:
-    """Is developer mode on for this deployment? `WORKSHOP_DEV_MODE=1`, and only
-    the exact string "1", so a stray empty / "0" / "false" in the environment can
-    never read as on. Read fresh on every call: the flag is deployment config,
-    and a process that has to restart to notice it is a process that will be
-    reported as broken."""
-    return os.environ.get(DEV_MODE_ENV) == "1"
-
-
-def self_dir_refusal(target: str | Path, who: str) -> str:
-    """The message a chokepoint shows when it refuses the platform repo.
-
-    One text, shared by every refusal, so the operator learns one sentence
-    instead of four. It names the target, the caller, the flag, and — because
-    this is the thing an audit must not have to unwind later — what kind of
-    boundary this is."""
-    return (
-        f"{who} cannot run against {target}: that is the Workshop's own source "
-        f"tree, and developer mode is off. Set {DEV_MODE_ENV}=1 for this "
-        f"installation to allow it. This is a safety interlock, not a security "
-        f"boundary. See ADR 0014."
-    )
-
-
-def assert_run_target(target: str | Path | None, who: str) -> None:
-    """Refuse the platform repo as a run target unless developer mode is on.
-
-    The Python half of `assert_run_target` in scripts/dev_mode_gate.sh, with the
-    same two rules and the same wording. Raises HTTPException(403) rather than
-    returning a bool, so the refusal reaches the UI as a specific sentence
-    instead of degrading into a confusing 404 further down."""
-    from fastapi import HTTPException  # local: services must not need FastAPI to import
-
-    if target is None:
-        raise HTTPException(403, f"{who} cannot run: no working tree named (ADR 0014).")
-    if is_self_dir(target) and not dev_mode_on():
-        raise HTTPException(403, self_dir_refusal(target, who))
-
+# MOVED to `wsplatform/dev_mode.py` (target-architecture-2026-08-17.md §2.2,
+# ADR 0024): `is_self_dir`, `is_in_self_repo`, the developer-mode flag
+# (`DEV_MODE_ENV`, `dev_mode_on`), `self_dir_refusal` and `assert_run_target`.
+# This module's own business logic never called any of them -- it only
+# defined them for its 8 other importers, which is the misplacement
+# `wsplatform/dev_mode.py`'s header explains in full. `is_self_project` stays
+# here: it IS this module's own logic (guards `start_app`/`stop_app`/
+# `restart_service`/`app_status`/`manifest_dict`/`env_overview` below, 6
+# internal call sites), not a chokepoint anything outside app_runner reaches
+# for the write-safety question `wsplatform.dev_mode` now answers alone.
 
 LOG_ROOT = paths.env_path("WORKSHOP_APP_LOG_ROOT", "app-logs")
 

@@ -20,7 +20,8 @@ import asyncio
 
 import pytest
 
-from services import app_runner, knowledge, ownership, scope_tree
+from services import knowledge, ownership, scope_tree
+from wsplatform import dev_mode
 
 
 # --- parse ---------------------------------------------------------------------
@@ -42,12 +43,12 @@ class TestParse:
             scope_tree.parse("nonsense")
 
     def test_development_raises_when_dev_mode_off(self, monkeypatch):
-        monkeypatch.delenv(app_runner.DEV_MODE_ENV, raising=False)
+        monkeypatch.delenv(dev_mode.DEV_MODE_ENV, raising=False)
         with pytest.raises(ValueError, match="developer mode is off"):
             scope_tree.parse("development")
 
     def test_development_parses_when_dev_mode_on(self, monkeypatch):
-        monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
+        monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
         s = scope_tree.parse("development")
         assert (s.kind, s.slug) == ("development", "")
 
@@ -66,34 +67,34 @@ def fixture_tree(monkeypatch):
 
 class TestReachDirection:
     def test_development_reaches_workshop(self, monkeypatch, fixture_tree):
-        monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
+        monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
         assert "workshop" in scope_tree.reach("development")
 
     def test_workshop_does_not_reach_development(self, monkeypatch, fixture_tree):
-        monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
+        monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
         assert "development" not in scope_tree.reach("workshop")
 
     def test_development_reaches_everything(self, monkeypatch, fixture_tree):
-        monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
+        monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
         r = scope_tree.reach("development")
         assert set(r) == {"development", "workshop", "project:a", "project:b", "agent:solo"}
 
     def test_workshop_reaches_its_projects_and_agents(self, monkeypatch, fixture_tree):
-        monkeypatch.delenv(app_runner.DEV_MODE_ENV, raising=False)
+        monkeypatch.delenv(dev_mode.DEV_MODE_ENV, raising=False)
         r = scope_tree.reach("workshop")
         assert set(r) == {"workshop", "project:a", "project:b", "agent:solo"}
 
     def test_siblings_are_mutually_unreachable(self, monkeypatch, fixture_tree):
-        monkeypatch.delenv(app_runner.DEV_MODE_ENV, raising=False)
+        monkeypatch.delenv(dev_mode.DEV_MODE_ENV, raising=False)
         assert "project:b" not in scope_tree.reach("project:a")
         assert "project:a" not in scope_tree.reach("project:b")
 
     def test_a_scope_always_reaches_itself(self, monkeypatch, fixture_tree):
-        monkeypatch.delenv(app_runner.DEV_MODE_ENV, raising=False)
+        monkeypatch.delenv(dev_mode.DEV_MODE_ENV, raising=False)
         assert scope_tree.reach("project:a") == ["project:a"]
 
     def test_no_development_node_when_dev_mode_is_off(self, monkeypatch, fixture_tree):
-        monkeypatch.delenv(app_runner.DEV_MODE_ENV, raising=False)
+        monkeypatch.delenv(dev_mode.DEV_MODE_ENV, raising=False)
         with pytest.raises(ValueError):
             scope_tree.parse("development")
         assert scope_tree.parent("workshop") is None  # workshop is the root
@@ -236,7 +237,7 @@ class TestCrossScopeRecall:
         assert out2 == []
 
     def test_development_recalls_into_every_scope(self, notes_tree, monkeypatch):
-        monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
+        monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
         out = asyncio.run(knowledge.recall("development", "project:alpha", "alpha"))
         assert out and out[0]["note_id"] == "a1"
         out2 = asyncio.run(knowledge.recall("development", "agent:solo", "solo"))
@@ -331,7 +332,7 @@ class TestAppsAndAgentsAreRegistryDriven:
 
     def test_development_reaches_registry_scopes_too(self, registry_tree, monkeypatch):
         tmp_path, agents_dir = registry_tree
-        monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
+        monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
         from services import installed_apps
         installed_apps.REGISTRY_PATH.write_text('{"installed": ["birds"]}')
         _write_agent(agents_dir, "scribe")
@@ -346,7 +347,7 @@ class TestLabel:
         assert scope_tree.label("workshop") == "Workshop"
 
     def test_development(self, monkeypatch):
-        monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
+        monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
         assert scope_tree.label("development") == "Development"
 
     def test_project(self):

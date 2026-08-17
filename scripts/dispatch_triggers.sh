@@ -43,7 +43,7 @@ export WORKSHOP
 source "$WORKSHOP/scripts/lib/instance.sh"
 
 # The shell half of developer mode: dev_mode_on / is_self_dir /
-# assert_run_target. Same rule as backend/services/app_runner.py and
+# assert_run_target. Same rule as backend/wsplatform/dev_mode.py and
 # frontend/src/lib/devMode.ts; do not restate the rule anywhere else.
 source "$WORKSHOP/scripts/dev_mode_gate.sh"
 
@@ -85,8 +85,11 @@ from services import dispatch_grants  # noqa: E402
 # Developer mode (ADR 0014). `is_self_dir` / `dev_mode_on` here are the SAME two
 # predicates the enclosing shell sourced from scripts/dev_mode_gate.sh; that file
 # names this module as its other half. Called from Python because the loop that
-# needs them is Python, not because there is a second rule.
-from services import app_runner  # noqa: E402
+# needs them is Python, not because there is a second rule. Moved from
+# `services.app_runner` to `wsplatform/dev_mode.py`
+# (target-architecture-2026-08-17.md §2.2, ADR 0024): app_runner is a
+# multi-service process supervisor this loop otherwise has no reason to import.
+from wsplatform import dev_mode  # noqa: E402
 
 WORKSHOP = Path(os.environ["WORKSHOP"])
 STATE_PATH = WORKSHOP / ".runtime" / "trigger-state.json"
@@ -329,7 +332,7 @@ except Exception:
     projects = {}
 
 proj_started = 0
-DEV_MODE = app_runner.dev_mode_on()
+DEV_MODE = dev_mode.dev_mode_on()
 for slug, p in sorted(projects.items()):
     if proj_started >= MAX_PROJECT_SWEEPS:
         break
@@ -351,10 +354,11 @@ for slug, p in sorted(projects.items()):
     #
     # `p.get("dir") and` matters: is_self_dir("") resolves to the cwd, and this
     # block runs with cwd = the repo root, so a row with no dir would read as
-    # self. The `self` flag is honored too, the same pair app_runner.is_self_project
-    # uses, read off the row already in hand instead of re-opening the registry.
+    # self. The `self` flag is honored too, the same pair
+    # services.app_runner.is_self_project uses, read off the row already in
+    # hand instead of re-opening the registry.
     _pdir = p.get("dir")
-    if not DEV_MODE and (p.get("self") or (_pdir and app_runner.is_self_dir(_pdir))):
+    if not DEV_MODE and (p.get("self") or (_pdir and dev_mode.is_self_dir(_pdir))):
         print(f"skip-dev-mode\tproject:{slug}\t"
               f"{p.get('dir')} is the Workshop's own source tree; "
               f"set WORKSHOP_DEV_MODE=1 to dispatch against it (ADR 0014)",

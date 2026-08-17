@@ -1389,10 +1389,13 @@ def launch_task_run(scope: str, task_id: str, *, chat_id: str | None = None) -> 
     mode is off, (409) when a sweep already holds the tree, (400) on an unknown
     scope or a broken ticket, (404) when the ticket is gone, (500) when the
     driver is missing. Returns {ok, job_id, scope, task_id}."""
-    from services import app_runner
+    from wsplatform import dev_mode
 
     root = _require_root(scope)
-    app_runner.assert_run_target(root, f"a {scope} ticket run")
+    try:
+        dev_mode.assert_run_target(root, f"a {scope} ticket run")
+    except dev_mode.DevModeRefusal as e:
+        raise HTTPException(e.status, e.message)
     task = tasks.get_task(root, task_id)
     if task is None:
         raise HTTPException(404, f"task not found: {task_id}")

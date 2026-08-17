@@ -31,7 +31,8 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
-from services import app_runner, knowledge, ownership
+from services import knowledge, ownership
+from wsplatform import dev_mode
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -139,7 +140,7 @@ def _scope_roots() -> list[tuple[str, Path]]:
     # never listed, `knowledge._parse_scope` refuses it on the write path, and
     # nothing here touches the filesystem. The directory is created on demand by
     # `knowledge.scope_dir`, exactly as it is for every other scope.
-    if app_runner.dev_mode_on():
+    if dev_mode.dev_mode_on():
         dev = ws / "development"
         try:
             key = str(dev.resolve())

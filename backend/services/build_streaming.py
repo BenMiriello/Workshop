@@ -1689,9 +1689,18 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
     A product capability boundary and a safety interlock, not a security
     boundary: this stops the app being used to rewrite itself, not a person with
     a shell from editing the source."""
-    from services import app_runner
+    from wsplatform import dev_mode
 
-    app_runner.assert_run_target(cwd, "a chat turn")
+    try:
+        dev_mode.assert_run_target(cwd, "a chat turn")
+    except dev_mode.DevModeRefusal as e:
+        # local: this service module has no other reason to depend on FastAPI,
+        # so the import stays here rather than at module scope. Same convention
+        # `services/app_runner.py` used before this refusal moved out of it —
+        # see wsplatform/dev_mode.py's header for why the dependency could not
+        # just move with it.
+        from fastapi import HTTPException
+        raise HTTPException(e.status, e.message)
     turn = _make_turn(thread_id, agent_slug, turn_id=run_id)
     if run_id is None:
         joined = await claim_run(thread_id, turn.id, model=model, agent=speaker)
@@ -3028,8 +3037,9 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     # running in backend/, shared/, apps/ or branches/ passed the check and then
     # committed the whole monorepo -- other agents' unfinished files included.
     try:
-        from services import checkpoints, app_runner
-        if cwd and not app_runner.is_in_self_repo(cwd):
+        from services import checkpoints
+        from wsplatform import dev_mode
+        if cwd and not dev_mode.is_in_self_repo(cwd):
             paths = _written_paths(turn.id, cwd)
             sha = await asyncio.to_thread(
                 checkpoints.checkpoint, cwd, f"{turn.agent_slug} turn", paths

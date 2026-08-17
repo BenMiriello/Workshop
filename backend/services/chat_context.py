@@ -1534,7 +1534,7 @@ def contained_project_dir(slug: str) -> _Path:
     this join is reachable from every other, so the invariant is enforced where
     the path is actually built. What made the original traversal reach a spawn
     was precisely this shape of gap: the only downstream guard,
-    `app_runner.is_self_dir`, is an exact-equality test against the repo root,
+    `wsplatform.dev_mode.is_self_dir`, is an exact-equality test against the repo root,
     which a traversed path simply is not, so the turn ran the full agentic
     toolset under bypassPermissions at an arbitrary host path.
 
@@ -1833,7 +1833,7 @@ _general = ContextProvider()
 # was the platform repo itself. Once Read/Grep/Glob rode alongside the query
 # tool (2026-07-18, "Widen general chat's tool surface") plus Edit/Write/Bash,
 # `general` could read AND edit whatever that shared fallback pointed at —
-# `is_self_dir` in app_runner never caught it, because WORKSHOP_DEV_MODE is on
+# `is_self_dir` in wsplatform.dev_mode never caught it, because WORKSHOP_DEV_MODE is on
 # here for `development`'s own sake and gates by directory, not by scope.
 #
 # The fix is not "point the fallback somewhere safer": several providers share
@@ -1872,8 +1872,8 @@ def provider_map() -> dict[str, ContextProvider]:
     # rather than in _PLATFORM_PROVIDERS because that map is a module-level
     # constant and the flag has to be read per call: a constant would freeze
     # whatever the environment said at import.
-    from services import app_runner
-    if app_runner.dev_mode_on():
+    from wsplatform import dev_mode
+    if dev_mode.dev_mode_on():
         try:
             dev = DevelopmentContextProvider()
             providers[dev.key] = dev
@@ -2008,8 +2008,8 @@ def dev_scope_refused(context_key: str | None) -> bool:
     operator-facing seams say so out loud."""
     if context_key != "development":
         return False
-    from services import app_runner
-    return not app_runner.dev_mode_on()
+    from wsplatform import dev_mode
+    return not dev_mode.dev_mode_on()
 
 
 def get_provider(context_key: str | None) -> ContextProvider:
@@ -2033,8 +2033,8 @@ def get_provider(context_key: str | None) -> ContextProvider:
         log.warning("refusing scope %r: not the caller's to reach", context_key)
         context_key = None
     if context_key == "development":
-        from services import app_runner
-        if app_runner.dev_mode_on():
+        from wsplatform import dev_mode
+        if dev_mode.dev_mode_on():
             return DevelopmentContextProvider()
         # FALLS THROUGH TO `general` when the flag is off, and that is a
         # DOWNGRADE, not a refusal. This comment used to claim the opposite,
@@ -2054,7 +2054,7 @@ def get_provider(context_key: str | None) -> ContextProvider:
         # no gate here, ProjectContextProvider's own fallback
         # (`_projects_root() / slug`) joined that unchecked, resolving OUTSIDE
         # `projects/` entirely, and the only downstream check
-        # (`app_runner.is_self_dir`) is an exact-equality test that a traversal
+        # (`wsplatform.dev_mode.is_self_dir`) is an exact-equality test that a traversal
         # target simply isn't. That gave a chat full agentic tools
         # (bypassPermissions, no --allowedTools) at an arbitrary host path.
         #

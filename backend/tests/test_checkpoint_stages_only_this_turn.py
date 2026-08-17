@@ -20,7 +20,8 @@ import subprocess
 
 import pytest
 
-from services import app_runner, checkpoints
+from services import checkpoints
+from wsplatform import dev_mode
 
 
 def _git(args, cwd):
@@ -94,13 +95,13 @@ def test_platform_repo_is_never_auto_committed_from_a_subdirectory():
     of them is repo-wide. `projects/*` carry their own .git, so they are their
     own tree and remain checkpointable.
     """
-    root = app_runner.WORKSHOP_ROOT
+    root = dev_mode.WORKSHOP_ROOT
     for sub in ("", "backend", "shared", "apps"):
         p = root / sub if sub else root
         if not p.exists():
             continue
-        assert app_runner.is_in_self_repo(p) is True, f"{p} must be protected"
-    assert app_runner.is_in_self_repo("/tmp") is False
+        assert dev_mode.is_in_self_repo(p) is True, f"{p} must be protected"
+    assert dev_mode.is_in_self_repo("/tmp") is False
 
 
 def test_undecidable_location_is_treated_as_protected(monkeypatch):
@@ -110,7 +111,7 @@ def test_undecidable_location_is_treated_as_protected(monkeypatch):
         raise OSError("git unavailable")
 
     monkeypatch.setattr(subprocess, "run", boom)
-    assert app_runner.is_in_self_repo("/anywhere") is True
+    assert dev_mode.is_in_self_repo("/anywhere") is True
 
 
 def test_written_paths_reads_the_turns_own_journal(tmp_path, monkeypatch):

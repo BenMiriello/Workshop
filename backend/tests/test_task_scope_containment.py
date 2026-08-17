@@ -10,7 +10,7 @@ both take one, the former from any authenticated user — so
 `project_ralph.sh --dir <that path>`: a detached autonomous run rooted outside
 the tree.
 
-The only containment downstream is `app_runner.is_self_dir`, an exact-equality
+The only containment downstream is `wsplatform.dev_mode.is_self_dir`, an exact-equality
 test against the platform repo — so `agent:../..` was caught and everything
 deeper was not. That is the same shape as the `project:` traversal fixed
 alongside it, on the branch that also ran something.

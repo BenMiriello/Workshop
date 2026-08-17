@@ -104,8 +104,8 @@ class TestTheCanonicalMapping:
         chat is bound is a different question from whether that scope resolves
         to a working tree, and answering `workshop` here would silently re-home
         every development chat onto the root queue."""
-        from services import app_runner
-        monkeypatch.delenv(app_runner.DEV_MODE_ENV, raising=False)
+        from wsplatform import dev_mode
+        monkeypatch.delenv(dev_mode.DEV_MODE_ENV, raising=False)
         assert scope_tree.scope_for_context("development") == "development"
 
     def test_development_is_never_an_app(self, catalog):

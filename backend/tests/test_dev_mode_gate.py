@@ -35,21 +35,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from routes import projects as projects_route  # noqa: E402
 from routes import tasks_all  # noqa: E402
 from services import app_runner, build_agents, build_streaming, knowledge, task_scope  # noqa: E402
+from wsplatform import dev_mode  # noqa: E402
 
-REPO = app_runner.WORKSHOP_ROOT
+REPO = dev_mode.WORKSHOP_ROOT
 SCRIPTS = REPO / "scripts"
 
 
 @pytest.fixture(autouse=True)
 def dev_mode_off(monkeypatch):
-    monkeypatch.delenv(app_runner.DEV_MODE_ENV, raising=False)
-    assert not app_runner.dev_mode_on()
+    monkeypatch.delenv(dev_mode.DEV_MODE_ENV, raising=False)
+    assert not dev_mode.dev_mode_on()
 
 
 @pytest.fixture
 def dev_mode_on(monkeypatch):
-    monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
-    assert app_runner.dev_mode_on()
+    monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
+    assert dev_mode.dev_mode_on()
 
 
 @pytest.fixture
@@ -92,23 +93,23 @@ def _self_project_slug() -> str:
 class TestTheFlag:
     def test_only_the_exact_string_one_reads_as_on(self, monkeypatch):
         for value in ("", "0", "false", "true", "yes", "1 ", "01"):
-            monkeypatch.setenv(app_runner.DEV_MODE_ENV, value)
-            assert not app_runner.dev_mode_on(), f"{value!r} must not read as on"
-        monkeypatch.setenv(app_runner.DEV_MODE_ENV, "1")
-        assert app_runner.dev_mode_on()
+            monkeypatch.setenv(dev_mode.DEV_MODE_ENV, value)
+            assert not dev_mode.dev_mode_on(), f"{value!r} must not read as on"
+        monkeypatch.setenv(dev_mode.DEV_MODE_ENV, "1")
+        assert dev_mode.dev_mode_on()
 
     def test_the_refusal_names_the_flag_and_disclaims_confinement(self):
-        msg = app_runner.self_dir_refusal(REPO, "a chat turn")
-        assert app_runner.DEV_MODE_ENV in msg
+        msg = dev_mode.self_dir_refusal(REPO, "a chat turn")
+        assert dev_mode.DEV_MODE_ENV in msg
         assert str(REPO) in msg
         assert "safety interlock" in msg
         assert "not a security boundary" in msg
 
     def test_the_predicate_is_the_directory_not_the_name(self):
-        assert app_runner.is_self_dir(REPO)
-        assert app_runner.is_self_dir(str(REPO) + "/")
-        assert not app_runner.is_self_dir(REPO / "frontend")
-        assert not app_runner.is_self_dir(REPO.parent)
+        assert dev_mode.is_self_dir(REPO)
+        assert dev_mode.is_self_dir(str(REPO) + "/")
+        assert not dev_mode.is_self_dir(REPO / "frontend")
+        assert not dev_mode.is_self_dir(REPO.parent)
 
 
 # --------------------------------------------------------------------------
@@ -125,7 +126,7 @@ class TestDoor1TicketRun:
         with pytest.raises(HTTPException) as e:
             tasks_all.launch_task_run("development", "any-id")
         assert e.value.status_code == 403
-        assert app_runner.DEV_MODE_ENV in e.value.detail
+        assert dev_mode.DEV_MODE_ENV in e.value.detail
 
     def test_workshop_is_not_a_build_target_at_all(self):
         # Not "refused because dev mode is off" — the root organising scope has
@@ -143,7 +144,7 @@ class TestDoor1TicketRun:
         # The strongest form of door 1: whatever the scopes are called, none of
         # them is the Workshop's own tree.
         for key, root in tasks_all.scope_roots():
-            assert not app_runner.is_self_dir(root), f"{key} resolves to the platform repo"
+            assert not dev_mode.is_self_dir(root), f"{key} resolves to the platform repo"
 
 
 # --------------------------------------------------------------------------
@@ -154,7 +155,7 @@ class TestDoor2GeneralChat:
     def test_general_no_longer_resolves_to_the_platform_repo(self):
         root = task_scope.root_for_context("general")
         assert root is not None, "the general chat must keep a queue to file into"
-        assert not app_runner.is_self_dir(root)
+        assert not dev_mode.is_self_dir(root)
 
     def test_general_and_workshop_still_share_one_inbox(self):
         # Removing the alias to the REPO must not split the root queue in two.
@@ -202,7 +203,7 @@ class TestDoor3SelfProjectRow:
         # The strong form: whatever a row is called, none of the listed dirs is
         # the Workshop's own tree.
         for p in projects_client.get("/projects/").json():
-            assert not app_runner.is_self_dir(p["dir"]), \
+            assert not dev_mode.is_self_dir(p["dir"]), \
                 f"project {p['slug']} is the platform repo"
 
     def test_it_is_still_absent_with_developer_mode_on(self, projects_client, dev_mode_on):
@@ -220,7 +221,7 @@ class TestDoor3SelfProjectRow:
         # found" and take the autonomy config down with it.
         r = projects_client.get(f"/projects/{_self_project_slug()}")
         assert r.status_code == 200, r.text
-        assert app_runner.is_self_dir(r.json()["dir"])
+        assert dev_mode.is_self_dir(r.json()["dir"])
 
     def test_renaming_the_row_would_not_reopen_it(self, monkeypatch, tmp_path):
         # The gate is the directory, so a row called anything at all is refused
@@ -246,7 +247,7 @@ class TestDoor4RetiredBuildAgents:
     def test_no_build_agent_points_at_the_platform_repo(self):
         for a in build_agents.list_agents():
             cwd = a.get("cwd")
-            assert not (cwd and app_runner.is_self_dir(cwd)), \
+            assert not (cwd and dev_mode.is_self_dir(cwd)), \
                 f"build agent {a.get('slug')} has the self cwd"
 
     def test_a_revived_one_would_still_be_refused(self, monkeypatch):
@@ -281,7 +282,7 @@ class TestDoor5AgentScope:
         monkeypatch.setattr(agents_registry, "get",
                             lambda slug: {"slug": slug, "role": None})
         root = task_scope.root_for_context("agent:memory-keeper")
-        assert root is not None and not app_runner.is_self_dir(root)
+        assert root is not None and not dev_mode.is_self_dir(root)
 
 
 # --------------------------------------------------------------------------
@@ -296,7 +297,7 @@ class TestDoor6AutonomyRunEndpoint:
     def test_the_endpoint_refuses_with_a_reason_the_ui_can_show(self, client):
         r = client.post(f"/projects/{_self_project_slug()}/autonomy/run")
         assert r.status_code == 403, r.text
-        assert app_runner.DEV_MODE_ENV in r.json()["detail"]
+        assert dev_mode.DEV_MODE_ENV in r.json()["detail"]
 
     def test_it_refuses_before_opening_a_job(self, client, monkeypatch):
         from services import jobs
@@ -322,7 +323,7 @@ class TestDoors789TheLoops:
         script = (f'source "{SCRIPTS}/dev_mode_gate.sh"; '
                   f'assert_run_target "{dir_arg}" "test-loop"')
         e = dict(os.environ)
-        e.pop(app_runner.DEV_MODE_ENV, None)
+        e.pop(dev_mode.DEV_MODE_ENV, None)
         e.update(env or {})
         return subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=e)
 
@@ -335,13 +336,13 @@ class TestDoors789TheLoops:
         p = self._gate(str(REPO))
         assert p.returncode == 1
         assert "own source tree" in p.stderr
-        assert app_runner.DEV_MODE_ENV in p.stderr
+        assert dev_mode.DEV_MODE_ENV in p.stderr
 
     def test_an_ordinary_tree_is_allowed(self, tmp_path):
         assert self._gate(str(tmp_path)).returncode == 0
 
     def test_developer_mode_allows_the_platform_repo(self):
-        assert self._gate(str(REPO), {app_runner.DEV_MODE_ENV: "1"}).returncode == 0
+        assert self._gate(str(REPO), {dev_mode.DEV_MODE_ENV: "1"}).returncode == 0
 
     @pytest.mark.parametrize("script", [
         "ralph.sh", "queue_runner.sh", "queue_runner_watchdog.sh", "project_ralph.sh",
@@ -397,7 +398,7 @@ class TestChatTurns:
         with pytest.raises(HTTPException) as e:
             self._start(str(REPO))
         assert e.value.status_code == 403
-        assert app_runner.DEV_MODE_ENV in e.value.detail
+        assert dev_mode.DEV_MODE_ENV in e.value.detail
 
     def test_it_refuses_before_claiming_the_thread(self):
         # A refusal that had already claimed the run would wedge the thread as
@@ -416,7 +417,7 @@ class TestKnowledgeScope:
     def test_development_is_not_a_notes_scope(self):
         with pytest.raises(ValueError) as e:
             knowledge._parse_scope("development")
-        assert app_runner.DEV_MODE_ENV in str(e.value)
+        assert dev_mode.DEV_MODE_ENV in str(e.value)
 
     def test_workshop_notes_are_unaffected(self):
         assert knowledge._parse_scope("workshop") == ("workshop", "")
@@ -470,17 +471,84 @@ class TestDeveloperModeOn:
         assert open_tasks, "the development queue is empty; the migration lost it"
 
     def test_the_platform_repo_still_has_exactly_one_name(self, dev_mode_on):
-        keys = [k for k, root in tasks_all.scope_roots() if app_runner.is_self_dir(root)]
+        keys = [k for k, root in tasks_all.scope_roots() if dev_mode.is_self_dir(root)]
         assert keys == ["development"]
 
     def test_a_chat_turn_in_the_platform_repo_is_permitted(self, dev_mode_on, monkeypatch):
         # Assert only that the gate lets it through — the spawn itself is not
         # what this file is about.
         called: list = []
-        monkeypatch.setattr(app_runner, "assert_run_target",
+        monkeypatch.setattr(dev_mode, "assert_run_target",
                             lambda target, who: called.append((str(target), who)))
-        app_runner.assert_run_target(str(REPO), "a chat turn")
+        dev_mode.assert_run_target(str(REPO), "a chat turn")
         assert called and called[0][0] == str(REPO)
 
     def test_development_is_a_notes_scope(self, dev_mode_on):
         assert knowledge._parse_scope("development") == ("development", "")
+
+
+# --------------------------------------------------------------------------
+# The extraction itself (target-architecture-2026-08-17.md §2.2, ADR 0024)
+# --------------------------------------------------------------------------
+#
+# Everything above this line proves the GATE still works. It does not prove
+# WHERE the gate now lives -- every assertion above goes through `dev_mode.*`,
+# which would pass identically whether that module holds the real logic or is
+# a thin re-export of `app_runner`. These tests are the difference: they prove
+# `app_runner` no longer carries the interlock at all, and that the callers
+# resolve it through `wsplatform.dev_mode`'s own module object, not through
+# any copy `app_runner` might still hold.
+
+class TestTheInterlockMovedOut:
+    def test_app_runner_no_longer_defines_the_interlock(self):
+        # The whole point of the move: a caller that only wants this boolean
+        # must no longer be able to reach it by importing the 1,426-line
+        # process supervisor. If any of these come back, the import graph
+        # regressed exactly the way the plan measured.
+        for name in ("dev_mode_on", "is_self_dir", "is_in_self_repo",
+                     "self_dir_refusal", "assert_run_target", "DEV_MODE_ENV"):
+            assert not hasattr(app_runner, name), (
+                f"services.app_runner still defines {name!r}; the interlock "
+                f"was supposed to move to wsplatform.dev_mode, not be copied"
+            )
+        # is_self_project is the one predicate that DOES stay: it is
+        # app_runner's own business logic (refusing to let the App-runner UI
+        # manage the running platform as a deployable app), not a chokepoint
+        # anything outside app_runner reaches for the write-safety question.
+        assert hasattr(app_runner, "is_self_project")
+
+    def test_the_ticket_run_chokepoint_resolves_through_the_new_module(self, monkeypatch):
+        # Patching `dev_mode.assert_run_target` (not an env var, and not
+        # `app_runner.assert_run_target`, which no longer exists) and getting
+        # a refusal proves `routes/tasks_all.py` now imports `wsplatform.dev_mode`
+        # for this, rather than some copy reached through `app_runner`.
+        from wsplatform.dev_mode import DevModeRefusal
+
+        def refuse(target, who):
+            raise DevModeRefusal(f"refused: {who}", status=403)
+
+        monkeypatch.setattr(dev_mode, "assert_run_target", refuse)
+        with pytest.raises(HTTPException) as e:
+            tasks_all.launch_task_run("workshop", "any-id")
+        assert e.value.status_code == 403
+        assert "refused: a workshop ticket run" in e.value.detail
+
+    def test_the_chat_turn_chokepoint_resolves_through_the_new_module(self, monkeypatch):
+        # Same proof for `services/build_streaming.py`'s chokepoint (the one
+        # service-layer, not route-layer, direct caller): a refusal raised by
+        # the NEW module's own object, translated to the same HTTPException
+        # shape the operator has always seen.
+        import asyncio
+
+        from wsplatform.dev_mode import DevModeRefusal
+
+        def refuse(target, who):
+            raise DevModeRefusal(f"refused: {who}", status=403)
+
+        monkeypatch.setattr(dev_mode, "assert_run_target", refuse)
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(build_streaming.start_turn(
+                thread_id="t", agent_slug="a", prompt="p", model="m",
+                cwd="/tmp/not-the-repo", session_id=None, resume=False))
+        assert e.value.status_code == 403
+        assert "refused: a chat turn" in e.value.detail

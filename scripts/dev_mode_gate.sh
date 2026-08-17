@@ -26,7 +26,7 @@
 #   source "$(dirname "${BASH_SOURCE[0]}")/dev_mode_gate.sh"
 #   assert_run_target "$DIR" "queue_runner" || exit 2
 #
-# The backend half is WORKSHOP_DEV_MODE read in backend/services/app_runner.py
+# The backend half is WORKSHOP_DEV_MODE read in backend/wsplatform/dev_mode.py
 # (is_self_dir); the frontend half is the build-time VITE_DEV_MODE. All three
 # read one flag in one place per side, deliberately.
 

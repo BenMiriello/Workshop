@@ -143,8 +143,8 @@ def root_for_context(context_key: str | None) -> Path | None:
     root = _raw_root_for_context(context_key)
     if root is None:
         return None
-    from services import app_runner
-    if app_runner.is_self_dir(root):
+    from wsplatform import dev_mode
+    if dev_mode.is_self_dir(root):
         # ONE NAME, even with the flag on. §4: exactly one key resolves to the
         # platform repo, and it is `development`. The registry row is named
         # `development` too, so `project:development` also resolved here and the
@@ -153,7 +153,7 @@ def root_for_context(context_key: str | None) -> Path | None:
         # tested, so it survived the audit that added the gate.
         if context_key != DEVELOPMENT_SCOPE:
             return None
-        if not app_runner.dev_mode_on():
+        if not dev_mode.dev_mode_on():
             return None
     return root
 
@@ -165,9 +165,9 @@ def dev_mode_refusal(context_key: str | None) -> str | None:
     root = _raw_root_for_context(context_key)
     if root is None:
         return None
-    from services import app_runner
-    if app_runner.is_self_dir(root) and not app_runner.dev_mode_on():
-        return app_runner.self_dir_refusal(root, f"the {context_key} scope")
+    from wsplatform import dev_mode
+    if dev_mode.is_self_dir(root) and not dev_mode.dev_mode_on():
+        return dev_mode.self_dir_refusal(root, f"the {context_key} scope")
     return None
 
 
@@ -179,7 +179,7 @@ def dev_scopes() -> list[str]:
     Routes the shape question ("does `development` exist as a scope right
     now?") through `services.scope_tree`, the single owner of that question
     (memory-and-documentation-model-2026-08-14.md sec 7.1), rather than
-    re-reading `app_runner.dev_mode_on()` here a second time. `scope_tree.parse`
+    re-reading `wsplatform.dev_mode.dev_mode_on()` here a second time. `scope_tree.parse`
     already derives conditionally from that same flag."""
     from services import scope_tree
     try:
@@ -314,7 +314,7 @@ def _agent_scope_dir(slug: str) -> Path | None:
     `project_ralph.sh --dir <that path>`: a detached, autonomous Claude Code
     sweep rooted outside the workshop tree entirely.
 
-    The one containment downstream, `app_runner.is_self_dir`, is an
+    The one containment downstream, `wsplatform.dev_mode.is_self_dir`, is an
     exact-equality test against the platform repo — so `agent:../..` was caught
     and every deeper escape was not. Same defect and the same shape as the
     `project:` traversal fixed alongside it; this branch is the one that also

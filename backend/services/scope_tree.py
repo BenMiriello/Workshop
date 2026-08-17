@@ -21,10 +21,11 @@ assume: `development` is ABOVE `workshop`, not below it.
         `-- agent:<slug>        unattached
 
 `development` is the developer's environment: the only scope whose work target
-is the running application. It exists only when `app_runner.dev_mode_on()` is
-true (ADR 0014, "developer mode gates the resolved directory"); off, it is not
-a scope at all, and `workshop` is the root. This module does not invent a
-second flag: every dev-mode question here defers to `app_runner.dev_mode_on()`.
+is the running application. It exists only when
+`wsplatform.dev_mode.dev_mode_on()` is true (ADR 0014, "developer mode gates
+the resolved directory"); off, it is not a scope at all, and `workshop` is the
+root. This module does not invent a second flag: every dev-mode question here
+defers to `wsplatform.dev_mode.dev_mode_on()`.
 
 TWO AXES, NOT ONE (see `knowledge.py` module docstring). `role:<role>` is NOT a
 node in this tree; it is a second, separate axis. `parse` accepts it, `reach`
@@ -98,17 +99,17 @@ class Scope:
 
 
 def _dev_mode_on() -> bool:
-    from services import app_runner
-    return app_runner.dev_mode_on()
+    from wsplatform import dev_mode
+    return dev_mode.dev_mode_on()
 
 
 def parse(scope_key: str) -> Scope:
     """kind + slug for `scope_key`, or raise ValueError on an unknown shape.
 
-    `development` parses only when `app_runner.dev_mode_on()` is true; off, it
-    is not a scope at all and raises exactly like any other unrecognised key
-    -- the notes layer for work on the Workshop's own source does not exist in
-    a normal install, rather than existing and refusing (ADR 0014)."""
+    `development` parses only when `wsplatform.dev_mode.dev_mode_on()` is true;
+    off, it is not a scope at all and raises exactly like any other unrecognised
+    key -- the notes layer for work on the Workshop's own source does not exist
+    in a normal install, rather than existing and refusing (ADR 0014)."""
     if scope_key == WORKSHOP_SCOPE:
         return Scope("workshop", "", scope_key)
     if scope_key == DEVELOPMENT_SCOPE:

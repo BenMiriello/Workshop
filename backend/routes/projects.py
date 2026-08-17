@@ -211,17 +211,18 @@ async def list_templates() -> list[dict]:
 def _is_self_row(raw: dict) -> bool:
     """Is this registry row the platform repo (the Workshop's own source)?
 
-    The same rule as `app_runner.is_self_project` — the `self` flag, or a dir
-    that resolves to the repo root — asked of a row already in hand, so listing
-    N projects does not re-read and re-parse the registry N times. The directory
-    half delegates to `app_runner.is_self_dir`, the one predicate ADR 0014 gates
-    on, so a renamed row cannot slip back in as an ordinary project."""
-    from services import app_runner
+    The same rule as `services.app_runner.is_self_project` — the `self` flag, or
+    a dir that resolves to the repo root — asked of a row already in hand, so
+    listing N projects does not re-read and re-parse the registry N times. The
+    directory half delegates to `wsplatform.dev_mode.is_self_dir`, the one
+    predicate ADR 0014 gates on, so a renamed row cannot slip back in as an
+    ordinary project."""
+    from wsplatform import dev_mode
 
     if raw.get("self"):
         return True
     d = raw.get("dir")
-    return bool(d) and app_runner.is_self_dir(d)
+    return bool(d) and dev_mode.is_self_dir(d)
 
 
 @router.get("/")
@@ -869,10 +870,13 @@ async def run_autonomy(slug: str) -> dict:
     would refuse it a second later, but as an exit code in a log rather than as
     an answer to the request — so the refusal is made here, where the caller can
     read it. A safety interlock, not a security boundary."""
-    from services import app_runner
+    from wsplatform import dev_mode
 
     _ensure_project(slug)
-    app_runner.assert_run_target(_project_dir(slug), f"the {slug} autonomy run")
+    try:
+        dev_mode.assert_run_target(_project_dir(slug), f"the {slug} autonomy run")
+    except dev_mode.DevModeRefusal as e:
+        raise HTTPException(e.status, e.message)
     running, _ = _run_state(slug)
     if running:
         raise HTTPException(409, "a sweep is already running for this project")
