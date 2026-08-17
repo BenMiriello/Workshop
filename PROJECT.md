@@ -189,3 +189,24 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   on the list and was deliberately NOT changed: it already respawns with
   `--resume` so the conversation survives, and only an in-flight utterance is
   lost, with an honest message. Suite 2171 green.
+- 2026-08-16 — Operator: research the ontology review another agent wrote, do our own
+  research, propose an overhaul, then implement it with subagents, working and tested.
+  Emphasis: memory is many unintegrated systems (Letta included) and a proper memory
+  system without junk old systems is critical; ticket sequencing as a DAG is overstated.
+  Diagnosis, from four audits of the live tree: the problem is entropy more than
+  taxonomy. Every concept has two to five implementations and nothing has ever removed
+  one (11 memory substrates, 5 disagreeing context_key->scope mappings, 16 date
+  formatters, 6 status mappers with 2 drifted, 62 design docs with 22 carrying no
+  status). Plans: `coherence-overhaul-2026-08-16.md` (the spine plus the ratchet) and
+  `memory-consolidation-2026-08-16.md` (thread T1), ADR 0022. SHIPPED: all of T1 plus
+  the two S0 fixes. Headline finding was that the learnings garbage collector could
+  never fire because the injector stamped last_retrieved on every render, which is why
+  "Ralph rejected: ts_typecheck_fail" sat in every agent prompt for a month. Also fixed:
+  the semantic index never learned about chat, ticket or doc writes (2 call sites, both
+  note writes), the relational ticket store silently dropped five fields including
+  `awaiting` and `attempts`, and PLAID_ENV was documented, required, and read by
+  nothing while the real switch defaulted to production. Letta's 18 memory blocks were
+  exported to notes before its wiring was removed; the root-owned :8283 process itself
+  needs the operator. NOT done: T2 (chat is the session, and "chat with an agent" is
+  currently impossible because _promotion_patch rewrites the context key at creation),
+  T3 (one scope module), T4 (delete the dead `run` and `agent` tables), T5, T6.
