@@ -1,7 +1,9 @@
 """Direct, Orchestrated, Auto: whether work leaves the conversation, and
 whether it waits to be let out.
 
-The first two already existed as a field with no behaviour, like `participants`.
+The first two already existed as a field with no behaviour. The other field in
+that state, `participants`, was deleted in T2 rather than given one; these were
+given one. Those are the two honest endings, and a field must reach one of them.
 These tests pin the behaviour they were given, and in particular that the guard
 is REAL: the prompt asks the model not to file in Direct mode, but a prompt is a
 request. A chat in Direct mode must be unable to file even if the model emits a

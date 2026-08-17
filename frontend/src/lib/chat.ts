@@ -246,10 +246,14 @@ export type ThreadSummary = {
   // by no client and read by one migration helper, and is gone.
   scope?: string;
   mode?: ChatModeId;
-  // Canonical form: `agent:<slug>`. Legacy agent:<slug> chats back-fill
-  // to [that slug]; workshop/project chats start empty and grow when
-  // participants are added (P4).
-  participants?: string[];
+  // The agent this chat is with, when the chat's own scope is not one. See
+  // `threadAgent` below, which is the only thing that should read it: an
+  // `agent:<slug>` chat answers with `context_key`, and this covers the chats
+  // that were with an agent whose scope no longer exists.
+  //
+  // `participants` used to sit here: a list of `agent:<slug>` strings that no
+  // turn, prompt or route ever read. It is deleted.
+  agent_id?: string | null;
   title: string;
   updated_at: string;
   // When this chat was archived. Absent on every live thread: the two lists are
@@ -278,6 +282,26 @@ export type ThreadSummary = {
   // load looking exactly like one that had never been touched.
   card_states?: Record<string, CardState>;
 };
+
+/**
+ * The agent this chat is with, or null.
+ *
+ * One derivation, in one place, because there are two ways a chat is an agent's
+ * and they are not alternatives to choose between at each call site:
+ *
+ *  - `context_key: "agent:<slug>"` — the agent ANSWERS this chat. This is what
+ *    "chat with an agent" creates, and it is the normal case.
+ *  - `agent_id` — the chat was with an agent whose scope no longer exists (a
+ *    retired build agent, one whose definition file is gone). Its transcript
+ *    stays where its work is, and this is what still names who it was with.
+ *
+ * Used for the Agents filter, the list tag, and search, so all three agree.
+ */
+export function threadAgent(t: Pick<ThreadSummary, "context_key" | "agent_id">): string | null {
+  const key = t.context_key || "";
+  if (key.startsWith("agent:")) return key.slice("agent:".length) || null;
+  return t.agent_id || null;
+}
 
 export type CardState = {
   phase: string;              // "success" | "dismissed"

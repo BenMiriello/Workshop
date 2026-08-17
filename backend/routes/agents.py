@@ -217,8 +217,11 @@ async def list_tools():
 # ---- Build agents (Claude Code coding sessions) ----------------------------
 # Distinct kind of Agent per ADR-008. Each Build agent is scoped to a cwd
 # (either a Project directory or a freestanding scratch dir). The chat surface
-# uses contextKey="build:<slug>" to route through chat_context's
-# BuildAgentContextProvider which sets cwd at call_cloud spawn time.
+# uses contextKey="agent:<slug>", which routes through chat_context's
+# MakerAgentContextProvider (selected by the agent's `role`) and sets cwd at
+# call_cloud spawn time. The old `build:<slug>` context key is retired and folds
+# to `agent:<slug>`; `build:<slug>` survives only as a TASK scope
+# (`services/task_scope.py`), which is a different namespace.
 
 class BuildAgentCreate(BaseModel):
     slug: str = Field(min_length=1, max_length=48)

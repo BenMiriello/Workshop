@@ -15,7 +15,7 @@ import {
   catFor,
   type SegmentedOption,
 } from "@workshop/ui";
-import { chatApi, type ThreadSummary } from "../lib/chat";
+import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
 import { newChatHref } from "../lib/chatSelection";
 import { scopeKind, scopeLabel } from "../components/chat/chatScope";
 import { DEV_MODE } from "../lib/devMode";
@@ -94,12 +94,12 @@ type Pending = { id: string; title: string; action: "restore" | "delete" };
 /** Search over a loaded list. Shared by both pages so they narrow identically. */
 function matches(t: ThreadSummary, needle: string): boolean {
   if (!needle) return true;
-  const participantMatch = (t.participants ?? []).some((p) => p.toLowerCase().includes(needle));
+  const agent = threadAgent(t);
   return (
     (t.title || "").toLowerCase().includes(needle) ||
     (t.last_message || "").toLowerCase().includes(needle) ||
     scopeLabel(t.context_key).toLowerCase().includes(needle) ||
-    participantMatch
+    (agent !== null && agent.toLowerCase().includes(needle))
   );
 }
 
@@ -141,13 +141,14 @@ export default function Chats() {
     return sorted.filter((t) => {
       if (kind !== "all") {
         const k = scopeKind(t.context_key);
-        // P3: the Agent filter matches BOTH context_key-derived agent chats
-        // (legacy shape) AND any chat carrying an agent as a participant
-        // under the new model. That lets a workshop-scope chat with agent:X
-        // as a participant still surface here.
-        const hasAgentParticipant = (t.participants ?? []).length > 0;
+        // The Agents filter is keyed on WHO ANSWERS, which is what the operator
+        // is looking for when they pick it. `threadAgent` is the one derivation
+        // of that: an `agent:<slug>` chat, or a chat with an agent whose own
+        // scope is gone. It used to match "carries a non-empty participants
+        // list", a field nothing wrote except a migration and nothing read
+        // except this line.
         if (kind === "agent") {
-          if (k !== "agent" && !hasAgentParticipant) return false;
+          if (threadAgent(t) === null) return false;
         } else if (k !== kind) {
           return false;
         }
@@ -258,22 +259,12 @@ export default function Chats() {
                   </strong>
                   <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flex: "none", marginLeft: "auto" }}>
                     <Tag hue={catFor(t.context_key)}>{scopeLabel(t.context_key)}</Tag>
-                    {/* P3: participants column — every agent in this chat as
-                        a small tag. An agent is a PARTICIPANT of a chat, not
-                        the chat's home; this row makes that visible instead
-                        of collapsing "agent chats" into a distinct scope. */}
-                    {(t.participants ?? []).slice(0, 3).map((p) => {
-                      const slug = p.startsWith("agent:") ? p.slice(6) : p;
-                      return (
-                        <Tag key={p} hue={catFor(`part:${slug}`)}>
-                          {slug}
-                        </Tag>
-                      );
-                    })}
-                    {(t.participants ?? []).length > 3 && (
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                        +{(t.participants ?? []).length - 3}
-                      </span>
+                    {/* Who answered, only when the scope tag beside it does not
+                        already say so. An `agent:<slug>` chat reads
+                        "Agent · <slug>" one tag to the left, and repeating it
+                        would be the same fact twice. */}
+                    {!t.context_key.startsWith("agent:") && threadAgent(t) && (
+                      <Tag hue={catFor(`agent:${threadAgent(t)}`)}>{threadAgent(t)}</Tag>
                     )}
                   </span>
                 </div>
@@ -283,7 +274,7 @@ export default function Chats() {
                     The message count rides at the END of the snippet line, not up
                     in the title row: it describes the conversation's length, so it
                     belongs next to the conversation's last line, and the title row
-                    is already carrying the scope tag and participants. */}
+                    is already carrying the scope tag. */}
                 <div className="ws-chat-card__last">
                   <p className="ws-muted ws-chat-card__snippet">{t.last_message || " "}</p>
                   <span className="ws-card__meta ws-chat-card__count">{t.message_count}</span>

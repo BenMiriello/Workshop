@@ -436,7 +436,12 @@ async def ensure_worker(context_key: str, thread_id: str, model: str | None) -> 
         # processes fighting over the session file.
         session_id = ""
         resume = False
-        if context_key.startswith("build:"):
+        # `agent:<slug>`, not the retired `build:<slug>` this was gated on. That
+        # spelling is folded away before a thread is ever stored (thread T2,
+        # `chat_store.canonical_context_key`), so the branch as written could
+        # never fire again; a maker agent whose slug has no runtime record
+        # raises below and falls through to a fresh session, same as before.
+        if context_key.startswith("agent:"):
             try:
                 from services import build_agents as _ba
                 sid, is_new = _ba.ensure_session_id(context_key.split(":", 1)[1])
@@ -569,11 +574,13 @@ async def _run_turn(worker: VoiceWorker, turn: VoiceTurn) -> None:
 # this directly ("are you able to see the past messages before this particular
 # audio session?") and the honest answer was no, and never could have been yes.
 #
-# The one branch meant to prevent this shares the AGENT'S session, but it is gated
-# on a `build:` context key and NO thread that has ever used voice has one: a
-# project chat is keyed `development` or `project:notes-app` and falls straight
+# The one branch meant to prevent this shares the AGENT'S session, but it was
+# gated on a `build:` context key and NO thread that has ever used voice had one:
+# a project chat is keyed `development` or `project:notes-app` and falls straight
 # through to the fresh-session path, which the comment there already admits. All
-# nine threads in the store that have spoken turns took that path.
+# nine threads in the store that have spoken turns took that path. It reads
+# `agent:` since T2 retired the other spelling, so it can at least fire now; it
+# is still not what makes voice see the typed conversation. This seed is.
 def _thread_seed(thread_id: str, exclude_client_id: str | None = None) -> str:
     try:
         t = chat_store.get_thread(thread_id) or {}

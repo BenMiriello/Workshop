@@ -230,53 +230,49 @@ _INTERNAL_META = ("last_seq", "boundary_seq", "active_run_id", "active_run_seq",
                   "live_message", "cut_through")
 
 
-def _promotion_patch(meta: dict) -> dict:
-    """P5: quietly migrate a legacy `agent:<slug>` (or `build:<slug>`) chat to
-    workshop or project scope with the agent captured as a participant.
+# `_promotion_patch` USED TO BE HERE, and deleting it is what made "chat with an
+# agent" exist.
+#
+# It was a P5 migration that rewrote any `agent:<slug>` or `build:<slug>`
+# context_key to `project:<slug>` or `general`, capturing the agent in a
+# `participants` list -- at creation AND on every subsequent `_patch`. The model
+# it migrated INTO was never built: nothing in routes/chat.py, chat_context.py,
+# mentions.py, build_streaming.py or the voice path ever read `participants`, so
+# the rewrite moved every agent chat to a provider that is not the agent and
+# recorded who it should have been in a field with no readers.
+#
+# Measured on 2026-08-16: `AssistantAgentContextProvider` and
+# `BuildAgentContextProvider` were both UNREACHABLE, 0 of 94 live threads had an
+# `agent:` context key, and AgentDetail's "Start chat with agent" button opened a
+# chat answered by the general assistant. There was no way to talk to an agent at
+# all except @mention, which is a per-turn override.
+#
+# `agent:<slug>` is now a durable context key like any other, and the provider it
+# resolves to is that agent. Nothing rewrites a context key on write any more.
 
-    An agent chat under the old model had context_key = agent:<slug> and no
-    participants list. Under the new model an agent is a PARTICIPANT of a chat
-    that lives in workshop / project / app scope. Returns the meta fields that
-    move it, computed on every write so the store gradually drifts to the new
-    shape without a data-migration pass.
 
-    Never touches a chat whose participants have been explicitly diverged from
-    the context_key (a participants list that is empty or has more than one
-    entry, or an entry that doesn't match). That way an operator-authored
-    intentional agent:<slug>-scope chat stays as-is.
+def canonical_context_key(context_key: str | None) -> str:
+    """The one spelling of a chat's binding. Total: every input answers.
 
-    The other escape hatch used to be `scope_locked`, and it was never reachable:
-    no route and no client could set it, so the flag was declared in five places,
-    enforced here, and always False. It is gone. This whole function goes with it
-    in thread T2, which makes `agent:<slug>` a durable context key rather than
-    something to migrate away from."""
-    ck = meta.get("context_key", "")
-    if ":" not in ck:
-        return {}
-    kind, rest = ck.split(":", 1)
-    if kind not in ("agent", "build"):
-        return {}
-    parts = _normalize_participants(meta.get("participants") or [])
-    canon = f"agent:{rest}"
-    # Only promote when the participant list is exactly [that agent] (or the
-    # freshly back-filled derivation). Anything else was set on purpose.
-    if parts and parts != [canon]:
-        return {}
-    patch: dict = {"participants": [canon]}
-    # Try to pull the agent's project link so a project-scoped agent's chat
-    # lands in project:<slug>; otherwise land in workshop (general).
-    project_slug = None
-    try:
-        from services import agents_registry as _reg
-        rec = _reg.get(rest)
-        if rec is not None:
-            project_slug = rec.get("project_slug") or None
-    except Exception:
-        project_slug = None
-    # Only `context_key` moves. `scope` follows from it on every read, so
-    # writing a second copy here would be the first place for the two to drift.
-    patch["context_key"] = f"project:{project_slug}" if project_slug else "general"
-    return patch
+    `build:<slug>` folds to `agent:<slug>`, and that is the retirement of `build:`
+    as a context kind (thread T2 of the 2026-08-16 coherence overhaul). It was
+    the last load-bearing remnant of the builder/assistant runtime axis, it named
+    the SAME agent the `agent:` form names, and its own chat path had stopped
+    working: all 8 build agents are retired, `notes-app-builder` has no definition
+    file at all, and `voice_worker.py`'s `build:` branch documents that it has
+    never fired. Folding preserves the identity exactly -- same slug, same agent
+    -- which is the difference between this and `_promotion_patch`, which threw
+    the identity away.
+
+    Everything else passes through untouched: this decides SPELLING, never
+    placement. Where a chat lives is `scope_tree.scope_for_context`, and it reads
+    whatever comes out of here.
+    """
+    ck = (context_key or "general").strip() or "general"
+    if ck.startswith("build:"):
+        slug = ck.split(":", 1)[1]
+        return f"agent:{slug}" if slug else "general"
+    return ck
 
 
 # ---- folding the log into the thread document ------------------------------
@@ -512,10 +508,6 @@ def _document(meta: dict, messages: list[dict], seqs: list[int], cut_seq: int = 
     t["scope"] = scope_tree.scope_for_context(ck)
     if not t.get("mode"):
         t["mode"] = DEFAULT_CHAT_MODE
-    if t.get("participants") is None:
-        t["participants"] = _participants_from_context_key(ck)
-    else:
-        t["participants"] = _normalize_participants(t.get("participants"))
     # THE SUMMARY IS THE RESOLVED BOUNDARY'S, OR THERE IS NONE. `meta.summary`
     # is thread-global and reaches here through the copy above; on its own that
     # made going back past a compaction incoherent, because the cut correctly
@@ -547,10 +539,11 @@ def _patch(thread_id: str, **fields: object) -> dict | None:
     meta = chat_log.read_meta(thread_id)
     if meta is None:
         return None
-    merged = {**meta, **{k: v for k, v in fields.items() if v is not None}}
-    promo = _promotion_patch(merged)
-    if promo:
-        fields = {**fields, **promo}
+    # NOTHING REWRITES A FIELD ON THE WAY THROUGH. `_promotion_patch` used to sit
+    # here and re-key any agent chat on every single patch, so a thread could not
+    # hold an `agent:` binding even if something managed to create one.
+    if "context_key" in fields and fields["context_key"] is not None:
+        fields = {**fields, "context_key": canonical_context_key(str(fields["context_key"]))}
     chat_log.patch_meta_sync(thread_id, **fields)
     return get_thread(thread_id)
 
@@ -577,15 +570,10 @@ def create_thread(
     agent_id: str | None = None,
     model: str | None = None,
     mode: str | None = None,
-    participants: list[str] | None = None,
 ) -> dict:
     tid = uuid.uuid4().hex
     # Entity-model 2026-07-18 §7 fields (C11, P1):
     # - mode: direct (the default), orchestrated, or auto. See CHAT_MODES.
-    # - participants: agent slugs (as `agent:<slug>`) in this chat. Under the
-    #   new model an Agent is a PARTICIPANT of a chat, not the chat's home.
-    #   A legacy `agent:<slug>` context_key back-fills this list on read so old
-    #   chats still surface the agent inline.
     #
     # NO `scope` AND NO `scope_locked`. The Scope a chat lives in is derived
     # from its `context_key` on every read (see `_document`), so an explicit
@@ -594,15 +582,22 @@ def create_thread(
     # threads. `scope_locked` was the flag that made such a divergence
     # permanent; nothing could set it and nothing but `_promotion_patch` read
     # it, so it is gone rather than wired.
-    parts = _normalize_participants(participants) if participants is not None \
-        else _participants_from_context_key(context_key or "general")
+    #
+    # NO `participants` EITHER. It was a list of `agent:<slug>` strings with no
+    # reader anywhere in the system: an agent in a chat is now the chat's
+    # `context_key` (it answers the turns) or an @mention (it answers one turn),
+    # and both of those are things that actually happen. See the note where
+    # `_promotion_patch` used to be.
+    #
+    # THE CONTEXT KEY IS KEPT. Whatever the caller asked for is what this thread
+    # is bound to, through creation and every later patch; the only thing
+    # `canonical_context_key` changes is the retired `build:` spelling.
     now = _now_iso()
     meta = {
         "id": tid,
-        "context_key": context_key or "general",
+        "context_key": canonical_context_key(context_key),
         # An explicit mode wins; otherwise the operator's default for new chats.
         "mode": _clamp_mode(mode) if mode is not None else get_default_mode(),
-        "participants": parts,
         "agent_id": agent_id,
         # Per-thread model preference (full model id) chosen via the composer's
         # model picker. None = fall back to the provider default at call time.
@@ -625,9 +620,6 @@ def create_thread(
         "created_at": now,
         "updated_at": now,
     }
-    promo = _promotion_patch(meta)
-    if promo:
-        meta.update(promo)
     chat_log.create_thread(tid, meta)
     return get_thread(tid)
 
@@ -739,9 +731,12 @@ def _summary_row(thread_id: str) -> dict | None:
         # stored -- see `_document`.
         "scope": scope_tree.scope_for_context(ck),
         "mode": meta.get("mode") or DEFAULT_CHAT_MODE,
-        "participants": _normalize_participants(meta.get("participants"))
-            if meta.get("participants") is not None
-            else _participants_from_context_key(ck),
+        # WHO ANSWERS THIS CHAT, when that is an agent. An `agent:<slug>` chat is
+        # answered by that agent, so the key IS the answer; `agent_id` carries
+        # the historical case, a chat that was with an agent whose scope no
+        # longer exists (see the P5 casualties note in
+        # scripts/migrate_chat_participants.py). One field, so the list can
+        # filter, tag and search on one thing.
         "agent_id": meta.get("agent_id"),
         "model": meta.get("model"),
         "title": title,
@@ -914,44 +909,7 @@ def _recency_key(summary: dict) -> str:
     return summary.get("last_user_at") or summary.get("created_at") or ""
 
 
-# ---- scope / participants / mode -------------------------------------------
-
-
-def _normalize_participants(raw) -> list[str]:
-    """Coerce any incoming participant list into canonical `agent:<slug>` form.
-    Drops empties, dedupes preserving first-seen order. Bare slugs are namespaced
-    to `agent:` since that is the only participant kind today (per entity-model
-    §7.1 the operator is always implicit; agents are the explicit list)."""
-    if not isinstance(raw, (list, tuple)):
-        return []
-    seen: set[str] = set()
-    out: list[str] = []
-    for p in raw:
-        if not isinstance(p, str):
-            continue
-        s = p.strip()
-        if not s:
-            continue
-        if ":" not in s:
-            s = f"agent:{s}"
-        if s not in seen:
-            seen.add(s)
-            out.append(s)
-    return out
-
-
-def _participants_from_context_key(context_key: str) -> list[str]:
-    """Legacy chats keyed by `agent:<slug>` back-fill their participants list
-    from that prefix. Same for `build:<slug>` (a build is a runtime, not a
-    separate scope kind). Everything else starts empty."""
-    if not context_key or ":" not in context_key:
-        return []
-    kind, rest = context_key.split(":", 1)
-    if kind == "agent":
-        return [context_key]
-    if kind == "build":
-        return [f"agent:{rest}"]
-    return []
+# ---- mode ------------------------------------------------------------------
 
 
 def set_thread_mode(thread_id: str, mode: str) -> dict | None:
@@ -1826,7 +1784,11 @@ def ensure_agent_session(thread_id: str, slug: str) -> tuple[str, bool] | None:
     same agent mentioned in two different chats would carry the first chat's
     context into the second. Per (agent, thread) gives continuity where a
     conversation is actually continuing, and isolation between conversations
-    that merely share a participant."""
+    that merely share a speaker.
+
+    SO A MENTION IS NOT STATELESS, and `routes.chat._start_agent_mention_turn`
+    used to say it was, in a docstring three hundred lines above the call to this
+    function. Both sides now describe what the code does."""
     t = get_thread(thread_id)
     if t is None:
         return None

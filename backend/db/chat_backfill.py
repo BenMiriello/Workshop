@@ -556,7 +556,7 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
             stats["orphan_messages"] += 1
 
     # Refresh every mutable field from the meta this pass read, INCLUDING on a
-    # top-up: archived_at, mode, scope and participants can all have moved
+    # top-up: archived_at, mode and scope can all have moved
     # since the last pass, same reasoning as the early return above.
     chat_repo.sync_thread_fields(s, tid, meta)
     if title:

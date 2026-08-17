@@ -943,8 +943,8 @@ def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
 
 
 # Meta keys whose change is worth a Postgres round trip. The thread list
-# (services.chat_list_pg) reads chat_thread's mutable columns and
-# `state.participants`, all traceable to one of these; the fields NOT in this
+# (services.chat_list_pg) reads chat_thread's mutable columns, all traceable to
+# one of these; the fields NOT in this
 # set (active_run_id, live_message, turn_marks, card_states, context_tokens,
 # boundary_seq/cut_through/cut_mode, claude_session, agent_sessions, ...) are
 # per-turn bookkeeping that `patch_meta_sync` rewrites constantly WHILE A
@@ -955,11 +955,12 @@ def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
 # here loses accuracy -- this only decides WHEN a patch earns the trip.
 _LIST_RELEVANT_META_FIELDS = frozenset({
     "title", "_seed_title", "archived_at", "mode",
-    "model", "agent_id", "context_key", "participants",
+    "model", "agent_id", "context_key",
 })
-# NOT `scope`/`scope_locked`. Nothing writes either key any more: the mirror's
-# `scope` column is DERIVED from `context_key` (which is in this set, so a
-# rescope still earns its round trip), and `scope_locked` is gone.
+# NOT `scope`/`scope_locked`/`participants`. Nothing writes any of those keys
+# any more: the mirror's `scope` column is DERIVED from `context_key` (which is
+# in this set, so a rescope still earns its round trip), `scope_locked` went in
+# T3, and `participants` went in T2 along with every reader it never had.
 
 
 def _mirror_meta(thread_id: str, meta: dict) -> None:

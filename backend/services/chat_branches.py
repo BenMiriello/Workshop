@@ -448,8 +448,8 @@ def _sync_record(org_id, user_id, thread_ref: str, ev: dict, meta: dict) -> None
             t = chat_repo.create_thread(
                 s, org_id, user_id, external_id=thread_ref,
                 **chat_repo._thread_fields(meta))
-            # `state.participants` isn't a plain column create_thread can take
-            # a kwarg for; one extra UPDATE, once per thread, at creation.
+            # `state.meta_updated_at` isn't a plain column create_thread can
+            # take a kwarg for; one extra UPDATE, once per thread, at creation.
             chat_repo.sync_thread_fields(s, t["id"], meta)
         kind = ev.get("kind")
         if kind == "boundary":
@@ -516,7 +516,7 @@ def _sync_record_meta(org_id, thread_ref: str, meta: dict) -> None:
 
 async def record_meta(thread_ref: str, meta: dict) -> None:
     """Mirror a META-ONLY change into the tree: archive/restore, rename, a
-    mode/model/scope change, a participants change.
+    mode/model/scope change.
 
     `record_message` above is the funnel for a LOGGED event; this is the
     funnel for everything that only ever touched meta.json. Before this,

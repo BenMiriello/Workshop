@@ -10,8 +10,8 @@ Postgres outage must cost speed, never the chat list.
 thread's CURRENT branch path, aggregated -- see its own docstring for why a
 plain `SELECT * FROM chat_message` would be wrong). Everything below that is
 business logic chat_store already has and this reuses rather than
-reimplements: the title-from-seed fallback, the scope/participants
-derivation from `context_key`, the timestamp format the file store writes.
+reimplements: the title-from-seed fallback, the scope derivation from
+`context_key`, the timestamp format the file store writes.
 Two independent readers computing the SAME rule in two languages is exactly
 how a "byte-identical" requirement quietly stops being true six months later.
 """
@@ -46,16 +46,12 @@ def _shape_row(row: dict) -> dict:
     `chat_store._summary_row` hands the `/threads` route.
 
     Imports `chat_store` lazily and only for its pure helpers: the title
-    fallback, and the scope/participants derivation from `context_key`. Using
-    the SAME functions the file fold uses is what keeps the two paths from
-    drifting apart the moment one of those rules changes.
+    fallback and the mode default. Using the SAME functions the file fold uses
+    is what keeps the two paths from drifting apart the moment one of those
+    rules changes.
     """
     from services import scope_tree
-    from services.chat_store import (
-        DEFAULT_CHAT_MODE,
-        _normalize_participants,
-        _participants_from_context_key,
-    )
+    from services.chat_store import DEFAULT_CHAT_MODE
 
     ck = row.get("context_key") or "general"
 
@@ -64,10 +60,6 @@ def _shape_row(row: dict) -> dict:
         title = row["seed_title"]
 
     state = row.get("state") or {}
-    raw_participants = state.get("participants") if isinstance(state, dict) else None
-    participants = (_normalize_participants(raw_participants)
-                    if raw_participants is not None
-                    else _participants_from_context_key(ck))
 
     return {
         "id": row["external_id"],
@@ -77,7 +69,8 @@ def _shape_row(row: dict) -> dict:
         # disagree about where a chat lives.
         "scope": scope_tree.scope_for_context(ck),
         "mode": row.get("mode") or DEFAULT_CHAT_MODE,
-        "participants": participants,
+        # WHO ANSWERS, when that is an agent -- the same field
+        # `chat_store._summary_row` hands back, off the same value.
         "agent_id": row.get("agent_slug"),
         "model": row.get("model"),
         "title": title,

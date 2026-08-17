@@ -717,50 +717,19 @@ def _thread_fields(meta: dict) -> dict:
     }
 
 
-def _participants_of(meta: dict) -> list[str]:
-    """Port of `chat_store._normalize_participants` /
-    `_participants_from_context_key`. Duplicated rather than imported, same
-    reasoning as `_thread_fields` above (chat_backfill runs as a standalone
-    script and does not pull the services package in) -- this computes the
-    SAME resolved list chat_store's own read-time fallback would, so a row
-    written before a participants change still reads right without a second
-    migration.
-    """
-    raw = meta.get("participants")
-    if raw is not None:
-        if not isinstance(raw, (list, tuple)):
-            return []
-        seen: set[str] = set()
-        out: list[str] = []
-        for p in raw:
-            if not isinstance(p, str):
-                continue
-            v = p.strip()
-            if not v:
-                continue
-            if ":" not in v:
-                v = f"agent:{v}"
-            if v not in seen:
-                seen.add(v)
-                out.append(v)
-        return out
-    ck = meta.get("context_key") or "general"
-    if ":" not in ck:
-        return []
-    kind, rest = ck.split(":", 1)
-    if kind == "agent":
-        return [ck]
-    if kind == "build":
-        return [f"agent:{rest}"]
-    return []
+# `_participants_of` USED TO BE HERE: a hand-copied port of
+# `chat_store._normalize_participants` / `_participants_from_context_key` whose
+# own docstring admitted the duplication. Both originals and this copy are gone
+# with the `participants` field (thread T2). Who an agent chat is with is its
+# `context_key`, which is already a column, so there is nothing left to
+# re-spell.
 
 
 def sync_thread_fields(s: Session, tid: UUID | str, meta: dict) -> None:
-    """UPDATE chat_thread's mutable columns, and `state.participants`, from
-    the thread's CURRENT file meta. Always the current value, never a delta,
-    so this is safe to call on every top-up and on every meta patch."""
+    """UPDATE chat_thread's mutable columns from the thread's CURRENT file meta.
+    Always the current value, never a delta, so this is safe to call on every
+    top-up and on every meta patch."""
     f = _thread_fields(meta)
-    participants = _participants_of(meta)
     s.execute(text(
         "UPDATE chat_thread SET "
         "  context_key = :context_key, scope = :scope, "
@@ -770,7 +739,7 @@ def sync_thread_fields(s: Session, tid: UUID | str, meta: dict) -> None:
         "  context_tokens = :context_tokens, claude_session = :claude_session, "
         "  voice_session = :voice_session, agent_slug = :agent_slug, "
         "  archived_at = :archived_at, updated_at = :updated_at, "
-        "  state = COALESCE(state, '{}'::jsonb) || :participants "
+        "  state = COALESCE(state, '{}'::jsonb) || :state "
         "WHERE id = :tid"),
         {**f, "tid": str(tid),
          # `meta_updated_at` rides in the jsonb because the COLUMN cannot hold
@@ -782,8 +751,12 @@ def sync_thread_fields(s: Session, tid: UUID | str, meta: dict) -> None:
          # age, so serving the trigger's value would make every chat read as
          # "just now" and destroy both orderings. Stored RAW, exactly as the
          # file holds it, so the list is byte-identical rather than reformatted.
-         "participants": _json({"participants": participants,
-                                "meta_updated_at": meta.get("updated_at")})})
+         #
+         # It is the ONLY key here now. `participants` sat beside it and is
+         # deleted; the `||` merge leaves the old key on rows that already have
+         # one, which is what the T4 dead-schema pass clears along with the
+         # column it lives in.
+         "state": _json({"meta_updated_at": meta.get("updated_at")})})
 
 
 # --- the thread list, in one query ------------------------------------------
@@ -804,7 +777,7 @@ def sync_thread_fields(s: Session, tid: UUID | str, meta: dict) -> None:
 #                   head with no message after it, and the file fold's
 #                   `messages` array only ever holds message-kind events.
 #
-# Everything else (title-from-seed, scope/participants fallback) is business
+# Everything else (title-from-seed, the scope derivation) is business
 # logic chat_store already has, applied in Python over these raw columns by
 # the caller (services.chat_list_pg), not reimplemented here.
 _THREAD_LIST_WALK = """
@@ -861,9 +834,9 @@ def list_threads(s: Session, org_id: UUID | str, owner_user_id: UUID | str, *,
     """The thread-list summary rows, straight from the tree. One query.
 
     Raw columns only -- see the module comment above `_THREAD_LIST_WALK`.
-    The caller (services.chat_list_pg) applies chat_store's own title/scope/
-    participants derivation over these, so the two read paths cannot drift by
-    reimplementing that rule twice.
+    The caller (services.chat_list_pg) applies chat_store's own title and scope
+    derivations over these, so the two read paths cannot drift by reimplementing
+    that rule twice.
     """
     rows = s.execute(text(_THREAD_LIST_WALK), {
         "org": str(org_id), "owner": str(owner_user_id),

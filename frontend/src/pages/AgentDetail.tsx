@@ -594,13 +594,18 @@ function ExistingAgent({ agentId }: { agentId: string }) {
 
   const personaValue = useMemo(() => agent?.definition ?? "", [agent]);
 
-  // P2: start a new chat with this agent as a participant. Chats live in the
-  // scope where work happens (project:X for a project-linked agent, workshop
-  // otherwise); the agent joins as a participant per the new entity model.
+  // Start a chat WITH THIS AGENT, which means a thread bound to `agent:<slug>`:
+  // the agent's own persona, model and tools answer every turn in it.
+  //
+  // This button used to create a thread in `project:<slug>` or `general`, put
+  // the agent's name in the title and its slug in `participants`, and hand the
+  // conversation to the general assistant. It said "Start chat" and produced a
+  // chat with someone else. The key it sends is now the key the store keeps.
+  //
   // We navigate to /chat/<context_key>?thread=<new-id> so FocusedChat resumes
   // the freshly-created thread instead of opening a blank one.
   const startChatWithAgent = async (a: AgentDetailData) => {
-    const contextKey = a.project_slug ? `project:${a.project_slug}` : "general";
+    const contextKey = `agent:${a.slug}`;
     try {
       const r = await fetch("/api/chat/threads", {
         method: "POST",
@@ -608,17 +613,16 @@ function ExistingAgent({ agentId }: { agentId: string }) {
         body: JSON.stringify({
           context_key: contextKey,
           title: `Chat with ${a.name || a.slug}`,
-          participants: [`agent:${a.slug}`],
         }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const t = await r.json();
       nav(`/chat/${encodeURIComponent(contextKey)}?thread=${encodeURIComponent(t.id)}`);
     } catch (e) {
-      // Fall back to the legacy shortcut if the create failed for any reason;
-      // FocusedChat will open on the legacy agent:<slug> route rather than
-      // silently leaving the operator on AgentDetail.
-      nav(`/chat/${encodeURIComponent(`agent:${a.slug}`)}`);
+      // The create failed. Open the agent's scope anyway with no thread, so the
+      // operator lands in a chat with this agent rather than being left on this
+      // page with nothing having happened.
+      nav(`/chat/${encodeURIComponent(contextKey)}`);
       // The console error is enough here — the operator sees the chat land.
       // eslint-disable-next-line no-console
       console.error("start-chat-with-agent failed:", e);

@@ -720,9 +720,13 @@ def chat_mode_block(mode: str | None) -> str:
     """How this chat handles work, stated every turn.
 
     Three modes. The first two already existed as a field
-    (`chat_store.set_thread_mode`) with no behaviour, like `participants`, and
-    rather than invent a second vocabulary this gave the existing names their
-    meaning. The third is the operator's explicit "stop asking" setting.
+    (`chat_store.set_thread_mode`) with no behaviour, and rather than invent a
+    second vocabulary this gave the existing names their meaning. The third is
+    the operator's explicit "stop asking" setting.
+
+    (The field this used to be compared to, `participants`, was never given a
+    meaning and is deleted. That is the other half of the same rule: a field
+    with no behaviour gets one or gets removed.)
 
       direct        the conversation does the work itself. Claude Code's native
                     subagents are available for context isolation, and their
@@ -1341,8 +1345,9 @@ class ContextProvider:
     # Named for its SCOPE, not as a character. This entry is the workshop-scope
     # chat, which is what the Chats page and the task scope labels have always
     # called it; the picker calling the same thing "Clawd" was the app
-    # disagreeing with itself. Agents are participants in a chat (entity model
-    # 2026-07-18), so the top-level chat is a place, not a persona.
+    # disagreeing with itself. An agent is reached by binding a chat to it
+    # (`agent:<slug>`) or by @mentioning it, so the top-level chat is a place,
+    # not a persona.
     label = "Workshop"
     # Per-provider tool policy for the chat surface.
     #   allowed_tools : list of MCP tool names ("mcp__plaid__search_transactions")
@@ -1659,16 +1664,35 @@ class DevelopmentContextProvider(ProjectContextProvider):
         self.key = "development"
 
 
-# ---------------------------------------------------------------- build-agent provider
-# Build agents are Claude Code coding sessions surfaced under the Agents tab,
-# distinct from Projects. context_key looks like "build:<slug>". Same Build-mode
-# behavior as a Project chat: full agentic toolset, cwd pinned to the agent's
-# directory (which is either a Project dir for project-linked agents or a
-# freestanding scratch dir).
+# ---------------------------------------------------------------- agent providers
+# ONE CONTEXT KIND FOR AN AGENT, AND IT IS `agent:<slug>`. `build:<slug>` is
+# retired (chat_store.canonical_context_key folds it), because it addressed the
+# same agent by its RUNTIME rather than by its identity, and runtime is the axis
+# the entity model is retiring.
+#
+# Two implementations behind that one kind, chosen by the agent's ROLE
+# (`agent_provider` below), because a maker and an unroled assistant genuinely
+# differ: a maker has a working tree, so it gets the full agentic toolset pinned
+# to that directory; an assistant has a persona and no cwd of its own. That is a
+# behavioural split, not two spellings of one thing.
+#
+# NOT keyed on `rec["runtime"] == "builder"`, which is what this used to be and
+# was the single most load-bearing remaining use of the retired axis.
+# `agents_registry._role_for_runtime` already defaults every builder definition
+# to `role: maker`, so reading `role` here needs no registry change and no
+# migration -- it just stops asking the question the wrong way.
 
 
-class BuildAgentContextProvider(ContextProvider):
-    label = "Build · agent"
+class MakerAgentContextProvider(ContextProvider):
+    """An agent that works in a tree (`role: maker`): full Claude Code tool
+    access, cwd pinned to the agent's directory (a Project dir for a
+    project-linked agent, a freestanding scratch dir otherwise).
+
+    Was `BuildAgentContextProvider`, keyed `build:<slug>`. The class survived the
+    rename because its behaviour is right and load-bearing; what changed is the
+    axis it is selected on and the key it mints."""
+
+    label = "Agent · maker"
     allowed_tools = []
     mcp_servers = []
     role = "builder"
@@ -1690,7 +1714,7 @@ class BuildAgentContextProvider(ContextProvider):
         # silently handing out a real cwd for a slug that names nothing.
         record = _ba.get_agent(slug)
         self.slug = slug
-        self.key = f"build:{slug}"
+        self.key = f"agent:{slug}"
         self.name = record.get("name") or slug
         self.purpose = record.get("purpose") or ""
         self.dir = _Path(record["cwd"])
@@ -1706,7 +1730,7 @@ class BuildAgentContextProvider(ContextProvider):
     def persona(self) -> str:
         rules = self._read("AGENTS.md")
         return (
-            f"You are the build agent '{self.name}' inside the Workshop. You have full "
+            f"You are the agent '{self.name}' inside the Workshop. You have full "
             f"Claude Code tool access inside the directory {self.dir}. The operator is "
             f"{operator_name()}, a senior engineer who dislikes padding. Be direct and brief. Never use em-dashes.\n\n"
             "Always read PROJECT.md FIRST to ground your work in the current goal and "
@@ -1719,7 +1743,7 @@ class BuildAgentContextProvider(ContextProvider):
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
             + LEARNING_NOTE_PROTOCOL + "\n\n" + NOTE_PROTOCOL + "\n\n"
             + git_worktree_rule() + "\n\n"
-            + f"Build-agent rules:\n\n{rules or '(none)'}"
+            + f"Agent rules:\n\n{rules or '(none)'}"
         )
 
     def live_context(self) -> str:
@@ -1734,11 +1758,14 @@ class BuildAgentContextProvider(ContextProvider):
 
 
 class AssistantAgentContextProvider(ContextProvider):
-    """A registry assistant agent (`agent:<slug>`) as a chat provider: a data-tier
-    assistant whose persona comes from its markdown definition body, scoped to its
-    own knowledge namespace. This is what makes registry assistants reachable from
-    a chat surface (before this they silently fell back to `general`). Data-tier
-    tools (web + anything it declares), no project cwd, no build."""
+    """A registry agent with no working tree (`agent:<slug>`) as a chat provider:
+    its persona comes from its markdown definition body, scoped to its own
+    knowledge namespace. Data-tier tools (web + anything it declares), no project
+    cwd, no build.
+
+    Reachable for the first time as of thread T2. It was written in July and
+    every route to it went through `_promotion_patch`, which rewrote the key that
+    selects it before any read could see it."""
     role = "assistant"
     default_model = _llm.TIER_HAIKU
 
@@ -1767,6 +1794,29 @@ class AssistantAgentContextProvider(ContextProvider):
             "\"update\": [{\"id\": \"...\", \"status\": \"done\"}]}\n```"
         )
         return base
+
+
+def agent_provider(slug: str, record: dict) -> ContextProvider:
+    """The provider for `agent:<slug>`, chosen by the agent's ROLE.
+
+    `maker` is the one role that works in a tree, so it is the one that gets a
+    cwd and the full agentic toolset (primitive-roles 2026-07-18 §2). Every other
+    role, and no role at all, answers from its definition.
+
+    A maker whose working directory is not registered falls back to the
+    definition-only provider rather than raising: `build_agents.json` is
+    per-instance runtime state and an agent definition can outlive it, and the
+    honest degradation is an agent that can talk but not build. That is the same
+    shape `get_provider` uses everywhere else, where a broken binding degrades
+    instead of failing a turn.
+    """
+    if (record.get("role") or "") == "maker":
+        try:
+            return MakerAgentContextProvider(slug)
+        except KeyError:
+            log.info("agent %s is a maker with no working directory registered; "
+                     "answering from its definition", slug)
+    return AssistantAgentContextProvider(slug, record)
 
 
 # ---------------------------------------------------------------- registry
@@ -1886,17 +1936,26 @@ def _project_slugs() -> list[str]:
         return []
 
 
-def _build_agent_slugs() -> list[str]:
+def _agent_records() -> list[tuple[str, dict]]:
+    """(slug, record) for every agent this instance can chat with, sorted.
+
+    OFF THE AGENT REGISTRY, not `build_agents.json`. The list used to be
+    `build_agents.slugs()`, which is per-instance runtime state for one runtime,
+    so the scope picker offered eight retired build agents and not one of the
+    three live assistants. `list_agents` already excludes retired and
+    per-channel agents, which is exactly the set that should be offerable as a
+    place to type."""
     try:
-        from services import build_agents as _ba
-        return sorted(_ba.slugs())
+        from services import agents_registry
+        return sorted(((r["slug"], r) for r in agents_registry.list_agents()),
+                      key=lambda pair: pair[0])
     except Exception:
         return []
 
 
 def is_build_provider(provider: ContextProvider) -> bool:
     """A build provider runs the full agentic Claude Code path."""
-    return isinstance(provider, (ProjectContextProvider, BuildAgentContextProvider))
+    return isinstance(provider, (ProjectContextProvider, MakerAgentContextProvider))
 
 
 # Built-in web tools every data/assistant chat gets (no MCP server needed).
@@ -1963,12 +2022,20 @@ def dev_scope_refused(context_key: str | None) -> bool:
 
 
 def get_provider(context_key: str | None) -> ContextProvider:
-    # WHOSE scope is this? Asked first, before any branch below can turn a key
+    # ONE SPELLING FIRST. `build:<slug>` is a retired context kind naming the
+    # same agent `agent:<slug>` names, and folding it here rather than in each
+    # branch is what lets a caller still holding the old spelling (AgentBuild's
+    # `contextKey`, a `/providers?scope=` query, a rescope request) resolve to the
+    # right agent instead of silently degrading to `general`.
+    if context_key:
+        from services.chat_store import canonical_context_key
+        context_key = canonical_context_key(context_key)
+    # WHOSE scope is this? Asked next, before any branch below can turn a key
     # into a working directory. Every HTTP route reaching a project, agent or
     # worktree is mounted operator-only, so the REST surface never needed to
     # ask; chat is mounted for any authenticated user, takes `context_key`
-    # verbatim from the client, and hands the result a cwd plus (on the build
-    # branches) the full agentic toolset. A caller who is not the owner
+    # verbatim from the client, and hands the result a cwd plus (on the maker
+    # branch) the full agentic toolset. A caller who is not the owner
     # degrades to `general`, the same way a refused `development` does — see
     # services/scope_owner.py.
     from services import scope_owner
@@ -2015,17 +2082,15 @@ def get_provider(context_key: str | None) -> ContextProvider:
                             context_key)
         # An invalid slug falls through to `general`, same as any other unknown
         # key — not a 500, not a provider built from an unchecked path.
-    elif context_key and context_key.startswith("build:"):
-        slug = context_key.split(":", 1)[1]
-        try:
-            return BuildAgentContextProvider(slug)
-        except KeyError:
-            pass  # unknown slug: falls through to `general`, same as agent: below
     elif context_key and context_key.startswith("agent:"):
-        # A registry agent bound to this chat. Builders resolve to the build
-        # provider (their runtime); assistants resolve to the assistant provider
-        # (persona from the definition body). An unknown slug falls back to
-        # general so a stale binding never 500s the chat.
+        # THE AGENT THIS CHAT IS WITH. One branch, because there is one agent
+        # context kind: `build:<slug>` was folded into this one by
+        # `chat_store.canonical_context_key` before the key was ever stored, and
+        # the maker/assistant split moved from `runtime` to `role` inside
+        # `agent_provider`.
+        #
+        # An unknown or retired slug falls back to `general` so a stale binding
+        # never 500s the chat.
         slug = context_key.split(":", 1)[1]
         try:
             from services import agents_registry
@@ -2033,13 +2098,7 @@ def get_provider(context_key: str | None) -> ContextProvider:
         except Exception:
             rec = None
         if rec and not rec.get("retired"):
-            if rec.get("runtime") == "builder":
-                try:
-                    return BuildAgentContextProvider(slug)
-                except KeyError:
-                    pass  # the agent registry and build_agents registry disagree; fall through
-            else:
-                return AssistantAgentContextProvider(slug, rec)
+            return agent_provider(slug, rec)
     providers = provider_map()
     return providers.get(context_key or "general", providers["general"])
 
@@ -2084,29 +2143,29 @@ def list_providers(scope: str | None = None) -> list[dict]:
     """Provider directory for the composer/picker.
 
     scope=None  -> the FULL list (static data providers + every discovered
-                   project + build-agent provider). The Agents page needs this.
+                   project + every agent). The Agents page needs this.
     scope=<key> -> ONLY the single matching provider entry (an in-app dock
                    passes its own contextKey and must not see unrelated
-                   projects/build agents). Returns [] if the key resolves to
+                   projects/agents). Returns [] if the key resolves to
                    nothing valid.
 
     Each entry: {key, label, role, models, default_model, tools_active,
     model_caps}.
     """
     if scope:
+        from services.chat_store import canonical_context_key
+        scope = canonical_context_key(scope)
         provider = get_provider(scope)
         # get_provider falls back to the `general` provider for unknown keys;
         # only return an entry if the resolved key actually matches the request
         # (so a bogus scope doesn't silently expose `general`).
         if provider.key != scope and scope not in provider_map():
             return []
-        # Preserve the nicer dynamic labels for project:/build: keys.
-        if scope.startswith("project:"):
-            label = f"Build · project · {scope.split(':', 1)[1]}"
-        elif scope.startswith("build:"):
-            label = f"Build · agent · {scope.split(':', 1)[1]}"
-        else:
-            label = None
+        # Preserve the nicer dynamic label for project: keys. An agent provider
+        # already labels itself with the agent's name, which is the thing the
+        # picker should say.
+        label = (f"Build · project · {scope.split(':', 1)[1]}"
+                 if scope.startswith("project:") else None)
         return [_provider_entry(provider, label)]
 
     out = [_provider_entry(p) for p in provider_map().values()]
@@ -2114,10 +2173,14 @@ def list_providers(scope: str | None = None) -> list[dict]:
         out.append(_provider_entry(
             ProjectContextProvider(slug), f"Build · project · {slug}"
         ))
-    for slug in _build_agent_slugs():
-        out.append(_provider_entry(
-            BuildAgentContextProvider(slug), f"Build · agent · {slug}"
-        ))
+    # EVERY AGENT IS A PLACE YOU CAN TYPE. This is the entry that makes "chat
+    # with an agent" appear in the scope picker at all; it was a list of build
+    # agents whose keys the store then rewrote on first send.
+    for slug, rec in _agent_records():
+        try:
+            out.append(_provider_entry(agent_provider(slug, rec)))
+        except Exception as e:  # one broken definition must not sink the list
+            log.warning("agent chat provider build failed for %s: %s", slug, e)
     return out
 
 

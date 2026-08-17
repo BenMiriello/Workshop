@@ -118,9 +118,11 @@ class CreateThread(BaseModel):
     context_key: str = "general"
     title: str = ""
     agent_id: str | None = None
-    # Entity-model 2026-07-18 §7 (P1). An agent joins the chat as a participant,
-    # not as its home scope. Optional at create; UI can add/remove after.
-    participants: list[str] | None = None
+    # NO `participants`. It was accepted here, stored, mirrored into Postgres,
+    # and read by nothing that answers a turn: an agent in a chat is either the
+    # chat's `context_key` (`agent:<slug>`, it answers every turn) or an
+    # @mention (it answers one). Send `context_key: "agent:<slug>"` to start a
+    # chat with an agent.
     # NO `scope`. It was accepted here, never sent by any client, and passed
     # straight into the stored field as a second answer to a question
     # `context_key` already answers. A chat's scope is derived from its
@@ -383,7 +385,7 @@ async def new_thread(body: CreateThread):
         raise HTTPException(400, f"mode must be one of {list(chat_context.CHAT_MODES)}")
     return chat_store.create_thread(
         context_key=body.context_key, title=body.title, agent_id=body.agent_id,
-        participants=body.participants, mode=body.mode,
+        mode=body.mode,
     )
 
 
@@ -1651,11 +1653,11 @@ _CHARS_PER_TOKEN = 4
 def _has_live_session(t: dict, provider) -> bool:
     """Does this chat have a claude session whose window /compact can reclaim?
 
-    Two homes, because build agents predate per-thread sessions: an agent chat's
+    Two homes, because maker agents predate per-thread sessions: a maker chat's
     session hangs off the AGENT record (one session per agent), everything else
     off the thread. Checking only the thread would silently skip the native
     compact for exactly the chats that need it most."""
-    if isinstance(provider, chat_context.BuildAgentContextProvider):
+    if isinstance(provider, chat_context.MakerAgentContextProvider):
         try:
             from services import build_agents as _ba
             rec = _ba.get_agent(provider.slug) or {}
@@ -1677,7 +1679,7 @@ def _reset_live_session(t: dict, provider) -> bool:
     Returns whether a session was actually there to drop (informational only —
     the thread's own `claude_session` is dropped by `chat_store.clear_thread_context`,
     this only has to reach the agent-keyed home)."""
-    if isinstance(provider, chat_context.BuildAgentContextProvider):
+    if isinstance(provider, chat_context.MakerAgentContextProvider):
         try:
             from services import build_agents as _ba
             rec = _ba.get_agent(provider.slug) or {}
@@ -2821,10 +2823,21 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
 
     The agent answers with its own definition, its own memory scope and its own
     workspace — it is the agent talking, not the assistant doing an impression of
-    it. Deliberately stateless per mention: an agent joins a conversation to
-    answer a question, and carrying a resumable session per (agent, chat) pair
-    would quietly create a second, invisible conversation alongside this one.
-    What it needs from the chat, it is given here.
+    it.
+
+    A MENTION IS NOT STATELESS. This docstring used to say it was, and argued
+    that a resumable session per (agent, chat) pair would create a second,
+    invisible conversation alongside this one; three hundred lines below,
+    `chat_store.ensure_agent_session` has been keying exactly that session since
+    it shipped, and its own docstring argues the opposite case. The code is
+    right and the paragraph was stale. Per (agent, thread) is what gives an
+    agent continuity in a conversation that is actually continuing while keeping
+    two chats that merely mention the same agent apart; without it, every
+    mention rebuilt the agent's definition, knowledge layers and conversation
+    excerpt from nothing, which was the one path in the system that genuinely
+    did reset every turn.
+
+    What the agent needs from the chat beyond that session, it is given here.
 
     The reply is stamped with `meta.agent` so the transcript can attribute it,
     which is the whole point: an unattributed agent reply is indistinguishable
@@ -3260,7 +3273,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
     if mcp_selection is None and not ownership.caller_is_operator():
         mcp_selection = []
 
-    if isinstance(provider, chat_context.BuildAgentContextProvider):
+    if isinstance(provider, chat_context.MakerAgentContextProvider):
         from services import build_agents as _ba
         try:
             sid, is_new = _ba.ensure_session_id(provider.slug)

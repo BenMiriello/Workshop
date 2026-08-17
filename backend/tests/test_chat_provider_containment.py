@@ -83,4 +83,4 @@ class TestBuildAgentUnknownSlug:
         who calls it directly."""
         from services import chat_context
         with pytest.raises(KeyError):
-            chat_context.BuildAgentContextProvider("this-build-agent-does-not-exist-xyz")
+            chat_context.MakerAgentContextProvider("this-build-agent-does-not-exist-xyz")
