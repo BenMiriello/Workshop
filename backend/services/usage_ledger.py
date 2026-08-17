@@ -38,7 +38,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
-from services import paths
+from wsplatform import paths
 
 WINDOW_S = 5 * 3600  # rolling 5-hour window, matching Claude's usage windows
 

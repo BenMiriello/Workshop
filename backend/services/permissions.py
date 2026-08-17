@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from services import manifests
-from services import paths
+from wsplatform import paths
 
 Decision = Literal["allow", "confirm", "deny"]
 ActionPolicy = Literal["read", "confirm", "allow"]

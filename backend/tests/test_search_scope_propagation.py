@@ -34,7 +34,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services import (agent_authority, auth_store,  # noqa: E402
                       build_streaming as bs, chat_store, llm_router,
-                      ownership, paths)
+                      ownership)
+from wsplatform import paths  # noqa: E402
 
 
 def _meta(thread_id=None, **over) -> dict:

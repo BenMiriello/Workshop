@@ -22,7 +22,7 @@ import json
 import logging
 from pathlib import Path
 
-from services import paths
+from wsplatform import paths
 
 log = logging.getLogger("workshop.backlinks")
 

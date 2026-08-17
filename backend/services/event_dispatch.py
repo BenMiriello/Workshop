@@ -24,7 +24,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from services import paths
+from wsplatform import paths
 
 log = logging.getLogger("workshop.event_dispatch")
 

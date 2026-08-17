@@ -22,7 +22,7 @@ import tempfile
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from services import paths
+from wsplatform import paths
 
 
 def _now() -> str:

@@ -59,7 +59,7 @@ def test_the_pin_matches_what_is_installed():
 
 def test_semantic_index_imports_nothing_undeclared():
     declared = _base_requirements()
-    local = {p.stem for p in (BACKEND / "services").glob("*.py")} | {"services"}
+    local = {p.stem for p in (BACKEND / "services").glob("*.py")} | {"services", "wsplatform"}
     missing = sorted(
         m for m in _module_level_imports(BACKEND / "services" / "semantic_index.py")
         if m not in _STDLIB and m not in local and m.lower() not in declared

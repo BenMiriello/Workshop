@@ -120,7 +120,7 @@ def app_ref(name: str) -> str:
 # path to still sit inside it. `..`, a leading `/`, and a symlink that escapes
 # all fail the same way here as there.
 def _clean_doc_path(rel: str) -> Path | None:
-    from services import paths
+    from wsplatform import paths
     docs = (paths.workshop_root() / "docs").resolve()
     try:
         candidate = (paths.workshop_root() / rel).resolve()
@@ -233,7 +233,7 @@ def _resolve_note(ref: Ref) -> dict | None:
 
 
 def _resolve_doc(ref: Ref) -> dict | None:
-    from services import paths
+    from wsplatform import paths
     candidate = _clean_doc_path(ref.key)
     if candidate is None or candidate.suffix != ".md" or not candidate.is_file():
         return None

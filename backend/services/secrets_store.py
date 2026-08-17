@@ -25,7 +25,7 @@ def _root() -> Path:
     machine it was written on and of nothing else. Resolved per call so an
     override set after import (tests, a relocated instance) is honoured.
     """
-    from services import paths
+    from wsplatform import paths
     return paths.env_path("WORKSHOP_SECRETS_ROOT", "secrets", base="runtime")
 
 

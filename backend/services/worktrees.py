@@ -31,7 +31,7 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from services import paths
+from wsplatform import paths
 
 BRANCHES_ROOT = paths.env_path("WORKSHOP_BRANCHES_ROOT", "branches", base="root")
 PROJECTS_ROOT = paths.env_path("WORKSHOP_PROJECTS_ROOT_NEW", "projects", base="root")

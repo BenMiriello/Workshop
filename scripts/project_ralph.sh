@@ -134,9 +134,11 @@ trap revoke_grant EXIT
 # IMPORT PATH: `PYTHONPATH=$WORKSHOP/backend` + `-m services.jobs`, the same way
 # this file already calls services.usage_ledger and services.latitude. It used to
 # be `-m backend.services.jobs`, which stopped working the moment jobs.py grew a
-# top-level `from services import paths` — that import only resolves with
-# backend/ ON the path, not with the repo root as the package parent. Every call
-# below then died on ModuleNotFoundError.
+# top-level `from services import paths` (now `from wsplatform import paths`,
+# ADR 0024's move of paths.py out of services/ -- same constraint, new module
+# name) — that import only resolves with backend/ ON the path, not with the
+# repo root as the package parent. Every call below then died on
+# ModuleNotFoundError.
 #
 # And nothing said so, because all four call sites end in `2>/dev/null || true`.
 # So a sweep ran, worked tasks, and never recorded a Job: the Jobs feed and the

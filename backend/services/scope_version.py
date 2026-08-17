@@ -30,7 +30,7 @@ import os
 import time
 from pathlib import Path
 from typing import Any
-from services import paths
+from wsplatform import paths
 
 WORKSHOP_ROOT = paths.workshop_root()
 STORE = Path(os.environ.get(

@@ -14,7 +14,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from services import paths  # noqa: E402
+from wsplatform import paths  # noqa: E402
 
 DB = str(paths.env_path("BIRDNET_BROWSER_DB", "apps", "birds", "browser-stations.db"))
 CLIPS_DIR = paths.env_path("BIRDNET_CLIPS_DIR", "apps", "birds", "clips")

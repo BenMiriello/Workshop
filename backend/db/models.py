@@ -49,7 +49,7 @@ from db.ids import uuid7
 # IMPORTED, not restated. `latitude` already has exactly one definition of its
 # vocabulary and adding a second here is how the four definitions of the
 # autonomy enum happened. `services.latitude` reaches only the stdlib and
-# `services.paths` at module scope, so this does not drag the service layer
+# `wsplatform.paths` at module scope, so this does not drag the service layer
 # into the schema.
 from services.latitude import LATITUDES
 

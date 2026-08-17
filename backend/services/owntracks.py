@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from . import location
-from services import paths
+from wsplatform import paths
 
 AUTH_ENV_PATH = Path(
     paths.env_path("OWNTRACKS_AUTH_ENV", "owntracks-auth.env", base="config")

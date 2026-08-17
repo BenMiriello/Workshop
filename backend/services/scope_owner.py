@@ -33,7 +33,8 @@ from __future__ import annotations
 import json
 import logging
 
-from services import ownership, paths
+from services import ownership
+from wsplatform import paths
 
 log = logging.getLogger("workshop.scope_owner")
 

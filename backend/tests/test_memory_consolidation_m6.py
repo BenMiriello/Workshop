@@ -41,7 +41,8 @@ def two_owners(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKSHOP_PROJECTS_ROOT", str(tmp_path / "projects"))
     monkeypatch.delenv("WORKSHOP_DEV_MODE", raising=False)
 
-    from services import auth_store, installed_apps, agents_registry, paths
+    from services import auth_store, installed_apps, agents_registry
+    from wsplatform import paths
     monkeypatch.setattr(auth_store, "DB_PATH", tmp_path / "auth.db")
     monkeypatch.setattr(ownership, "_RUNTIME", tmp_path / ".runtime")
     monkeypatch.setattr(knowledge, "_root", lambda: tmp_path)
@@ -128,7 +129,8 @@ class TestB2BacklinksRecordNoteRows:
     def test_a_note_that_names_a_ref_lands_a_backlink_row(self, two_owners):
         """`set_source` is keyed by SOURCE ref, so it accumulates across
         sources. A note row and a chat row coexist."""
-        from services import backlinks, paths, refs
+        from services import backlinks, refs
+        from wsplatform import paths
         ownership.set_current_owner(two_owners["op"])
         backlinks.set_source("workshop:chat/t1#m1", ["workshop:note/workshop/op-only"])
         asyncio.run(knowledge.put_note(
@@ -144,7 +146,7 @@ class TestB2BacklinksRecordNoteRows:
             "workshop:note/workshop/op-only"]
 
     def test_a_wikilink_in_a_note_body_also_lands(self, two_owners):
-        from services import paths
+        from wsplatform import paths
         ownership.set_current_owner(two_owners["op"])
         asyncio.run(knowledge.put_note("workshop", "wikis", "Wikis",
                                        "as covered in [[Operator house style]]"))
@@ -152,7 +154,7 @@ class TestB2BacklinksRecordNoteRows:
         assert store["workshop:note/workshop/wikis"] == ["workshop:note/workshop/op-only"]
 
     def test_an_edit_that_drops_the_ref_drops_the_row(self, two_owners):
-        from services import paths
+        from wsplatform import paths
         ownership.set_current_owner(two_owners["op"])
         asyncio.run(knowledge.put_note("workshop", "cites", "Cites",
                                        "see workshop:note/workshop/op-only"))
@@ -274,7 +276,7 @@ class TestB5TheGpuNoteIsTrue:
     NOTE_ID = "deep-search-dies-with-the-gpu-no-lexical-fallbac-1a001d05335"
 
     def _body(self) -> str:
-        from services import paths
+        from wsplatform import paths
         p = paths.workshop_root() / "shared" / "knowledge" / f"{self.NOTE_ID}.md"
         return p.read_text()
 
@@ -301,7 +303,7 @@ class TestB5TheGpuNoteIsTrue:
         assert "out of memory" in body
 
     def test_the_index_line_matches_the_corrected_note(self):
-        from services import paths
+        from wsplatform import paths
         index = (paths.workshop_root() / "shared" / "knowledge" / "MEMORY.md").read_text()
         line = next(ln for ln in index.splitlines() if self.NOTE_ID in ln)
         assert "no lexical fallback" not in line

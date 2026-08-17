@@ -64,7 +64,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from services import paths
+from wsplatform import paths
 
 LATITUDES = ("strict", "standard", "open")
 DEFAULT_LATITUDE = "standard"

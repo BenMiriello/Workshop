@@ -33,7 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
-from services import paths
+from wsplatform import paths
 
 from .timeline import SAMPLE_RATE
 

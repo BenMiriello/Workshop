@@ -58,7 +58,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from services import paths
+from wsplatform import paths
 
 STORE = Path(os.environ.get(
     "WORKSHOP_MEMORY_POLICY", str(paths.workshop_root() / ".runtime" / "memory-policy.json")))

@@ -11,7 +11,7 @@ from typing import Literal
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from services import paths
+from wsplatform import paths
 
 
 router = APIRouter(prefix="/relay", tags=["relay"])

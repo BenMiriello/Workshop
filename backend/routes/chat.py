@@ -42,7 +42,7 @@ from services import task_scope
 from services import scope_version
 from services import agent_authority
 from services import ownership
-from services import paths
+from wsplatform import paths
 from services import ticket_drafts
 from services import ticket_format
 from services import knowledge

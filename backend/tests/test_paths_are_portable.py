@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from services import paths
+from wsplatform import paths
 
 
 # Module attribute -> the module that owns it. Every one of these was a
@@ -41,9 +41,9 @@ DERIVED = [
     ("services.build_agents", "_scratch_root"),
     ("services.build_agents", "_registry"),
     ("services.build_agents", "_projects_registry"),
-    ("services.paths", "projects_root"),
-    ("services.paths", "projects_registry"),
-    ("services.paths", "chat_cwd"),
+    ("wsplatform.paths", "projects_root"),
+    ("wsplatform.paths", "projects_registry"),
+    ("wsplatform.paths", "chat_cwd"),
     ("services.worktrees", "BRANCHES_ROOT"),
     ("services.worktrees", "PROJECTS_ROOT"),
     ("services.compose_gen", "COMPOSE_ROOT"),

@@ -42,7 +42,7 @@ def operator_name() -> str:
 # The three pickable models surfaced in the composer's model selector, full ids.
 # Sourced from llm_router so they never drift from the actual call tiers.
 from services import llm_router as _llm  # noqa: E402
-from services import paths
+from wsplatform import paths
 
 PICKABLE_MODELS: list[str] = [
     _llm.TIER_OPUS_5,     # claude-opus-5
@@ -625,7 +625,7 @@ def _last_apply_line() -> str:
     which is the failure this is meant to fix, one level up.
     """
     try:
-        from services import paths
+        from wsplatform import paths
         import json as _json
 
         p = paths.runtime_dir() / "apply-last.json"

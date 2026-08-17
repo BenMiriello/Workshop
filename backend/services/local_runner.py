@@ -39,7 +39,8 @@ import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-from services import dev_servers, paths, port_registry
+from services import dev_servers, port_registry
+from wsplatform import paths
 
 log = logging.getLogger("workshop.local_runner")
 

@@ -33,7 +33,7 @@ from typing import Any
 
 from services import llm_router as _llm
 from services.chat_context import ContextProvider
-from services import paths
+from wsplatform import paths
 
 log = logging.getLogger("workshop.app_personas")
 

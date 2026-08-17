@@ -25,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from services.birds_analyze import nonbird_exclusion_sql
-from services import paths
+from wsplatform import paths
 
 DB_PATH = paths.env_path("BIRDNET_DB", "apps", "birds", "birdnet.db")
 CLIPS_DIR = paths.env_path("BIRDNET_CLIPS", "apps", "birds", "clips")

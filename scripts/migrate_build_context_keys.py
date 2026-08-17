@@ -100,7 +100,7 @@ def migrate_db() -> dict:
 
 
 def main() -> int:
-    from services import paths
+    from wsplatform import paths
 
     runtime = paths.runtime_dir()
     found, fixed = migrate_chat_files(runtime)

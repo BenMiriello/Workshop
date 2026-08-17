@@ -60,11 +60,13 @@ available under that constraint, and it is also the pattern already proven by
 `AppError`. The refusal a caller ultimately sees -- status code and message --
 is byte-for-byte unchanged; `tests/test_dev_mode_gate.py` is what proves it.
 
-Still a transitional dependency, named rather than hidden: this module imports
-`services.paths`, which ADR 0024 itself says belongs in `platform`/`wsplatform`
-eventually ("`services/paths.py` and `services/ownership.py` ... are the first
-two things to move"). Moving `paths.py` is not this task; `app_runner.py`
-already had the identical dependency, so this is not a new edge.
+UPDATE, same day: the transitional dependency named above is gone. This module's
+`from services import paths` was exactly the `wsplatform.dev_mode ->
+services.paths` upward edge `check_module_layout.py`'s new `wsplatform` layer
+entry surfaced as a ratchet failure (42 violations against a baseline of 41).
+The fix was the move the paragraph above already called for: `paths.py` is now
+`wsplatform/paths.py`, so this import is `from wsplatform import paths`, a
+same-layer edge, not an upward one.
 """
 from __future__ import annotations
 
@@ -72,7 +74,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from services import paths
+from wsplatform import paths
 
 WORKSHOP_ROOT = paths.workshop_root()
 

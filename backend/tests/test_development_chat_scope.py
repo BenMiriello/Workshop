@@ -57,7 +57,7 @@ class TestDeveloperModeOn:
         # Compare against the derived root, not against the directory NAME. The
         # old assertion fell through to `p.dir.name == "workshop"`, which is only
         # true when the checkout happens to be in a directory called workshop.
-        from services import paths
+        from wsplatform import paths
         assert Path(p.dir).resolve() == paths.workshop_root()
 
     def test_it_is_a_build_provider(self, ctx, monkeypatch):

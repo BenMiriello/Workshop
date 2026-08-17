@@ -25,7 +25,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import auth_store, build_streaming as bs, ownership, paths  # noqa: E402
+from services import auth_store, build_streaming as bs, ownership  # noqa: E402
+from wsplatform import paths  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

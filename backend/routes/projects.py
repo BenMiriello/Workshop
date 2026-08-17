@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services import tasks, jobs, triggers, latitude as latitude_svc
-from services import paths
+from wsplatform import paths
 from services import scope_owner
 
 router = APIRouter()

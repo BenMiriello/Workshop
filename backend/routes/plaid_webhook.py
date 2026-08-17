@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
-from services import paths
+from wsplatform import paths
 
 router = APIRouter()
 log = logging.getLogger("workshop.plaid_webhook")

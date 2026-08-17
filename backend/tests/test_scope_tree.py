@@ -188,7 +188,7 @@ def notes_tree(tmp_path, monkeypatch):
     shared = tmp_path / "shared" / "knowledge"
     shared.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(knowledge, "_shared_knowledge_root", lambda: shared)
-    from services import paths
+    from wsplatform import paths
     monkeypatch.setattr(paths, "projects_root", lambda: tmp_path / "projects")
     monkeypatch.setattr(paths, "workshop_root", lambda: tmp_path)
     monkeypatch.setattr(scope_tree, "STORE", tmp_path / ".runtime" / "scope-tree.json")
@@ -262,7 +262,7 @@ def registry_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(knowledge, "_runtime", lambda: tmp_path / ".runtime")
     shared = tmp_path / "shared" / "knowledge"
     monkeypatch.setattr(knowledge, "_shared_knowledge_root", lambda: shared)
-    from services import paths
+    from wsplatform import paths
     monkeypatch.setattr(paths, "projects_root", lambda: tmp_path / "projects")
     monkeypatch.setattr(paths, "workshop_root", lambda: tmp_path)
     monkeypatch.setattr(scope_tree, "STORE", tmp_path / ".runtime" / "scope-tree.json")

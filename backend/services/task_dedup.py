@@ -204,7 +204,7 @@ _vec_cache_mem: dict[str, list[float]] | None = None
 
 
 def _vec_cache_path() -> Path:
-    from services import paths
+    from wsplatform import paths
     return paths.runtime("dedup-vectors.json")
 
 

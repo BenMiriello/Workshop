@@ -34,7 +34,7 @@ def tree(tmp_path, monkeypatch):
     monkeypatch.setattr(knowledge, "_runtime", lambda: tmp_path / ".runtime")
     monkeypatch.setattr(knowledge, "_shared_knowledge_root",
                         lambda: _mk(tmp_path / "shared" / "knowledge"))
-    from services import paths
+    from wsplatform import paths
     monkeypatch.setattr(paths, "projects_root", lambda: tmp_path / "projects")
     monkeypatch.setattr(paths, "workshop_root", lambda: tmp_path)
     monkeypatch.setattr(si.paths, "workshop_root", lambda: tmp_path)

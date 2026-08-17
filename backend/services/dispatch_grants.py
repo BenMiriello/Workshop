@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from services import permissions, stores
-from services import paths
+from wsplatform import paths
 
 WORKSHOP_ROOT = paths.workshop_root()
 

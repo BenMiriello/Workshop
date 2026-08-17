@@ -713,7 +713,7 @@ def call_cloud(
     the transcript (only meaningful for the stream-json paths).
     """
     if cwd is None:
-        from services import paths as _paths
+        from wsplatform import paths as _paths
         cwd = str(_paths.chat_cwd())
     # THE PROMPT GOES ON STDIN, NOT IN ARGV.
     #

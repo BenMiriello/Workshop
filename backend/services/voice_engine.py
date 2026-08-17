@@ -25,7 +25,7 @@ import re
 import threading
 import wave
 from pathlib import Path
-from services import paths
+from wsplatform import paths
 
 log = logging.getLogger("workshop.voice_engine")
 

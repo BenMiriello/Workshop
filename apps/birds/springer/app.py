@@ -52,7 +52,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from routes import birds as birds_routes
-from services import birds_analyze, paths
+from services import birds_analyze
+from wsplatform import paths
 
 import auth as springer_auth
 

@@ -25,7 +25,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
-from services import paths
+from wsplatform import paths
 
 # Per-instance operator state — lives in .runtime/ (gitignored), never in the
 # tracked tree. See routes/projects.py for the matching rationale.

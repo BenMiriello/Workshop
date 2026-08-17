@@ -5,8 +5,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from services import agents_registry, build_agents, dev_servers, jobs, paths, triggers
+from services import agents_registry, build_agents, dev_servers, jobs, triggers
 from services import agent_authority
+from wsplatform import paths
 
 router = APIRouter()
 

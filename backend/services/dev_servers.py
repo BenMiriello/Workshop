@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from services import port_registry
-from services import paths
+from wsplatform import paths
 
 log = logging.getLogger("workshop.dev_servers")
 

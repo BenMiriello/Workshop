@@ -7,7 +7,7 @@ pin is not the wording — it is that every claim tracks the record and the run
 config, and that a bound is stated only when it actually holds.
 """
 from services import chat_context as cc
-from services import paths
+from wsplatform import paths
 
 
 def _preamble(**over):

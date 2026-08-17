@@ -141,7 +141,7 @@ def collect_jobs() -> list[dict]:
     worse than no measurement. Collapse by id, later line wins, matching
     `jobs._collapse`.
     """
-    from services import paths
+    from wsplatform import paths
 
     log = paths.env_path("WORKSHOP_JOBS_LOG", "jobs.jsonl")
     if not Path(log).is_file():
@@ -183,7 +183,8 @@ def collect_threads() -> list[dict]:
 
 
 def collect_learnings() -> list[dict]:
-    from services import learnings, paths
+    from services import learnings
+    from wsplatform import paths
 
     root = paths.runtime_dir() / "learnings"
     if not root.is_dir():

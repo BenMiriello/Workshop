@@ -43,7 +43,7 @@ import os
 import threading
 from contextlib import asynccontextmanager, contextmanager
 
-from services import paths
+from wsplatform import paths
 
 CONFIG_PATH = paths.env_path("WORKSHOP_AGENT_CONCURRENCY", "agent-concurrency.json")
 

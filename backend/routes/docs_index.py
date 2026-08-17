@@ -22,7 +22,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
-from services import paths
+from wsplatform import paths
 
 log = logging.getLogger("workshop.docs_index")
 

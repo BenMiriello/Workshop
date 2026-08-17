@@ -53,7 +53,7 @@ from pathlib import Path
 
 import numpy as np
 
-from services import paths
+from wsplatform import paths
 
 log = logging.getLogger("workshop.semantic_index")
 

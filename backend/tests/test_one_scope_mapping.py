@@ -31,9 +31,9 @@ from services import (
     knowledge,
     mentions,
     ownership,
-    paths,
     scope_tree,
 )
+from wsplatform import paths
 
 
 # Every context_key FORM the system can hold, and the ONE scope each resolves to.

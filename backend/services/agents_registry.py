@@ -59,7 +59,7 @@ import yaml
 from services import triggers
 from services import build_agents as _build_agents
 from services import latitude as _latitude
-from services import paths
+from wsplatform import paths
 
 log = logging.getLogger("workshop.agents_registry")
 

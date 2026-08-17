@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from services import paths
+from wsplatform import paths
 
 RALPH = paths.scripts("project_ralph.sh")
 

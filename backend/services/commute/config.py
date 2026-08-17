@@ -16,7 +16,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
-from services import paths
+from wsplatform import paths
 
 COMMUTE_ROOT = paths.env_path("WORKSHOP_COMMUTE_ROOT", "commute-config")
 

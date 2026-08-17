@@ -22,7 +22,7 @@ import stat
 from pathlib import Path
 
 from cryptography.fernet import Fernet
-from services import paths
+from wsplatform import paths
 
 SECRETS = Path(os.path.expanduser("~/.config/workshop/secrets.env"))
 RUNTIME = paths.runtime_dir()

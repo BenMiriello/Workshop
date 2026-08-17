@@ -26,7 +26,7 @@ def tree(tmp_path, monkeypatch):
     (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
     (tmp_path / "docs" / "existing.md").write_text("# Existing\n\nOriginal body.\n")
     (tmp_path / "secret.md").write_text("outside docs/\n")
-    from services import paths
+    from wsplatform import paths
     monkeypatch.setattr(paths, "workshop_root", lambda: tmp_path)
     return tmp_path
 

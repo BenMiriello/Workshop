@@ -24,7 +24,7 @@ from typing import Any
 import httpx
 
 from . import config, scoring, timefmt
-from services import paths
+from wsplatform import paths
 
 
 # No default: a channel id is one deployment's, and posting to a stranger's

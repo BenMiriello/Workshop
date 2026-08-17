@@ -43,7 +43,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
-from services import paths
+from wsplatform import paths
 
 # ---------------------------------------------------------------------------
 # Vocabulary

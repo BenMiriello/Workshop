@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Request
-from services import paths
+from wsplatform import paths
 
 
 router = APIRouter(prefix="/events", tags=["events"])

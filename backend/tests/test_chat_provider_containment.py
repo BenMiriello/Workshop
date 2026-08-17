@@ -71,7 +71,7 @@ class TestProjectSlugTraversal:
 
 class TestBuildAgentUnknownSlug:
     def test_an_unregistered_slug_never_gets_the_platform_repo(self, ctx, monkeypatch):
-        from services import paths
+        from wsplatform import paths
         monkeypatch.setenv("WORKSHOP_DEV_MODE", "1")  # the exact condition that used to let this through
         p = ctx.get_provider("agent:this-agent-does-not-exist-xyz")
         assert p.key != "agent:this-agent-does-not-exist-xyz"

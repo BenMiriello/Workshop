@@ -41,7 +41,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import compose_gen, container_runtime, local_runner, paths, port_registry
+from services import compose_gen, container_runtime, local_runner, port_registry
+from wsplatform import paths
 
 log = logging.getLogger("workshop.app_runner")
 

@@ -27,7 +27,7 @@ import re
 from pathlib import Path
 
 import yaml
-from services import paths
+from wsplatform import paths
 
 log = logging.getLogger("workshop.compose_gen")
 

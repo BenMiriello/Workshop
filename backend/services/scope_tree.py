@@ -66,7 +66,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from services import paths
+from wsplatform import paths
 
 # Slug shape shared with `knowledge._SLUG_RE`: lowercase/uppercase letters,
 # digits, hyphen/underscore separators. Kept as a module-level constant here
@@ -333,7 +333,8 @@ def _watched_roots() -> list[Path]:
     always sees it correctly, and watching every individual definition file
     would mean enumerating them, which defeats the point of caching. A test
     exercising this reads with a cold cache, which is the common case."""
-    from services import knowledge, paths, installed_apps, build_agents
+    from services import knowledge, installed_apps, build_agents
+    from wsplatform import paths
     from services import agents_registry as ar
     roots = [paths.projects_root(), paths.workshop_root() / "apps",
              paths.runtime_dir() / "agents",

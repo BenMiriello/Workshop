@@ -40,7 +40,7 @@ import logging
 import os
 from pathlib import Path
 
-from services import paths
+from wsplatform import paths
 
 log = logging.getLogger("workshop.auth_env")
 

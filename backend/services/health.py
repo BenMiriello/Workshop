@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from . import ownership
-from services import paths
+from wsplatform import paths
 
 AUTH_ENV_PATH = Path(
     paths.env_path("HEALTH_AUTH_ENV", "health-auth.env", base="config")

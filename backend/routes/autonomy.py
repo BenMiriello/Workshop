@@ -29,8 +29,9 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from services import agent_slots, autonomy_override, gpubroker_client, jobs, paths
+from services import agent_slots, autonomy_override, gpubroker_client, jobs
 from pydantic import BaseModel, Field
+from wsplatform import paths
 
 
 router = APIRouter(tags=["autonomy"])

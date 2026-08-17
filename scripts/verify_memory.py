@@ -195,7 +195,7 @@ def c_index_is_not_ancient(name: str) -> None:
 # --- the learnings store ---------------------------------------------------
 
 def _learning_rows() -> list[dict]:
-    from services import paths
+    from wsplatform import paths
 
     root = Path(paths.runtime_dir()) / "learnings"
     rows: list[dict] = []
