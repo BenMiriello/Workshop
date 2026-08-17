@@ -74,7 +74,8 @@ backend/
     apps/        # the app runner and registry
     commute/     # already correct, becomes the template
     voice/       # already partly correct
-  platform/      # paths, ownership, tenancy, ids, config, shared vocabulary
+  wsplatform/    # paths, ownership, tenancy, ids, config, shared vocabulary
+                 # NOT `platform/`: see "The name" below
   api/           # routers only, thin
   db/            # models, migrations, repositories
 ```
@@ -90,6 +91,38 @@ Re-exporting submodules (`from . import config, poller, scoring`) satisfies this
 as well as re-exporting symbols does, and it is the cheaper migration. The rule
 the check enforces is the same either way: an import from outside names the
 package, and takes something `__all__` names.
+
+### The name: `wsplatform/`, not `platform/`
+
+Amended 2026-08-17, the same day this record was written, after the first two
+things that belonged in it were built.
+
+This ADR originally named the package `platform/`. That name is a landmine.
+`backend/` is on `sys.path` for every way this app runs (uvicorn resolving
+`main:app`, pytest's rootdir), so a top-level package literally called
+`platform` **shadows the standard library's `platform` module process-wide**.
+The failure is not local to anything that imports it: the backend died before
+pytest could collect a single test, because `uuid` calls `platform.system()` at
+import time and got an empty package instead.
+
+Reproduced directly:
+
+```
+$ mkdir -p /tmp/shadowtest/platform && touch /tmp/shadowtest/platform/__init__.py
+$ cd /tmp/shadowtest && python -c "import sys; sys.path.insert(0,'.'); import platform; print(platform.__file__)"
+/tmp/shadowtest/platform/__init__.py
+```
+
+So the package is `wsplatform/`. This is worth recording rather than quietly
+renaming, for two reasons. It is the kind of defect that gets rediscovered by
+whoever next reads the target tree in the plan doc and types the obvious thing.
+And it is a small instance of this document's own thesis: the tree diagram was a
+decision written down, someone built against it, and the writing down is what
+made the collision a five-minute correction instead of a mystery.
+
+If a later migration changes how the app is invoked so that `backend/` is no
+longer a `sys.path` root, this becomes a one-line rename. Until then the name
+carries the constraint.
 
 ### The four rules
 
@@ -132,7 +165,7 @@ lines are grandfathered in the baseline and may only shrink.
 
 **A closed vocabulary is platform, not domain.** `LATITUDES`, `CHAT_MODES`,
 `EFFORTS`, `STATE_TYPES` and every other value set that both a table definition
-and a service need moves to `platform/vocabulary.py`. Both `db/models.py` and
+and a service need moves to `wsplatform/vocabulary.py`. Both `db/models.py` and
 `domains/*` then import downward from it.
 
 This has to be said explicitly because it looks like a conflict between two
@@ -246,7 +279,7 @@ directory. And the two specific extractions the plan calls out become
 straightforward: `services/app_runner.py` is 1,426 lines imported by 10 modules
 of which **only 2 use its actual purpose**, the other 8 pulling in a process
 supervisor to read a ~40-line developer-mode boolean, which becomes its own
-module in `platform/`.
+module in `wsplatform/`.
 
 **Cost.** A large mechanical diff across ~116 files that touches nearly every
 import statement in the backend, and it must land after the `task→ticket` and
@@ -287,7 +320,7 @@ coupling, and fixes nothing this record is about.
 **Move `EFFORTS` and `STATE_TYPES` back to a duplicate declaration to clear the
 upward edge.** Rejected outright. It trades a layering violation for a
 correctness one, and `CHAT_MODES` already demonstrated the failure mode by
-drifting in element order between its two copies. `platform/` gets both rules at
+drifting in element order between its two copies. `wsplatform/` gets both rules at
 once.
 
 **Allow function-local imports where they break a cycle.** This is the status
