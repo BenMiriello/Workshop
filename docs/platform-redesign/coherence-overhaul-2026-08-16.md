@@ -1,6 +1,9 @@
 # Coherence overhaul: the spine and the ratchet (2026-08-16)
 
-Status: **proposal, first thread being implemented.** Written at the operator's
+Status: **accepted; all six threads built 2026-08-16/17.** Build log in §10 records
+what landed, in which commit, and the four places this plan's own estimates turned out
+to be wrong. Open items are listed at the end of §10; the largest is `Thread.state`,
+deliberately not built. Written at the operator's
 direction on 2026-08-16: *"research into this and the overhaul or redesign we could do
 to make this system much more clear and coherent ... Do not be shy about overhauling and
 don't use the way things are already as an excuse not to do it right."*
