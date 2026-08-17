@@ -39,8 +39,21 @@ if str(_BACKEND) not in sys.path:
 
 # The data owner every count is taken as. The app partitions personal stores by
 # owner id, so an unpinned call raises rather than silently reading nothing.
-# 6 is the operator (benmiriello@gmail.com), NOT the Linux uid.
-OWNER = 6
+# Resolved from the app's own operator record (services.auth_store.operator_id),
+# never a literal: a literal here would be exactly the kind of per-deployment
+# identity check_no_hardcoding.sh exists to catch, and it would silently read
+# the wrong owner on any other checkout. Override with --owner for one-off runs
+# (e.g. against a non-operator account, or a checkout with no operator yet).
+def _default_owner() -> int:
+    from services import auth_store
+
+    op = auth_store.operator_id()
+    if op is None:
+        raise SystemExit(
+            "field_occupancy: no operator account found (bootstrap hasn't run "
+            "on this checkout) -- pass --owner <id> explicitly"
+        )
+    return op
 
 
 def _empty(v: object) -> bool:
@@ -91,24 +104,33 @@ def _all_keys(records: list[dict]) -> set[str]:
     return keys
 
 
-def collect_tickets() -> dict[str, list[dict]]:
-    """Tickets per scope, through the app's own read path.
+def collect_tickets() -> tuple[dict[str, list[dict]], dict[str, str]]:
+    """Tickets per scope, through the app's own read path, plus which store
+    backs each scope (`relational` = Postgres, `file` = `.tasks.json`).
 
     Split by store, because `development` and `workshop` are Postgres-backed
     since 2026-08-15 while the project trees are still .tasks.json, and a field
     that is populated in one and empty in the other is exactly the signal worth
-    surfacing.
+    surfacing -- it is how the ticket data-loss bug in §3 of the coherence-
+    overhaul doc was found (`db/ticket_sync.py` silently dropping `latitude`,
+    `max_attempts`, `attempts`, `awaiting`, `assignee`).
     """
     from routes.tasks_all import scope_roots
     from services import tasks
 
     out: dict[str, list[dict]] = {}
+    kind: dict[str, str] = {}
     for scope, root in scope_roots():
         try:
             out[scope] = tasks.list_tasks(root, include_done=True)
         except Exception as e:  # a scope that cannot be read is a finding
             print(f"  ! {scope}: {type(e).__name__}: {e}", file=sys.stderr)
-    return out
+            continue
+        try:
+            kind[scope] = "relational" if tasks.is_relational(root) else "file"
+        except Exception:
+            kind[scope] = "unknown"
+    return out, kind
 
 
 def collect_jobs() -> list[dict]:
@@ -185,29 +207,64 @@ CORPORA = {
     "learning": collect_learnings,
 }
 
+# Committed baseline: the field set each corpus was known to have the last
+# time someone looked. See `--write-baseline` / `--fail-on-new-zero` below.
+_BASELINE_PATH = Path(__file__).resolve().parent / "field_occupancy_baseline.json"
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--json", action="store_true", help="machine-readable output")
-    ap.add_argument("--zero-only", action="store_true",
-                    help="only report fields no live record carries")
-    args = ap.parse_args()
 
+def build_report(owner: int) -> dict[str, dict]:
+    """The occupancy report for one owner. Exposed as a function (rather than
+    inlined in `main`) so tests, and `--fail-on-new-zero`, can call it without
+    going through argv or stdout."""
     from services import ownership
-    ownership.set_current_owner(OWNER)
+    ownership.set_current_owner(owner)
 
     report: dict[str, dict] = {}
 
-    # Tickets, split by scope so a divergence between stores is visible.
-    per_scope = collect_tickets()
+    # Tickets, split by scope AND by store, so a field populated in one store
+    # and empty in the other is visible -- that split is how the ticket
+    # data-loss bug (coherence-overhaul-2026-08-16.md §3) was found.
+    per_scope, store_kind = collect_tickets()
     combined: list[dict] = [t for ts in per_scope.values() for t in ts]
     if combined:
         total, filled, constant = _occupancy(combined)
+        all_fields = sorted(_all_keys(combined))
+
+        by_scope_fields: dict[str, dict[str, int]] = {}
+        by_store: dict[str, dict] = {}
+        store_records: dict[str, list[dict]] = {}
+        for scope, records in per_scope.items():
+            _, scope_filled, _ = _occupancy(records)
+            by_scope_fields[scope] = {k: scope_filled.get(k, 0) for k in all_fields}
+            kind = store_kind.get(scope, "unknown")
+            store_records.setdefault(kind, []).extend(records)
+
+        for kind, records in store_records.items():
+            k_total, k_filled, _ = _occupancy(records)
+            by_store[kind] = {
+                "total": k_total,
+                "fields": {k: k_filled.get(k, 0) for k in all_fields},
+            }
+
+        # A field with real occupancy in one store and zero in another,
+        # restricted to stores that actually have records (an empty store
+        # trivially "diverges" from everything, which is not the signal).
+        divergent = []
+        active_kinds = [k for k, d in by_store.items() if d["total"] > 0]
+        if len(active_kinds) > 1:
+            for field in all_fields:
+                counts = {k: by_store[k]["fields"][field] for k in active_kinds}
+                if max(counts.values()) > 0 and min(counts.values()) == 0:
+                    divergent.append({"field": field, "by_store": counts})
+
         report["ticket"] = {
             "total": total,
-            "fields": {k: filled.get(k, 0) for k in sorted(_all_keys(combined))},
+            "fields": {k: filled.get(k, 0) for k in all_fields},
             "constant": constant,
             "by_scope": {s: len(ts) for s, ts in per_scope.items()},
+            "by_scope_fields": by_scope_fields,
+            "by_store": by_store,
+            "store_divergence": divergent,
         }
 
     for name, fn in CORPORA.items():
@@ -225,6 +282,77 @@ def main() -> int:
             "constant": constant,
         }
 
+    return report
+
+
+def _load_baseline(path: Path) -> dict[str, list[str]]:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _report_field_sets(report: dict[str, dict]) -> dict[str, list[str]]:
+    return {corpus: sorted(data["fields"].keys()) for corpus, data in report.items()}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--zero-only", action="store_true",
+                    help="only report fields no live record carries")
+    ap.add_argument("--owner", type=int, default=None,
+                     help="data owner id (default: the operator account, via "
+                          "services.auth_store.operator_id)")
+    ap.add_argument("--baseline", default=str(_BASELINE_PATH),
+                     help="baseline file (default: %(default)s)")
+    ap.add_argument("--write-baseline", action="store_true",
+                     help="record the current field set as the new baseline and exit")
+    ap.add_argument("--fail-on-new-zero", action="store_true",
+                     help="exit 1 (after printing loudly) if a field NOT in the "
+                          "baseline is at 0%% occupancy -- i.e. a field introduced "
+                          "since the baseline was recorded that has never been "
+                          "written by any live record")
+    args = ap.parse_args()
+
+    owner = args.owner if args.owner is not None else _default_owner()
+    report = build_report(owner)
+    baseline_path = Path(args.baseline)
+
+    if args.write_baseline:
+        baseline_path.write_text(
+            json.dumps(_report_field_sets(report), indent=2, sort_keys=True) + "\n"
+        )
+        print(f"field_occupancy: wrote baseline to {baseline_path} "
+              f"({sum(len(v) for v in _report_field_sets(report).values())} fields "
+              f"across {len(report)} corpora)")
+        return 0
+
+    if args.fail_on_new_zero:
+        baseline = _load_baseline(baseline_path)
+        if not baseline:
+            print(f"field_occupancy: no baseline at {baseline_path} -- run "
+                  f"--write-baseline first", file=sys.stderr)
+            return 2
+        new_zero: dict[str, list[str]] = {}
+        for corpus, data in report.items():
+            known = set(baseline.get(corpus, []))
+            new_fields = set(data["fields"]) - known
+            zeros = sorted(f for f in new_fields if data["fields"][f] == 0)
+            if zeros:
+                new_zero[corpus] = zeros
+        if new_zero:
+            print("=== NEW fields introduced since the baseline, never populated "
+                  "by any live record")
+            print("    Not a build failure -- a design that has not landed yet, or "
+                  "a write path\n    that silently drops it. Worth an answer before "
+                  "more gets built on it.")
+            for corpus, fields in sorted(new_zero.items()):
+                print(f"    {corpus}: {', '.join(fields)}")
+            return 1
+        print("field_occupancy: no new never-populated fields since the baseline")
+        return 0
+
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
@@ -235,6 +363,9 @@ def main() -> int:
         if "by_scope" in data:
             spread = "  ".join(f"{s}:{n}" for s, n in sorted(data["by_scope"].items()))
             print(f"    by scope: {spread}")
+        if data.get("by_store") and len(data["by_store"]) > 1:
+            spread = "  ".join(f"{k}:{d['total']}" for k, d in sorted(data["by_store"].items()))
+            print(f"    by store: {spread}")
         rows = sorted(data["fields"].items(), key=lambda kv: (kv[1], kv[0]))
         for field, n in rows:
             if args.zero_only and n:
@@ -244,6 +375,11 @@ def main() -> int:
             if not flag and field in data.get("constant", {}):
                 flag = f"  <- always {data['constant'][field]!r}"
             print(f"    {field:22} {n:5d} / {total:<5d} {pct:5.1f}%{flag}")
+        if data.get("store_divergence"):
+            print("    -- populated in one ticket store, empty in another:")
+            for row in data["store_divergence"]:
+                by_store = "  ".join(f"{k}:{v}" for k, v in sorted(row["by_store"].items()))
+                print(f"       {row['field']:22} {by_store}")
 
     zeros = {c: [f for f, n in d["fields"].items() if n == 0] for c, d in report.items()}
     zeros = {c: fs for c, fs in zeros.items() if fs}

@@ -1,10 +1,18 @@
 # Primitive agent roles, triage loop, and template catalog (2026-07-18)
 
-> **STATUS: DESIGN. NOT BUILT.** This doc distills the research and synthesis from
-> `agent-roles-research-2026-07-16.md` and `synthesis-agent-protocols-2026-07-16.md`
-> into the actionable reference for implementation phases R0-R4.
+> **STATUS: DESIGN, PARTIALLY BUILT.** This doc distills the research and
+> synthesis from `agent-roles-research-2026-07-16.md` and
+> `synthesis-agent-protocols-2026-07-16.md` into the actionable reference for
+> implementation phases R0-R4.
 > All file:line references point to the live tree as of 2026-07-16 unless noted.
-> No code has been written.
+>
+> **Correction, 2026-08-17:** the line that used to be here ("No code has been
+> written") was wrong and actively misleading. `role` is a live Postgres `CHECK`
+> constraint (`backend/db/models.py:606`) and the write-set map this doc
+> proposes is implemented at `backend/services/agent_authority.py:59`
+> (`_ROLE_WRITES`). The rest of R0-R4 (triage loop, template catalog) has not
+> been verified built or unbuilt by this pass. See
+> `coherence-overhaul-2026-08-16.md` R1.
 
 Owns the output deliverable for operator asks D1-D6 and E1-E5 from
 `operator-asks-2026-07-16.md`. Companion to

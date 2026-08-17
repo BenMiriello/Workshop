@@ -1,8 +1,14 @@
 # Resource access protocol: hard gate + LLM-mediated scoping (2026-07-16)
 
-> **STATUS: PROPOSED. NOT BUILT.** No code written. No broker exists. The gating
-> decision (agent as a third `Identity.kind`) is UNANSWERED by the operator; if it is
-> rejected, most of this report collapses. ADR 0004 is proposed, not accepted.
+> **STATUS: PROPOSED, LARGELY BUILT.** The gating decision (agent as a third
+> `Identity.kind`) is UNANSWERED by the operator; if it is rejected, most of
+> this report collapses. ADR 0004 is proposed, not accepted.
+>
+> **Correction, 2026-08-17:** the banner that used to be here claimed no
+> mediating component existed. That was wrong. `services/broker.py:142` is
+> `class MediatedBroker`, `services/policy.py:62` has the three tiers
+> (`TIERS`), and invariants I1 (attenuation) and I2 (separation) described in
+> Part 4 are implemented. See `coherence-overhaul-2026-08-16.md` R1.
 
 Owning thread: the interface contract for resource access. Covers operator asks
 A1-A12 (`operator-asks-2026-07-16.md`). Companion reports own B, C, D, E.

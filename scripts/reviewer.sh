@@ -16,6 +16,9 @@
 #     "blocked_reason": string|null,
 #     "criteria":   [{criterion, cmd, expect, pass, evidence}, ...],  // executed, if any
 #     "reasons":    [string, ...]
+#     "one_definition":    "ok|fail|skipped",   // R3: duplicate enum value-set touching this diff
+#     "occupancy_notice":  string|null,         // R2: NEW zero-occupancy field since baseline (advisory)
+#     "doc_status_notice": string|null          // R1: a changed doc has no status / a misleading banner (advisory)
 #   }
 #
 # This gate judges the DIFF and executed evidence ONLY. The worker's own
@@ -29,6 +32,9 @@
 #   - zero NEW stub markers introduced (preexisting stubs in unchanged code are OK)
 #   - python typecheck passes on changed .py files (uses backend venv mypy if present)
 #   - typescript tsc --noEmit passes on changed .ts/.tsx files
+#   - no enum value-set touching this diff is declared in two places (R3, only
+#     when the diff introduces or touches an existing same-language duplicate —
+#     see check_one_definition.py's own header for why it is not unconditional)
 #   - every executed acceptance criterion passed, when REVIEWER_CRITERIA_FILE points
 #     at a JSON results array (machine-checkable assertions run by project_ralph.sh)
 #
@@ -274,6 +280,83 @@ else
 fi
 export HARDCODE_CHECK
 
+# 4.6c One definition per enum (R3, coherence-overhaul-2026-08-16.md). Gated on
+# touching a file the checker actually scans (backend .py, frontend/packages-ui
+# .ts/.tsx) — cheap either way (~0.6s full-repo), but a docs-only or shell-only
+# diff has nothing this check could find. `--only-changed` restricts FAILURE to
+# duplicate groups where at least one declaring file is in THIS diff: touching
+# either side of an existing duplicate, or introducing a new one, keeps you
+# honest, but a duplicate sitting untouched elsewhere in the tree does not
+# block unrelated work — see the script's own header for why an unconditional
+# whole-tree gate would just get this check disabled.
+ONE_DEF_CHECK="skipped"
+ONE_DEF_COUNT=0
+if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(backend/.*\.py|frontend/src/.*\.tsx?|packages/ui/src/.*\.tsx?)$'; then
+  if [[ -f "$WORKSHOP/scripts/check_one_definition.py" ]]; then
+    ONE_DEF_JSON=$(python3 "$WORKSHOP/scripts/check_one_definition.py" --only-changed "$BASELINE" --json 2>/dev/null)
+    if [[ -n "$ONE_DEF_JSON" ]]; then
+      ONE_DEF_COUNT=$(printf '%s' "$ONE_DEF_JSON" | python3 -c "import json,sys; print(len(json.load(sys.stdin).get('gating_groups', [])))" 2>/dev/null || echo 0)
+      if [[ "$ONE_DEF_COUNT" -gt 0 ]]; then
+        ONE_DEF_CHECK="fail"
+      else
+        ONE_DEF_CHECK="ok"
+      fi
+    else
+      AMBIGUOUS+=("one_definition_check_errored")
+    fi
+  else
+    AMBIGUOUS+=("one_definition_check_unavailable")
+  fi
+fi
+
+# 4.6d Field-occupancy ratchet (R2) and doc-status ratchet (R1) are measurement,
+# not gates — R2 is explicit that a newly-introduced zero-occupancy field must
+# be reported loudly, not fail the build on first introduction (a design that
+# has not landed yet is a question, not automatically a defect, and R1's docs
+# are historical debt no single diff is responsible for clearing). Both are
+# ADDITIVE fields on the JSON output; neither can flip `complete` to false.
+OCCUPANCY_NOTICE=""
+if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/(db/(models|ticket_sync)\.py|services/(tasks|jobs|chat_store|learnings)\.py)$'; then
+  if [[ -x "$WORKSHOP/backend/.venv/bin/python" && -f "$WORKSHOP/scripts/field_occupancy_baseline.json" ]]; then
+    OCC_OUT=$(cd "$WORKSHOP/backend" && "$WORKSHOP/backend/.venv/bin/python" "$WORKSHOP/scripts/field_occupancy.py" --fail-on-new-zero 2>/dev/null)
+    OCC_RC=$?
+    if [[ $OCC_RC -eq 1 ]]; then
+      OCCUPANCY_NOTICE="$OCC_OUT"
+    fi
+  fi
+fi
+
+DOC_STATUS_NOTICE=""
+if printf '%s\n' "$CHANGED_ALL" | grep -q '^docs/platform-redesign/.*\.md$'; then
+  if [[ -f "$WORKSHOP/scripts/doc_status.py" ]]; then
+    DOC_STATUS_JSON=$(python3 "$WORKSHOP/scripts/doc_status.py" --json 2>/dev/null)
+    if [[ -n "$DOC_STATUS_JSON" ]]; then
+      # Only surface docs the DIFF actually touches — the other ~60 docs'
+      # pre-existing no-status/misleading state is not this diff's problem.
+      # Data passed via env vars, not stdin: this command already needs stdin
+      # for the heredoc script itself (mirrors the STUB_HITS_JSON block above).
+      DOC_STATUS_NOTICE=$(DOC_STATUS_JSON="$DOC_STATUS_JSON" CHANGED_ALL="$CHANGED_ALL" python3 - <<'PYEOF'
+import json, os
+data = json.loads(os.environ.get("DOC_STATUS_JSON") or "{}")
+changed = {l.rsplit("/", 1)[-1] for l in os.environ.get("CHANGED_ALL", "").splitlines()
+           if l.startswith("docs/platform-redesign/")}
+docs = data.get("docs", {})
+notes = []
+for name in sorted(changed):
+    entry = docs.get(name)
+    if not entry:
+        continue
+    if not entry.get("has_status"):
+        notes.append(f"{name}: no status line")
+    if entry.get("misleading"):
+        notes.append(f"{name}: NOT-BUILT banner disputes an artifact that exists")
+print("; ".join(notes))
+PYEOF
+)
+    fi
+  fi
+fi
+
 # 4.7 Executed-criteria results (optional). A task can carry machine-checkable
 #     acceptance assertions; project_ralph.sh EXECUTES them in the scope dir and
 #     passes the RESULTS here via REVIEWER_CRITERIA_FILE. Surfacing them makes the
@@ -324,6 +407,12 @@ if [[ "$HARDCODE_CHECK" == "fail" ]]; then
   REASONS+=("hardcoded_identity")
   COMPLETE="false"
 fi
+if [[ "$ONE_DEF_CHECK" == "fail" ]]; then
+  REASONS+=("duplicate_definitions:${ONE_DEF_COUNT}")
+  COMPLETE="false"
+fi
+# OCCUPANCY_NOTICE and DOC_STATUS_NOTICE are deliberately NOT checked here —
+# both are measurement (R1/R2), not gates. See their computation above for why.
 
 if [[ "$DIFF_FILES" -eq 0 ]]; then
   # An empty diff normally fails the gate (nothing changed). But a command- or
@@ -385,6 +474,7 @@ COMPLETE_BOOL=$([[ "$COMPLETE" == "true" ]] && echo 1 || echo 0)
 TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
+export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -405,6 +495,13 @@ out = {
     "design":    os.environ["DESIGN_CHECK"],
     "pluggable_apps": os.environ["APPS_CHECK"],
     "hardcoding": os.environ.get("HARDCODE_CHECK", "skip"),
+    # T6 ratchet (coherence-overhaul-2026-08-16.md §7). `one_definition` gates
+    # (see REASONS above); `occupancy_notice` and `doc_status_notice` are pure
+    # visibility, never affecting `complete` — R2 is explicit that a
+    # newly-introduced zero-occupancy field is a question, not a build failure.
+    "one_definition": os.environ.get("ONE_DEF_CHECK", "skipped"),
+    "occupancy_notice": os.environ.get("OCCUPANCY_NOTICE") or None,
+    "doc_status_notice": os.environ.get("DOC_STATUS_NOTICE") or None,
     # executed machine-checkable acceptance assertions (empty unless the caller
     # passed REVIEWER_CRITERIA_FILE); surfaced so the Work UI shows what was checked.
     "criteria":  criteria,
@@ -422,7 +519,13 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+if [[ -n "$OCCUPANCY_NOTICE" ]]; then
+  echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
+fi
+if [[ -n "$DOC_STATUS_NOTICE" ]]; then
+  echo "[$(ts)] doc-status notice: $DOC_STATUS_NOTICE" >> "$LOG"
+fi
 
 # 6. Meter the reviewer's OWN auxiliary claude spend (research rec 5). When this
 #    reviewer performs an LLM review, its `claude --output-format json` envelope is

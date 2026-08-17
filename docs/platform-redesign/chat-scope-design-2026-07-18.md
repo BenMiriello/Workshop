@@ -1,6 +1,15 @@
 # Chat scoping, re-scope, and cross-chat access (2026-07-18)
 
-> **STATUS: DESIGN. NOT BUILT.**  
+> **STATUS: DESIGN, PARTIALLY BUILT.**
+>
+> **Correction, 2026-08-17:** the banner that used to be here claimed nothing
+> had shipped. That was wrong. `chat_thread.scope` and
+> `chat_thread.scope_locked` are live columns
+> (`backend/db/models.py:759-760`). Whether the re-scope and cross-chat-access
+> BEHAVIOUR this doc specifies is fully built has not been verified by this
+> pass -- only that the schema landed. See `coherence-overhaul-2026-08-16.md`
+> R1.
+>
 > Owns items B6 (chat scoping) and B7 (cross-chat access) from the
 > orchestration-surface task.  
 > Depends on: T0 entity model (`entity-model-2026-07-18.md`).  

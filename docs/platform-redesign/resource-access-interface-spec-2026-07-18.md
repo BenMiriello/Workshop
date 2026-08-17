@@ -1,8 +1,15 @@
 # Resource-Access Protocol: Interface Spec (2026-07-18)
 
-> This doc is the **implementable contract**. Rationale and research live in
-> `resource-access-protocol-2026-07-16.md`. ADR 0004 decides the agent identity
-> model; ADR 0005 decides the rules engine. This doc tells you what to write.
+> **STATUS: SPEC, LARGELY BUILT.** This doc is the **implementable contract**.
+> Rationale and research live in `resource-access-protocol-2026-07-16.md`.
+> ADR 0004 decides the agent identity model; ADR 0005 decides the rules
+> engine. This doc tells you what to write.
+>
+> **Correction, 2026-08-17:** this doc had no status line at all, which read
+> as nothing having shipped by omission, next to its companion doc's
+> (now-corrected) banner. `services/broker.py:142` is `class MediatedBroker` and
+> `services/policy.py:62` has the three tiers this spec's terminology table
+> describes. See `coherence-overhaul-2026-08-16.md` R1.
 
 ---
 
