@@ -8,6 +8,12 @@ runtime or config directories off the repo.
     WORKSHOP_ROOT        the repository root (default: two levels above this file)
     WORKSHOP_RUNTIME     mutable per-instance state (default: <root>/.runtime)
     WORKSHOP_CONFIG_DIR  operator config + secrets (default: ~/.config/workshop)
+
+MOVED FROM `services/paths.py` (ADR 0024): a pure leaf with in-degree ~49 and no
+imports but `os`/`pathlib`, exactly the "closed vocabulary is platform, not
+domain" shape the ADR names it as. `wsplatform.dev_mode -> services.paths` was
+the upward edge the layering ratchet caught; this move is the fix, not a
+rewrite of anything the module does.
 """
 
 from __future__ import annotations
@@ -19,7 +25,7 @@ _THIS = Path(__file__).resolve()
 
 
 def workshop_root() -> Path:
-    """The repository root. `backend/services/paths.py` -> up two.
+    """The repository root. `backend/wsplatform/paths.py` -> up two.
 
     Always absolute. compose_gen writes these paths into generated compose files
     as bind-mount sources, and docker resolves a bind mount on the DAEMON's

@@ -555,6 +555,62 @@ run.
   deleted; the table is 1 row. This is the recorded "tests must not share owner
   storage" lesson recurring one layer down, in Postgres instead of the file stores.
 
+- **Item 2's foundation, the two pieces that reach the whole surface** (`cf9c47e`).
+  The error model is registered and every one of the 348 raise sites is now
+  compliant without being edited: `GET /api/tasks` unauthenticated returns
+  `{"detail": {"code": "unauthorized", "message": "authentication required",
+  "hint": null}}`, and a framework-raised 404 and a 422 validation error carry the
+  same shape. `Page[T]` exists as one shared generic so the generated client will
+  get one `Page<T>`. `health.py` and `location.py` fully converted, taking
+  `response_model` from 4 routes to 13.
+  The agent also did the thing that makes this real rather than nominal: it found
+  every frontend consumer of the old plain-string `detail` (`lib/auth.ts`,
+  `AutonomyControls.tsx`, `notes/api.ts`, the birds standalone entry) and updated
+  them in the same commit, so the global change did not silently turn error
+  messages into `[object Object]`.
+
+- **§2.2's worst-placed code, moved** (`cdc811f`). The developer-mode interlock
+  (ADR 0014's repo-write safety control) is out of `app_runner.py`. Actual
+  importers of that 1,426-line process supervisor drop from 10 files to 2, both
+  genuine users. The `fastapi.HTTPException` raised from a service module became a
+  plain `DevModeRefusal` translated at the three route call sites, so `wsplatform`
+  has no web-framework dependency. Refusal status and message unchanged, proven by
+  the existing gate tests plus three new ones that patch the new module directly,
+  so a surviving alias on `app_runner` could not make them pass. It also found a
+  ninth importer nobody had counted, inside a shell heredoc in
+  `scripts/dispatch_triggers.sh`.
+
+- **The package is `wsplatform/`, not `platform/`** (`4b82a04`, ADR 0024 amended).
+  `backend/` is a `sys.path` root, so a package called `platform` shadows the
+  stdlib module process-wide and the backend dies before pytest collects a test,
+  because `uuid` calls `platform.system()` at import time. The plan's own tree
+  diagram named `platform/`; anyone retyping it hits this.
+
+- **`paths.py` moved into the platform layer** (`723132d`), no shim, 76 files in one
+  commit. It is the repo's most-depended-on hub (in-degree ~49) and imports nothing
+  but `os` and `pathlib`, so it is exactly the leaf ADR 0024 describes.
+
+  **This one is worth reading for the method, not the result.** Teaching the ratchet
+  about `wsplatform` immediately exposed an edge it had been blind to
+  (`wsplatform.dev_mode -> services.paths`), taking the count 41 to 42. Moving
+  `paths` removed that edge and exposed the next one underneath it
+  (`wsplatform.paths -> services.ownership`, a function-local import in
+  `chat_cwd()` that was same-layer and therefore invisible while both files lived
+  in `services/`). Net 42 both times.
+
+  The agent refused to re-pin a worse number and left the gate red rather than
+  hide it, which is the correct behaviour and the reason the ratchet is worth
+  having. The baseline was then rewritten to 42 deliberately, because **the code
+  did not regress, the measurement got more accurate**: 41 was counted with the
+  layer invisible, so the two numbers are not comparable. That reasoning is
+  recorded in `check_module_layout.py`'s header, next to the table, so the jump
+  cannot later read as a silently pinned regression.
+
+  The remaining edge is named with its fix: clearing it means moving `ownership.py`
+  as well, and `ownership` has a function-local `from services import auth_store`,
+  so those three move together across 135 files or not at all. One at a time is
+  whack-a-mole and each step scores zero. **That is the next piece of item 3.**
+
 ### The gate now
 
 Four checks were added to `scripts/reviewer.sh` this build, joining the three that

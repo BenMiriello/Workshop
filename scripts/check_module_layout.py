@@ -83,14 +83,46 @@ _EXCLUDE_PATH_PARTS = {"db/migrations/versions"}
 
 _BIG_FILE_LINES = 800
 
-# The three CURRENT directories the layering rule is checked against, in
-# target dependency order (lower index = closer to the api/edge; a module may
-# only import from a directory at the SAME or a HIGHER index). This is today's
+# The CURRENT directories the layering rule is checked against, in target
+# dependency order (lower index = closer to the api/edge; a module may only
+# import from a directory at the SAME or a HIGHER index). This is today's
 # `routes/ -> services/ -> db/` chain; under the target names in the plan doc
-# `routes/` is `api/`, `services/` is (for now) `domains/`, and `db/` stays
-# `db/` -- `platform/` does not exist yet as a directory, so it is not in this
-# list, and nothing is checked against it.
-_LAYER_ORDER = {"routes": 0, "services": 1, "db": 2}
+# `routes/` is `api/` and `services/` is (for now) `domains/`.
+#
+# `wsplatform/` was added 2026-08-17, when the first two things that belong in
+# it were built (the HTTP contract's Page[T] and error model, and the dev-mode
+# interlock lifted out of app_runner). It sits BELOW services and ABOVE db,
+# matching ADR 0024's `api -> domains -> platform -> db`: anything may import it
+# and it may import only `db`. Note the name is `wsplatform` and not `platform`
+# because `backend/` is a sys.path root, so a package called `platform` shadows
+# the stdlib module process-wide (ADR 0024, "The name").
+#
+# Until this entry existed, edges into and out of wsplatform were invisible to
+# the upward-violation count, so moving eight importers off a god module scored
+# zero. A rule the checker cannot see is a rule that does not exist.
+#
+# BASELINE HISTORY, because `upward_violations` went 41 -> 42 on the same day
+# and that must not read as a silently pinned regression. It is not one. The
+# CODE did not get worse; the MEASUREMENT got more accurate. 41 was counted with
+# `wsplatform` absent from this table, so every edge touching it was skipped.
+# The two numbers are not comparable, which is why the baseline was rewritten
+# rather than the difference explained away.
+#
+# What the accurate count of 42 contains, and the order it happened in:
+#   1. Adding `wsplatform` here exposed `wsplatform.dev_mode -> services.paths`.
+#   2. Moving `paths.py` into `wsplatform/` removed that edge and exposed
+#      `wsplatform.paths -> services.ownership` (a function-local import in
+#      `chat_cwd()`, previously a same-layer edge and therefore invisible).
+# Net 42 both times: the move was neutral by this metric and correct by ADR
+# 0024, which is a real thing that can happen and is worth stating plainly.
+#
+# THE ONE REMAINING EDGE IS NAMED AND HAS A KNOWN FIX. Clearing it means moving
+# `ownership.py` too, which the ADR also lists as platform. That is not a free
+# move: `ownership` has a function-local `from services import auth_store`, so
+# it relocates the edge again unless `auth_store` goes with it, across 135
+# files. Do those three together or not at all; moving them one at a time is
+# whack-a-mole and each step scores zero.
+_LAYER_ORDER = {"routes": 0, "services": 1, "wsplatform": 2, "db": 3}
 
 import ast  # noqa: E402
 
