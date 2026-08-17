@@ -5,6 +5,7 @@ import { Segmented, Stepper, ConfirmDialog } from "@workshop/ui";
 import { API, jget, pct, SpeciesLink, BirdThumb } from "./ui";
 import { useRecStatus, fmtBytes, PlayButton } from "./recordings";
 import BirdsHeader from "./BirdsHeader";
+import { usePoll } from "../../../lib/usePoll";
 
 // Recordings management: the storage meter, the budget settings (cap + what to do
 // when full), and the full list of saved clips with per-clip pin / delete. This
@@ -35,7 +36,7 @@ export default function Recordings() {
       .then((d) => { setItems(d.items); setTotal(d.total); })
       .catch((e) => setErr(String(e)));
   }, []);
-  useEffect(() => { load(); const t = setInterval(load, 12000); return () => clearInterval(t); }, [load]);
+  usePoll(load, 12000);
 
   const pin = (r: Rec) => {
     const fd = new FormData(); fd.append("pinned", String(!r.pinned));

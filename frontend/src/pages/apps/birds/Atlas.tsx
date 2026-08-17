@@ -7,6 +7,7 @@ import { ClipPlayButton } from "./recordings";
 import { jget, apost, API, conf } from "./ui";
 import { scatterSVG, heatSVG, noveltySVG } from "./atlasInsightCharts";
 import { timeAbsoluteShort } from "../../../lib/time";
+import { usePoll } from "../../../lib/usePoll";
 
 // The Soundscape Atlas: every stored detection is a point in a learned acoustic
 // map (BirdNET embedding -> UMAP). The Overview colours the whole yard by species
@@ -74,7 +75,6 @@ export default function Atlas() {
   const loadStatus = useCallback(() => {
     jget<AtlasStatus>("/atlas/status").then(setStatus).catch(() => setStatus(null));
   }, []);
-  useEffect(() => { loadStatus(); }, [loadStatus]);
   useEffect(() => {
     jget<{ species: SpeciesRow[] }>("/atlas/species")
       .then((r) => { setSpeciesList(r.species); if (r.species[0] && !species) setSpecies(r.species[0].scientific_name); })
@@ -98,10 +98,7 @@ export default function Atlas() {
   // The Atlas rebuilds itself nightly (and Settings has a manual trigger). Poll
   // status slowly so a rebuild that lands while this page is open refreshes the
   // view — when the version bumps, reload the points.
-  useEffect(() => {
-    const t = setInterval(loadStatus, 60000);
-    return () => clearInterval(t);
-  }, [loadStatus]);
+  usePoll(loadStatus, 60000);
   const lastVersion = useRef(status?.version);
   useEffect(() => {
     if (status && lastVersion.current != null && status.version !== lastVersion.current) load();

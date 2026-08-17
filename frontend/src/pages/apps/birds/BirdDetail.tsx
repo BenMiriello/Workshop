@@ -12,6 +12,7 @@ import ActivityCard from "./ActivityCard";
 import BirdsHeader from "./BirdsHeader";
 import { useBirdsScope } from "./scope";
 import { PlayButton, fmtBytes } from "./recordings";
+import { usePoll } from "../../../lib/usePoll";
 
 // One species' page: photo + description (client-side reference lookup), stats,
 // the same activity charts as the rest of the app (NOT subject to the status
@@ -66,12 +67,8 @@ export default function BirdDetail() {
     return jget<Detail>(`/bird?${qs.toString()}`).then(setD).catch((e) => setErr(String(e)));
   }, [sci, locId, device, days, status]);
 
-  useEffect(() => {
-    if (!sci) return;
-    reload();
-    const t = setInterval(reload, REFRESH_MS);
-    return () => clearInterval(t);
-  }, [sci, reload]);
+  useEffect(() => { if (sci) void reload(); }, [sci, reload]);
+  usePoll(reload, REFRESH_MS, { enabled: !!sci, immediate: false });
 
   // Only the detection-status filter is page-local now; Location/Device/Time come
   // from the global scope. Always write it (including "all") and drop any legacy

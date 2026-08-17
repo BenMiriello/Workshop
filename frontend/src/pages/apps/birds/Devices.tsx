@@ -5,6 +5,7 @@ import { useRecorder, type DeviceMode } from "./recorder";
 import { StatusPill } from "@workshop/ui";
 import { API, jget, isRecording } from "./ui";
 import { timeAgo } from "../../../lib/time";
+import { usePoll } from "../../../lib/usePoll";
 
 // Devices that listen. Each is adaptive (follows its current GPS) or fixed
 // (pinned to one location, the way the Pi will be). A device is read-only until
@@ -71,11 +72,7 @@ export default function Devices() {
   }, []);
   // Poll so the "Recording" indicator reflects current liveness without a manual
   // reload (a fixed device like the yard Pi posts continuously).
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 15000);
-    return () => clearInterval(t);
-  }, [load]);
+  usePoll(load, 15000);
 
   // When arrived at via a device's edit pencil (?token=…), open that device's
   // editor and bring it into view.

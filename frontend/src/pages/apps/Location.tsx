@@ -16,6 +16,7 @@ import {
 } from "../../native/location";
 import { shortHttpError } from "../../lib/httpError";
 import { timeAgo } from "../../lib/time";
+import { usePoll } from "../../lib/usePoll";
 
 // Location app page — read-only view of operator position fed by Owntracks
 // iOS. Web geolocation is gone; this page is a viewer.
@@ -214,14 +215,15 @@ export default function Location() {
     }
   }, [records.length]);
 
+  useEffect(() => { loadFirstPage(); loadTrack(); }, [loadFirstPage, loadTrack]);
+  usePoll(loadLatest, 30_000);
+
+  // Relative "last fix" label re-render, not a server read: pausing it while
+  // hidden is harmless and it is not what usePoll is for.
   useEffect(() => {
-    loadLatest();
-    loadFirstPage();
-    loadTrack();
-    const t = setInterval(loadLatest, 30_000);
     const tick = setInterval(() => setTick((x) => x + 1), 10_000);
-    return () => { clearInterval(t); clearInterval(tick); };
-  }, [loadLatest, loadFirstPage, loadTrack]);
+    return () => clearInterval(tick);
+  }, []);
 
   const onClear = async () => {
     setClearing(true);

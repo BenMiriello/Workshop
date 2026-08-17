@@ -16,6 +16,7 @@ import NowCard from "./birds/NowCard";
 import LiveFeed from "./birds/LiveFeed";
 import Aviary from "./birds/Aviary";
 import AppChatDock from "../../components/AppChatDock";
+import { usePoll } from "../../lib/usePoll";
 
 // Birds home. One page, reshaped by two dropdown filters: which place (the
 // always-on yard, or any device-created location) and which device. The live
@@ -194,13 +195,8 @@ function RecentCard({ nb }: { nb: string }) {
   const [win, setWin] = useState("1h");
   const [page, setPage] = useState(0);
   const [dets, setDets] = useState<RecentDet[]>([]);
-  useEffect(() => {
-    const load = () => jget<{ detections: RecentDet[] }>(`/detections?limit=1000${nb}`)
-      .then((d) => setDets(d.detections || [])).catch(() => {});
-    load();
-    const t = setInterval(load, 8000);
-    return () => clearInterval(t);
-  }, [nb]);
+  usePoll(() => jget<{ detections: RecentDet[] }>(`/detections?limit=1000${nb}`)
+    .then((d) => setDets(d.detections || [])).catch(() => {}), 8000);
   useEffect(() => setPage(0), [win]);
 
   const cutoff = useMemo(() => {
@@ -343,7 +339,8 @@ function Dashboard({ source, nb, device }: { source: Source; nb: string; device:
     }
   }, [source.kind, source.id, nb, dev]);
 
-  useEffect(() => { setD(null); setErr(null); load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
+  useEffect(() => { setD(null); setErr(null); void load(); }, [load]);
+  usePoll(load, 8000, { immediate: false });
 
   if (err && !d) return <p className="error">Could not load: {err}</p>;
   if (!d) return <p className="muted">Loading…</p>;

@@ -5,6 +5,7 @@ import { useShowNonBird, nonBirdQuery } from "./settings";
 import { API, jget } from "./ui";
 import AddressPicker from "./AddressPicker";
 import type { Place } from "./geocode";
+import { usePoll } from "../../../lib/usePoll";
 
 // All the places birds have been heard. Mirrors the Devices page: each place is a
 // read-only card with a per-card Edit pencil that opens an INLINE editor (no
@@ -35,7 +36,7 @@ export default function Locations() {
     jget<{ locations: Loc[] }>(`/locations?archived=1${nb}`)
       .then((d) => setRemoved(d.locations)).catch(() => {});
   }, [nb]);
-  useEffect(() => { load(); const t = setInterval(load, REFRESH_MS); return () => clearInterval(t); }, [load]);
+  usePoll(load, REFRESH_MS);
 
   // Arrived at via a place's edit pencil (?id=…, e.g. from the Place dropdown):
   // open that card's editor and bring it into view — same as Devices' ?token=.

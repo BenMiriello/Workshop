@@ -11,6 +11,7 @@ import { Check, Copy, Eye, EyeOff, Heart } from "lucide-react";
 import { ConfirmDialog, StatusDot } from "@workshop/ui";
 import { SettingsSection as Section, SettingsRow as Row } from "../../../components/AppSettings";
 import { timeAgo } from "../../../lib/time";
+import { usePoll } from "../../../lib/usePoll";
 
 export default function HealthSettings() {
   const [metrics, setMetrics] = useState<Record<string, { ts?: string; date?: string; qty?: unknown; units?: string }> | null>(null);
@@ -28,12 +29,14 @@ export default function HealthSettings() {
     }
   }, []);
 
+  usePoll(load, 60_000);
+
+  // Relative "last reading" label re-render, not a server read: pausing it
+  // while hidden is harmless and it is not what usePoll is for.
   useEffect(() => {
-    load();
-    const t = setInterval(load, 60_000);
     const tick = setInterval(() => setTick((x) => x + 1), 15_000);
-    return () => { clearInterval(t); clearInterval(tick); };
-  }, [load]);
+    return () => clearInterval(tick);
+  }, []);
 
   const onClear = async () => {
     setClearing(true);

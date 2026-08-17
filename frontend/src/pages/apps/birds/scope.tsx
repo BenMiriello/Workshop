@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useSearchParams } from "react-router-dom";
 import { jget } from "./api";
 import { useShowNonBird, nonBirdQuery } from "./settings";
+import { usePoll } from "../../../lib/usePoll";
 
 // The Birds app's single persistent scope: Location · Device · Time, applied on
 // every page (including bird detail). It replaces the per-page pickers the home
@@ -67,7 +68,7 @@ export function BirdsScopeProvider({ children }: { children: React.ReactNode }) 
     jget<{ available: boolean; total_detections: number }>(`/summary?_=1`)
       .then((s) => setYardAvailable(s.available && s.total_detections > 0)).catch(() => {});
   }, [nb]);
-  useEffect(() => { reload(); const t = setInterval(reload, 8000); return () => clearInterval(t); }, [reload]);
+  usePoll(reload, 8000);
 
   const sources = useMemo<Source[]>(() => {
     const out: Source[] = [];

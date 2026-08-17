@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Play, Pause, AlertTriangle, AlertCircle } from "lucide-react";
 import { StatusPill } from "@workshop/ui";
 import { API, jget } from "./ui";
+import { usePoll } from "../../../lib/usePoll";
 
 // Shared pieces for the recordings system: the storage-status hook, a homepage
 // banner that renders only when there's something to say, byte formatting, and a
@@ -33,13 +34,12 @@ export function useRecStatus(intervalMs = 8000): RecStatus | null {
   const load = useCallback(() => {
     jget<RecStatus>("/recordings/status").then(setS).catch(() => {});
   }, []);
+  usePoll(load, intervalMs);
   useEffect(() => {
-    load();
-    const t = setInterval(load, intervalMs);
     const onChange = () => load();
     window.addEventListener("bird-settings-change", onChange);
-    return () => { clearInterval(t); window.removeEventListener("bird-settings-change", onChange); };
-  }, [load, intervalMs]);
+    return () => window.removeEventListener("bird-settings-change", onChange);
+  }, [load]);
   return s;
 }
 

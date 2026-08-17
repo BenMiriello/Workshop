@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Radio } from "lucide-react";
 import { jget } from "./ui";
+import { usePoll } from "../../../lib/usePoll";
 
 // Viewer for live-broadcasting devices. Polls /live (scoped to who you can see)
 // and renders each active feed's rolling spectrogram + "now hearing". This is how
@@ -126,14 +127,15 @@ function FeedCanvas({ cols }: { cols: number[][] }) {
 
 export default function LiveFeed({ locationId }: { locationId?: number }) {
   const [feeds, setFeeds] = useState<Feed[]>([]);
-  useEffect(() => {
-    let alive = true;
-    const load = () => jget<{ feeds: Feed[] }>(`/live${locationId ? `?location_id=${locationId}` : ""}`)
-      .then((d) => { if (alive) setFeeds(d.feeds || []); }).catch(() => {});
-    load();
-    const t = setInterval(load, 1200);
-    return () => { alive = false; clearInterval(t); };
-  }, [locationId]);
+  // This is the WATCHING side of the live feed (the broadcasting device is
+  // recorder.tsx, on a different phone). Nobody is looking at this spectrogram
+  // while this tab is hidden, so unlike the broadcaster's probe, pausing here
+  // (usePoll's default) is exactly right: default whenHidden: "pause".
+  usePoll(
+    () => jget<{ feeds: Feed[] }>(`/live${locationId ? `?location_id=${locationId}` : ""}`)
+      .then((d) => setFeeds(d.feeds || [])).catch(() => {}),
+    1200,
+  );
 
   if (!feeds.length) return null;
   return (

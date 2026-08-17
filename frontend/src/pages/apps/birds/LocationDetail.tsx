@@ -5,6 +5,7 @@ import { useCrumbLabel } from "../../../components/appNav";
 import { API, jget } from "./ui";
 import AddressPicker from "./AddressPicker";
 import type { Place } from "./geocode";
+import { usePoll } from "../../../lib/usePoll";
 
 // The editing surface for one place: rename it, pin its coordinates (so adaptive
 // devices merge into it), set it home, merge it into another, and see the devices
@@ -36,7 +37,8 @@ export default function LocationDetail() {
       .catch((e) => setErr(String(e)));
   }, [id]);
 
-  useEffect(() => { refresh(); const t = setInterval(refresh, REFRESH_MS); return () => clearInterval(t); }, [refresh]);
+  useEffect(() => { if (id) refresh(); }, [id, refresh]);
+  usePoll(refresh, REFRESH_MS, { enabled: !!id, immediate: false });
 
   // A location with no pinned place needs one — open the editor automatically.
   const autoOpened = useRef(false);

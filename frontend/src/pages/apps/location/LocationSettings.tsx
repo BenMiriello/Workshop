@@ -4,6 +4,7 @@ import { MapPin, Trash2, Eye, EyeOff, Copy, Check } from "lucide-react";
 import { Button, ConfirmDialog, StatusDot } from "@workshop/ui";
 import { SettingsSection, SettingsRow as Row } from "../../../components/AppSettings";
 import { timeAgo } from "../../../lib/time";
+import { usePoll } from "../../../lib/usePoll";
 
 // Location app settings — Owntracks status + privacy. Moved verbatim out of the
 // platform Settings page (Phase 5 settings split) so it lives inside the app it
@@ -33,12 +34,14 @@ export default function LocationSettings() {
     }
   }, []);
 
+  usePoll(load, 30_000);
+
+  // Relative "last ping" label re-render, not a server read: pausing it while
+  // hidden is harmless and it is not what usePoll is for.
   useEffect(() => {
-    load();
-    const t = setInterval(load, 30_000);
     const tick = setInterval(() => setTick((x) => x + 1), 10_000);
-    return () => { clearInterval(t); clearInterval(tick); };
-  }, [load]);
+    return () => clearInterval(tick);
+  }, []);
 
   const ageS = latest?.ts ? Math.max(0, Math.round((Date.now() - Date.parse(latest.ts)) / 1000)) : null;
   const stale = ageS != null && ageS > 30 * 60; // > 30min with no ping → likely a problem

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Circle, RefreshCw, CalendarClock, Check, Play, Dot,
   ChevronDown, ChevronRight, Inbox, Sparkles } from "lucide-react";
 import { ConfirmDialog, StatusPill, Stepper, Tabs, type StatusKind } from "@workshop/ui";
 import { shortHttpError } from "../../../lib/httpError";
 import { timeAgo } from "../../../lib/time";
+import { usePoll } from "../../../lib/usePoll";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -649,11 +650,7 @@ function SourcesTab() {
     }
   }, []);
 
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 30_000);
-    return () => clearInterval(t);
-  }, [refresh]);
+  usePoll(refresh, 30_000);
 
   if (err) return <p className="err">Backend error: {err}</p>;
   if (!data) return <p>Loading sources…</p>;
@@ -740,11 +737,7 @@ function AlertsTab() {
     }
   }, []);
 
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 30_000);
-    return () => clearInterval(t);
-  }, [refresh]);
+  usePoll(refresh, 30_000);
 
   if (err) return <p className="err">Backend error: {err}</p>;
   if (!data) return <p>Loading alerts…</p>;
@@ -977,11 +970,7 @@ function NowTab() {
     }
   }, [loadFirst]);
 
-  useEffect(() => {
-    loadFirst();
-    const t = setInterval(loadFirst, 30_000);
-    return () => clearInterval(t);
-  }, [loadFirst]);
+  usePoll(loadFirst, 30_000);
 
   if (err && items.length === 0) {
     return <p className="err">Couldn’t load messages: {err} <code>/api/commute/messages</code></p>;
@@ -1047,7 +1036,6 @@ export default function Commute() {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [briefErr, setBriefErr] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
-  const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadBrief = useCallback(async () => {
     try {
@@ -1070,11 +1058,7 @@ export default function Commute() {
     }
   }, [loadBrief]);
 
-  useEffect(() => {
-    loadBrief();
-    refreshTimer.current = setInterval(loadBrief, 30_000);
-    return () => { if (refreshTimer.current) clearInterval(refreshTimer.current); };
-  }, [loadBrief]);
+  usePoll(loadBrief, 30_000);
 
   const select = (t: Tab) => {
     setTab(t);

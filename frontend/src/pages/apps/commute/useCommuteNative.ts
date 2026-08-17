@@ -6,9 +6,10 @@
 // the bridge between the backend's commute brain and iOS — it adds NO new
 // backend endpoints; it reads the same status the web UI already shows.
 
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import type { CommuteActivityState, ActivityStatus } from "@shared/native-bridge";
 import { native } from "../../../native/bridge";
+import { usePoll } from "../../../lib/usePoll";
 
 interface Leg {
   mode?: string;
@@ -70,76 +71,72 @@ function toActivityState(brief: CommuteBrief): CommuteActivityState | null {
 export function useCommuteNative(): void {
   const activityId = useRef<string | null>(null);
   const scheduledKey = useRef<string | null>(null);
+  // Installed before page scripts run (see native/useNative.ts), stable for the
+  // document's lifetime. Null in a plain browser, which is what gates the poll.
+  const n = native();
 
-  useEffect(() => {
-    const n = native();
-    if (!n) return; // browser: nothing to do
+  const tick = async () => {
+    if (!n) return;
+    try {
+      const r = await fetch("/api/commute/status");
+      if (!r.ok) return;
+      const brief = (await r.json()) as CommuteBrief;
 
-    let alive = true;
+      const scheduleLeave = (key: string, fireAt: string, title: string, body: string) => {
+        if (!n.has("localNotify") || scheduledKey.current === key) return;
+        scheduledKey.current = key;
+        void n.localNotify.schedule({ id: `commute-leave`, title, body, fireAt }).catch(() => {});
+      };
 
-    const scheduleLeave = (key: string, fireAt: string, title: string, body: string) => {
-      if (!n.has("localNotify") || scheduledKey.current === key) return;
-      scheduledKey.current = key;
-      void n.localNotify.schedule({ id: `commute-leave`, title, body, fireAt }).catch(() => {});
-    };
-
-    const syncActivity = async (state: CommuteActivityState | null) => {
-      if (!n.has("liveActivity") || !(await n.liveActivity.isSupported())) return;
-      try {
-        if (state) {
-          if (activityId.current) {
-            await n.liveActivity.update(activityId.current, state);
-          } else {
-            const h = await n.liveActivity.start(state);
-            activityId.current = h.id;
+      const syncActivity = async (state: CommuteActivityState | null) => {
+        if (!n.has("liveActivity") || !(await n.liveActivity.isSupported())) return;
+        try {
+          if (state) {
+            if (activityId.current) {
+              await n.liveActivity.update(activityId.current, state);
+            } else {
+              const h = await n.liveActivity.start(state);
+              activityId.current = h.id;
+            }
+          } else if (activityId.current) {
+            await n.liveActivity.end(activityId.current);
+            activityId.current = null;
           }
-        } else if (activityId.current) {
-          await n.liveActivity.end(activityId.current);
-          activityId.current = null;
+        } catch {
+          /* Live Activity not built into this dev build yet — ignore. */
         }
-      } catch {
-        /* Live Activity not built into this dev build yet — ignore. */
-      }
-    };
+      };
 
-    const tick = async () => {
-      try {
-        const r = await fetch("/api/commute/status");
-        if (!r.ok || !alive) return;
-        const brief = (await r.json()) as CommuteBrief;
-
-        if (brief.active) {
-          if (brief.leave_by && brief.schedule_id) {
-            scheduleLeave(
-              `${brief.schedule_id}:${brief.leave_by}`,
-              brief.leave_by,
-              "Time to leave",
-              `Leave now${brief.target_arrive_local ? ` to arrive by ${brief.target_arrive_local}` : ""}.`,
-            );
-          }
-          await syncActivity(toActivityState(brief));
-        } else if (brief.next_schedule?.leave_by) {
-          const ns = brief.next_schedule;
+      if (brief.active) {
+        if (brief.leave_by && brief.schedule_id) {
           scheduleLeave(
-            `${ns.schedule_id}:${ns.leave_by}`,
-            ns.leave_by!,
-            "Upcoming commute",
-            `Leave by ${ns.leave_by_local ?? "soon"}${ns.target_arrive_local ? ` to arrive ${ns.target_arrive_local}` : ""}.`,
+            `${brief.schedule_id}:${brief.leave_by}`,
+            brief.leave_by,
+            "Time to leave",
+            `Leave now${brief.target_arrive_local ? ` to arrive by ${brief.target_arrive_local}` : ""}.`,
           );
-          await syncActivity(null);
-        } else {
-          await syncActivity(null);
         }
-      } catch {
-        /* transient; next tick retries */
+        await syncActivity(toActivityState(brief));
+      } else if (brief.next_schedule?.leave_by) {
+        const ns = brief.next_schedule;
+        scheduleLeave(
+          `${ns.schedule_id}:${ns.leave_by}`,
+          ns.leave_by!,
+          "Upcoming commute",
+          `Leave by ${ns.leave_by_local ?? "soon"}${ns.target_arrive_local ? ` to arrive ${ns.target_arrive_local}` : ""}.`,
+        );
+        await syncActivity(null);
+      } else {
+        await syncActivity(null);
       }
-    };
+    } catch {
+      /* transient; next tick retries */
+    }
+  };
 
-    void tick();
-    const h = setInterval(() => void tick(), POLL_MS);
-    return () => {
-      alive = false;
-      clearInterval(h);
-    };
-  }, []);
+  // This drives a lock-screen Live Activity countdown and a "time to leave"
+  // local notification — both exist specifically for when the phone is not
+  // being looked at. Pausing while hidden (usePoll's default) would silently
+  // break the feature it is, so it explicitly continues.
+  usePoll(tick, POLL_MS, { enabled: !!n, whenHidden: "continue" });
 }

@@ -4,6 +4,7 @@ import BirdsHeader from "./BirdsHeader";
 import { useBirdsScope } from "./scope";
 import { jget, pct, SpeciesLink, BirdThumb } from "./ui";
 import SpeciesRow, { type SpeciesAgg, type TrustStatus } from "./SpeciesRow";
+import { usePoll } from "../../../lib/usePoll";
 
 // The review surface: every species for the current scope, segmented by trust
 // status (Confirmed / Suggested / Rejected, default Confirmed). This is the ONLY
@@ -31,7 +32,8 @@ export default function BirdsReview() {
       jget<{ species: SpeciesAgg[] }>(`/species?_=1${nb}`).then((s) => setSp(s.species)).catch((e) => setErr(String(e)));
     }
   }, [isLoc, locId, nb, dev, status]);
-  useEffect(() => { setSp(null); setErr(null); load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
+  useEffect(() => { setSp(null); setErr(null); void load(); }, [load]);
+  usePoll(load, 8000, { immediate: false });
 
   const label = status[0].toUpperCase() + status.slice(1);
   const emptyMsg = !isLoc ? "Nothing yet."
