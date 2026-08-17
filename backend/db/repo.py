@@ -18,11 +18,21 @@ WHAT DELIBERATELY DIFFERS from the JSON record, and why:
               id, so the compatibility shape keeps it. `pk` carries the new one
               for anything that needs to join.
 
-  dropped     `latitude`, `max_attempts`, `sync`, `external_refs`,
-              `discovered_from`, `owner`, `assignee`, `exec`, `blocked_request`.
-              All were 0% occupancy or a mirror of another field. Nothing reads
-              them; `shadow.py` asserts that by comparing every field that is
-              kept and listing what is not.
+  dropped     `sync`, `external_refs`, `exec`, `blocked_request`. Each is
+              either 0% occupancy or a strict PROJECTION of a field that is
+              kept: `exec` is a re-gathering of the execution fields under one
+              key and `blocked_request` is a second name for `awaiting`, both
+              re-derived by `tasks._normalize` on the way back in.
+
+  RESTORED 2026-08-16 (e9c4a71f0d38). `latitude`, `max_attempts`, `attempts`,
+              `awaiting` and `assignee` were in that dropped list on a July
+              measurement. Postgres became authoritative for `development` and
+              `workshop` on 2026-08-15, at which point "nothing reads them" was
+              no longer the question — `PATCH /tasks/{id}` WRITES all five, and
+              they were going into a store with no column for them. They now
+              round-trip. `attempts` in particular was being re-derived here
+              from `count(run)`, and nothing has written `run` since the
+              one-shot backfill, so the retry cap it feeds was unenforceable.
 """
 from __future__ import annotations
 
@@ -71,6 +81,12 @@ SELECT
   t.blocked_reason           AS blocked_reason,
   t.acceptance               AS acceptance,
   t.claim_token              AS claim_token,
+  -- The execution fields. Columns, not derivations: see the module docstring.
+  t.latitude                 AS latitude,
+  t.max_attempts             AS max_attempts,
+  t.attempts                 AS attempts,
+  t.awaiting                 AS awaiting,
+  t.assignee                 AS assignee,
   parent.external_id         AS parent_legacy,
   COALESCE((SELECT array_agg(d.external_id ORDER BY d.external_id)
             FROM ticket_link l JOIN ticket d ON d.id = l.to_ticket_id
@@ -106,17 +122,19 @@ SELECT
   (SELECT e.new_value FROM ticket_event e
     WHERE e.ticket_id = t.id AND e.verb = 'scoped'
     ORDER BY e.created_at LIMIT 1) AS scoped_by,
-  -- `attempts` was a hand-maintained counter on the ticket, and it had drifted:
-  -- 11 of 98 live tickets stored a value LOWER than their real run count, one
-  -- claiming 2 attempts against 5 runs that all started and all finished
-  -- done-or-failed. Deriving it is a correction, not a translation.
+  -- `attempts` WAS derived here as `count(run WHERE started_at IS NOT NULL)`.
+  -- That derivation was a real correction when it landed — 11 of 98 live
+  -- tickets stored a counter BELOW their true run count — but it assumed
+  -- something that never became true: that `run` would be written. Nothing
+  -- writes it (the newest row is the 2026-08-14 backfill), so the value could
+  -- only freeze, and a ticket created after the backfill could never leave
+  -- zero. The cap in `tasks.reclaim` and `project_ralph.sh:856` is enforced
+  -- against this number, so a frozen value is a cap that never fires.
   --
-  -- Restricted to runs that STARTED, which is what "an attempt was made" means.
-  -- Identical to a bare count(*) on today's data (every run with a ticket has a
-  -- started_at), so nothing changes now, and it stays right the first time a
-  -- run is queued and never picked up.
-  (SELECT count(*) FROM run r
-    WHERE r.ticket_id = t.id AND r.started_at IS NOT NULL) AS attempts,
+  -- It is a stored column again (e9c4a71f0d38), SEEDED from that same run count
+  -- so the correction is kept rather than thrown away, and `tasks.claim` owns
+  -- the increment. `job_ids` below still derives from `run` and has the same
+  -- staleness; it feeds no cap, and removing `run` is T4.
   COALESCE((SELECT array_agg(r.legacy_job_id ORDER BY r.started_at)
             FROM run r
             WHERE r.ticket_id = t.id AND r.legacy_job_id IS NOT NULL), '{}')
@@ -193,13 +211,25 @@ def _row_to_legacy(row: Any) -> dict:
         "scoped_by": m["scoped_by"],
         "attempts": int(m["attempts"] or 0),
         "job_ids": list(m["job_ids"] or []),
-        # Both were the literal string "operator" on all 112 tickets: two
-        # fields, one concept, no information (ADR 0019 R4). They are
-        # SYNTHESISED here so the 18 callers that read `task["assignee"]` keep
-        # working, and they go when those callers do. `ticket.assignee_id` is
-        # the real column for when assignment starts meaning something.
-        "assignee": "operator",
-        "owner": "operator",
+        # `latitude` is None when the ticket INHERITS from its scope, which is
+        # not the same as `standard`; `tasks_all._with_latitude` resolves the
+        # cascade and stamps `effective_latitude` on top.
+        "latitude": m["latitude"],
+        "max_attempts": m["max_attempts"],
+        # The block record, whole. `blocked_request` is the other name for it
+        # and is re-projected by `tasks._normalize`, so it is not returned here.
+        "awaiting": m["awaiting"] or None,
+        # READ, not synthesised. It was hardcoded to "operator" here because the
+        # value was "operator" on all 112 tickets and there was no column; both
+        # halves of that are now false. None means unassigned, which
+        # `tasks._match_assignee` treats as claimable by ANY scope — a real
+        # distinction the hardcoded literal could not express.
+        "assignee": m["assignee"],
+        # `owner` is the legacy mirror of `assignee` and defaults to the
+        # operator when nothing is assigned, exactly as `tasks._normalize`
+        # derives it. Kept here so the two cannot disagree for a caller reading
+        # a row straight out of this layer.
+        "owner": m["assignee"] or "operator",
         "execution": _TYPE_TO_EXECUTION.get(m["type_name"] or ""),
         # A scalar on the JSON record, a list here. First one wins, which is
         # lossless: only 2 of 112 have one and neither has two.

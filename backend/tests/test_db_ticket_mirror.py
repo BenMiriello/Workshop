@@ -348,20 +348,34 @@ def test_labels_are_shared_per_project_and_the_join_is_what_changes(scope):
     assert rows["t1"]["labels"] == [] and rows["t2"]["labels"] == ["design"]
 
 
-def test_attempts_is_derived_from_runs_that_started(scope):
-    """The stored counter had drifted on 11 of 98 live tickets, one claiming 2
-    attempts against 5 finished runs. A queued run that never started is not an
-    attempt."""
+def test_attempts_is_the_stored_counter_and_not_a_run_count(scope):
+    """It USED to be `count(run WHERE started_at IS NOT NULL)`, and that
+    derivation was a real correction: the hand-maintained counter had drifted
+    below the true run count on 11 of 98 live tickets.
+
+    It was also unsustainable, because nothing writes `run` — the newest row in
+    that table is the one-shot backfill's. So the derived value could only
+    freeze, and a ticket filed after the backfill could never leave zero, while
+    `tasks.reclaim` and `project_ralph.sh:856` enforce the retry cap against it.
+    A cap that can never be reached is not a cap.
+
+    The counter is stored again (`e9c4a71f0d38` seeded it from that same run
+    count, keeping the correction), and run rows do not move it. This test
+    writes runs precisely so that they are seen NOT to.
+    """
     from db.engine import tenant_session
 
-    _mirror(scope, [_task("t1")])
-    pk = None
+    _mirror(scope, [_task("t1", attempts=2)])
     with tenant_session(scope["org"]) as s:
         pk = s.execute(text("SELECT id FROM ticket WHERE external_id = 't1'")).scalar()
         _run(s, scope, ticket_id=pk, started_at=datetime.now(timezone.utc))
         _run(s, scope, ticket_id=pk, started_at=datetime.now(timezone.utc))
         _run(s, scope, ticket_id=pk)          # queued, never started
     assert _rows(scope)["t1"]["attempts"] == 2
+
+    # And the writer's own increment is what moves it, which is the point.
+    _mirror(scope, [_task("t1", attempts=3)])
+    assert _rows(scope)["t1"]["attempts"] == 3
 
 
 def test_a_ticket_keeps_its_own_timestamps_not_the_migrations(scope):
@@ -417,3 +431,73 @@ def test_an_evidence_note_keeps_the_time_it_happened(scope):
         got = s.execute(text("SELECT created_at FROM ticket_event "
                              " WHERE verb = 'noted'")).scalar()
     assert got.isoformat() == when
+
+
+# --- the five fields the relational write path was dropping (2026-08-16) ------
+
+def test_the_execution_fields_round_trip(scope):
+    """THE §3 BUG. Postgres became authoritative for `development` and
+    `workshop` on 2026-08-15, and the write path enumerated its columns without
+    `latitude`, `max_attempts`, `attempts`, `awaiting` or `assignee`. Every one
+    of them is reachable from the HTTP API (`PATCH /tasks/{id}` takes all five)
+    and every one was written into a store that dropped it on the floor.
+
+    `awaiting` in particular is the general escalation primitive
+    (`services/run_inbox.py`): a run that blocked on those two scopes could not
+    record what it was blocked on, so nothing could surface the question.
+    """
+    awaiting = {"question": "which bucket?", "ask": "which bucket?",
+                "kind": "decision", "since": "2026-08-16T00:00:00+00:00",
+                "why": "two are plausible", "unblocks_if": "the operator picks",
+                "options": ["a", "b"], "default": "a",
+                "proposal": {"uri": "store://x", "verb": "write"},
+                "raised_by": "agent:maker", "dedupe_key": "k1",
+                "context": {"scope": "development"}, "dismissed": False}
+    _mirror(scope, [_task("t1", latitude="strict", max_attempts=5, attempts=3,
+                          awaiting=awaiting, assignee="agent:maker")])
+    row = _rows(scope)["t1"]
+    assert row["latitude"] == "strict"
+    assert row["max_attempts"] == 5
+    assert row["attempts"] == 3
+    assert row["awaiting"] == awaiting
+    assert row["assignee"] == "agent:maker"
+
+
+def test_an_execution_field_changing_alone_still_writes(scope):
+    """The mirror only issues an UPDATE when a TRACKED field differs. A field
+    that is mirrored but not tracked is written on the insert and then frozen:
+    the first block a ticket ever raises would land, and every subsequent change
+    to it would be dropped. That is the failure mode this pins."""
+    _mirror(scope, [_task("t1", attempts=1)])
+    stats = _mirror(scope, [_task("t1", attempts=2)])
+    assert stats["updated"] == 1
+    assert _rows(scope)["t1"]["attempts"] == 2
+
+    stats = _mirror(scope, [_task("t1", attempts=2, latitude="open")])
+    assert stats["updated"] == 1
+    assert _rows(scope)["t1"]["latitude"] == "open"
+
+    stats = _mirror(scope, [_task("t1", attempts=2, latitude="open",
+                                  awaiting={"ask": "now what?"})])
+    assert stats["updated"] == 1
+    assert (_rows(scope)["t1"]["awaiting"] or {}).get("ask") == "now what?"
+
+    # And clearing the block clears the column, rather than leaving a question
+    # the ticket is no longer asking.
+    stats = _mirror(scope, [_task("t1", attempts=2, latitude="open")])
+    assert stats["updated"] == 1
+    assert _rows(scope)["t1"]["awaiting"] is None
+
+
+def test_unset_execution_fields_read_as_the_canonical_empty(scope):
+    """`latitude: None` means INHERIT from the scope, not `standard`
+    (`services/latitude.py`), and an unassigned ticket is claimable by ANY
+    scope (`tasks._match_assignee`). Both distinctions are destroyed by
+    defaulting on read, which is what the hardcoded `"operator"` did."""
+    _mirror(scope, [_task("t1")])
+    row = _rows(scope)["t1"]
+    assert row["latitude"] is None
+    assert row["max_attempts"] is None
+    assert row["attempts"] == 0
+    assert row["awaiting"] is None
+    assert row["assignee"] is None

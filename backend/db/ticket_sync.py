@@ -30,6 +30,10 @@ from sqlalchemy import text
 
 from db.legacy_map import STATUS_TO_STATE, priority_band
 from db.models import SOURCE_KINDS
+# The read-side coercion the work model already owns: junk or a typo reads as
+# None (INHERIT), never as `standard`. Reused rather than restated, so the
+# mirror cannot come to disagree with the module the value belongs to.
+from services.latitude import coerce as _latitude_coerce
 
 log = logging.getLogger(__name__)
 
@@ -64,14 +68,27 @@ __all__ = ["mirror", "scope_for_root"]
 _TRACKED = ("title", "body", "status", "priority", "effort", "type", "parent",
             "source_kind", "source_ref", "spec_hash", "touches",
             "blocked_reason", "acceptance", "claim_token", "created",
-            "updated")
+            "updated",
+            # The execution fields (e9c4a71f0d38). TRACKED, not merely mirrored:
+            # this tuple decides whether an UPDATE is issued at all, so a field
+            # that is written on the insert and left out here lands once and is
+            # frozen forever after. A ticket's first block would save and every
+            # later change to it would be silently dropped.
+            "latitude", "max_attempts", "attempts", "awaiting", "assignee")
 
 # Of those, the ones worth a history row when they change. A `spec_hash` moving
 # is a restatement of a title or body change already recorded, and a
 # `claim_token` bump is an execution event that `run` records properly, so
 # writing history for either would be noise in the feed that history is for.
+#
+# `assignee`, `latitude` and `max_attempts` join it: each is a deliberate
+# operator decision about how the ticket is to be worked, which is the same kind
+# of thing as changing its priority. `attempts` and `awaiting` do NOT: `attempts`
+# moves on every claim (execution bookkeeping, the same reason `claim_token` is
+# excluded) and `awaiting` is a nested record whose changes the inbox already
+# surfaces properly, so stringifying it into a history row would bury the feed.
 _HISTORIC = ("title", "body", "status", "priority", "effort", "type",
-             "blocked_reason")
+             "blocked_reason", "assignee", "latitude", "max_attempts")
 
 # The legacy `execution` values, as type names. `None` means no type, which is
 # how the JSON store spelled "not classified".
@@ -153,6 +170,28 @@ def _event(s, org_id, ticket_id, field, old, new) -> None:
          "nv": None if new is None else str(new)[:8000]})
 
 
+def _positive_int_or_none(value) -> int | None:
+    """A cap, or None for "no per-task cap".
+
+    `ck_ticket_max_attempts` refuses zero and negatives, and a CHECK violation
+    would fail the whole mirror and so the whole ticket write. Same trade as
+    `source_kind` below: a nonsense cap degrades to "unset" rather than costing
+    the operator the ticket. Unset is also what it MEANS — `project_ralph.sh`
+    falls back to its own default when the field is absent."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _non_negative_int(value) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _legacy_view(task: dict) -> dict:
     """The tracked fields of a JSON record, in the schema's vocabulary, so the
     comparison is like for like. Comparing a raw integer priority against an
@@ -195,6 +234,25 @@ def _legacy_view(task: dict) -> dict:
         # Compared too, so the row carries the ticket's own modified
         # time rather than the migration's. Every list sorts by this.
         "updated": _ts(task.get("updated")),
+        # --- the execution fields (e9c4a71f0d38) ---------------------------
+        # None means INHERIT from the scope, and coercing a typo to `standard`
+        # would look like a deliberate per-task default and silently undo a
+        # strict scope (services/latitude.py). Coerced rather than validated
+        # because a bad value must not fail the write.
+        "latitude": _latitude_coerce(task.get("latitude")),
+        "max_attempts": _positive_int_or_none(task.get("max_attempts")),
+        "attempts": _non_negative_int(task.get("attempts")),
+        # The block record, whole. Normalized upstream by
+        # `tasks._normalize_awaiting`; an empty dict is "not asking", which is
+        # the same thing as absent and must compare equal to it.
+        "awaiting": (task.get("awaiting") or None)
+                    if isinstance(task.get("awaiting"), dict) else None,
+        # `operator` | `agent:<slug>` | None. Not `owner`: that is the legacy
+        # mirror of this field (`tasks._normalize`), and reading it here would
+        # resurrect the "operator" default for a ticket that is deliberately
+        # unassigned, which is claimable by any scope and not the same thing.
+        "assignee": (str(task.get("assignee")).strip()[:64] or None
+                     if task.get("assignee") else None),
     }
 
 
@@ -218,6 +276,11 @@ def _row_view(row) -> dict:
         "claim_token": m["claim_token"],
         "created": m["created_at"],
         "updated": m["updated_at"],
+        "latitude": m["latitude"],
+        "max_attempts": m["max_attempts"],
+        "attempts": m["attempts"] or 0,
+        "awaiting": m["awaiting"] or None,
+        "assignee": m["assignee"],
     }
 
 
@@ -226,7 +289,8 @@ SELECT t.id, t.external_id, t.title, t.body, t.priority::text AS priority,
        t.effort, t.closed_at, t.created_at, t.updated_at, ws.name AS state_name, ty.name AS type_name,
        parent.external_id AS parent_legacy,
        t.source_kind, t.source_ref, t.spec_hash, t.touches, t.blocked_reason,
-       t.acceptance, t.claim_token
+       t.acceptance, t.claim_token,
+       t.latitude, t.max_attempts, t.attempts, t.awaiting, t.assignee
   FROM ticket t
   JOIN workflow_state ws ON ws.id = t.state_id
   LEFT JOIN ticket_type ty ON ty.id = t.type_id
@@ -581,10 +645,12 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                     "body, state_id, type_id, priority, effort, closed_at, "
                     "source_kind, source_ref, spec_hash, touches, "
                     "blocked_reason, acceptance, claim_token, "
+                    "latitude, max_attempts, attempts, awaiting, assignee, "
                     "created_at, updated_at, "
                     "external_source, external_id) VALUES (:i, :o, :p, :n, :ti, "
                     ":bo, :st, :ty, CAST(:pr AS ticket_priority), :ef, :cl, "
                     ":sk, :sr, :sh, :tc, :br, CAST(:ac AS jsonb), :ct, "
+                    ":lat, :mx, :at, CAST(:aw AS jsonb), :asg, "
                     "COALESCE(:ca, now()), COALESCE(:ua, now()), "
                     "'workshop-json', :ex)"),
                     {"i": uuid7(), "o": org_id, "p": project_id, "n": number,
@@ -596,6 +662,9 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                      "br": want["blocked_reason"],
                      "ac": _json(want["acceptance"]),
                      "ct": want["claim_token"],
+                     "lat": want["latitude"], "mx": want["max_attempts"],
+                     "at": want["attempts"], "aw": _json(want["awaiting"]),
+                     "asg": want["assignee"],
                      # THE TICKET'S OWN TIMESTAMPS, not the row's. Without these
                      # the migration relabels the whole backlog as created and
                      # modified at the moment it ran, and `updated` is what
@@ -623,7 +692,9 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                 "effort = :ef, closed_at = :cl, source_kind = :sk, "
                 "source_ref = :sr, spec_hash = :sh, touches = :tc, "
                 "blocked_reason = :br, acceptance = CAST(:ac AS jsonb), "
-                "claim_token = :ct, updated_at = COALESCE(:ua, now()), "
+                "claim_token = :ct, latitude = :lat, max_attempts = :mx, "
+                "attempts = :at, awaiting = CAST(:aw AS jsonb), assignee = :asg, "
+                "updated_at = COALESCE(:ua, now()), "
                 "created_at = COALESCE(:ca, created_at) WHERE id = :i"),
                 {"ti": want["title"][:255] or "(untitled)", "bo": want["body"],
                  "st": state_id, "ty": type_id, "pr": want["priority"],
@@ -634,6 +705,9 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                  "br": want["blocked_reason"],
                  "ac": _json(want["acceptance"]),
                  "ct": want["claim_token"],
+                 "lat": want["latitude"], "mx": want["max_attempts"],
+                 "at": want["attempts"], "aw": _json(want["awaiting"]),
+                 "asg": want["assignee"],
                  "ua": _ts(task.get("updated")),
                  "ca": _ts(task.get("created")),
                  "i": ticket_id})

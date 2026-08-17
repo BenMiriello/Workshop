@@ -46,6 +46,12 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID as PgUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from db.ids import uuid7
+# IMPORTED, not restated. `latitude` already has exactly one definition of its
+# vocabulary and adding a second here is how the four definitions of the
+# autonomy enum happened. `services.latitude` reaches only the stdlib and
+# `services.paths` at module scope, so this does not drag the service layer
+# into the schema.
+from services.latitude import LATITUDES
 
 # --- controlled vocabularies -------------------------------------------------
 # CHECK constraints rather than native Postgres ENUM types, with ONE deliberate
@@ -382,9 +388,63 @@ class Ticket(Base, Timestamps, SoftDelete):
     claim_token: Mapped[int] = mapped_column(Integer, nullable=False,
                                              server_default="0")
 
+    # --- the execution fields (2026-08-16) ----------------------------------
+    # These five were left out when the schema was first cut, on a July
+    # measurement of "0% occupancy or a mirror of another field". Postgres then
+    # became authoritative for `development` and `workshop` on 2026-08-15
+    # (b2c0db5) and the omission stopped being a modelling opinion and became
+    # data loss: all five are reachable from `PATCH /tasks/{id}` and all five
+    # were being written into a store that had nowhere to put them.
+    #
+    # Occupancy at rest is the WRONG test for three of them. `awaiting` is
+    # raised at a block and cleared at the unblock, so zero at rest is what a
+    # healthy queue looks like; `latitude` and `max_attempts` are overrides that
+    # exist to be set on the exceptional ticket. The right test is whether a
+    # live path writes them, and for all five it does.
+
+    # NULL means INHERIT from the scope, never "standard" — coercing an unset
+    # value to the default silently undoes a project's strict setting
+    # (services/latitude.py). Hence nullable with no server_default.
+    latitude: Mapped[str | None] = mapped_column(String(16))
+
+    # The per-task cap on worker RUNS, distinct from ralph's inner iteration
+    # cap. NULL means "use the sweep's default" (project_ralph.sh:64).
+    max_attempts: Mapped[int | None] = mapped_column(Integer)
+
+    # Worker runs spent, and the counter the cap is enforced against
+    # (services/tasks.py `reclaim`, project_ralph.sh:856). It was briefly
+    # derived from `count(run)` instead; nothing has written `run` since the
+    # one-shot backfill, so the derived value could only ever go stale and the
+    # cap became unenforceable. It is a stored counter again, seeded from that
+    # run count so the correction the derivation made is kept.
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False,
+                                          server_default="0")
+
+    # THE BLOCK RECORD — the general escalation primitive (services/run_inbox).
+    # Whatever stopped the work writes the same shape, so one review surface
+    # serves all of them. Genuinely nested (`options`, `proposal`, `context`)
+    # and read whole by the inbox reconciler, so JSONB rather than a column per
+    # key. NULL means the ticket is not asking anything.
+    awaiting: Mapped[dict | None] = mapped_column(JSONB)
+
+    # THE DELEGATE, as the work model spells it: `operator`, `agent:<slug>`, or
+    # NULL for unassigned (which `tasks._match_assignee` treats as claimable by
+    # ANY scope, a distinction a default would destroy). Deliberately beside
+    # `assignee_id` and not merged into it: that column is a FK to
+    # `user_account` for when assignment means a person, and most delegates
+    # today are agents that have no user row at all.
+    assignee: Mapped[str | None] = mapped_column(String(64))
+
     __table_args__ = (
         CheckConstraint(f"effort IS NULL OR {_one_of('effort', EFFORTS)}",
                         name="ck_ticket_effort"),
+        CheckConstraint(f"latitude IS NULL OR {_one_of('latitude', LATITUDES)}",
+                        name="ck_ticket_latitude"),
+        # A cap of zero would park a ticket before its first attempt, and a
+        # negative attempt count is not a thing that happened.
+        CheckConstraint("max_attempts IS NULL OR max_attempts > 0",
+                        name="ck_ticket_max_attempts"),
+        CheckConstraint("attempts >= 0", name="ck_ticket_attempts"),
         CheckConstraint(
             f"source_kind IS NULL OR {_one_of('source_kind', SOURCE_KINDS)}",
             name="ck_ticket_source_kind"),
