@@ -96,9 +96,15 @@ fi
 
 # Last completed task title (for "latest activity" line), from the store.
 LAST_ACTIVITY=$(PYTHONPATH=$WORKSHOP/backend "$WORKSHOP/backend/.venv/bin/python" - <<'PYEOF' 2>/dev/null
+import os
 from pathlib import Path
 try:
-    from services import tasks
+    # `os` was used here without being imported, so this block raised NameError
+    # into a bare `except: pass` and the report has never carried a latest
+    # activity line. The owner pin is the same fix as root_task_counts.sh: the
+    # root's tickets are in Postgres and an unpinned read cannot see them.
+    from services import auth_store, ownership, tasks
+    ownership.set_current_owner(auth_store.operator_id())
     done = [t for t in tasks.list_tasks(Path(os.environ['WORKSHOP'])) if t.get('status') == 'done']
     done.sort(key=lambda t: t.get('updated') or '', reverse=True)
     if done:

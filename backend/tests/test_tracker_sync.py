@@ -511,6 +511,18 @@ def finishing(synced, monkeypatch, tmp_path):
     # workshop scope is `WORKSHOP_SCOPE_DIR`, not the platform repo — pointing
     # WORKSHOP_ROOT here instead would make the store answer "development".
     monkeypatch.setattr(task_scope, "WORKSHOP_SCOPE_DIR", root)
+    # ...but file-backed. Since the one-store cutover, being the `workshop` scope
+    # also means "these tickets live in Postgres", and a write to a relational
+    # scope fails closed rather than landing in a file. This fixture only needs
+    # the NAME, so that `key_for_root` finds the tracker binding.
+    #
+    # Narrowed to THIS root. A blanket `lambda r: None` would tell the process
+    # that the real repo checkout is file-backed too, and anything that then read
+    # it would rebuild `.tasks.json` from `TODO.md` in the operator's live tree.
+    real_scope = task_scope.relational_scope_for_root
+    monkeypatch.setattr(
+        task_scope, "relational_scope_for_root",
+        lambda r: None if Path(r).resolve() == root.resolve() else real_scope(r))
     return jobs, root, fake
 
 

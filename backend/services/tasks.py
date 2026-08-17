@@ -1,9 +1,19 @@
 """Structured task store (canonical Task model, orchestration-and-autonomy O1).
 
-The authoritative store is a JSON file per working tree at ``<root>/.tasks.json``;
-``TODO.md`` is a regenerated EXPORT plus a healed inbox. One write path: nothing
-edits TODO.md as the way to change state; a stray hand edit is absorbed by
-``reconcile`` on the next read, never destroyed.
+WHICH STORE DEPENDS ON THE ROOT, and there is exactly one per root. The
+relational scopes (`development`, `workshop` -- see
+`services.task_scope.RELATIONAL_SCOPES`) keep their tickets in Postgres and
+have no `.tasks.json` at all; ``TODO.md`` there is a ONE-WAY export and is never
+read back. Every other working tree -- project trees, agent scopes -- is
+file-backed at ``<root>/.tasks.json``, with ``TODO.md`` as a regenerated export
+plus a healed inbox: a stray hand edit is absorbed by ``reconcile`` on the next
+read, never destroyed.
+
+The two branches are chosen by `is_relational_scope`, which is a fact about the
+PATH. It is never chosen by whether the database happens to be reachable, and
+never by whether the running interpreter can import a database driver. Both of
+those were tried; both produced a second live ticket store that diverged from
+the first (`docs/platform-redesign/tickets-postgres-cutover-2026-08-16.md`).
 
 Canonical Task (version 2)::
 
@@ -1211,14 +1221,22 @@ def is_relational_scope(root: Path) -> bool:
     when the database is down, would answer False and quietly take the file
     path: the write lands in `.tasks.json`, the database comes back, reads
     resume from rows, and the write is gone. Belonging is a static fact about
-    the root (`ticket_sync.scope_for_root`), so the writer asks THIS and fails
-    closed instead, and only the reader asks whether the database answered.
+    the root, so the writer asks THIS and fails closed instead, and only the
+    reader asks whether the database answered.
+
+    IT ASKS PATHLIB, NOT THE DATABASE LAYER, and that is the whole point. This
+    used to route through `db.ticket_sync.scope_for_root` inside a bare
+    `except Exception: return False`, and `db/ticket_sync.py` imports sqlalchemy
+    at module scope. Under an interpreter without the driver the import raised,
+    the answer came back False for the repo root, and the retired `.tasks.json`
+    became authoritative again: on 2026-08-17 a `python3` (not
+    `backend/.venv/bin/python`) run of `scripts/field_occupancy.py` took the
+    file branch of `_persist`, `reconcile` re-imported `TODO.md`, and four
+    tickets ended up with a second id apiece behind Postgres's back. A guard
+    that answers "file-backed" when it means "I could not tell" is not a guard.
     """
-    try:
-        from db import ticket_sync
-        return ticket_sync.scope_for_root(root) is not None
-    except Exception:
-        return False
+    from services import task_scope
+    return task_scope.relational_scope_for_root(root) is not None
 
 
 def has_store(root: Path) -> bool:
@@ -1227,9 +1245,10 @@ def has_store(root: Path) -> bool:
     For the two shell callers that used `(root / ".tasks.json").exists()` as
     their guard. That test answers "is there a file", which stops being the same
     question as "is there a store" the moment a scope's tickets live in
-    Postgres.
+    Postgres. A relational scope HAS a store whether or not the database is up
+    at this instant, so this asks belonging, not reachability.
     """
-    return is_relational(root) or _store_path(root).exists()
+    return is_relational_scope(root) or _store_path(root).exists()
 
 
 def last_modified(root: Path) -> datetime | None:
@@ -1239,9 +1258,11 @@ def last_modified(root: Path) -> datetime | None:
     to decide whether anything had moved since. A file that is no longer written
     has a frozen mtime, so that comparison would quietly answer "nothing
     changed" forever and the sweep would stop re-opening work that had in fact
-    been updated.
+    been updated. A relational scope has no `.tasks.json` left to stat at all,
+    so the branch is chosen by belonging rather than by reachability -- falling
+    through to the file for one would read an mtime that no longer moves.
     """
-    if is_relational(root):
+    if is_relational_scope(root):
         rows = _from_relational(root) or []
         stamps = [r.get("updated") for r in rows if r.get("updated")]
         if not stamps:
@@ -1258,29 +1279,50 @@ def last_modified(root: Path) -> datetime | None:
     return datetime.fromtimestamp(store.stat().st_mtime, timezone.utc)
 
 
+class RelationalStoreUnavailable(RuntimeError):
+    """A relational scope was read while its database could not answer.
+
+    Raised instead of serving the retired `.tasks.json`, because the alternative
+    is not "degraded": it is a different, older set of tickets presented as the
+    current one. That is what put a cancelled ticket in the operator's daily
+    digest for three days.
+    """
+
+
 def _from_relational(root: Path) -> list[dict] | None:
     """This scope's tickets out of Postgres, in the shape `_normalize` accepts.
 
-    Returns None when the relational store cannot answer for this root -- no
-    database configured, or a working tree this installation does not know --
-    and the caller falls back to the file. That is NOT a two-store design: it
-    is what lets a checkout with no Postgres (and the test suite) keep working
-    while the file is still being written alongside.
+    Returns None ONLY for the two cases where Postgres is not the right place to
+    look: this installation has no database at all (a plain checkout, and the
+    test suite), or this working tree is not a relational scope (every project
+    tree, which is still file-backed and legitimately so).
+
+    IT NO LONGER SWALLOWS FAILURES. A read that could not reach a database that
+    exists used to log a warning and fall back to the file, and `log.warning`
+    goes to a log nobody tails: `scripts/root_task_counts.sh` had been calling
+    this without a pinned owner, taking the fallback on `OwnerUnset` every time,
+    and feeding the operator's 07:00 and 14:00 cron digests a ticket count out
+    of a store the app had stopped writing. Raising is what makes that visible
+    on the first run instead of the ninetieth.
     """
-    try:
-        from db import repo, ticket_sync
-        from services import tenancy
-        if not tenancy.available():
-            return None
-        scope = ticket_sync.scope_for_root(root)
-        if scope is None:
-            return None
-        org_id, _user = tenancy.org_and_user()
-        rows = repo.list_tickets(org_id, scope=scope)
-    except Exception:
-        log.warning("relational read failed for %s; falling back to the file",
-                    root, exc_info=True)
+    from services import task_scope, tenancy
+    # WHICH ROOT FIRST, always. A project tree is file-backed by design, so an
+    # unreachable database is not a failure for it and must not raise: asking
+    # reachability before belonging would take every project scope down with the
+    # database.
+    scope = task_scope.relational_scope_for_root(root)
+    if scope is None:
         return None
+    if not tenancy.available():
+        if tenancy.configured():
+            raise RelationalStoreUnavailable(
+                f"{root}: a database is configured but did not answer")
+        # No database on this installation at all, or a test that has redirected
+        # the file store. Nothing failed; `_load` decides what to do about it.
+        return None
+    from db import repo
+    org_id, _user = tenancy.org_and_user()
+    rows = repo.list_tickets(org_id, scope=scope)
     for row in rows:
         row["priority"] = _BAND_TO_INT.get(row.get("priority"), 0)
     return [_normalize(r) for r in rows]
@@ -1288,10 +1330,25 @@ def _from_relational(root: Path) -> list[dict] | None:
 
 def _load(root: Path) -> list[dict]:
     """Load the authoritative task list, migrating from TODO.md on first access.
-    Does NOT reconcile (callers that want the healed view call reconcile first)."""
+    Does NOT reconcile (callers that want the healed view call reconcile first).
+
+    A RELATIONAL SCOPE HAS EXACTLY ONE STORE and never reaches the file branch
+    below, not even as a fallback. The file branch does not just read: with no
+    `.tasks.json` present it re-parses `TODO.md` and mints a fresh id for every
+    line (`_migrate_from_todo`). Pointed at a relational root that is one
+    database outage away from empty, that is a duplicate of the entire backlog.
+    """
     relational = _from_relational(root)
     if relational is not None:
         return relational
+    if is_relational_scope(root):
+        # `_from_relational` already raised if a database exists. Getting here
+        # means this checkout has none, so the scope has no tickets to show --
+        # which is not the same as "regenerate them from the export".
+        log.warning("%s keeps its tickets in Postgres and this installation has "
+                    "no database configured; reporting no tickets rather than "
+                    "reading the retired file store", root)
+        return []
     raw = _read_store(root)
     if raw is None:
         # Protected root with no store yet: return empty WITHOUT migrating (which
@@ -1512,8 +1569,17 @@ def reconcile(root: Path) -> bool:
     hand. The repo's own CLAUDE.md already forbids editing it. Project trees are
     still file-backed and still heal, so this is a per-root behaviour, not a
     deletion.
+
+    THE GUARD IS `is_relational_scope`, NOT `is_relational`. `is_relational`
+    also asks whether the database answered, so a scope whose tickets live in
+    Postgres would start healing again the moment it could not be reached -- and
+    healing means minting a new id for every export line that does not match the
+    stale file. That is not a hypothetical: it ran on 2026-08-17 and produced
+    four duplicate tickets plus 24 titles with the rendered status tag
+    (`... (cancelled)`) written back into them. Belonging is static; reachability
+    is not; only the first may decide this.
     """
-    if is_relational(root):
+    if is_relational_scope(root):
         return False
     if _is_protected(root):
         return False  # never heal/persist a protected root's mixed TODO.md
@@ -2486,8 +2552,11 @@ def import_markdown(root: Path, content: str) -> None:
     `PUT /projects/development/todo` would parse a rendered export back into the
     store it was rendered from. Raising is better than a silent no-op, because
     the caller believes it has just saved the operator's edit.
+
+    Asks `is_relational_scope` for the same reason `reconcile` does: a database
+    outage must not turn the refusal back into a re-key.
     """
-    if is_relational(root):
+    if is_relational_scope(root):
         raise ValueError(
             "TODO.md is a generated export for this scope and cannot be "
             "imported; edit the tickets themselves")

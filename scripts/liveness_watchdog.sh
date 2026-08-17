@@ -43,7 +43,11 @@ fi
 # Reconcile stuck Jobs + reclaim stranded tasks across every scope tree. The
 # scope roots are the workshop root itself plus every registered project dir and
 # build-agent working tree, so a strand in any scope is recovered.
-OUT=$(cd "$WORKSHOP" && python3 - <<'PYEOF' 2>&1
+# UNDER THE BACKEND'S INTERPRETER. `services.tasks` reaches Postgres through
+# sqlalchemy for the relational scopes, and the system python3 does not have it:
+# the same mistake as e7b758a, which wrote a store nothing read. It now fails
+# loudly instead of silently, which is better and still not what this wants.
+OUT=$(cd "$WORKSHOP" && "$WORKSHOP/backend/.venv/bin/python" - <<'PYEOF' 2>&1
 import json, os, sys
 from pathlib import Path
 

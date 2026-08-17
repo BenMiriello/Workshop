@@ -112,25 +112,18 @@ _THREAD_ID = re.compile(r"[0-9a-f]{32}")
 
 
 def scope_for_root(root: Path) -> str | None:
-    """Which project a working tree's `.tasks.json` belongs to.
+    """Which project a working tree's tickets belong to, or None for a tree this
+    installation does not know about.
 
-    Mirrors `backfill.SCOPES` rather than guessing: the repo root is the
-    `development` scope and `shared/queue` is `workshop`. An unrecognised root
-    returns None and is not mirrored, which is the honest answer for a checkout
-    this installation does not know about.
+    The mapping itself lives in `services.task_scope`, which needs nothing but
+    pathlib to answer it. It used to be spelled here, over `backfill.SCOPES`,
+    and this module cannot be imported without sqlalchemy — so the one question
+    the ticket writer must never get wrong could only be asked by an interpreter
+    with a database driver installed. It is a fact about a path. This is now a
+    thin alias so the mirror and the writer cannot drift.
     """
-    from db.backfill import SCOPES
-    try:
-        resolved = root.resolve()
-    except OSError:
-        return None
-    for slug, _name, _key, store_dir in SCOPES:
-        try:
-            if resolved == Path(store_dir).resolve():
-                return slug
-        except OSError:
-            continue
-    return None
+    from services.task_scope import relational_scope_for_root
+    return relational_scope_for_root(root)
 
 
 def _lookup(sess, sql: str, **params) -> Any:

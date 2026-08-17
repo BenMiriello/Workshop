@@ -112,6 +112,16 @@ class TestAutoMode:
         Pointed at a temp store for the reason `test_unset_mode_still_files`
         is: filing into the real workshop queue is a production side effect."""
         monkeypatch.setattr(task_scope, "WORKSHOP_SCOPE_DIR", tmp_path)
+        # ...and file-backed, which is what a temp store is. Naming a
+        # directory as the `workshop` scope now also says "its tickets live
+        # in Postgres" (services.task_scope.RELATIONAL_SCOPES), and this test
+        # must not reach the real database. Narrowed to THIS directory: a
+        # blanket answer would also declare the operator's real checkout
+        # file-backed, and a read of it would then rebuild a store from TODO.md.
+        _real_scope = task_scope.relational_scope_for_root
+        monkeypatch.setattr(
+            task_scope, "relational_scope_for_root",
+            lambda r: None if Path(r) == tmp_path else _real_scope(r))
         patch = 'Sure.\n\n```task-patch\n{"add":[{"text":"Filed by auto"}]}\n```\n'
         _, notes = task_scope.apply_task_patch("general", patch, "t1", "auto")
         assert not any("Direct mode" in n for n in notes)
@@ -260,6 +270,16 @@ class TestFilingGuard:
         `WORKSHOP_SCOPE_DIR` since ADR 0014; WORKSHOP_ROOT is the platform repo
         and would resolve to `development` instead."""
         monkeypatch.setattr(task_scope, "WORKSHOP_SCOPE_DIR", tmp_path)
+        # ...and file-backed, which is what a temp store is. Naming a
+        # directory as the `workshop` scope now also says "its tickets live
+        # in Postgres" (services.task_scope.RELATIONAL_SCOPES), and this test
+        # must not reach the real database. Narrowed to THIS directory: a
+        # blanket answer would also declare the operator's real checkout
+        # file-backed, and a read of it would then rebuild a store from TODO.md.
+        _real_scope = task_scope.relational_scope_for_root
+        monkeypatch.setattr(
+            task_scope, "relational_scope_for_root",
+            lambda r: None if Path(r) == tmp_path else _real_scope(r))
         cleaned, notes = task_scope.apply_task_patch("general", self.PATCH, "t1", None)
         assert not any("Direct mode" in n for n in notes)
         from services import tasks

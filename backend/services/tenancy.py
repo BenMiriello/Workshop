@@ -24,8 +24,8 @@ from uuid import UUID
 
 from services import ownership
 
-__all__ = ["TenantUnresolved", "available", "org_and_user", "current_org",
-           "org_for_owner", "reset_cache"]
+__all__ = ["TenantUnresolved", "available", "configured", "org_and_user",
+           "current_org", "org_for_owner", "reset_cache"]
 
 # The installation's single organization today. A tenant lookup that had to
 # guess would be a bug; this is the slug the backfill seeds, and it is only used
@@ -76,6 +76,31 @@ def reset_cache() -> None:
         _db_ok = None
 
 
+def configured() -> bool:
+    """Whether this INSTALLATION has a relational store at all, reachable or not.
+
+    Not the same question as `available()`, and conflating the two is a data
+    hazard on the read side. "No database on this box" is a legitimate
+    file-backed checkout that must keep working. "There is a database and it did
+    not answer this call" is an outage, and serving a retired file store through
+    it is how `.tasks.json` came back from the dead on 2026-08-17 (four tickets
+    re-minted with fresh ids out of `TODO.md`). Callers that must fail closed ask
+    this to tell the two apart.
+
+    Uncached and deliberately cheap: it reads the environment, never the
+    database, so it stays answerable in the exact situation the database is not.
+
+    A process whose file store has been redirected answers False, matching
+    `available()` and for the same reason: it is no longer operating against
+    this installation, so this installation's database is not its database.
+    That is what keeps the fail-closed read from firing inside every test that
+    points `ownership._RUNTIME` at a tmp_path.
+    """
+    if _file_store_redirected():
+        return False
+    return bool(os.environ.get("WORKSHOP_DATABASE_URL"))
+
+
 def available() -> bool:
     """Whether the relational store can be reached at all.
 
@@ -92,7 +117,7 @@ def available() -> bool:
     with _lock:
         if _db_ok is not None:
             return _db_ok
-        if not os.environ.get("WORKSHOP_DATABASE_URL"):
+        if not configured():
             _db_ok = False
             return _db_ok
         try:

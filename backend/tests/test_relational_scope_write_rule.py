@@ -23,13 +23,28 @@ import json
 import pytest
 
 from db import ticket_sync
-from services import tasks
+from services import task_scope, tasks, tenancy
 
 
 @pytest.fixture
 def relational(monkeypatch):
-    """Make tmp_path look like a scope whose tickets live in Postgres."""
-    monkeypatch.setattr(ticket_sync, "scope_for_root", lambda root: "development")
+    """Make tmp_path look like a scope whose tickets live in Postgres, on a box
+    that has no database.
+
+    The seam is `task_scope.relational_scope_for_root`, which is where the
+    root-to-scope mapping lives now. It used to be spelled in `ticket_sync`,
+    behind an import of sqlalchemy, which is what made the answer depend on the
+    running interpreter (see `test_belonging_does_not_depend_on_the_interpreter`).
+
+    `configured`/`available` are stubbed off because these tests are about which
+    branch the WRITE takes; with a database configured, the read that precedes
+    the write fails closed rather than serving a file, which is the point of
+    `test_a_read_of_a_relational_scope_never_falls_back_to_the_file` below.
+    """
+    monkeypatch.setattr(task_scope, "relational_scope_for_root",
+                        lambda root: "development")
+    monkeypatch.setattr(tenancy, "configured", lambda: False)
+    monkeypatch.setattr(tenancy, "available", lambda: False)
 
 
 def test_a_file_backed_root_still_writes_its_file(tmp_path):
@@ -81,10 +96,75 @@ def test_belonging_is_static_and_does_not_ask_whether_the_database_is_up(tmp_pat
     """`is_relational` conflates 'belongs in Postgres' with 'Postgres answered'.
     The writer must ask the first, or an outage silently reroutes writes to a
     file that later readers ignore."""
-    from services import tenancy
     monkeypatch.setattr(tenancy, "available", lambda: False)
     assert tasks.is_relational(tmp_path) is False       # the reader's question
     assert tasks.is_relational_scope(tmp_path) is True  # the writer's question
+
+
+def test_belonging_does_not_depend_on_the_interpreter(tmp_path, monkeypatch):
+    """The regression of 2026-08-17.
+
+    `is_relational_scope` used to reach `db.ticket_sync`, which imports
+    sqlalchemy at module scope, inside a bare `except Exception: return False`.
+    Run under an interpreter without the driver -- `python3 scripts/...` rather
+    than `backend/.venv/bin/python` -- it answered "file-backed" for the repo
+    root. `_persist` then wrote `.tasks.json`, `reconcile` re-imported
+    `TODO.md`, and four tickets that already existed in Postgres were re-minted
+    with fresh ids in a store the app had stopped reading.
+
+    Simulated by making the db package unimportable, which is what a missing
+    driver looks like from here.
+    """
+    import builtins
+    real_import = builtins.__import__
+
+    def no_db(name, *a, **kw):
+        if name.startswith("db.") or name == "db":
+            raise ModuleNotFoundError("No module named 'sqlalchemy'")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(task_scope, "WORKSHOP_ROOT", tmp_path)
+    monkeypatch.setattr(builtins, "__import__", no_db)
+    assert tasks.is_relational_scope(tmp_path) is True, \
+        "a root's tickets belong where they belong; a missing driver is not an answer"
+
+
+def test_a_read_of_a_relational_scope_never_falls_back_to_the_file(tmp_path, monkeypatch):
+    """Fail closed on the READ too, or the retired store quietly serves.
+
+    `scripts/root_task_counts.sh` read without a pinned owner, the relational
+    read raised `OwnerUnset`, and the old code logged a warning and returned the
+    file's tickets. Two cron digests reported those counts to the operator for
+    days, one ticket in the wrong status column.
+    """
+    monkeypatch.setattr(task_scope, "relational_scope_for_root",
+                        lambda root: "development")
+    monkeypatch.setattr(tenancy, "configured", lambda: True)
+    monkeypatch.setattr(tenancy, "available", lambda: False)
+    (tmp_path / ".tasks.json").write_text(json.dumps(
+        {"version": 2, "tasks": [{"id": "stale", "title": "From the retired store",
+                                  "status": "done"}]}))
+    with pytest.raises(tasks.RelationalStoreUnavailable):
+        tasks.list_tasks(tmp_path)
+
+
+def test_a_relational_scope_does_not_re_import_its_own_export(tmp_path, monkeypatch):
+    """`reconcile` is inert for a relational scope even with the database down.
+
+    Guarding it on `is_relational` (which asks reachability) meant an outage
+    turned the one-way export back into an inbox: every line that did not match
+    the stale file was imported as a NEW ticket. That is how the four duplicates
+    were minted.
+    """
+    monkeypatch.setattr(task_scope, "relational_scope_for_root",
+                        lambda root: "development")
+    monkeypatch.setattr(tenancy, "configured", lambda: False)
+    monkeypatch.setattr(tenancy, "available", lambda: False)
+    (tmp_path / "TODO.md").write_text("# TODO\n\n## operator\n\n- [ ] A line nobody filed\n")
+    assert tasks.reconcile(tmp_path) is False
+    assert not (tmp_path / ".tasks.json").exists()
+    with pytest.raises(ValueError):
+        tasks.import_markdown(tmp_path, "# TODO\n\n- [ ] And another\n")
 
 
 def test_a_required_write_reports_a_skip_as_a_failure():
