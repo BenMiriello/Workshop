@@ -101,18 +101,18 @@ class TestDoorSevenIsGated:
             "platform repo is reachable under at least five names"
         )
 
-    def test_the_branch_runs_before_the_autonomy_mode_test(self):
-        """Order matters. `autonomy.mode` is stored data the operator can change
-        from the UI, and it was the only thing closing this door."""
+    def test_the_branch_runs_before_the_autonomy_preset_test(self):
+        """Order matters. The autonomy preset is stored data the operator can
+        change from the UI, and it was the only thing closing this door."""
         text = (SCRIPTS / "dispatch_triggers.sh").read_text(encoding="utf-8")
         gate = text.index("skip-dev-mode")
-        mode_test = text.index('if (autonomy.get("mode") or "off") == "off":')
-        assert gate < mode_test
+        preset_test = text.index('if preset in ("off", "on-demand"):')
+        assert gate < preset_test
 
     def test_the_predicate_partitions_the_real_registry(self, monkeypatch):
         """The exact condition the loop applies, replayed over the real registry
         in both modes. Off: the self row is the only one skipped, and it is
-        skipped whatever its stored autonomy mode says. On: nothing is skipped."""
+        skipped whatever its stored autonomy says. On: nothing is skipped."""
         import json
 
         registry = Path(notes_all._PROJECTS_REGISTRY)
