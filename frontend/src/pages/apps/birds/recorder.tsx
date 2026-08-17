@@ -4,6 +4,7 @@ import {
 import { reverseGeocode } from "./geocode";
 import { localizeEvents, type SpecCol, type SpeciesEvent, type Sample } from "./specLocalize";
 import { userStorage } from "../../../lib/storage";
+import { usePoll } from "../../../lib/usePoll";
 
 // App-root recorder: captures THIS device's mic and streams live BirdNET
 // detections. Lives above the router so listening keeps running while you move
@@ -311,15 +312,18 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   // probe (e.g. the backend was briefly restarting) used to set analyzerUp=false
   // permanently, which DISABLES the Listen button until a manual reload. Re-probing
   // every 20s lets the button recover on its own once the analyzer is reachable.
-  useEffect(() => {
-    let alive = true;
-    const probe = () => fetch(`${API}/analyze/health`).then((r) => r.json())
-      .then((h) => { if (alive) setAnalyzerUp(!!h.up); })
-      .catch(() => { if (alive) setAnalyzerUp(false); });
-    probe();
-    const t = setInterval(probe, 20000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
+  //
+  // whenHidden: "continue" is deliberate, and it is the opposite of the call
+  // made for LiveFeed.tsx's 1.2s poll on the same feature. LiveFeed is the
+  // WATCHING side: nobody is looking at a hidden tab, so pausing costs nothing.
+  // This is the BROADCASTING side, and a phone whose screen has slept is its
+  // normal operating state. If this probe pauses, analyzerUp is frozen at
+  // whatever it was when the screen went off, so the Listen button cannot
+  // recover on its own, which is the exact defect the poll was added to fix.
+  usePoll(() => fetch(`${API}/analyze/health`).then((r) => r.json())
+    .then((h) => setAnalyzerUp(!!h.up))
+    .catch(() => setAnalyzerUp(false)),
+    20000, { whenHidden: "continue" });
 
   useEffect(() => {
     // Refresh this device's user-agent on load so it can be identified ("Chrome

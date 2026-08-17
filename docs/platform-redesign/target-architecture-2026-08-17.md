@@ -1,6 +1,8 @@
 # Target architecture: what to build, ignoring what is there
 
-- Status: PROPOSAL, awaiting operator decision. Nothing here is built.
+- Status: ACCEPTED 2026-08-17, in build. The operator approved implementation the
+  same day it was written. Build log in §6; that section is the record of what has
+  actually landed, and it also records where this document turned out to be wrong.
 - Date: 2026-08-17
 - Supersedes nothing. Sits above `coherence-overhaul-2026-08-16.md`, which was a
   cleanup; this is the target the cleanup should have been aiming at.
@@ -418,7 +420,171 @@ fails on a regression.
 
 ---
 
-## 5. The one-line answer
+## 5. Where the sequence was wrong
+
+Recorded here rather than quietly re-planned, because the correction is evidence-based
+and the next reader needs the evidence more than the conclusion.
+
+**Item 1 was specified as one rename and it is two, with very different risk.**
+Measured 2026-08-17 on source only, excluding `.venv`:
+
+- `job → run`: roughly 758 references (`job` 286, `jobs` 234, `job_id` 169,
+  `job_ids` 69). **No standard-library or framework collision.** Clean and
+  mechanical.
+- `task → ticket`: 153 backend source files and roughly 2,478 `task`/`tasks`
+  tokens, but **54 of them are `asyncio` Tasks, not tickets** (`_drive_task`,
+  `pump_task`, `_tick_task`, `_speaker_task`, `TaskGroup`). Worst case:
+  `create_task` is BOTH `asyncio.create_task` and ticket creation, in the same
+  codebase. A mechanical rename corrupts the concurrency code.
+
+So `task → ticket` needs semantic discrimination per site, which is the property
+that makes a rename unsafe to run unattended against a system the operator is
+using at the time.
+
+**Two things are also out of scope of the rename and were not called out:**
+
+1. **The on-disk name `.tasks.json` must not change.** It is read by the live
+   autonomy shell loop (`scripts/ralph.sh`, `cron_agent.sh`,
+   `scripts/queue_runner.sh`, `scripts/project_tasks.py`). Renaming the file
+   renames it out from under a running worker. §2.3 already decides these files
+   become exports; the name goes when the store does, not before.
+2. **The wire path `/api/tasks` (52 frontend call sites) belongs to item 2**, not
+   item 1. It is a breaking wire change, and item 2 is already rewriting every
+   route's contract. Doing it there costs one pass instead of two.
+
+**Revised sequencing, and the reason:** do `job → run` on its own; let
+`task → ticket` ride with item 3, because item 3 MOVES those files into
+`domains/tickets/` anyway and renaming a file that is already moving is free,
+whereas doing it first means touching all 153 files twice. This preserves item 1's
+actual argument (do not rename twice) while inverting its conclusion.
+
+---
+
+## 6. Build log
+
+Newest last. Every entry states what was measured, not what was intended.
+
+**Baselines at the start of the build**, so later regressions are attributable:
+backend 2,892 passed / 0 failed; frontend 919 tests across 60 files; `npm run
+typecheck` clean; `apply.sh --check` in sync.
+
+A trap found immediately, worth knowing before reading any agent's test report:
+the backend suite reports **85 errors and 2 failures** unless
+`WORKSHOP_DATABASE_ADMIN_URL` is exported from `~/.config/workshop/db-admin.env`.
+Those tests ERROR rather than skipping cleanly (`db/engine.py:229`), so a fresh
+shell shows 85 regressions that do not exist. Source it before believing a suite
+run.
+
+### Landed
+
+- **The transcript leak in §2.4, fixed** (`ca9c0ea`). `GET /threads/{id}` stripped
+  `messages` and carried a comment telling the next reader not to put it back;
+  PATCH, archive and restore sat three functions below returning the same
+  `chat_store` document raw, so closing a chat shipped up to 4.77 MB of transcript.
+  Invisible from the screen: `lib/chat.ts` types all four as `ThreadSummary`, which
+  has no `messages` field, so the client parsed it and discarded it in silence. One
+  helper now, not a comprehension in one of four sites. Seven tests through the
+  router, each verified to fail when any single route is reverted.
+
+- **Item 0, all four ADRs** (`279b607`, `074105d`). `0023-the-http-contract`,
+  `0024-a-domain-is-a-package`, `0025-one-owner-per-server-entity`,
+  `0026-one-identity-root-and-tenancy-is-a-column`. Each ends with the contract for
+  the check that enforces it. Three decisions in them are worth knowing because they
+  overrule or sharpen this document:
+  - `tasks_all.py:400` is **superseded, not generalised**. Its total/page split
+    survives as `page.total`; the entity-named `tasks` key is the mechanism that
+    produced 52 names and it forfeits a generic `Page<T>` in the generated client.
+    The envelope is `{items, page}`.
+  - The error model reaches all 348 raise sites **with zero diff**: a registered
+    `HTTPException` handler upgrades a plain-string `detail` into `{code, message,
+    hint}`. Highest ratio of coverage to diff in the whole plan.
+  - §2.4's versioning trigger ("a consumer not built from this repo") is **wrong**
+    and was replaced. An Expo native build sitting in an app-store queue IS built
+    from this repo and still cannot be redeployed with the server. The trigger is
+    "cannot be redeployed in the same commit as the server."
+
+- **Item 0b, the schema drift** (`f032cc4`). `compare_metadata()` went from 46
+  entries / 29 removals to **zero in both directions**. 15 composite tenant FKs, 6
+  `UNIQUE (id, org_id)` pairs, 2 actor-consistency CHECKs and 4 indexes now declared
+  through helpers rather than hand-spelled. It also found something not in this
+  document: `chat_message_turn_fkey` and `chat_thread_current_branch_fkey` had lost
+  the column list on their `ON DELETE SET NULL`, which on a composite key nulls the
+  tenant column too and raises instead of clearing the pointer. Regression test
+  fails on any removal directive and skips cleanly with no database.
+
+- **Item 7, three more ratchets** (`e739fd2`), plus a fourth (below). Each measures,
+  pins a baseline, and fails only on regression, and each was proven to catch a
+  regression before being committed. Corrected numbers, since the audit's were off:
+  function-local imports **451** (not 438), upward layering violations **41**,
+  mutable process globals **60** (not 33; the audit's figure was illustrative and
+  three of its named examples are in fact never mutated). The 58-module SCC and the
+  11 files over 1,200 lines reproduced exactly.
+
+- **§2.5 item 3, the polling migration finished** (`3304955` + a follow-up). 17 sites
+  converted. Two judgement calls the API exists to force: `birds/LiveFeed.tsx` (1.2s)
+  **pauses**, because it is the watching side of a live feed and nobody is looking at
+  a hidden tab; `commute/useCommuteNative.ts` and `birds/recorder.tsx`'s analyzer
+  probe **continue**, because the first drives a lock-screen Live Activity and a
+  "time to leave" notification, and the second is the broadcasting side of that same
+  live feed, on a phone whose screen being off is its normal operating state. Pausing
+  either would silently break the feature. Everything still on a raw `setInterval` is
+  now a clock tick, a bounded retry or a device watchdog, each with a stated reason.
+
+- **§2.5 item 4, storage namespaced by user** (`c4f0e0c`). 14 logical keys across 9
+  files now go through one module as `ws:<user_id>:<key>`; 5 device-scoped keys stay
+  global by being **listed with a reason**, so namespacing is the default and an
+  exemption is a diff someone reviews. Two questions this document did not ask were
+  answered rather than assumed. The bootstrap case is unreachable (`Guard` renders
+  nothing of `<App/>` until auth resolves, and every storage-touching page is a
+  descendant), and is still quarantined in a `ws:anon:` bucket that cannot collide
+  with a real account. Pre-existing keys are **moved, not copied**, once, on first
+  authenticated load: a copy would reproduce the exact defect being closed, and
+  "whichever account signs in first keeps them, once" is strictly narrower than
+  today, where every concurrent user clobbers them on every load forever.
+
+- **A live data defect, found while verifying item 0b and not in this document.**
+  The test suite was writing users into the production database. `user_account`
+  carries no `org_id`, so deleting a test organization cascades to its membership and
+  leaves the user; two fixtures deleted only the org, and the third deleted its user
+  with an inline `DELETE` the other two never inherited. Measured 3,826 rows, **one**
+  a real person, growing 1,271 / 348 / 170 / 2,036 per day because the rate tracks
+  how often anyone runs the tests. It grew 99 rows mid-session from this build's own
+  agents. Now one guarded helper called by all three fixtures, refusing any address
+  outside the reserved `example.test` domain. Proof is the row count, not a green
+  test: 56 DB tests now run with the count unchanged. 3,825 rows backed up and
+  deleted; the table is 1 row. This is the recorded "tests must not share owner
+  storage" lesson recurring one layer down, in Postgres instead of the file stores.
+
+### The gate now
+
+Four checks were added to `scripts/reviewer.sh` this build, joining the three that
+already existed. Three are ratchets against a pinned baseline; one is absolute.
+
+| Check | Enforces | Kind |
+|---|---|---|
+| `check_module_layout.py` | ADR 0024: function-local imports, SCC size, upward edges, files over 800 lines | ratchet |
+| `check_no_process_globals.py` | §2.6 item 3: module-level mutable globals in `backend/` | ratchet |
+| `check_response_model.py` | ADR 0023 clause 6, scoped per changed route file | ratchet |
+| `check_no_raw_storage.py` | ADR 0025 clause 4: `localStorage`/`sessionStorage` outside one module | **absolute** |
+
+The last one is absolute rather than ratcheted because the tree is already at zero.
+A new raw call is not debt getting marginally worse, it is a key a second signed-in
+account on the same machine can read, so there is nothing to ratchet toward.
+
+### Not done, and why
+
+- **Items 1 to 6 in their large form.** What landed is item 0, item 0b, item 7, and
+  two clauses of item 5. Items 2, 3, 4 and 6 are weeks of work each and have not
+  started. The four contracts they are built against now exist, which is the thing
+  that had to happen first.
+- **`task → ticket`.** Deliberately deferred to item 3, for the reasons measured in
+  §5 above. `job → run` is ready to go and is the next mechanical piece.
+- **The `hardcoded_identity` reviewer reason fires on the current tree**, from
+  `scripts/smoke_chat.sh` (an env-var default) and four test files using
+  `agent:masini` as a fixture. Pre-existing, untouched by this build, and it is
+  making the gate noisy, so it wants either a fix or a documented exemption.
+
+## 7. The one-line answer
 
 **Write down the four contracts nobody ever wrote down, rename the code to the model
 you already ratified, give every domain a package and every entity one store, generate

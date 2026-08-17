@@ -26,6 +26,8 @@
 #                                                // §2.6 item 3): count of module-level mutable globals
 #                                                // in backend/, ratcheted against
 #                                                // scripts/no_process_globals_baseline.json
+#     "no_raw_storage":      "ok|fail|skipped"  // ADR 0025 c4: localStorage/sessionStorage
+#                                                // outside lib/storage.ts. ABSOLUTE, tree is at zero
 #     "response_model":      "ok|fail|skipped"  // ADR 0023: routes/ lacking response_model=, ratcheted
 #                                                // per-file against scripts/response_model_baseline.json
 #   }
@@ -52,6 +54,9 @@
 #   - no routes/ file touched by this diff has MORE routes lacking
 #     response_model= than the pinned baseline (ADR 0023; see
 #     check_response_model.py's own header)
+#   - zero raw localStorage/sessionStorage calls outside frontend/src/lib/storage.ts
+#     (ADR 0025 clause 4). Absolute rather than ratcheted: the tree is at zero, and
+#     a new raw call is a key a second account on the same machine can read
 #   - every executed acceptance criterion passed, when REVIEWER_CRITERIA_FILE points
 #     at a JSON results array (machine-checkable assertions run by project_ralph.sh)
 #
@@ -385,6 +390,26 @@ if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/routes/.*\.py$'; then
   fi
 fi
 
+# 4.6c-v No raw browser-storage access (ADR 0025 clause 4). Unlike the three
+# above this is ABSOLUTE, not a ratchet, and it can be: the tree is already at
+# zero. Every localStorage/sessionStorage call now goes through
+# frontend/src/lib/storage.ts, which namespaces the key by user id. A new raw
+# call is therefore not "debt getting slightly worse", it is a key that a
+# second signed-in account on the same machine can read, so there is nothing to
+# ratchet toward and no reason to allow one.
+NO_RAW_STORAGE_CHECK="skipped"
+if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(frontend/src|mobile)/.*\.tsx?$'; then
+  if [[ -f "$WORKSHOP/scripts/check_no_raw_storage.py" ]]; then
+    if python3 "$WORKSHOP/scripts/check_no_raw_storage.py" >/dev/null 2>&1; then
+      NO_RAW_STORAGE_CHECK="ok"
+    else
+      NO_RAW_STORAGE_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("no_raw_storage_check_unavailable")
+  fi
+fi
+
 # 4.6d Field-occupancy ratchet (R2) and doc-status ratchet (R1) are measurement,
 # not gates — R2 is explicit that a newly-introduced zero-occupancy field must
 # be reported loudly, not fail the build on first introduction (a design that
@@ -499,6 +524,10 @@ if [[ "$RESPONSE_MODEL_CHECK" == "fail" ]]; then
   REASONS+=("response_model_regression")
   COMPLETE="false"
 fi
+if [[ "$NO_RAW_STORAGE_CHECK" == "fail" ]]; then
+  REASONS+=("raw_browser_storage")
+  COMPLETE="false"
+fi
 # OCCUPANCY_NOTICE and DOC_STATUS_NOTICE are deliberately NOT checked here —
 # both are measurement (R1/R2), not gates. See their computation above for why.
 
@@ -563,7 +592,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK
+export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -598,6 +627,9 @@ out = {
     "module_layout": os.environ.get("MODULE_LAYOUT_CHECK", "skipped"),
     "no_process_globals": os.environ.get("NO_PROCESS_GLOBALS_CHECK", "skipped"),
     "response_model": os.environ.get("RESPONSE_MODEL_CHECK", "skipped"),
+    # Absolute, not ratcheted: the tree is at zero raw storage calls, so any
+    # new one is a cross-account leak rather than incremental debt.
+    "no_raw_storage": os.environ.get("NO_RAW_STORAGE_CHECK", "skipped"),
     # executed machine-checkable acceptance assertions (empty unless the caller
     # passed REVIEWER_CRITERIA_FILE); surfaced so the Work UI shows what was checked.
     "criteria":  criteria,
@@ -615,7 +647,7 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi
