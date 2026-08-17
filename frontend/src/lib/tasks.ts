@@ -151,6 +151,17 @@ export const TASK_ACCEPTANCE_KINDS = ["reviewer", "command", "operator"] as cons
 
 export type TaskAcceptanceKind = typeof TASK_ACCEPTANCE_KINDS[number];
 
+// The words a picker shows for each kind. Keyed by the type rather than written
+// as a free list, so adding a fourth kind above fails to compile until it has a
+// label. TaskPanel restated these three as hardcoded <option> elements until
+// 2026-08-17; JSX is invisible to check_one_definition.py, which is exactly why
+// that copy outlived the array copies it was drifting alongside.
+export const TASK_ACCEPTANCE_LABELS: Record<TaskAcceptanceKind, string> = {
+  reviewer: "reviewer pass",
+  command: "command exits 0",
+  operator: "operator approves",
+};
+
 export type TaskAcceptance = {
   kind: TaskAcceptanceKind;
   spec?: string | null;

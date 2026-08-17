@@ -21,6 +21,8 @@ import {
   type Task,
   type TaskStatus,
   TASK_STATUSES,
+  TASK_ACCEPTANCE_KINDS,
+  TASK_ACCEPTANCE_LABELS,
   LATITUDES,
   DEFAULT_LATITUDE,
   taskStatusKind,
@@ -454,9 +456,9 @@ export default function TaskPanel({
           <Field label="Acceptance" htmlFor={`tp-accept-${t.id}`} help="gate before this task can finish">
             <Select id={`tp-accept-${t.id}`} value={draft.acceptanceKind} onChange={(e) => setField("acceptanceKind", e.target.value)}>
               <option value="">none</option>
-              <option value="reviewer">reviewer pass</option>
-              <option value="command">command exits 0</option>
-              <option value="operator">operator approves</option>
+              {TASK_ACCEPTANCE_KINDS.map((k) => (
+                <option key={k} value={k}>{TASK_ACCEPTANCE_LABELS[k]}</option>
+              ))}
             </Select>
           </Field>
           {draft.acceptanceKind === "command" && (
