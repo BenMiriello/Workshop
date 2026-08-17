@@ -155,14 +155,16 @@ DEFAULT_OWNER = "operator"  # canonical assignee for the human
 # make it a second source of truth. It is computed on the way out, in the route
 # layer, and the record on disk never carries it.
 #
-# This is the JSON store's copy of db/models.py's `STATE_CATEGORIES` — same
-# five values, different name, agreeing by coincidence rather than by
-# construction (coherence-overhaul-2026-08-16 T5 flags it as one of the "one
-# definition per enum" duplicates). It is NOT imported from db/models.py here:
-# as of this pass that module is mid-rewrite by another agent (several of its
-# own enum constants were mid-move and briefly undefined), so this file is
-# left a plain restatement rather than coupled to an in-flux module. Whoever
-# lands that schema work should point one at the other.
+# CANONICAL, for the JSON store and for the schema both: db/models.py imports
+# this as `STATE_CATEGORIES` and builds its CHECK constraint from it. It lives
+# here rather than there because this store is the one that has to heal a
+# hand-edited TODO.md against the vocabulary, and because the reverse direction
+# would drag SQLAlchemy into every importer of this module.
+#
+# Linear's five, verified against its documentation. Plane adds a sixth
+# (`triage`); it is skipped because `draft` already covers that lane here, and
+# adding a category to serve one state would be inventing a distinction rather
+# than adopting one.
 STATE_TYPES = ("backlog", "unstarted", "started", "completed", "canceled")
 
 _STATE_TYPE = {

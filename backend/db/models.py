@@ -53,17 +53,20 @@ from db.ids import uuid7
 # into the schema.
 from services.latitude import LATITUDES
 
+# The JSON store owns the state vocabulary because it is the store that has to
+# heal a hand-edited TODO.md against it; the schema follows. Same test as
+# LATITUDES above: `services.tasks` reaches only the stdlib and
+# `services.latitude` at module scope, so importing it here does not drag the
+# service layer into the schema. This was two identical tuples until 2026-08-17;
+# `services/tasks.py` asked for exactly this pointing-one-at-the-other.
+from services.chat_store import CHAT_MODES
+from services.tasks import EFFORTS, STATE_TYPES as STATE_CATEGORIES
+
 # --- controlled vocabularies -------------------------------------------------
 # CHECK constraints rather than native Postgres ENUM types, with ONE deliberate
 # exception (priority, below, which needs enum ordering). A native enum cannot
 # have a value removed, and altering one takes a lock; a CHECK is a one-line
 # migration. The tuples here are the single source of truth for both sides.
-
-# Linear's five, verified against its documentation. Plane adds a sixth
-# (`triage`); it is skipped because `draft` already covers that lane here, and
-# adding a category to serve one state would be inventing a distinction rather
-# than adopting one.
-STATE_CATEGORIES = ("backlog", "unstarted", "started", "completed", "canceled")
 
 # Relation kinds taken from Plane's IssueRelation rather than invented.
 # `blocked_by` is the scheduling edge: it is the one that makes a ticket
@@ -99,7 +102,6 @@ PRIORITIES = ("urgent", "high", "medium", "low", "none")
 
 ACTOR_TYPES = ("user", "agent", "system")
 MEMBERSHIP_ROLES = ("owner", "admin", "member")
-EFFORTS = ("quick", "standard", "deep")
 
 # Where a ticket came from. The JSON store's `source.kind`, which took exactly
 # these three values across all 112 tickets. `chat` carries a thread id in
@@ -647,11 +649,10 @@ class TicketEvent(Base):
 # sense. The line is: the record of what was said is in the database; the
 # scratchpad of a turn in flight is a file.
 
-# Mirrors `services.chat_store.CHAT_MODES`. `auto` joined them on 2026-08-15
-# (tickets-in-chat-2026-08-15 §7): file and run without asking, stop only for a
-# question that cannot be answered. Adding a value here means a migration for
+# CHAT_MODES is imported from `services.chat_store` at the top of this file: it
+# was a mirrored restatement here until 2026-08-17, and the two copies had even
+# drifted into different orders. Adding a value there means a migration for
 # `ck_chat_thread_mode` as well; the constraint is not derived at runtime.
-CHAT_MODES = ("orchestrated", "direct", "auto")
 MESSAGE_ROLES = ("user", "assistant")
 
 # What a node in the transcript can be. All three occupy a POSITION, which is
