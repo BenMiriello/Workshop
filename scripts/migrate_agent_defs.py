@@ -2,20 +2,20 @@
 """Generate unified Agent definition files (Phase 2 migration).
 
 Sources:
-  * `.runtime/build_agents.json`  -> runtime: builder  (project scope when
+  * `.runtime/build_agents.json`  -> role: maker  (project scope when
     `project_slug` is set, else user scope). Body from the agent cwd's
     PROJECT.md when present.
-  * The Letta agent list           -> runtime: assistant (user scope), EXCLUDING
+  * The Letta agent list           -> no role (user scope), EXCLUDING
     per-channel bridge agents (authoritative via the channel-agent map) and the
     supervisor's internal plumbing (name-prefix skip list). Persona body from the
     Letta persona block; triggers from Letta autonomy metadata.
 
-`.runtime/build_agents.json` stays in place as the builder runtime-state file
+`.runtime/build_agents.json` stays in place as the maker execution-state file
 (it stops being the registry of record but is NOT deleted).
 
 DRY-RUN BY DEFAULT. Pass --apply to write files. Safe to run with autonomy
 paused: it only reads Letta + build state and writes markdown definition files;
-it mutates no runtime state and starts no work.
+it mutates no execution state and starts no work.
 
     python3 scripts/migrate_agent_defs.py            # dry-run (prints plan)
     python3 scripts/migrate_agent_defs.py --apply    # write definition files
@@ -91,7 +91,9 @@ def plan_builders(apply: bool) -> list[str]:
         project_slug = raw.get("project_slug")
         path = ar._path_for(slug, project_slug)
         fm = ar._build_fm(
-            runtime="builder",
+            # A maker IS what a builder was: it works in a tree. There is no
+            # `runtime` field any more (thread T2 of the coherence overhaul).
+            role="maker",
             name=raw.get("name") or slug,
             purpose=raw.get("purpose") or "",
             capabilities=[],
@@ -130,7 +132,6 @@ def plan_assistants(apply: bool) -> list[str]:
         taken.add(slug)
         path = ar._path_for(slug, None)
         fm = ar._build_fm(
-            runtime="assistant",
             name=name,
             purpose="",
             capabilities=[],

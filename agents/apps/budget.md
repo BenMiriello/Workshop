@@ -1,6 +1,5 @@
 ---
 name: Budget assistant
-runtime: assistant
 purpose: Answers questions about the allocation plan and edits it on request.
 model: sonnet
 tools:

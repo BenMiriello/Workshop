@@ -1,6 +1,5 @@
 ---
 name: Location assistant
-runtime: assistant
 purpose: Answers where the operator was last seen and how stale that signal is.
 model: haiku
 tools: []

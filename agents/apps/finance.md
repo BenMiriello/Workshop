@@ -1,6 +1,5 @@
 ---
 name: Accounts assistant
-runtime: assistant
 purpose: Read-only questions about live balances, transactions and spending patterns.
 model: haiku
 tools:

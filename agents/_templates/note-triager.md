@@ -3,7 +3,6 @@ template: note-triager
 template_version: 1
 description: Reviews new and updated notes in a scope, files or links tickets, escalates the rest
 name: Note triager
-runtime: assistant
 role: triager
 purpose: read the scope's new notes and decide, per note, task / link / escalate / none
 capabilities: []

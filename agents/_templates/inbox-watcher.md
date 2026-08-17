@@ -3,7 +3,6 @@ template: inbox-watcher
 template_version: 1
 description: Triages an inbound feed (mail, transactions, PRs) into tasks; a watcher is a trigger, not a role
 name: Inbox watcher
-runtime: assistant
 role: triager
 purpose: read an inbound feed and file the few items that are actually work
 capabilities: []

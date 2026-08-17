@@ -3,7 +3,6 @@ template: memory-keeper
 template_version: 1
 description: Consolidates a scope's closed jobs, learnings, and notes into durable memory on a slow cron
 name: Memory keeper
-runtime: assistant
 role: keeper
 purpose: consolidate this scope's memory off the hot path
 capabilities:

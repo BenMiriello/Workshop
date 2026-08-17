@@ -1,6 +1,5 @@
 ---
 name: Commute assistant
-runtime: assistant
 purpose: Explains the latest train decision, the alerter's state, and when the next one fires.
 model: haiku
 tools: []
