@@ -985,11 +985,6 @@ function AgentsSection() {
           <Button size="sm" variant="ghost">New agent ↗</Button>
         </Link>
       </Row>
-      <Row label="memory tree">
-        <span className="muted" style={{ fontSize: "0.85rem" }}>
-          <code style={{ fontSize: "0.8rem" }}>shared/memory-tree.yaml</code> · edit on disk
-        </span>
-      </Row>
     </Section>
   );
 }

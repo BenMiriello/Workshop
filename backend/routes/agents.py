@@ -5,7 +5,6 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from services.memory_tree import effective_memory as resolve_memory_tree
 from services import agents_registry, build_agents, dev_servers, jobs, paths, triggers
 from services import agent_authority
 
@@ -681,34 +680,6 @@ async def build_agent_commit(slug: str, body: _CommitIn):
         env=env, capture_output=True, text=True, check=True, timeout=15,
     ).stdout.strip()
     return {"ok": True, "commit": head}
-
-
-@router.get("/memory/tree-nodes")
-async def memory_tree_nodes():
-    """Return all known global blocks + archival namespaces from the memory tree.
-    Used by the UI to populate the memory-scope multi-selects."""
-    def _collect(node: dict, blocks: set, namespaces: set):
-        blocks.update(node.get("blocks") or [])
-        namespaces.update(node.get("archival_namespaces") or [])
-        for child in (node.get("children") or {}).values():
-            _collect(child, blocks, namespaces)
-
-    from services.memory_tree import _load_tree
-    tree = _load_tree()
-    root = tree.get("root", {})
-    all_blocks: set = set()
-    all_ns: set = set()
-    _collect(root, all_blocks, all_ns)
-    return {"blocks": sorted(all_blocks), "archival_namespaces": sorted(all_ns)}
-
-
-@router.get("/memory/effective")
-async def memory_effective_query(persona_path: str = ""):
-    """Resolve the effective blocks + archival namespaces for a persona_path
-    without needing an existing agent. Useful for planning and diagnostics."""
-    if not persona_path:
-        raise HTTPException(status_code=422, detail="persona_path query param required (e.g. ?persona_path=ops/personal-ai)")
-    return resolve_memory_tree(persona_path)
 
 
 def _agent_scope_key(rec: dict) -> str | None:
