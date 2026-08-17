@@ -1,5 +1,7 @@
 # Knowledge index
 
+- [A background shorthand resets the caret it paints](a-background-shorthand-resets-the-caret-it-paint-1a002fb6e3a.md)
+- [A flex item with default min-width silently defeats ws-truncate](a-flex-item-with-default-min-width-silently-defe-1a0096a0d6a.md)
 - [A lazy route blanks permanently on a stale chunk after any rebuild](a-lazy-route-blanks-permanently-on-a-stale-chunk-19ff45161c0.md)
 - [Agent system needs one coherent definition method](agent-system-needs-one-coherent-definition-metho-1a0028fb2cb.md)
 - [Agents are opt-in mentionable/delegatable configurations](agents-are-opt-in-mentionable-delegatable-config-1a0028fb2c2.md)
@@ -35,12 +37,27 @@
 - [Concurrent agents editing chat UI race on files](concurrent-agents-editing-chat-ui-race-on-files-1a0028fb2ec.md)
 - [Deep exploration before splitting work into tickets](deep-exploration-before-splitting-work-into-tick-1a0028fb299.md)
 - [Deep research before autonomous execution](deep-research-before-autonomous-execution-1a0028fb25e.md)
-- [Deep search dies with the GPU: no lexical fallback](deep-search-dies-with-the-gpu-no-lexical-fallbac-1a001d05335.md)
+- [Deep search degrades to lexical when the GPU dies](deep-search-dies-with-the-gpu-no-lexical-fallbac-1a001d05335.md) - `search()` is hybrid since aa457c8: BM25 over the same chunks when `embed()` raises, and `mode` says which path answered
 - [Fable review-and-refine improves design plans](fable-review-and-refine-improves-design-plans-1a0028fb29c.md)
 - [Filing a ticket is not progress](filing-a-ticket-is-not-progress-1a0028fb2a7.md)
 - [Five fixed color scheme pairs decided](five-fixed-color-scheme-pairs-decided-1a0028fb2e5.md)
 - [Focus ring inherits border-radius, not forced on descendants](focus-ring-inherits-border-radius-not-forced-on-1a0028fb2b9.md)
+- [Gzip middleware must be registered FIRST, or it silently compresses nothing](gzip-middleware-must-be-registered-first-or-it-s-1a002e9891e.md)
 - [Handoff: tickets surface + automation loop (2026-08-12)](handoff-tickets-surface-automation-loop-2026-08-19ff9747432.md)
+- [Letta memory: human (email-triager)](letta-email-triager-human.md) - Exported Letta human block, held by email-triager.
+- [Letta memory: persona (email-triager)](letta-email-triager-persona.md) - Exported Letta persona block, held by email-triager.
+- [Letta memory: human (masini-ch-1507029806909362237)](letta-masini-ch-1507029806909362237-human.md) - Exported Letta human block, held by masini-ch-1507029806909362237.
+- [Letta memory: persona (masini-ch-1507029806909362237)](letta-masini-ch-1507029806909362237-persona.md) - Exported Letta persona block, held by masini-ch-1507029806909362237.
+- [Letta memory: human (masini-ch-1507197290358636574)](letta-masini-ch-1507197290358636574-human.md) - Exported Letta human block, held by masini-ch-1507197290358636574.
+- [Letta memory: persona (masini-ch-1507197290358636574)](letta-masini-ch-1507197290358636574-persona.md) - Exported Letta persona block, held by masini-ch-1507197290358636574.
+- [Letta memory: operator-context (shared)](letta-operator-context-shared.md) - Exported Letta operator-context block, held by masini-ch-1507197290358636574, masini-ch-1507029806909362237, masini-commute, email-triager, plaid-watcher.
+- [Letta memory: human (plaid-watcher)](letta-plaid-watcher-human.md) - Exported Letta human block, held by plaid-watcher.
+- [Letta memory: persona (plaid-watcher)](letta-plaid-watcher-persona.md) - Exported Letta persona block, held by plaid-watcher.
+- [Letta memory: current_focus (workshop-overseer)](letta-workshop-overseer-current-focus.md) - Exported Letta current_focus block, held by workshop-overseer.
+- [Letta memory: human (workshop-overseer)](letta-workshop-overseer-human.md) - Exported Letta human block, held by workshop-overseer.
+- [Letta memory: last_dispatched (workshop-overseer)](letta-workshop-overseer-last-dispatched.md) - Exported Letta last_dispatched block, held by workshop-overseer.
+- [Letta memory: persona (workshop-overseer)](letta-workshop-overseer-persona.md) - Exported Letta persona block, held by workshop-overseer.
+- [Letta memory: watchlist (workshop-overseer)](letta-workshop-overseer-watchlist.md) - Exported Letta watchlist block, held by workshop-overseer.
 - [Manual work until the ticket system proves reliable](manual-work-until-the-ticket-system-proves-relia-1a0028fb2a6.md)
 - [Mid-turn chat bubbles should render dimmed (still broken)](mid-turn-chat-bubbles-should-render-dimmed-still-1a0028fb2e9.md)
 - [Mobile chat mode selector: icon closed, text in dropdown](mobile-chat-mode-selector-icon-closed-text-in-dr-1a0028fb2e0.md)
@@ -50,6 +67,7 @@
 - [No step/turn limits, no repeated continue prompts](no-step-turn-limits-no-repeated-continue-prompts-1a0028fb2b4.md)
 - [Note capture defaults to verbose with importance classification](note-capture-defaults-to-verbose-with-importance-1a0028fb2a1.md)
 - [Where notes go: three tiers (scratch, scoped Notes, docs)](notes-and-docs-policy.md) - commit-or-not policy; never a flat per-project NOTES.md
+- [NUL bytes in a source file make it invisible to every grep](nul-bytes-in-a-source-file-make-it-invisible-to-1a007155a4e.md)
 - [Orchestration-surface requirements (addendum): re-scope warning + main-thread scoping](orchestration-surface-requirements-addendum-re-s-19f74360f21.md)
 - [Orchestration-surface requirements addendum (re: shared scope + resilience + card links)](orchestration-surface-requirements-addendum-re-s-19f743cb2c2.md)
 - [Paths and machine identity must derive from config](paths-and-machine-identity-must-derive-from-conf-1a0028fb2f2.md)
@@ -68,10 +86,13 @@
 - [Status colors stay byte-identical across all palettes](status-colors-stay-byte-identical-across-all-pal-1a0028fb2e7.md)
 - [System design must prioritize usability over technical purity](system-design-must-prioritize-usability-over-tec-1a0028fb2a3.md)
 - [Task filing should learn from operator patterns](task-filing-should-learn-from-operator-patterns-1a0028fb292.md)
+- [The autonomous loop has never been able to write a file](the-autonomous-loop-has-never-been-able-to-write-1a002e04bad.md)
+- [The turn stream's wire vocabulary has one owner](the-turn-stream-s-wire-vocabulary-has-one-owner-1a003231bba.md)
 - [Ticket dependencies: first-class edge model (addendum to T0)](ticket-dependencies-first-class-edge-model-adden-19f7440aaf0.md)
 - [Ticket drafts persist on threads](ticket-drafts-persist-on-threads-1a0028fb2c0.md)
 - [Ticket/task dependency tracking is required](ticket-task-dependency-tracking-is-required-1a0028fb297.md)
 - [Tickets are the approval unit for autonomous work](tickets-are-the-approval-unit-for-autonomous-wor-1a0028fb2cf.md)
+- [Tickets: two stores, and which one a writer reaches](tickets-two-stores-and-which-one-a-writer-reache-1a00881d657.md)
 - [Transcript splitting: a delegation is atomic, and the ending goes on the last block that EXISTS](transcript-splitting-a-delegation-is-atomic-and-19ff4398f60.md)
 - [Turns must pick up new messages without dropping output](turns-must-pick-up-new-messages-without-dropping-1a0028fb2b1.md)
 - [UI info on hover via title attribute, not inline text](ui-info-on-hover-via-title-attribute-not-inline-1a0028fb2e2.md)
