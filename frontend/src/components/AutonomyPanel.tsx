@@ -91,7 +91,6 @@ type Autonomy = {
   triggers: Trigger[];
   queue?: Queue;
   awaiting?: Awaiting[];
-  mode?: string;
   updated?: string | null;
   running?: boolean;
   last_run?: Job;
@@ -249,7 +248,6 @@ export default function AutonomyPanel({
         triggers: Array.isArray(raw.triggers) ? raw.triggers : [],
         queue: raw.queue,
         awaiting: Array.isArray(raw.awaiting) ? raw.awaiting : [],
-        mode: raw.mode,
         updated: raw.updated ?? null,
         running: !!raw.running,
         last_run: raw.last_run ?? null,

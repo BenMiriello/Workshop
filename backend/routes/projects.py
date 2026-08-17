@@ -620,63 +620,19 @@ async def put_todo(slug: str, body: FileWriteIn) -> dict:
     return {"ok": True}
 
 
-# ---- Structured tasks (per-agent + project roll-up; plan item 14) -----------
-# Authoritative store lives at projects/<slug>/.tasks.json; TODO.md is the
-# regenerated export (so chat_context, which reads TODO.md, stays current).
-
-
-class TaskCreateIn(BaseModel):
-    text: str = Field(min_length=1, max_length=2000)
-    owner: str = "operator"
-    parent: str | None = None
-
-
-class TaskPatchIn(BaseModel):
-    status: str | None = None
-    text: str | None = None
-
-
-@router.get("/{slug}/tasks")
-async def list_tasks(slug: str, include_done: bool = True) -> dict:
-    return {"tasks": tasks.list_tasks(_project_dir(slug), include_done=include_done)}
-
-
-@router.post("/{slug}/tasks")
-async def add_task(slug: str, body: TaskCreateIn) -> dict:
-    try:
-        task = tasks.add(
-            _project_dir(slug),
-            text=body.text,
-            owner=(body.owner or "operator").strip() or "operator",
-            parent=body.parent,
-        )
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    _touch(slug)
-    return task
-
-
-@router.patch("/{slug}/tasks/{task_id}")
-async def patch_task(slug: str, task_id: str, body: TaskPatchIn) -> dict:
-    if body.status is None and body.text is None:
-        raise HTTPException(400, "no fields to update")
-    try:
-        task = tasks.update(_project_dir(slug), task_id, status=body.status, text=body.text)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    if task is None:
-        raise HTTPException(404, f"task not found: {task_id}")
-    _touch(slug)
-    return task
-
-
-@router.delete("/{slug}/tasks/{task_id}")
-async def delete_task(slug: str, task_id: str) -> dict:
-    deleted = tasks.remove(_project_dir(slug), task_id)
-    if not deleted:
-        raise HTTPException(404, f"task not found: {task_id}")
-    _touch(slug)
-    return {"deleted": True}
+# ---- Structured tasks: REMOVED ---------------------------------------------
+# `GET/POST /projects/{slug}/tasks` and `PATCH/DELETE
+# /projects/{slug}/tasks/{id}` are deleted (2026-08-17). They were a SECOND CRUD
+# surface over the same store as `/api/tasks?scope=project:<slug>`, and the two
+# were not equivalent: this one filed straight through `tasks.add`, so it
+# skipped the dedup pass, stored no `source` or `scoped_by`, and never touched
+# `.runtime/queue-runner.wake`, so a ticket filed here sat until the next poll.
+# Its PATCH accepted only `status` and `text`, so editing a tracker-linked
+# ticket from the project page diverged it from the remote tracker in silence.
+#
+# The `/tasks` surface is the one that does all of that. ProjectDetail now calls
+# it. The store is unchanged: projects/<slug>/.tasks.json, with TODO.md as the
+# regenerated export.
 
 
 @router.get("/{slug}/interventions")
@@ -756,10 +712,11 @@ class TriggersIn(BaseModel):
 
 
 def _stored_triggers(autonomy: dict) -> list[dict]:
-    stored = autonomy.get("triggers")
-    if stored is not None:
-        return [triggers.normalize(t) for t in stored]
-    return triggers.project_triggers(autonomy)
+    """The scope's trigger list, which is the whole answer to "is this queue
+    swept automatically?". A record with no `triggers` key has never been
+    configured, and an unconfigured scope is `off` — no automatic sweep. There
+    is no second key to fall back to: the `autonomy.mode` shadow is gone."""
+    return [triggers.normalize(t) for t in (autonomy.get("triggers") or [])]
 
 
 def _queue_snapshot(root: Path) -> dict:
@@ -845,7 +802,6 @@ async def get_autonomy(slug: str) -> dict:
         "latitude": latitude_svc.coerce(autonomy.get("latitude")),
         "limits": autonomy.get("limits") or {},
         "triggers": trigs,
-        "mode": triggers.project_mode_from_triggers(trigs),
         "updated": autonomy.get("updated"),
         "running": running,
         "last_run": last,
@@ -873,7 +829,6 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
     proj = (data.get("projects") or {}).get(slug)
     if not proj:
         raise HTTPException(404, f"project not found: {slug}")
-    mode = triggers.project_mode_from_triggers(norm)
     limits = body.limits if body.limits is not None else \
         ((proj.get("autonomy") or {}).get("limits") or {})
     # Emit-only-when-non-default (latitude.py): `standard` is stored as null so a
@@ -888,7 +843,6 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
     if lat == latitude_svc.DEFAULT_LATITUDE:
         lat = None
     proj["autonomy"] = {
-        "mode": mode,
         "preset": preset,
         "latitude": lat,
         "limits": limits,
@@ -902,7 +856,6 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
         "latitude": lat,
         "limits": limits,
         "triggers": norm,
-        "mode": mode,
         "updated": proj["autonomy"]["updated"],
         "running": running,
     }

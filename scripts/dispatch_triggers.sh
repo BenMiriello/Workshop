@@ -70,7 +70,11 @@ fi
 # The decision engine prints one dispatch per line: "TYPE\tSCOPE\tASSIGNEE\tTOKEN".
 # TYPE=project -> SCOPE is a slug; TYPE=agent -> SCOPE is a dir, ASSIGNEE=agent:slug.
 # TOKEN is the in-scope grant the job carries (agent dispatches only; empty else).
-PLAN=$(cd "$WORKSHOP" && python3 - <<'PYEOF'
+# UNDER THE BACKEND'S INTERPRETER, for the reason spelled out at
+# scripts/project_tasks.py:80: `services.tasks` reads the relational scopes
+# through sqlalchemy, and the system python3 has no sqlalchemy. Running this
+# sweep under it used to mean the ticket store answered out of a retired file.
+PLAN=$(cd "$WORKSHOP" && "$WORKSHOP/backend/.venv/bin/python" - <<'PYEOF'
 import json, os, sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -333,8 +337,8 @@ for slug, p in sorted(projects.items()):
     # DOOR 7 (design §2). The `self: true` registry row — slug `development`,
     # dir = the platform repo — reaches this loop as an ordinary candidate, and
     # until this branch existed nothing here told it apart from `birds`. It was
-    # closed only by DATA: that row's autonomy mode happens to be `manual`, so
-    # the mode test below skipped it. A stored value someone can change from the
+    # closed only by DATA: that row's autonomy happens to be on-demand, so the
+    # preset test below skipped it. A stored value someone can change from the
     # UI is not a gate. §8 decision 2: the dispatcher iterates projects always,
     # `development` only when dev mode is on.
     #
@@ -359,62 +363,32 @@ for slug, p in sorted(projects.items()):
 
     autonomy = p.get("autonomy") or {}
 
-    # --- Preset-aware dispatch (O6/O7-config) ---------------------------------
-    # A scope with an explicit `autonomy` PRESET is dispatched by the preset's
-    # rule: off / on-demand are never background-swept (only an explicit Run-now
-    # sweeps them); scheduled sweeps on its cron cadence when ready; continuous
-    # sweeps every tick when ready (today's behavior). A scope with NO preset
-    # field falls through to the EXISTING mode/trigger logic below, byte-for-byte
-    # unchanged, so an unbound project sweeps exactly as before.
-    preset = autonomy.get("preset")
-    if preset is not None:
-        if preset in ("off", "on-demand"):
-            continue
-        fired_keys = []
-        if preset == "scheduled":
-            due = False
-            for t in (autonomy.get("triggers") or []):
-                if t.get("kind") == "cron":
-                    key = f"project:{slug}:cron:{t.get('cron_expression','')}"
-                    if triggers.due(t.get("cron_expression", ""), state.get(key), now):
-                        due = True
-                        fired_keys.append(key)
-            if not due:
-                continue
-        elif preset != "continuous":
-            continue
-        pdir = p.get("dir")
-        if not pdir or not Path(pdir).is_dir():
-            continue
-        root = Path(pdir)
-        if running_job(project_slug=slug):
-            continue
-        opened, cb_reason, cb_half_open = circuit_open(f"project:{slug}", project_slug=slug)
-        if opened:
-            print(f"skip-circuit\tproject:{slug}\t{cb_reason}", file=sys.stderr)
-            continue
-        if awaiting_unchanged(slug, root):
-            continue
-        if not has_ready(root):
-            continue
-        ok, reason = usage_ledger.can_admit(slug)
-        if not ok:
-            print(f"skip-budget\tproject:{slug}\t{reason}", file=sys.stderr)
-            continue
-        plan.append(("project", slug, "", ""))
-        if cb_half_open:
-            cb_mark_probe(f"project:{slug}")
-        # Consume the cron firing only now that it is actually dispatched (F16).
-        _pf = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-        for _k in fired_keys:
-            state[_k] = _pf
-        proj_started += 1
+    # --- Preset dispatch (O6/O7-config) ---------------------------------------
+    # A scope is dispatched by its preset: off / on-demand are never
+    # background-swept (only an explicit Run-now sweeps them); scheduled sweeps
+    # on its cron cadence when ready; continuous sweeps every tick when ready.
+    #
+    # An unconfigured row (no stored preset) is classified from its stored
+    # trigger list, which is the same answer read the same way everywhere else.
+    # There used to be a SECOND branch here for rows with no preset, gating on
+    # `autonomy.mode`; it is deleted (2026-08-17). The mode key had no value for
+    # `scheduled`, so the two branches disagreed about the same registry row.
+    preset = autonomy.get("preset") or \
+        triggers.triggers_to_preset(autonomy.get("triggers") or [])
+    if preset in ("off", "on-demand"):
         continue
-
-    trigs = triggers.project_triggers(autonomy)
-    if not any(t.get("kind") == "loop" for t in trigs):
-        continue
-    if (autonomy.get("mode") or "off") == "off":
+    fired_keys = []
+    if preset == "scheduled":
+        due = False
+        for t in (autonomy.get("triggers") or []):
+            if t.get("kind") == "cron":
+                key = f"project:{slug}:cron:{t.get('cron_expression','')}"
+                if triggers.due(t.get("cron_expression", ""), state.get(key), now):
+                    due = True
+                    fired_keys.append(key)
+        if not due:
+            continue
+    elif preset != "continuous":
         continue
     pdir = p.get("dir")
     if not pdir or not Path(pdir).is_dir():
@@ -437,6 +411,10 @@ for slug, p in sorted(projects.items()):
     plan.append(("project", slug, "", ""))
     if cb_half_open:
         cb_mark_probe(f"project:{slug}")
+    # Consume the cron firing only now that it is actually dispatched (F16).
+    _pf = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    for _k in fired_keys:
+        state[_k] = _pf
     proj_started += 1
 
 # --- Agent cron/loop triggers: the ROLE dispatch table ---------------------

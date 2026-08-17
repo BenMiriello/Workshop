@@ -527,20 +527,29 @@ fi
 unset ANTHROPIC_API_KEY
 
 # A --dir sweep targets an explicit scope tree (agent scope, or any tree) and
-# trusts the caller's decision to run it (mode gate does not apply). Otherwise
-# resolve the project dir + autonomy mode from the registry.
+# trusts the caller's decision to run it (the preset gate does not apply).
+# Otherwise resolve the project dir + autonomy PRESET from the registry.
+#
+# The preset is read from the stored trigger list, the one encoding of "is this
+# queue swept automatically?", classified exactly as services/triggers.py does.
+# It used to be read from `autonomy.mode`, a second key that could not express
+# `scheduled` at all; that key is gone (2026-08-17).
+#
+# The `mode == "supervised"` test that also hung off that read is gone with it.
+# No writer ever produced that value (the mode vocabulary was off/manual/
+# continuous), so it could not fire. Supervision is set by --supervised or
+# WORKSHOP_SWEEP_SUPERVISED, which is how the resident runner turns it on.
 if [[ -n "$DIR_ARG" ]]; then
   # Absolute, for the reason ralph.sh --dir gives: this path is handed to a
   # child that cds into the tree, so a relative one silently means two
   # different directories before and after that cd. The registry path below is
   # already absolute; this is the branch that was not.
-  DIR="$(cd "$DIR_ARG" 2>/dev/null && pwd -P || printf '%s' "$DIR_ARG")"; MODE="on"
+  DIR="$(cd "$DIR_ARG" 2>/dev/null && pwd -P || printf '%s' "$DIR_ARG")"; PRESET="direct"
 else
-read -r DIR MODE < <(python3 - "$SLUG" <<'PYEOF'
-import json, sys
+read -r DIR PRESET < <(python3 - "$SLUG" <<'PYEOF'
+import json, os, sys
 from pathlib import Path
 slug = sys.argv[1]
-import os
 reg = Path(os.environ.get("WORKSHOP_PROJECTS_REGISTRY",
                           str(Path(os.environ["WORKSHOP"]) / ".runtime" / "projects.json")))
 try:
@@ -552,8 +561,17 @@ p = (data.get("projects") or {}).get(slug)
 if not p:
     print(" ")
     raise SystemExit(0)
-mode = ((p.get("autonomy") or {}).get("mode")) or "off"
-print(f"{p.get('dir','')} {mode}")
+autonomy = p.get("autonomy") or {}
+kinds = {(t or {}).get("kind") for t in (autonomy.get("triggers") or [])}
+if "loop" in kinds:
+    preset = "continuous"
+elif "cron" in kinds:
+    preset = "scheduled"
+elif "manual" in kinds:
+    preset = "on-demand"
+else:
+    preset = "off"
+print(f"{p.get('dir','')} {autonomy.get('preset') or preset}")
 PYEOF
 )
 fi
@@ -562,13 +580,6 @@ if [[ -z "$DIR" || ! -d "$DIR" ]]; then
   echo "[project_ralph] project not found or no dir: ${SLUG:-$DIR_ARG}" >&2
   exit 2
 fi
-
-# A project registered as `supervised` supervises every sweep of it, however the
-# sweep was started. The flag and the env var can turn supervision ON for a --dir
-# sweep (which has no registry entry and no slug), but nothing here turns it OFF:
-# a scope the operator marked supervised must not become unsupervised because a
-# caller forgot a flag.
-[[ "$MODE" == "supervised" ]] && SUPERVISED=1
 
 # The terminal status of a task whose gates all passed. `in_review` under
 # supervision, `done` otherwise. Both writes are otherwise identical: the
@@ -649,11 +660,12 @@ if _is_autonomy_off && [[ "$FORCE" -ne 1 ]]; then
   exit 2
 fi
 
-# Per-project mode gate. A background (non-force) sweep only runs for a project
-# whose mode is not "off". A manual --force run is always allowed (an operator
-# "run now" is a deliberate action; "off = manual only").
-if [[ "$MODE" == "off" && "$FORCE" -ne 1 ]]; then
-  log "project autonomy is off for $SLUG; not running"
+# Per-project preset gate, and the SAME rule the dispatcher applies: `off` and
+# `on-demand` are never background-swept. A manual --force run is always allowed
+# (an operator "run now" is a deliberate action), and a --dir sweep has no
+# registry row to consult.
+if [[ "$PRESET" == "off" || "$PRESET" == "on-demand" ]] && [[ "$FORCE" -ne 1 ]]; then
+  log "project autonomy is $PRESET for $SLUG; not running unattended"
   job_finish "$JOB_ID" cancelled 0 0
   exit 2
 fi
@@ -705,7 +717,7 @@ LEARN_SCOPE="$(learn_scope_for)"
 
 
 START_EPOCH=$(date +%s)
-log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE job=$JOB_ID scope=$BILL_SCOPE learn_scope=$LEARN_SCOPE grant=${GRANT_TOKEN:0:8} max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS bound=$REPO_BOUND worktrees=$WT_ENABLED ==="
+log "=== sweep start slug=$SLUG dir=$DIR autonomy=$PRESET job=$JOB_ID scope=$BILL_SCOPE learn_scope=$LEARN_SCOPE grant=${GRANT_TOKEN:0:8} max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS bound=$REPO_BOUND worktrees=$WT_ENABLED ==="
 
 # The canonical branch for a bound project: the tracked default_branch, else the
 # same main/master/HEAD detection worktrees.py falls back to. Used by

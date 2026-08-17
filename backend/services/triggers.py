@@ -225,42 +225,19 @@ def normalize(raw: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Project adapter — project registry `autonomy.mode` <-> triggers
-# ---------------------------------------------------------------------------
-#   off        -> [] plus an implicit manual capability (represented as a single
-#                 manual trigger so the UI always has one row)
-#   manual     -> [manual]
-#   continuous -> [loop]  (bounded by max_iterations + budget + reviewer gate)
-
-def project_triggers(autonomy: dict | None) -> list[dict]:
-    """Translate a project's `autonomy` config to a trigger list."""
-    mode = ((autonomy or {}).get("mode")) or "off"
-    if mode == "continuous":
-        return [make_trigger("loop")]
-    # both "off" and "manual" present only a manual trigger; "off" means the
-    # background cron will not pick it up (no loop), manual-only otherwise.
-    return [make_trigger("manual")]
-
-
-def project_mode_from_triggers(triggers: list[dict]) -> str:
-    """Reverse the translation: a loop trigger means `continuous`; a manual-only
-    list means `manual`; an empty list means `off`."""
-    kinds = {(t or {}).get("kind") for t in (triggers or [])}
-    if "loop" in kinds:
-        return "continuous"
-    if not triggers:
-        return "off"
-    return "manual"
-
-
-# ---------------------------------------------------------------------------
 # Autonomy PRESET model (Phase O6/O7-config)
 # ---------------------------------------------------------------------------
-# The operator-facing autonomy control is a single preset, not a raw trigger
-# list. A preset expands DETERMINISTICALLY into the concrete trigger list (plus
-# a budget bundle carried on the loop trigger). This is the new PRIMARY control;
-# the old `autonomy.mode {off, manual, continuous}` still works as a back-compat
-# shadow (see mode_to_preset / preset_to_mode below).
+# The operator-facing autonomy control is a single preset, and the stored
+# `triggers` list is the ONE encoding of "will this scope's queue be swept
+# automatically?". A preset expands DETERMINISTICALLY into that trigger list
+# (plus a budget bundle carried on the loop trigger).
+#
+# The `autonomy.mode {off, manual, continuous}` shadow that used to ride
+# alongside it is gone (2026-08-17). It could not express `scheduled` at all:
+# a project put on a cron stored `mode="manual"`, so every reader that asked
+# the mode was told the scope was manual-only and told the operator to "set its
+# autonomy to continuous" about a scope already on a cron. Two encodings, one
+# question, and they disagreed. Readers ask `triggers`.
 #
 #   preset        triggers      dispatcher behavior                    default for
 #   ----------    ----------    ------------------------------------   -----------
@@ -270,35 +247,12 @@ def project_mode_from_triggers(triggers: list[dict]) -> str:
 #   continuous    [loop]        swept every tick when ready, bounded   opt-in per scope
 #
 # The empty-list encoding of `off` (rather than a lone manual trigger) keeps the
-# inverse `triggers_to_preset` unambiguous and matches project_mode_from_triggers
-# (empty -> off). A manual "Run now" never consults triggers to decide whether it
-# may run (it uses --force), so `off` losing its manual trigger changes nothing
-# about the operator's ability to launch a sweep by hand.
+# inverse `triggers_to_preset` unambiguous. A manual "Run now" never consults
+# triggers to decide whether it may run (it uses --force), so `off` losing its
+# manual trigger changes nothing about the operator's ability to launch a sweep
+# by hand.
 
 PRESETS = ("off", "on-demand", "scheduled", "continuous")
-
-_PRESET_TO_MODE = {
-    "off": "off",
-    "on-demand": "manual",
-    "scheduled": "scheduled",
-    "continuous": "continuous",
-}
-_MODE_TO_PRESET = {
-    "off": "off",
-    "manual": "on-demand",
-    "scheduled": "scheduled",
-    "continuous": "continuous",
-}
-
-
-def preset_to_mode(preset: str | None) -> str:
-    """Back-compat: the old `autonomy.mode` value a preset shadows."""
-    return _PRESET_TO_MODE.get(preset or "off", "off")
-
-
-def mode_to_preset(mode: str | None) -> str:
-    """Back-compat: the preset an existing `autonomy.mode` maps to."""
-    return _MODE_TO_PRESET.get(mode or "off", "off")
 
 
 def preset_to_triggers(preset: str | None, *, cron: str | None = None,
