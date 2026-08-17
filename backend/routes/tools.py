@@ -1,21 +1,26 @@
-"""HTTP dispatch for Letta tool functions.
+"""HTTP dispatch for the host-side tool implementations.
 
-The Letta sandbox runs tool functions inside its own Docker container, which
-does NOT have access to:
-  - Host filesystem (the workshop repo root)
-  - Host localhost services (127.0.0.1:11434 Ollama, etc.)
+One endpoint per tool: POST /tools/{tool_name} with a JSON body of kwargs,
+returning {"result": <string>} or {"error": <string>}. The implementations live
+in services/letta_tools/ (workshop.py, local.py, cloud.py, notify.py,
+health.py), which is a misleading directory name kept only because renaming it
+is a separate change.
 
-The sandbox CAN reach the host backend at host.docker.internal:8000. So the
-pattern is: keep tool *implementations* on the host backend (this module),
-and make the Letta-registered tool *functions* thin HTTP proxies that POST
-here.
+HISTORY, because this module's shape only makes sense with it. The split
+existed because Letta ran tool functions inside its own Docker container with
+no access to the host filesystem or to host localhost services, but which could
+reach the host backend at host.docker.internal:8000. So implementations stayed
+here and Letta registered thin HTTP proxies that POSTed in. Letta was removed in
+the 2026-07-15 Stage 9 teardown and the proxy module (sandbox_wrappers.py) was
+deleted on 2026-08-16; nothing calls in over HTTP any more.
 
-This module exposes one endpoint per tool: POST /tools/{tool_name} with a
-JSON body of kwargs. Returns {"result": <string>} or {"error": <string>}.
-
-All implementations live in services/letta_tools/. The Letta-registered tool
-functions (also in services/letta_tools/) are HTTP wrappers that hit these
-endpoints — see services/letta_tools/sandbox_wrappers.py.
+STATUS, measured 2026-08-16: this surface answers live (`GET /tools/_list`
+returns 11 names) and has ZERO callers anywhere in backend/, frontend/src,
+scripts/ or mobile/. The implementations themselves are ordinary code that is
+still worth keeping. Whether the HTTP surface survives is thread T5 of
+docs/platform-redesign/coherence-overhaul-2026-08-16.md; it is left in place
+rather than removed mid-overhaul because cloud.py's callable surface is
+referenced by an open security ticket (SEC-A4) that should settle first.
 """
 from __future__ import annotations
 
