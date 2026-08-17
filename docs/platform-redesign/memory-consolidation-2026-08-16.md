@@ -320,6 +320,21 @@ committed and independently verified, not when a worker reported it done.
 | Acceptance harness | `c863ff7`, `565c45e` | 2026-08-16 | `scripts/verify_memory.py`. Caught its own green-but-hollow bug: `put_note` is a coroutine and was never awaited. |
 | Occupancy tool (R2) | `7177146` | 2026-08-16 | `scripts/field_occupancy.py`. Reproduces the audit numbers independently: ticket `parent`/`latitude`/`awaiting`/`max_attempts` at 0 of 197; `assignee` and `owner` always the literal `operator`. |
 
+| **M2/M3** — write-time reconciliation, quality gate, split counters, salience floor | `02ff747`, `41555a5` | 2026-08-16 | Live store 15 to 12 rows. Archived with reasons, not deleted: both `Ralph rejected: *_typecheck_fail` rows ("machine status token, not instructional guidance") and the older duplicate restart guardrail ("superseded at rest by a later revision, sim 0.68"). Provenance 46 to 11 with `provenance_total` kept. GC proved to fire on a stale loop-authored fixture while an operator guardrail survives the same pass. 21 new tests. |
+| **M4** — delete `memory_tree`, `memory_promotion`, the promotion lobe | `6bead5c`, `0e316b0` | 2026-08-16 | Both routes 404 against a live TestClient. `import main` clean. |
+| **M5** — export Letta, then remove its wiring | `6f18268`, `e0e030e` | 2026-08-16 | 18 distinct blocks (22 attachments; `operator-context` is one block shared by 5 agents) exported via `knowledge.put_note` into `agent:masini`, `agent:masini-commute` and `workshop`, each carrying block id, label and holder agents with Letta creation dates. Spot-checked on disk and confirmed retrievable through the index. |
+| **M6** — the five correctness bugs | `02ff747` (swept), `41555a5` | 2026-08-16 | B3 persona and B4 `role:` listability confirmed and fixed; B5 note corrected against the code. **B1 and B2 were refuted with runtime evidence** and correctly not "fixed" (see below). |
+| Reply truthfulness | `80e5061` | 2026-08-16 | The chat said "Captured a preference" even when the new gate refused the note. Now distinguishes captured / updated / already recorded / not captured with the reason. 5 tests. |
+
+**Two hypotheses in section 5 were wrong, and the measurement matters more than the
+plan.** B1 (cross-owner knowledge leak) is **not** a leak: `_shared_knowledge_root()` is
+already per-owner and owner 4242 sees 0 workshop notes, verified at runtime. Only the
+*enumeration* in `notes_all.py` was asking about the operator's directory on every
+account, which is fixed. B2 (backlinks losing note and ticket rows) is **not** a loss:
+`set_source` is keyed by source ref and does accumulate. The store holds 7 chat rows
+because **no note or ticket body in the corpus contains a ref at all** (0 refs across
+107 notes and 197 tickets). The silent `log.debug` was raised to `log.warning` anyway.
+
 **Known gap, not in the M1 spec:** `chat_log.delete_thread` does not mark the index
 stale, so a deleted thread's chunks linger until some other write triggers a rebuild.
 The rebuild re-enumerates live thread ids, so they drop then. Low harm, recorded rather
