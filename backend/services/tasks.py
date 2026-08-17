@@ -154,6 +154,15 @@ DEFAULT_OWNER = "operator"  # canonical assignee for the human
 # this onto a record inside `_normalize` would persist it into .tasks.json and
 # make it a second source of truth. It is computed on the way out, in the route
 # layer, and the record on disk never carries it.
+#
+# This is the JSON store's copy of db/models.py's `STATE_CATEGORIES` — same
+# five values, different name, agreeing by coincidence rather than by
+# construction (coherence-overhaul-2026-08-16 T5 flags it as one of the "one
+# definition per enum" duplicates). It is NOT imported from db/models.py here:
+# as of this pass that module is mid-rewrite by another agent (several of its
+# own enum constants were mid-move and briefly undefined), so this file is
+# left a plain restatement rather than coupled to an in-flux module. Whoever
+# lands that schema work should point one at the other.
 STATE_TYPES = ("backlog", "unstarted", "started", "completed", "canceled")
 
 _STATE_TYPE = {
@@ -583,12 +592,13 @@ def _normalize_acceptance(acc) -> dict | None:
 # the worker at `strict` latitude, the reviewer's block-for-decision verdict, the
 # harness) differ; the record does not.
 
-# A `kind` is a short slug, validated as a slug and NOT against a fixed list. The
-# named kinds are the seed set, not the boundary — a closed enum would reject the
-# first reason to stop that nobody anticipated, which is exactly the case a block
-# loop exists to catch. These are the ones that have a producer today.
-BLOCK_KINDS = ("permission", "resource", "input", "decision", "missing-info",
-               "dependency", "environment", "other")
+# A `kind` is a short slug, validated as a slug and NOT against a fixed list. A
+# closed enum would reject the first reason to stop that nobody anticipated,
+# which is exactly the case a block loop exists to catch. (A named seed list —
+# permission, resource, input, decision, missing-info, dependency, environment,
+# other — used to live here as a constant; it had zero readers, because nothing
+# validates against it, so it was deleted rather than kept as unread
+# documentation.)
 _KIND_RE = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
 _VALID_PROPOSAL_VERBS = ("read", "write", "append")
 

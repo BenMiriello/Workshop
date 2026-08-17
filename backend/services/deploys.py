@@ -23,6 +23,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# IMPORTED, not restated. This tuple used to be typed out here a second time;
+# services/triggers.py is the single source among the files this pass owns
+# (coherence-overhaul-2026-08-16 T5). db/models.py's `AGENT_AUTONOMY` (the DB
+# CHECK constraint) and services/agents_registry.py's own copy are two
+# further restatements outside this module's reach — see the note in
+# services/triggers.py for why those are not collapsed here too.
+from services.triggers import AUTONOMY_MODES
+
 
 WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", str(Path(__file__).resolve().parents[2])))
 STORE_PATH = Path(os.environ.get(
@@ -30,7 +38,6 @@ STORE_PATH = Path(os.environ.get(
     str(WORKSHOP_ROOT / ".runtime" / "deploys.json"),
 ))
 
-AUTONOMY_MODES = ("reactive", "supervised", "autonomous")
 DEFAULT_AUTONOMY = "reactive"
 
 # Name discipline: reused from project slugs but a little looser (uppercase

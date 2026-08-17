@@ -43,13 +43,10 @@ Phase 1 backing stores are adapted, not replaced:
 
   * Project triggers live in the project registry, translated to/from the old
     `autonomy.mode {off, manual, continuous}` field.
-  * Agent triggers are READ from existing Letta metadata (`autonomy_mode`,
-    `cron_expression`, `event_sources`) and presented in trigger shape.
-
-The agent-side adapter is deliberately a thin seam: `agent_triggers(meta)` takes
-a metadata-shaped dict. Phase 2 swaps the backing store to markdown definition
-frontmatter by calling the same function with the frontmatter dict (same keys),
-so nothing downstream of the adapter changes.
+  * Agent triggers are read from a definition's frontmatter `triggers:` list
+    via `definition_triggers` below. An earlier Phase 1 adapter read the same
+    shape (`autonomy_mode`, `cron_expression`, `event_sources`) straight off
+    Letta metadata; it was never called from anywhere and was removed.
 """
 from __future__ import annotations
 
@@ -345,40 +342,19 @@ def triggers_to_preset(triggers: list[dict] | None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Agent adapter — Letta metadata (Phase 1) -> triggers
-# ---------------------------------------------------------------------------
-# Phase 2 will call this same function with definition frontmatter instead of
-# Letta metadata; the accepted keys (autonomy_mode / cron_expression /
-# event_sources) are intentionally identical so the seam is a no-op swap.
-
-def agent_triggers(meta: dict | None) -> list[dict]:
-    """Present an agent's autonomy metadata as a trigger list. Reads
-    `autonomy_mode` (off|scheduled|event-driven|continuous), `cron_expression`,
-    and `event_sources`.
-
-    Phase 1 read path, kept for agents not yet migrated to a definition file
-    (their triggers still live on Letta metadata). Phase 2's source of record is
-    `definition_triggers` below; the two produce the same normalized shape."""
-    meta = meta or {}
-    mode = meta.get("autonomy_mode") or meta.get("autonomy") or "off"
-    out: list[dict] = []
-    if mode == "scheduled":
-        out.append(make_trigger("cron", cron_expression=meta.get("cron_expression") or ""))
-    elif mode == "event-driven":
-        out.append(make_trigger("event", event_sources=list(meta.get("event_sources") or [])))
-    elif mode == "continuous":
-        out.append(make_trigger("loop"))
-    # off -> no automatic trigger; the agent still runs on manual invocation.
-    return out
-
-
-# ---------------------------------------------------------------------------
 # Agent adapter — definition frontmatter (Phase 2 backing store) -> triggers
 # ---------------------------------------------------------------------------
 # Phase 2 swaps the agent-side backing store from Letta metadata to markdown
 # definition frontmatter. The frontmatter already stores triggers in normalized
-# shape under a `triggers:` list, so the adapter is a normalize pass — the same
-# output shape as `agent_triggers`, so nothing downstream of the adapter changes.
+# shape under a `triggers:` list, so the adapter is a normalize pass.
+#
+# A Phase 1 sibling of this adapter, `agent_triggers(meta)`, used to read
+# `autonomy_mode`/`cron_expression`/`event_sources` straight off Letta
+# metadata for agents not yet migrated to a definition file. It had no
+# callers — the live inline readers of that same Letta metadata shape are
+# `services/event_dispatch.py` and `routes/agents.py`, neither of which ever
+# called through this module — so it was deleted rather than kept as an
+# unused adapter nothing exercises.
 
 def definition_triggers(defn: dict | None) -> list[dict]:
     """Read the `triggers` list from an agent definition's frontmatter (or a
@@ -434,6 +410,15 @@ def effective_autonomy(agent_slug: str, *, registry=None, override=None) -> str:
     return "reactive"
 
 
+# CANONICAL for this file and services/deploys.py, which imports it rather
+# than restating it (coherence-overhaul-2026-08-16 T5). Two further copies
+# remain outside this module's reach: db/models.py's own `AGENT_AUTONOMY` (the
+# DB CHECK constraint's source) and services/agents_registry.py's `AUTONOMY`.
+# Neither file is owned here, and as of this pass db/models.py is mid-rewrite
+# by another agent (its own AGENT_AUTONOMY was mid-move and briefly
+# undefined), so pointing this module at it now would couple a stable file to
+# an in-flux one. The remaining two-way collapse is left for whoever lands
+# that schema work.
 AUTONOMY_MODES = ("reactive", "supervised", "autonomous")
 
 
