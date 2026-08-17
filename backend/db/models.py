@@ -99,10 +99,6 @@ PRIORITIES = ("urgent", "high", "medium", "low", "none")
 
 ACTOR_TYPES = ("user", "agent", "system")
 MEMBERSHIP_ROLES = ("owner", "admin", "member")
-AGENT_ROLES = ("maker", "reviewer", "triager", "keeper", "broker")
-AGENT_AUTONOMY = ("reactive", "supervised", "autonomous")
-RUN_STATUSES = ("queued", "running", "blocked", "done", "failed", "cancelled")
-RUN_TRIGGERS = ("manual", "cron", "event", "loop")
 EFFORTS = ("quick", "standard", "deep")
 
 # Where a ticket came from. The JSON store's `source.kind`, which took exactly
@@ -339,8 +335,6 @@ class Ticket(Base, Timestamps, SoftDelete):
         SAEnum(*PRIORITIES, name="ticket_priority"),
         nullable=False, server_default="none")
     effort: Mapped[str | None] = mapped_column(String(16))
-    sort_order: Mapped[float] = mapped_column(Float, nullable=False,
-                                              server_default="65535")
 
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("ticket.id", ondelete="SET NULL"))
@@ -413,10 +407,10 @@ class Ticket(Base, Timestamps, SoftDelete):
 
     # Worker runs spent, and the counter the cap is enforced against
     # (services/tasks.py `reclaim`, project_ralph.sh:856). It was briefly
-    # derived from `count(run)` instead; nothing has written `run` since the
-    # one-shot backfill, so the derived value could only ever go stale and the
-    # cap became unenforceable. It is a stored counter again, seeded from that
-    # run count so the correction the derivation made is kept.
+    # derived from `count(run)` instead, against a Postgres `run` table that
+    # nothing wrote after the one-shot backfill, so the derived value could
+    # only ever go stale and the cap became unenforceable. It is a stored
+    # counter again; `run` itself is gone (T4, coherence-overhaul-2026-08-16).
     attempts: Mapped[int] = mapped_column(Integer, nullable=False,
                                           server_default="0")
 
@@ -434,6 +428,25 @@ class Ticket(Base, Timestamps, SoftDelete):
     # `user_account` for when assignment means a person, and most delegates
     # today are agents that have no user row at all.
     assignee: Mapped[str | None] = mapped_column(String(64))
+
+    # --- the claim fields (2026-08-17) --------------------------------------
+    # `job_ids`, `lease_until`, `last_heartbeat` and `claim_pid` sat only in the
+    # compatibility read shape, DERIVED from the Postgres `run` table (the
+    # newest row's lease/heartbeat/pid, and the array of every run's
+    # `legacy_job_id`). `run` had zero readers and one writer, the one-shot
+    # backfill, so the derivation could only freeze -- exactly the class of bug
+    # e9c4a71f0d38 fixed for latitude/max_attempts/attempts/awaiting/assignee.
+    # `tasks.claim()` and `tasks.heartbeat()` write all four of these on every
+    # claim of a ticket in a relational scope, through the same `PATCH
+    # /tasks/{id}` -> `_persist` -> `ticket_sync.mirror` path as everything
+    # else on this record, and `ticket_sync` was not tracking any of them --
+    # so a claim's own lease/heartbeat/pid/job-id landed nowhere. Real columns
+    # now, matching the JSON store's own field names 1:1 so there is one
+    # definition of what a ticket's claim looks like, not two.
+    job_ids: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claim_pid: Mapped[int | None] = mapped_column(Integer)
 
     __table_args__ = (
         CheckConstraint(f"effort IS NULL OR {_one_of('effort', EFFORTS)}",
@@ -521,7 +534,11 @@ class TicketLabel(Base):
 
 class Comment(Base, Timestamps, SoftDelete):
     """Mutable user content. Distinct from `ticket_event`, which is immutable
-    history. An agent can author a comment; that is what `author_type` is for."""
+    history. `author_type` can still name `agent`; there is no `agent` table
+    to point an id at (T4, coherence-overhaul-2026-08-16 -- it had zero reads
+    and zero writes), so an agent-authored comment is `system`, the same as
+    any other machine-written one, until something actually identifies agents
+    to this schema."""
     __tablename__ = "comment"
 
     id: Mapped[uuid.UUID] = _pk()
@@ -532,11 +549,10 @@ class Comment(Base, Timestamps, SoftDelete):
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("comment.id", ondelete="CASCADE"))
     author_type: Mapped[str] = mapped_column(String(16), nullable=False)
-    # Nullable because a `system` author has no row to point at.
+    # Nullable because a `system` (or `agent`, see above) author has no row to
+    # point at.
     author_user_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("user_account.id", ondelete="SET NULL"))
-    author_agent_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("agent.id", ondelete="SET NULL"))
     body: Mapped[str] = mapped_column(Text, nullable=False)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -570,10 +586,10 @@ class TicketEvent(Base):
         PgUUID(as_uuid=True), ForeignKey("ticket.id", ondelete="CASCADE"),
         nullable=False)
     actor_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Nullable because a `system` (or `agent`; see `Comment.author_user_id`
+    # for why there is no `actor_agent_id`) actor has no row to point at.
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("user_account.id", ondelete="SET NULL"))
-    actor_agent_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("agent.id", ondelete="SET NULL"))
     verb: Mapped[str] = mapped_column(String(32), nullable=False)
     field: Mapped[str | None] = mapped_column(String(64))
     old_value: Mapped[str | None] = mapped_column(Text)
@@ -590,94 +606,16 @@ class TicketEvent(Base):
 
 
 # --- execution ---------------------------------------------------------------
-
-class Agent(Base, Timestamps, SoftDelete):
-    __tablename__ = "agent"
-
-    id: Mapped[uuid.UUID] = _pk()
-    org_id: Mapped[uuid.UUID] = _org_fk()
-    slug: Mapped[str] = mapped_column(String(64), nullable=False)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str | None] = mapped_column(String(32))
-    autonomy: Mapped[str] = mapped_column(String(32), nullable=False,
-                                          server_default="reactive")
-
-    __table_args__ = (
-        CheckConstraint(f"role IS NULL OR {_one_of('role', AGENT_ROLES)}",
-                        name="ck_agent_role"),
-        CheckConstraint(_one_of("autonomy", AGENT_AUTONOMY), name="ck_agent_autonomy"),
-        Index("uq_agent_slug", "org_id", "slug", unique=True, postgresql_where=_ALIVE),
-    )
-
-
-class Run(Base, Timestamps):
-    """One execution attempt.
-
-    The claim and lease columns that used to sit on the ticket live here,
-    because they describe an execution and not a durable work item.
-    `ticket.attempts` becomes `count(run)`, which removes a hand-maintained
-    counter that had already produced a real bug.
-
-    All of them have now moved. `claim_token` is the monotonic fence the JSON
-    store hand-rolled to reject a resurrected zombie worker's late write:
-    `lease_expires_at` + `heartbeat_at` + `worker_pid` cover liveness, but not
-    compare-and-swap, and a held-but-unchecked token does not stop a late write
-    from a worker everyone else has given up on. It is a per-ticket generation
-    counter, so it lives on `ticket` as the allocator and is STAMPED here, on
-    the execution that holds it.
-    """
-    __tablename__ = "run"
-
-    id: Mapped[uuid.UUID] = _pk()
-    org_id: Mapped[uuid.UUID] = _org_fk()
-    ticket_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("ticket.id", ondelete="CASCADE"))
-    agent_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("agent.id", ondelete="SET NULL"))
-
-    # THE SWEEP THAT SPAWNED THIS RUN, and it is what carries ticket identity.
-    #
-    # A queue sweep works N tickets. The sweep run itself has no ticket -- it
-    # records counts -- and each ticket's actual work is a CHILD run that does
-    # carry `ticket_id`. Measured on the real log: every child run created since
-    # the mechanism landed on 2026-07-15 carries its ticket, 74 of 74, so this
-    # relation is how "which tickets did that sweep work" is answerable at all.
-    # The first cut of this schema dropped the edge, which would have quietly
-    # flattened every sweep back into a pair of integers.
-    parent_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
-
-    attempt_no: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
-    trigger: Mapped[str] = mapped_column(String(16), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)
-
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    exit_code: Mapped[int | None] = mapped_column(Integer)
-    summary: Mapped[str | None] = mapped_column(Text)
-
-    # The claim. A lease renewed by heartbeat, not a fixed wall-clock guess, so
-    # a healthy-but-slow worker is never reclaimed out from under itself.
-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    worker_pid: Mapped[int | None] = mapped_column(Integer)
-
-    # The generation this run claimed, compared against `ticket.claim_token` on
-    # every write. A run holding a stale one has been superseded and its writes
-    # are refused, which is what makes the fence a fence rather than a label.
-    claim_token: Mapped[int | None] = mapped_column(Integer)
-
-    legacy_job_id: Mapped[str | None] = mapped_column(String(64))
-
-    __table_args__ = (
-        CheckConstraint(_one_of("status", RUN_STATUSES), name="ck_run_status"),
-        CheckConstraint(_one_of("trigger", RUN_TRIGGERS), name="ck_run_trigger"),
-        CheckConstraint("parent_id IS NULL OR parent_id <> id",
-                        name="ck_run_not_own_parent"),
-        Index("ix_run_ticket", "ticket_id", "started_at"),
-        Index("ix_run_parent", "parent_id", "started_at"),
-        Index("ix_run_org_started", "org_id", "started_at"),
-        Index("ix_run_legacy", "legacy_job_id"),
-    )
+# `Agent` and `Run` lived here and are gone (T4, coherence-overhaul-2026-08-16,
+# migration def2cbf58df8). `agent` had zero reads and zero writes ever,
+# with three inbound FKs that could never be non-NULL. `run` had 2,753 rows and
+# zero readers once e9c4a71f0d38 stopped deriving `ticket.attempts` from it; it
+# was written only by the one-shot `db/backfill.py`, and had already diverged
+# (`max(started_at)` 2026-08-05 against a live queue that kept moving). What
+# either table's live writers actually needed a home for --
+# `ticket.job_ids`/`lease_until`/`last_heartbeat`/`claim_pid` -- moved onto
+# `Ticket` itself, next to `attempts`/`awaiting`/`assignee`, which got the same
+# treatment one migration earlier for the same reason.
 
 
 # --- chat --------------------------------------------------------------------
@@ -762,7 +700,20 @@ class ChatThread(Base, Timestamps, SoftDelete):
                                       server_default="orchestrated")
 
     title: Mapped[str | None] = mapped_column(String(255))
-    title_source: Mapped[str | None] = mapped_column(String(16))
+    # `title_source` and `pre_plan_permission_mode` and `mcp_servers_enabled`
+    # lived here and are gone (T4, coherence-overhaul-2026-08-16, migration
+    # def2cbf58df8). All three were dead in this table specifically:
+    # `chat_repo.sync_thread_fields`, the one live mirror from the file store
+    # into `chat_thread`, never included any of the three in its UPDATE, so
+    # none of them was kept current past a thread's creation, and two of them
+    # (`mcp_servers_enabled`, `pre_plan_permission_mode`) were never written
+    # here even once -- `chat_repo.create_thread`'s own `allowed` field list
+    # did not carry them either. `title_source` was written exactly once, by
+    # the one-shot `db/chat_backfill.py`. This is a gap in the relational
+    # mirror, not evidence the concepts are unwanted: `services/chat_store.py`
+    # still tracks all three in the file store today. Re-add them to
+    # `chat_repo` (T2/T3 territory, not T4) if and when they need to be read
+    # back out of Postgres rather than dropped a second time.
     # The first user message, truncated. Stands in until naming succeeds, and
     # naming failing silently behind it is a known open defect, so it is a
     # separate column rather than a title that lies about being one.
@@ -771,10 +722,6 @@ class ChatThread(Base, Timestamps, SoftDelete):
     model: Mapped[str | None] = mapped_column(String(64))
     effort: Mapped[str | None] = mapped_column(String(16))
     permission_mode: Mapped[str | None] = mapped_column(String(32))
-    pre_plan_permission_mode: Mapped[str | None] = mapped_column(String(32))
-    # NULL means ALL servers, which is not the same as none of them. A nullable
-    # array carries that distinction; a join table would need a sentinel row.
-    mcp_servers_enabled: Mapped[list[str] | None] = mapped_column(ARRAY(String(64)))
     agent_slug: Mapped[str | None] = mapped_column(String(64))
 
     # chat_thread and chat_branch reference each other, so this FK is added

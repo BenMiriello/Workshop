@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime, timezone
 
 import pytest
 
@@ -89,15 +88,6 @@ def _rows(scope):
     from db import repo
     return {t["id"]: t for t in repo.list_tickets(scope["org"],
                                                   scope=scope["slug"])}
-
-
-def _run(session, scope, **kw):
-    from db.ids import uuid7
-    from db.models import Run
-    r = Run(id=uuid7(), org_id=scope["org"], trigger="loop", status="done", **kw)
-    session.add(r)
-    session.flush()
-    return r.id
 
 
 def test_a_new_ticket_is_inserted_and_a_second_pass_changes_nothing(scope):
@@ -190,19 +180,21 @@ def test_comments_round_trip_by_their_legacy_id(scope):
 
 
 def test_an_assistant_comment_is_system_not_a_user(scope):
-    """`ck_comment_actor_is_consistent` forbids an `agent` author with no agent
-    id, and the JSON store names no agent. `user` would claim a person wrote
-    it, which is the one answer that is simply false."""
+    """There is no `agent` identity to name (T4: `comment.author_agent_id` is
+    gone, zero writes ever) and the JSON store names no agent either --
+    `ck_comment_actor_is_consistent` forbids a `user` author with no user id,
+    and `user` would claim a person wrote it, which is the one answer that is
+    simply false."""
     from db.engine import tenant_session
 
     _mirror(scope, [_task("t1", comments=[
         {"id": "c1", "author": "assistant", "text": "x"}])])
     with tenant_session(scope["org"]) as s:
         row = s.execute(text(
-            "SELECT author_type, author_user_id, author_agent_id FROM comment "
+            "SELECT author_type, author_user_id FROM comment "
             " WHERE external_id = 'c1'")).one()
     assert row.author_type == "system"
-    assert row.author_user_id is None and row.author_agent_id is None
+    assert row.author_user_id is None
 
 
 def test_an_unknown_root_is_skipped_rather_than_guessed(tmp_path):
@@ -280,9 +272,8 @@ def test_the_preserved_fields_round_trip(scope):
 
 
 def test_blocked_reason_changing_is_recorded_but_a_claim_token_bump_is_not(scope):
-    """History is a feed a person reads. A claim bump is execution bookkeeping
-    that `run` records properly, and putting it here would bury the changes that
-    matter."""
+    """History is a feed a person reads. A claim bump is execution bookkeeping,
+    and putting it here would bury the changes that matter."""
     from db.engine import tenant_session
 
     _mirror(scope, [_task("t1", blocked_reason="one", claim_token=1)])
@@ -348,34 +339,59 @@ def test_labels_are_shared_per_project_and_the_join_is_what_changes(scope):
     assert rows["t1"]["labels"] == [] and rows["t2"]["labels"] == ["design"]
 
 
-def test_attempts_is_the_stored_counter_and_not_a_run_count(scope):
-    """It USED to be `count(run WHERE started_at IS NOT NULL)`, and that
-    derivation was a real correction: the hand-maintained counter had drifted
-    below the true run count on 11 of 98 live tickets.
+def test_attempts_is_the_stored_counter_not_a_derivation(scope):
+    """It USED to be `count(run WHERE started_at IS NOT NULL)`, against a
+    Postgres `run` table (T4: dropped outright, zero readers left once this
+    derivation stopped). That derivation was a real correction when it landed
+    — the hand-maintained counter had drifted below the true run count on 11
+    of 98 live tickets — but it was unsustainable: nothing wrote `run` past
+    the one-shot backfill, so the derived value could only freeze, and a
+    ticket filed after the backfill could never leave zero, while
+    `tasks.reclaim` and `project_ralph.sh:856` enforce the retry cap against
+    it. A cap that can never be reached is not a cap.
 
-    It was also unsustainable, because nothing writes `run` — the newest row in
-    that table is the one-shot backfill's. So the derived value could only
-    freeze, and a ticket filed after the backfill could never leave zero, while
-    `tasks.reclaim` and `project_ralph.sh:856` enforce the retry cap against it.
-    A cap that can never be reached is not a cap.
-
-    The counter is stored again (`e9c4a71f0d38` seeded it from that same run
-    count, keeping the correction), and run rows do not move it. This test
-    writes runs precisely so that they are seen NOT to.
+    The counter is stored again (`e9c4a71f0d38`): only the writer's own value
+    moves it.
     """
-    from db.engine import tenant_session
-
     _mirror(scope, [_task("t1", attempts=2)])
-    with tenant_session(scope["org"]) as s:
-        pk = s.execute(text("SELECT id FROM ticket WHERE external_id = 't1'")).scalar()
-        _run(s, scope, ticket_id=pk, started_at=datetime.now(timezone.utc))
-        _run(s, scope, ticket_id=pk, started_at=datetime.now(timezone.utc))
-        _run(s, scope, ticket_id=pk)          # queued, never started
     assert _rows(scope)["t1"]["attempts"] == 2
 
-    # And the writer's own increment is what moves it, which is the point.
     _mirror(scope, [_task("t1", attempts=3)])
     assert _rows(scope)["t1"]["attempts"] == 3
+
+
+def test_the_claim_fields_round_trip_and_a_heartbeat_alone_is_not_dropped(scope):
+    """`job_ids`/`lease_until`/`last_heartbeat`/`claim_pid` used to be derived
+    from the (now-deleted) `run` table; T4 (def2cbf58df8) made them plain
+    columns, TRACKED like `attempts`/`awaiting`. Written on every claim by
+    `tasks.claim()`/`tasks.heartbeat()`, same as `attempts`/`claim_token` --
+    and, critically, a write that changes ONLY one of these four (a bare
+    heartbeat renewal, no other field moving) must still issue an UPDATE, or
+    the second heartbeat freezes at the first one forever.
+    """
+    when = "2026-08-17T12:00:00+00:00"
+    _mirror(scope, [_task("t1", job_ids=["job-1"], lease_until=when,
+                          last_heartbeat=when, claim_pid=777)])
+    row = _rows(scope)["t1"]
+    assert row["job_ids"] == ["job-1"]
+    assert row["lease_until"] == when
+    assert row["last_heartbeat"] == when
+    assert row["claim_pid"] == 777
+
+    # A heartbeat renewal: same job_ids/lease/pid, only last_heartbeat moves.
+    later = "2026-08-17T12:05:00+00:00"
+    stats = _mirror(scope, [_task("t1", job_ids=["job-1"], lease_until=when,
+                                  last_heartbeat=later, claim_pid=777)])
+    assert stats["updated"] == 1
+    assert _rows(scope)["t1"]["last_heartbeat"] == later
+
+    # It is bookkeeping, not something a person reads a feed for.
+    from db.engine import tenant_session
+    with tenant_session(scope["org"]) as s:
+        fields = s.execute(text(
+            "SELECT field FROM ticket_event WHERE verb = 'changed'")).scalars().all()
+    assert "last_heartbeat" not in fields
+    assert "job_ids" not in fields
 
 
 def test_a_ticket_keeps_its_own_timestamps_not_the_migrations(scope):

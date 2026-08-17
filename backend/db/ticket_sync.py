@@ -74,12 +74,21 @@ _TRACKED = ("title", "body", "status", "priority", "effort", "type", "parent",
             # that is written on the insert and left out here lands once and is
             # frozen forever after. A ticket's first block would save and every
             # later change to it would be silently dropped.
-            "latitude", "max_attempts", "attempts", "awaiting", "assignee")
+            "latitude", "max_attempts", "attempts", "awaiting", "assignee",
+            # The claim fields (def2cbf58df8, T4). Same reasoning, same bug
+            # class: `tasks.claim()`/`tasks.heartbeat()` write these on every
+            # claim of a relational-scope ticket, and until this tuple named
+            # them the mirror silently dropped every one — a claim landed on
+            # the insert row and every renewal after it was lost. `job_ids`
+            # used to be derived from the (now-deleted) `run` table's
+            # `legacy_job_id` column; `lease_until`/`last_heartbeat`/
+            # `claim_pid` from that table's newest row for this ticket.
+            "job_ids", "lease_until", "last_heartbeat", "claim_pid")
 
 # Of those, the ones worth a history row when they change. A `spec_hash` moving
 # is a restatement of a title or body change already recorded, and a
-# `claim_token` bump is an execution event that `run` records properly, so
-# writing history for either would be noise in the feed that history is for.
+# `claim_token` bump is execution bookkeeping, so writing history for either
+# would be noise in the feed that history is for.
 #
 # `assignee`, `latitude` and `max_attempts` join it: each is a deliberate
 # operator decision about how the ticket is to be worked, which is the same kind
@@ -87,6 +96,9 @@ _TRACKED = ("title", "body", "status", "priority", "effort", "type", "parent",
 # moves on every claim (execution bookkeeping, the same reason `claim_token` is
 # excluded) and `awaiting` is a nested record whose changes the inbox already
 # surfaces properly, so stringifying it into a history row would bury the feed.
+# The claim fields are the same kind of bookkeeping as `attempts`: a heartbeat
+# fires every few seconds while a worker runs, and a history row per heartbeat
+# would drown the feed in noise nobody reads.
 _HISTORIC = ("title", "body", "status", "priority", "effort", "type",
              "blocked_reason", "assignee", "latitude", "max_attempts")
 
@@ -253,6 +265,16 @@ def _legacy_view(task: dict) -> dict:
         # unassigned, which is claimable by any scope and not the same thing.
         "assignee": (str(task.get("assignee")).strip()[:64] or None
                      if task.get("assignee") else None),
+        # --- the claim fields (def2cbf58df8) --------------------------------
+        # Written by `tasks.claim()`/`tasks.heartbeat()`/`tasks.reclaim()`,
+        # same as `attempts`/`claim_token`. `job_ids` is append-only in the
+        # source (`tasks.claim` only ever appends), so comparing the whole
+        # list is equivalent to comparing its last element and is simpler.
+        "job_ids": [str(j) for j in (task.get("job_ids") or []) if j] or None,
+        "lease_until": _ts(task.get("lease_until")),
+        "last_heartbeat": _ts(task.get("last_heartbeat")),
+        "claim_pid": (int(task["claim_pid"])
+                      if isinstance(task.get("claim_pid"), int) else None),
     }
 
 
@@ -281,6 +303,10 @@ def _row_view(row) -> dict:
         "attempts": m["attempts"] or 0,
         "awaiting": m["awaiting"] or None,
         "assignee": m["assignee"],
+        "job_ids": list(m["job_ids"]) if m["job_ids"] else None,
+        "lease_until": m["lease_until"],
+        "last_heartbeat": m["last_heartbeat"],
+        "claim_pid": m["claim_pid"],
     }
 
 
@@ -290,7 +316,8 @@ SELECT t.id, t.external_id, t.title, t.body, t.priority::text AS priority,
        parent.external_id AS parent_legacy,
        t.source_kind, t.source_ref, t.spec_hash, t.touches, t.blocked_reason,
        t.acceptance, t.claim_token,
-       t.latitude, t.max_attempts, t.attempts, t.awaiting, t.assignee
+       t.latitude, t.max_attempts, t.attempts, t.awaiting, t.assignee,
+       t.job_ids, t.lease_until, t.last_heartbeat, t.claim_pid
   FROM ticket t
   JOIN workflow_state ws ON ws.id = t.state_id
   LEFT JOIN ticket_type ty ON ty.id = t.type_id
@@ -442,12 +469,13 @@ def _sync_history(s, org_id, ticket_pk, task: dict) -> int:
 def _author(value: str | None, user_id) -> tuple[str, Any]:
     """A legacy comment author string as an actor type, plus its actor id.
 
-    "assistant" maps to `system`, NOT to `agent`, and a constraint is what
-    settled it. `ck_comment_actor_is_consistent` requires an `agent` author to
-    name WHICH agent, which is the whole reason that constraint exists: 117 rows
-    once claimed an actor with no actor id. The JSON store recorded the literal
-    word "assistant" and no identity, so there is no agent to name and `system`
-    (a machine, unattributed) is the honest slot.
+    "assistant" maps to `system`, NOT to `agent`. There is no `comment` column
+    left that could name WHICH agent (`author_agent_id` was dropped in
+    def2cbf58df8, T4: zero writes, ever) and the JSON store records only the
+    literal word "assistant", no identity, so `system` (a machine,
+    unattributed) is the honest slot regardless. Before `author_agent_id` was
+    dropped, `ck_comment_actor_is_consistent` made the same call structural:
+    117 rows once claimed an actor with no actor id.
 
     `operator` is the human, and it must carry a user id for the same reason.
     `user` with a null id -- what the first backfill produced for these rows --
@@ -646,11 +674,13 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                     "source_kind, source_ref, spec_hash, touches, "
                     "blocked_reason, acceptance, claim_token, "
                     "latitude, max_attempts, attempts, awaiting, assignee, "
+                    "job_ids, lease_until, last_heartbeat, claim_pid, "
                     "created_at, updated_at, "
                     "external_source, external_id) VALUES (:i, :o, :p, :n, :ti, "
                     ":bo, :st, :ty, CAST(:pr AS ticket_priority), :ef, :cl, "
                     ":sk, :sr, :sh, :tc, :br, CAST(:ac AS jsonb), :ct, "
                     ":lat, :mx, :at, CAST(:aw AS jsonb), :asg, "
+                    ":jid, :lu, :lh, :cpid, "
                     "COALESCE(:ca, now()), COALESCE(:ua, now()), "
                     "'workshop-json', :ex)"),
                     {"i": uuid7(), "o": org_id, "p": project_id, "n": number,
@@ -665,6 +695,8 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                      "lat": want["latitude"], "mx": want["max_attempts"],
                      "at": want["attempts"], "aw": _json(want["awaiting"]),
                      "asg": want["assignee"],
+                     "jid": want["job_ids"], "lu": want["lease_until"],
+                     "lh": want["last_heartbeat"], "cpid": want["claim_pid"],
                      # THE TICKET'S OWN TIMESTAMPS, not the row's. Without these
                      # the migration relabels the whole backlog as created and
                      # modified at the moment it ran, and `updated` is what
@@ -694,6 +726,8 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                 "blocked_reason = :br, acceptance = CAST(:ac AS jsonb), "
                 "claim_token = :ct, latitude = :lat, max_attempts = :mx, "
                 "attempts = :at, awaiting = CAST(:aw AS jsonb), assignee = :asg, "
+                "job_ids = :jid, lease_until = :lu, last_heartbeat = :lh, "
+                "claim_pid = :cpid, "
                 "updated_at = COALESCE(:ua, now()), "
                 "created_at = COALESCE(:ca, created_at) WHERE id = :i"),
                 {"ti": want["title"][:255] or "(untitled)", "bo": want["body"],
@@ -708,6 +742,8 @@ def _mirror(org_id, user_id, slug: str, tasks: list[dict], stats: dict) -> dict:
                  "lat": want["latitude"], "mx": want["max_attempts"],
                  "at": want["attempts"], "aw": _json(want["awaiting"]),
                  "asg": want["assignee"],
+                 "jid": want["job_ids"], "lu": want["lease_until"],
+                 "lh": want["last_heartbeat"], "cpid": want["claim_pid"],
                  "ua": _ts(task.get("updated")),
                  "ca": _ts(task.get("created")),
                  "i": ticket_id})

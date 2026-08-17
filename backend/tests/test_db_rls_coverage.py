@@ -26,8 +26,26 @@ MIGRATIONS = Path(__file__).resolve().parents[1] / "db" / "migrations" / "versio
 INITIAL = MIGRATIONS / "966ddcaa35ae_initial_work_schema.py"
 
 
+def _upgrade_section(source: str) -> str:
+    """The text of `def upgrade(): ...`, up to `def downgrade(` or EOF.
+
+    A migration's `downgrade()` recreates tables `upgrade()` drops (T4,
+    coherence-overhaul-2026-08-16, migration def2cbf58df8, dropped `agent`
+    and `run`): it has its own `op.create_table(...)` calls naming them right
+    back. Scanning the whole file for `op.drop_table` would see `upgrade()`'s
+    real drop AND `downgrade()`'s mirror-image drop of everything ELSE (every
+    `downgrade()` in this tree tears its own `upgrade()` back down), and the
+    second kind would wrongly subtract every currently-live table from
+    `_tables_in_migration()`'s result. Only `upgrade()`'s drops are real.
+    """
+    m = re.search(r"^def upgrade\b.*?(?=^def downgrade\b|\Z)", source,
+                  re.S | re.M)
+    return m.group(0) if m else ""
+
+
 def _tables_in_migration() -> set[str]:
-    """Every table any migration declares tenant-scoped.
+    """Every table any migration declares tenant-scoped, MINUS any a later
+    migration's `upgrade()` permanently dropped.
 
     EVERY migration, not just the initial one. This read the initial schema
     alone, which meant the check could not see a table added by a later
@@ -38,15 +56,23 @@ def _tables_in_migration() -> set[str]:
 
     The convention it enforces, and the reason a migration adding a
     tenant-scoped table must follow it: name the tuple `_TENANT_TABLES` and put
-    the table names in it as string literals.
+    the table names in it as string literals. A migration that DROPS a
+    tenant-scoped table (`op.drop_table` in `upgrade()`) is the other half of
+    the convention: without subtracting it here, a dropped table stays
+    "protected" forever in the union below while `db.models.TENANT_TABLES`
+    (derived from live metadata) stops naming it, and the two sets can never
+    agree again -- exactly what happened when `agent`/`run` were dropped.
     """
     found: set[str] = set()
+    dropped: set[str] = set()
     for path in sorted(MIGRATIONS.glob("*.py")):
-        for block in re.finditer(r"_TENANT_TABLES\s*=\s*\((.*?)\)",
-                                 path.read_text(), re.S):
+        source = path.read_text()
+        for block in re.finditer(r"_TENANT_TABLES\s*=\s*\((.*?)\)", source, re.S):
             found.update(re.findall(r'"([a-z_]+)"', block.group(1)))
+        dropped.update(re.findall(
+            r'op\.drop_table\(\s*["\']([a-z_]+)["\']', _upgrade_section(source)))
     assert found, "no migration declares _TENANT_TABLES"
-    return found
+    return found - dropped
 
 
 def test_every_org_scoped_table_has_a_policy_in_the_migration():

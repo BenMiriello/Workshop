@@ -15,10 +15,10 @@ keyed on `(external_source, external_id)` before relying on it for that.
     .venv/bin/python -m db.backfill --apply
 
 IDEMPOTENCY KEYS. Tickets carry `external_source='workshop-json'` plus their old
-uuid in `external_id`; runs carry `legacy_job_id`; users carry `legacy_user_id`;
-projects and agents match on slug. Those columns exist for external trackers and
-this is exactly that case: the JSON store is the external system being migrated
-from. No migration-only column was added.
+uuid in `external_id`; users carry `legacy_user_id`; projects match on slug.
+Those columns exist for external trackers and this is exactly that case: the
+JSON store is the external system being migrated from. No migration-only
+column was added.
 
 WHAT MAPS TO WHAT
 
@@ -29,11 +29,21 @@ WHAT MAPS TO WHAT
   `depends_on` / `relates_to` -> `ticket_link` rows
   `evidence` + `source`       -> `ticket_event` rows
   `comments`                  -> `comment` rows
-  jobs.jsonl                  -> `run` rows
+  latitude/max_attempts/attempts/awaiting/assignee/job_ids/lease_until/
+    last_heartbeat/claim_pid  -> `ticket` columns, direct (see `_exec_fields`)
 
 Deliberately NOT migrated here: chat threads and messages, notes, the personal
 stores. They are P6 and later, and folding them in would make this
 unreviewable.
+
+NO LONGER MIGRATED (def2cbf58df8, T4 of coherence-overhaul-2026-08-16): agents
+and `jobs.jsonl` into `run` rows. Both tables are gone -- `agent` had zero
+reads and zero writes ever, and `run` had 2,753 rows and zero readers once
+`ticket.attempts` stopped being derived from it (e9c4a71f0d38). The one thing
+either table's rows fed that anything still reads -- a ticket's own
+`job_ids`/claim state -- comes straight off the JSON ticket record now (see
+`_exec_fields`), the same place `latitude`/`attempts`/`awaiting`/`assignee`
+already came from below. `jobs.jsonl` itself is untouched by this script.
 """
 from __future__ import annotations
 
@@ -53,8 +63,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from db.engine import owner_session, tenant_session  # noqa: E402
 from db.ids import uuid7  # noqa: E402
 from db.models import (  # noqa: E402
-    RUN_STATUSES, RUN_TRIGGERS, Agent, Comment, Label, Membership, Organization,
-    Project, Run, Ticket, TicketEvent, TicketLabel, TicketLink, TicketType,
+    Comment, Label, Membership, Organization,
+    Project, Ticket, TicketEvent, TicketLabel, TicketLink, TicketType,
     UserAccount, WorkflowState,
 )
 
@@ -66,16 +76,59 @@ LEGACY = "workshop-json"
 # with this script. Three copies drifting is how a ticket changes status by
 # being read and written back.
 from db.legacy_map import STATES, TYPES, priority_band as _priority  # noqa: E402
+# The exact coercions `ticket_sync._legacy_view` uses for these six fields,
+# reused rather than restated: this script and the live mirror must not be
+# able to disagree about what a JSON ticket record's execution/claim state
+# means. `_positive_int_or_none`/`_non_negative_int` are "private" only in the
+# sense of not being re-exported; `ticket_sync` is this script's sibling in
+# the same package and the two already share `legacy_map` the same way.
+from db.ticket_sync import _non_negative_int, _positive_int_or_none  # noqa: E402
+from services.latitude import coerce as _latitude_coerce  # noqa: E402
 
 _STATUS_TOKENS = {row[0] for row in STATES}
+
+
+def _exec_fields(rec: dict) -> dict:
+    """The six execution/claim fields, straight off a JSON ticket record.
+
+    Every one of these is a plain field on the record already -- none of them
+    is derived from `jobs.jsonl` or from anything Run-shaped. `job_ids` in
+    particular looks like it should come from the job log, but `tasks.claim()`
+    appends to the ticket's OWN `job_ids` list on every claim (see
+    `services/tasks.py`), so the record already carries its own history.
+    `lease_until`/`last_heartbeat`/`claim_pid` are the same: whatever a live
+    claim looks like right now is exactly what the record says.
+    """
+    return {
+        "latitude": _latitude_coerce(rec.get("latitude")),
+        "max_attempts": _positive_int_or_none(rec.get("max_attempts")),
+        "attempts": _non_negative_int(rec.get("attempts")),
+        "awaiting": (rec.get("awaiting") or None)
+                    if isinstance(rec.get("awaiting"), dict) else None,
+        "assignee": (str(rec.get("assignee")).strip()[:64] or None
+                     if rec.get("assignee") else None),
+        "job_ids": [str(j) for j in (rec.get("job_ids") or []) if j] or None,
+        "lease_until": _iso(rec.get("lease_until")),
+        "last_heartbeat": _iso(rec.get("last_heartbeat")),
+        "claim_pid": (int(rec["claim_pid"])
+                      if isinstance(rec.get("claim_pid"), int) else None),
+    }
+
 
 # JSON fields with no column of their own. They are POPULATED (scoped_by 112,
 # provenance 56, touches 35, blocked_reason 23, acceptance 5, discovered_from 2)
 # and were silently discarded by the first version of this script. They are
 # preserved as ticket_event rows, which is what models.py always claimed
 # happened. Nothing is dropped without being counted in the run summary.
+#
+# `latitude`/`max_attempts` used to be here too, preserved only as an event
+# rather than a queryable field -- the same silent-drop this script's own
+# docstring now calls out for the execution/claim fields generally. Both get
+# real columns via `_exec_fields` instead, alongside `attempts`/`awaiting`/
+# `assignee`/`job_ids`/`lease_until`/`last_heartbeat`/`claim_pid`, none of
+# which were ever preserved even as an event.
 _PRESERVED = ("scoped_by", "provenance", "touches", "acceptance",
-              "discovered_from", "blocked_reason", "latitude", "max_attempts")
+              "discovered_from", "blocked_reason")
 
 SCOPES = [
     ("development", "Development", "DEV", ROOT),
@@ -100,22 +153,6 @@ def _load_tasks(store: Path) -> list[dict]:
     return payload.get("tasks", payload) if isinstance(payload, dict) else payload
 
 
-def _load_jobs(path: Path) -> list[dict]:
-    """Collapse the append-only log by id; later lines override earlier ones."""
-    if not path.exists():
-        return []
-    merged: dict[str, dict] = {}
-    for line in path.read_text().splitlines():
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        jid = rec.get("id")
-        if jid:
-            merged.setdefault(jid, {}).update(rec)
-    return list(merged.values())
-
-
 def _load_users(db: Path) -> list[dict]:
     if not db.exists():
         return []
@@ -129,8 +166,7 @@ def _load_users(db: Path) -> list[dict]:
 
 
 def plan() -> dict:
-    counts = {"users": len(_load_users(ROOT / ".runtime" / "auth.db")),
-              "runs": len(_load_jobs(ROOT / ".runtime" / "jobs.jsonl"))}
+    counts = {"users": len(_load_users(ROOT / ".runtime" / "auth.db"))}
     for key, _, _, store_dir in SCOPES:
         counts[f"tickets:{key}"] = len(_load_tasks(store_dir / ".tasks.json"))
     reg = ROOT / ".runtime" / "projects.json"
@@ -251,13 +287,16 @@ def apply() -> dict:
                     created_at=_iso(rec.get("created")),
                     updated_at=_iso(rec.get("updated")),
                     closed_at=closed,
-                    # `assignee` was the constant string "operator" on all 112
-                    # records, so it carried no information as a value, but the
-                    # ATTRIBUTION is real and there is exactly one user to
-                    # attribute it to.
+                    # `assignee_id` is ATTRIBUTION (a real person, an FK to
+                    # `user_account`), distinct from the `assignee` string
+                    # `_exec_fields` sets below (the DELEGATE the work model
+                    # spells `operator`/`agent:<slug>`/unassigned -- see
+                    # `Ticket.assignee`'s own docstring). There is exactly one
+                    # user to attribute authorship to in this installation.
                     assignee_id=sole_user,
                     created_by_id=sole_user,
                     external_source=LEGACY, external_id=legacy,
+                    **_exec_fields(rec),
                 )
                 s.add(t)
                 s.flush()
@@ -384,84 +423,9 @@ def apply() -> dict:
                                          kind=kind))
                         n_links += 1
 
-        # --- agents + runs ----------------------------------------------------
-        agents: dict[str, object] = {}
-        reg = ROOT / ".runtime" / "build_agents.json"
-        if reg.exists():
-            payload = json.loads(reg.read_text())
-            # The top-level key is `build_agents`. Falling back to the whole
-            # payload was a real bug: it iterated the single wrapper key and
-            # created one agent literally named "build_agents". No silent
-            # fallback here, so a renamed key fails loudly instead.
-            entries = payload.get("build_agents") or payload.get("agents") or {}
-            for slug in (entries if isinstance(entries, dict) else {}):
-                a = s.scalar(select(Agent).where(Agent.org_id == org_id,
-                                                 Agent.slug == slug))
-                if a is None:
-                    a = Agent(id=uuid7(), org_id=org_id, slug=slug, name=slug)
-                    s.add(a)
-                    s.flush()
-                agents[slug] = a.id
-
-        n_runs = 0
-        runs_by_legacy = {}
-        parent_of = {}
-        for job in _load_jobs(ROOT / ".runtime" / "jobs.jsonl"):
-            jid = str(job.get("id"))
-            if job.get("parent_id"):
-                parent_of[jid] = str(job["parent_id"])
-            existing = s.scalar(select(Run).where(Run.legacy_job_id == jid))
-            if existing:
-                runs_by_legacy[jid] = existing.id
-                continue
-            status = job.get("status")
-            if status == "awaiting_input":
-                status = "blocked"
-            elif status not in RUN_STATUSES:
-                # An UNKNOWN state is not a successful one. The first version
-                # coerced anything unrecognised to "done", which silently
-                # reports failed or half-finished work as complete. No live row
-                # hits this (all 2753 are done/failed/cancelled), so it is
-                # latent, and latent is exactly when to fix it.
-                dropped[f"run_status:{status}"] += 1
-                status = "failed"
-            trigger = job.get("trigger")
-            trigger = trigger if trigger in RUN_TRIGGERS else "manual"
-            run_id = uuid7()
-            runs_by_legacy[jid] = run_id
-            s.add(Run(
-                id=run_id, org_id=org_id,
-                ticket_id=tickets_by_legacy.get(str(job.get("task_id") or "")),
-                agent_id=agents.get(str(job.get("agent_id") or "")),
-                trigger=trigger, status=status,
-                started_at=_iso(job.get("started_at")),
-                ended_at=_iso(job.get("ended_at")),
-                exit_code=job.get("exit_code") if isinstance(job.get("exit_code"), int) else None,
-                summary=(json.dumps(job.get("evidence"))[:8000]
-                         if job.get("evidence") is not None else None),
-                legacy_job_id=jid,
-            ))
-            n_runs += 1
-
-        # SECOND PASS for the sweep -> child edge, because a child can be logged
-        # before the parent's own line and a forward reference cannot resolve on
-        # the first. Same reason `ticket.parent_id` needs one.
-        s.flush()
-        n_run_parents = 0
-        for jid, pid in parent_of.items():
-            child, parent = runs_by_legacy.get(jid), runs_by_legacy.get(pid)
-            if child is None or parent is None or child == parent:
-                if parent is None:
-                    dropped["run_parent_missing"] += 1
-                continue
-            s.execute(update(Run).where(Run.id == child)
-                        .values(parent_id=parent))
-            n_run_parents += 1
-
-        stats.update(run_parents=n_run_parents,
-                     tickets=n_tickets, links=n_links, labels=n_labels,
+        stats.update(tickets=n_tickets, links=n_links, labels=n_labels,
                      parents=n_parents, events=n_events, comments=n_comments,
-                     runs=n_runs, agents=len(agents), org=str(org_id))
+                     org=str(org_id))
         for field, count in sorted(preserved.items()):
             stats[f"preserved:{field}"] = count
         for reason, count in sorted(dropped.items()):

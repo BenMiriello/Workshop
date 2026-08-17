@@ -33,6 +33,15 @@ WHAT DELIBERATELY DIFFERS from the JSON record, and why:
               round-trip. `attempts` in particular was being re-derived here
               from `count(run)`, and nothing has written `run` since the
               one-shot backfill, so the retry cap it feeds was unenforceable.
+
+  RESTORED AGAIN 2026-08-17 (def2cbf58df8, T4 of coherence-overhaul-2026-08-16).
+              `job_ids`, `lease_until`, `last_heartbeat` and `claim_pid` were
+              the last four fields still DERIVED here instead of stored:
+              `job_ids` from every `run.legacy_job_id` against this ticket,
+              the other three from the newest `run` row's lease/heartbeat/pid.
+              `run` is gone (2,753 rows, zero readers, one writer — the same
+              one-shot backfill). All four are now plain columns on `ticket`,
+              read directly below with no join.
 """
 from __future__ import annotations
 
@@ -122,45 +131,26 @@ SELECT
   (SELECT e.new_value FROM ticket_event e
     WHERE e.ticket_id = t.id AND e.verb = 'scoped'
     ORDER BY e.created_at LIMIT 1) AS scoped_by,
-  -- `attempts` WAS derived here as `count(run WHERE started_at IS NOT NULL)`.
-  -- That derivation was a real correction when it landed — 11 of 98 live
-  -- tickets stored a counter BELOW their true run count — but it assumed
-  -- something that never became true: that `run` would be written. Nothing
-  -- writes it (the newest row is the 2026-08-14 backfill), so the value could
-  -- only freeze, and a ticket created after the backfill could never leave
-  -- zero. The cap in `tasks.reclaim` and `project_ralph.sh:856` is enforced
-  -- against this number, so a frozen value is a cap that never fires.
-  --
-  -- It is a stored column again (e9c4a71f0d38), SEEDED from that same run count
-  -- so the correction is kept rather than thrown away, and `tasks.claim` owns
-  -- the increment. `job_ids` below still derives from `run` and has the same
-  -- staleness; it feeds no cap, and removing `run` is T4.
-  COALESCE((SELECT array_agg(r.legacy_job_id ORDER BY r.started_at)
-            FROM run r
-            WHERE r.ticket_id = t.id AND r.legacy_job_id IS NOT NULL), '{}')
-    AS job_ids,
+  -- `attempts` was derived here as `count(run WHERE started_at IS NOT NULL)`
+  -- until e9c4a71f0d38 made it a stored column again, seeded from that same
+  -- count. `job_ids`/`lease_until`/`last_heartbeat`/`claim_pid` got the same
+  -- treatment in def2cbf58df8 (T4): plain columns, no join, `run` itself gone.
+  t.job_ids                  AS job_ids,
   COALESCE((SELECT array_agg(d.external_id ORDER BY d.external_id)
             FROM ticket_link l JOIN ticket d ON d.id = l.to_ticket_id
             WHERE l.from_ticket_id = t.id AND l.kind = 'discovered_from'
               AND l.deleted_at IS NULL), '{}') AS discovered_from,
-  -- The live claim, from the ticket's most recent run. These sat on the ticket
-  -- in the JSON store and describe an EXECUTION, so they moved to `run`; the
-  -- compatibility shape puts them back where `reclaim` expects to find them.
-  -- Dormant today (`_is_stale_claim` returns early unless a ticket is `doing`,
-  -- and nothing is), but wrong-by-omission the moment the runner starts.
-  lr.lease_expires_at        AS lease_until,
-  lr.heartbeat_at            AS last_heartbeat,
-  lr.worker_pid              AS claim_pid
+  -- The live claim. Dormant today (`_is_stale_claim` returns early unless a
+  -- ticket is `doing`, and reclaim() does not consult the relational store at
+  -- all yet), but wrong-by-omission the moment either changes.
+  t.lease_until               AS lease_until,
+  t.last_heartbeat            AS last_heartbeat,
+  t.claim_pid                 AS claim_pid
 FROM ticket t
 JOIN project p         ON p.id  = t.project_id
 JOIN workflow_state ws ON ws.id = t.state_id
 LEFT JOIN ticket_type ty ON ty.id = t.type_id
 LEFT JOIN ticket parent  ON parent.id = t.parent_id
-LEFT JOIN LATERAL (
-    SELECT r.lease_expires_at, r.heartbeat_at, r.worker_pid
-      FROM run r WHERE r.ticket_id = t.id
-     ORDER BY r.started_at DESC NULLS LAST LIMIT 1
-) lr ON true
 WHERE t.deleted_at IS NULL
 """
 

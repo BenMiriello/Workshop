@@ -455,7 +455,6 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
     # --- messages ------------------------------------------------------------
     held: dict[str, list[dict]] = {}
     title = fields["title"]
-    title_source = None
 
     def emit_user(ev: dict) -> None:
         chat_repo.append_message(
@@ -476,7 +475,6 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
         kind = ev.get("kind")
         if kind == "title":
             title = ev.get("title") or title
-            title_source = ev.get("source") or title_source
             continue
         if kind == "run":
             continue
@@ -565,11 +563,13 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
         # LAST, so it wins over sync_thread_fields's `f["title"]`: `title`
         # here was walked off the log's own `title` events (auto-naming, a
         # manual rename), which is more precise than meta.json's own field
-        # ever needs to be ahead of, and it is the only source for
-        # `title_source`, which meta.json does not carry at all.
-        s.execute(text(
-            "UPDATE chat_thread SET title = :ti, title_source = :src WHERE id = :t"),
-            {"ti": title[:255], "src": title_source, "t": tid})
+        # ever needs to be ahead of. `title_source` used to be recorded here
+        # too; the column is gone (T4, coherence-overhaul-2026-08-16,
+        # migration def2cbf58df8 -- this was its only writer, and the live
+        # mirror in chat_repo.sync_thread_fields never carried it either, so
+        # nothing else in the tree read it back out of Postgres).
+        s.execute(text("UPDATE chat_thread SET title = :ti WHERE id = :t"),
+                  {"ti": title[:255], "t": tid})
 
 
 def plan() -> dict:
