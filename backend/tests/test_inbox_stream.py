@@ -130,17 +130,20 @@ def test_presets_resolve_to_an_hour_and_to_tomorrow_morning(store):
 
 
 def test_the_endpoint_snoozes_and_the_listing_stops_showing_it(client, store):
+    # GET /inbox had zero callers (the chat Work panel reads through
+    # useChatWork's poller against the per-item endpoints, not this whole-list
+    # read) and was deleted (coherence-overhaul-2026-08-16 T5), so this checks
+    # the snooze endpoint's effect the way the surviving callers observe it:
+    # through `inbox.list_items`/`counts`, not a second HTTP round trip.
     item = inbox.raise_item(kind="question", agent="a", scope="workshop", title="Which store?")
-    assert len(client.get("/api/inbox").json()["items"]) == 1
+    assert len(inbox.list_items()) == 1
 
     r = client.post(f"/api/inbox/{item['id']}/snooze", json={"preset": "hour"})
     assert r.status_code == 200, r.text
     assert r.json()["snoozed_until"]
 
-    body = client.get("/api/inbox").json()
-    assert body["items"] == []
-    assert body["counts"] == {"notify": 0, "question": 0, "review": 0}
-    assert body["global_counts"] == {"notify": 0, "question": 0, "review": 0}
+    assert inbox.list_items() == []
+    assert inbox.counts() == {"notify": 0, "question": 0, "review": 0}
 
 
 def test_snoozing_a_missing_item_is_a_404(client, store):

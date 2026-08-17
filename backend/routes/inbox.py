@@ -1,7 +1,12 @@
 """Inbox routes: what agents need from the operator.
 
-Global store, per-chat filter. `GET /api/inbox` with no scope is the whole
-inbox; with `chat_id` it is what that chat should show inline.
+Global store, per-chat filter. The chat Work panel reaches this router at
+`POST /api/inbox/{id}/snooze` and `POST /api/inbox/{id}/resolve` — those are
+the two live surfaces. The whole-inbox read (`GET /inbox`) and the raw raise
+endpoint (`POST /inbox`, which mirrored `services.inbox.raise_item` over
+HTTP) had zero callers — every producer that raises an item (`run_inbox`,
+`services.inbox` itself) does so as a direct Python call — and were deleted
+(coherence-overhaul-2026-08-16 T5).
 """
 from __future__ import annotations
 
@@ -10,7 +15,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from services import inbox, chat_store, knowledge
+from services import inbox
 
 log = logging.getLogger(__name__)
 # Bare prefix, NOT "/api/inbox". The edge proxy strips the leading `/api`
@@ -19,19 +24,6 @@ log = logging.getLogger(__name__)
 # with `/api` here yields `/api/api/...` in effect: the client's request arrives
 # as `/inbox`, matches nothing, and 404s while the route list looks correct.
 router = APIRouter(prefix="/inbox", tags=["inbox"])
-
-
-class RaiseIn(BaseModel):
-    kind: str
-    agent: str
-    scope: str = "workshop"
-    title: str
-    body: str = ""
-    options: list[str] | None = None
-    chat_id: str | None = None
-    ticket_id: str | None = None
-    run_id: str | None = None
-    dedupe_key: str | None = None
 
 
 class ResolveIn(BaseModel):
@@ -56,51 +48,6 @@ _APPROVALS = {"approve", "approved"}
 
 def _is_approval(answer: str | None) -> bool:
     return str(answer or "").strip().lower() in _APPROVALS
-
-
-def _scope_for_chat(chat_id: str | None) -> tuple[str | None, str | None]:
-    """(scope, chat_id) for a chat, or (None, None) for the global inbox."""
-    if not chat_id:
-        return None, None
-    t = chat_store.get_thread(chat_id)
-    if t is None:
-        raise HTTPException(404, "chat not found")
-    return knowledge.scope_for_context(t.get("context_key") or "general"), chat_id
-
-
-@router.get("")
-async def list_inbox(chat_id: str | None = None, state: str = "open"):
-    """Open items. Without `chat_id` this is the global inbox; with one it is
-    filtered to what that chat should surface inline (see inbox.surfaces_in_chat
-    — a broad chat is deliberately not a firehose, and what it does not show
-    inline is still here globally)."""
-    # The producers that keep an open read honest live in `inbox.reconcile`, so
-    # the chat's aggregated work read runs exactly the same sequence rather than
-    # a second copy of it that can drift.
-    if state == "open":
-        inbox.reconcile()
-    scope, cid = _scope_for_chat(chat_id)
-    items = inbox.list_items(chat_scope=scope, chat_id=cid, state=state)
-    return {
-        "items": items,
-        "counts": inbox.counts(chat_scope=scope, chat_id=cid),
-        # The global total travels with every response so a chat can say "and 4
-        # more elsewhere" without a second request. A filtered view that cannot
-        # tell you what it filtered out is how things get missed.
-        "global_counts": inbox.counts(),
-        "scope": scope,
-    }
-
-
-@router.post("")
-async def raise_inbox(body: RaiseIn):
-    """Raise an item. Idempotent on `dedupe_key` while an item is still open, so
-    a triggered agent re-raising the same block every pass does not bury the
-    inbox in copies of one problem."""
-    try:
-        return inbox.raise_item(**body.model_dump())
-    except ValueError as e:
-        raise HTTPException(400, str(e))
 
 
 @router.post("/{item_id}/snooze")

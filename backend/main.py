@@ -14,7 +14,7 @@ from middleware.compression import SSEAwareGZipMiddleware
 # location/birds/health/…) are NOT imported here; they mount from the installed-
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
-from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, skills, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes
+from routes import agents, projects, base_apps, relay, services, events, jobs, push, tools, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes
 from routes import mcp as mcp_routes
 from routes import stores as stores_routes
 from routes import deploys as deploys_routes
@@ -215,7 +215,6 @@ app.include_router(memory_policy_routes.router, dependencies=_OPERATOR)  # what 
 app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_OPERATOR)
 app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
 app.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"], dependencies=_OPERATOR)
-app.include_router(skills.router, prefix="/skills", tags=["skills"], dependencies=_OPERATOR)
 app.include_router(worktrees.router, prefix="/worktrees", tags=["worktrees"], dependencies=_OPERATOR)
 app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], dependencies=_OPERATOR)
 # Grants + Stores (Phase 4). /base-apps/grants stays as a thin alias in base_apps
@@ -225,15 +224,12 @@ app.include_router(grants.router, dependencies=_OPERATOR)
 # The Store catalog + the one door onto a Store's contents (/stores). The operator
 # is served ungated here; the gate is on a caller that says it is an agent.
 app.include_router(stores_routes.router, dependencies=_OPERATOR)
-app.include_router(backlog.router, dependencies=_OPERATOR)
 # Deploys — per-project target bindings + provider catalog + run kicker. Both
 # cross-project (/deploys) and per-project (/projects/{slug}/deploys/...) routes
 # live in the same router.
 app.include_router(deploys_routes.router, dependencies=_OPERATOR)
 app.include_router(autonomy.router, dependencies=_OPERATOR)
 app.include_router(usage.router, dependencies=_OPERATOR)  # rolling-window token usage (/usage)
-app.include_router(redaction.router, dependencies=_OPERATOR)
-app.include_router(redaction.restore_router, dependencies=_OPERATOR)
 # Settings -> MCP: which MCP servers exist, whether they connect, what they
 # cost. Machine-wide facts, so it hangs off settings rather than a chat.
 app.include_router(mcp_routes.router, dependencies=_OPERATOR)
@@ -270,7 +266,6 @@ for _spec in app_registry.installed_specs():
 app.include_router(relay.router, dependencies=_LOOPBACK)
 app.include_router(services.router, dependencies=_LOOPBACK)
 app.include_router(events.router, dependencies=_LOOPBACK)
-app.include_router(auto_pr.router, dependencies=_LOOPBACK)
 # Letta tool sandbox runs off-loopback (Docker bridge); internal-only, no
 # personal data, never proxied to the public origin.
 app.include_router(tools.router, dependencies=[Depends(require_internal_caller)])
