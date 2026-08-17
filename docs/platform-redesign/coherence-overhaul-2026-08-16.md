@@ -327,19 +327,77 @@ a worker reported it done.
 - §2's table implies `participants` could simply be deleted. It could, but 15 threads
   carried real agent identity in it; that had to be migrated to `agent_id`, not dropped.
 
-### Still open
+---
 
-- **`AgentDetail.tsx:699`** still branches on `agent.runtime === "builder"`, gating five
-  UI branches including navigation. The honest conversion is
-  `role === "maker" && !!project_slug`, not a bare role check, which would send a
-  project-less maker to a work pane that does not exist. Its own pass.
-- **`AgentBuild.tsx:703`** still sends `contextKey="build:<slug>"`. The server folds it
-  so the page works, but retiring the spelling needs `chatScope.deriveMode` to learn
-  maker-ness some other way.
-- **`Thread.state`** (`idle | working | awaiting | done | failed`) is deliberately NOT
-  built. It is the one new field that makes the inbox derivable and the escalation
-  reachable, and it deserves its own pass rather than riding T2.
-- **`tasks.STATE_TYPES` vs `db/models.STATE_CATEGORIES`** remain two identical tuples.
-  Consolidating forces SQLAlchemy into every `tasks` import, which costs more than the
-  duplicate. Recorded rather than forced.
+## 11. Second pass, 2026-08-17: the leftovers, and what the sweep found
+
+Operator direction, verbatim in substance: finish the plan, and **remove the old system
+rather than building beside it**, because building beside it is the disease.
+
+That reframed the remaining work. Everything below is a deletion.
+
+### 11.1 The T2 leftovers, now closed
+
+| What | Commits | Result |
+|---|---|---|
+| The `runtime` axis (`builder\|assistant`) | `40f342e`, `e359619` | `RUNTIMES` and `_role_for_runtime` DELETED. Zero reads outside one historical comment. 17 definition files carried `runtime:`; 0 do. The 7 project builders declare `role: maker`. Replacement rule is `role == "maker" && project_slug`, not a bare role check, so a project-less maker is not sent to a work pane that does not exist. |
+| The `build:` context key | same | Zero spellings left. `canonical_context_key` no longer rewrites anything, so a leftover call site fails visibly instead of being silently folded. 2 threads on disk carried a `build:` key; both migrated, 94 threads before and after. |
+| `ContextProvider.role` | `6e40a65` | The SAME `assistant\|builder` vocabulary surviving under a different field name on the chat provider. Dead: the client declared `ProviderRole` and read it nowhere. Its comment claimed it drove the composer label and the default model; both are separate fields, and removing it changes neither, which the provider entry now demonstrates. |
+| `ROLE_ALIASES` | `4dec5de` | A one-entry alias table (`memory` → `keeper`) kept alive by one definition file. The file is migrated to `role: keeper` and the table is gone. A second accepted spelling for one enum value is how a vocabulary grows a shadow. |
+| `scripts/migrate_agent_defs.py` | `59a3b05` | A completed one-shot that regenerated agent definitions from the torn-down Letta server. No invoker, not in cron. A migration script whose source no longer exists is a hazard, not a tool. |
+
+### 11.2 Where §10's "Still open" was wrong
+
+- It said **`tasks.STATE_TYPES` vs `db/models.STATE_CATEGORIES`** could not be
+  consolidated because it "forces SQLAlchemy into every `tasks` import". That had the
+  direction backwards: `models.py` already imports `LATITUDES` from a services leaf,
+  and `services/tasks.py` reaches only the stdlib. The schema now imports the store's
+  vocabulary (`73748d3`), and `EFFORTS` and `CHAT_MODES` went the same way. `CHAT_MODES`
+  had already drifted: the two copies listed the same values in different orders.
+
+### 11.3 What a full archaeology sweep then found
+
+A read-only audit looked for every remaining case of a NEW mechanism built while the OLD
+one it replaced stayed reachable, with reachability PROVEN by a caller, a route or a
+record count rather than inferred from a comment. Ranked by blast radius, and acted on:
+
+| Finding | Commit | What it actually was |
+|---|---|---|
+| **Two ticket stores** | `ba1a71c` | The severe one, and it was actively corrupting data. Two fail-open guards (`is_relational_scope` swallowing an import error, `_from_relational` falling back on failure) let `reconcile` re-import the rendered `TODO.md` export: it minted 4 duplicate tickets with fresh ids, flipped one status from `todo` to `cancelled`, and baked rendered status markers into 24 stored TITLES. The operator's daily digest had been counting a ticket in the wrong column because `root_task_counts.sh` ran without a pinned owner and silently took the file path. Both retired stores deleted, both guards closed, `tenancy.configured()` now splits "no database on this box" from "the database did not answer" so only the second fails closed. |
+| **Two learnings stores** | `987f44f` | T1 reported this consolidated; it was not. `shared/learnings.md` was an ORIGIN, not an archive: 10 of 12 rows carried `source: legacy-md`, and there were THREE live bridge paths, not two (`_unmirror_from_md` also deleted lines from the markdown on archive). The markdown is deleted and the SessionStart hook renders from the JSONL, verified by executing the hook and counting 12 guardrails out. |
+| **Two autonomy encodings** | `5fd81b6` | `autonomy.mode` beside `preset`/`triggers`, and they disagreed in a way the operator saw: a project put on a cron was told "no runner covers `<slug>`". All 7 project records migrated; none changed sweep behaviour. |
+| **Two ticket CRUD surfaces** | `5fd81b6` | `/projects/{slug}/tasks` beside `/tasks`, both live on the same store, with ProjectDetail on the lossy one: it skipped dedup, `source`/`scoped_by` and the queue wake, and its PATCH handled only two fields so a tracker-linked ticket silently diverged from the remote. |
+| **Three store-tier vocabularies** | `16d94af` | The Stores page hardcoded `open\|mediated\|closed` and both store pages carried their own mapper. The backend has always declared `open\|gated\|mediated`, so `gated` was a real tier no filter could select and `closed` was a phantom. The server now publishes its own `TIERS`. |
+| **Duplicate enum declarations** | `73748d3`, `c790e8c`, `ec406b1` | 4 duplicated value-sets to 0. The JSX restatement in `TaskPanel` is worth noting: `check_one_definition.py` matches array literals, so a vocabulary written as hardcoded `<option>` elements is invisible to the ratchet and outlived the array copies it was drifting beside. |
+| **`services/budget.py`** | `3ea6b2d` | Dead three ways: no importer, the route in its docstring does not exist, and it read Letta metadata plus a log that has been `.migrated` since May. |
+
+### 11.4 Deliberately NOT built, with the measurement
+
+- **`Thread.state`.** §10 left this as "the one new field worth adding". It is not being
+  added. The inbox is LIVE (15 items, 9 open) with an operator-sourced design rationale
+  from 2026-07-31, and it is global precisely because an ambient agent may raise
+  something while the operator is nowhere near the relevant chat. A per-thread state
+  field would be a SECOND mechanism answering "what needs your attention" beside a
+  working one. That is the disease, not the cure.
+- **Folding the standalone run view into the thread view** (a T2 line item). The run
+  page links back to its originating chat, is reachable from eight surfaces, and was
+  already redesigned. Folding it would delete a working surface in order to rebuild it
+  inside the chat: an addition wearing a deletion's clothes.
+
+### 11.5 Still open, honestly
+
+- **`scripts/dispatch_triggers.sh`** is unreachable (its sole caller `cron_agent.sh` has
+  a commented-out crontab line), but deleting it strands `triager_run.sh`,
+  `memory_keeper_run.sh` and `heartbeat.sh`, which have no other invoker and no
+  replacement. That deletes a CAPABILITY, not a duplicate. Operator decision.
+- **The installed crontab has drifted from `infra/cron/workshop.crontab`**: the template
+  carries a fix (`install_cron.sh` has not run) that `crontab -l` does not have.
+  Auditing from the template gives the wrong answer about what is installed.
+- **Legacy styling**: `frontend/src/styles.css` bare-token classes are still used
+  ~330 times in routed `.tsx` (`muted` 215, `card` 56, `btn` 46, `pill` 14). Known and
+  documented as "the shrinking legacy sheet"; a mechanical migration, not a hazard.
+- **31 raw `setInterval` sites** under `pages/apps/` that never adopted `usePoll`, so
+  they poll a hidden tab. Same class: mechanical.
+- **Budget commits money edits on blur** (`pages/apps/Budget.tsx`), against the
+  Edit-mode rule that names budget explicitly.
 - The root-owned **Letta process on :8283** is still running. Needs the operator.
