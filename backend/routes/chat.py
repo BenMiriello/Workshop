@@ -448,6 +448,26 @@ async def set_chat_prefs(body: ChatPrefs):
     return _prefs_payload()
 
 
+def _without_messages(t: dict) -> dict:
+    """A thread document as SETTINGS: everything except the transcript.
+
+    `chat_store` documents carry `messages`, and every route that answers with a
+    thread is answering a settings question, not a transcript one (the
+    transcript is served by GET /events). Measured 2026-08-14: the worst
+    thread's `messages` was 4.77 MB of a 4.79 MB response no client reads, and
+    `lib/chat.ts` types all four of these as `ThreadSummary`, which has no
+    `messages` field at all.
+
+    This is a function rather than a dict comprehension repeated four times
+    because it was a comprehension in ONE of the four. GET stripped it and
+    carried a comment saying not to add it back; PATCH, archive and restore sat
+    three functions below returning the same document raw, so closing a chat
+    shipped its whole history to a client that discards it. One rule, one place.
+    Strip here rather than in chat_store.get_thread(): backend callers of that
+    function legitimately need the messages."""
+    return {k: v for k, v in t.items() if k != "messages"}
+
+
 @router.get("/threads/{thread_id}")
 async def thread(thread_id: str):
     """The thread as a document: meta plus a `messages` list.
@@ -462,15 +482,9 @@ async def thread(thread_id: str):
     if t is None:
         raise HTTPException(404, "thread not found")
     # Opening a chat shows what is waiting to be sent in it, on the first paint,
-    # from the same read that produced the transcript.
-    #
-    # `messages` is stripped from the HTTP response here, not from
-    # chat_store.get_thread() itself: this route is settings/metadata (the
-    # transcript is served by GET /events), but plenty of backend code still
-    # calls get_thread() directly and legitimately needs messages. Measured
-    # 2026-08-14: the worst thread's `messages` was 4.77 MB of a 4.79 MB
-    # response the client never reads. Do not add it back to this dict.
-    return {k: v for k, v in t.items() if k != "messages"} | chat_queue.state(thread_id)
+    # from the same read that produced the transcript. See _without_messages
+    # for why the transcript itself is not in this response.
+    return _without_messages(t) | chat_queue.state(thread_id)
 
 
 # How long a thread stream waits before sending a keepalive. Long enough that an
@@ -760,7 +774,7 @@ async def rename(thread_id: str, body: RenameThread):
     t = chat_store.rename_thread(thread_id, body.title)
     if t is None:
         raise HTTPException(404, "thread not found")
-    return t
+    return _without_messages(t)
 
 
 @router.post("/threads/{thread_id}/archive")
@@ -770,7 +784,7 @@ async def archive(thread_id: str):
     t = chat_store.archive_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
-    return t
+    return _without_messages(t)
 
 
 @router.post("/threads/{thread_id}/restore")
@@ -778,7 +792,7 @@ async def restore(thread_id: str):
     t = chat_store.restore_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
-    return t
+    return _without_messages(t)
 
 
 # --- branches (ADR 0020) -----------------------------------------------------
