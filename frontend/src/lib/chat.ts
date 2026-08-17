@@ -488,8 +488,6 @@ async function j<T>(r: Response): Promise<T> {
 // import it from this module.
 export { shortHttpError };
 
-export type ProviderRole = "assistant" | "builder";
-
 // What a given model actually honours for a turn. Vendor-declared: the frontend
 // renders the levels it is handed and never carries its own list, because the
 // ladder differs per model (Sonnet 4.6 has `max` but no `xhigh`) and per vendor.
@@ -523,7 +521,6 @@ export type ChatPrefsPatch = {
 export type Provider = {
   key: string;
   label: string;
-  role?: ProviderRole;
   models?: string[];
   default_model?: string;
   tools_active?: boolean;

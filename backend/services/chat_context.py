@@ -1360,10 +1360,6 @@ class ContextProvider:
     # cross-cutting chat without a clear data domain doesn't justify the surface.
     allowed_tools: list[str] = []
     mcp_servers: list[str] = []
-    # Role surfaced to the UI: "assistant" for data/app chats, "builder" for the
-    # providers that work in a tree (project: and a maker agent). Drives the
-    # composer label + default model.
-    role: str = "assistant"
     # Provider default model (full id). Resolution order at call time is:
     # explicit body.model > thread.model > this default. Assistants default to
     # the fast tier; builders override to a strong tier (see subclasses).
@@ -1566,7 +1562,6 @@ class ProjectContextProvider(ContextProvider):
     # signals routes/chat.py to switch into the project-build branch.
     allowed_tools = []
     mcp_servers = []
-    role = "builder"
     # Builders default to a strong model for codegen quality; opus is selectable.
     default_model = _llm.TIER_SONNET
 
@@ -1693,7 +1688,6 @@ class MakerAgentContextProvider(ContextProvider):
     label = "Agent · maker"
     allowed_tools = []
     mcp_servers = []
-    role = "builder"
     default_model = _llm.TIER_SONNET
 
     def __init__(self, slug: str):
@@ -1764,7 +1758,6 @@ class AssistantAgentContextProvider(ContextProvider):
     Reachable for the first time as of thread T2. It was written in July and
     every route to it went through `_promotion_patch`, which rewrote the key that
     selects it before any read could see it."""
-    role = "assistant"
     default_model = _llm.TIER_HAIKU
 
     def __init__(self, slug: str, record: dict):
@@ -2100,7 +2093,7 @@ def get_provider(context_key: str | None) -> ContextProvider:
 
 
 def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict:
-    """Rich /providers entry the composer relies on: key, label, role, the
+    """Rich /providers entry the composer relies on: key, label, the
     pickable models, the default model, whether this provider actually gets
     tools in the current run config, and each model's turn capabilities.
 
@@ -2123,7 +2116,6 @@ def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict
     return {
         "key": provider.key,
         "label": label if label is not None else provider.label,
-        "role": provider.role,
         "models": list(PICKABLE_MODELS),
         "default_model": provider.default_model,
         "tools_active": tools_active,
@@ -2145,7 +2137,7 @@ def list_providers(scope: str | None = None) -> list[dict]:
                    projects/agents). Returns [] if the key resolves to
                    nothing valid.
 
-    Each entry: {key, label, role, models, default_model, tools_active,
+    Each entry: {key, label, models, default_model, tools_active,
     model_caps}.
     """
     if scope:

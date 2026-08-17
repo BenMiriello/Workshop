@@ -2301,8 +2301,9 @@ async def set_thread_mcp_servers(thread_id: str, body: McpSelectionIn):
 def _agent_role_for(provider) -> str | None:
     """The ROLE (maker/reviewer/triager/keeper/broker) behind a chat, or None.
 
-    Distinct from `provider.role`, which is the provider CLASS
-    (assistant/builder) and is a different axis entirely. Only an agent-backed
+    There used to be a second field called `role` on the provider itself,
+    carrying the retired assistant/builder axis; it was deleted on 2026-08-17,
+    so `role` now means one thing here. Only an agent-backed
     chat has a role in the closed-enum sense, so everything else reads the
     workshop + place layers and no role layer, which is correct: a general chat
     is not doing a kind of work.

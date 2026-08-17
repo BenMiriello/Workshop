@@ -62,11 +62,19 @@ class TestDeveloperModeOn:
 
     def test_it_is_a_build_provider(self, ctx, monkeypatch):
         """Working on the platform is a build chat: full agentic toolset, cwd
-        pinned. Empty allowed_tools is how routes/chat.py recognises that."""
+        pinned. Empty allowed_tools is how routes/chat.py recognises that.
+
+        This used to also assert `p.role == "builder"`, which was the retired
+        assistant/builder axis restating what the line above already says. That
+        field was deleted on 2026-08-17 (it was serialised to a client that
+        never read it, and its comment claimed it drove the label and the model
+        while both are their own fields). The model tier is asserted instead,
+        because that IS a real difference between a build chat and a data one."""
         monkeypatch.setenv("WORKSHOP_DEV_MODE", "1")
+        from services import llm_router
         p = ctx.get_provider("development")
         assert p.allowed_tools == []
-        assert p.role == "builder"
+        assert p.default_model == llm_router.TIER_SONNET
 
 
 class TestDeveloperModeOff:
