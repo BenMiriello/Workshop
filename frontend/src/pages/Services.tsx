@@ -1,11 +1,10 @@
 import { useState, useCallback } from "react";
 import { usePoll } from "../lib/usePoll";
-import { ExternalLink, KeyRound, RefreshCw } from "lucide-react";
+import { ExternalLink, KeyRound, RefreshCw, Server } from "lucide-react";
 import {
   Button,
   Card,
   CardGrid,
-  PageHeader,
   Row,
   SectionLabel,
   Skeleton,
@@ -144,10 +143,17 @@ export default function Services() {
     </Button>
   );
 
+  // Services only ever renders embedded, inside Settings > System — never
+  // routed on its own (App.tsx redirects the old /services path to
+  // /settings). Settings already carries the page's one PageHeader, so this
+  // is a SectionLabel, not a second header stacked under it.
   if (err) {
     return (
       <div>
-        <PageHeader title="Services" actions={refreshBtn} />
+        <Row between style={{ marginBottom: "var(--space-3)" }}>
+          <SectionLabel icon={<Server aria-hidden />}>Services</SectionLabel>
+          {refreshBtn}
+        </Row>
         <StateBlock
           variant="error"
           title="Couldn't probe services"
@@ -169,7 +175,10 @@ export default function Services() {
   if (!data) {
     return (
       <div>
-        <PageHeader title="Services" sub="Probing…" actions={refreshBtn} />
+        <Row between style={{ marginBottom: "var(--space-3)" }}>
+          <SectionLabel icon={<Server aria-hidden />}>Services</SectionLabel>
+          {refreshBtn}
+        </Row>
         <Card><Stack gap="sm"><Skeleton width="60%" /><Skeleton width="45%" /></Stack></Card>
       </div>
     );
@@ -186,19 +195,17 @@ export default function Services() {
 
   return (
     <div>
-      <PageHeader
-        title="Services"
-        sub={
-          <Row wrap>
-            <StatusDot status="ok">{data.summary.up} up</StatusDot>
-            {data.summary.degraded > 0 && <StatusDot status="warn">{data.summary.degraded} degraded</StatusDot>}
-            {data.summary.down > 0 && <StatusDot status="danger">{data.summary.down} down</StatusDot>}
-            {credsBad > 0 && <StatusDot status="danger">{credsBad} credential{credsBad === 1 ? "" : "s"} failing</StatusDot>}
-            {credsWarn > 0 && <StatusDot status="warn">{credsWarn} credential{credsWarn === 1 ? "" : "s"} to check</StatusDot>}
-          </Row>
-        }
-        actions={refreshBtn}
-      />
+      <Row between wrap style={{ marginBottom: "var(--space-3)", alignItems: "center" }}>
+        <SectionLabel icon={<Server aria-hidden />}>Services</SectionLabel>
+        <Row wrap style={{ gap: "var(--space-3)", alignItems: "center" }}>
+          <StatusDot status="ok">{data.summary.up} up</StatusDot>
+          {data.summary.degraded > 0 && <StatusDot status="warn">{data.summary.degraded} degraded</StatusDot>}
+          {data.summary.down > 0 && <StatusDot status="danger">{data.summary.down} down</StatusDot>}
+          {credsBad > 0 && <StatusDot status="danger">{credsBad} credential{credsBad === 1 ? "" : "s"} failing</StatusDot>}
+          {credsWarn > 0 && <StatusDot status="warn">{credsWarn} credential{credsWarn === 1 ? "" : "s"} to check</StatusDot>}
+        </Row>
+        {refreshBtn}
+      </Row>
 
       {creds.length > 0 && (
         <section style={{ marginBottom: "var(--space-6)" }}>

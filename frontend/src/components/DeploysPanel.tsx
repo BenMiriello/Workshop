@@ -9,6 +9,8 @@ import {
   Badge, Tag, Skeleton, Field, Input, Select, Modal, ConfirmDialog, type StatusKind,
   Notice,
 } from "@workshop/ui";
+import { jobStatusKind } from "../lib/jobs";
+import { timeAgo } from "../lib/time";
 import { shortHttpError } from "../lib/httpError";
 
 // Deploys panel — per-project target bindings.
@@ -56,31 +58,8 @@ type ProviderCatalog = {
   source_kinds: string[];
 };
 
-const JOB_KIND: Record<string, StatusKind> = {
-  running: "running",
-  queued: "running",
-  awaiting_input: "warn",
-  done: "ok",
-  failed: "danger",
-  cancelled: "stopped",
-};
-
 function short(sha?: string): string {
   return (sha || "").slice(0, 7);
-}
-
-function ago(iso?: string): string {
-  if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (!t) return "";
-  const s = Math.max(1, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
 }
 
 
@@ -347,7 +326,7 @@ function DeployRow({
   // Row-level status: derive from the most recent run if we have it, else from
   // whether a `current` pointer is set.
   const lastStatus: StatusKind = runs[0]?.status
-    ? (JOB_KIND[runs[0].status] || "stopped")
+    ? jobStatusKind(runs[0].status)
     : current ? "ok" : "stopped";
   const lastLabel = runs[0]?.status || (current ? "live" : "never deployed");
 
@@ -377,7 +356,7 @@ function DeployRow({
               )}
               {current.deployed_at && (
                 <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                  {ago(current.deployed_at)}
+                  {timeAgo(current.deployed_at)}
                 </span>
               )}
             </Row>
@@ -412,12 +391,12 @@ function DeployRow({
             <Stack gap="sm">
               {runs.map((r) => (
                 <Row key={r.id} wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                  <StatusDot status={JOB_KIND[r.status] || "stopped"}>{r.status}</StatusDot>
+                  <StatusDot status={jobStatusKind(r.status)}>{r.status}</StatusDot>
                   {r.kind === "deploy-rollback" && <Badge>rollback</Badge>}
                   <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                     {r.evidence?.commit_sha ? short(r.evidence.commit_sha) : short(r.binding?.ref)}
                   </span>
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{ago(r.started_at)}</span>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{timeAgo(r.started_at)}</span>
                   {r.evidence?.summary && (
                     <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
                       {r.evidence.summary}

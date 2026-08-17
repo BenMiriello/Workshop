@@ -10,15 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, Copy, Eye, EyeOff, Heart } from "lucide-react";
 import { ConfirmDialog, StatusDot } from "@workshop/ui";
 import { SettingsSection as Section, SettingsRow as Row } from "../../../components/AppSettings";
-
-const fmtAge = (iso: string) => {
-  const ms = Date.now() - Date.parse(iso);
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
-};
+import { timeAgo } from "../../../lib/time";
 
 export default function HealthSettings() {
   const [metrics, setMetrics] = useState<Record<string, { ts?: string; date?: string; qty?: unknown; units?: string }> | null>(null);
@@ -70,9 +62,9 @@ export default function HealthSettings() {
         {!latestTs ? (
           <StatusDot status="danger">no data, install Health Auto Export</StatusDot>
         ) : stale ? (
-          <StatusDot status="warn">stale ({fmtAge(latestTs)}), check Health Auto Export</StatusDot>
+          <StatusDot status="warn">stale ({timeAgo(latestTs)}), check Health Auto Export</StatusDot>
         ) : (
-          <StatusDot status="ok">{entries.length} metric{entries.length === 1 ? "" : "s"} · last push {fmtAge(latestTs)}</StatusDot>
+          <StatusDot status="ok">{entries.length} metric{entries.length === 1 ? "" : "s"} · last push {timeAgo(latestTs)}</StatusDot>
         )}
       </Row>
       <Row label="iOS app">

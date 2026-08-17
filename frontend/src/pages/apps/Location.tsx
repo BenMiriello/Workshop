@@ -15,6 +15,7 @@ import {
   stopDeviceTracking,
 } from "../../native/location";
 import { shortHttpError } from "../../lib/httpError";
+import { timeAgo } from "../../lib/time";
 
 // Location app page — read-only view of operator position fed by Owntracks
 // iOS. Web geolocation is gone; this page is a viewer.
@@ -91,15 +92,6 @@ function buildSegments(records: LocationRecord[]): LngLat[][] {
   if (cur.length) segments.push(cur);
   return segments;
 }
-
-const fmtAge = (iso: string) => {
-  const ms = Date.now() - Date.parse(iso);
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
-};
 
 // Reports THIS device's position to the backend. In the mobile shell this hands
 // off to native background tracking (works while the app is suspended); in a
@@ -294,7 +286,7 @@ export default function Location() {
                 <StatusDot status="ok">live</StatusDot>
               )}
             </span>
-            <span className="muted">when</span><span>{fmtAge(latest.ts)} <span className="muted">({latest.ts})</span></span>
+            <span className="muted">when</span><span>{timeAgo(latest.ts)} <span className="muted">({latest.ts})</span></span>
             <span className="muted">coordinates</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{latest.lat.toFixed(5)}, {latest.lng.toFixed(5)}</span>
             {latest.accuracy_m != null && (<><span className="muted">accuracy</span><span>{Math.round(latest.accuracy_m)} m</span></>)}
             {latest.speed_mps != null && (<><span className="muted">speed</span><span>{latest.speed_mps.toFixed(1)} m/s ({(latest.speed_mps * 2.237).toFixed(1)} mph)</span></>)}
@@ -347,7 +339,7 @@ export default function Location() {
                 <tbody>
                   {records.map((r, i) => (
                     <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
-                      <td style={{ padding: "0.3rem 0.5rem", color: "var(--muted)" }}>{fmtAge(r.ts)}</td>
+                      <td style={{ padding: "0.3rem 0.5rem", color: "var(--muted)" }}>{timeAgo(r.ts)}</td>
                       <td style={{ padding: "0.3rem 0.5rem", fontFamily: "ui-monospace, monospace" }}>
                         {r.lat.toFixed(5)}, {r.lng.toFixed(5)}
                       </td>

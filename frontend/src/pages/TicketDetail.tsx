@@ -35,6 +35,7 @@ import {
 } from "../lib/tasks";
 import { TICKET_EFFORTS, parseList, unresolvedIds } from "../lib/ticketEdit";
 import { jobIsLive, jobStatusKind, runHref } from "../lib/jobs";
+import { formatDuration, timeAbsolute, timeAgo } from "../lib/time";
 import { nextWorkParams } from "../lib/workParams";
 import {
   EditableBody, EditableTitle, PickEditor, PropRow, TextEditor,
@@ -61,26 +62,6 @@ type JobRec = {
   evidence?: { summary?: string; url?: string };
 };
 
-function ago(iso?: string | null): string {
-  if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (!t) return "";
-  const s = Math.max(1, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
-}
-
-function fmtTs(iso?: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? "" : d.toLocaleString();
-}
-
 // The run row's own link. `.ws-runrow` still lays the row out; the link inside
 // it takes the row's ink, no underline, and the growth that used to belong to
 // `.ws-runrow__who`, so the duration and the time stay pinned right.
@@ -95,17 +76,7 @@ const RUN_LINK = {
 } as const;
 const RUN_AGENT = { flex: "none", fontSize: "var(--fs-sm)" } as const;
 
-function runDuration(r: JobRec): string {
-  if (!r.started_at) return "";
-  const start = new Date(r.started_at).getTime();
-  const end = r.ended_at ? new Date(r.ended_at).getTime() : NaN;
-  if (isNaN(start) || isNaN(end)) return "";
-  const secs = Math.max(0, Math.round((end - start) / 1000));
-  if (secs < 60) return `${secs}s`;
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  return s ? `${m}m ${s}s` : `${m}m`;
-}
+const runDuration = (r: JobRec): string => formatDuration(r.started_at, r.ended_at);
 
 // Initials for a comment avatar. An agent slug ("note-triager") and a person
 // ("Ben") both have to produce two readable characters.
@@ -387,7 +358,7 @@ export default function TicketDetail() {
         {runsInOrder.length > 0 && (
           <span className="ws-sectionhead__sub">
             {runsInOrder.length} attempt{runsInOrder.length === 1 ? "" : "s"}
-            {lastRun?.started_at ? ` · last one ${ago(lastRun.started_at)}` : ""}
+            {lastRun?.started_at ? ` · last one ${timeAgo(lastRun.started_at)}` : ""}
           </span>
         )}
         <Link className="ws-sectionhead__link" to="/runs">All runs</Link>
@@ -415,7 +386,7 @@ export default function TicketDetail() {
                     </Link>
                   )}
                   <span className="ws-runrow__dur">{runDuration(r)}</span>
-                  <span className="ws-runrow__when">{ago(r.started_at)}</span>
+                  <span className="ws-runrow__when">{timeAgo(r.started_at)}</span>
                 </div>
               ))}
             </div>
@@ -461,7 +432,7 @@ export default function TicketDetail() {
               <div className="ws-comment__body">
                 <div className="ws-comment__head">
                   <span className="ws-comment__who">{c.author}</span>
-                  <span className="ws-comment__when" title={fmtTs(c.ts)}>{ago(c.ts)}</span>
+                  <span className="ws-comment__when" title={timeAbsolute(c.ts)}>{timeAgo(c.ts)}</span>
                 </div>
                 <div className="ws-comment__text">{c.text}</div>
               </div>
@@ -595,7 +566,7 @@ export default function TicketDetail() {
                 label="Triage"
                 editable={false}
                 value={
-                  <span title={task.triage.reason || fmtTs(task.triage.at)}>
+                  <span title={task.triage.reason || timeAbsolute(task.triage.at)}>
                     {triageLabel(task.triage.decision)}
                   </span>
                 }
@@ -604,12 +575,12 @@ export default function TicketDetail() {
             <PropRow
               label="Created"
               editable={false}
-              value={<span title={fmtTs(task.created)}>{ago(task.created)}</span>}
+              value={<span title={timeAbsolute(task.created)}>{timeAgo(task.created)}</span>}
             />
             <PropRow
               label="Updated"
               editable={false}
-              value={<span title={fmtTs(task.updated)}>{ago(task.updated)}</span>}
+              value={<span title={timeAbsolute(task.updated)}>{timeAgo(task.updated)}</span>}
             />
             <PropRow
               label="Ticket"
@@ -710,7 +681,7 @@ export default function TicketDetail() {
             {scopeLink
               ? <Link to={scopeLink}>{scopeLabel(scope)}</Link>
               : <span>{scopeLabel(scope)}</span>}
-            <span title={fmtTs(task.updated)}>updated {ago(task.updated)}</span>
+            <span title={timeAbsolute(task.updated)}>updated {timeAgo(task.updated)}</span>
           </>
         )}
         actions={

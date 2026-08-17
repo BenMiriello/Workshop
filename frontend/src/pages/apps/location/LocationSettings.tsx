@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { MapPin, Trash2, Eye, EyeOff, Copy, Check } from "lucide-react";
 import { Button, ConfirmDialog, StatusDot } from "@workshop/ui";
 import { SettingsSection, SettingsRow as Row } from "../../../components/AppSettings";
+import { timeAgo } from "../../../lib/time";
 
 // Location app settings — Owntracks status + privacy. Moved verbatim out of the
 // platform Settings page (Phase 5 settings split) so it lives inside the app it
@@ -15,15 +16,6 @@ type LocationLatest = {
   accuracy_m?: number;
   source?: string;
 } | null;
-
-const fmtAge = (iso: string) => {
-  const ms = Date.now() - Date.parse(iso);
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
-};
 
 export default function LocationSettings() {
   const [latest, setLatest] = useState<LocationLatest>(null);
@@ -69,9 +61,9 @@ export default function LocationSettings() {
         {noData ? (
           <StatusDot status="danger">no data, Owntracks not publishing yet</StatusDot>
         ) : stale ? (
-          <StatusDot status="warn">stale ({fmtAge(latest!.ts!)}), check Owntracks app</StatusDot>
+          <StatusDot status="warn">stale ({timeAgo(latest!.ts!)}), check Owntracks app</StatusDot>
         ) : (
-          <StatusDot status="ok">live · last ping {fmtAge(latest!.ts!)}</StatusDot>
+          <StatusDot status="ok">live · last ping {timeAgo(latest!.ts!)}</StatusDot>
         )}
       </Row>
       <Row label="source">{latest?.source || "–"}</Row>

@@ -6,6 +6,7 @@ import BirdsHeader, { InlineSelect } from "./BirdsHeader";
 import { ClipPlayButton } from "./recordings";
 import { jget, apost, API, conf } from "./ui";
 import { scatterSVG, heatSVG, noveltySVG } from "./atlasInsightCharts";
+import { timeAbsoluteShort } from "../../../lib/time";
 
 // The Soundscape Atlas: every stored detection is a point in a learned acoustic
 // map (BirdNET embedding -> UMAP). The Overview colours the whole yard by species
@@ -56,10 +57,7 @@ function useThemeColors() {
   }, []);
 }
 
-const fmtTime = (ts: string) => {
-  try { return new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
-  catch { return ts; }
-};
+const fmtTime = timeAbsoluteShort;
 
 export default function Atlas() {
   const colors = useThemeColors();

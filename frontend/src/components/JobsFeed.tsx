@@ -16,6 +16,7 @@ import {
 } from "@workshop/ui";
 import { type Job, jobStatusKind as statusKind, runHref } from "../lib/jobs";
 import { runTicketScope, ticketHref } from "../lib/tasks";
+import { formatDuration, timeAgo } from "../lib/time";
 import { shortHttpError } from "../lib/httpError";
 
 // The Jobs feed: one list for every bounded execution (cron task, drained
@@ -46,35 +47,11 @@ const FILTERS: SegmentedOption<StatusFilter>[] = [
 // `.ws-listrow` carried them while the link WAS the row.
 const ROW_LINK = { color: "inherit", textDecoration: "none" } as const;
 
-// Relative time for the meta line, matching the ticket list.
-function ago(iso?: string | null): string {
-  if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return "";
-  const secs = Math.max(0, (Date.now() - t) / 1000);
-  if (secs < 60) return "now";
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo`;
-  return `${Math.floor(months / 12)}y`;
-}
+// Relative time for the meta line, matching the ticket list: no suffix, the
+// row's position already reads as relative. lib/time is the one formatter.
+const ago = (iso?: string | null): string => timeAgo(iso, { suffix: false });
 
-function duration(job: Job): string {
-  if (!job.started_at) return "";
-  const start = new Date(job.started_at).getTime();
-  const end = job.ended_at ? new Date(job.ended_at).getTime() : NaN;
-  if (isNaN(start) || isNaN(end)) return "";
-  const secs = Math.max(0, Math.round((end - start) / 1000));
-  if (secs < 60) return `${secs}s`;
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  return s ? `${m}m ${s}s` : `${m}m`;
-}
+const duration = (job: Job): string => formatDuration(job.started_at, job.ended_at);
 
 // Icon + human name for the job's binding. Prefers the enriched agent_name over
 // the raw UUID; the ticket title (job.title) carries the primary label.

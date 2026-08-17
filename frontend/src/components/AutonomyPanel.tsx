@@ -10,6 +10,8 @@ import {
   useEditMode, type StatusKind, type SegmentedOption,
 } from "@workshop/ui";
 import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib/tasks";
+import { jobStatusKind } from "../lib/jobs";
+import { timeAbsolute } from "../lib/time";
 import { shortHttpError } from "../lib/httpError";
 
 // Autonomy = how a scope (a project OR an agent) decides when to work its own
@@ -155,19 +157,6 @@ function isLatitude(v: unknown): v is Latitude {
   return v === "strict" || v === "standard" || v === "open";
 }
 
-function fmtTs(ts?: string | null): string {
-  if (!ts) return "";
-  const d = new Date(ts);
-  return isNaN(d.getTime()) ? "" : d.toLocaleString();
-}
-
-function jobKind(status?: string): StatusKind {
-  if (status === "running") return "running";
-  if (status === "done") return "ok";
-  if (status === "failed") return "danger";
-  if (status === "awaiting_input") return "warn";
-  return "stopped";
-}
 
 function cronFromTriggers(triggers?: Trigger[]): string {
   const cron = (triggers || []).find((t) => t.kind === "cron");
@@ -394,7 +383,7 @@ export default function AutonomyPanel({
         <SectionLabel icon={<Repeat aria-hidden />}>Autonomy</SectionLabel>
         <Row wrap style={{ gap: "var(--space-2)" }}>
           {cfg && (scope === "project" ? (
-            <StatusPill status={running ? "running" : jobKind(last?.status)}>
+            <StatusPill status={running ? "running" : jobStatusKind(last?.status)}>
               {running ? "running" : (last?.status ?? "never run")}
             </StatusPill>
           ) : (
@@ -558,16 +547,16 @@ export default function AutonomyPanel({
                   )}
                 </Row>
                 {cfg?.updated && (
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Updated {fmtTs(cfg.updated)}</span>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Updated {timeAbsolute(cfg.updated)}</span>
                 )}
                 {scope === "project" && running && last?.trigger && (
                   <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                    Sweep running (trigger <span className="ws-mono">{last.trigger}</span>, started {fmtTs(last.started_at)}).
+                    Sweep running (trigger <span className="ws-mono">{last.trigger}</span>, started {timeAbsolute(last.started_at)}).
                   </p>
                 )}
                 {scope === "project" && !running && last && (
                   <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                    Last run {fmtTs(last.started_at)}: {last.status}
+                    Last run {timeAbsolute(last.started_at)}: {last.status}
                     {typeof last.tasks_done === "number" ? `, ${last.tasks_done} done` : ""}
                     {typeof last.tasks_failed === "number" && last.tasks_failed > 0 ? `, ${last.tasks_failed} failed` : ""}.
                   </p>
@@ -612,7 +601,7 @@ export default function AutonomyPanel({
                     </Row>
                     {a.question && <p style={{ fontSize: "var(--fs-sm)", margin: "0 0 var(--space-1)" }}>{a.question}</p>}
                     <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                      {a.since ? `since ${fmtTs(a.since)}. ` : ""}Reply from the task panel.
+                      {a.since ? `since ${timeAbsolute(a.since)}. ` : ""}Reply from the task panel.
                     </span>
                   </div>
                 ))}

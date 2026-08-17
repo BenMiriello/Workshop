@@ -146,12 +146,15 @@ export default function App() {
           {/* Legacy path + the old external link both land on the in-workshop app now. */}
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />
           <Route path="/settings" element={<Settings />} />
-          {/* Retired surfaces. Services/Events moved into Settings > System and
-              their page files are deleted. "Jobs" is the legacy noun for a Run
-              (entity model section 5). The Runs feed was a tab on the ticket
-              list until 2026-08-12; it is /runs now, because a run belongs to
-              the ticket that produced it and the standalone feed is the
-              leftovers, not a peer of the ticket list. */}
+          {/* Retired standalone routes. Services/Events moved into Settings >
+              System; their page files are still there (pages/Services.tsx,
+              pages/Events.tsx), but only as panels Settings renders, not as
+              routed pages of their own — this redirect is what keeps an old
+              /services or /events link working. "Jobs" is the legacy noun for
+              a Run (entity model section 5). The Runs feed was a tab on the
+              ticket list until 2026-08-12; it is /runs now, because a run
+              belongs to the ticket that produced it and the standalone feed
+              is the leftovers, not a peer of the ticket list. */}
           <Route path="/activity" element={<Navigate to="/" replace />} />
           <Route path="/services" element={<Navigate to="/settings" replace />} />
           <Route path="/events" element={<Navigate to="/settings" replace />} />

@@ -25,6 +25,7 @@ import {
   StatusPill,
   type StatusKind,
 } from "@workshop/ui";
+import { timeAgo } from "../lib/time";
 import { shortHttpError } from "../lib/httpError";
 
 // Home — three bands per operator direction 2026-07-18: Apps + Chats +
@@ -32,16 +33,6 @@ import { shortHttpError } from "../lib/httpError";
 // attention band, no jobs feed, no status pills. The signal is "what am I
 // working on or near recently"; system status lives elsewhere (the /agents
 // header carries the autonomy pill; Work carries the ticket queue).
-
-function fmtAge(iso?: string): string {
-  if (!iso) return "";
-  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
-  if (Number.isNaN(s)) return "";
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
-}
 
 // ---- Section shell --------------------------------------------------------
 function Section({
@@ -140,7 +131,7 @@ function RecentChats() {
                       <MessageSquare size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
                       {t.title || "Untitled chat"}
                     </h3>
-                    <span className="ws-card__meta ws-mono" style={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>{t.updated_at ? fmtAge(t.updated_at) : " "}</span>
+                    <span className="ws-card__meta ws-mono" style={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>{t.updated_at ? timeAgo(t.updated_at) : " "}</span>
                   </Row>
                   <p className="ws-card__meta ws-mono" style={{ marginTop: "var(--space-1)", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.context_key}</p>
                 </Card>
@@ -282,7 +273,7 @@ function RecentProjects() {
                   </Row>
                   <p className="ws-project-card__desc" style={{ marginTop: "var(--space-2)" }}>{p.purpose || " "}</p>
                   <p className="ws-card__meta ws-project-card__when">
-                    {p.last_touched ? `touched ${fmtAge(p.last_touched)}` : " "}
+                    {p.last_touched ? `touched ${timeAgo(p.last_touched)}` : " "}
                   </p>
                 </Card>
               </Link>

@@ -4,26 +4,14 @@
 // ticket looks like.
 import { Tag, catFor } from "@workshop/ui";
 import { ticketKey, type Task } from "../../lib/tasks";
+import { timeAgo } from "../../lib/time";
 
 // Relative time, the unit every tracker's list column uses. An absolute
 // timestamp in a list is precision nobody reads; the ticket page has the full
-// one.
-export function ago(iso?: string | null): string {
-  if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return "";
-  const secs = Math.max(0, (Date.now() - t) / 1000);
-  if (secs < 60) return "now";
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo`;
-  return `${Math.floor(months / 12)}y`;
-}
+// one. Re-exported so the existing `ago` import at every call site keeps
+// working; the formatting itself lives in lib/time (one definition, not
+// sixteen).
+export const ago = (iso?: string | null): string => timeAgo(iso, { suffix: false });
 
 /** The short mono handle for a ticket. See `ticketKey` for why six characters. */
 export function TicketKey({ id }: { id: string }) {

@@ -65,6 +65,7 @@ import { useNative, useTrackingStatus } from "../native/useNative";
 import { startDeviceTracking, stopDeviceTracking } from "../native/location";
 import type { PermissionState } from "@shared/native-bridge";
 import { AppSuspense, appSettingsPanels } from "../apps/registry";
+import { timeAgo } from "../lib/time";
 
 // Settings page. Logical groupings, no over-engineering. Sections in order
 // of how often the operator actually touches them.
@@ -82,15 +83,6 @@ type AgentSummary = {
   id: string;
   name: string;
   memory_blocks: string[];
-};
-
-const fmtAge = (iso: string) => {
-  const ms = Date.now() - Date.parse(iso);
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
 };
 
 export default function Settings() {
@@ -605,7 +597,7 @@ function DeviceTokens() {
             <Smartphone size={14} strokeWidth={1.8} aria-hidden />
             <span>{d.label || "device"}</span>
             <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>
-              {d.id}{d.last_seen ? ` · seen ${fmtAge(d.last_seen)}` : ""}
+              {d.id}{d.last_seen ? ` · seen ${timeAgo(d.last_seen)}` : ""}
             </span>
             <Button size="sm" variant="danger-ghost" onClick={() => setRevoking(d)}>
               <Trash2 size={14} strokeWidth={1.8} aria-hidden /> Revoke

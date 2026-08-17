@@ -5,6 +5,7 @@ import { useShowNonBird } from "./settings";
 import BirdsHeader from "./BirdsHeader";
 import { Toggle, Button, Segmented } from "@workshop/ui";
 import { API, pct } from "./ui";
+import { timeAbsoluteShort } from "../../../lib/time";
 
 // Settings for the Birds app. The non-bird filter is display-only: BirdNET keeps
 // detecting and storing every class (so nothing is lost and the toggle is
@@ -236,11 +237,7 @@ function AtlasSettings() {
     }, 2500);
     setTimeout(() => { clearInterval(t); setBuilding(false); }, 120000);
   }, [stat]);
-  const fmtBuilt = (iso: string | null) => {
-    if (!iso) return "never";
-    try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
-    catch { return iso; }
-  };
+  const fmtBuilt = (iso: string | null) => (iso ? timeAbsoluteShort(iso) || "never" : "never");
 
   const toggle = useCallback((v: boolean) => {
     setSave(v);

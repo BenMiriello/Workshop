@@ -18,6 +18,7 @@ import {
   type StatusKind,
   Notice,
 } from "@workshop/ui";
+import { timeAgo } from "../lib/time";
 import { shortHttpError } from "../lib/httpError";
 
 const SENS_OPTIONS: SegmentedOption<ProjectSensitivity>[] = [
@@ -143,14 +144,6 @@ const stateKind = (s: ProjectState): StatusKind => {
   }
 };
 
-const fmtAge = (iso: string) => {
-  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
-};
-
 export default function Projects() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -226,7 +219,7 @@ export default function Projects() {
                     {p.purpose || " "}
                   </p>
                   <p className="ws-card__meta ws-project-card__when">
-                    touched {fmtAge(p.last_touched)} · {p.sensitivity}
+                    touched {timeAgo(p.last_touched)} · {p.sensitivity}
                   </p>
                 </Card>
               </Link>

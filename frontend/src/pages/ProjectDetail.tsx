@@ -59,6 +59,7 @@ import { useCrumbLabel } from "../components/appNav";
 import { chatApi, type ThreadSummary } from "../lib/chat";
 import { newChatHref } from "../lib/chatSelection";
 import { marketplaceApi, type RegistryItem } from "../lib/marketplace";
+import { timeAbsoluteShort } from "../lib/time";
 import AppServicesPanel from "../components/AppServicesPanel";
 import DeploysPanel from "../components/DeploysPanel";
 import AutonomyPanel from "../components/AutonomyPanel";
@@ -185,17 +186,6 @@ function freshNoteId(title: string): string {
   return `${base}-${Date.now().toString(36)}`;
 }
 
-function fmtTs(ts?: string | null): string {
-  if (!ts) return "";
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return ts;
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
 
 // Stores hosted by this project (B11). Reads /api/stores?project=<slug>
 // which routes through stores.by_host on the backend (entity-model 2026-07-18
@@ -1334,7 +1324,7 @@ export default function ProjectDetail() {
                     <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                       <span style={{ fontWeight: 600, wordBreak: "break-word" }}>{n.title || n.id}</span>
                       {n.updated && (
-                        <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(n.updated)}</span>
+                        <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{timeAbsoluteShort(n.updated)}</span>
                       )}
                     </Row>
                     {n.hook && (
@@ -1373,7 +1363,7 @@ export default function ProjectDetail() {
                   <GitBranch size={14} aria-hidden /> default branch{" "}
                   <code className="ws-mono">{project.repo.default_branch}</code>
                 </span>
-                <span>connected {fmtTs(project.repo.connected_at)}</span>
+                <span>connected {timeAbsoluteShort(project.repo.connected_at)}</span>
               </Row>
 
               {/* Concurrent-worktrees opt-in. A single config boolean: the Toggle

@@ -8,7 +8,8 @@ import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot,
   Badge, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Menu, MenuItem, type StatusKind,
 } from "@workshop/ui";
-import { runHref } from "../lib/jobs";
+import { jobStatusKind, runHref } from "../lib/jobs";
+import { timeAgo } from "../lib/time";
 import { shortHttpError } from "../lib/httpError";
 
 
@@ -40,30 +41,7 @@ type Run = {
 type Notice = { deploy_id?: string; branch?: string; remote_sha?: string; detected_at?: string; reason?: string; none?: boolean };
 
 
-const JOB_KIND: Record<string, StatusKind> = {
-  running: "running",
-  queued: "running",
-  awaiting_input: "warn",
-  done: "ok",
-  failed: "danger",
-  cancelled: "stopped",
-};
-
 function short(sha?: string): string { return (sha || "").slice(0, 7); }
-
-function ago(iso?: string | null): string {
-  if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (!t) return "";
-  const s = Math.max(1, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
-}
 
 
 export default function DeployDetail() {
@@ -217,7 +195,7 @@ export default function DeployDetail() {
   }, [deploy]);
 
   const lastStatus: StatusKind = runs[0]?.status
-    ? (JOB_KIND[runs[0].status] || "stopped")
+    ? jobStatusKind(runs[0].status)
     : deploy?.current ? "ok" : "stopped";
 
   return (
@@ -284,7 +262,7 @@ export default function DeployDetail() {
         <Notice tone="warn" icon={<TriangleAlert aria-hidden />}>
           Change detected at <code>{short(notice.remote_sha)}</code> on{" "}
           <code>{notice.branch}</code>, paused ({notice.reason}).
-          {notice.detected_at ? ` Noticed ${ago(notice.detected_at)}.` : ""}
+          {notice.detected_at ? ` Noticed ${timeAgo(notice.detected_at)}.` : ""}
         </Notice>
       )}
 
@@ -398,13 +376,13 @@ export default function DeployDetail() {
                 <Stack gap="sm">
                   {runs.map((r) => (
                     <Row key={r.id} wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                      <StatusDot status={JOB_KIND[r.status] || "stopped"}>{r.status}</StatusDot>
+                      <StatusDot status={jobStatusKind(r.status)}>{r.status}</StatusDot>
                       {r.kind === "deploy-rollback" && <Badge>rollback</Badge>}
                       {r.trigger === "event" && <Badge>auto</Badge>}
                       <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                         {r.evidence?.commit_sha ? short(r.evidence.commit_sha) : short(r.binding?.ref)}
                       </span>
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{ago(r.started_at)}</span>
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{timeAgo(r.started_at)}</span>
                       {r.evidence?.summary && (
                         <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
                           {r.evidence.summary}

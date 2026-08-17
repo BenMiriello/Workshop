@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Circle, RefreshCw, CalendarClock, Check, Play, Dot,
   ChevronDown, ChevronRight, Inbox, Sparkles } from "lucide-react";
-import { ConfirmDialog, Stepper, Tabs } from "@workshop/ui";
+import { ConfirmDialog, StatusPill, Stepper, Tabs, type StatusKind } from "@workshop/ui";
 import { shortHttpError } from "../../../lib/httpError";
+import { timeAgo } from "../../../lib/time";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -81,17 +82,6 @@ type AlertsResp = { alerts: AlertEntry[] };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const fmtAge = (isoStr: string): string => {
-  try {
-    const dt = new Date(isoStr);
-    const diffS = (Date.now() - dt.getTime()) / 1000;
-    if (diffS < 60) return `${Math.round(diffS)}s ago`;
-    if (diffS < 3600) return `${Math.round(diffS / 60)}m ago`;
-    return `${Math.round(diffS / 3600)}h ago`;
-  } catch {
-    return isoStr;
-  }
-};
 
 const statusColor = (s: string): string => {
   if (s === "ok") return "var(--ok)";
@@ -715,7 +705,7 @@ function SourcesTab() {
                 </div>
                 <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
                   {st?.ts
-                    ? `last poll ${fmtAge(st.ts)}`
+                    ? `last poll ${timeAgo(st.ts)}`
                     : "never polled (no live poller for this source yet)"}
                   {entityCount != null ? ` · ${entityCount} entities` : ""}
                 </p>
@@ -835,27 +825,27 @@ type Msg = {
 };
 type MsgResp = { messages: Msg[]; total: number; has_more: boolean };
 
-const SEV_COLOR: Record<string, string> = {
-  ok: "var(--ok)",
-  info: "var(--accent, var(--fg))",
-  caution: "var(--warn)",
-  urgent: "var(--danger)",
+// The now-feed's own severity vocabulary, mapped onto the five design status
+// kinds instead of a bespoke three-color scheme (StatusPill, never a hand-
+// rolled pill). `info` reads as `stopped`: it is a neutral fact, not an
+// outcome, the same way an idle/paused state carries no ok/warn/danger charge.
+const SEVERITY_KIND: Record<Msg["severity"], StatusKind> = {
+  ok: "ok",
+  info: "stopped",
+  caution: "warn",
+  urgent: "danger",
 };
 
-function sevSoft(sev: string): string {
-  const c = SEV_COLOR[sev] ?? "var(--muted)";
-  return `color-mix(in srgb, ${c} 14%, transparent)`;
+// The kind's own token, for the few places (a card's tinted border, an inline
+// action line) that need the bare color rather than a pill. Status tokens are
+// named exactly `--ok` / `--stopped` / `--warn` / `--danger`, so this is a
+// lookup, not an invented palette.
+function sevColor(sev: Msg["severity"]): string {
+  return `var(--${SEVERITY_KIND[sev]})`;
 }
 
-function SevPill({ sev }: { sev: string }) {
-  const c = SEV_COLOR[sev] ?? "var(--muted)";
-  return (
-    <span style={{
-      color: c, background: sevSoft(sev), border: `1px solid color-mix(in srgb, ${c} 40%, transparent)`,
-      borderRadius: 999, padding: "0.1rem 0.5rem", fontSize: "0.72rem", fontWeight: 600,
-      textTransform: "uppercase", letterSpacing: "0.03em", whiteSpace: "nowrap",
-    }}>{sev}</span>
-  );
+function sevSoft(sev: Msg["severity"]): string {
+  return `color-mix(in srgb, ${sevColor(sev)} 14%, transparent)`;
 }
 
 function Evidence({ msg }: { msg: Msg }) {
@@ -881,13 +871,13 @@ function Evidence({ msg }: { msg: Msg }) {
 
 function TopMessageCard({ msg }: { msg: Msg }) {
   const [open, setOpen] = useState(false);
-  const c = SEV_COLOR[msg.severity] ?? "var(--muted)";
+  const c = sevColor(msg.severity);
   return (
     <div style={{ border: `1px solid color-mix(in srgb, ${c} 45%, var(--border))`, borderRadius: 12,
       background: sevSoft(msg.severity), padding: "1rem", marginBottom: "1.25rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem", flexWrap: "wrap" }}>
-        <SevPill sev={msg.severity} />
-        <span className="muted" style={{ fontSize: "0.75rem" }}>{fmtAge(msg.ts)}</span>
+        <StatusPill status={SEVERITY_KIND[msg.severity]}>{msg.severity}</StatusPill>
+        <span className="muted" style={{ fontSize: "0.75rem" }}>{timeAgo(msg.ts)}</span>
         <span className="muted" style={{ fontSize: "0.72rem", marginLeft: "auto" }}>{msg.kind}</span>
       </div>
       <h3 style={{ margin: "0 0 0.3rem", fontSize: "1.12rem", lineHeight: 1.25 }}>{msg.headline}</h3>
@@ -910,7 +900,7 @@ function TopMessageCard({ msg }: { msg: Msg }) {
 
 function HistoryRow({ msg }: { msg: Msg }) {
   const [open, setOpen] = useState(false);
-  const c = SEV_COLOR[msg.severity] ?? "var(--muted)";
+  const c = sevColor(msg.severity);
   return (
     <li style={{ borderBottom: "1px solid var(--border)", padding: "0.55rem 0" }}>
       <button onClick={() => setOpen((v) => !v)} aria-expanded={open}
@@ -919,7 +909,7 @@ function HistoryRow({ msg }: { msg: Msg }) {
         <Dot size={18} style={{ color: c, flexShrink: 0 }} aria-hidden />
         <span style={{ flex: 1, minWidth: 0 }}>
           <span style={{ display: "block", fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{msg.headline}</span>
-          <span className="muted" style={{ fontSize: "0.72rem" }}>{fmtAge(msg.ts)} · {msg.kind}</span>
+          <span className="muted" style={{ fontSize: "0.72rem" }}>{timeAgo(msg.ts)} · {msg.kind}</span>
         </span>
         {open ? <ChevronDown size={15} className="muted" /> : <ChevronRight size={15} className="muted" />}
       </button>

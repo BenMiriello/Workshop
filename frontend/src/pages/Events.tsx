@@ -1,11 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 import { usePoll } from "../lib/usePoll";
-import { RefreshCw } from "lucide-react";
+import { Activity, RefreshCw } from "lucide-react";
 import {
   Button,
   Card,
   CardGrid,
-  PageHeader,
   Row,
   SectionLabel,
   Select,
@@ -79,10 +78,16 @@ export default function Events() {
     </Button>
   );
 
+  // Events, like Services, only ever renders embedded inside Settings >
+  // System — never routed on its own (App.tsx redirects the old /events path
+  // to /settings). A SectionLabel, not a second PageHeader under Settings' own.
   if (err) {
     return (
       <div>
-        <PageHeader title="Events" actions={refreshBtn} />
+        <Row between style={{ marginBottom: "var(--space-3)" }}>
+          <SectionLabel icon={<Activity aria-hidden />}>Events</SectionLabel>
+          {refreshBtn}
+        </Row>
         <StateBlock
           variant="error"
           title="Couldn't load events"
@@ -100,7 +105,10 @@ export default function Events() {
   if (!data) {
     return (
       <div>
-        <PageHeader title="Events" sub="Loading…" actions={refreshBtn} />
+        <Row between style={{ marginBottom: "var(--space-3)" }}>
+          <SectionLabel icon={<Activity aria-hidden />}>Events</SectionLabel>
+          {refreshBtn}
+        </Row>
         <Card><Stack gap="sm"><Skeleton width="60%" /><Skeleton width="45%" /></Stack></Card>
       </div>
     );
@@ -108,27 +116,25 @@ export default function Events() {
 
   return (
     <div>
-      <PageHeader
-        title="Events"
-        sub={
-          <Row wrap>
-            <span>
-              {data.count} recent {data.count === 1 ? "event" : "events"}
-              {filter ? ` · source=${filter}` : ""}
-            </span>
-            {/* View-preference filter — commits on change. */}
-            <Select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: "auto" }}>
-              <option value="">all sources</option>
-              {sources.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </Select>
-          </Row>
-        }
-        actions={refreshBtn}
-      />
+      <Row between wrap style={{ marginBottom: "var(--space-3)", alignItems: "center" }}>
+        <SectionLabel icon={<Activity aria-hidden />}>Events</SectionLabel>
+        <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+            {data.count} recent {data.count === 1 ? "event" : "events"}
+            {filter ? ` · source=${filter}` : ""}
+          </span>
+          {/* View-preference filter — commits on change. */}
+          <Select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: "auto" }}>
+            <option value="">all sources</option>
+            {sources.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </Select>
+        </Row>
+        {refreshBtn}
+      </Row>
 
       {subs && Object.keys(subs.subscriptions).length > 0 && (
         <section style={{ marginBottom: "var(--space-6)" }}>

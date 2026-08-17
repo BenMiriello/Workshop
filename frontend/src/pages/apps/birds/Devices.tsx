@@ -4,6 +4,7 @@ import { Smartphone, Radio, MapPin, Trash2, X, Check, Pencil, RotateCcw, Users }
 import { useRecorder, type DeviceMode } from "./recorder";
 import { StatusPill } from "@workshop/ui";
 import { API, jget, isRecording } from "./ui";
+import { timeAgo } from "../../../lib/time";
 
 // Devices that listen. Each is adaptive (follows its current GPS) or fixed
 // (pinned to one location, the way the Pi will be). A device is read-only until
@@ -21,18 +22,12 @@ type Dev = {
 };
 type Loc = { id: number; name: string };
 
-// Relative "last active" so a stale device reads at a glance.
+// Relative "last active" so a stale device reads at a glance. lib/time's
+// `timeAgo` is the one formatter; only the empty-input wording is local
+// (a device shows "never" for no last-seen record, not an empty string).
 function relTime(iso: string | null): string {
   if (!iso) return "never";
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "unknown";
-  const s = Math.max(0, (Date.now() - then) / 1000);
-  if (s < 60) return "just now";
-  const m = s / 60; if (m < 60) return `${Math.floor(m)}m ago`;
-  const h = m / 60; if (h < 24) return `${Math.floor(h)}h ago`;
-  const d = h / 24; if (d < 30) return `${Math.floor(d)}d ago`;
-  const mo = d / 30; if (mo < 12) return `${Math.floor(mo)}mo ago`;
-  return `${Math.floor(mo / 12)}y ago`;
+  return timeAgo(iso) || "unknown";
 }
 function dateLabel(iso: string | null): string {
   if (!iso) return "";

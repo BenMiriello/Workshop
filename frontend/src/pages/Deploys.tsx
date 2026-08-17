@@ -6,6 +6,7 @@ import {
   Badge, Tag, Skeleton, Field, Input, Modal, ConfirmDialog, type StatusKind,
 } from "@workshop/ui";
 import { TableScroll, Table } from "@workshop/ui";
+import { timeAgo } from "../lib/time";
 import { shortHttpError } from "../lib/httpError";
 
 // /deploys — cross-project index of every hosted target across the workshop.
@@ -31,20 +32,6 @@ type Deploy = {
 type Override = { engaged: boolean; reason?: string | null; engaged_at?: string | null; engaged_by?: string | null };
 
 type Filter = "all" | "prod" | "preview" | "failed" | "autonomous";
-
-function ago(iso?: string | null): string {
-  if (!iso) return "";
-  const t = new Date(iso).getTime();
-  if (!t) return "";
-  const s = Math.max(1, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
-}
 
 function short(sha?: string): string { return (sha || "").slice(0, 7); }
 
@@ -174,7 +161,7 @@ export default function Deploys() {
               <StatusDot status="warn">frozen</StatusDot>
               <span style={{ flex: 1 }}>
                 All deploys are refused (409). Reason: {override.reason || "(no reason recorded)"}.
-                {override.engaged_at ? ` Engaged ${ago(override.engaged_at)}` : ""}
+                {override.engaged_at ? ` Engaged ${timeAgo(override.engaged_at)}` : ""}
                 {override.engaged_by ? ` by ${override.engaged_by}` : ""}.
               </span>
             </Row>
@@ -269,7 +256,7 @@ export default function Deploys() {
                     <Badge>{d.autonomy}</Badge>
                   </td>
                   <td className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                    {d.current?.deployed_at ? ago(d.current.deployed_at) : ""}
+                    {d.current?.deployed_at ? timeAgo(d.current.deployed_at) : ""}
                   </td>
                 </tr>
               ))}
