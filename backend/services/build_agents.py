@@ -31,7 +31,7 @@ from services import paths
 # tracked tree. See routes/projects.py for the matching rationale.
 # Functions rather than constants so tests and a relocated root are honoured at
 # CALL time. NOT per-owner: a build agent is owned by its registry record's
-# `owner_id`, not by which directory it sits in, because `build:<slug>` is a
+# `owner_id`, not by which directory it sits in, because `agent:<slug>` is a
 # global scope key — see paths.projects_root for the full reasoning.
 def _registry() -> Path:
     return paths.env_path("WORKSHOP_BUILD_AGENTS_JSON", "build_agents.json")

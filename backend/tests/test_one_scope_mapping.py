@@ -57,8 +57,9 @@ KEY_FORMS: list[tuple[str, str]] = [
     ("project:birds", "project:birds"),
     ("app:budget", "app:budget"),
     ("agent:masini", "agent:masini"),
-    ("build:unlinked", "agent:unlinked"),
-    ("build:has-a-project", "project:has-a-project"),
+    # `build:<slug>` was a second spelling of `agent:<slug>` and is DELETED, so
+    # it is now an unrecognised kind like any other and resolves to the root.
+    ("build:unlinked", "workshop"),
     ("bare-app", "app:bare-app"),
     ("zzz-not-an-app", "workshop"),
     ("role:maker", "workshop"),
@@ -154,17 +155,16 @@ class TestEverySiteAgrees:
         else:
             assert got == scope
 
-    def test_a_build_key_never_survives_as_a_scope(self, catalog):
-        """`build:` is a context_key kind, not a scope kind: `scope_tree.parse`
-        rejects it, so `reach()` can never contain it. `task_scope_for` used to
-        hand it straight back."""
+    def test_no_site_still_knows_the_deleted_build_kind(self, catalog):
+        """`build:<slug>` is gone, and gone means every site treats it as the
+        junk key it now is rather than one of them quietly keeping the
+        translation. An unrecognised kind resolves to the root, and the root is
+        queueless for a chat."""
         for key in ("build:unlinked", "build:has-a-project"):
-            for got in (scope_tree.scope_for_context(key),
-                        knowledge.scope_for_context(key),
-                        chat_work.task_scope_for(key),
-                        chat_repo._thread_fields({"context_key": key})["scope"]):
-                assert got is not None and not got.startswith("build:")
-                scope_tree.parse(got)  # raises if it is not a real scope key
+            assert scope_tree.scope_for_context(key) == "workshop"
+            assert knowledge.scope_for_context(key) == "workshop"
+            assert chat_work.task_scope_for(key) is None
+            assert chat_repo._thread_fields({"context_key": key})["scope"] == "workshop"
 
     def test_a_mentionable_agent_is_local_to_its_own_development_chat(self, catalog):
         """The concrete consequence of site 5 disagreeing. `home_scope` fell to

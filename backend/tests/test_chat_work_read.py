@@ -79,12 +79,11 @@ class TestScopeKey:
         for key in ("development", "project:demo", "agent:y"):
             assert chat_work.task_scope_for(key) == key
 
-    def test_a_build_key_comes_out_as_a_real_scope(self, env):
-        """`build:` is a context_key, never a scope: `scope_tree.parse` rejects
-        it and `reach()` can never yield it. This used to return it verbatim, so
-        the work panel compared a string against a scope-root list that could
-        not contain it."""
-        assert chat_work.task_scope_for("build:x") == "agent:x"
+    def test_the_deleted_build_kind_opens_no_queue(self, env):
+        """`build:<slug>` was a second spelling of `agent:<slug>`; both the
+        spelling and the translation are deleted, so it is now junk and resolves
+        to the queueless root rather than to a scope of its own."""
+        assert chat_work.task_scope_for("build:x") is None
 
     def test_an_unknown_key_does_not_become_its_own_queue(self, env):
         """It used to be returned verbatim for anything prefixed. Unknown

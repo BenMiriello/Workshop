@@ -14,13 +14,16 @@ export type Trigger = {
   completion_gate?: string;
 };
 
-export type AgentRuntime = "builder" | "assistant";
-
 // One unified Agent as returned by GET /api/agents/ and GET /api/agents/:id.
+//
+// THERE IS NO `runtime`. `builder | assistant` was a second axis beside `role`,
+// answering the same question worse, and it is deleted on both sides of the wire
+// (thread T2 of the 2026-08-16 coherence overhaul). What used to be a builder is
+// `role: "maker"` with a `project_slug`: the role says it works in a tree, the
+// project link says which tree.
 export type UnifiedAgent = {
   id: string;
   slug: string;
-  runtime: AgentRuntime;
   name: string;
   purpose?: string;
   triggers?: Trigger[];

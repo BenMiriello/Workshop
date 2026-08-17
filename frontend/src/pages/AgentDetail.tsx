@@ -41,10 +41,10 @@ import {
 import { ticketHref } from "../lib/tasks";
 import { shortHttpError } from "../lib/httpError";
 
-// One Agent, one config surface. `runtime` is a field, not a separate noun.
+// One Agent, one config surface, typed by ROLE. There is no `runtime` field.
 // This page is the definition (editable), triggers, the grant set
 // (Phase-4 scoped Store tokens, minted here via the broker), and its Job history. The
-// builder work pane (files / editor / preview / diff + chat) lives separately at
+// maker work pane (files / editor / preview / diff + chat) lives separately at
 // /agents/:slug/chat.
 
 type AgentDetailData = UnifiedAgent & {
@@ -74,6 +74,16 @@ type AgentDetailData = UnifiedAgent & {
   // cannot describe a grant the run does not have.
   authority?: { writes: string[]; describes: string; tools: string[] };
 };
+
+// THE ONE TEST THIS PAGE BRANCHES ON, and the honest replacement for the deleted
+// `runtime === "builder"`. Both halves are load-bearing: `maker` is the role that
+// works in a tree, and the tree it works in is the project it is linked to. A
+// project-less maker has no work pane, so a bare role check would send it to a
+// page for a directory that does not exist. Same rule as `deriveMode` in
+// components/chat/chatScope.ts and the roster card in Agents.tsx.
+function isMaker(a: Pick<AgentDetailData, "role" | "project_slug">): boolean {
+  return a.role === "maker" && !!a.project_slug;
+}
 
 // A Phase-4 resource-scoped grant minted TO this agent (over a Store).
 type ResourceGrant = {
@@ -247,10 +257,10 @@ function TriggerEditor({
 // ---------------------------------------------------------------------------
 // Create form (role picker) — the real /agents/new flow
 // ---------------------------------------------------------------------------
-// Post-2026-07-18: agents are keyed by role, not runtime. Runtime is derived:
-// role=maker + a linked project produces a `builder` runtime (Claude Code coding
-// session); anything else is an `assistant`. Broker is closed to interactive
-// creation per primitive-roles §2 (demand-only, no runner needed).
+// Agents are keyed by role. `role: maker` PLUS a linked project is the agent
+// that works in a tree (a Claude Code coding session); anything else answers from
+// its definition. Broker is closed to interactive creation per primitive-roles §2
+// (demand-only, no runner needed).
 
 type CreateRole = "none" | "maker" | "reviewer" | "triager" | "keeper";
 const CREATE_ROLE: SegmentedOption<CreateRole>[] = [
@@ -289,8 +299,9 @@ function CreateAgent() {
       .catch(() => setProjects([]));
   }, []);
 
-  // maker + project => Claude Code coding session (builder runtime); everything
-  // else => assistant runtime. Kept as a derived value, never a separate control.
+  // maker + project => a Claude Code coding session with a tree; everything else
+  // answers from its definition. Derived, never a separate control: both halves
+  // are already on the form above.
   const isBuilderPath = role === "maker" && !!projectSlug;
 
   const submit = async () => {
@@ -633,7 +644,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     if (!agent) return;
     setDName(agent.name || "");
     setDPurpose(agent.purpose || "");
-    setDBody(agent.runtime === "assistant" ? personaValue : agent.definition || "");
+    setDBody(isMaker(agent) ? agent.definition || "" : personaValue);
     setDTriggers((agent.triggers || []).map((t) => ({ ...t })));
     setDMentionable(!!agent.mentionable);
     setDDelegatable(!!agent.delegatable);
@@ -671,9 +682,9 @@ function ExistingAgent({ agentId }: { agentId: string }) {
   };
 
   const retire = async () => {
-    // Retire is offered for builders (flips build runtime state). Assistant
-    // retirement is a later concern; the Retire button is builder-only.
-    if (agent?.runtime === "builder") {
+    // Retire is offered for a maker with a tree (it flips that tree's execution
+    // state). Retiring anything else is a later concern.
+    if (agent && isMaker(agent)) {
       await fetch(`/api/agents/build/${encodeURIComponent(agent.slug)}/retire`, { method: "POST" });
     }
     nav("/agents");
@@ -696,8 +707,8 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     );
   }
 
-  const isBuilder = agent.runtime === "builder";
-  const RuntimeIcon = isBuilder ? Bot : Brain;
+  const isBuilder = isMaker(agent);
+  const KindIcon = isBuilder ? Bot : Brain;
 
   return (
     <div>
@@ -720,7 +731,6 @@ function ExistingAgent({ agentId }: { agentId: string }) {
             <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
               <code className="ws-mono">{agent.slug}</code> ·{" "}
               {agent.project_slug ? <>project <code>{agent.project_slug}</code></> : "workshop scope"}
-              {" · runs as "}<code>{agent.runtime}</code>
             </span>
           </Row>
         }
@@ -892,7 +902,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
             <Card style={{ padding: "var(--space-3)" }}>
               <p className="ws-card__meta">{agent.purpose || "No purpose set."}</p>
               <p className="ws-muted" style={{ marginTop: "var(--space-2)" }}>
-                <RuntimeIcon size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
+                <KindIcon size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
                 {isBuilder ? "Claude Code agent" : "Assistant agent"}
                 {agent.memory ? ` · memory: ${agent.memory}` : ""}
               </p>
@@ -909,7 +919,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
                 background: "var(--bg-inset)", borderRadius: "var(--radius-sm)",
                 fontSize: "var(--fs-sm)", whiteSpace: "pre-wrap", overflow: "auto", maxHeight: "24vh",
               }}>
-                {(agent.runtime === "assistant" ? personaValue : agent.definition) || "(no instructions yet)"}
+                {(isBuilder ? agent.definition : personaValue) || "(no instructions yet)"}
               </pre>
             </Card>
           )}
@@ -1059,7 +1069,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
 
         {/* --- Tasks (the agent's work queue, canonical cross-scope store) --- */}
         <TaskPanel
-          scope={isBuilder ? `build:${agent.slug}` : `agent:${agent.slug}`}
+          scope={`agent:${agent.slug}`}
           variant="section"
           heading="Tasks"
         />

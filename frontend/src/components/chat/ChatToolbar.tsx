@@ -84,7 +84,7 @@ export default function ChatToolbar({
   showProviderPicker: boolean;
   // The scopes this chat can be in. Still the provider directory, because a
   // provider key IS a scope key (`general`, an app id, `project:<slug>`,
-  // `build:<slug>`) — what changes here is that they are named and grouped as
+  // `agent:<slug>`) — what changes here is that they are named and grouped as
   // the places they are, instead of listed as assistants to talk to.
   providers: Provider[];
   activeProvider: string;

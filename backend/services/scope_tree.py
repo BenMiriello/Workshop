@@ -146,10 +146,6 @@ def parse(scope_key: str) -> Scope:
 # and is its OWN root (ADR 0014, `task_scope.WORKSHOP_ROOT`), not an app.
 #
 # All five now call `scope_for_context`. Do not add a sixth.
-def _project_exists(slug: str) -> bool:
-    return (paths.projects_root() / slug).exists()
-
-
 def _installed_app_ids() -> set[str]:
     """Context keys that name an installed app (`budget`, `finance`, ...).
 
@@ -176,11 +172,6 @@ def scope_for_context(context_key: str | None) -> str:
       `development`                             -> `development`
       `project:<slug>`                          -> `project:<slug>`
       `app:<name>` / `agent:<slug>`             -> unchanged
-      `build:<slug>`  -> `project:<slug>` if that project exists on disk, else
-                         `agent:<slug>`. A build agent linked to a project
-                         shares the project's scope; a freestanding one gets
-                         its own. `build:` is not a scope kind (`parse` rejects
-                         it), so it can never come out the other side.
       a bare installed app id (`budget`)        -> `app:<id>`
       anything else                             -> `workshop`
 
@@ -208,8 +199,6 @@ def scope_for_context(context_key: str | None) -> str:
             return WORKSHOP_SCOPE
         if kind == "project":
             return f"project:{slug}"
-        if kind == "build":
-            return f"project:{slug}" if _project_exists(slug) else f"agent:{slug}"
         if kind in ("app", "agent"):
             return ck
         return WORKSHOP_SCOPE

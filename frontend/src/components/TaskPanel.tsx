@@ -53,8 +53,8 @@ import { shortHttpError } from "../lib/httpError";
 // the run's bound task the same way the Job detail page does.
 
 export type TaskPanelProps = {
-  // The task-store scope key: "workshop" | "project:<slug>" | "agent:<slug>" |
-  // "build:<slug>". Every read/write is scoped to it.
+  // The task-store scope key: "workshop" | "project:<slug>" | "agent:<slug>".
+  // Every read/write is scoped to it.
   scope: string;
   // Optional client-side narrowing to one assignee (e.g. "agent:<slug>"). The
   // scope already selects the store; this filters within it when a store is

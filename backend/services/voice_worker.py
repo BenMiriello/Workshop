@@ -436,11 +436,11 @@ async def ensure_worker(context_key: str, thread_id: str, model: str | None) -> 
         # processes fighting over the session file.
         session_id = ""
         resume = False
-        # `agent:<slug>`, not the retired `build:<slug>` this was gated on. That
-        # spelling is folded away before a thread is ever stored (thread T2,
-        # `chat_store.canonical_context_key`), so the branch as written could
-        # never fire again; a maker agent whose slug has no runtime record
-        # raises below and falls through to a fresh session, same as before.
+        # `agent:<slug>`, not the deleted `build:<slug>` this was gated on. The
+        # old spelling is gone from the code and from the stored threads (thread
+        # T2), so the branch as written could never fire again; a maker agent
+        # whose slug has no execution record raises below and falls through to a
+        # fresh session, same as before.
         if context_key.startswith("agent:"):
             try:
                 from services import build_agents as _ba
@@ -579,7 +579,7 @@ async def _run_turn(worker: VoiceWorker, turn: VoiceTurn) -> None:
 # a project chat is keyed `development` or `project:notes-app` and falls straight
 # through to the fresh-session path, which the comment there already admits. All
 # nine threads in the store that have spoken turns took that path. It reads
-# `agent:` since T2 retired the other spelling, so it can at least fire now; it
+# `agent:` since T2 deleted the other spelling, so it can at least fire now; it
 # is still not what makes voice see the typed conversation. This seed is.
 def _thread_seed(thread_id: str, exclude_client_id: str | None = None) -> str:
     try:

@@ -533,22 +533,6 @@ export type Provider = {
   modes?: { options: string[]; default: string };
 };
 
-// ---- Per-agent task list (build agents only) -------------------------------
-// Each build agent owns a task list at /api/agents/build/{slug}/tasks. The same
-// store backs tasks the agent creates itself, so the UI just renders whatever
-// the endpoint returns and refetches after mutations / after a turn completes.
-export type AgentTaskStatus = "todo" | "doing" | "done" | "blocked";
-
-export type AgentTask = {
-  id: string;
-  text: string;
-  status: AgentTaskStatus;
-  owner: string;
-  parent: string | null;
-  created: string;
-  updated: string;
-};
-
 export const chatApi = {
   // ONE FILE PER REQUEST, and the request happens on drop rather than on send.
   // A 12MB screenshot uploading inside the send would make Send feel broken for
@@ -900,35 +884,4 @@ export const chatApi = {
       j<{ used_tokens: number; window_tokens: number; pct: number; model: string }>,
     ),
 
-  // ---- Per-agent tasks (build agents only) ---------------------------------
-  // `slug` is the part of a build contextKey after the "build:" prefix.
-  listAgentTasks: (slug: string, includeDone = false) =>
-    fetch(
-      `/api/agents/build/${encodeURIComponent(slug)}/tasks?include_done=${includeDone ? "true" : "false"}`,
-    )
-      .then(j<{ tasks: AgentTask[] }>)
-      .then((r) => r.tasks),
-
-  addAgentTask: (slug: string, text: string, parent?: string) =>
-    fetch(`/api/agents/build/${encodeURIComponent(slug)}/tasks`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(parent ? { text, parent } : { text }),
-    }).then(j<AgentTask>),
-
-  updateAgentTask: (
-    slug: string,
-    id: string,
-    patch: { status?: AgentTaskStatus; text?: string },
-  ) =>
-    fetch(`/api/agents/build/${encodeURIComponent(slug)}/tasks/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    }).then(j<AgentTask>),
-
-  deleteAgentTask: (slug: string, id: string) =>
-    fetch(`/api/agents/build/${encodeURIComponent(slug)}/tasks/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    }).then(j<{ deleted: boolean }>),
 };

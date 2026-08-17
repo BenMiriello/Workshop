@@ -123,7 +123,6 @@ def _apply_group_to_project(project_slug: str | None, defaults: dict,
         norm = triggers.preset_to_triggers(preset, limits=autonomy.get("limits") or None)
         autonomy.update({
             "preset": preset,
-            "mode": triggers.project_mode_from_triggers(norm),
             "triggers": norm,
         })
     proj["autonomy"] = autonomy
@@ -150,8 +149,8 @@ def _drop_from_project_roster(rec: dict) -> None:
 
 @router.get("/")
 async def list_agents():
-    """One unified roster: every Agent across both scopes and both runtimes,
-    sourced from the agents registry (definition files + builder runtime state).
+    """One unified roster: every Agent across both scopes, sourced from the
+    agents registry (definition files + a maker's execution state).
     Per-channel bridge agents are excluded by the registry."""
     reg = agents_registry.list_agents()
 
@@ -160,7 +159,6 @@ async def list_agents():
         out.append({
             "id": a.get("id"),
             "slug": a.get("slug"),
-            "runtime": a.get("runtime"),
             "name": a.get("name"),
             "purpose": a.get("purpose"),
             "triggers": a.get("triggers") or [],
@@ -219,9 +217,8 @@ async def list_tools():
 # (either a Project directory or a freestanding scratch dir). The chat surface
 # uses contextKey="agent:<slug>", which routes through chat_context's
 # MakerAgentContextProvider (selected by the agent's `role`) and sets cwd at
-# call_cloud spawn time. The old `build:<slug>` context key is retired and folds
-# to `agent:<slug>`; `build:<slug>` survives only as a TASK scope
-# (`services/task_scope.py`), which is a different namespace.
+# call_cloud spawn time. `build:<slug>` is DELETED as both a context key and a
+# task scope: an agent has one address, and it is `agent:<slug>`.
 
 class BuildAgentCreate(BaseModel):
     slug: str = Field(min_length=1, max_length=48)
@@ -698,23 +695,21 @@ def _agent_scope_key(rec: dict) -> str | None:
     if pslug:
         return f"project:{pslug}"
     slug = rec.get("slug") or rec.get("id")
-    if rec.get("runtime") == "builder" and slug:
-        return f"build:{slug}"
-    return None
+    return f"agent:{slug}" if slug else None
 
 
 def _agent_scope_root(rec: dict) -> _P | None:
     """The tree this agent's tasks live in: its linked project dir, else a
-    builder's own cwd. Assistant agents with no project link have no code tree,
-    so their queue snapshot is empty.
+    maker's own cwd. An agent with no project link and no tree of its own has an
+    empty queue snapshot.
 
     Resolved from the scope key through task_scope, so the tree the server reads
     and the scope the UI links to cannot disagree."""
     from services import task_scope
     key = _agent_scope_key(rec)
     root = task_scope.root_for_context(key) if key else None
-    if root is None and rec.get("runtime") == "builder" and rec.get("cwd"):
-        # A builder that predates the build-agents registry still has a tree.
+    if root is None and rec.get("role") == "maker" and rec.get("cwd"):
+        # A maker that predates the build-agents registry still has a tree.
         root = rec["cwd"]
     return _P(root) if root else None
 
@@ -964,10 +959,11 @@ async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
 
 @router.post("/")
 async def create_agent(body: AgentCreate):
-    """Create an assistant Agent in the registry (a markdown definition file). The
+    """Create an Agent in the registry (a markdown definition file). The
     persona/instructions become the definition body; there is no separate memory
-    runtime to provision. Builders are created via POST /agents/build. Triggers
-    and limits are edited afterward on the detail page (PUT /agents/{id})."""
+    engine to provision. A maker with a working tree is created via POST
+    /agents/build. Triggers and limits are edited afterward on the detail page
+    (PUT /agents/{id})."""
     parts: list[str] = []
     if body.persona.strip():
         parts.append(body.persona.strip())
@@ -976,7 +972,6 @@ async def create_agent(body: AgentCreate):
     try:
         return agents_registry.create(
             slug=agents_registry.mint_slug(body.name),
-            runtime="assistant",
             name=body.name,
             memory="notes",
             role=body.role,
@@ -992,8 +987,8 @@ async def create_agent(body: AgentCreate):
 @router.delete("/{agent_id}")
 async def delete_agent(agent_id: str):
     """Retire an agent from the registry: it leaves the roster while the
-    declarative definition is preserved (retired flag). Builders also flip their
-    build-runtime state."""
+    declarative definition is preserved (retired flag). A maker also flips its
+    execution state."""
     rec = agents_registry.get(agent_id)
     if rec is None:
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")

@@ -11,12 +11,35 @@ import { scopeForContext, scopeHasQueue } from "../../lib/scope";
 export type ChatMode = "data" | "build";
 export type ChatVariant = "dock" | "panel" | "full";
 
-export function deriveMode(contextKey: string): ChatMode {
-  return contextKey.startsWith("build:") ? "build" : "data";
+// The agent a chat is bound to, as far as its MODE is concerned. Only two fields
+// of the roster record matter here, so only two are asked for: a caller that
+// already holds the agent passes it, and one that does not fetches it.
+export type AgentBinding = { role?: string | null; project_slug?: string | null };
+
+// `agent:<slug>` is the only agent context key. `build:<slug>` was a second
+// spelling of the same binding and is deleted.
+export function agentSlug(contextKey: string): string | null {
+  if (!contextKey.startsWith("agent:")) return null;
+  return contextKey.slice("agent:".length) || null;
 }
 
-export function buildSlug(contextKey: string): string | null {
-  return contextKey.startsWith("build:") ? contextKey.slice("build:".length) : null;
+// BUILD MODE IS A FACT ABOUT THE AGENT, NOT ABOUT THE KEY. This used to read the
+// `build:` prefix, which is why deleting that spelling needed a real answer
+// rather than a rename: the key says which agent, and only the agent says
+// whether it works in a tree.
+//
+// The test is `role === "maker" && project_slug`, and both halves are load-
+// bearing. A maker is the one role that writes a tree, and the tree it writes is
+// the project it is linked to, so a maker with no project link has no work pane
+// to open. Sending it to one produces a page for a directory that does not
+// exist.
+//
+// A caller that cannot supply the agent gets `data`, which is the honest answer
+// while the record is still loading: `data` shows the transcript and the
+// composer, and the build affordances appear when the agent says they should.
+export function deriveMode(contextKey: string, agent?: AgentBinding | null): ChatMode {
+  if (!agentSlug(contextKey)) return "data";
+  return agent?.role === "maker" && !!agent.project_slug ? "build" : "data";
 }
 
 // ---- What a scope key MEANS ------------------------------------------------
@@ -27,18 +50,15 @@ export function buildSlug(contextKey: string): string | null {
 // never name them differently.
 //
 // Related but deliberately separate: `scopeLabel` in lib/scope.ts names SCOPE
-// keys, a near-identical key space that differs in two ways (the root is
-// `workshop` there and `general` here, and it has no `build:`). The two spaces
-// are now bridged by ONE function, `scopeForContext` in lib/scope.ts; these
-// stay because they LABEL a context key, which is a different job from
-// translating one. Do not add a third naming function.
+// keys, a near-identical key space that differs in one way (the root is
+// `workshop` there and `general` here). The two spaces are now bridged by ONE
+// function, `scopeForContext` in lib/scope.ts; these stay because they LABEL a
+// context key, which is a different job from translating one. Do not add a third
+// naming function.
 
 export type ScopeKind = "development" | "workshop" | "project" | "app" | "agent" | "other";
 
-// App chats bind a BARE app id (finance, budget, …), not `app:<id>`. build: and
-// agent: are two runtimes of one scope kind (entity model 2026-07-18 §6), so
-// they collapse here; the runtime distinction shows on AgentDetail, not in a
-// list of places.
+// App chats bind a BARE app id (finance, budget, …), not `app:<id>`.
 //
 // `development` is its own kind, not a project (ADR 0014). It is work ON the
 // Workshop — its source and this installation's host — and it is the only name
@@ -49,7 +69,7 @@ export function scopeKind(key: string): ScopeKind {
   if (!key.includes(":")) return "app";
   const kind = key.split(":", 1)[0];
   if (kind === "project" || kind === "app") return kind;
-  if (kind === "build" || kind === "agent") return "agent";
+  if (kind === "agent") return "agent";
   return "other";
 }
 
@@ -59,7 +79,7 @@ export function scopeLabel(key: string): string {
   if (!key.includes(":")) return `App · ${key}`;
   const [kind, rest] = key.split(":", 2);
   if (kind === "project") return `Project · ${rest}`;
-  if (kind === "build" || kind === "agent") return `Agent · ${rest}`;
+  if (kind === "agent") return `Agent · ${rest}`;
   if (kind === "app") return `App · ${rest}`;
   return key;
 }
@@ -125,7 +145,7 @@ export function scopeGroups(devMode: boolean = DEV_MODE): { kind: ScopeKind; lab
 export const SCOPE_GROUPS = scopeGroups();
 
 // The task-store scope a chat maps to, or null when the chat has no task queue
-// (general chat, app docks). build/project/agent chats all get the shared
+// (general chat, app docks). Project and agent chats both get the shared
 // TaskPanel.
 //
 // It used to answer with the contextKey itself, off its own four-branch prefix

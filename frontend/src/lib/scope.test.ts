@@ -76,11 +76,11 @@ describe("context_key resolves to one scope", () => {
     expect(scopeForContext("development")).toBe("development");
   });
 
-  it("resolves build: to a real scope kind", () => {
-    // `build:` is a context_key kind, never a scope kind. The server also
-    // checks for a project of that slug; the client has no project catalog, so
-    // it always gives the freestanding answer.
-    expect(scopeForContext("build:solo")).toBe("agent:solo");
+  it("does not recognise the deleted `build:` kind", () => {
+    // It used to resolve to `agent:<slug>`, which is how the two spellings were
+    // kept alive side by side. The spelling is deleted and the stored data is
+    // migrated, so an unknown kind now falls back like any other.
+    expect(scopeForContext("build:solo")).toBe("workshop");
   });
 });
 
@@ -98,9 +98,6 @@ describe("which scopes a chat gets a task queue for", () => {
     expect(taskScopeFor("development")).toBe("development");
     expect(taskScopeFor("project:birds")).toBe("project:birds");
     expect(taskScopeFor("agent:masini")).toBe("agent:masini");
-    // It used to hand `build:solo` straight back, which is a string the
-    // backend's scope list can never contain.
-    expect(taskScopeFor("build:solo")).toBe("agent:solo");
   });
 
   it("never opens a queue for an unrecognised key", () => {
@@ -109,7 +106,7 @@ describe("which scopes a chat gets a task queue for", () => {
   });
 
   it("agrees with scopeForContext wherever it answers", () => {
-    for (const key of ["development", "project:birds", "agent:masini", "build:solo"]) {
+    for (const key of ["development", "project:birds", "agent:masini"]) {
       expect(taskScopeFor(key)).toBe(scopeForContext(key));
     }
   });

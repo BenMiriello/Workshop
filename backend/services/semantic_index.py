@@ -409,35 +409,24 @@ def collect_tickets() -> list[Chunk]:
     direction; this one call goes the other way on purpose, same as refs.py's
     ticket resolver, because the sweep genuinely lives with the route).
 
-    `scope_roots()` can hand back `build:<slug>` for an UNBOUND build agent (one
-    with no linked project, so it was not already collapsed into a
-    `project:<slug>` entry). That is not a `scope_tree` key -- `reach()` and
-    `memory_policy` have never heard of the `build:` namespace -- so it is
-    translated through `knowledge.scope_for_context`, the SAME translation
-    `_resolve_chunk_scope` already applies to a chat's `context_key` below.
-    Every other scope `scope_roots()` returns (`development`, `workshop`,
-    `project:<slug>`, `agent:<slug>`) is already a real scope_tree key and
-    passes through unchanged.
+    Every scope `scope_roots()` returns (`development`, `workshop`,
+    `project:<slug>`, `agent:<slug>`) is a real scope_tree key and needs no
+    translation. It used to also emit `build:<slug>`, which `reach()` and
+    `memory_policy` had never heard of and which had to be translated here; that
+    key is deleted, so the translation is too.
 
     A ticket's `ref` is its bare id (matching `refs.ticket_ref` / the
     `workshop:ticket/<id>` format `services/refs.py` already resolves), and its
     text is title + body, split like every other collector."""
     from routes import tasks_all
-    from services import knowledge, tasks
+    from services import tasks
     out: list[Chunk] = []
     try:
         roots = tasks_all.scope_roots()
     except Exception as e:
         log.warning("ticket scopes unavailable: %s", e)
         return out
-    for raw_scope, root in roots:
-        if raw_scope.startswith("build:"):
-            try:
-                scope = knowledge.scope_for_context(raw_scope)
-            except Exception:
-                scope = raw_scope
-        else:
-            scope = raw_scope
+    for scope, root in roots:
         try:
             items = tasks.list_tasks(root)
         except Exception:
@@ -835,11 +824,8 @@ def _bm25_scores(query: str, meta: list[dict]) -> np.ndarray:
 # unifying them is a further migration this phase does not own. Only chats
 # need the translation HERE; a note's `scope` is already a real scope_key (it
 # came straight off `knowledge.all_scope_dirs()`) and a doc's is always "". A
-# ticket's `scope` is also already a real scope_key by the time it reaches
-# this function: `collect_tickets` resolves `scope_roots()`'s occasional
-# `build:<slug>` key at COLLECTION time (the same translation this function
-# applies to a chat, just applied once per rebuild instead of once per search),
-# so nothing ticket-shaped needs a case here.
+# ticket's `scope` is a real scope_key too: every key `scope_roots()` returns is
+# one, so nothing ticket-shaped needs a case here.
 #
 # A chunk with no scope at all (every doc) is never excluded by a scope
 # filter: docs are cross-cutting reference material with no place in the

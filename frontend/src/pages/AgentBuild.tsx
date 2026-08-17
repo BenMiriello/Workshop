@@ -700,7 +700,9 @@ export default function AgentBuild() {
         {/* --- PRIMARY: chat (the surface you land on) --- */}
         <section className="ws-agent-chat__chat" aria-label="Chat">
           <Chat
-            contextKey={`build:${agent.slug}`}
+            contextKey={`agent:${agent.slug}`}
+            // This page IS the work pane, so it states the mode rather than
+            // waiting for the roster fetch to say what it already knows.
             mode="build"
             variant="panel"
             placeholder="Tell the agent what to build..."

@@ -23,7 +23,7 @@ export type Pickup = {
 
 export type PickupMap = Record<string, Pickup>;
 
-// Mirrors backend scope_is_runnable: launch_task_run accepts these four scope
+// Mirrors backend scope_is_runnable: launch_task_run accepts these three scope
 // shapes and 400s on everything else (a general chat resolves to `general`, so
 // "file and run" there could only ever file).
 export function scopeIsRunnable(scope: string | null | undefined): boolean {
@@ -32,7 +32,6 @@ export function scopeIsRunnable(scope: string | null | undefined): boolean {
     scope === "workshop"
     || scope.startsWith("project:")
     || scope.startsWith("agent:")
-    || scope.startsWith("build:")
   );
 }
 

@@ -61,7 +61,7 @@ const NODE_KEYS = Object.keys(NODES).sort((a, b) => b.length - a.length);
 
 export function resolveCrumbs(pathname: string): Crumb[] {
   // Focused chat: /chat/<context-key>. The leaf shows the decoded key so
-  // "build:foo" reads as "Chat · build:foo" rather than the encoded form.
+  // "agent:foo" reads as "Chat · agent:foo" rather than the encoded form.
   if (pathname.startsWith("/chat/")) {
     const key = decodeURIComponent(pathname.slice("/chat/".length));
     return [{ label: `Chat · ${key}` }];

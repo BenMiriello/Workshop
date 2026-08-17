@@ -1,8 +1,8 @@
 """Task-scope resolution + the `task-patch` chat protocol (orchestration O2).
 
-A chat bound to a task scope (project:/build:/agent:) can maintain its task list
-mid-conversation. Builder chats use the shell CLI (scripts/project_tasks.py) via
-Bash; data/assistant chats (no filesystem) emit a fenced ``task-patch`` block,
+A chat bound to a task scope (project:/agent:) can maintain its task list
+mid-conversation. Maker chats use the shell CLI (scripts/project_tasks.py) via
+Bash; chats with no filesystem emit a fenced ``task-patch`` block,
 applied server-side in the turn finalize path exactly like the budget plan-patch:
 parsed, applied against THIS scope's store, stripped from the stored reply, with
 a human-readable outcome appended to meta.notes (which drives the panel refetch).
@@ -99,15 +99,18 @@ def _raw_root_for_context(context_key: str | None) -> Path | None:
     if context_key.startswith("project:"):
         from services import build_agents
         return build_agents._project_dir(context_key.split(":", 1)[1])
-    if context_key.startswith("build:"):
-        return _build_agent_root(context_key.split(":", 1)[1])
     if context_key.startswith("agent:"):
+        # ONE AGENT SPELLING. `build:<slug>` used to be a second key naming the
+        # same agent, and it is deleted rather than folded: which store an
+        # agent's tickets live in is decided by what the agent IS (its role and
+        # its project link), never by which of two names the caller reached it
+        # through.
         slug = context_key.split(":", 1)[1]
         from services import agents_registry
         rec = agents_registry.get(slug)
-        if rec and rec.get("runtime") == "builder":
-            return _build_agent_root(slug)
-        return _agent_scope_dir(slug)  # assistant runtime: its own scope
+        if rec and rec.get("role") == "maker":
+            return _maker_root(rec)
+        return _agent_scope_dir(slug)  # no tree of its own: its own scope
     return None
 
 
@@ -200,7 +203,7 @@ def key_for_root(root: Path | str | None) -> str | None:
     ticket write (which is what bumps the scope's change counter). It mirrors
     root_for_context branch for branch; the two must be read together.
 
-    A build agent shares its project's tree, so a project root maps back to
+    A maker shares its project's tree, so a project root maps back to
     `project:<slug>` and never to the agent that happened to write there — the
     change belongs to the place, not to whoever touched it.
 
@@ -232,6 +235,34 @@ def key_for_root(root: Path | str | None) -> str | None:
     return None
 
 
+# The scopes whose tickets live in Postgres and NOWHERE ELSE (the cutover of
+# docs/platform-redesign/tickets-one-store-2026-08-14.md, completed by
+# tickets-postgres-cutover-2026-08-16.md). Every other scope — project trees,
+# agent scopes — is still file-backed, and legitimately so: the split is by
+# root, not by installation.
+#
+# ONE DEFINITION, and it lives here rather than in `db/` on purpose.
+# `db.ticket_sync.scope_for_root` used to own it, which meant the question "do
+# this root's tickets belong in Postgres?" could only be asked by an interpreter
+# that could import sqlalchemy. Under one that could not, the answer came back
+# False, the retired file store served the read and took the write, and on
+# 2026-08-17 a `TODO.md` re-import minted four duplicate ticket ids behind
+# Postgres's back. The answer is a fact about a path; it must be answerable with
+# pathlib alone.
+RELATIONAL_SCOPES = ("development", "workshop")
+
+
+def relational_scope_for_root(root: Path | str | None) -> str | None:
+    """Which relational scope this working tree is, or None if it is not one.
+
+    The whole of `is_relational_scope`, and of `ticket_sync.scope_for_root`,
+    which both delegate here. Pure path arithmetic: no database, no driver, no
+    import that can fail and be mistaken for "file-backed".
+    """
+    key = key_for_root(root)
+    return key if key in RELATIONAL_SCOPES else None
+
+
 def root_for_job(job: dict | None) -> Path | None:
     """The task-store directory a Job worked, from its binding. A project sweep
     carries project_slug; an agent sweep carries agent_id ('agent:<slug>'). Lets
@@ -248,24 +279,31 @@ def root_for_job(job: dict | None) -> Path | None:
     return None
 
 
-def _build_agent_root(slug: str) -> Path | None:
-    """A build agent's task store: its linked project dir, else its own cwd."""
+def _maker_root(rec: dict) -> Path | None:
+    """A maker's task store: its linked project dir, else the working directory
+    its execution state records. None when it has neither, which `root_for_context`
+    reports as "no task scope" -- a maker with no tree cannot be swept.
+
+    Takes the REGISTRY record, not a slug, so the project link is read off the
+    declaration that owns it. It used to be read out of `build_agents.json`,
+    which is per-instance execution state: an agent definition can outlive it,
+    and then a project-linked maker resolved to nothing."""
     from services import build_agents
-    try:
-        a = build_agents.get_agent(slug)
-    except KeyError:
-        return None
-    project_slug = a.get("project_slug")
+    project_slug = rec.get("project_slug")
     if project_slug:
         pd = build_agents._project_dir(project_slug)
         if pd is not None:
             return pd
+    try:
+        a = build_agents.get_agent(rec.get("slug") or "")
+    except KeyError:
+        return None
     cwd = a.get("cwd")
     return Path(cwd) if cwd else None
 
 
 def _agent_scope_dir(slug: str) -> Path | None:
-    """A registry assistant's own durable task scope (.runtime/agent-scopes/<slug>).
+    """A registry agent's own durable task scope (.runtime/agent-scopes/<slug>).
 
     Contained, and it was not. This join took the slug straight off an HTTP
     `context_key`/`scope` — `POST /chat/threads/{id}/spawn-task` and

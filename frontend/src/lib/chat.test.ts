@@ -47,10 +47,10 @@ describe("threadAgent", () => {
     expect(threadAgent({ context_key: "general", agent_id: undefined })).toBeNull();
   });
 
-  it("does not answer for the retired `build:` spelling", () => {
-    // No thread can hold one: `chat_store.canonical_context_key` folds it to
-    // `agent:` before the key is stored. Answering here would be this module
-    // keeping a vocabulary the server has retired.
+  it("does not answer for the deleted `build:` spelling", () => {
+    // `build:<slug>` is gone from the code and from the stored threads, so no
+    // thread can hold one. Answering here would be this module keeping a
+    // vocabulary the rest of the system no longer has.
     expect(threadAgent({ ...base, context_key: "build:smith" })).toBeNull();
   });
 });

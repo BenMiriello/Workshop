@@ -1,11 +1,11 @@
 """Unified Agent registry over markdown definition files.
 
-One Agent concept. `runtime` is a field (`builder | assistant`), not a separate
-noun. A definition is a markdown file with YAML frontmatter:
+One Agent concept, TYPED BY `role` (the closed enum below). A definition is a
+markdown file with YAML frontmatter:
 
     ---
     name: Commute builder
-    runtime: builder            # builder | assistant
+    role: maker                 # maker | reviewer | triager | keeper | broker
     purpose: keep the commute app shipping
     capabilities: []            # grant refs (Phase 4 fills these)
     triggers:                   # normalized triggers (services.triggers shape)
@@ -14,20 +14,31 @@ noun. A definition is a markdown file with YAML frontmatter:
     limits:
       max_iterations: 20
       budget: {max_wall_s: 3000}
-    memory: letta               # assistant memory engine, or null (builders)
+    memory: letta               # memory engine, or null
     project_slug: commute       # link / project scope (optional)
-    letta_agent_id: agent-...   # assistant runtime link to its Letta agent
+    letta_agent_id: agent-...   # link to this agent's Letta agent
     ---
     <markdown body: persona / instructions>
+
+THERE IS NO `runtime` FIELD. `builder | assistant` was a second axis running
+beside `role` and answering the same question worse: it described how an agent
+EXECUTES rather than what it is, and every builder definition carried no role at
+all, so the whole agent surface keyed on the one field that happened to have a
+value in it. It is deleted, not deprecated (thread T2 of the 2026-08-16
+coherence overhaul). A `runtime:` line left in a hand-written definition is
+ignored like any other unknown frontmatter key.
+
+What used to be a builder is `role: maker` with a `project_slug`: a maker works
+in a tree, and the tree is the project it is linked to.
 
 Scope:
   * User scope    ~/workshop/agents/<slug>.md
   * Project scope <project_dir>/agents/<slug>.md
 
-DECLARATIVE ONLY. Mutable runtime state (`state`, `claude_session`,
+DECLARATIVE ONLY. Mutable execution state (`state`, `claude_session`,
 `last_active`, `cwd`) never lives in frontmatter. It stays in
 `.runtime/build_agents.json` keyed by slug (the same file build_agents.py owns);
-`list_agents` merges it into builder records at read time.
+`list_agents` merges it into maker records at read time.
 
 EXCLUSION RULE. Per-channel Discord agents (created by
 `per_channel_agents.py`) are NOT registry members: they get no definition files,
@@ -74,7 +85,6 @@ SUBSCRIPTIONS_PATH = Path(os.environ.get(
 CHANNEL_MAP = Path(os.environ.get(
     "WORKSHOP_CHANNEL_AGENT_MAP", str(WORKSHOP_ROOT / ".runtime" / "channel-agent-map.json")))
 
-RUNTIMES = ("builder", "assistant")
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 # Shipped agent TEMPLATES (final-plan P4 / roles report 5.1). Tracked source, not
@@ -192,20 +202,6 @@ def _coerce_bool(v: object) -> bool:
     return False
 
 
-def _role_for_runtime(runtime: str) -> str | None:
-    """The role a runtime implies when the definition does not state one.
-
-    A builder IS a maker: it runs the ralph sweep, writes the tree and commits
-    (primitive-roles 2026-07-18, section 2). Every builder definition predates the
-    role enum and so carries `role: None`, which left the entire agent surface
-    keyed on `runtime` because that was the only field with a value in it. The
-    entity model keys agents on ROLE, so the default belongs here — one rule at
-    the read boundary — rather than as a fallback repeated at each display site.
-    Assistants imply nothing; an assistant with no role is genuinely unroled.
-    """
-    return "maker" if runtime == "builder" else None
-
-
 def _coerce_latitude(v: object) -> str | None:
     """Read-side: a canonical latitude, or None meaning inherit from the cascade.
     Writes go through `_validate_latitude`, which raises instead of coercing."""
@@ -300,7 +296,7 @@ def _coerce_role(v: object) -> str | None:
     """Read-side coercion: a canonical role, or None (no role -> default dispatch).
 
     Aliases resolve to their canonical name. Anything else (unset, junk, a typo)
-    is None, which the dispatcher reads as "use the runtime's default handler".
+    is None, which the dispatcher reads as "use the default handler".
     Writes go through `_validate_role`, which raises instead of coercing, so a
     typo can only ever enter the tree by hand-editing a definition file."""
     if not isinstance(v, str):
@@ -429,11 +425,9 @@ def _project_dirs() -> dict[str, Path]:
 def _record_from_def(path: Path, scope: str, project_slug: str | None = None) -> dict:
     fm, body = _parse(path.read_text())
     slug = path.stem
-    runtime = fm.get("runtime") if fm.get("runtime") in RUNTIMES else "assistant"
     letta_id = fm.get("letta_agent_id")
     rec: dict[str, Any] = {
         "slug": slug,
-        "runtime": runtime,
         "name": fm.get("name") or slug,
         "purpose": fm.get("purpose") or "",
         # DECLARED, not granted. `capabilities` is a free-text list an agent
@@ -444,7 +438,10 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         "capabilities": fm.get("capabilities") or [],
         "triggers": triggers.definition_triggers(fm),
         "limits": fm.get("limits") or dict(DEFAULT_LIMITS),
-        "role": _coerce_role(fm.get("role")) or _role_for_runtime(runtime),
+        # An agent with no declared role is genuinely unroled. There is no
+        # inference step here any more: the builder definitions that used to
+        # rely on one now declare `role: maker` themselves.
+        "role": _coerce_role(fm.get("role")),
         # May only NARROW what the role permits (agent_authority.narrow_tools).
         # None = no request = the role's full set.
         "tools": _coerce_tools(fm.get("tools")),
@@ -474,7 +471,10 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         "retired": bool(fm.get("retired")),
         "source": "definition",
     }
-    rec["id"] = letta_id if (runtime == "assistant" and letta_id) else slug
+    # An agent that DECLARES a Letta agent is routed by that id; everything else
+    # is routed by its slug. This used to also require `runtime == "assistant"`,
+    # which asked the same question twice: a maker has no Letta agent to name.
+    rec["id"] = letta_id or slug
     return rec
 
 
@@ -701,8 +701,8 @@ def live_builder_slugs() -> set[str]:
 # ---------------------------------------------------------------------------
 
 def list_agents(*, include_retired: bool = False) -> list[dict]:
-    """Every Agent across both scopes and both runtimes. Per-channel agents are
-    excluded. Builder runtime state is merged from build_agents.json."""
+    """Every Agent across both scopes. Per-channel agents are excluded. A
+    maker's execution state is merged from build_agents.json."""
     excluded = per_channel_ids()
     build_state = (_build_agents._load().get("build_agents") or {})
     live_slugs = _live_builder_slugs()
@@ -727,7 +727,7 @@ def list_agents(*, include_retired: bool = False) -> list[dict]:
     for slug, r in defs.items():
         if r.get("letta_agent_id") in excluded:
             continue
-        if r["runtime"] == "builder":
+        if r.get("role") == "maker":
             st = build_state.get(slug)
             if st:
                 _merge_build_state(r, st)
@@ -737,7 +737,7 @@ def list_agents(*, include_retired: bool = False) -> list[dict]:
         out.append(r)
         seen.add(slug)
 
-    # NO builder fallback. An agent is what a DEFINITION FILE declares; runtime
+    # NO builder fallback. An agent is what a DEFINITION FILE declares; execution
     # state is evidence that something ran, and running is not a way to become
     # an agent.
     #
@@ -748,7 +748,7 @@ def list_agents(*, include_retired: bool = False) -> list[dict]:
     # then treated it as a peer of a real agent — it appeared in the roster, in
     # the chat scope picker, and in the count the operator kept asking about.
     #
-    # Their runtime state is untouched and still in build_agents.json (sessions,
+    # Their execution state is untouched and still in build_agents.json (sessions,
     # cwd, last_active), so nothing about their history is lost. They are simply
     # no longer Agents, which is correct: an undeclared process is a Run.
     #
@@ -796,7 +796,7 @@ def _path_for(slug: str, project_slug: str | None) -> Path:
     return _user_agents_dir() / f"{slug}.md"
 
 
-def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
+def _build_fm(*, name: str, purpose: str, capabilities: list,
               triggers_list: list, limits: dict, memory: Any,
               project_slug: str | None, letta_agent_id: str | None,
               role: str | None = None, latitude: str | None = None,
@@ -805,7 +805,6 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
               template: str | None = None, retired: bool = False) -> dict:
     fm: dict[str, Any] = {
         "name": name,
-        "runtime": runtime,
         "purpose": purpose or "",
         "capabilities": capabilities or [],
         "triggers": [triggers.normalize(t) for t in (triggers_list or [])],
@@ -870,7 +869,7 @@ def _assert_role_unique(role: str | None, project_slug: str | None,
             )
 
 
-def create(*, slug: str, runtime: str, name: str, purpose: str = "",
+def create(*, slug: str, name: str, purpose: str = "",
            capabilities: list | None = None, triggers_list: list | None = None,
            limits: dict | None = None, memory: Any = None,
            project_slug: str | None = None, letta_agent_id: str | None = None,
@@ -880,13 +879,11 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
     slug = slug.strip().lower()
     if not SLUG_RE.match(slug):
         raise ValueError("slug must be kebab-case alphanumeric, start with a letter, max 64 chars")
-    if runtime not in RUNTIMES:
-        raise ValueError(f"runtime must be one of {RUNTIMES}")
     if get(slug) is not None:
         raise ValueError(f"agent already exists: {slug}")
     _assert_role_unique(_validate_role(role), project_slug)
     path = _path_for(slug, project_slug)
-    fm = _build_fm(runtime=runtime, name=name, purpose=purpose,
+    fm = _build_fm(name=name, purpose=purpose,
                    capabilities=capabilities or [], triggers_list=triggers_list or [],
                    limits=limits or dict(DEFAULT_LIMITS), memory=memory,
                    project_slug=project_slug, letta_agent_id=letta_agent_id,
@@ -907,7 +904,7 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
            delegatable: bool | None = None,
            body: str | None = None) -> dict:
     """Write changes to the definition file. If the agent has no definition file
-    yet (e.g. a builder synthesized from build_agents.json), one is created from
+    yet (e.g. a maker synthesized from build_agents.json), one is created from
     the current record. Regenerates the event-subscriptions file afterward.
 
     role/latitude follow the same convention as the other setters:
@@ -922,7 +919,7 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
         fm, existing_body = _parse(path.read_text())
     else:
         fm = _build_fm(
-            runtime=rec["runtime"], name=rec["name"], purpose=rec["purpose"],
+            name=rec["name"], purpose=rec["purpose"],
             capabilities=rec.get("capabilities") or [], triggers_list=rec.get("triggers") or [],
             limits=rec.get("limits") or dict(DEFAULT_LIMITS), memory=rec.get("memory"),
             project_slug=rec.get("project_slug"), letta_agent_id=rec.get("letta_agent_id"),
@@ -983,7 +980,6 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
                 fm.pop(_flag, None)
     new_body = existing_body if body is None else body
 
-    fm.setdefault("runtime", rec["runtime"])
     if rec.get("project_slug"):
         fm.setdefault("project_slug", rec["project_slug"])
     if rec.get("letta_agent_id"):
@@ -996,13 +992,13 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
 
 
 def retire(slug: str) -> None:
-    """Retire an agent. Builders also flip their runtime state via build_agents;
+    """Retire an agent. A maker also flips its execution state via build_agents;
     definition files (if any) get a `retired: true` flag so the roster hides them
     while the declarative record is preserved."""
     rec = get(slug)
     if rec is None:
         return
-    if rec["runtime"] == "builder":
+    if rec.get("role") == "maker":
         _build_agents.retire(rec["slug"])
     path = Path(rec["definition_path"]) if rec.get("definition_path") else None
     if path and path.exists():
@@ -1035,7 +1031,7 @@ def _template_path(slug: str) -> Path:
 
 def list_templates() -> list[dict]:
     """The shipped templates: [{template, template_version, description, name,
-    role, runtime, triggers, purpose}]. Never registry members."""
+    role, triggers, purpose}]. Never registry members."""
     out: list[dict] = []
     if not TEMPLATES_DIR.is_dir():
         return out
@@ -1046,7 +1042,6 @@ def list_templates() -> list[dict]:
             "template_version": int(fm.get("template_version") or 1),
             "description": fm.get("description") or "",
             "name": fm.get("name") or p.stem,
-            "runtime": fm.get("runtime") if fm.get("runtime") in RUNTIMES else "assistant",
             "role": _coerce_role(fm.get("role")),
             "purpose": fm.get("purpose") or "",
             "triggers": triggers.definition_triggers(fm),
@@ -1117,7 +1112,6 @@ def fork_from_template(template_slug: str, target_slug: str,
 
     return create(
         slug=target_slug,
-        runtime=ov.get("runtime") or (fm.get("runtime") if fm.get("runtime") in RUNTIMES else "assistant"),
         name=ov.get("name") or fm.get("name") or target_slug,
         purpose=ov.get("purpose") if ov.get("purpose") is not None else (fm.get("purpose") or ""),
         capabilities=ov.get("capabilities") if ov.get("capabilities") is not None else (fm.get("capabilities") or []),

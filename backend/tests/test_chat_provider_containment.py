@@ -73,8 +73,8 @@ class TestBuildAgentUnknownSlug:
     def test_an_unregistered_slug_never_gets_the_platform_repo(self, ctx, monkeypatch):
         from services import paths
         monkeypatch.setenv("WORKSHOP_DEV_MODE", "1")  # the exact condition that used to let this through
-        p = ctx.get_provider("build:this-build-agent-does-not-exist-xyz")
-        assert p.key != "build:this-build-agent-does-not-exist-xyz"
+        p = ctx.get_provider("agent:this-agent-does-not-exist-xyz")
+        assert p.key != "agent:this-agent-does-not-exist-xyz"
         assert not ctx.is_build_provider(p) or str(p.dir) != str(paths.workshop_root())
 
     def test_the_constructor_itself_refuses_an_unknown_slug(self):

@@ -9,9 +9,10 @@ Covers:
   - `collect_tickets` enumerates every scope `routes.tasks_all.scope_roots()`
     returns and emits `kind="ticket"` chunks with a real scope_tree scope, the
     bare ticket id as `ref`, and title+body as the text;
-  - an unbound `build:<slug>` scope (the one shape `scope_roots()` returns that
-    is not already a `scope_tree` key) is translated the same way a chat's
-    `context_key` already is;
+  - EVERY key `scope_roots()` returns is already a real `scope_tree` scope, so
+    no translation happens here at all. It used to also return `build:<slug>`
+    for an unlinked build agent, which had to be translated on every rebuild;
+    that key is deleted;
   - the emitted ref actually resolves through `services.refs.resolve_ref` to a
     live href (Phase 3's own acceptance test: a hit you cannot open is a bug);
   - a ticket chunk is scope-filtered by `semantic_index.search` exactly like
@@ -31,7 +32,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from routes import tasks_all  # noqa: E402
-from services import knowledge, memory_policy, paths, refs, semantic_index as si, tasks  # noqa: E402
+from services import knowledge, memory_policy, refs, semantic_index as si, tasks  # noqa: E402
 
 
 @pytest.fixture
@@ -77,26 +78,15 @@ class TestCollectTickets:
         assert refs_seen[b["id"]] == "project:birds"
         assert refs_seen[c["id"]] == "development"
 
-    def test_an_unbound_build_scope_translates_through_scope_for_context(
-        self, tmp_path, monkeypatch,
-    ):
-        """`scope_roots()` can hand back `build:<slug>` for a build agent with no
-        linked project. That is not a `scope_tree` key, so it must come out the
-        other side as a real one -- here, `project:myproj`, because a project of
-        that same slug exists on disk."""
-        build_root = tmp_path / "build-tree"
-        build_root.mkdir()
-        monkeypatch.setattr(tasks_all, "scope_roots",
-                            lambda: [("build:myproj", build_root)], raising=False)
-        projects_root = tmp_path / "projects"
-        (projects_root / "myproj").mkdir(parents=True)
-        monkeypatch.setattr(paths, "projects_root", lambda: projects_root)
+    def test_every_scope_it_enumerates_is_already_a_real_scope_key(self):
+        """There is no translation step left in `collect_tickets`, and this is
+        what makes removing it safe: `scope_roots()` emits only keys
+        `scope_tree.parse` accepts. The one exception was `build:<slug>` for an
+        unlinked build agent, and that key is deleted."""
+        from services import scope_tree
 
-        t = tasks.add(build_root, title="Built from an unbound agent")
-        chunks = si.collect_tickets()
-        mine = [c for c in chunks if c.ref == t["id"]]
-        assert len(mine) == 1
-        assert mine[0].scope == "project:myproj"
+        for scope, _root in tasks_all.scope_roots():
+            scope_tree.parse(scope)  # raises if it is not a real scope key
 
     def test_a_scope_with_no_store_yet_is_skipped_not_an_error(self, tmp_path, monkeypatch):
         monkeypatch.setattr(tasks_all, "scope_roots",

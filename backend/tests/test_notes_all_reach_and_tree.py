@@ -46,7 +46,7 @@ def tree(tmp_path, monkeypatch):
     agents_dir = tmp_path / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(agents_registry, "_user_agents_dir", lambda: agents_dir)
-    (agents_dir / "solo.md").write_text("---\nname: Solo\nruntime: assistant\n---\n\nProbe.\n")
+    (agents_dir / "solo.md").write_text("---\nname: Solo\n---\n\nProbe.\n")
     monkeypatch.setattr(installed_apps, "REGISTRY_PATH", tmp_path / "installed-apps.json")
 
     ownership.set_current_owner(4242)

@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { pickupFor, pickupNote, scopeIsRunnable, type PickupMap } from "./scopePickup";
 
 describe("scopeIsRunnable", () => {
-  it("accepts exactly the four shapes launch_task_run accepts", () => {
+  it("accepts exactly the three shapes launch_task_run accepts", () => {
     expect(scopeIsRunnable("workshop")).toBe(true);
     expect(scopeIsRunnable("project:birds")).toBe(true);
     expect(scopeIsRunnable("agent:keeper")).toBe(true);
-    expect(scopeIsRunnable("build:thing")).toBe(true);
+    // The fourth was `build:<slug>`, and it is deleted on both sides.
+    expect(scopeIsRunnable("build:thing")).toBe(false);
   });
 
   it("refuses a general chat scope, which is the case that used to file and fail", () => {

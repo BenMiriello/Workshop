@@ -15,7 +15,9 @@ build_streaming.py or the voice path read `participants`. So:
     field nothing read.
 
 `agent:<slug>` is now a durable context key answered by that agent. `build:` is
-retired as a context kind and folds to it. `participants` is deleted.
+DELETED as a context kind, not folded to it: the fold was the second spelling
+kept alive, and the stored threads were migrated
+(`scripts/migrate_build_context_keys.py`). `participants` is deleted.
 """
 from __future__ import annotations
 
@@ -61,9 +63,9 @@ ASSISTANT_REC = {
 MAKER_REC = {
     "slug": "smith",
     "name": "Smith",
-    # A maker whose definition predates the role enum: `runtime` says builder,
-    # and `agents_registry._role_for_runtime` is what fills `role` in. Both
-    # fields are present so a test keying on the WRONG one still passes here and
+    # A `runtime` field is left here DELIBERATELY, and it is junk: the axis is
+    # deleted, `_record_from_def` no longer emits the key, and nothing may read
+    # it. It stays so a test keying on the wrong field still passes here and
     # fails in TestRoleNotRuntime below.
     "runtime": "builder",
     "role": "maker",
@@ -157,7 +159,7 @@ class TestTheAgentAnswers:
         assert resolved == p.default_model
 
     def test_a_maker_agent_gets_its_tree_and_the_full_toolset(self, store, registry):
-        """The `build:` provider's behaviour, reached through `agent:` and
+        """What the `build:` provider used to do, reached through `agent:` and
         selected by ROLE. A maker is the one role that writes a tree, so it is
         the one that gets a cwd and the agentic path."""
         p = chat_context.get_provider("agent:smith")
@@ -187,8 +189,9 @@ class TestTheAgentAnswers:
 
 # --- role, not runtime ---------------------------------------------------------
 class TestRoleNotRuntime:
-    """`rec["runtime"] == "builder"` was the single most load-bearing remaining
-    use of the retired builder/assistant axis. The split reads `role` now."""
+    """`rec["runtime"] == "builder"` was the single most load-bearing use of the
+    deleted builder/assistant axis. The split reads `role`, and a record with no
+    `runtime` key at all is what the registry actually produces now."""
 
     def test_a_maker_with_no_runtime_field_still_gets_the_tree(self, store, registry,
                                                               monkeypatch):
@@ -198,8 +201,8 @@ class TestRoleNotRuntime:
         p = chat_context.get_provider("agent:smith")
         assert isinstance(p, chat_context.MakerAgentContextProvider)
 
-    def test_a_builder_runtime_with_a_non_maker_role_does_not(self, store, registry,
-                                                              monkeypatch):
+    def test_a_stray_runtime_field_cannot_outrank_the_role(self, store, registry,
+                                                          monkeypatch):
         from services import agents_registry
         monkeypatch.setattr(agents_registry, "get",
                             lambda s: {**MAKER_REC, "role": "reviewer"})
@@ -208,8 +211,8 @@ class TestRoleNotRuntime:
 
     def test_a_maker_with_no_registered_tree_still_answers(self, store, registry,
                                                            monkeypatch):
-        """`build_agents.json` is per-instance runtime state and a definition can
-        outlive it. The honest degradation is an agent that talks and cannot
+        """`build_agents.json` is per-instance execution state and a definition
+        can outlive it. The honest degradation is an agent that talks and cannot
         build, not a 500 and not a cwd invented for it."""
         from services import build_agents
 
@@ -287,29 +290,27 @@ class TestTheAgentDetailButton:
         assert chat_store.get_thread(tid)["context_key"] == "agent:smith"
 
 
-# --- build: is retired ---------------------------------------------------------
-class TestBuildIsRetired:
-    def test_a_build_key_is_stored_as_an_agent_key(self, store, registry):
-        t = chat_store.create_thread("build:smith")
-        assert t["context_key"] == "agent:smith"
+# --- build: is deleted ---------------------------------------------------------
+class TestBuildIsDeleted:
+    def test_nothing_translates_the_old_spelling_any_more(self):
+        """The fold is gone, and that is the point. While it existed, both
+        spellings worked, so nothing in the tree was ever forced to pick one and
+        `build:` kept being written by new code."""
+        assert chat_store.canonical_context_key("build:smith") == "build:smith"
 
-    def test_the_fold_is_total_and_identity_preserving(self):
-        assert chat_store.canonical_context_key("build:smith") == "agent:smith"
-        assert chat_store.canonical_context_key("agent:smith") == "agent:smith"
-        assert chat_store.canonical_context_key("project:birds") == "project:birds"
-        assert chat_store.canonical_context_key("development") == "development"
+    def test_canonicalising_is_now_only_about_the_empty_case(self):
+        for key in ("agent:smith", "project:birds", "development"):
+            assert chat_store.canonical_context_key(key) == key
         assert chat_store.canonical_context_key("") == "general"
         assert chat_store.canonical_context_key(None) == "general"
-        assert chat_store.canonical_context_key("build:") == "general"
+        assert chat_store.canonical_context_key("   ") == "general"
 
-    def test_a_caller_still_holding_the_old_spelling_reaches_the_agent(
-            self, store, registry):
-        """AgentBuild.tsx passes `build:<slug>` as its contextKey. The fold is at
-        `get_provider` as well as at the store, so that page keeps working and
-        lands on the agent instead of degrading to `general`."""
+    def test_the_old_spelling_reaches_no_agent(self, store, registry):
+        """AgentBuild.tsx sends `agent:<slug>` now. A caller still holding the
+        old key degrades to `general` rather than being quietly translated, which
+        is what makes a leftover call site visible instead of invisible."""
         p = chat_context.get_provider("build:smith")
-        assert p.key == "agent:smith"
-        assert isinstance(p, chat_context.MakerAgentContextProvider)
+        assert p.key == "general"
 
     def test_no_provider_mints_a_build_key(self, store, registry):
         for key in ("agent:smith", "build:smith", "agent:quill"):

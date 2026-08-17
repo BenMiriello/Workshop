@@ -13,8 +13,7 @@ Scope keys mirror `task_scope.root_for_context`:
   development     -> the platform repo itself; developer mode only (ADR 0014)
   workshop        -> the root inbox (shared/queue), which has no working tree
   project:<slug>  -> projects/<slug>
-  agent:<slug>    -> .runtime/agent-scopes/<slug> (assistant runtime)
-  build:<slug>    -> a build agent's linked project dir or its own cwd
+  agent:<slug>    -> a maker's linked project dir, else .runtime/agent-scopes/<slug>
 
 Cross-scope listing is cheap: `tasks.list_tasks` reconciles, and reconcile
 short-circuits on an unchanged export hash, so a sweep across scopes does no work
@@ -33,7 +32,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from services import (tasks, task_scope, task_dedup, jobs, build_agents, ownership,
+from services import (tasks, task_scope, task_dedup, jobs, ownership,
                       knowledge, learnings, permissions, ticket_readiness,
                       latitude as latitude_svc)
 
@@ -52,8 +51,7 @@ _SCRIPTS_ROOT = _WORKSHOP_ROOT / "scripts"
 
 def _root_for_scope(scope: str | None) -> Path | None:
     """Resolve a scope key to its task-store root. `task_scope` owns every kind
-    (development / workshop / project: / agent: / build:); an unknown scope
-    returns None.
+    (development / workshop / project: / agent:); an unknown scope returns None.
 
     A scope refused by the developer-mode gate also returns None here, because
     listing paths must not raise. Route handlers call `_require_root` instead,
@@ -174,18 +172,26 @@ def _project_slugs() -> list[str]:
 
 
 def _scope_roots() -> list[tuple[str, Path]]:
-    """Every task scope that actually has a store, deduped by resolved path so a
-    build agent sharing a project's tree is not counted twice. Priority order:
-    development, workshop, projects, assistant scopes, build agents. Only a scope
-    with an existing `.tasks.json` or `TODO.md` is surfaced, keeping the sweep
-    cheap and non-destructive (no scope is created just by listing).
+    """Every task scope that actually has a store, deduped by resolved path so an
+    agent sharing a project's tree is not counted twice. Priority order:
+    development, workshop, projects, agent scopes. Only a scope with an existing
+    `.tasks.json` or `TODO.md` is surfaced, keeping the sweep cheap and
+    non-destructive (no scope is created just by listing).
+
+    THERE IS NO SEPARATE BUILD-AGENT PASS, and removing it lost nothing. It
+    enumerated `build_agents.json` and added a `build:<slug>` scope per row --
+    a key nothing else in the system recognised, which `semantic_index` then had
+    to translate back on every rebuild. Every one of those agents is linked to a
+    project, so its root is the project tree the loop above already claimed, and
+    the dedupe collapsed all of them. A maker's tickets live in its project's
+    store; that is the same statement, made once.
 
     Development sorts first — above Workshop — because it is the narrower, more
     specific place and the one a developer is usually in. It is absent entirely
     when developer mode is off (`task_scope.dev_scopes`), which is also what
     makes the dedupe below the thing that keeps the platform repo to ONE name: it
-    claims the repo's path first, so a registry row or build agent pointing at
-    the same tree collapses into it instead of appearing as a second door."""
+    claims the repo's path first, so a registry row pointing at the same tree
+    collapses into it instead of appearing as a second door."""
     seen: set[str] = set()
     order: list[tuple[str, Path]] = []
 
@@ -215,10 +221,6 @@ def _scope_roots() -> list[tuple[str, Path]]:
         for d in sorted(_AGENT_SCOPES_DIR.iterdir()):
             if d.is_dir():
                 add(f"agent:{d.name}", d)
-    for a in build_agents.list_agents():
-        slug = a.get("slug")
-        if slug:
-            add(f"build:{slug}", _root_for_scope(f"build:{slug}"))
     return order
 
 
@@ -1254,9 +1256,7 @@ def scope_is_runnable(scope: str | None) -> bool:
         return False
     if scope == "development":
         return _root_for_scope("development") is not None
-    return (scope.startswith("project:")
-            or scope.startswith("agent:")
-            or scope.startswith("build:"))
+    return scope.startswith("project:") or scope.startswith("agent:")
 
 
 def _queue_runner_covers(dir_str: str) -> bool:
@@ -1330,12 +1330,18 @@ def scope_pickup(scope: str | None) -> dict:
             autonomy = ((reg.get("projects") or {}).get(slug) or {}).get("autonomy")
         except (json.JSONDecodeError, OSError):
             autonomy = None
-        from services import triggers as triggers_svc
-        kinds = {(t or {}).get("kind") for t in triggers_svc.project_triggers(autonomy)}
-        if "loop" in kinds:
+        # The STORED trigger list, the same one the dispatcher loops over, and
+        # the same `cron or loop` test the agent branch below applies. This used
+        # to ask `autonomy.mode`, a second encoding that had no value for
+        # `scheduled`: a project the operator had just put on a cron stored
+        # mode="manual", so this told them "set its autonomy to continuous"
+        # about a scope the dispatcher was already sweeping on a cadence.
+        kinds = {(t or {}).get("kind") for t in ((autonomy or {}).get("triggers") or [])}
+        if kinds & {"cron", "loop"}:
             return {"scope": scope, "runnable": True, "automatic": True, "why": ""}
         return {"scope": scope, "runnable": True, "automatic": False,
-                "why": f"no runner covers {slug}; set its autonomy to continuous or press Run"}
+                "why": f"no runner covers {slug}; set its autonomy to scheduled or "
+                       "continuous, or press Run"}
 
     if scope.startswith("agent:"):
         slug = scope.split(":", 1)[1]
@@ -1366,7 +1372,6 @@ def launch_task_run(scope: str, task_id: str, *, chat_id: str | None = None) -> 
       project:<slug> -> project_ralph.sh <slug> --force --job-id --task-id
       development    -> ... --dir <platform repo> --force --job-id --task-id
       agent:<slug>   -> ... --dir <scope root> --assignee agent:<slug> --force ...
-      build:<slug>   -> ... --dir <build agent root> --force --job-id --task-id
 
     A ticket that is BROKEN is refused HERE rather than in the route, because
     the chat "file and run" path calls this function directly and so used to
@@ -1429,8 +1434,6 @@ def launch_task_run(scope: str, task_id: str, *, chat_id: str | None = None) -> 
         slug = scope.split(":", 1)[1]
         start_kwargs["agent_id"] = f"agent:{slug}"
         cmd_tail = ["--dir", str(root), "--assignee", f"agent:{slug}"]
-    elif scope.startswith("build:"):
-        cmd_tail = ["--dir", str(root)]
     else:
         raise HTTPException(400, f"scope not runnable: {scope}")
 

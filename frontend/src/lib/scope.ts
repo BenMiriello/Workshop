@@ -7,7 +7,7 @@
 //
 // `src/components/chat/chatScope.ts` keys off a chat's `context_key`, which is
 // a DIFFERENT namespace: it carries aliases this tree does not model (bare app
-// ids, `general`, `build:`). The translation between the two namespaces is
+// ids, `general`). The translation between the two namespaces is
 // `scopeForContext` below, and it is the only one; chatScope.ts calls it rather
 // than carrying a second copy.
 //
@@ -25,14 +25,6 @@ const ROOT_CONTEXT_KEYS = ["", "general", "workshop", "new-project"];
 // (backend/services/scope_tree.py), which is the single owner of this mapping;
 // the table there is authoritative and this must not grow a branch of its own.
 //
-// ONE DELIBERATE DIVERGENCE, and it is the only thing the client cannot know:
-// the server resolves `build:<slug>` to `project:<slug>` when a project of that
-// slug exists on disk, and to `agent:<slug>` otherwise. There is no catalog of
-// projects in the bundle, so this always returns the freestanding answer. It
-// costs nothing today: `build:` is a retired context kind (all 8 build agents
-// are retired, no live thread carries one) and every surface that needs the
-// resolved value reads it off a server payload, never off this function.
-//
 // A bare key is an installed app id here, where the backend checks it against
 // the catalog and falls back to `workshop`. The client only ever holds bare keys
 // that came from the server's own provider list, so it has no junk to reject.
@@ -46,7 +38,6 @@ export function scopeForContext(contextKey: string | null | undefined): string {
   const slug = ck.slice(i + 1);
   if (!slug) return WORKSHOP_SCOPE;
   if (kind === "project" || kind === "app" || kind === "agent") return ck;
-  if (kind === "build") return `agent:${slug}`;
   return WORKSHOP_SCOPE;
 }
 

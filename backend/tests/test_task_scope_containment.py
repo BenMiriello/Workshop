@@ -62,5 +62,13 @@ class TestTheOtherBranchesStayClosed:
     def test_an_unknown_project_has_no_root(self, runtime):
         assert task_scope.root_for_context("project:no-such-project-xyz") is None
 
-    def test_an_unknown_build_agent_has_no_root(self, runtime):
+    def test_an_unknown_agent_gets_its_own_scope_and_nobody_elses_tree(self, runtime):
+        # An unregistered slug is not a maker, so it resolves to its own scope
+        # dir under the runtime root and never to a working tree.
+        root = task_scope.root_for_context("agent:no-such-agent-xyz")
+        assert root is not None and root.parent.name == "agent-scopes"
+
+    def test_the_deleted_build_kind_resolves_to_nothing(self, runtime):
+        # `build:<slug>` was the other way to name an agent. It is deleted, so
+        # it is now an unrecognised kind rather than a second door.
         assert task_scope.root_for_context("build:no-such-agent-xyz") is None

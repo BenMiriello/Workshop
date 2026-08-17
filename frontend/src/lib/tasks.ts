@@ -378,7 +378,7 @@ export type Task = {
   created?: string;
   updated?: string;
   // Attached by the cross-scope API (routes/tasks_all): the resolved scope key
-  // (e.g. "workshop", "project:birds", "agent:foo", "build:bar").
+  // (e.g. "workshop", "project:birds", "agent:foo").
   scope?: string;
   // ---- derived on the way out, never stored (routes/tasks_all._with_triage) --
   // The coarse category above `status` (see TaskStateType).

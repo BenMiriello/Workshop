@@ -224,7 +224,7 @@ def test_a_good_ticket_launches_and_records_the_pid(monkeypatch, tmp_path, job_l
 def test_pickup_separates_manual_from_automatic():
     from routes import tasks_all
 
-    p = tasks_all.scope_pickup("build:anything")
+    p = tasks_all.scope_pickup("agent:anything")
     assert p["runnable"] is True and p["automatic"] is False
     assert p["why"], "a scope nothing sweeps must say so"
 
@@ -236,16 +236,24 @@ def test_a_non_runnable_scope_is_neither():
     assert p["runnable"] is False and p["automatic"] is False
 
 
-def test_a_project_without_a_loop_trigger_is_not_automatic(monkeypatch, tmp_path):
-    """Zero registered projects carry a loop trigger, so `project:<slug>` work
-    waits for a person. The predicate has to say that before the operator files."""
+def _reg_with(tmp_path, monkeypatch, autonomy: str):
     from routes import tasks_all
     from services import autonomy_override
 
     monkeypatch.setattr(autonomy_override, "is_engaged", lambda: False)
     reg = tmp_path / "projects.json"
-    reg.write_text('{"projects": {"demo": {"autonomy": {"mode": "manual"}}}}')
+    reg.write_text('{"projects": {"demo": {"autonomy": %s}}}' % autonomy)
     monkeypatch.setattr(tasks_all, "_PROJECTS_REGISTRY", reg)
+    return tasks_all
+
+
+def test_an_on_demand_project_is_not_automatic(monkeypatch, tmp_path):
+    """An on-demand project carries only a manual trigger, so `project:<slug>`
+    work waits for a person. The predicate has to say that before the operator
+    files."""
+    tasks_all = _reg_with(
+        tmp_path, monkeypatch,
+        '{"preset": "on-demand", "triggers": [{"kind": "manual"}]}')
 
     p = tasks_all.scope_pickup("project:demo")
     assert p["runnable"] is True and p["automatic"] is False
@@ -253,15 +261,35 @@ def test_a_project_without_a_loop_trigger_is_not_automatic(monkeypatch, tmp_path
 
 
 def test_a_continuous_project_is_automatic(monkeypatch, tmp_path):
-    from routes import tasks_all
-    from services import autonomy_override
-
-    monkeypatch.setattr(autonomy_override, "is_engaged", lambda: False)
-    reg = tmp_path / "projects.json"
-    reg.write_text('{"projects": {"demo": {"autonomy": {"mode": "continuous"}}}}')
-    monkeypatch.setattr(tasks_all, "_PROJECTS_REGISTRY", reg)
+    tasks_all = _reg_with(
+        tmp_path, monkeypatch,
+        '{"preset": "continuous", "triggers": [{"kind": "loop"}]}')
 
     assert tasks_all.scope_pickup("project:demo")["automatic"] is True
+
+
+def test_a_scheduled_project_is_automatic(monkeypatch, tmp_path):
+    """The disagreement this predicate used to carry. A project put on a cron
+    stored `autonomy.mode == "manual"` (the mode vocabulary had no word for
+    `scheduled`), so this told the operator "set its autonomy to continuous or
+    press Run" about a scope the dispatcher was already sweeping on a cadence.
+    One encoding now: the stored trigger list."""
+    tasks_all = _reg_with(
+        tmp_path, monkeypatch,
+        '{"preset": "scheduled",'
+        ' "triggers": [{"kind": "cron", "cron_expression": "0 * * * *"}]}')
+
+    p = tasks_all.scope_pickup("project:demo")
+    assert p["automatic"] is True and p["why"] == ""
+
+
+def test_an_unconfigured_project_is_not_automatic(monkeypatch, tmp_path):
+    """No stored triggers means never configured, which is `off`. There is no
+    second key to consult, so this must not read as automatic."""
+    tasks_all = _reg_with(tmp_path, monkeypatch, "null")
+
+    p = tasks_all.scope_pickup("project:demo")
+    assert p["runnable"] is True and p["automatic"] is False
 
 
 def test_the_autonomy_brake_makes_everything_manual(monkeypatch):

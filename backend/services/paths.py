@@ -88,8 +88,8 @@ def projects_registry() -> Path:
 def chat_cwd() -> Path:
     """Working directory for a chat turn that has no scope of its own.
 
-    The general assistant, app assistants and assistant-runtime agents are not
-    bound to a project or a build tree, so their turns still need *a* directory
+    The general assistant, app assistants and any agent that is not a maker are
+    not bound to a project or a build tree, so their turns still need *a* directory
     to run in. `WORKSHOP_CHAT_CWD` names it. What it must never be is the
     account's home: that default (`os.path.expanduser("~")`, spelled separately
     in three call sites) put every turn without a scope in the directory

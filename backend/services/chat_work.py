@@ -52,10 +52,10 @@ def task_scope_for(context_key: str | None) -> str | None:
 
     The SCOPE comes from `scope_tree.scope_for_context` like every other scope
     question in the system; the only thing decided here is which scopes a chat
-    gets a queue for. It used to return the raw `context_key`, which meant
-    `build:<slug>` came out as `build:<slug>` -- a string `scope_tree.parse`
-    rejects and `reach()` can never yield -- and an unknown key came out as
-    itself rather than resolving to the root.
+    gets a queue for. It used to return the raw `context_key`, so an unknown key
+    came out as itself rather than resolving to the root, and every key kind
+    that was not already a scope kind came out as a string `scope_tree.parse`
+    rejects and `reach()` can never yield.
 
     Mirrors `taskScopeFor` in `frontend/src/components/chat/chatScope.ts`.
     """

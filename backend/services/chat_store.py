@@ -254,25 +254,19 @@ _INTERNAL_META = ("last_seq", "boundary_seq", "active_run_id", "active_run_seq",
 def canonical_context_key(context_key: str | None) -> str:
     """The one spelling of a chat's binding. Total: every input answers.
 
-    `build:<slug>` folds to `agent:<slug>`, and that is the retirement of `build:`
-    as a context kind (thread T2 of the 2026-08-16 coherence overhaul). It was
-    the last load-bearing remnant of the builder/assistant runtime axis, it named
-    the SAME agent the `agent:` form names, and its own chat path had stopped
-    working: all 8 build agents are retired, `notes-app-builder` has no definition
-    file at all, and `voice_worker.py`'s `build:` branch documents that it has
-    never fired. Folding preserves the identity exactly -- same slug, same agent
-    -- which is the difference between this and `_promotion_patch`, which threw
-    the identity away.
+    THERE IS NOTHING LEFT TO FOLD, and that is the point. This used to rewrite
+    `build:<slug>` to `agent:<slug>` -- a second spelling of the same binding,
+    kept working by a translation at the read boundary. The spelling is now
+    deleted everywhere that could mint one and the stored data is migrated
+    (`scripts/migrate_build_context_keys.py`), so the fold has nothing to
+    translate and carrying it would only invite the second spelling back.
 
-    Everything else passes through untouched: this decides SPELLING, never
-    placement. Where a chat lives is `scope_tree.scope_for_context`, and it reads
-    whatever comes out of here.
+    What remains is the empty case: an absent or blank key is the unbound chat.
+    Everything else passes through untouched, because this decides SPELLING,
+    never placement. Where a chat lives is `scope_tree.scope_for_context`, and
+    it reads whatever comes out of here.
     """
-    ck = (context_key or "general").strip() or "general"
-    if ck.startswith("build:"):
-        slug = ck.split(":", 1)[1]
-        return f"agent:{slug}" if slug else "general"
-    return ck
+    return (context_key or "general").strip() or "general"
 
 
 # ---- folding the log into the thread document ------------------------------
@@ -591,7 +585,7 @@ def create_thread(
     #
     # THE CONTEXT KEY IS KEPT. Whatever the caller asked for is what this thread
     # is bound to, through creation and every later patch; the only thing
-    # `canonical_context_key` changes is the retired `build:` spelling.
+    # `canonical_context_key` decides is what an ABSENT key means.
     now = _now_iso()
     meta = {
         "id": tid,

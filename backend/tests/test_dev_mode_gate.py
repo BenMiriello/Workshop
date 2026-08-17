@@ -252,10 +252,16 @@ class TestDoor4RetiredBuildAgents:
     def test_a_revived_one_would_still_be_refused(self, monkeypatch):
         # `get_agent` does not filter on state, which is how four retired rows
         # stayed live doors. Deleting them is the tidy-up; this is the guard.
+        # Reached through `agent:<slug>`, the one agent key there is now that
+        # `build:<slug>` is deleted.
+        from services import agents_registry
+        monkeypatch.setattr(agents_registry, "get",
+                            lambda slug: {"slug": slug, "role": "maker",
+                                          "project_slug": None})
         monkeypatch.setattr(build_agents, "get_agent",
                             lambda slug: {"slug": slug, "cwd": str(REPO),
                                           "project_slug": None, "state": "retired"})
-        assert task_scope.root_for_context("build:anything") is None
+        assert task_scope.root_for_context("agent:anything") is None
 
 
 # --------------------------------------------------------------------------
@@ -263,17 +269,17 @@ class TestDoor4RetiredBuildAgents:
 # --------------------------------------------------------------------------
 
 class TestDoor5AgentScope:
-    def test_a_builder_agent_rooted_at_the_platform_repo_is_refused(self, monkeypatch):
+    def test_a_maker_rooted_at_the_platform_repo_is_refused(self, monkeypatch):
         from services import agents_registry
         monkeypatch.setattr(agents_registry, "get",
-                            lambda slug: {"slug": slug, "runtime": "builder"})
-        monkeypatch.setattr(task_scope, "_build_agent_root", lambda slug: REPO)
+                            lambda slug: {"slug": slug, "role": "maker"})
+        monkeypatch.setattr(task_scope, "_maker_root", lambda rec: REPO)
         assert task_scope.root_for_context("agent:maker-x") is None
 
-    def test_an_ordinary_assistant_scope_is_untouched(self, monkeypatch):
+    def test_an_unroled_agent_scope_is_untouched(self, monkeypatch):
         from services import agents_registry
         monkeypatch.setattr(agents_registry, "get",
-                            lambda slug: {"slug": slug, "runtime": "assistant"})
+                            lambda slug: {"slug": slug, "role": None})
         root = task_scope.root_for_context("agent:memory-keeper")
         assert root is not None and not app_runner.is_self_dir(root)
 
@@ -430,11 +436,25 @@ class TestDeveloperModeOn:
         assert keys.index("development") < keys.index("workshop")
 
     def test_every_open_root_ticket_is_still_pickupable(self, dev_mode_on):
-        from services import tasks
+        """Reads the REAL development queue, which since the cutover is Postgres.
+
+        So it has to pin an owner. It used to get away without one: the
+        relational read raised `OwnerUnset`, the old `_from_relational` swallowed
+        it, and the retired `.tasks.json` answered instead — this test was
+        asserting against a store the app had stopped writing.
+        """
+        from services import auth_store, ownership, tasks
         root = task_scope.root_for_context("development")
         assert tasks_all.scope_is_runnable("development") is True
         assert tasks_all.scope_pickup("development")["runnable"] is True
-        all_tasks = tasks.list_tasks(root)
+        owner = auth_store.operator_id()
+        if owner is None:
+            pytest.skip("no operator account on this checkout")
+        ownership.set_current_owner(owner)
+        try:
+            all_tasks = tasks.list_tasks(root)
+        finally:
+            ownership.clear_current_owner()
         if not all_tasks:
             # A fresh instance has filed nothing yet. This guards a one-time
             # migration against dropping the queue, so with no queue at all there

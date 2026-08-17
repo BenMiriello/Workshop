@@ -356,10 +356,10 @@ export default function Agents() {
 
       {sup && (() => {
         // At-a-glance strip, keyed on ROLE. It used to count `runtime` --
-        // "Builders" vs "Assistants" -- but runtime is how an agent executes,
-        // not what it is. The entity model (6.1) types agents by role, and every
-        // builder now resolves to `maker`, so this reads as the roster it
-        // actually is. Live/idle stays on makers: they hold the long sessions.
+        // "Builders" vs "Assistants" -- but that axis described how an agent
+        // executes, not what it is, and it is deleted. The entity model (6.1)
+        // types agents by role. Live/idle stays on makers: they hold the long
+        // sessions.
         const makers = agents.filter((a) => a.role === "maker");
         const others = agents.filter((a) => a.role !== "maker");
         const liveBuilds = makers.filter((a) => a.state === "running").length;
@@ -427,12 +427,16 @@ export default function Agents() {
               if (scopeFilter === "project") return !!a.project_slug;
               return true;
             }).map((a) => {
-            const isBuilder = a.runtime === "builder";
+            // A maker WITH a project link is the agent that works in a tree,
+            // and it is the only one with a work pane to open. Role alone is not
+            // the test: a project-less maker has no tree, so linking it to a
+            // build page would open a page for a directory that does not exist.
+            const isBuilder = a.role === "maker" && !!a.project_slug;
             const Icon = isBuilder ? Bot : Brain;
             const when = activityLabel(a.last_active || a.created_at);
             const lastJob = lastJobByAgent.get(a.id);
             return (
-              <li key={`${a.runtime}:${a.id}`} className={isBuilder ? "ws-agent-card-cell" : undefined}>
+              <li key={a.id} className={isBuilder ? "ws-agent-card-cell" : undefined}>
                 {/* MARK THE EXCEPTION, NOT THE DEFAULT. Only an agent that
                     can start its own work wears a rail; one that runs when
                     you ask is the ordinary case and gets nothing. Striping
@@ -462,19 +466,15 @@ export default function Agents() {
                         <Icon size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
                         {a.name}
                       </h2>
-                      {/* Primary tag flips from runtime to role (C8). Runtime
-                          becomes a small metadata line below (per operator
-                          direction: role/latitude/autonomy/scope first; runtime
-                          is plumbing). */}
-                      {/* Role is the type. It is always set for a maker (a
-                          builder resolves to one); an assistant may genuinely
-                          have none, and "no role" is the honest label for that
-                          rather than falling back to naming the runtime. */}
+                      {/* Role is the type, and the only one: the `runtime`
+                          tag that used to sit here is deleted. An agent may
+                          genuinely have no role, and "no role" is the honest
+                          label for that. */}
                       {a.role
                         ? <Tag hue={catFor(`role:${a.role}`)}>{a.role}</Tag>
                         : <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>no role</span>}
                     </Row>
-                    <p className="ws-card__meta">{a.purpose || (isBuilder ? (a.project_slug ? `linked to ${a.project_slug}` : "freestanding") : "assistant")}</p>
+                    <p className="ws-card__meta">{a.purpose || (a.project_slug ? `linked to ${a.project_slug}` : "no project link")}</p>
                     {(a.autonomy_mode || a.autonomy || a.latitude) && (
                       <Row wrap style={{ gap: "var(--space-1)", marginBottom: "var(--space-1)" }}>
                         {/* Autonomy mode is the primary axis; if unset, fall
@@ -489,10 +489,6 @@ export default function Agents() {
                             </Badge>
                           </span>
                         )}
-                        {/* Runtime demoted to a small muted tag on the same row */}
-                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                          runs as {a.runtime}
-                        </span>
                       </Row>
                     )}
                     <p className="ws-card__meta">{triggerSummary(a.triggers)}</p>

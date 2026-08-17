@@ -24,8 +24,8 @@ import { enterAction } from "./chat/enterKey";
 import { usePhysicalKeyboard } from "./chat/usePhysicalKeyboard";
 import { type ChatDrawer } from "./chat/drawers";
 import {
-  deriveMode, buildSlug, taskScopeFor, composerPlaceholder,
-  isEgressFailure, type ChatMode, type ChatVariant,
+  deriveMode, agentSlug, taskScopeFor, composerPlaceholder,
+  isEgressFailure, type AgentBinding, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
 import { useLogScroll } from "./chat/useLogScroll";
 import { spliceDictation, dictationLost, typedPortion } from "./chat/voiceDictation";
@@ -105,7 +105,27 @@ export default function Chat({
   contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand,
   initialThreadId, startNew,
 }: ChatProps) {
-  const effectiveMode: ChatMode = mode ?? deriveMode(contextKey);
+  // THE AGENT THIS CHAT IS WITH, when it is with one. Build mode is a fact about
+  // the agent (role + project link), not about the shape of the context key, so
+  // the record has to be here to answer it. A caller that already holds the
+  // agent skips the wait by passing `mode` outright, which still outranks this.
+  const boundSlug = agentSlug(contextKey);
+  const [boundAgent, setBoundAgent] = useState<AgentBinding | null>(null);
+  useEffect(() => {
+    if (!boundSlug) { setBoundAgent(null); return; }
+    let live = true;
+    fetch(`/api/agents/${encodeURIComponent(boundSlug)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((a: AgentBinding | null) => {
+        if (live) setBoundAgent(a ? { role: a.role, project_slug: a.project_slug } : null);
+      })
+      // A roster read that fails leaves the chat in `data` mode, which is the
+      // safe half: the transcript and composer work, and only the work-pane
+      // shortcut is missing.
+      .catch(() => { if (live) setBoundAgent(null); });
+    return () => { live = false; };
+  }, [boundSlug]);
+  const effectiveMode: ChatMode = mode ?? deriveMode(contextKey, boundAgent);
   const navigate = useNavigate();
   // THE CHAT'S ONE PROBLEM SLOT. Everything in it is chat-scoped by definition —
   // anything caused by a specific message is said under that message instead
@@ -612,7 +632,7 @@ export default function Chat({
   const [confirmCompact, setConfirmCompact] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [mentionSel, setMentionSel] = useState(0);
-  const slug = buildSlug(contextKey);
+  const slug = boundSlug;
   const taskScope = taskScopeFor(contextKey);
 
   // ONE PANEL, TWO MOUNT POINTS, one set of props. The toolbar hosts it as a

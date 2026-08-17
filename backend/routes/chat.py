@@ -190,7 +190,7 @@ class CardState(BaseModel):
 class SpawnTask(BaseModel):
     text: str | None = None       # explicit task text; else distilled from the chat
     project: str | None = None    # target project slug; else the chat's own scope
-    # An explicit scope KEY (workshop / project:x / agent:x / build:x). Task
+    # An explicit scope KEY (workshop / project:x / agent:x). Task
     # proposal cards let the operator choose where a ticket lands, and they used
     # to POST /api/tasks directly to honour that — which meant filing from a card
     # recorded no chat provenance and the ticket had no way back to the
@@ -1175,8 +1175,8 @@ async def spawn_task(thread_id: str, body: SpawnTask):
     if t is None:
         raise HTTPException(404, "thread not found")
 
-    # Resolve a canonical scope KEY (workshop / project:<slug> / agent:<slug> /
-    # build:<slug>) so the same key both files the task AND drives the run
+    # Resolve a canonical scope KEY (workshop / project:<slug> / agent:<slug>)
+    # so the same key both files the task AND drives the run
     # launcher. An explicit project wins; else the chat's own binding when it has
     # a task scope; else the workshop root queue (a general chat has none of its
     # own to file to yet).
@@ -1330,7 +1330,7 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
         raise HTTPException(400, "context_key required")
 
     # Validate the target resolves to a REAL provider. get_provider constructs a
-    # provider for any project:/build: key and returns the matching-key provider
+    # provider for any project: key and returns the matching-key provider
     # for a registered static key, but falls back to `general` for an unknown
     # static key, so a resolved key that doesn't equal the request is bogus.
     provider = chat_context.get_provider(new_key)

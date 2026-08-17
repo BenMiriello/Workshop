@@ -126,12 +126,12 @@ const EMPTY_TASKS: Task[] = [];
 type KnowledgeNote = { id: string; title: string; hook: string; updated?: string | null };
 
 // A row from GET /api/agents (the unified registry roster). Distinct from the
-// runtime Build agents list (GET /api/agents/build): these are DEFINITION-file
-// agents under projects/<slug>/agents/*.md, of either runtime.
+// Build agents list (GET /api/agents/build), which is execution state: these are
+// DEFINITION-file agents under projects/<slug>/agents/*.md, of any role.
 type RosterAgent = {
   id: string;
   slug: string;
-  runtime: string;
+  role: string | null;
   name: string;
   purpose: string;
   project_slug: string | null;
@@ -415,7 +415,12 @@ export default function ProjectDetail() {
     setBrief(draft.content);
   });
 
-  // Tasks
+  // Tasks. One CRUD surface, /api/tasks, scoped to this project. The
+  // /api/projects/{slug}/tasks routes that used to back this section are gone:
+  // they wrote the same store while skipping dedup, provenance and the queue
+  // runner's wake file, so a ticket filed here behaved differently from the
+  // identical ticket filed on the Work page.
+  const taskScope = `project:${slug}`;
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [tasksErr, setTasksErr] = useState<string | null>(null);
   const [showDone, setShowDone] = useState(false);
@@ -530,7 +535,7 @@ export default function ProjectDetail() {
   const loadTasks = useCallback(async () => {
     setTasksErr(null);
     try {
-      const r = await fetch(`/api/projects/${slug}/tasks?include_done=true`);
+      const r = await fetch(`/api/tasks?scope=${encodeURIComponent(taskScope)}&include_done=true`);
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const d = await r.json();
       setTasks(d.tasks as Task[]);
@@ -538,7 +543,7 @@ export default function ProjectDetail() {
       setTasksErr(String(e));
       setTasks([]);
     }
-  }, [slug]);
+  }, [taskScope]);
 
   const loadNotes = useCallback(async () => {
     setNotesErr(null);
@@ -553,7 +558,8 @@ export default function ProjectDetail() {
   }, [noteScope]);
 
   // Definition-file agents scoped to this project (registry roster, source =
-  // "definition"), distinct from the runtime Build agents above.
+  // "definition"), distinct from the Build agents above, which are execution
+  // state.
   const loadDefAgents = useCallback(async () => {
     setDefAgentsErr(null);
     try {
@@ -620,39 +626,42 @@ export default function ProjectDetail() {
     if (!text) return;
     setAdding(true);
     try {
-      await fetch(`/api/projects/${slug}/tasks`, {
+      await fetch(`/api/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, owner: "operator" }),
+        body: JSON.stringify({ scope: taskScope, text }),
       });
       setAddText("");
       await loadTasks();
     } finally {
       setAdding(false);
     }
-  }, [addText, slug, loadTasks]);
+  }, [addText, taskScope, loadTasks]);
 
   const setTaskStatus = useCallback(async (id: string, status: TaskStatus) => {
     setTasks((prev) => prev?.map((t) => (t.id === id ? { ...t, status } : t)) ?? prev);
-    await fetch(`/api/projects/${slug}/tasks/${id}`, {
+    await fetch(`/api/tasks/${encodeURIComponent(taskScope)}/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
     });
     await loadTasks();
-  }, [slug, loadTasks]);
+  }, [taskScope, loadTasks]);
 
   const doDeleteTask = useCallback(async () => {
     if (!deleteTask) return;
     setDeletingTask(true);
     try {
-      await fetch(`/api/projects/${slug}/tasks/${deleteTask.id}`, { method: "DELETE" });
+      await fetch(
+        `/api/tasks/${encodeURIComponent(taskScope)}/${encodeURIComponent(deleteTask.id)}`,
+        { method: "DELETE" },
+      );
       await loadTasks();
     } finally {
       setDeletingTask(false);
       setDeleteTask(null);
     }
-  }, [deleteTask, slug, loadTasks]);
+  }, [deleteTask, taskScope, loadTasks]);
 
   // ---- Notes mutation -------------------------------------------------------
   // Write a fresh note into the project knowledge scope via the per-note PUT
@@ -1038,7 +1047,7 @@ export default function ProjectDetail() {
 
       {/* --- Agents (definition files under projects/<slug>/agents) --- */}
       {/* Distinct from Build agents above: these are the registry's declarative
-          agent definitions scoped to this project (either runtime). Each links to
+          agent definitions scoped to this project, of any role. Each links to
           its AgentDetail config page. */}
       <section style={{ marginBottom: "var(--space-6)" }}>
         <Row between style={{ marginBottom: "var(--space-3)" }}>
@@ -1071,7 +1080,9 @@ export default function ProjectDetail() {
                         <Bot size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
                         {a.name}
                       </h3>
-                      <Tag hue={catFor(a.runtime)}>{a.runtime}</Tag>
+                      {a.role
+                        ? <Tag hue={catFor(`role:${a.role}`)}>{a.role}</Tag>
+                        : <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>no role</span>}
                     </Row>
                     <p className="ws-card__meta ws-mono">{a.slug}</p>
                     {a.purpose && <p style={{ marginTop: "var(--space-2)" }}>{a.purpose}</p>}
@@ -1223,7 +1234,7 @@ export default function ProjectDetail() {
               <StateBlock
                 variant="error"
                 title="Couldn't load tasks"
-                hint={<code>GET /api/projects/{slug}/tasks ({tasksErr})</code>}
+                hint={<code>GET /api/tasks?scope={taskScope} ({tasksErr})</code>}
                 action={<Button size="sm" onClick={loadTasks}>Retry</Button>}
               />
             ) : ownerOrder.length === 0 ? (

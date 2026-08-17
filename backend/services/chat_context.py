@@ -1360,8 +1360,9 @@ class ContextProvider:
     # cross-cutting chat without a clear data domain doesn't justify the surface.
     allowed_tools: list[str] = []
     mcp_servers: list[str] = []
-    # Role surfaced to the UI: "assistant" for data/app chats, "builder" for
-    # project:/build: providers. Drives the composer label + default model.
+    # Role surfaced to the UI: "assistant" for data/app chats, "builder" for the
+    # providers that work in a tree (project: and a maker agent). Drives the
+    # composer label + default model.
     role: str = "assistant"
     # Provider default model (full id). Resolution order at call time is:
     # explicit body.model > thread.model > this default. Assistants default to
@@ -1666,21 +1667,18 @@ class DevelopmentContextProvider(ProjectContextProvider):
 
 # ---------------------------------------------------------------- agent providers
 # ONE CONTEXT KIND FOR AN AGENT, AND IT IS `agent:<slug>`. `build:<slug>` is
-# retired (chat_store.canonical_context_key folds it), because it addressed the
-# same agent by its RUNTIME rather than by its identity, and runtime is the axis
-# the entity model is retiring.
+# DELETED, because it addressed the same agent by its RUNTIME rather than by its
+# identity, and the runtime axis is gone.
 #
 # Two implementations behind that one kind, chosen by the agent's ROLE
-# (`agent_provider` below), because a maker and an unroled assistant genuinely
+# (`agent_provider` below), because a maker and an unroled agent genuinely
 # differ: a maker has a working tree, so it gets the full agentic toolset pinned
-# to that directory; an assistant has a persona and no cwd of its own. That is a
-# behavioural split, not two spellings of one thing.
+# to that directory; everything else has a persona and no cwd of its own. That is
+# a behavioural split, not two spellings of one thing.
 #
 # NOT keyed on `rec["runtime"] == "builder"`, which is what this used to be and
-# was the single most load-bearing remaining use of the retired axis.
-# `agents_registry._role_for_runtime` already defaults every builder definition
-# to `role: maker`, so reading `role` here needs no registry change and no
-# migration -- it just stops asking the question the wrong way.
+# was the single most load-bearing use of the deleted axis. The definitions that
+# used to rely on an inferred role now declare `role: maker` themselves.
 
 
 class MakerAgentContextProvider(ContextProvider):
@@ -1940,9 +1938,9 @@ def _agent_records() -> list[tuple[str, dict]]:
     """(slug, record) for every agent this instance can chat with, sorted.
 
     OFF THE AGENT REGISTRY, not `build_agents.json`. The list used to be
-    `build_agents.slugs()`, which is per-instance runtime state for one runtime,
-    so the scope picker offered eight retired build agents and not one of the
-    three live assistants. `list_agents` already excludes retired and
+    `build_agents.slugs()`, which is per-instance execution state for makers
+    alone, so the scope picker offered eight retired build agents and not one of
+    the three live registry agents. `list_agents` already excludes retired and
     per-channel agents, which is exactly the set that should be offerable as a
     place to type."""
     try:
@@ -2022,11 +2020,10 @@ def dev_scope_refused(context_key: str | None) -> bool:
 
 
 def get_provider(context_key: str | None) -> ContextProvider:
-    # ONE SPELLING FIRST. `build:<slug>` is a retired context kind naming the
-    # same agent `agent:<slug>` names, and folding it here rather than in each
-    # branch is what lets a caller still holding the old spelling (AgentBuild's
-    # `contextKey`, a `/providers?scope=` query, a rescope request) resolve to the
-    # right agent instead of silently degrading to `general`.
+    # ONE SPELLING FIRST, decided by the one function that owns the question, so
+    # a blank or absent key means the same thing here as it does at the moment a
+    # thread is stored. There is nothing else left for it to normalise: the
+    # second agent spelling (`build:<slug>`) is deleted rather than folded.
     if context_key:
         from services.chat_store import canonical_context_key
         context_key = canonical_context_key(context_key)
@@ -2084,10 +2081,9 @@ def get_provider(context_key: str | None) -> ContextProvider:
         # key — not a 500, not a provider built from an unchecked path.
     elif context_key and context_key.startswith("agent:"):
         # THE AGENT THIS CHAT IS WITH. One branch, because there is one agent
-        # context kind: `build:<slug>` was folded into this one by
-        # `chat_store.canonical_context_key` before the key was ever stored, and
-        # the maker/assistant split moved from `runtime` to `role` inside
-        # `agent_provider`.
+        # context kind: `build:<slug>` is deleted, and the split between an agent
+        # that works in a tree and one that does not moved from `runtime` to
+        # `role`, inside `agent_provider`.
         #
         # An unknown or retired slug falls back to `general` so a stale binding
         # never 500s the chat.

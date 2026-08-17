@@ -197,7 +197,7 @@ def notes_tree(tmp_path, monkeypatch):
     agents_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(agents_registry, "_user_agents_dir", lambda: agents_dir)
     (agents_dir / "solo.md").write_text(
-        "---\nname: Solo\nruntime: assistant\n---\n\nA standalone agent.\n")
+        "---\nname: Solo\n---\n\nA standalone agent.\n")
     monkeypatch.setattr(installed_apps, "REGISTRY_PATH", tmp_path / "installed-apps.json")
 
     ownership.set_current_owner(4242)
@@ -278,7 +278,7 @@ def registry_tree(tmp_path, monkeypatch):
 
 def _write_agent(agents_dir, slug, extra_frontmatter=""):
     (agents_dir / f"{slug}.md").write_text(
-        f"---\nname: {slug}\nruntime: assistant\n{extra_frontmatter}---\n\nProbe.\n")
+        f"---\nname: {slug}\n{extra_frontmatter}---\n\nProbe.\n")
 
 
 class TestAppsAndAgentsAreRegistryDriven:
