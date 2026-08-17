@@ -10,8 +10,9 @@ write door moved to routes/stores.py, which owns everything /stores.
   POST /grants/mint      mint a scoped grant over a Store, returns the token
   POST /grants/revoke    revoke a scoped grant by token/id
 
-base_apps.py keeps a thin `/base-apps/grants` alias (GET/PUT) until Phase 5, so
-the existing frontend caller keeps working while pages repoint here.
+There is no `/base-apps/grants` alias — base_apps.py declares no grants route
+(it only exposes app manifests; see its own comment that nothing there
+enforces scope or grants). This module is the only HTTP surface for grants.
 """
 from __future__ import annotations
 

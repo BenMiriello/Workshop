@@ -2,10 +2,11 @@
 
 Doc spec (Tab 3, Agent Layer): an agent's autonomy mode can be `event-driven`
 with a webhook/trigger source. This route accepts arbitrary JSON from any
-named source, logs it to a JSONL, and (in a future commit) will nudge any
-agents subscribed to that source via Letta.
-
-For now it's a passive receiver — subscription dispatch is a 5b TODO item.
+named source, logs it to a JSONL, and enqueues a pending run for each
+subscriber via `services.event_dispatch.enqueue_event` (Phase 5b — landed,
+not a stub). The cron loop (5a) pops those pending runs and decides whether
+to actually fire `claude -p`; this route's job ends at "enqueued," not
+"ran," which is what `enqueued_runs` in the response names honestly.
 """
 from __future__ import annotations
 
@@ -141,7 +142,6 @@ async def receive_event(source: str, request: Request):
     return {
         "ok": True,
         "logged": True,
-        "subscribers_notified": 0,
         "subscribers_pending": len(subscribers),
         "enqueued_runs": dispatch["enqueued"],
         "enqueued_agent_ids": dispatch["agent_ids"],
