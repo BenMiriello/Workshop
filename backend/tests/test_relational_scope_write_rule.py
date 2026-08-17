@@ -163,8 +163,50 @@ def test_a_relational_scope_does_not_re_import_its_own_export(tmp_path, monkeypa
     (tmp_path / "TODO.md").write_text("# TODO\n\n## operator\n\n- [ ] A line nobody filed\n")
     assert tasks.reconcile(tmp_path) is False
     assert not (tmp_path / ".tasks.json").exists()
-    with pytest.raises(ValueError):
-        tasks.import_markdown(tmp_path, "# TODO\n\n- [ ] And another\n")
+
+
+def test_there_is_no_way_to_import_an_export(tmp_path):
+    """The guard above was the fallback. The import DIRECTION is now gone.
+
+    `tasks.import_markdown` and the `PUT /projects/{slug}/todo` route that
+    reached it are deleted (2026-08-17), so no credential and no database state
+    can turn a rendering back into store input. This asserts the absence,
+    because a guard is only as good as the next caller that reaches around it --
+    and one did.
+    """
+    import inspect
+
+    from routes import projects
+
+    assert not hasattr(tasks, "import_markdown"), \
+        "the TODO.md import bridge is back"
+    routes = {(r.path, m) for r in projects.router.routes
+              for m in getattr(r, "methods", ())}
+    assert ("/{slug}/todo", "PUT") not in routes, \
+        "PUT /projects/{slug}/todo is back; it re-derived the store from markdown"
+    assert ("/{slug}/todo", "GET") in routes, \
+        "reading the rendering is fine and should still work"
+
+
+def test_a_file_backed_export_edit_is_reverted_not_absorbed(tmp_path):
+    """The other half of the same rule, for a root that IS file-backed.
+
+    `reconcile` used to heal a hand edit into the store: a checkbox flip moved
+    the ticket's status, and a line matching nothing was minted as a new ticket.
+    It now runs one way. An edit behind the store's back is overwritten by the
+    store's own rendering, and invents nothing.
+    """
+    kept = tasks.add(tmp_path, text="Real work")
+    (tmp_path / "TODO.md").write_text(
+        "# TODO\n\n## operator\n\n- [x] Real work\n- [ ] A line nobody filed\n")
+
+    assert tasks.reconcile(tmp_path) is True  # the export was rewritten
+
+    titles = {t["title"]: t["status"] for t in tasks.list_tasks(tmp_path)}
+    assert titles == {"Real work": "todo"}, \
+        "the export edit changed the store: status healed in, or a ticket minted"
+    assert "A line nobody filed" not in (tmp_path / "TODO.md").read_text()
+    assert tasks.get_task(tmp_path, kept["id"])["status"] == "todo"
 
 
 def test_a_required_write_reports_a_skip_as_a_failure():

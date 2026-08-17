@@ -32,13 +32,12 @@ _AUTH_ENV = str(
     or (_Path.home() / ".config" / "workshop" / "auth.env")
 )
 
-# Recursion + cost caps (security-audit-2026-07-18 A4). These tools spawn full
-# agentic `claude -p` turns with Bash; caller-supplied max_turns/max_iter used to
-# be unbounded, and nothing stopped claude→claude→claude fan-out. A depth counter
-# rides in the child env so a spawned turn that calls these tools again is refused
+# Recursion + cost caps (security-audit-2026-07-18 A4). This spawns a full
+# agentic `claude -p` turn with Bash; caller-supplied max_turns used to be
+# unbounded, and nothing stopped claude→claude→claude fan-out. A depth counter
+# rides in the child env so a spawned turn that calls this tool again is refused
 # past _MAX_DEPTH.
 _MAX_TURNS_CAP = 12
-_MAX_ITER_CAP = 8
 _MAX_DEPTH = 2
 _MAX_CONCURRENT = 3
 
@@ -203,68 +202,23 @@ def cloud_run_claude(task: str, model: str = "haiku", redact_pii: bool = True, m
     return out
 
 
-def cloud_run_ralph(task_substring: str, max_iter: int = 6) -> str:
-    """Dispatch a TODO.md task to the Ralph re-fire loop (drives to completion).
-
-    Use this when: a TODO.md `[ ]` item needs to be DONE, not just discussed.
-    Ralph fires claude -p iteratively until reviewer.sh approves the diff.
-
-    The TODO.md this reads is the platform repo's own — this is `development`
-    work (ADR 0014), so the target is named explicitly with `--dir` rather than
-    inherited from a default. `ralph.sh` no longer has one, and it refuses the
-    platform repo outright unless WORKSHOP_DEV_MODE=1, which is reported back
-    here as "blocked: developer mode is off" instead of a bare exit code.
-
-    Args:
-        task_substring: Distinctive substring of the TODO.md `[ ]` line to drive.
-        max_iter: Maximum Ralph iterations. Default 6.
-
-    Returns:
-        Status: "completed", "incomplete", "blocked", or an error string.
-    """
-    import subprocess
-    from pathlib import Path
-    if _too_deep():
-        return "blocked: recursion depth cap (WORKSHOP_AGENT_DEPTH >= %d)" % _MAX_DEPTH
-    try:
-        max_iter = max(1, min(int(max_iter), _MAX_ITER_CAP))
-    except (TypeError, ValueError):
-        max_iter = 6
-    todo_path = Path(_WORKSHOP_ROOT) / "TODO.md"
-    if not todo_path.exists():
-        return "ERROR: TODO.md does not exist"
-    lines = todo_path.read_text().splitlines()
-    matches = [l for l in lines if l.startswith("[ ] ") and task_substring.lower() in l.lower()]
-    if not matches:
-        return f"ERROR: no [ ] task matched {task_substring!r}"
-    if len(matches) > 1:
-        return f"ERROR: {len(matches)} tasks matched {task_substring!r}; be more specific"
-    task_text = matches[0][4:]
-    if not _try_enter():
-        return "blocked: cloud-run concurrency cap (%d) reached; try again shortly" % _MAX_CONCURRENT
-    try:
-        proc = subprocess.run(
-            [f"{_WORKSHOP_ROOT}/scripts/ralph.sh", task_text,
-             "--dir", _WORKSHOP_ROOT,
-             "--max-iter", str(max_iter), "--max-wall", "900"],
-            cwd=_WORKSHOP_ROOT,
-            capture_output=True, text=True, timeout=1100,
-        )
-    except subprocess.TimeoutExpired:
-        return "timeout: ralph exceeded wall budget"
-    finally:
-        _leave()
-    exit_code = proc.returncode
-    if exit_code == 0:
-        return "completed: ralph approved by reviewer.sh"
-    if exit_code == 1:
-        return "incomplete: iter cap hit (will retry next tick)"
-    if exit_code == 2:
-        return "incomplete: wall cap hit (will retry next tick)"
-    if exit_code == 3:
-        return "blocked: classifier"
-    if exit_code == 4:
-        # ralph.sh's startup refusal — here, always the developer-mode gate.
-        return ("blocked: developer mode is off, so the platform repo is not a "
-                "permitted run target (set WORKSHOP_DEV_MODE=1; ADR 0014)")
-    return f"failed: ralph exit {exit_code}"
+# `cloud_run_ralph`: REMOVED (2026-08-17). It was the SECOND way to drive a
+# ticket to completion, and it had none of the safeties the first one has.
+# `scripts/project_ralph.sh` takes a claim token, holds a lease it heartbeats,
+# writes a receipt, runs the acceptance check and spends against a budget. This
+# function took a substring, grepped the platform repo's own `TODO.md` for a
+# matching line, and shelled `ralph.sh` with the raw text: no claim, so two
+# drivers could take the same ticket; no lease or fencing, so nothing noticed;
+# no receipt, so nothing recorded that it ran; no acceptance and no budget.
+#
+# It also read a format the store stopped writing. It matched `line.startswith(
+# "[ ] ")`, and the export has rendered `- [ ] ` under a `## owner` heading since
+# ADR 0019 — measured on the live file: zero lines match. Every call had already
+# been failing with "no [ ] task matched".
+#
+# Nothing called it. `POST /tools/{name}` had zero callers across backend/,
+# frontend/src, mobile/ and scripts/; the only mentions in the tree were a Letta
+# persona note for a runtime retired in the 2026-07-15 teardown.
+#
+# `cloud_run_claude` above is kept: it runs a prompt, it does not claim, drive or
+# complete a ticket, so it is not a second path around the queue's safeties.

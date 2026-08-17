@@ -14,10 +14,11 @@ here and Letta registered thin HTTP proxies that POSTed in. Letta was removed in
 the 2026-07-15 Stage 9 teardown and the proxy module (sandbox_wrappers.py) was
 deleted on 2026-08-16; nothing calls in over HTTP any more.
 
-STATUS, measured 2026-08-16: this surface answers live (`GET /tools/_list`
-returns 11 names) and has ZERO callers anywhere in backend/, frontend/src,
-scripts/ or mobile/. The implementations themselves are ordinary code that is
-still worth keeping. Whether the HTTP surface survives is thread T5 of
+STATUS, measured 2026-08-16 and re-measured 2026-08-17: this surface answers
+live (`GET /tools/_list` returns 10 names, down from 11 with `cloud_run_ralph`
+deleted) and has ZERO callers anywhere in backend/, frontend/src, scripts/ or
+mobile/. The implementations themselves are ordinary code that is still worth
+keeping. Whether the HTTP surface survives is thread T5 of
 docs/platform-redesign/coherence-overhaul-2026-08-16.md; it is left in place
 rather than removed mid-overhaul because cloud.py's callable surface is
 referenced by an open security ticket (SEC-A4) that should settle first.
@@ -54,7 +55,9 @@ DISPATCH: dict[str, Any] = {
     "local_route_decision":   t_local.local_route_decision,
     "local_summarize_short":  t_local.local_summarize_short,
     "cloud_run_claude":       t_cloud.cloud_run_claude,
-    "cloud_run_ralph":        t_cloud.cloud_run_ralph,
+    # "cloud_run_ralph" is deleted (2026-08-17): a second way to drive a ticket
+    # that skipped the claim, lease, receipt, acceptance and budget that
+    # scripts/project_ralph.sh takes. See services/letta_tools/cloud.py.
     "notify_operator":        t_notify.notify_operator,
     "system_health":          t_health.system_health,
 }

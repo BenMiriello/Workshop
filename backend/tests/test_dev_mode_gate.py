@@ -364,13 +364,19 @@ class TestDoors789TheLoops:
             f"{script} defaults DIR to {assigns[0]!r}; a target must be named"
 
     def test_no_python_launcher_leaves_the_target_unnamed(self):
-        # The one Python caller of ralph.sh reads the platform repo's own
-        # TODO.md, so it must say so rather than inherit a default that no
-        # longer exists.
+        # There is no Python launcher of ralph.sh left to name a target.
+        #
+        # This used to check that `cloud_run_ralph` passed `--dir`. That tool is
+        # deleted (2026-08-17): naming the target was the LAST of the queue's
+        # safeties it honoured, and it still skipped the claim, lease, receipt,
+        # acceptance and budget that scripts/project_ralph.sh takes. A ticket is
+        # driven through the shell entrypoints, which all apply the gate above.
+        from routes import tools as tools_route
         from services.letta_tools import cloud
-        src = Path(cloud.__file__).read_text()
-        i = src.index("scripts/ralph.sh")
-        assert "--dir" in src[i:i + 200], "cloud_run_ralph launches ralph.sh with no target"
+        assert not hasattr(cloud, "cloud_run_ralph"), \
+            "the ralph bypass is back; it skips claim/lease/receipt/acceptance"
+        assert "cloud_run_ralph" not in tools_route.DISPATCH, \
+            "POST /tools/cloud_run_ralph is reachable again"
 
 
 # --------------------------------------------------------------------------

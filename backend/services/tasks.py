@@ -1156,8 +1156,14 @@ def _migrate_from_todo(root: Path) -> list[dict]:
     an export but no `.tasks.json` (the store was deleted, or the directory
     predates it).
 
-    It reads through `_parse_export_blocks`, the SAME parser `reconcile` uses.
-    It used to read `services/todos.py`, a second parser of the same file left
+    THE LAST REMAINING READ OF THE EXPORT, and it is a bootstrap, not a sync:
+    it runs only for a file-backed root that has an export and NO store at all,
+    and `_load` refuses to reach it for a relational scope (see its docstring).
+    The two paths that ran it against a store that already existed --
+    `import_markdown` and `reconcile`'s healing half -- are deleted.
+
+    It reads through `_parse_export_blocks`, which is the only parser of this
+    file. It used to read `services/todos.py`, a second parser of the same left
     over from ADR-009, whose model was a checkbox: `done: bool`. The export has
     written eight statuses since ADR 0019, so every draft, doing, in_review,
     blocked, parked and cancelled line came back through it as plain `todo` or
@@ -1498,12 +1504,10 @@ _BOX_TO_STATUS = {" ": "todo", "x": "done", "X": "done", "~": "doing",
 _LINE_RE = re.compile(r"^(\s*)[-*]\s*\[([ xX~!?pd\-])\]\s*(.*?)\s*$")
 
 
-def _norm_text(s: str) -> str:
-    """Normalize a task's FIRST line for matching (strip trailing status tag,
-    collapse whitespace, lowercase). Multi-line bodies match on line one."""
-    first = (s or "").split("\n", 1)[0]
-    first = re.sub(r"\s*\((?:draft|doing|blocked|in_review|in review|parked|cancelled)\)\s*$", "", first, flags=re.I)
-    return re.sub(r"\s+", " ", first).strip().lower()
+# `_norm_text` lived here: it matched a rendered export line back to a stored
+# ticket by stripping the trailing status tag ("... (cancelled)") and lowercasing.
+# Nothing matches an export line to a ticket any more, and the tag it stripped is
+# exactly what got written into 24 stored titles when the matcher missed.
 
 
 def _parse_export_blocks(text: str) -> list[tuple[str, str]]:
@@ -1552,37 +1556,39 @@ def _parse_export_blocks(text: str) -> list[tuple[str, str]]:
 
 
 def reconcile(root: Path) -> bool:
-    """Heal an out-of-band TODO.md edit back into the store. Cheap: short-circuits
-    on an unchanged hash. Checkbox flips apply to the matching store task
-    (normalized-text match); unmatched new checklist lines import as new tasks;
-    lines missing from the file are ignored (the store wins on deletion). Returns
-    True if anything changed. The store remains the single authority.
+    """Restore a drifted TODO.md from the store. ONE WAY: store -> file, never
+    file -> store. Returns True if the export was rewritten.
 
-    INERT FOR A RELATIONAL ROOT, which is what retiring the file store means in
-    practice. `TODO.md` there is a one-way export: healing it back in is the
-    second write path that made it a store rather than a rendering, and it is
-    the read-back ADR 0019 removes.
+    THE EXPORT IS NOT AN INBOX. This function used to run the other direction
+    too: checkbox flips healed onto the matching store task by normalized-text
+    match, hand-edited detail blocks were absorbed, and any checklist line that
+    matched nothing was minted as a NEW ticket with a fresh id. That read-back is
+    what made `TODO.md` a second store rather than a rendering, and it is
+    deleted. It is not deleted on principle. It ran against the repository root
+    on 2026-08-17 and produced four duplicate tickets stamped
+    `source={"kind":"operator","ref":"todo-reconcile"}`, one status flipped from
+    `todo` to `cancelled`, and 24 stored TITLES with the export's rendered status
+    marker baked into them ("... (cancelled)  (cancelled)"). The data damage was
+    repaired in ba1a71c by narrowing the guard from `is_relational` (which asks
+    whether the database answered) to `is_relational_scope` (which asks where a
+    root's tickets belong). A guard is only ever as good as the next caller who
+    reaches around it, so the direction itself is now gone.
 
-    The evidence for switching it off rather than keeping it as insurance: 22
-    commits in history changed `TODO.md` without `.tasks.json`, the last on
-    2026-07-18, and they cluster on a single day of an agent annotating lines by
-    hand. The repo's own CLAUDE.md already forbids editing it. Project trees are
-    still file-backed and still heal, so this is a per-root behaviour, not a
-    deletion.
+    What remains is the export half, which has to stay somewhere: `_persist`
+    regenerates `TODO.md` on every mutation, so the only way the file can
+    disagree with the store is an edit made behind the store's back. That edit is
+    now reverted on the next read instead of being swallowed into the store. The
+    file is a rendering; a rendering that disagrees with what it renders is
+    simply stale.
 
-    THE GUARD IS `is_relational_scope`, NOT `is_relational`. `is_relational`
-    also asks whether the database answered, so a scope whose tickets live in
-    Postgres would start healing again the moment it could not be reached -- and
-    healing means minting a new id for every export line that does not match the
-    stale file. That is not a hypothetical: it ran on 2026-08-17 and produced
-    four duplicate tickets plus 24 titles with the rendered status tag
-    (`... (cancelled)`) written back into them. Belonging is static; reachability
-    is not; only the first may decide this.
+    Inert for a relational scope (`_persist` there writes Postgres and renders
+    the export from it) and for a protected root, whose TODO.md carries prose
+    sections a re-render would wipe.
     """
     if is_relational_scope(root):
         return False
     if _is_protected(root):
-        return False  # never heal/persist a protected root's mixed TODO.md
+        return False  # never regenerate a protected root's mixed TODO.md
     export = _export_path(root)
     if not export.exists():
         return False
@@ -1590,53 +1596,10 @@ def reconcile(root: Path) -> bool:
         tasks_raw, export_sha = _read_payload(root)
         if tasks_raw is None:
             return False
-        current = export.read_text()
-        if export_sha is not None and _sha(render_markdown([_normalize(t) for t in tasks_raw])) == export_sha \
-                and _sha(current) == export_sha:
-            return False
-        if _sha(current) == export_sha:
-            return False  # export matches what we last wrote; nothing to heal
-        tasks = [_normalize(t) for t in tasks_raw]
-        by_text: dict[str, dict] = {}
-        for t in tasks:
-            by_text.setdefault(_norm_text(t["text"]), t)
-        changed = False
-        now = _now()
-        for status, text in _parse_export_blocks(current):
-            key = _norm_text(text)
-            match = by_text.get(key)
-            if match is not None:
-                # Heal a checkbox flip; also absorb an edited/extended body so a
-                # hand-edited detail block is not lost on the next re-render.
-                item_changed = False
-                if match["status"] != status:
-                    match["status"] = status
-                    item_changed = True
-                if text.strip() != (match["text"] or "").strip():
-                    # Write through to the canonical pair, not to the `text`
-                    # projection: a hand-edited detail block in TODO.md is a real
-                    # body edit, and setting the mirror alone would be discarded
-                    # by the next load.
-                    match["title"], match["body"] = split_text(text)
-                    match["text"] = join_text(match["title"], match["body"])
-                    item_changed = True
-                if item_changed:
-                    match["updated"] = now
-                    changed = True
-            else:
-                # Unmatched new line -> import (non-destructive).
-                new = _normalize({
-                    "id": _new_id(), "text": text, "status": status,
-                    "assignee": DEFAULT_OWNER, "created": now, "updated": now,
-                    "source": {"kind": "operator", "ref": "todo-reconcile"},
-                })
-                tasks.append(new)
-                by_text.setdefault(key, new)
-                changed = True
-        # Always re-persist so export_sha tracks the current file even when the
-        # only diff was cosmetic (whitespace), preventing a reconcile loop.
-        _persist(root, tasks)
-        return changed
+        if _sha(export.read_text()) == export_sha:
+            return False  # the file is exactly what we last rendered
+        _persist(root, [_normalize(t) for t in tasks_raw])
+        return True
 
 
 # ---- Markdown export -------------------------------------------------------
@@ -2534,40 +2497,14 @@ def remove(root: Path, task_id: str, *, owner: str | None = None) -> bool:
         return True
 
 
-# ---- Legacy TODO.md bridge -------------------------------------------------
+# ---- TODO.md export --------------------------------------------------------
+#
+# There is no counterpart to this function and there must not be one. The import
+# direction (`import_markdown`, reached by `PUT /projects/{slug}/todo`) is
+# deleted: see `reconcile` for what it did to the live store on 2026-08-17.
 
 def export_markdown(root: Path) -> str:
     reconcile(root)
     tasks = _load(root)
     _persist(root, tasks)
     return _export_path(root).read_text()
-
-
-def import_markdown(root: Path, content: str) -> None:
-    """Legacy PUT /todo: write the body then reconcile it into the store (the
-    store stays authoritative). Non-destructive now, unlike the old re-key.
-
-    REFUSED FOR A RELATIONAL ROOT. This is the other read-back path, and it is
-    reachable: the `development` project's directory IS the repository root, so
-    `PUT /projects/development/todo` would parse a rendered export back into the
-    store it was rendered from. Raising is better than a silent no-op, because
-    the caller believes it has just saved the operator's edit.
-
-    Asks `is_relational_scope` for the same reason `reconcile` does: a database
-    outage must not turn the refusal back into a re-key.
-    """
-    if is_relational_scope(root):
-        raise ValueError(
-            "TODO.md is a generated export for this scope and cannot be "
-            "imported; edit the tickets themselves")
-    with _locked(root):
-        _atomic_write(
-            _export_path(root),
-            content if (content.endswith("\n") or not content) else content + "\n",
-        )
-        # Force reconcile to see this as an out-of-band edit by clearing the sha.
-        tasks_raw, _ = _read_payload(root)
-        if tasks_raw is None:
-            tasks = _migrate_from_todo(root)
-            _persist(root, tasks)
-    reconcile(root)

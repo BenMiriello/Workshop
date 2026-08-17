@@ -602,24 +602,19 @@ async def get_todo(slug: str) -> dict:
     return {"content": tasks.export_markdown(_project_dir(slug))}
 
 
-@router.put("/{slug}/todo")
-async def put_todo(slug: str, body: FileWriteIn) -> dict:
-    # Legacy raw-markdown write: persist the body then re-derive the store
-    # from it so the structured tasks stay authoritative and consistent.
-    #
-    # Refused for a scope whose tickets live in Postgres, where TODO.md is a
-    # one-way export (ADR 0019). That is reachable here rather than theoretical:
-    # the `development` project's directory IS the repository root. A 409 rather
-    # than a 500, because the caller believes it just saved an operator edit and
-    # should be told plainly that this surface no longer accepts one.
-    try:
-        tasks.import_markdown(_project_dir(slug), body.content)
-    except ValueError as e:
-        raise HTTPException(409, str(e))
-    _touch(slug)
-    return {"ok": True}
-
-
+# `PUT /projects/{slug}/todo`: REMOVED (2026-08-17). It took raw markdown and
+# re-derived the ticket store from it, which made a RENDERED EXPORT into store
+# input. That is not a theoretical inversion: the `development` project's
+# directory IS the repository root, so this route parsed a file the store had
+# just written back into the store it came from. The read-back ran on 2026-08-17
+# and minted four duplicate tickets, flipped a status, and wrote the export's
+# rendered "(cancelled)" markers into 24 stored titles.
+#
+# It was guarded rather than removed at first, and the guard held; the route is
+# gone because the direction should not exist for anything to reach. Tickets are
+# edited through `/api/tasks` (or `PATCH /api/tasks/{id}`), which is the only
+# writer. `GET /{slug}/todo` stays: reading the rendering is fine.
+#
 # ---- Structured tasks: REMOVED ---------------------------------------------
 # `GET/POST /projects/{slug}/tasks` and `PATCH/DELETE
 # /projects/{slug}/tasks/{id}` are deleted (2026-08-17). They were a SECOND CRUD
