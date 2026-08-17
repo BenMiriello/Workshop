@@ -64,12 +64,19 @@ def test_workshop_scope_learnings_reach_the_prompt(tmp_path, monkeypatch):
 
 
 def test_global_is_not_injected_twice(tmp_path, monkeypatch):
-    """`global` stays excluded from the scoped block: it is already the first one."""
+    """`global` stays excluded from the scoped block: it is already the first one.
+
+    The text is a real guardrail rather than the placeholder "A global
+    guardrail." it used to be, because the write path now runs a quality gate
+    (2026-08-16): a loop-sourced two-word fragment is refused as not being
+    instructional guidance, which is the entire point of the gate.
+    """
     _isolate(tmp_path, monkeypatch)
-    learnings.record("A global guardrail.", scope=learnings.GLOBAL, source="test")
+    learnings.record("Always rebuild the bundle before reporting a UI change delivered.",
+                     scope=learnings.GLOBAL, source="test")
 
     out = chat_context.learnings_context(_Provider(learnings.GLOBAL))
-    assert out.count("A global guardrail.") == 1
+    assert out.count("Always rebuild the bundle") == 1
 
 
 def test_a_standing_rule_outranks_incident_noise_under_the_budget(tmp_path, monkeypatch):
