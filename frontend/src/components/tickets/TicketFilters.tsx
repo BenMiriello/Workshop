@@ -13,15 +13,13 @@ import {
   Segmented, StatusDot,
 } from "@workshop/ui";
 import {
-  TASK_STATUSES, TASK_SORTS, scopeLabel, taskStatusKind, taskStatusLabel,
+  TASK_STATUSES, TASK_SORTS, TASK_EFFORTS, scopeLabel, taskStatusKind, taskStatusLabel,
   taskStatusTitle, type TaskSort,
 } from "../../lib/tasks";
 import {
   chipsFor, clearField, toggleValue,
   type TicketFilters as Filters, type TicketSort, type TicketView,
 } from "../../lib/ticketFilters";
-
-const EFFORTS = ["quick", "standard", "deep"];
 
 export type LabelCount = { label: string; count: number };
 
@@ -56,7 +54,7 @@ function FieldMenuBody({ filters, scopes, labels, assignees, onFilters }: {
         </MenuCheckItem>
       ))}
       <MenuLabel>Effort</MenuLabel>
-      {EFFORTS.map((e) => (
+      {TASK_EFFORTS.map((e) => (
         <MenuCheckItem
           key={e}
           checked={filters.effort.includes(e)}
@@ -322,7 +320,7 @@ export function TicketFilterSheet({
         <section>
           <div className="ws-section-label">Effort</div>
           <div className="ws-pillset">
-            {EFFORTS.map((e) => (
+            {TASK_EFFORTS.map((e) => (
               <button
                 key={e}
                 type="button"

@@ -28,12 +28,12 @@ import {
 } from "@workshop/ui";
 import { Markdown } from "@workshop/ui/markdown";
 import {
-  type Task, type TaskLink, TASK_STATUSES, LATITUDES, TASK_EXECUTIONS,
+  type Task, type TaskLink, TASK_STATUSES, LATITUDES, TASK_EXECUTIONS, TASK_EFFORTS,
   taskStatusKind, taskStatusLabel, title as titleOf, description as descriptionOf,
   scopeLabel, scopeHref, ticketHref, ticketKey, executionLabel, latitudeDesc,
   latitudeSourceLabel, readinessLine, readinessTone, triageLabel,
 } from "../lib/tasks";
-import { TICKET_EFFORTS, parseList, unresolvedIds } from "../lib/ticketEdit";
+import { parseList, unresolvedIds } from "../lib/ticketEdit";
 import { jobIsLive, jobStatusKind, runHref } from "../lib/jobs";
 import { formatDuration, timeAbsolute, timeAgo } from "../lib/time";
 import { nextWorkParams } from "../lib/workParams";
@@ -507,7 +507,7 @@ export default function TicketDetail() {
                   done={done}
                   onPick={(v) => { void patch({ effort: v }); }}
                   options={[{ value: "", label: "Not set" },
-                    ...TICKET_EFFORTS.map((v) => ({ value: v, label: v }))]}
+                    ...TASK_EFFORTS.map((v) => ({ value: v, label: v }))]}
                 />
               )}
             />

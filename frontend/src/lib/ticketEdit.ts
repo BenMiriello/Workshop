@@ -27,15 +27,13 @@ import {
   TASK_EXECUTIONS, type Task,
 } from "./tasks";
 
-// The store's effort vocabulary (backend services/tasks.py EFFORTS).
-export const TICKET_EFFORTS = ["quick", "standard", "deep"] as const;
-
 // The store's execution vocabulary. Re-exported from lib/tasks so the editor and
 // every reader name the same closed set (backend services/tasks.py).
 export const TICKET_EXECUTIONS = TASK_EXECUTIONS;
 
-// The store's acceptance kinds (backend routes/tasks_all.py _ACCEPTANCE_KINDS).
-export const TICKET_ACCEPTANCE_KINDS = ["reviewer", "command", "operator"] as const;
+// The effort vocabulary is TASK_EFFORTS and the acceptance kinds are
+// TASK_ACCEPTANCE_KINDS, both in lib/tasks. They were restated here verbatim
+// until 2026-08-17; import them from there instead of re-adding a copy.
 
 // The draft's word for "this ticket sets no latitude of its own". The store
 // spells that as null on read and as "" on write.

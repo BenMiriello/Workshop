@@ -143,7 +143,13 @@ export type TaskLinks = {
 // store's shape (backend services/tasks.py): reviewer = a reviewer pass judges
 // it; command = `spec` is a shell command that must exit 0; operator = the human
 // approves. `spec` only carries meaning for the command kind.
-export type TaskAcceptanceKind = "reviewer" | "command" | "operator";
+//
+// The list is the definition and the type is derived from it, so a fourth kind
+// can only be added in one place. lib/ticketEdit.ts used to restate the same
+// three as TICKET_ACCEPTANCE_KINDS; that copy is gone.
+export const TASK_ACCEPTANCE_KINDS = ["reviewer", "command", "operator"] as const;
+
+export type TaskAcceptanceKind = typeof TASK_ACCEPTANCE_KINDS[number];
 
 export type TaskAcceptance = {
   kind: TaskAcceptanceKind;
@@ -185,6 +191,19 @@ const LATITUDE_DESC: Record<Latitude, string> = {
 
 export const latitudeDesc = (v?: string): string =>
   LATITUDE_DESC[(v ?? "") as Latitude] ?? "";
+
+// ---- effort: how much depth the ticket is worth -----------------------------
+// The store's effort hint (backend services/tasks.py EFFORTS), a hint to the
+// worker about depth. Not latitude (that is decision rights) and not execution
+// (that is whether a machine can do it at all).
+//
+// It lives here rather than in a component or in lib/ticketEdit because two
+// unrelated screens read it: the filter row and the ticket editor. It was
+// declared in both of them, verbatim, until 2026-08-17. The list is the
+// definition; the type is derived from it.
+export const TASK_EFFORTS = ["quick", "standard", "deep"] as const;
+
+export type TaskEffort = typeof TASK_EFFORTS[number];
 
 // ---- execution: can a machine do this at all --------------------------------
 // A SPEC field (backend services/tasks.py, autonomy-implementation-2026-08-13

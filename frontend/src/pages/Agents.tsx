@@ -29,6 +29,7 @@ import {
 import DelegatesSection from "../components/DelegatesSection";
 import { triggerSummary, nextScheduled, agentAgency, type UnifiedAgent } from "../lib/agentTriggers";
 import { latitudeDesc, type Latitude } from "../lib/tasks";
+import { type AutonomyMode } from "../lib/autonomy";
 import { runHref } from "../lib/jobs";
 import { shortHttpError } from "../lib/httpError";
 
@@ -36,7 +37,6 @@ import { shortHttpError } from "../lib/httpError";
 // GET /api/agents/ (autonomy preset + role + latitude). Kept local so the shared
 // UnifiedAgent type is untouched; every existing UnifiedAgent field still applies.
 type Preset = "off" | "on-demand" | "scheduled" | "continuous";
-type AutonomyMode = "reactive" | "supervised" | "autonomous";
 type RosterAgent = UnifiedAgent & {
   autonomy?: Preset;
   // Per-agent autonomy mode (autonomy-model 2026-07-18). The primary axis;

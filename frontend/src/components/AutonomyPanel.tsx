@@ -10,6 +10,7 @@ import {
   useEditMode, type StatusKind, type SegmentedOption,
 } from "@workshop/ui";
 import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib/tasks";
+import { isAutonomyMode, type AutonomyMode } from "../lib/autonomy";
 import { jobStatusKind } from "../lib/jobs";
 import { timeAbsolute } from "../lib/time";
 import { shortHttpError } from "../lib/httpError";
@@ -45,11 +46,8 @@ import { shortHttpError } from "../lib/httpError";
 // unchanged; agent scope is opt-in via the optional `scope`/`agentId` props.
 
 type Preset = "off" | "on-demand" | "scheduled" | "continuous";
-// autonomy-model 2026-07-18 §1.1. Per-agent field, controls whether the
-// dispatcher fires this agent's triggers in the background AND whether a
-// completed run commits directly to `done` or lands in `in_review`. Distinct
-// from the cadence preset above (which sets WHEN triggers fire).
-type AutonomyMode = "reactive" | "supervised" | "autonomous";
+// AutonomyMode (the per-agent axis, distinct from the cadence preset above)
+// comes from lib/autonomy, which owns that vocabulary.
 
 type TriggerKind = "manual" | "cron" | "event" | "loop";
 
@@ -133,10 +131,6 @@ const AUTONOMY_MODE_DESC: Record<AutonomyMode, string> = {
   supervised: "Fires on triggers; results land in Review before commit.",
   autonomous: "Fires on triggers; results commit directly.",
 };
-
-function isAutonomyMode(v: unknown): v is AutonomyMode {
-  return v === "reactive" || v === "supervised" || v === "autonomous";
-}
 
 const LATITUDE_OPTIONS: SegmentedOption<Latitude>[] = LATITUDES.map((v) => ({
   value: v,
