@@ -1,6 +1,10 @@
 # Memory consolidation: eleven substrates to four, and a keeper that runs (2026-08-16)
 
-Status: **plan, being implemented.** Written 2026-08-16 at the operator's direction
+Status: **plan, being implemented.** Build log at the end of this doc records what
+has landed and in which commit; per R1 of the coherence overhaul, a doc that does not
+say when it landed is how the next pass ends up rebuilding it beside itself.
+
+Written 2026-08-16 at the operator's direction
 ("a proper system for memory management without junk extra old systems or
 mismanagement is critical ... Including that Letta is still part of it").
 
@@ -302,3 +306,21 @@ Not "it builds". Each step names an observable:
 - **M6**: assert each bug's specific symptom is gone.
 - Full backend suite green, `npm run typecheck` and `bash scripts/check_design.sh`
   clean for any UI touched, then `bash scripts/apply.sh`.
+
+---
+
+## 9. Build log
+
+Per R1: what landed, when, and in which commit. A step is listed only once it is
+committed and independently verified, not when a worker reported it done.
+
+| Step | Commit | Landed | Verified by |
+|---|---|---|---|
+| **M1** — `mark_stale` on chat, ticket and doc writes | `c9c99de` | 2026-08-16 | `mark_stale` now reached from `chat_log.py`, `tasks.py`, `docs_index.py` and `knowledge.py` (was 2 sites, both note writes). 50/50 `test_semantic_index.py` pass. Live: index rebuilt 4,600 to 4,760 chunks; a newly written chat and ticket were each found by exact marker at 0.93 and 0.90. |
+| Acceptance harness | `c863ff7`, `565c45e` | 2026-08-16 | `scripts/verify_memory.py`. Caught its own green-but-hollow bug: `put_note` is a coroutine and was never awaited. |
+| Occupancy tool (R2) | `7177146` | 2026-08-16 | `scripts/field_occupancy.py`. Reproduces the audit numbers independently: ticket `parent`/`latitude`/`awaiting`/`max_attempts` at 0 of 197; `assignee` and `owner` always the literal `operator`. |
+
+**Known gap, not in the M1 spec:** `chat_log.delete_thread` does not mark the index
+stale, so a deleted thread's chunks linger until some other write triggers a rebuild.
+The rebuild re-enumerates live thread ids, so they drop then. Low harm, recorded rather
+than fixed silently.
