@@ -15,6 +15,7 @@ Shapes:
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -22,6 +23,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from services import paths
+
+log = logging.getLogger("workshop.docs_index")
 
 # Prefix is /documents, not /docs: FastAPI's built-in Swagger UI already owns
 # /docs (served at /api/docs behind the edge), which would shadow the list route.
@@ -134,4 +137,13 @@ def write_doc(body: PutDocIn) -> dict:
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="doc not found")
     candidate.write_text(body.content)
+    # The semantic index has just gone out of date (doc is in DEFAULT_KINDS).
+    # Same best-effort, never-raise posture as knowledge.put_note: the file is
+    # already on disk and is the thing that mattered, so a bookkeeping failure
+    # here must never turn into a 500 for a write that already succeeded.
+    try:
+        from services import semantic_index
+        semantic_index.mark_stale(f"doc {body.path}")
+    except Exception:
+        log.debug("semantic index stale-mark skipped for %s", body.path, exc_info=True)
     return {"path": str(candidate.relative_to(_root())), "content": body.content, "mtime": _mtime_iso(candidate)}

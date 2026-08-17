@@ -339,6 +339,148 @@ class TestBM25:
         assert rare_score > common_score
 
 
+class TestMarkStaleDebounce:
+    """D6/M1: the marker write is on hot paths (every chat message, every
+    ticket heartbeat), so a second `mark_stale` while the first mark is still
+    unread must cost a `Path.exists()` check, not a second write."""
+
+    @pytest.fixture(autouse=True)
+    def _tmp_index(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(si, "index_dir", lambda: tmp_path)
+
+    def test_a_second_mark_does_not_rewrite_the_file(self, monkeypatch):
+        si.mark_stale("first reason")
+        first_mtime = si._stale_path().stat().st_mtime_ns
+        calls = []
+        real_write_text = type(si._stale_path()).write_text
+
+        def spy(self, *a, **k):
+            calls.append(a)
+            return real_write_text(self, *a, **k)
+        monkeypatch.setattr("pathlib.Path.write_text", spy)
+        si.mark_stale("second reason")
+        assert calls == [], "a second mark while already stale must not write again"
+        assert si._stale_path().stat().st_mtime_ns == first_mtime
+        # The first cause is what is on disk, not the most recent one.
+        assert si._stale_path().read_text().strip() == "first reason"
+
+    def test_marks_again_once_cleared(self):
+        si.mark_stale("first")
+        si._clear_stale()
+        si.mark_stale("second")
+        assert si._stale_path().read_text().strip() == "second"
+
+    def test_never_raises_when_the_index_dir_is_unwritable(self, monkeypatch):
+        def boom(*a, **k):
+            raise OSError("disk full")
+        monkeypatch.setattr("pathlib.Path.write_text", boom)
+        si.mark_stale("anything")  # must not raise
+
+
+class TestMarkStaleCallSites:
+    """D6/M1: the two other durable stores in DEFAULT_KINDS (chat, ticket) plus
+    the doc write route must mark the index stale on their own write paths --
+    before this, only knowledge.py's two note call sites did, so a chat sent
+    today was unfindable until someone ran a manual rebuild."""
+
+    @pytest.fixture(autouse=True)
+    def _tmp_index(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(si, "index_dir", lambda: tmp_path)
+
+    @pytest.fixture()
+    def owned(self, tmp_path, monkeypatch):
+        from services import ownership
+        monkeypatch.setattr(ownership, "_RUNTIME", tmp_path / "runtime")
+        ownership.set_current_owner(1)
+        try:
+            yield
+        finally:
+            ownership.clear_current_owner()
+
+    def test_a_chat_message_marks_the_index_stale(self, owned):
+        from services import chat_log, chat_store
+        assert not si.is_stale()
+        tid = chat_store.create_thread("general")["id"]
+        chat_log.append_message_sync(tid, "user", "hello")
+        assert si.is_stale()
+
+    def test_an_idempotent_resend_does_not_re_mark(self, owned):
+        """A dedup hit returns before reaching the append at all, so it must
+        not even redundantly re-mark an already-clear index."""
+        from services import chat_log, chat_store
+        tid = chat_store.create_thread("general")["id"]
+        chat_log.append_message_sync(tid, "user", "hello", client_id="c1")
+        si._clear_stale()
+        chat_log.append_message_sync(tid, "user", "hello", client_id="c1")
+        assert not si.is_stale()
+
+    def test_a_non_message_event_does_not_mark_the_index(self, owned):
+        """`run`/`boundary`/`scope`/`title` events are not in the indexed
+        corpus (`collect_chats` only reads `kind == "message"`), so marking on
+        every event -- several times per turn -- would be pure waste."""
+        from services import chat_log, chat_store
+        tid = chat_store.create_thread("general")["id"]
+        chat_log.append_sync(tid, {"kind": "run", "run_id": "r1", "state": "started"})
+        assert not si.is_stale()
+
+    def test_a_chat_write_survives_a_broken_mark_stale(self, owned, monkeypatch):
+        """A memory-index bookkeeping failure must never break a chat send."""
+        from services import chat_log, chat_store
+        monkeypatch.setattr(si, "mark_stale",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        tid = chat_store.create_thread("general")["id"]
+        ev = chat_log.append_message_sync(tid, "user", "still lands")
+        assert ev["content"] == "still lands"
+        assert chat_log.read_events(tid)[-1]["content"] == "still lands"
+
+    def test_a_ticket_create_marks_the_index_stale(self, tmp_path):
+        from services import tasks
+        root = tmp_path / "workshop"
+        root.mkdir()
+        assert not si.is_stale()
+        tasks.add(root, title="A ticket", body="body text")
+        assert si.is_stale()
+
+    def test_a_ticket_update_marks_the_index_stale(self, tmp_path):
+        from services import tasks
+        root = tmp_path / "workshop"
+        root.mkdir()
+        t = tasks.add(root, title="A ticket", body="body text")
+        si._clear_stale()
+        tasks.update(root, t["id"], body="edited body")
+        assert si.is_stale()
+
+    def test_a_ticket_delete_marks_the_index_stale(self, tmp_path):
+        from services import tasks
+        root = tmp_path / "workshop"
+        root.mkdir()
+        t = tasks.add(root, title="A ticket", body="body text")
+        si._clear_stale()
+        tasks.remove(root, t["id"])
+        assert si.is_stale()
+
+    def test_a_ticket_write_survives_a_broken_mark_stale(self, tmp_path, monkeypatch):
+        """A memory-index bookkeeping failure must never break a ticket write."""
+        from services import tasks
+        root = tmp_path / "workshop"
+        root.mkdir()
+        monkeypatch.setattr(si, "mark_stale",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        t = tasks.add(root, title="Still filed", body="body text")
+        assert t["title"] == "Still filed"
+        assert tasks.get_task(root, t["id"]) is not None
+
+    def test_a_doc_write_marks_the_index_stale(self, tmp_path, monkeypatch):
+        from routes import docs_index
+        monkeypatch.setattr(docs_index.paths, "workshop_root", lambda: tmp_path)
+        (tmp_path / "docs").mkdir()
+        f = tmp_path / "docs" / "x.md"
+        f.write_text("# X\n\noriginal")
+        assert not si.is_stale()
+        docs_index.write_doc(docs_index.PutDocIn(path="docs/x.md", content="# X\n\nedited"))
+        assert si.is_stale()
+
+
 class TestEmbedNormalisation:
     def test_a_zero_vector_does_not_become_nan(self, monkeypatch):
         """A NaN row poisons every later comparison, silently and forever."""

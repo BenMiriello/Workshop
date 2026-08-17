@@ -1381,6 +1381,20 @@ def _persist(root: Path, tasks: list[dict]) -> None:
     except Exception:
         # Never let bookkeeping fail a write that already landed on disk.
         pass
+    # The semantic index has just gone out of date (ticket is in DEFAULT_KINDS).
+    # `_persist` is the one funnel every ticket mutation already goes through
+    # for the scope_version bump above and the backlinks re-extraction below,
+    # so it is the one place a mark covers add/update/remove/reconcile/import
+    # without a call site at each of them. Same best-effort, never-raise
+    # posture as knowledge.put_note/delete_note; `mark_stale` itself debounces
+    # (a no-op `exists()` check once the marker is already down), so a lease
+    # heartbeat that reaches this same funnel costs nothing extra once the
+    # index is already known stale.
+    try:
+        from services import semantic_index
+        semantic_index.mark_stale(f"tickets {root}")
+    except Exception:
+        log.debug("semantic index stale-mark skipped for %s", root, exc_info=True)
     # The relational write happened at the top of this function, before the
     # export was rendered, because for those roots it IS the write. There is no
     # mirror step here any more and no second store to keep in step.

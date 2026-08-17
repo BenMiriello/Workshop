@@ -1003,7 +1003,21 @@ def append_message_sync(thread_id: str, role: str, content: str,
         ev["client_id"] = client_id
     if meta:
         ev["meta"] = meta
-    return append_sync(thread_id, ev)
+    out = append_sync(thread_id, ev)
+    # The semantic index has just gone out of date (chat is in DEFAULT_KINDS).
+    # Single choke point for every message write: chat_store.append_message,
+    # append_message_during_turn and the bulk import at the tail of this file
+    # all funnel through here, and the idempotent resend above returns before
+    # reaching this line, so a retried client_id does not mark anything.
+    # Same pattern as knowledge.put_note/delete_note: best-effort, never raises,
+    # because a memory-index bookkeeping failure must never break a chat send.
+    try:
+        from services import semantic_index
+        semantic_index.mark_stale(f"chat {thread_id}")
+    except Exception:
+        log.debug("semantic index stale-mark skipped for thread %s", thread_id,
+                  exc_info=True)
+    return out
 
 
 async def append_message(thread_id: str, role: str, content: str,

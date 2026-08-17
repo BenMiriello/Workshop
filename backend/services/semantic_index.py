@@ -547,8 +547,21 @@ def mark_stale(reason: str = "") -> None:
     Best-effort on purpose: this is called from the tail of a write that has
     already succeeded, and failing a note write because a marker could not be
     touched would be a strictly worse outcome than a stale index.
+
+    DEBOUNCED: skips the write entirely when the marker is already down. A
+    chat message, a ticket heartbeat, and a note edit all funnel through this
+    on their hot write paths, so between one rebuild and the next this can be
+    called many times for one meaningful staleness -- the first caller's write
+    is the one that matters, and every caller after it until the marker is
+    cleared is a no-op `exists()` check rather than a second file write. Costs
+    nothing when nothing was stale (the common case, one `Path.exists()`), and
+    the reason recorded on disk is therefore the FIRST cause since the last
+    rebuild rather than the most recent one -- nothing reads it back, it is
+    debugging text for a human running the CLI.
     """
     try:
+        if _stale_path().exists():
+            return
         _stale_path().write_text((reason or "changed").strip() + "\n")
     except Exception:
         log.debug("could not mark the semantic index stale", exc_info=True)
