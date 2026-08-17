@@ -376,7 +376,7 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
             for ev in events:
                 if ev.get("kind") in ("message", "boundary", "scope") and ev.get("ts"):
                     chat_repo.fix_message_created_at(s, tid, ev.get("id"), ev.get("ts"))
-                    stats["created_at_checked"] += 1
+                    stats["created_at_checked"] = stats.get("created_at_checked", 0) + 1
             return
         stats["topped_up"] += 1
     else:
@@ -489,7 +489,7 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
                 # A no-op once corrected -- see fix_message_created_at. This
                 # counts every CHECK, not every actual write.
                 chat_repo.fix_message_created_at(s, tid, ev.get("id"), ev.get("ts"))
-                stats["created_at_checked"] += 1
+                stats["created_at_checked"] = stats.get("created_at_checked", 0) + 1
             continue
         if kind == "boundary":
             chat_repo.append_message(
