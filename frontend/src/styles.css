@@ -699,8 +699,22 @@ input[type="range"].grad::-moz-range-thumb {
    clamp itself takes the spacer), and an assistant message is markdown blocks,
    where the spacer has to go inside the LAST block or it would land on a new
    line of its own. `:not(:has(.ws-md))` is what keeps the first rule off the
-   second shape. */
-.chat-bubble__body > :last-child:not(:has(.ws-md))::after,
+   second shape.
+
+   IT NAMES `.chat-clamp` RATHER THAN `:last-child`, which is the 2026-08-18
+   correction. A bubble whose turn had work but no answer ends in `.chat-work`,
+   and that is `display: flex` -- so the spacer became a flex ITEM, `display`
+   computed to `block`, and it took a full row of its own. Measured: 3 of the 4
+   orphaned icon rows in the operator's thread were that, not a wrap. The work
+   fold reserves its own room on `.chat-work__toggle` and never wanted this.
+
+   THE RESIDUAL, stated because it is visible: when the last line ends within
+   the reserve of the right edge there is nowhere to put an inline box, so it
+   wraps and the icons ride down with it. CSS has no break-prohibition between
+   text and a following atomic inline, so the alternative is letting text run
+   underneath the icons, which is worse. Measured after this change: 1 bubble in
+   12, where the last line had 14px of room and needed 42px. */
+.chat-bubble__body > .chat-clamp:not(:has(.ws-md))::after,
 .chat-bubble__body .ws-md > :last-child::after {
   content: "";
   display: inline-block;
@@ -709,7 +723,14 @@ input[type="range"].grad::-moz-range-thumb {
   height: 1em;
   vertical-align: text-bottom;
 }
-.chat-bubble--copyable { --chat-actions-gap: 1.25rem; }
+/* THE RESERVE IS THE ICONS' FOOTPRINT MEASURED FROM THE TEXT'S OWN EDGE, not
+   from the bubble's. The icons are placed against the BUBBLE (`right: 0.5rem`)
+   and the body sits 0.7rem inside it, so the last icon's far edge is 3.1rem
+   from the bubble and only 2.4rem from the text. Reserving the full 2.9rem was
+   over-reserving by half a rem of every last line, and a wider reserve makes
+   the wrap below more likely, not less. Plus 0.25rem so the text does not touch
+   the icon. */
+.chat-bubble--copyable { --chat-actions-gap: 1.2rem; }
 
 /* Copy the message. Absolutely placed so it costs no vertical space: with no
    expand control it sits at the corner of the last text row, and when a Show
@@ -761,8 +782,32 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-msg.user .chat-branch:hover:enabled,
 .chat-msg.user .chat-branch:focus-visible { color: var(--accent-fg); }
 /* Room for both controls, on the last line only. See the spacer above. */
-.chat-bubble--branchable { --chat-actions-gap: 1.45rem; }
-.chat-bubble--branchable.chat-bubble--copyable { --chat-actions-gap: 2.9rem; }
+/* ANYTHING BUT THE TEXT RESERVES WITH PADDING, because the two cases want
+   opposite things. The message text is many lines and must only give up width
+   on the LAST one, which is what the inline spacer above does. Everything else
+   that can end a bubble is a SINGLE short row -- the work fold, the Show
+   more/less row, the receipt line -- where padding costs nothing and, unlike an
+   inline box, cannot wrap onto a line of its own or misbehave inside a flex
+   container.
+
+   Enumerating the shapes was the mistake this replaces. A first pass sampled a
+   few bubbles, concluded the body always ends in `.chat-clamp`, and reserved
+   only there; the bubbles it did not sample end in `.chat-work` (a streaming
+   turn with no answer yet), `.chat-more` (the Show more row this file's older
+   comment already called "the bottom row"), or `.chat-receipts`. All three had
+   the icons sitting on top of them, up to 260px2 over a `Read docs/...` step.
+   Naming what is NOT the text covers the ones nobody has added yet too. */
+.chat-bubble__body > :last-child:not(.chat-clamp) {
+  padding-right: var(--chat-actions-gap, 0);
+  /* AND TALL ENOUGH TO HOLD THEM. The icons are 1.15rem high sitting 0.5rem off
+     the bubble's floor, so they reach 1.65rem up; a trailing row shorter than
+     that leaves them poking into whatever is above it. The Show more row is
+     17px, which is exactly how the icons came to sit on the last visible line
+     of a clamped message. */
+  min-height: 1.3rem;
+}
+.chat-bubble--branchable { --chat-actions-gap: 1.2rem; }
+.chat-bubble--branchable.chat-bubble--copyable { --chat-actions-gap: 2.65rem; }
 /* THREE ROWS, THEN IT SCROLLS. The operator asked for exactly this: a picker
    that stays a small target no matter how many times a conversation has been
    branched. The kit's menu already scrolls at 16rem; this is the tighter cap
@@ -1026,14 +1071,7 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-work > .chat-reveal > .chat-reveal__inner { padding-top: var(--space-1); }
 .chat-work__toggle {
   display: inline-flex; align-items: center; gap: 0.3rem;
-  background: none; border: none; margin: 0;
-  /* The gap keeps this one-line summary clear of the copy/branch buttons. It
-     needs its own reserve because when a turn has work but no answer text the
-     clamp below renders empty, so THIS line is the bubble's bottom line and the
-     last-line spacer above lands in something invisible. Measured that exact
-     collision at 12px2 on 2026-08-18. The summary is a few words, so reserving
-     the gap on it costs nothing when it is not the bottom line. */
-  padding: 0.15rem var(--chat-actions-gap, 0) 0.15rem 0;
+  background: none; border: none; padding: 0.15rem 0; margin: 0;
   color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-work__toggle:hover { color: var(--fg); }
