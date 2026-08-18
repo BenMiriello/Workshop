@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from routes import chat_models as cm
+from routes import chat_resource_models as crm
 from routes.api_models import DeletedOut
 from services import chat_attachments
 from services import chat_branches
@@ -2096,7 +2097,7 @@ def _window_for(model: str | None, measured: int = 0) -> int:
     return window
 
 
-@router.get("/threads/{thread_id}/context", response_model=cm.ThreadContext, response_model_exclude_unset=True)
+@router.get("/threads/{thread_id}/context", response_model=crm.ThreadContext, response_model_exclude_unset=True)
 async def thread_context(thread_id: str):
     """Real context-window usage for the composer meter.
 
@@ -2177,7 +2178,7 @@ def _side_query_cwd(provider) -> str:
             else str(context_report.WORKSHOP_ROOT))
 
 
-@router.get("/threads/{thread_id}/context/detail", response_model=cm.ContextDetail, response_model_exclude_unset=True)
+@router.get("/threads/{thread_id}/context/detail", response_model=crm.ContextDetail, response_model_exclude_unset=True)
 async def thread_context_detail(thread_id: str, refresh: bool = False):
     """What is actually filling this chat's window, broken down.
 
@@ -2230,7 +2231,7 @@ async def thread_context_detail(thread_id: str, refresh: bool = False):
             **{k: v for k, v in report.items() if k not in ("model",)}}
 
 
-@router.get("/threads/{thread_id}/mcp/health", response_model=cm.McpHealth, response_model_exclude_unset=True)
+@router.get("/threads/{thread_id}/mcp/health", response_model=crm.McpHealth, response_model_exclude_unset=True)
 async def thread_mcp_health(thread_id: str, refresh: bool = False):
     """Which MCP servers are configured for this chat's directory, and whether
     they connect.
@@ -2274,7 +2275,7 @@ class McpSelectionIn(BaseModel):
     servers: list[str] | None = None
 
 
-@router.put("/threads/{thread_id}/mcp/servers", response_model=cm.McpSelection, response_model_exclude_unset=True)
+@router.put("/threads/{thread_id}/mcp/servers", response_model=crm.McpSelection, response_model_exclude_unset=True)
 async def set_thread_mcp_servers(thread_id: str, body: McpSelectionIn):
     """Choose which MCP servers this chat's turns may reach.
 
@@ -3039,7 +3040,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
 # waits for a reply, and the chip can say "ready" or "failed" while there is
 # still something to do about it. The turn then carries only ids.
 
-@router.post("/attachments", response_model=cm.AttachmentUploaded, response_model_exclude_unset=True)
+@router.post("/attachments", response_model=crm.AttachmentUploaded, response_model_exclude_unset=True)
 async def upload_attachment(file: UploadFile, scope: str = Form(""),
                             thread_id: str = Form("")):
     data = await file.read()
@@ -3055,7 +3056,7 @@ async def upload_attachment(file: UploadFile, scope: str = Form(""),
             "size": rec["size"], "created_at": rec["created_at"]}
 
 
-@router.get("/attachments", response_model=cm.AttachmentList, response_model_exclude_unset=True)
+@router.get("/attachments", response_model=crm.AttachmentList, response_model_exclude_unset=True)
 async def list_attachments(scope: str = "", q: str = ""):
     """Every stored attachment, newest first, for the Files tab on Memory.
 
@@ -3086,7 +3087,7 @@ async def list_attachments(scope: str = "", q: str = ""):
     return {"files": out, "count": len(out), "scopes": scopes}
 
 
-@router.delete("/attachments/{att_id}", response_model=cm.AttachmentDeleted, response_model_exclude_unset=True)
+@router.delete("/attachments/{att_id}", response_model=crm.AttachmentDeleted, response_model_exclude_unset=True)
 async def delete_attachment(att_id: str):
     if not chat_attachments.delete(att_id):
         raise HTTPException(404, "attachment not found")
@@ -3112,7 +3113,7 @@ async def get_attachment(att_id: str):
                                  f'inline; filename="{rec["name"]}"'})
 
 
-@router.get("/threads/{thread_id}/mentionable", response_model=cm.MentionableAgents, response_model_exclude_unset=True)
+@router.get("/threads/{thread_id}/mentionable", response_model=crm.MentionableAgents, response_model_exclude_unset=True)
 async def list_mentionable(thread_id: str):
     """Agents this chat may @-mention, in picker order.
 

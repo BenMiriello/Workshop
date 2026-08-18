@@ -266,6 +266,26 @@ class ThreadSettings(BaseModel):
     name_attempts: int | None = Field(default=None, alias="_name_attempts")
 
 
+class AttachmentRef(BaseModel):
+    """A file already uploaded, as it rides along on a QUEUED message or a
+    saved draft -- a reference, not the row. `routes.chat.AttachmentRefIn` is
+    the matching write shape; `AttachmentRow` below is the index entry, which
+    is a different and much larger thing (size, scope, thread, missing).
+
+    Measured over the live queue and draft stores on 2026-08-18: every stored
+    attachment reference carries exactly `id`, `name` and `kind`. `name` and
+    `kind` are carried so the transcript renders a chip without a second
+    lookup; the server re-reads both from its own index before handing anything
+    to a model, so a wrong one here can only mislabel a chip.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    name: str = ""
+    kind: str = ""
+
+
 class QueuedMessage(BaseModel):
     """A message the SERVER has taken responsibility for but has not sent. The
     per-turn overrides ride with it so a queued message runs under the model,
@@ -279,7 +299,7 @@ class QueuedMessage(BaseModel):
     # Already in the log: a delivery was attempted against a turn that could not
     # read it, so finding it in the transcript does not mean it was answered.
     recorded: bool | None = None
-    attachments: list[dict[str, Any]] | None = None
+    attachments: list[AttachmentRef] | None = None
     model: str | None = None
     effort: str | None = None
     permission_mode: str | None = None
@@ -358,7 +378,7 @@ class Draft(BaseModel):
     text: str
     ts: int
     client_id: str
-    attachments: list[dict[str, Any]] | None = None
+    attachments: list[AttachmentRef] | None = None
     superseded: bool | None = None
 
 
@@ -634,7 +654,7 @@ class SpawnedTask(BaseModel):
     run_error: Any = None
 
 
-# ---------------------------------------------------------- context + folding
+# --------------------------------------------------------------------- folding
 
 class OperationCancelled(BaseModel):
     """`cancelled: false` is not an error: it means the operation landed while
@@ -669,135 +689,6 @@ class ClearResult(BaseModel):
     deferred: bool | None = None
     cancelled: bool | None = None
     busy: bool | None = None
-
-
-class ThreadContext(BaseModel):
-    """The context meter. OUR estimate, measured over the prompt a turn would
-    actually send -- summary included -- because an estimate over a trimmed
-    history while turns send the whole thing is how a chat read 12% while
-    re-sending every message ever written in it."""
-
-    used_tokens: int
-    window_tokens: int
-    pct: int
-    model: str | None = None
-    source: str
-
-
-class ContextDetail(BaseModel):
-    """The breakdown EXPLAINS the meter; it must never quietly replace it. Our
-    `used_tokens` stays the headline number, and the CLI's own reading arrives
-    beside it as `cli_used_tokens` against `cli_window_tokens`, computed on a
-    different window.
-
-    `available: false` with a `reason` is what an unreadable breakdown looks
-    like. The CLI-derived lists stay open: `/context` is parsed out of another
-    process's markdown and its section set belongs to that CLI."""
-
-    model_config = ConfigDict(extra="allow")
-
-    model: str | None = None
-    window_tokens: int
-    used_tokens: int
-    available: bool
-    # Epoch seconds, and it is when the CLI actually RAN, not when the cache was
-    # read: reporting the moment of a cache hit would be a lie about freshness.
-    checked_at: float | None = None
-    cached: bool
-    reason: str | None = None
-    cli_used_tokens: int | None = None
-    cli_window_tokens: int | None = None
-    categories: list[dict[str, Any]] | None = None
-    mcp: list[dict[str, Any]] | None = None
-    agents: list[dict[str, Any]] | None = None
-    memory: list[dict[str, Any]] | None = None
-    skills: list[dict[str, Any]] | None = None
-
-
-# ------------------------------------------------------------------------ mcp
-
-class McpServer(BaseModel):
-    """One row of `claude mcp list`, annotated by `mcp_registry`.
-    `spec_available` false means the server cannot be re-declared, so a turn
-    running a subset cannot include it -- saying so is the whole point, since the
-    alternative is a switch that appears to work and silently removes a server's
-    tools."""
-
-    model_config = ConfigDict(extra="allow")
-
-    name: str
-    spec_available: bool | None = None
-    scope: str | None = None
-    source: str | None = None
-    shadowed: bool | None = None
-
-
-class McpHealth(BaseModel):
-    """`available: false` with a `reason` is what an unrunnable CLI looks like.
-    There is no fallback list, because a made-up server list would report health
-    for things that may not exist. `enabled` is this chat's own selection, null
-    for 'all'."""
-
-    available: bool
-    reason: str | None = None
-    servers: list[McpServer] | None = None
-    counts: dict[str, Any] | None = None
-    checked_at: float | None = None
-    cached: bool
-    enabled: list[str] | None = None
-
-
-class McpSelection(BaseModel):
-    """Null means ALL. Sending every server the machine currently has is stored
-    as 'all' rather than as that frozen list."""
-
-    enabled: list[str] | None = None
-
-
-# ---------------------------------------------------------------- attachments
-
-class AttachmentUploaded(BaseModel):
-    id: str
-    name: str
-    kind: str
-    size: int
-    created_at: str | None = None
-
-
-class AttachmentRow(BaseModel):
-    """`missing` says the index has a row whose blob is gone, which the list
-    shows rather than hiding: a file that cannot be opened should say so where
-    you would go looking for it."""
-
-    id: str
-    name: str
-    kind: str
-    size: int
-    scope: str
-    thread_id: str
-    created_at: str
-    missing: bool
-
-
-class AttachmentList(BaseModel):
-    files: list[AttachmentRow]
-    count: int
-    scopes: list[str]
-
-
-class AttachmentDeleted(BaseModel):
-    deleted: str
-
-
-# ----------------------------------------------------------------- mentionable
-
-class MentionableAgents(BaseModel):
-    """Server-resolved because the rule is a policy, not a display preference: an
-    agent is addressable only if it opted in AND this chat's scope reaches it.
-    Computing it on the client would put the policy in two places."""
-
-    scope: str
-    agents: list[dict[str, Any]]
 
 
 # ---------------------------------------------------------------------- turns

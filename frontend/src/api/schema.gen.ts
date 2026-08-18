@@ -8082,6 +8082,35 @@ export interface components {
             scopes: string[];
         };
         /**
+         * AttachmentRef
+         * @description A file already uploaded, as it rides along on a QUEUED message or a
+         *     saved draft -- a reference, not the row. `routes.chat.AttachmentRefIn` is
+         *     the matching write shape; `AttachmentRow` below is the index entry, which
+         *     is a different and much larger thing (size, scope, thread, missing).
+         *
+         *     Measured over the live queue and draft stores on 2026-08-18: every stored
+         *     attachment reference carries exactly `id`, `name` and `kind`. `name` and
+         *     `kind` are carried so the transcript renders a chip without a second
+         *     lookup; the server re-reads both from its own index before handing anything
+         *     to a model, so a wrong one here can only mislabel a chip.
+         */
+        AttachmentRef: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @default
+             */
+            kind: string;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * AttachmentRefIn
          * @description A file the client already uploaded. `name` and `kind` are carried for the
          *     transcript to render without a second lookup; the server re-reads both from
@@ -9570,7 +9599,7 @@ export interface components {
          */
         Draft: {
             /** Attachments */
-            attachments?: Record<string, never>[] | null;
+            attachments?: components["schemas"]["AttachmentRef"][] | null;
             /** Client Id */
             client_id: string;
             /** Key */
@@ -11728,7 +11757,7 @@ export interface components {
          */
         QueuedMessage: {
             /** Attachments */
-            attachments?: Record<string, never>[] | null;
+            attachments?: components["schemas"]["AttachmentRef"][] | null;
             /** Client Id */
             client_id: string;
             /** Effort */
