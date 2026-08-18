@@ -10568,6 +10568,67 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * McpServerRow
+         * @description One server, joined from the two readings. WHAT IS NOT HERE MATTERS:
+         *     `mcp_registry` resolves real launch specs and a spec can hold credentials
+         *     (`~/.claude.json` on this host has a GOOGLE_CLIENT_SECRET in one). Only
+         *     `spec_available`, `scope` and `source` cross the wire; the spec itself never
+         *     leaves the backend.
+         *
+         *     `tokens: null` and `tokens: 0` are DIFFERENT CLAIMS and the difference is
+         *     the whole point of the column. Null means the cost probe never saw this row
+         *     and the UI prints an em-dash; zero means it saw it contributing nothing.
+         */
+        McpServerRow: {
+            /** Name */
+            name: string;
+            /** Scope */
+            scope?: string | null;
+            /** Shadowed */
+            shadowed?: boolean | null;
+            /** Source */
+            source?: string | null;
+            /** Spec Available */
+            spec_available?: boolean | null;
+            /** Tokens */
+            tokens?: number | null;
+            /** Tools */
+            tools?: Record<string, never>[] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * McpServers
+         * @description The union of `claude mcp list` and a sessionless `/context` reading.
+         *     Neither is complete alone: a server that fails to connect loads no tools, so
+         *     it costs nothing, so it is invisible in the cost reading exactly when it
+         *     most needs looking at.
+         *
+         *     `cost_available: false` means the cost half could not run; the health half
+         *     still stands, and the two carry separate `checked_at` stamps because they
+         *     are separately cached and can be of different ages.
+         */
+        McpServers: {
+            /** Available */
+            available: boolean;
+            /** Cached */
+            cached?: boolean | null;
+            /** Checked At */
+            checked_at?: number | null;
+            /** Cost Available */
+            cost_available: boolean;
+            /** Cost Checked At */
+            cost_checked_at?: number | null;
+            /** Counts */
+            counts?: Record<string, never> | null;
+            /** Cwd */
+            cwd: string;
+            /** Reason */
+            reason?: string | null;
+            /** Servers */
+            servers: components["schemas"]["McpServerRow"][];
+        };
+        /**
          * MemoryPolicy
          * @description CURATION, NOT CONFINEMENT. Everything on this box runs as one uid, so
          *     nothing here restricts what a process may read; it restricts what a SEARCH
@@ -23200,7 +23261,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["McpServers"];
                 };
             };
             /** @description Validation Error */

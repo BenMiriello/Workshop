@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from fastapi import APIRouter
+from pydantic import BaseModel, ConfigDict
 
 from services import context_report, mcp_health, mcp_registry
 
@@ -62,7 +64,52 @@ def _norm(name: str) -> str:
     return "_".join(p for p in "".join(out).split("_") if p)
 
 
-@router.get("/servers")
+
+
+class McpServerRow(BaseModel):
+    """One server, joined from the two readings. WHAT IS NOT HERE MATTERS:
+    `mcp_registry` resolves real launch specs and a spec can hold credentials
+    (`~/.claude.json` on this host has a GOOGLE_CLIENT_SECRET in one). Only
+    `spec_available`, `scope` and `source` cross the wire; the spec itself never
+    leaves the backend.
+
+    `tokens: null` and `tokens: 0` are DIFFERENT CLAIMS and the difference is
+    the whole point of the column. Null means the cost probe never saw this row
+    and the UI prints an em-dash; zero means it saw it contributing nothing."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    spec_available: bool | None = None
+    scope: str | None = None
+    source: str | None = None
+    shadowed: bool | None = None
+    tokens: int | None = None
+    tools: list[dict[str, Any]] | None = None
+
+
+class McpServers(BaseModel):
+    """The union of `claude mcp list` and a sessionless `/context` reading.
+    Neither is complete alone: a server that fails to connect loads no tools, so
+    it costs nothing, so it is invisible in the cost reading exactly when it
+    most needs looking at.
+
+    `cost_available: false` means the cost half could not run; the health half
+    still stands, and the two carry separate `checked_at` stamps because they
+    are separately cached and can be of different ages."""
+
+    available: bool
+    reason: str | None = None
+    servers: list[McpServerRow]
+    counts: dict[str, Any] | None = None
+    checked_at: float | None = None
+    cached: bool | None = None
+    cost_available: bool
+    cost_checked_at: float | None = None
+    cwd: str
+
+
+@router.get("/servers", response_model=McpServers)
 async def list_servers(refresh: bool = False):
     """Every configured MCP server: where it comes from, whether it connects,
     what it exposes and what it costs.
