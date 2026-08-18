@@ -168,6 +168,33 @@ been fixed the same day.
    review lists them in priority order. `check_tenant_columns.py` and
    `check_frontend_state.sh` do not exist at all.
 
+### 2.8a Deduplication found a real user-visible bug (agent D, landed `c6be0bd`)
+
+17 declarations to 5. `fmtTs` x3 now call `lib/time.ts` `timeAbsolute`, and
+three new pure modules hold the rest (`lib/bytes.ts`, `lib/sha.ts`,
+`pages/apps/birds/specColor.ts`).
+
+**Two same-named helpers were not the same function, and one was a bug.**
+`Memory.tsx`'s `fmtBytes` had no GB tier, so a 2 GiB chat attachment rendered as
+`2048.0 MB`. Verified against the pre-change source. The birds copy had the tier;
+the `AutonomyControls` copy was a nullable VRAM formatter in mebibytes and was
+deliberately kept separate. Separately `fmtAge` took SECONDS in one caller and
+MILLISECONDS in the other, and was correctly not folded into `timeAgo` because
+one rounds where the other floors.
+
+`scripts/check_duplicate_helpers.py` hashes normalised bodies with the signature
+excluded, which is what lets `ts?: string` and `ts?: string | null` match. 10
+groups flagged, 10 genuine, zero false positives. **Its stated limit matters:
+it catches copy-paste, not independent reimplementation.** None of the three
+`fmtTs` copies would have matched `timeAbsolute`, because one used `isNaN` and
+the other `Number.isNaN`. A green result is not evidence that no equivalent
+exists.
+
+Left in the frozen chat area for later: `useNow` x2, `firstLine` x2, and a bonus
+finding, `done` in `components/chat/CopyMessage.tsx:18` is a byte-copy of the
+kit's own `packages/ui/src/feedback.tsx:120`, so the chat reimplements a kit
+hook. All three are recorded in the baseline as pre-existing.
+
 ### 2.8 Smaller, verified
 
 - `jobs.py`, `usage_ledger.py` and `permissions.py` carry **zero** owner
@@ -203,9 +230,9 @@ so their commits may already be present.
   `autonomy_mode` two-vocabulary defect, and whether its bare-array collection
   routes (`list[Project]`, `list[RosterAgent]`, `list[BuildAgent]`) are
   deliberately grandfathered against ADR 0023 clause 1.
-- **D: frontend helper dedup + a new `check_duplicate_helpers.py`.** Owns
-  non-chat `pages/` and `components/`, `lib/time.ts`. Told not to wire its check
-  into `reviewer.sh`.
+- **D: LANDED** (`c6be0bd`), and its check is now wired (`a05ba32`). 17 helper
+  declarations to 5. Frontend tests 945 -> **966 in 64 files**; use 966 as the
+  new baseline. Details in §2.8a.
 
 ### Do these when they land, in this order
 
@@ -215,16 +242,12 @@ so their commits may already be present.
    until this runs. Both agents were explicitly told not to do it. **This is the
    single thing that must not be forgotten.**
 2. `python3 scripts/check_response_model.py --write-baseline` (only after 1).
-3. Wire `scripts/check_duplicate_helpers.py` into `reviewer.sh` if D landed it.
-   Copy the `NO_RAW_STORAGE_CHECK` block at `reviewer.sh:400` as the template:
-   define the variable, add a failure clause near `:551`, add it to the `export`
-   line and to the JSON payload and the log line. Prove it fires before trusting
-   it.
+3. DONE: `check_duplicate_helpers.py` is wired (`a05ba32`) and proven to fire.
 4. Full gates: backend pytest (**`set -a; . ~/.config/workshop/db-admin.env;
    set +a` first, or 85 tests error spuriously and look like a regression**),
    `npm run typecheck`, `cd frontend && npm test`, `check_design.sh`,
    `check_no_hardcoding.sh`, and all seven ratchets.
-5. Baselines to compare against: backend **2,921**, frontend **945 in 61 files**.
+5. Baselines to compare against: backend **2,921**, frontend **966 in 64 files**.
 6. Leak check: `user_account` must still be 1 row.
 7. **`bash scripts/apply.sh` LAST.** Do not run it while agents hold the tree:
    it builds and restarts from disk, and a half-renamed chat subsystem would go
