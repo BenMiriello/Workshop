@@ -429,12 +429,36 @@ and the router's own docstring already said so.
 
 **What was NOT deleted, with the reason.** `Job.evidence`'s two `relay_route`
 keys are historical residue from that migration script; they ride through as
-`extra` rather than being enshrined in the model as live vocabulary. And the
-1,956 log records still holding the old string shape were NOT rewritten: the
-rewrite was attempted, is correct (dry-run: 5,517 lines in and out, ids
-conserved, zero strings remaining) and was refused by the environment's
-classifier. The store-boundary fold makes that rewrite optional rather than
-load-bearing, which is why it is a follow-up and not a blocker.
+`extra` rather than being enshrined in the model as live vocabulary.
+
+**The log rewrite then ran, on the operator's instruction (same day).** It had
+been refused by the environment's classifier on the first two attempts and was
+reported as an optional follow-up. It is now done, and the fold it made
+optional is itself deleted:
+
+- 5,517 lines in and out, id order identical, and **zero non-evidence fields
+  differ on any line** (diffed against the pre-migration backup, not just
+  counted).
+- 1,957 evidence values converted: 1,618 Letta narration strings preserved
+  **verbatim** as `{"summary": ...}`, 338 `ollama_failed:` strings expanded to
+  the sentence the deleted display helper used to produce (detail retained),
+  1 receipt that had been serialised as a JSON string now a real object, and
+  1 awaiting-input question list now a real list. **Zero text lost.**
+- Proven to be a **no-op for every reader**: all 2,761 collapsed records are
+  identical through the store before and after, which is what the store-side
+  fold guaranteed and is the reason this could be done at leisure.
+
+So the read-side coercion is gone: a coercion for a shape that can no longer
+arrive is the same fossil as `_friendly_error`, which this pass deleted for
+exactly that reason. The guard stays on the WRITE side, at `finish()`, the one
+door every producer including the shell CLI shim goes through, so the shape
+cannot be reintroduced. The read path is now literal on purpose: a string
+appearing there would mean a new producer bypassed `finish()`, and that should
+surface rather than be folded away silently.
+
+One caveat is recorded in the code rather than only here: `.runtime/jobs.jsonl.bak-*`
+predates the rewrite and still holds the old shape, so a restore needs the
+conversion re-run first or `JobEvidence` will reject a string.
 
 **Two ratchet observations.** `check_opaque_fields.py` caught its author twice in
 two sessions: `TaskSyncLink.conflict` last pass, `JobEvidence.{files,commits,

@@ -202,13 +202,19 @@ def _structured_evidence(ev: Any) -> Any:
     ALSO written as a freeform STRING by two producers that no longer exist:
     the Letta overseer's per-tick narration (1,618 records) and an
     `ollama_failed:` prefix protocol whose writer is gone (338 records).
-    Measured over the whole log 2026-08-18; nothing live writes a string.
 
-    Both fold to `{"summary": ...}` here, at the store's one read boundary, and
-    on the way in at `finish()`. Above this line the old shape does not exist,
-    so no reader has to carry a branch for it. Delete this once the log's own
-    history has been rewritten; until then it is what makes that history
-    readable without four separate coercions spread across the callers.
+    This is a WRITE-side guard only, and deliberately not a read-side one. The
+    log's own history was rewritten on 2026-08-18 (1,957 records converted, ids
+    and every non-evidence field conserved, verified byte-identical through this
+    store before and after), so no string can be READ any more, and a coercion
+    for a shape that cannot arrive is the fossil this whole pass exists to
+    delete. It stays on the way IN because `finish()` is the one door every
+    producer uses, including the stdlib CLI shim the shell workers call, and a
+    guard there is what stops the shape being reintroduced by a new writer.
+
+    CAVEAT for a restore: `.runtime/jobs.jsonl.bak-*` predates the rewrite and
+    still holds the old shape. Re-run the conversion before pointing the store
+    at one, or `JobEvidence` will reject a string and the jobs routes will 500.
     """
     if not isinstance(ev, str):
         return ev
@@ -234,9 +240,6 @@ def _collapse(lines: Iterable[dict]) -> dict[str, dict]:
         jid = rec.get("id")
         if not jid:
             continue
-        if "evidence" in rec:
-            rec = dict(rec)
-            rec["evidence"] = _structured_evidence(rec["evidence"])
         if jid in by_id:
             by_id[jid].update(rec)
         else:
