@@ -22,6 +22,17 @@ class ResolveIn(BaseModel):
 
 
 
+class RefPreview(BaseModel):
+    """A file ref's preview descriptor (Layer 2 of managed-file-references-and-
+    path-scoping-2026-08-18.md). Only a `file` ref carries one; every other kind
+    leaves it unset, so response_model_exclude_unset omits it there."""
+
+    mime: str | None = None
+    size_bytes: int | None = None
+    icon: str | None = None
+    thumb_url: str | None = None
+
+
 class ResolvedRef(BaseModel):
     """What a `<Ref>` chip renders. A ref that cannot be POSITIVELY confirmed to
     still resolve comes back as null in the map rather than as a partial record,
@@ -31,6 +42,7 @@ class ResolvedRef(BaseModel):
     title: str | None = None
     href: str | None = None
     status: str | None = None
+    preview: RefPreview | None = None
 
 
 class ResolvedRefs(BaseModel):

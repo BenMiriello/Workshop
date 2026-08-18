@@ -12128,6 +12128,22 @@ export interface components {
             events: components["schemas"]["EventRecord"][];
         };
         /**
+         * RefPreview
+         * @description A file ref's preview descriptor (Layer 2 of managed-file-references-and-
+         *     path-scoping-2026-08-18.md). Only a `file` ref carries one; every other kind
+         *     leaves it unset, so response_model_exclude_unset omits it there.
+         */
+        RefPreview: {
+            /** Icon */
+            icon?: string | null;
+            /** Mime */
+            mime?: string | null;
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /** Thumb Url */
+            thumb_url?: string | null;
+        };
+        /**
          * Registered
          * @description `count` is the registry size after the write, so a re-register of a token
          *     already present reports the same number rather than an increment.
@@ -12295,6 +12311,7 @@ export interface components {
             href?: string | null;
             /** Kind */
             kind: string;
+            preview?: components["schemas"]["RefPreview"] | null;
             /** Status */
             status?: string | null;
             /** Title */
