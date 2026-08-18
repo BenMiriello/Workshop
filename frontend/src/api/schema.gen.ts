@@ -8284,15 +8284,6 @@ export interface components {
             /** Path */
             path: string;
         };
-        /** Backlinks */
-        Backlinks: {
-            /** Backlinks */
-            backlinks: components["schemas"]["Backlink"][];
-            /** Count */
-            count: number;
-            /** Path */
-            path: string;
-        };
         /**
          * BaseApp
          * @description One top-level directory containing a `.git/`. The git fields are absent
@@ -11915,6 +11906,33 @@ export interface components {
             updated_at?: string | null;
         };
         /**
+         * ResolvedRef
+         * @description What a `<Ref>` chip renders. A ref that cannot be POSITIVELY confirmed to
+         *     still resolve comes back as null in the map rather than as a partial record,
+         *     so a chip never navigates nowhere.
+         */
+        ResolvedRef: {
+            /** Href */
+            href?: string | null;
+            /** Kind */
+            kind: string;
+            /** Status */
+            status?: string | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * ResolvedRefs
+         * @description Batched on purpose: one page renders many chips, and this endpoint exists
+         *     so that is one call rather than N. Duplicates in the request collapse.
+         */
+        ResolvedRefs: {
+            /** Resolved */
+            resolved: {
+                [key: string]: components["schemas"]["ResolvedRef"] | null;
+            };
+        };
+        /**
          * ResourceGrant
          * @description A scoped capability token over a Store, or over a subtree of Store URIs.
          *     ITS `id` IS THE TOKEN a provider checks per call -- there is no separate
@@ -13970,6 +13988,15 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** Backlinks */
+        routes__notes__Backlinks: {
+            /** Backlinks */
+            backlinks: components["schemas"]["Backlink"][];
+            /** Count */
+            count: number;
+            /** Path */
+            path: string;
+        };
         /** NoteDeleted */
         routes__notes__NoteDeleted: {
             /** Deleted */
@@ -13999,6 +14026,16 @@ export interface components {
             platform: string;
             /** Token */
             token: string;
+        };
+        /**
+         * Backlinks
+         * @description The "referenced by" read. An index lookup, not a scan.
+         */
+        routes__refs__Backlinks: {
+            /** Ref */
+            ref: string;
+            /** Refs */
+            refs: string[];
         };
         /** ResolveIn */
         routes__refs__ResolveIn: {
@@ -23203,7 +23240,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Backlinks"];
+                    "application/json": components["schemas"]["routes__notes__Backlinks"];
                 };
             };
             /** @description Validation Error */
@@ -24708,7 +24745,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["routes__refs__Backlinks"];
                 };
             };
             /** @description Validation Error */
@@ -24741,7 +24778,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ResolvedRefs"];
                 };
             };
             /** @description Validation Error */

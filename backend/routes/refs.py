@@ -21,7 +21,33 @@ class ResolveIn(BaseModel):
     refs: list[str]
 
 
-@router.post("/resolve")
+
+class ResolvedRef(BaseModel):
+    """What a `<Ref>` chip renders. A ref that cannot be POSITIVELY confirmed to
+    still resolve comes back as null in the map rather than as a partial record,
+    so a chip never navigates nowhere."""
+
+    kind: str
+    title: str | None = None
+    href: str | None = None
+    status: str | None = None
+
+
+class ResolvedRefs(BaseModel):
+    """Batched on purpose: one page renders many chips, and this endpoint exists
+    so that is one call rather than N. Duplicates in the request collapse."""
+
+    resolved: dict[str, ResolvedRef | None]
+
+
+class Backlinks(BaseModel):
+    """The "referenced by" read. An index lookup, not a scan."""
+
+    ref: str
+    refs: list[str]
+
+
+@router.post("/resolve", response_model=ResolvedRefs)
 async def resolve(body: ResolveIn) -> dict:
     """`{resolved: {ref: {kind, title, href, status} | null}}` for every ref in
     the batch, de-duplicated. A ref that cannot be positively confirmed to
@@ -34,7 +60,7 @@ async def resolve(body: ResolveIn) -> dict:
     return {"resolved": out}
 
 
-@router.get("/backlinks")
+@router.get("/backlinks", response_model=Backlinks)
 async def get_backlinks(ref: str) -> dict:
     """Every ref whose current body names `ref` -- the "referenced by" read.
     An index lookup, not a scan (see services/backlinks)."""
