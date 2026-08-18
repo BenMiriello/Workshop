@@ -41,7 +41,7 @@ import type { ChatModeId } from "../components/chat/chatModes";
 // The narrowings that remain below are deliberate and each says why. Anything
 // not narrowed is the schema verbatim; do not re-widen or re-declare one here.
 import type { components } from "../api/schema.gen";
-import { shortHttpError } from "./httpError";
+import { HttpError, shortHttpError } from "./httpError";
 
 type CutAfter = { cut_after?: string[] };
 
@@ -441,7 +441,11 @@ export function newClientId(): string {
 }
 
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+  if (!r.ok) {
+    // Typed so a caller can tell a restart-window 502 from a real refusal; the
+    // message is still the shortHttpError line, so `${e}` is unchanged.
+    throw new HttpError(r.status, shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+  }
   return r.json() as Promise<T>;
 }
 

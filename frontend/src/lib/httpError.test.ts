@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ERROR_BODY_CAP, shortHttpError } from "./httpError";
+import { ERROR_BODY_CAP, HttpError, isTransientNetworkError, shortHttpError } from "./httpError";
 
 // What a failed request is allowed to put on screen.
 //
@@ -77,5 +77,27 @@ describe("the line shown for a failed request", () => {
   it("falls all the way back to statusText, then a generic sentence, for an unmapped status", () => {
     expect(shortHttpError(418, "I'm a teapot", "")).toBe("418 I'm a teapot");
     expect(shortHttpError(418, "", "")).toBe("418 request failed");
+  });
+});
+
+// Which failures the thread-list poll rides out quietly vs surfaces. A backend
+// restart is a pause, not a break: the poll must not banner a 502 that a second
+// of waiting cures, but it must still surface a real refusal at once.
+describe("a failure worth a quiet retry", () => {
+  it("treats a 502/503/504 gateway failure as transient", () => {
+    expect(isTransientNetworkError(new HttpError(502, "Server unavailable (502). Retrying."))).toBe(true);
+    expect(isTransientNetworkError(new HttpError(503, "x"))).toBe(true);
+    expect(isTransientNetworkError(new HttpError(504, "x"))).toBe(true);
+  });
+
+  it("treats a rejected fetch (no response at all) as transient", () => {
+    expect(isTransientNetworkError(new TypeError("Failed to fetch"))).toBe(true);
+  });
+
+  it("does NOT retry a real answer the server chose to give", () => {
+    expect(isTransientNetworkError(new HttpError(401, "401 Not signed in."))).toBe(false);
+    expect(isTransientNetworkError(new HttpError(403, "403 Not allowed."))).toBe(false);
+    expect(isTransientNetworkError(new HttpError(500, "500 The server errored."))).toBe(false);
+    expect(isTransientNetworkError(new Error("something else"))).toBe(false);
   });
 });

@@ -23,6 +23,33 @@
 /** Nothing built here ever puts more of a response body on screen than this. */
 export const ERROR_BODY_CAP = 200;
 
+/**
+ * An HTTP failure that carries its status, so a caller can tell a transient
+ * gateway hiccup from a real refusal without string-matching the message.
+ * `message` stays the `shortHttpError` line, so `${e}` reads exactly as before.
+ */
+export class HttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+
+/**
+ * A failure a moment's wait can cure, rather than a real answer. A backend
+ * restart is a pause, not a break: while it comes back up the edge has no
+ * origin to reach and answers 502/503/504 for a second or two, and a fetch
+ * that never got a response at all rejects as a TypeError. Everything else, a
+ * 4xx or a 500, is a real answer the server chose to give and must not be
+ * retried away.
+ */
+export function isTransientNetworkError(e: unknown): boolean {
+  if (e instanceof HttpError) return e.status >= 502 && e.status <= 504;
+  return e instanceof TypeError;
+}
+
 // Short, plain sentences for the statuses common enough to name. Anything
 // else falls back to the response's own statusText, then to "request failed".
 const STATUS_SENTENCES: Record<number, string> = {

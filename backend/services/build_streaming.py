@@ -1881,6 +1881,12 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
             except Exception as e:  # noqa: BLE001 - a search tool is not worth a dead turn
                 log.warning("workshop MCP config unavailable for this turn: %s", e)
         cmd.extend(["--permission-mode", mode])
+        # This branch never touches tool_flags, so the baseline deny list (which
+        # takes AskUserQuestion away from a headless turn — see llm_router) has
+        # to be added here too. The widest-surface turn in the system was the one
+        # path that could still reach for the interactive tool and lose its own
+        # question. One --disallowedTools group only; nothing else adds it here.
+        cmd.extend(["--disallowedTools", *llm_router.BASELINE_DISALLOWED_TOOLS])
     # THE COUPLING THAT MATTERS. Every mode except bypass can stop and ask, and
     # without a channel to ask ON the CLI accepts the mode and then silently
     # auto-denies every gated call: the turn ends "success", the file is never

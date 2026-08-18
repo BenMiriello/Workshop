@@ -446,6 +446,32 @@ _WRITE_BOUNDARY_NUDGE = (
 # existing latency profile.
 _MCP_BLOCK_STARTUP_ENV = {"MCP_CONNECTION_NONBLOCKING": "false"}
 
+# Built-in tools that CANNOT function in a headless `claude -p` turn and must be
+# denied on every tool-bearing path, regardless of role or mode.
+#
+# AskUserQuestion is the interactive "ask the operator a multiple-choice
+# question and block until answered" tool. In an interactive TTY it renders the
+# question with its options and waits. In this async chat only its PERMISSION
+# prompt renders ("Allowed · AskUserQuestion"): the operator can approve the
+# call, but the question text and its options never surface as anything he can
+# answer, so approving it grants permission to ask and returns no answer. The
+# model reads that empty result as "they didn't pick" and marches on, choosing
+# for the operator a question he was never shown (observed 2026-08-17, three
+# times, once past a permanent dependency choice). A tool whose result can only
+# come from a human on an unbounded clock is a suspend point, not a tool call,
+# and this async chat has no suspend/resume for it, so the honest move is to
+# take it away: the model must ask in prose (the one channel that actually
+# reaches the operator) or via a ui-card. Bare name; --disallowedTools denies it.
+BASELINE_DISALLOWED_TOOLS: tuple[str, ...] = ("AskUserQuestion",)
+
+
+def _merged_disallowed(disallowed_tools: list[str] | None) -> list[str]:
+    """The baseline deny list plus any caller-supplied patterns (e.g. the maker's
+    IRREVERSIBLE_PATTERNS), order-stable and de-duped. Emitted as ONE
+    `--disallowedTools` group: a second occurrence of the flag would overwrite
+    the first, so callers must never add their own alongside this."""
+    return list(dict.fromkeys([*BASELINE_DISALLOWED_TOOLS, *(disallowed_tools or [])]))
+
 # MCP server launch specs available to chat subprocesses are no longer hardcoded
 # here: each is registered by the app that needs it (e.g. the plaid server by the
 # finance/budget apps) and is available only when that app is installed. See
@@ -642,9 +668,9 @@ def tool_flags(
         # Deny list applies AFTER the allow list, which is what makes it a
         # reversibility gate rather than a second allowlist: a maker keeps Bash
         # and loses exactly the commands that cannot be undone. See
-        # agent_authority.IRREVERSIBLE_PATTERNS.
-        if disallowed_tools:
-            flags += ["--disallowedTools", *disallowed_tools]
+        # agent_authority.IRREVERSIBLE_PATTERNS. Always emitted now, because the
+        # baseline (AskUserQuestion) is denied on every tool-bearing turn.
+        flags += ["--disallowedTools", *_merged_disallowed(disallowed_tools)]
         _write_tools = {"Write", "Edit", "MultiEdit"}
         if _write_tools & set(kept_tools):
             flags += ["--append-system-prompt", _WRITE_BOUNDARY_NUDGE]
@@ -659,8 +685,11 @@ def tool_flags(
         # model turn, or the model sees `tools: []` and either says it has none
         # or fabricates a call.
         env = dict(_MCP_BLOCK_STARTUP_ENV) if chosen else {}
-        return (strict_mcp_flags(chosen), env, bool(chosen))
-    return ([], {}, False)
+        disallow = ["--disallowedTools", *_merged_disallowed(disallowed_tools)]
+        return (strict_mcp_flags(chosen) + disallow, env, bool(chosen))
+    # Full agentic, no MCP selection (reached by call_cloud, whose blocking data
+    # turns are just as headless): still deny the baseline built-ins.
+    return (["--disallowedTools", *_merged_disallowed(disallowed_tools)], {}, False)
 
 
 def call_cloud(
