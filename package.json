@@ -13,6 +13,7 @@
     "build:ui": "npm run build --workspace @workshop/ui",
     "build:web": "npm run build --workspace workshop-frontend",
     "gen:tokens": "npm run gen:tokens --workspace @workshop/ui",
+    "gen:api-types": "python3 scripts/gen_openapi.py",
     "check:tokens": "npm run check:tokens --workspace @workshop/ui",
     "api:check": "npm run api:check --workspace @workshop/ui"
   },
@@ -35,6 +36,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "openapi-typescript": "^7.13.0",
     "playwright-core": "^1.62.1"
   }
 }

@@ -134,8 +134,25 @@ async def lifespan(app: FastAPI):
 # Off by default; opt in with WORKSHOP_ENABLE_DOCS=1 for local dev.
 # (security-audit-2026-07-18 L3)
 _DOCS = os.environ.get("WORKSHOP_ENABLE_DOCS", "0").strip().lower() in {"1", "true", "yes"}
+
+# The HTTP contract version, carried in the OpenAPI schema's `info.version`.
+# Set because the schema is now a build artifact: `scripts/gen_openapi.py`
+# emits it and `frontend/src/api/schema.gen.ts` is generated from it, and
+# shipping FastAPI's placeholder "0.1.0" would have that artifact state a
+# version this app never chose.
+#
+# Hand-bumped, deliberately, and deliberately NOT the backend source id.
+# `_SOURCE_ID` below already answers "what code is answering" at /healthz and
+# changes on every commit; putting that here would rewrite the emitted schema
+# on every commit while saying nothing about whether the CONTRACT changed, and
+# the whole point of the generated types being committed is that a diff in
+# them means something. Bump the minor on an additive change, the major on a
+# breaking one.
+API_VERSION = "1.0.0"
+
 app = FastAPI(
     title="Workshop",
+    version=API_VERSION,
     lifespan=lifespan,
     docs_url="/docs" if _DOCS else None,
     redoc_url="/redoc" if _DOCS else None,

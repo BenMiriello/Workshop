@@ -255,6 +255,16 @@ Wired 2026-08-11: `mobile/lib/api.ts` derives its `colors` from `makeTheme("dark
 
 Only the token subpath is importable there. The React primitives are react-dom and cannot render in RN, so `mobile/metro.config.js` maps `@workshop/ui/tokens.js` explicitly and throws a pointed error on any other `@workshop/ui` import rather than letting it fail as a confusing missing module.
 
+## API response types are GENERATED, not hand-written
+
+`frontend/src/api/schema.gen.ts` is generated from the backend's own OpenAPI schema by `npm run gen:api-types` (repo root; no server needed, it imports the FastAPI app). It is committed, so a route contract changing shows up as a reviewable diff, and `python3 scripts/check_generated_client.py` fails when it has gone stale.
+
+**Reach for it before you hand-write a response type.** Use `components["schemas"]["Name"]` for a model and `paths["/route"]["get"]["responses"][200]...` for a response body. `frontend/src/pages/apps/Location.tsx` is the worked example: its four hand-written record fields said `number | undefined` where the backend serialises `number | null`, on the one page whose whole job is reading them.
+
+**A route that does not declare `response_model=` has no generated type**, only `unknown`. That is the backend declining to say what it returns, not a gap in the generator. Fix it there (`scripts/check_response_model.py` tracks the debt) rather than hand-writing another type here. There are still ~528 hand-written types in this tree; they are being converted route by route as their routes gain a `response_model=`, so do not assume a type you find is the real contract.
+
+**Never edit the generated file.** Change the route, run `npm run gen:api-types`, commit both.
+
 ## Before you commit UI
 
 Run `bash scripts/check_design.sh` (from repo root) — it flags raw hex, emoji, and `not-allowed` cursors in `.tsx`, and confirms the foundation imports are intact. It is part of the completion gate; a UI change that fails it is **not** done. Also run `npm run typecheck` from the repo root.

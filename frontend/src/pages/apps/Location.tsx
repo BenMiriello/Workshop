@@ -17,25 +17,26 @@ import {
 import { shortHttpError } from "../../lib/httpError";
 import { timeAgo } from "../../lib/time";
 import { usePoll } from "../../lib/usePoll";
+import type { components } from "../../api/schema.gen";
 
 // Location app page — read-only view of operator position fed by Owntracks
 // iOS. Web geolocation is gone; this page is a viewer.
 
-type LocationRecord = {
-  ts: string;
-  lat: number;
-  lng: number;
-  accuracy_m?: number;
-  altitude_m?: number;
-  heading_deg?: number;
-  speed_mps?: number;
-  client_ts?: string;
-  source?: string;
-};
-
-// ADR 0023 envelope: {"items": [...], "page": {"limit", "next_cursor", "total", "offset"}}.
-type PageMeta = { limit: number; next_cursor: string | null; total: number | null; offset: number | null };
-type HistoryResp = { items: LocationRecord[]; page: PageMeta };
+// GENERATED, not hand-written. These come from the backend's own OpenAPI
+// schema (`npm run gen:api-types`), which knows them because `routes/location`
+// declares `response_model=` on /latest, /history and /update. The
+// hand-written versions that used to sit here said `accuracy_m?: number` for
+// four fields the backend actually serialises as `number | null` -- a shape
+// the type asserted could never occur, on the one page whose whole job is
+// reading those fields. That is the drift class this pipeline exists to turn
+// into a compile error; see docs/platform-redesign/
+// target-architecture-2026-08-17.md item 2.
+//
+// ADR 0023 envelope: {"items": [...], "page": {"limit", "next_cursor",
+// "total", "offset"}} -- `Page[LocationRecord]` on the backend, which is why
+// the generated name reads the way it does.
+type LocationRecord = components["schemas"]["LocationRecord"];
+type HistoryResp = components["schemas"]["Page_LocationRecord_"];
 
 const PAGE_SIZE = 25;
 // The map draws the full recent breadcrumb, not just the first table page.
