@@ -703,6 +703,43 @@ run.
   must not share a directory), one level down: a library and a one-shot tool
   should not share a package either.
 
+- **Classified, all 42.** The headline is that *most of the layering problem is
+  filing, not coupling*:
+
+  | Count | Share | Root cause |
+  |---|---|---|
+  | 16 | 38% | genuine coupling |
+  | 13 | 30% | one-shot CLI misfiled in the data layer |
+  | 10 | 23% | composition root misfiled as a service |
+  | 3 | 7% | enum vocabulary with no home below both layers |
+
+  **26 of 42 have a resolution that moves a file rather than changing any code.**
+  The 23% is a single module: `services/app_registry.py` declares `mounts`, the
+  FastAPI routers plus their auth, so it references ten routers. That is what a
+  composition root does, and it is filed as a service. It imports all ten
+  *function-locally*, and `llm_router.py:456` states plainly that the lazy import
+  exists to break an `app_registry <-> llm_router` cycle. Filed beside `main.py`
+  those ten edges are legal by definition.
+
+- **Four of the 16 genuine violations are one misplaced function.**
+  `routes/tasks_all.py:229` publishes `scope_roots = _scope_roots` with the
+  comment "other routers need the same scope sweep, and duplicating it would let
+  the two drift." The instinct is right and the location is wrong: it is not
+  other routers that need it, it is **four services** (`chat_work`, `inbox`,
+  `refs`, `semantic_index`), and a service importing a router is the reverse of
+  the intended direction.
+
+  Two details make it worse than a single edge. `services/chat_work.py:160` also
+  imports `_with_latitude` and `_with_triage`, both **underscore-private**, out of
+  a route module. And `services/semantic_index.py:408` defends its import with the
+  comment "routes -> services is the normal direction" while performing
+  services -> routes, so the comment argues for the opposite of what the code does.
+
+  Scope resolution and response projection are service concerns. The earlier audit
+  already found `tasks_all.py` to be "a router that grew a service layer" with a
+  ~300-line process-launch lobe. Extracting these is the first cut of that, and it
+  clears four violations for one move.
+
 ### The gate now
 
 Four checks were added to `scripts/reviewer.sh` this build, joining the three that
