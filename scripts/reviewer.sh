@@ -59,6 +59,11 @@
 #     route-level response_model check above does not see these: a real model
 #     whose fields are `dict` still generates `Record<string, never>` in the
 #     client (ADR 0023 clause 6; see check_opaque_fields.py's own header)
+#   - every GET route the running backend serves answers without a 5xx (ADR 0023
+#     clause 6, third half; see check_routes_answer.py's own header). The two
+#     checks above read the DECLARATION; only calling a route can tell whether the
+#     declared type matches what the handler returns, and a mismatch is a 500 --
+#     the shape that took the chat surface down on 2026-08-17
 #   - zero raw localStorage/sessionStorage calls outside frontend/src/lib/storage.ts
 #     (ADR 0025 clause 4). Absolute rather than ratcheted: the tree is at zero, and
 #     a new raw call is a key a second account on the same machine can read
@@ -496,6 +501,32 @@ if printf '%s\n' "$CHANGED_ALL" \
   fi
 fi
 
+# 4.5g Every GET route answers (ADR 0023 clause 6, third half).
+# 4.5e and 4.5f read the DECLARATION: is a model named, and do its fields say
+# anything. Neither can see the VALUE, and no static check can -- a payload is
+# assembled from service calls across modules. A `response_model` is a runtime
+# behaviour change (FastAPI validates every response against it and 500s on a
+# mismatch), so the only oracle is calling the route. On 2026-08-17 a field
+# declared `str` and handed a dict returned 500 from THE chat sync endpoint for
+# seven minutes with both static checks green.
+# Same trigger set as 4.5f. Exit 3 is "no backend to probe", which is ambiguous
+# rather than a pass: a check that never ran must not read as clean.
+ROUTES_ANSWER_CHECK="skipped"
+if printf '%s\n' "$CHANGED_ALL" \
+   | grep -vE '^backend/tests/' \
+   | grep -qE '^(backend/|scripts/gen_openapi\.py)'; then
+  if [[ -f "$WORKSHOP/scripts/check_routes_answer.py" ]]; then
+    python3 "$WORKSHOP/scripts/check_routes_answer.py" >/dev/null 2>&1
+    case $? in
+      0) ROUTES_ANSWER_CHECK="ok" ;;
+      1) ROUTES_ANSWER_CHECK="fail" ;;
+      *) AMBIGUOUS+=("routes_answer_check_could_not_run") ;;
+    esac
+  else
+    AMBIGUOUS+=("routes_answer_check_unavailable")
+  fi
+fi
+
 # 4.6d Field-occupancy ratchet (R2) and doc-status ratchet (R1) are measurement,
 # not gates — R2 is explicit that a newly-introduced zero-occupancy field must
 # be reported loudly, not fail the build on first introduction (a design that
@@ -622,6 +653,10 @@ if [[ "$OPAQUE_FIELDS_CHECK" == "fail" ]]; then
   REASONS+=("opaque_response_field")
   COMPLETE="false"
 fi
+if [[ "$ROUTES_ANSWER_CHECK" == "fail" ]]; then
+  REASONS+=("route_returns_5xx")
+  COMPLETE="false"
+fi
 if [[ "$DUPLICATE_HELPERS_CHECK" == "fail" ]]; then
   REASONS+=("duplicate_helper")
   COMPLETE="false"
@@ -690,7 +725,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK
+export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -730,6 +765,10 @@ out = {
     "no_raw_storage": os.environ.get("NO_RAW_STORAGE_CHECK", "skipped"),
     "generated_client": os.environ.get("GENERATED_CLIENT_CHECK", "skipped"),
     "duplicate_helpers": os.environ.get("DUPLICATE_HELPERS_CHECK", "skipped"),
+    # "skipped" covers both "this diff did not touch backend/" and "there was no
+    # backend to probe"; the latter also lands in `ambiguous`, which is what
+    # distinguishes them for a strict sweep.
+    "routes_answer": os.environ.get("ROUTES_ANSWER_CHECK", "skipped"),
     # executed machine-checkable acceptance assertions (empty unless the caller
     # passed REVIEWER_CRITERIA_FILE); surfaced so the Work UI shows what was checked.
     "criteria":  criteria,
@@ -747,7 +786,7 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi
