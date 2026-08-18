@@ -13361,6 +13361,30 @@ export interface components {
              */
             kwargs: Record<string, never>;
         };
+        /** ToolList */
+        ToolList: {
+            /** Tools */
+            tools: string[];
+        };
+        /**
+         * ToolResult
+         * @description A tool call. `error` at HTTP 200 is an ADR 0023 `failure_at_200` and it
+         *     is the ADR's own worked example: an unknown tool raises 404 two lines above,
+         *     while a bad argument shape and a raised exception both `return` an error
+         *     body at 200. A client therefore cannot tell success from failure by status
+         *     code on this route.
+         *
+         *     It is DESCRIBED here, not fixed. The error text is deliberately fed back to
+         *     the calling agent so it can self-correct, and moving it to a 4xx changes the
+         *     contract for every agent tool call at once -- which is its own change, with
+         *     its own blast radius, not a side effect of adding a schema.
+         */
+        ToolResult: {
+            /** Error */
+            error?: string | null;
+            /** Result */
+            result?: string | null;
+        };
         /** ToolsOut */
         ToolsOut: {
             /** Tools */
@@ -25623,7 +25647,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ToolList"];
                 };
             };
         };
@@ -25649,7 +25673,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ToolResult"];
                 };
             };
             /** @description Validation Error */

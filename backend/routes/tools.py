@@ -67,7 +67,28 @@ class ToolCall(BaseModel):
     kwargs: dict[str, Any] = {}
 
 
-@router.post("/{tool_name}")
+
+class ToolResult(BaseModel):
+    """A tool call. `error` at HTTP 200 is an ADR 0023 `failure_at_200` and it
+    is the ADR's own worked example: an unknown tool raises 404 two lines above,
+    while a bad argument shape and a raised exception both `return` an error
+    body at 200. A client therefore cannot tell success from failure by status
+    code on this route.
+
+    It is DESCRIBED here, not fixed. The error text is deliberately fed back to
+    the calling agent so it can self-correct, and moving it to a 4xx changes the
+    contract for every agent tool call at once -- which is its own change, with
+    its own blast radius, not a side effect of adding a schema."""
+
+    result: str | None = None
+    error: str | None = None
+
+
+class ToolList(BaseModel):
+    tools: list[str]
+
+
+@router.post("/{tool_name}", response_model=ToolResult)
 def call_tool(tool_name: str, body: ToolCall | None = None) -> dict:
     func = DISPATCH.get(tool_name)
     if func is None:
@@ -84,6 +105,6 @@ def call_tool(tool_name: str, body: ToolCall | None = None) -> dict:
     return {"result": result if isinstance(result, str) else str(result)}
 
 
-@router.get("/_list")
+@router.get("/_list", response_model=ToolList)
 def list_tools() -> dict:
     return {"tools": sorted(DISPATCH.keys())}
