@@ -36,7 +36,6 @@ export type UnifiedAgent = {
   claude_session?: string | null;
   created_at?: string;
   last_active?: string;
-  memory_blocks?: string[];
   source?: string;
 };
 

@@ -79,12 +79,6 @@ type ServiceProbe = {
   notes?: string | null;
 };
 
-type AgentSummary = {
-  id: string;
-  name: string;
-  memory_blocks: string[];
-};
-
 export default function Settings() {
   return (
     <div>
@@ -853,7 +847,7 @@ type Concurrency = { turns: Pool; helpers: Pool };
 type ConcurrencyDraft = { max_turns: number; max_helpers: number };
 
 function AgentsSection() {
-  const [agents, setAgents] = useState<AgentSummary[] | null>(null);
+  const [agents, setAgents] = useState<unknown[] | null>(null);
   const [conc, setConc] = useState<Concurrency | null>(null);
   const [concErr, setConcErr] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);

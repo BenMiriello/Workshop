@@ -244,7 +244,6 @@ class ThreadSettings(BaseModel):
     # string "cleared" (chat_store.clear_thread_context). The name reads like a
     # message index and is not one; recorded as it is rather than renamed, since
     # renaming it is a wire-shape change.
-    context_cut: str | None = None
     turn_marks: TurnMarks | None = None
     card_states: dict[str, StoredCardState] | None = None
     ticket_drafts: TicketDraftScan | None = None

@@ -1919,9 +1919,7 @@ def clear_thread_context(thread_id: str) -> tuple[dict, int] | None:
 
     The counterpart to compaction's fold, and deliberately the same boundary:
     "no longer in the prompt" either way. A clear is a fold with nothing
-    preserved — no `summary` survives it, and `context_cut` records that
-    explicitly so the client never has to infer it from a summary that a fold
-    would only write ~30s later.
+    preserved: no `summary` survives it.
 
     Also drops the live claude session, the per-@mentioned-agent sessions, and
     `turn_marks`: all three are "what this thread has already been told", and a
@@ -1941,7 +1939,7 @@ def clear_thread_context(thread_id: str) -> tuple[dict, int] | None:
     # worker. Leaving it behind meant a /clear silently spared the spoken half of
     # the conversation, so talking after a clear resumed a model that still
     # remembered everything the clear was meant to drop.
-    _patch(thread_id, context_cut="cleared", summary=None, context_tokens=None,
+    _patch(thread_id, summary=None, context_tokens=None,
            claude_session=None, agent_sessions=None, turn_marks=None,
            voice_session=None)
     return get_thread(thread_id), cleared

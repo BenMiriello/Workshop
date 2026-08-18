@@ -143,7 +143,6 @@ class RosterAgent(BaseModel):
     claude_session: str | None = None
     created_at: str | None = None
     last_active: str | None = None
-    memory_blocks: list[dict] = []
     source: str | None = None
 
 
@@ -615,7 +614,6 @@ async def list_agents():
             "claude_session": a.get("claude_session"),
             "created_at": a.get("created"),
             "last_active": a.get("last_active") or a.get("created"),
-            "memory_blocks": [],
             "source": a.get("source"),
         })
 
