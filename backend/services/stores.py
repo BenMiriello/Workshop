@@ -291,6 +291,14 @@ def register_builtin_stores() -> None:
     from services import permissions
     declare("notes", "vault", permissions.NOTES_VAULT_ROOT, type="Note")
 
+    # Chat attachments. Content-addressed blobs live per-owner under
+    # .runtime/users/<id>/files (chat_attachments.py). Declaring the store makes an
+    # attached file addressable as workshop://store/attachments/chat, so a
+    # `workshop:file/<id>` ref and a Store target name the same object. The store
+    # path is the OWNER-AGNOSTIC users root (there is no pinned owner at startup);
+    # per-owner resolution happens in the resolver, keyed by the attachment id.
+    declare("attachments", "chat", _runtime_root() / "users", type="File")
+
     register_app_stores()
 
 

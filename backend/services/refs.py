@@ -37,7 +37,7 @@ from pathlib import Path
 
 log = logging.getLogger("workshop.refs")
 
-VALID_KINDS = ("note", "doc", "ticket", "chat", "run", "project", "agent", "app")
+VALID_KINDS = ("note", "doc", "ticket", "chat", "run", "project", "agent", "app", "file")
 
 _REF_RE = re.compile(r"^workshop:([a-z]+)/(.+)$")
 
@@ -74,6 +74,12 @@ def parse_ref(text: str) -> Ref:
     elif kind == "doc":
         if not _clean_doc_path(key):
             raise ValueError(f"doc ref must be a clean repo-relative path: {text!r}")
+    elif kind == "file":
+        # A file ref addresses a chat attachment by its opaque id. The id never
+        # contains a separator, so a key with one is a path trying to escape the
+        # store — refused the same way _clean_doc_path refuses `..`.
+        if "/" in key:
+            raise ValueError(f"file ref key must be an opaque attachment id: {text!r}")
     return Ref(kind=kind, key=key)
 
 
@@ -112,6 +118,10 @@ def agent_ref(slug: str) -> str:
 
 def app_ref(name: str) -> str:
     return serialize_ref(Ref("app", name))
+
+
+def file_ref(attachment_id: str) -> str:
+    return serialize_ref(Ref("file", attachment_id))
 
 
 # --- doc path containment ------------------------------------------------------
@@ -350,6 +360,48 @@ def _resolve_app(ref: Ref) -> dict | None:
     return None
 
 
+def _resolve_file(ref: Ref) -> dict | None:
+    """A chat attachment addressed by id. `href` is the in-app route that serves
+    the bytes (never a filesystem path); `preview` is a descriptor the <Ref>
+    dropdown renders. Refuses (None) when the attachment is gone, like every
+    other resolver. An image is its own thumbnail — the API serves the bytes —
+    while a pdf/text rendering is a Layer 3 follow-up, so `thumb_url` is null
+    there rather than a path."""
+    from services import chat_attachments
+    att_id = ref.key
+    rec = chat_attachments.get(att_id)
+    if rec is None:
+        return None
+    kind = rec.get("kind") or ""
+    if kind == "image":
+        icon = "image"
+    elif kind == "pdf":
+        icon = "pdf"
+    elif rec.get("converter"):
+        icon = "zip" if rec.get("converter") in ("zip", "archive") else "generic"
+    elif kind == "text":
+        icon = "text"
+    else:
+        icon = "generic"
+    mime = rec.get("media_type") or (
+        "image/png" if kind == "image"
+        else "application/pdf" if kind == "pdf"
+        else "text/plain")
+    href = f"/api/attachments/{att_id}"
+    return {
+        "kind": "file",
+        "title": rec.get("name") or att_id,
+        "href": href,
+        "status": "current",
+        "preview": {
+            "mime": mime,
+            "size_bytes": rec.get("size"),
+            "icon": icon,
+            "thumb_url": href if kind == "image" else None,
+        },
+    }
+
+
 _RESOLVERS = {
     "note": _resolve_note,
     "doc": _resolve_doc,
@@ -359,4 +411,5 @@ _RESOLVERS = {
     "project": _resolve_project,
     "agent": _resolve_agent,
     "app": _resolve_app,
+    "file": _resolve_file,
 }
