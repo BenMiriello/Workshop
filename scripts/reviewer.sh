@@ -410,6 +410,40 @@ if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(frontend/src|mobile)/.*\.tsx?$'; t
   fi
 fi
 
+# 4.6c-2 Generated-client staleness (ADR 0023). ABSOLUTE, like raw storage and
+# unlike the ratchets: `frontend/src/api/schema.gen.ts` is a committed build
+# artifact, so "stale" means the committed types no longer describe the API the
+# backend serves, which is the exact drift the generated client exists to make
+# impossible. There is nothing to ratchet toward and no acceptable number of
+# stale lines. The remedy is `npm run gen:api-types` and commit, under two
+# seconds. Gated on a diff that could move the schema: a backend route or model,
+# or the generator itself. Note it also fires on a route DOCSTRING edit, because
+# FastAPI puts the docstring in the schema as `description`; that is friction by
+# design, since dropping descriptions would mean the committed file is no longer
+# what the generator produces.
+GENERATED_CLIENT_CHECK="skipped"
+# Gated on any backend source outside tests, plus the generator and the artifact
+# itself. Deliberately WIDER than routes/: a Pydantic model or a closed enum
+# living in `services/` or `db/models.py` can flow into a response_model and move
+# the schema, and a missed staleness silently reintroduces exactly the drift the
+# generated client exists to kill. Measured cost of widening: 1.8s, and it cannot
+# produce a false failure, because the check only fails when the committed
+# artifact genuinely no longer matches what the generator produces. `backend/tests/`
+# is excluded because it cannot reach the schema.
+if printf '%s\n' "$CHANGED_ALL" \
+   | grep -vE '^backend/tests/' \
+   | grep -qE '^(backend/|scripts/gen_openapi\.py|frontend/src/api/)'; then
+  if [[ -f "$WORKSHOP/scripts/check_generated_client.py" ]]; then
+    if python3 "$WORKSHOP/scripts/check_generated_client.py" >/dev/null 2>&1; then
+      GENERATED_CLIENT_CHECK="ok"
+    else
+      GENERATED_CLIENT_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("generated_client_check_unavailable")
+  fi
+fi
+
 # 4.6d Field-occupancy ratchet (R2) and doc-status ratchet (R1) are measurement,
 # not gates — R2 is explicit that a newly-introduced zero-occupancy field must
 # be reported loudly, not fail the build on first introduction (a design that
@@ -528,6 +562,10 @@ if [[ "$NO_RAW_STORAGE_CHECK" == "fail" ]]; then
   REASONS+=("raw_browser_storage")
   COMPLETE="false"
 fi
+if [[ "$GENERATED_CLIENT_CHECK" == "fail" ]]; then
+  REASONS+=("generated_client_stale")
+  COMPLETE="false"
+fi
 # OCCUPANCY_NOTICE and DOC_STATUS_NOTICE are deliberately NOT checked here —
 # both are measurement (R1/R2), not gates. See their computation above for why.
 
@@ -592,7 +630,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK
+export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -630,6 +668,7 @@ out = {
     # Absolute, not ratcheted: the tree is at zero raw storage calls, so any
     # new one is a cross-account leak rather than incremental debt.
     "no_raw_storage": os.environ.get("NO_RAW_STORAGE_CHECK", "skipped"),
+    "generated_client": os.environ.get("GENERATED_CLIENT_CHECK", "skipped"),
     # executed machine-checkable acceptance assertions (empty unless the caller
     # passed REVIEWER_CRITERIA_FILE); surfaced so the Work UI shows what was checked.
     "criteria":  criteria,
@@ -647,7 +686,7 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi
