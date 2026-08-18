@@ -45,8 +45,12 @@ import { VoiceReply } from "./VoiceTurn";
 // LIVE run, so the message lands after what had been emitted and before what
 // had not. The rule now lives in transcriptBlocks.ts, where it is tested.
 //
-// Queued bubbles sit below everything because they have not been sent at all
-// yet, and the voice overlay sits below them. That overlay is now the REPLY
+// Queued bubbles sit below everything that has actually happened, including a
+// fold in flight: a message the operator typed while a compact or clear is
+// running is IN the queue because that operation is running, so the line
+// announcing the operation renders first and the message that is waiting on it
+// renders after. The voice overlay sits below the queue. That overlay is now
+// the REPLY
 // only: a spoken message is written to the thread when it is captured, so it is
 // an ordinary message in the list above, and what is still being said is a draft
 // in the composer. Nothing here renders the operator's own words.
@@ -192,6 +196,18 @@ export default function ChatLog({
         stopping={stopping}
       />
 
+      {/* The fold, while it runs. ABOVE the queue, not below it: a fold is
+          started by an explicit action (the button, or a command turn) that
+          happened before anything typed afterward, and a message that lands in
+          the queue while folding is true is in the queue BECAUSE the fold is
+          running (thread_ops.pending is exactly what routes it there — see
+          chat.py's send_message). Putting the queue first read as the operator's
+          own message outrunning the operation that is the reason it is waiting:
+          reported 2026-08-17, the message and the note under it appeared with
+          no visible cause, because the line naming that cause was further down
+          the page. */}
+      {folding && <FoldingNote mode={folding} onStop={onStopFold} stopping={foldStopping} />}
+
       {/* WAITING ON THE SERVER, not in this browser. These have been accepted
           and are on the thread; they go out when the run in flight ends, sent
           by the server, whether or not this tab is still open. So the line
@@ -221,11 +237,6 @@ export default function ChatLog({
           onCancelLast={() => onCancelQueued(queued[queued.length - 1].clientId)}
         />
       )}
-
-      {/* The fold, while it runs. Below the queue for the same reason the cut
-          divider ends up below it: what is queued was typed before the fold was
-          asked for, and the boundary lands after everything above it. */}
-      {folding && <FoldingNote mode={folding} onStop={onStopFold} stopping={foldStopping} />}
 
       {/* ONE voice element, and it renders the REPLY only.
           What the operator is saying is in the composer, as a draft (see
