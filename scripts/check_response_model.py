@@ -73,6 +73,10 @@ class Route:
     func: str
     has_response_model: bool
     has_return_annotation: bool
+    # Source text of the declared model when it is too weak to count (ADR 0023's
+    # `weak_response_model`), else None. A weak model does NOT set
+    # has_response_model, so it cannot move the ratchet.
+    weak_model: str | None = None
 
 
 def _iter_files() -> list[Path]:
@@ -105,6 +109,66 @@ def _route_decorators(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[tupl
     return out
 
 
+# ---- weak-model detection (ADR 0023, the `weak_response_model` finding) ------
+#
+# ADR 0023: "A return annotation of `dict`, `list`, `Any` or nothing is not a
+# response model and does not count. The declared model must be a pydantic model
+# or a `Page[T]` of one."
+#
+# WHY THIS EXISTS. Until 2026-08-17 this script asked only whether the
+# `response_model` KEYWORD was present and never looked at its value. So
+# `response_model=dict` satisfied the ratchet, moved the number in the right
+# direction, and produced `unknown` in `frontend/src/api/schema.gen.ts` -- which
+# is the exact outcome clause 6 exists to prevent. It was the cheapest possible
+# way to make the metric improve while the contract stayed empty, and a metric
+# that can be satisfied without doing the work is worse than no metric, because
+# it reports success.
+#
+# A parameterised generic over a REAL model is not weak: `list[Project]` and
+# `dict[str, MetricLatest]` both generate precise types. Only an untyped
+# container or an explicit opt-out is. `response_model=None` counts as weak
+# rather than absent because it is FastAPI's explicit "do not build a model".
+_WEAK_NAMES = {"dict", "list", "tuple", "set", "Any", "object", "None"}
+
+
+_BODILESS_STATUSES = {204, 205, 304}
+
+
+def _status_is_bodiless(dec: ast.Call) -> bool:
+    for kw in dec.keywords:
+        if isinstance(kw, ast.keyword) and kw.arg == "status_code":
+            v = kw.value
+            if isinstance(v, ast.Constant) and v.value in _BODILESS_STATUSES:
+                return True
+    return False
+
+
+def _render(node) -> str:
+    """Best-effort source text for a decorator argument, for the report."""
+    if node is None:
+        return "<none>"
+    try:
+        return ast.unparse(node)
+    except Exception:
+        return type(node).__name__
+
+
+def _is_weak_model(node) -> bool:
+    if isinstance(node, ast.Constant) and node.value is None:
+        return True
+    if isinstance(node, ast.Name):
+        return node.id in _WEAK_NAMES
+    if isinstance(node, ast.Attribute):          # typing.Any, t.Any
+        return node.attr in _WEAK_NAMES
+    if isinstance(node, ast.Subscript):
+        # dict[str, Any] is weak; dict[str, MetricLatest] is not. Judge the
+        # ELEMENTS, since the container alone says nothing.
+        sl = node.slice
+        elts = sl.elts if isinstance(sl, ast.Tuple) else [sl]
+        return any(_is_weak_model(e) for e in elts)
+    return False
+
+
 def scan_file(path: Path) -> list[Route]:
     rel = path.relative_to(_WORKSHOP).as_posix()
     try:
@@ -116,14 +180,30 @@ def scan_file(path: Path) -> list[Route]:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         for method, dec in _route_decorators(node):
-            has_rm = any(
-                isinstance(kw, ast.keyword) and kw.arg == "response_model"
-                for kw in dec.keywords
+            rm_value = None
+            for kw in dec.keywords:
+                if isinstance(kw, ast.keyword) and kw.arg == "response_model":
+                    rm_value = kw.value
+                    break
+            # `response_model=None` on a 204/205/304 is CORRECT, not weak: those
+            # statuses carry no body, so there is no model to declare and
+            # FastAPI needs the explicit None to stop inferring one from the
+            # `-> None` annotation. Treating it as a violation would put two
+            # honest routes permanently in the report, and a gate that cries
+            # wolf is a gate someone disables.
+            no_body = _status_is_bodiless(dec)
+            weak = (
+                rm_value is not None
+                and _is_weak_model(rm_value)
+                and not (no_body and isinstance(rm_value, ast.Constant)
+                         and rm_value.value is None)
             )
+            has_rm = rm_value is not None and not weak
             out.append(Route(
                 file=rel, line=node.lineno, method=method, func=node.name,
                 has_response_model=has_rm,
                 has_return_annotation=node.returns is not None,
+                weak_model=(_render(rm_value) if weak else None),
             ))
     return out
 
@@ -141,6 +221,10 @@ def measure() -> dict:
 
     with_rm = sum(1 for r in routes if r.has_response_model)
     no_return_annotation = sum(1 for r in routes if not r.has_return_annotation)
+    weak = [
+        {"file": r.file, "line": r.line, "func": r.func, "model": r.weak_model}
+        for r in routes if r.weak_model is not None
+    ]
 
     return {
         "scanned_files": len(files),
@@ -148,6 +232,8 @@ def measure() -> dict:
         "with_response_model": with_rm,
         "without_response_model": len(routes) - with_rm,
         "no_return_annotation": no_return_annotation,
+        "weak_response_model_count": len(weak),
+        "weak_response_models": weak,
         "per_file_without_response_model": per_file_without,
     }
 
@@ -239,6 +325,11 @@ def main() -> int:
     print(f"    with response_model:    {current['with_response_model']}")
     print(f"    without response_model: {current['without_response_model']}")
     print(f"    no return annotation:   {current['no_return_annotation']}  (informational only)")
+    if current.get("weak_response_model_count"):
+        print(f"    WEAK response_model:    {current['weak_response_model_count']}"
+              "  (declared but untyped; counted as WITHOUT, per ADR 0023)")
+        for w in current["weak_response_models"]:
+            print(f"        {w['file']}:{w['line']}  {w['func']}  ->  {w['model']}")
 
     if not baseline:
         print(f"\n    no baseline at {baseline_path} -- run --write-baseline first")
