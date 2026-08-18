@@ -740,6 +740,46 @@ run.
   ~300-line process-launch lobe. Extracting these is the first cut of that, and it
   clears four violations for one move.
 
+- **T3 removed the concept and left the substrate. Two dead columns and an index
+  survive on the live schema.** Measured 2026-08-17 against the running database.
+
+  The 2026-08-16 coherence pass made a chat's Scope derived on read, so that
+  staleness after a rescope became unrepresentable rather than merely fixed. The
+  service layer carries that decision in three places
+  (`chat_store.py:572`, `chat_log.py:960`, `chat_branches.py:441`), and
+  `db/chat_repo.py:813` refuses to select the column with an explicit reason:
+  "selecting the column would only offer a second answer that can be stale."
+
+  But the columns are still there:
+
+  | Object | Where | State |
+  |---|---|---|
+  | `chat_thread.scope` | `db/models.py`, live schema | written, never read |
+  | `chat_thread.scope_locked` | `db/models.py:784`, live schema | the service-layer field was deleted; the column was not |
+  | `ix_chat_thread_scope` | `db/models.py:857` | indexes a column no query filters |
+
+  So the code now documents, in four places, why not to touch storage that still
+  exists. That is worse than either keeping it or dropping it, because the next
+  reader has to discover the comments before they can trust the schema.
+
+  This is the same shape as the dead `run` and `agent` tables that T4 did drop,
+  and it is a reminder for every retirement in this plan: **retiring a concept
+  has a schema half, and finishing the code half feels like finishing.**
+
+  Fix is one migration dropping two columns and one index. Small, and it should
+  not ride another migration's change: it is its own decision.
+
+- **ADR 0026's sharpest example is stale, and the ADR should be corrected before
+  it is accepted.** It argues "a slug is being used as an identity. This is the
+  sharpest problem in the list and it has already cost data", and names
+  `chat_thread.scope`. That column is the one described immediately above: dead,
+  deliberately unread, and the defect it names was closed by T3.
+
+  The general claim may well survive on other evidence (`project.slug`,
+  agent slugs and `context_key` are genuinely load-bearing identities). The named
+  example does not, and an ADR that argues from a closed defect will be read as
+  wrong in whole when it is wrong in part.
+
 ### The gate now
 
 Four checks were added to `scripts/reviewer.sh` this build, joining the three that
