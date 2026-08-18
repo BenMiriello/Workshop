@@ -814,6 +814,20 @@ input[type="range"].grad::-moz-range-thumb {
      of a clamped message. */
   min-height: 1.3rem;
 }
+/* A CARD IS NOT A STATUS LINE. The rule above treats a trailing row as text
+   to squeeze beside the icons, but a `.chat-card` (prompt, task-proposal,
+   filed ticket) is its own bordered box: shrinking its padding-right left the
+   border and background full width and put the icons ON TOP of the card's
+   own corner instead of beside anything. Operator, 2026-08-18: "I don't think
+   it should be structured that way so that it could sit on top... you would
+   have a new line below the UI that we built." So a trailing card keeps its
+   normal padding and reserves the room BELOW itself instead, giving the icons
+   a line of their own under the card rather than a slice cut out of it. */
+.chat-bubble__body > .chat-card:last-child {
+  padding-right: var(--space-3);
+  min-height: 0;
+  margin-bottom: var(--space-5);
+}
 .chat-bubble--branchable { --chat-actions-gap: 1.2rem; }
 .chat-bubble--branchable.chat-bubble--copyable { --chat-actions-gap: 2.65rem; }
 /* THREE ROWS, THEN IT SCROLLS. The operator asked for exactly this: a picker
@@ -1087,7 +1101,14 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-work__toggle.is-open .chat-work__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-work__chev { transition: none; } }
 .chat-work__list { display: flex; flex-direction: column; gap: 0.2rem; }
+/* Interim narration is a block like any other in TurnWork's list (WorkText next
+   to StepRun), but it carried no spacing of its own: `.chat-work` gets a bottom
+   margin when it isn't last, `.chat-work__text` got none at all. Two narration
+   stretches back to back, or narration sitting against a step run, rendered
+   flush against each other with no gap. Same rule as `.chat-work`, so a run of
+   prose blocks reads as separate paragraphs instead of one concatenated blob. */
 .chat-work__text { font-size: var(--fs-sm); }
+.chat-work__text:not(:last-child) { margin-bottom: var(--space-2); }
 
 /* ---- Tool call: one bare row, tap to expand ----
    THE LEAF HAS NO BOX. It used to carry the border, the inset background and
