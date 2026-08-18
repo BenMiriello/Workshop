@@ -202,10 +202,28 @@ export function useLogScroll({
     if (farUp) setShowJumpToLatest(true);
   }, []);
 
+  // Called at SEND TIME, before the message that triggered it has reached the
+  // store: `onSend` fires synchronously ahead of the dispatch that adds the
+  // pending bubble, because the dispatch is what the send pipeline is for and
+  // this hook cannot reorder it. Scrolling immediately therefore targets
+  // `scrollHeight` as it stood the instant BEFORE that bubble exists — a
+  // smooth scroll's target is a fixed pixel offset, not a moving one, so the
+  // animation lands short of the true bottom once the bubble (and the
+  // composer shrinking back down) grow the log underneath it. The `scroll`
+  // event that fires as it settles then measures a real gap and marks
+  // `atBottomRef` false, which is the opposite of what this function is
+  // trying to say and disables the follow effect that would otherwise have
+  // corrected it — the log stops one message short and offers "jump to
+  // latest" instead of just being there. Reported 2026-08-18.
+  //
+  // A rAF is enough: React's commit for the dispatch that follows this call
+  // (and any composer-height change riding with it) lands within the same
+  // frame or the next, well inside the wait, and the deferred read gets the
+  // real post-layout height instead of a stale one.
   const followLatest = useCallback(() => {
     atBottomRef.current = true;
     setShowJumpToLatest(false);
-    scrollToBottom(true);
+    requestAnimationFrame(() => { if (atBottomRef.current) scrollToBottom(true); });
   }, [scrollToBottom]);
 
   // PRESERVE READING POSITION WHEN OLDER CONTENT IS PREPENDED. The browser
