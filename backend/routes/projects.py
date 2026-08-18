@@ -21,11 +21,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from routes.api_models import (AwaitingRow, ContentOut, FileOut, Job, OkOut,
+                               QueueCounts, TreeOut)
 from services import tasks, jobs, triggers, latitude as latitude_svc
 from wsplatform import paths
+from wsplatform.http import DEFAULT_PAGE, MAX_PAGE
 from services import scope_owner
 
 router = APIRouter()
@@ -200,9 +203,23 @@ def load_templates() -> list[dict]:
     return items
 
 
-@router.get("/templates")
+class ProjectTemplate(BaseModel):
+    """One entry in the scaffold catalog. `blank` is always first and is a
+    programmatic scaffold with no on-disk directory."""
+
+    slug: str
+    label: str
+    hint: str
+
+
+@router.get("/templates", response_model=list[ProjectTemplate])
 async def list_templates() -> list[dict]:
-    """List available templates ({slug,label,hint}). See load_templates."""
+    """List available templates ({slug,label,hint}). See load_templates.
+
+    A bare array, which ADR 0023 clause 1 bans in favour of the `items`/`page`
+    envelope. Left as an array here for the reason the ADR's migration posture
+    gives: this is a wire-shape change to a route the new-project dialog reads,
+    and it is not complete until that reader changes in the same commit."""
     return load_templates()
 
 
@@ -225,7 +242,7 @@ def _is_self_row(raw: dict) -> bool:
     return bool(d) and dev_mode.is_self_dir(d)
 
 
-@router.get("/")
+@router.get("/", response_model=list[Project])
 async def list_projects() -> list[Project]:
     """Every registered project EXCEPT the platform repo.
 
@@ -253,7 +270,7 @@ async def list_projects() -> list[Project]:
     return sorted(items, key=lambda p: p.last_touched, reverse=True)
 
 
-@router.get("/{slug}")
+@router.get("/{slug}", response_model=Project)
 async def get_project(slug: str) -> Project:
     """One project by slug, INCLUDING the self row. Deliberate, not an oversight.
 
@@ -278,7 +295,7 @@ async def get_project(slug: str) -> Project:
     return Project(slug=slug, **raw)
 
 
-@router.patch("/{slug}")
+@router.patch("/{slug}", response_model=Project)
 async def patch_project(slug: str, body: ProjectPatchIn) -> Project:
     """Read-modify-write a small set of editable project fields. Currently only
     the `concurrent_worktrees` opt-in (Phase G3); the setter exists so the UI can
@@ -421,7 +438,7 @@ def _repo_field(info: dict) -> dict:
     }
 
 
-@router.post("/")
+@router.post("/", response_model=Project)
 async def create_project(body: CreateProjectIn) -> Project:
     slug = body.slug.strip().lower()
     if not SLUG_RE.match(slug):
@@ -529,7 +546,7 @@ def _github_http_error(e: Exception) -> HTTPException:
 _GITHUB_ERRORS = (ValueError, subprocess.SubprocessError, OSError)
 
 
-@router.post("/{slug}/connect-github")
+@router.post("/{slug}/connect-github", response_model=Project)
 async def connect_github(slug: str, body: ConnectGithubIn) -> Project:
     from services import github
 
@@ -584,19 +601,19 @@ def _project_dir(slug: str) -> Path:
     return Path(raw["dir"])
 
 
-@router.get("/{slug}/brief")
+@router.get("/{slug}/brief", response_model=ContentOut)
 async def get_brief(slug: str) -> dict:
     return {"content": _read_text(_project_dir(slug) / "PROJECT.md")}
 
 
-@router.put("/{slug}/brief")
+@router.put("/{slug}/brief", response_model=OkOut)
 async def put_brief(slug: str, body: FileWriteIn) -> dict:
     _write_text(_project_dir(slug) / "PROJECT.md", body.content)
     _touch(slug)
     return {"ok": True}
 
 
-@router.get("/{slug}/todo")
+@router.get("/{slug}/todo", response_model=ContentOut)
 async def get_todo(slug: str) -> dict:
     # Read through the structured store so the rendered markdown is always
     # current (the store is the single source of truth; TODO.md is its export).
@@ -631,7 +648,7 @@ async def get_todo(slug: str) -> dict:
 # regenerated export.
 
 
-@router.get("/{slug}/interventions")
+@router.get("/{slug}/interventions", response_model=ContentOut)
 async def get_interventions(slug: str) -> dict:
     return {"content": _read_text(_project_dir(slug) / "INTERVENTIONS.md")}
 
@@ -641,7 +658,7 @@ class InterventionIn(BaseModel):
     who: str = "operator"
 
 
-@router.post("/{slug}/interventions")
+@router.post("/{slug}/interventions", response_model=ContentOut)
 async def add_intervention(slug: str, body: InterventionIn) -> dict:
     """Append a timestamped note to INTERVENTIONS.md. Format matches the
     reader: `[<iso-utc>] <who>: <text>` (one line per entry, newest appended)."""
@@ -781,7 +798,35 @@ def _run_state(slug: str) -> tuple[bool, dict | None]:
     return running, last
 
 
-@router.get("/{slug}/autonomy")
+class ProjectAutonomyOut(BaseModel):
+    """The scope's autonomy config plus the state a reader needs to act on it.
+
+    `autonomy` is the PRESET vocabulary (`off | on-demand | scheduled |
+    continuous`, `services/triggers.py::PRESETS`) -- the trigger cadence for a
+    project scope. It is a different axis from an AGENT's `autonomy_mode`
+    (`reactive | supervised | autonomous`); see the note on
+    `routes/agents.py::RosterAgent`.
+
+    `latitude` stays null when unset: this scope is one level of the latitude
+    cascade, not the bottom of it, so a defaulted value here would read as a
+    choice nobody made."""
+
+    autonomy: str
+    latitude: str | None = None
+    limits: dict = {}
+    triggers: list[dict] = []
+    # ADR 0023 clause 4 bans `updated` as an instant field name in favour of
+    # `updated_at`. Unchanged here: it is the key the stored registry record
+    # uses and the key AutonomyPanel reads, so renaming it is a wire change
+    # that must land with its frontend edit.
+    updated: str | None = None
+    running: bool
+    last_run: Job | None = None
+    queue: QueueCounts
+    awaiting: list[AwaitingRow] = []
+
+
+@router.get("/{slug}/autonomy", response_model=ProjectAutonomyOut)
 async def get_autonomy(slug: str) -> dict:
     raw = _ensure_project(slug)
     autonomy = raw.get("autonomy") or {}
@@ -806,7 +851,20 @@ async def get_autonomy(slug: str) -> dict:
     }
 
 
-@router.put("/{slug}/autonomy")
+class ProjectAutonomyPutOut(BaseModel):
+    """What was stored. Deliberately narrower than the GET: a write echoes the
+    config it just persisted plus whether a sweep is in flight, and does not
+    re-derive the queue snapshot the caller did not ask for."""
+
+    autonomy: str
+    latitude: str | None = None
+    limits: dict = {}
+    triggers: list[dict] = []
+    updated: str
+    running: bool
+
+
+@router.put("/{slug}/autonomy", response_model=ProjectAutonomyPutOut)
 async def put_autonomy(slug: str, body: TriggersIn) -> dict:
     # Preset shape wins when present; otherwise fall back to the raw trigger list
     # (the advanced escape hatch, and the pre-O6 request shape, unchanged).
@@ -857,7 +915,16 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
     }
 
 
-@router.post("/{slug}/autonomy/run")
+class AutonomyRunOut(BaseModel):
+    """The sweep that was launched: the Job it adopts and the process running it."""
+
+    started: bool
+    pid: int
+    slug: str
+    job_id: str
+
+
+@router.post("/{slug}/autonomy/run", response_model=AutonomyRunOut)
 async def run_autonomy(slug: str) -> dict:
     """Fire a project Ralph sweep in the background as a manual Job. Uses --force
     so neither the global cron off-switch nor the per-project mode blocks a
@@ -905,8 +972,22 @@ async def run_autonomy(slug: str) -> dict:
     return {"started": True, "pid": proc.pid, "slug": slug, "job_id": job["id"]}
 
 
-@router.get("/{slug}/autonomy/log")
-async def get_autonomy_log(slug: str, limit: int = 50) -> dict:
+class AutonomyLogOut(BaseModel):
+    """The sweep history. Not the ADR 0023 envelope, for the same reason as
+    `TaskJobsOut`: ProjectDetail reads these keys and cannot be edited in this
+    commit."""
+
+    jobs: list[Job]
+    count: int
+    running: bool
+
+
+@router.get("/{slug}/autonomy/log", response_model=AutonomyLogOut)
+async def get_autonomy_log(
+    slug: str,
+    # ADR 0023 clause 2: the ceiling is mandatory. The default is unchanged.
+    limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE),
+) -> dict:
     """Recent Jobs for this project (the sweep history), newest first."""
     _ensure_project(slug)
     recs = jobs.read(project_slug=slug, limit=limit)
@@ -916,7 +997,7 @@ async def get_autonomy_log(slug: str, limit: int = 50) -> dict:
 
 # ---- File tree --------------------------------------------------------------
 
-@router.get("/{slug}/tree")
+@router.get("/{slug}/tree", response_model=TreeOut)
 async def get_tree(slug: str) -> dict:
     root = _project_dir(slug)
     SKIP = {".git", "node_modules", "dist", ".next", "__pycache__"}
@@ -942,7 +1023,7 @@ async def get_tree(slug: str) -> dict:
     return {"root": str(root), "tree": walk(root)}
 
 
-@router.get("/{slug}/file")
+@router.get("/{slug}/file", response_model=FileOut)
 async def get_file(slug: str, path: str) -> dict:
     root = _project_dir(slug)
     target = (root / path).resolve()
@@ -957,7 +1038,7 @@ async def get_file(slug: str, path: str) -> dict:
         raise HTTPException(415, "binary file")
 
 
-@router.put("/{slug}/file")
+@router.put("/{slug}/file", response_model=OkOut)
 async def put_file(slug: str, path: str, body: FileWriteIn) -> dict:
     root = _project_dir(slug)
     target = (root / path).resolve()
@@ -1000,7 +1081,7 @@ def _valid_import_url(url: str) -> bool:
     return False
 
 
-@router.post("/import")
+@router.post("/import", response_model=Project)
 async def import_project(body: ImportProjectIn) -> Project:
     """Clone an external git repo into _projects_root() and register it.
 
@@ -1086,7 +1167,7 @@ async def import_project(body: ImportProjectIn) -> Project:
 
 # ---- Delete (retire) --------------------------------------------------------
 
-@router.post("/{slug}/retire")
+@router.post("/{slug}/retire", response_model=OkOut)
 async def retire_project(slug: str) -> dict:
     data = _load_registry()
     if slug not in (data.get("projects") or {}):

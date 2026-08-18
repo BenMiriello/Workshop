@@ -2,12 +2,17 @@ import json
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request
+from typing import Any, Literal
+
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from routes.api_models import (ContentOut, DeletedOut, FileOut, Job, OkOut,
+                               QueueCounts, AwaitingRow, Task, TreeOut)
 from services import agents_registry, build_agents, dev_servers, jobs, triggers
 from services import agent_authority
 from wsplatform import paths
+from wsplatform.http import DEFAULT_PAGE, MAX_PAGE
 
 router = APIRouter()
 
@@ -24,6 +29,397 @@ def known_tools() -> list[str]:
     return PLATFORM_TOOLS + [
         t for t in app_registry.installed_tools() if t not in PLATFORM_TOOLS
     ]
+
+
+# ---- Response models -------------------------------------------------------
+# ADR 0023 clause 6. Every field below was read off its emitter --
+# `agents_registry._record_from_def`, `build_agents.create_agent`,
+# `dev_servers.status` -- because a `response_model` FILTERS: an undeclared key
+# is dropped from the live response with no error anywhere.
+#
+# THE TWO AUTONOMY VOCABULARIES, and why one field name carries both.
+#
+#   Mode   `reactive | supervised | autonomous`  (triggers.AUTONOMY_MODES)
+#          May the dispatcher fire this agent in the background at all, and does
+#          a finished run commit or land in review? Stored in definition
+#          frontmatter under `autonomy:` and read through
+#          `agents_registry._coerce_autonomy`, which is TOTAL: anything not in
+#          the enum (unset, a typo, a preset word) reads as `reactive`.
+#   Preset `off | on-demand | scheduled | continuous`  (triggers.PRESETS)
+#          The trigger CADENCE, derived from the trigger list by
+#          `triggers.triggers_to_preset`. Not stored on an agent at all.
+#
+# Both are closed and total, so both are typed as Literals below and neither can
+# reach the wire holding the other's value. What they DO share is a name:
+#
+#   * `Agent.autonomy`      is the MODE   (PUT/POST return the registry record)
+#   * `RosterAgent.autonomy` and `AgentDetail.autonomy` are the PRESET
+#     (`GET /` and `GET /{id}` overwrite the record's field on the way out), and
+#     the MODE is served beside them as `autonomy_mode`.
+#
+# So one resource serves `autonomy` as two different enums depending on which of
+# its four routes you asked. Measured 2026-08-17: 10 agent definition files
+# exist and 0 declare `autonomy:`, so every agent currently serves
+# `autonomy_mode: "reactive"`, and the frontend already models the two as
+# separate fields (`Preset` / `AutonomyMode`, pages/Agents.tsx). Renaming either
+# is a wire change that must land with its frontend edit, so this pass types the
+# collision truthfully rather than papering over it.
+
+AutonomyMode = Literal["reactive", "supervised", "autonomous"]
+AutonomyPreset = Literal["off", "on-demand", "scheduled", "continuous"]
+
+
+class Agent(BaseModel):
+    """An agent as the registry holds it: `agents_registry._record_from_def`,
+    plus the execution state `_merge_build_state` folds in for a maker.
+
+    `memory`, `limits` and a trigger stay loosely typed on purpose -- they are
+    whatever the definition's YAML frontmatter carries, and narrowing them here
+    would drop keys the definition author wrote."""
+
+    id: str
+    slug: str
+    name: str
+    purpose: str = ""
+    capabilities: list[str] = []
+    triggers: list[dict] = []
+    limits: dict = {}
+    role: str | None = None
+    # May only NARROW what the role permits; null = no request = the role's set.
+    tools: list[str] | None = None
+    model: str | None = None
+    effort: str | None = None
+    permission_mode: str | None = None
+    mentionable: bool = False
+    delegatable: bool = False
+    latitude: str | None = None
+    autonomy: AutonomyMode = "reactive"
+    memory: Any = None
+    # Fork provenance `<template-slug>@<version>`: a label, not a link.
+    template: str | None = None
+    project_slug: str | None = None
+    letta_agent_id: str | None = None
+    scope: str | None = None
+    definition: str = ""
+    definition_path: str | None = None
+    retired: bool = False
+    source: str | None = None
+    # ---- merged from build_agents.json for a maker ----
+    state: str | None = None
+    claude_session: str | None = None
+    last_active: str | None = None
+    created: str | None = None
+    cwd: str | None = None
+    branch_slug: str | None = None
+
+
+class RosterAgent(BaseModel):
+    """The roster projection. Deliberately NOT `Agent`: the list route hand-picks
+    a narrower set (no `definition` body, no `definition_path`) because the
+    roster renders cards, and shipping every agent's full markdown to draw a
+    list is the kind of payload ADR 0023 exists to make visible.
+
+    `autonomy` here is the PRESET; `autonomy_mode` is the MODE. See the block
+    comment above."""
+
+    id: str | None = None
+    slug: str | None = None
+    name: str | None = None
+    purpose: str | None = None
+    triggers: list[dict] = []
+    limits: dict = {}
+    autonomy: AutonomyPreset
+    autonomy_mode: AutonomyMode
+    role: str | None = None
+    mentionable: bool = False
+    delegatable: bool = False
+    # null = inherit, and it must stay null over the wire.
+    latitude: str | None = None
+    capabilities: list[str] = []
+    memory: Any = None
+    project_slug: str | None = None
+    scope: str | None = None
+    state: str | None = None
+    claude_session: str | None = None
+    created_at: str | None = None
+    last_active: str | None = None
+    memory_blocks: list[dict] = []
+    source: str | None = None
+
+
+class ActivationLink(BaseModel):
+    """One condition in the chain that decides whether an agent runs."""
+
+    id: str
+    label: str
+    ok: bool
+    detail: str
+
+
+class Activation(BaseModel):
+    links: list[ActivationLink]
+    blocked_by: str | None = None
+    runs_unattended: bool
+    ever_ran: bool
+    last_active: str | None = None
+
+
+class Authority(BaseModel):
+    """What this role may write and the tools that follow from it. A declaration
+    rendered on the page, never a guarantee."""
+
+    writes: list[str]
+    describes: str
+    tools: list[str]
+
+
+class AgentDetail(Agent):
+    """`GET /agents/{id}`: the registry record, enriched.
+
+    Inherits every `Agent` field and then REDECLARES `autonomy` as the preset,
+    because that is what the handler puts there. That override is the collision
+    documented in the block comment above, made visible in the schema instead of
+    hidden in a dict spread."""
+
+    autonomy: AutonomyPreset
+    autonomy_mode: AutonomyMode
+    queue: QueueCounts
+    awaiting: list[AwaitingRow] = []
+    linked_ticket_ids: list[str] = []
+    # A ticket is addressed by (scope, id); every id above came from ONE store,
+    # so the scope rides along rather than being re-derived by the client.
+    linked_ticket_scope: str | None = None
+    linked_run_ids: list[str] = []
+    linked_chat_ids: list[str] = []
+    activation: Activation
+    authority: Authority
+
+
+class AgentTemplate(BaseModel):
+    """A shipped template. A file, not a registry member: nothing here is
+    registered or dispatched until it is forked."""
+
+    template: str
+    template_version: int
+    description: str = ""
+    name: str
+    role: str | None = None
+    purpose: str = ""
+    triggers: list[dict] = []
+    definition: str = ""
+
+
+class AgentGroup(BaseModel):
+    """A template GROUP: a member list WITH per-member overrides plus the
+    `scope_defaults` the adopting scope takes on. Members are typed `dict`
+    because a member is `{template, slug?, overrides?}` where `overrides` is an
+    open bag of any Agent field."""
+
+    name: str
+    # The picker's one-line explanation of what adopting this group does. It is
+    # on both shipped group files and a `response_model` would have DROPPED it:
+    # found by validating every live record through this model before shipping,
+    # which is the check that makes an under-declared model visible.
+    description: str = ""
+    members: list[dict] = []
+    scope_defaults: dict = {}
+
+
+class AgentTemplatesOut(BaseModel):
+    templates: list[AgentTemplate]
+    groups: list[AgentGroup]
+
+
+class SkippedMember(BaseModel):
+    """A group member that was not forked, with the incumbent named. Adopting a
+    group twice is a no-op for a singleton role, and this is how it says so."""
+
+    template: str
+    reason: str
+
+
+class AdoptGroupOut(BaseModel):
+    group: str | None = None
+    scope_defaults: dict = {}
+    adopted: list[Agent] = []
+    skipped: list[SkippedMember] = []
+    # Whether the group's non-agent half (its autonomy preset + the roster)
+    # reached a project record. False for a user-scope adoption, which has none.
+    scope_applied: bool = False
+
+
+class NativeSubagent(BaseModel):
+    """A Claude Code subagent this instance can DELEGATE to. Same markdown and
+    same parser as a roster agent; the difference is lifecycle, not schema."""
+
+    slug: str
+    name: str
+    description: str = ""
+    purpose: str = ""
+    role: str | None = None
+    scope: str = ""
+    tools: list[str] = []
+    unrestricted_tools: bool = False
+    delegatable: bool = False
+    mentionable: bool = False
+    # Names the surface this agent belongs to when it is not the Workshop's.
+    foreign: str | None = None
+    definition: str = ""
+    definition_path: str | None = None
+    dispatch: str
+    source: str
+
+
+class DelegatesOut(BaseModel):
+    delegates: list[NativeSubagent]
+
+
+class ToolsOut(BaseModel):
+    tools: list[str]
+
+
+class BuildAgent(BaseModel):
+    """A maker's execution state, out of `.runtime/build_agents.json`. Distinct
+    from `Agent`, which is what a DEFINITION FILE declares: running is not a way
+    to become an agent."""
+
+    slug: str
+    name: str
+    purpose: str = ""
+    kind: str | None = None
+    cwd: str | None = None
+    project_slug: str | None = None
+    branch_slug: str | None = None
+    state: str | None = None
+    created: str | None = None
+    last_active: str | None = None
+    claude_session: str | None = None
+    owner_id: int | None = None
+
+
+class BuildAgentDetail(BuildAgent):
+    """`session_alive` is a REAL check that the CLI session file still exists,
+    not merely "a session id string is stored" -- which stayed true after the
+    session was pruned, so the pill lied."""
+
+    session_alive: bool
+
+
+class BuildTasksOut(BaseModel):
+    """Not the ADR 0023 collection envelope: changing this key is a wire change
+    to a route the build-agent Tasks tab reads, and the ADR's one non-optional
+    migration rule is that such a change lands with its frontend edit."""
+
+    tasks: list[Task]
+
+
+class InterventionAppendOut(BaseModel):
+    """`ts` is ADR 0023 clause 4 debt: an instant field should be `<verb>_at`.
+    Left as-is because it is the key the caller reads today."""
+
+    ok: bool
+    ts: str
+
+
+class DiffFile(BaseModel):
+    """One changed file. `status` is git's two-character XY porcelain code;
+    `??` means untracked, whose `diff` is the whole file rendered as additions."""
+
+    status: str
+    path: str
+    diff: str
+
+
+class DiffOut(BaseModel):
+    files: list[DiffFile]
+    summary: str
+
+
+class SuggestedCommand(BaseModel):
+    command: str
+    kind: str
+
+
+class PreviewServerStatus(BaseModel):
+    """`dev_servers.status`. `started_at` is a RAW EPOCH FLOAT, which ADR 0023
+    clause 4 bans (every instant on the wire is an RFC3339 UTC string). Typed as
+    what it is rather than silently coerced: converting it is a wire change to
+    the reader that formats it, and this pass does not touch the frontend."""
+
+    running: bool
+    pid: int | None = None
+    port: int | None = None
+    command: str | None = None
+    started_at: float | None = None
+    log_path: str | None = None
+    # Set when a recorded process turned out to be gone and the entry was cleared.
+    stale_pid: int | None = None
+
+
+class PreviewStatusOut(PreviewServerStatus):
+    """Status plus the two boot-time helpers: what to run, and (when stopped)
+    which port to default the picker to. `public_url` is derived from the
+    request host so the link works over the LAN, not just localhost."""
+
+    suggested: SuggestedCommand
+    suggested_port: int | None = None
+    public_url: str | None = None
+
+
+class PreviewStartOut(BaseModel):
+    ok: bool
+    status: PreviewServerStatus | None = None
+    reason: str | None = None
+
+
+class PreviewStopOut(BaseModel):
+    ok: bool
+    reason: str | None = None
+    force_killed: bool | None = None
+
+
+class PreviewLogOut(BaseModel):
+    log: str
+
+
+class CommitOut(BaseModel):
+    """`ok: false` with a `reason` at HTTP 200 is an ADR 0023 clause 3 violation
+    (failure never arrives at 200). Declared rather than fixed: "nothing to
+    commit" is reported, not raised, by the caller today, and turning it into a
+    4xx is a behaviour change to a route the Diff tab reads."""
+
+    ok: bool
+    commit: str | None = None
+    reason: str | None = None
+
+
+class RetireAgentOut(BaseModel):
+    ok: bool
+    retired: str
+
+
+class AgentJobsOut(BaseModel):
+    """Not the ADR 0023 envelope; see `BuildTasksOut`."""
+
+    agent_id: str
+    jobs: list[Job]
+    count: int
+
+
+class AgentRunsOut(BaseModel):
+    """The per-agent activity feed: the run history plus heartbeat freshness.
+
+    `heartbeat` is whatever the heartbeat writer put in `.runtime/heartbeats/
+    <id>.json`, so it stays an open dict. `heartbeat_age_s` is a float of
+    seconds, which ADR 0023 clause 4 says should be `<thing>_ms` as an integer;
+    unchanged for the same reason as every other rename here."""
+
+    agent_id: str
+    heartbeat: dict | None = None
+    heartbeat_age_s: float | None = None
+    liveness: str
+    runs: list[Job]
+    runs_count: int
 
 
 class AgentCreate(BaseModel):
@@ -52,7 +448,7 @@ class AdoptGroupIn(BaseModel):
     project: str | None = None
 
 
-@router.get("/templates")
+@router.get("/templates", response_model=AgentTemplatesOut)
 async def list_agent_templates():
     """The shipped agent templates and template groups. Templates are files, not
     registry members: nothing here is registered or dispatched until it is forked
@@ -63,7 +459,7 @@ async def list_agent_templates():
     }
 
 
-@router.post("/from-template")
+@router.post("/from-template", response_model=Agent)
 async def create_agent_from_template(body: FromTemplateIn):
     """Fork a template into a real agent. The copy is independent — the only
     trace of its origin is a `template: <slug>@<version>` stamp in frontmatter.
@@ -80,7 +476,7 @@ async def create_agent_from_template(body: FromTemplateIn):
         raise HTTPException(400, str(e))
 
 
-@router.post("/adopt-group")
+@router.post("/adopt-group", response_model=AdoptGroupOut)
 async def adopt_agent_group(body: AdoptGroupIn):
     """Adopt a template group into a scope: fork each member with its overrides,
     then apply the group's `scope_defaults` to the project's autonomy record.
@@ -148,7 +544,7 @@ def _drop_from_project_roster(rec: dict) -> None:
     projects_route._save_registry(data)
 
 
-@router.get("/")
+@router.get("/", response_model=list[RosterAgent])
 async def list_agents():
     """One unified roster: every Agent across both scopes, sourced from the
     agents registry (definition files + a maker's execution state).
@@ -169,7 +565,7 @@ async def list_agents():
             # field name is `autonomy`, but until C7 rewrites AutonomyPanel to
             # read this shape, we surface it under `autonomy_mode` so nothing
             # breaks. Coherence-migration C7 flips the frontend + backend swap.
-            "autonomy_mode": a.get("autonomy") or "reactive",
+            "autonomy_mode": a.get("autonomy") or agents_registry.DEFAULT_AUTONOMY,
             "role": a.get("role"),
             "mentionable": bool(a.get("mentionable")),
             "delegatable": bool(a.get("delegatable")),
@@ -192,7 +588,7 @@ async def list_agents():
     return out
 
 
-@router.get("/delegates")
+@router.get("/delegates", response_model=DelegatesOut)
 async def list_delegates():
     """Claude Code subagents this instance can DELEGATE to.
 
@@ -208,7 +604,7 @@ async def list_delegates():
     return {"delegates": agents_registry.native_subagents()}
 
 
-@router.get("/tools")
+@router.get("/tools", response_model=ToolsOut)
 async def list_tools():
     return {"tools": known_tools()}
 
@@ -229,12 +625,12 @@ class BuildAgentCreate(BaseModel):
     branch_slug: str | None = None
 
 
-@router.get("/build")
+@router.get("/build", response_model=list[BuildAgent])
 async def list_build_agents():
     return build_agents.list_agents()
 
 
-@router.post("/build")
+@router.post("/build", response_model=BuildAgent)
 async def create_build_agent(body: BuildAgentCreate):
     try:
         return build_agents.create_agent(
@@ -253,7 +649,7 @@ class BuildAgentRename(BaseModel):
     purpose: str | None = Field(default=None, max_length=280)
 
 
-@router.patch("/build/{slug}")
+@router.patch("/build/{slug}", response_model=BuildAgent)
 async def rename_build_agent(slug: str, body: BuildAgentRename):
     try:
         return build_agents.rename(slug, name=body.name, purpose=body.purpose)
@@ -263,7 +659,7 @@ async def rename_build_agent(slug: str, body: BuildAgentRename):
         raise HTTPException(400, str(e))
 
 
-@router.get("/build/{slug}")
+@router.get("/build/{slug}", response_model=BuildAgentDetail)
 async def get_build_agent(slug: str):
     try:
         rec = build_agents.get_agent(slug)
@@ -283,13 +679,13 @@ async def get_build_agent(slug: str):
     return rec
 
 
-@router.post("/build/{slug}/retire")
+@router.post("/build/{slug}/retire", response_model=OkOut)
 async def retire_build_agent(slug: str):
     build_agents.retire(slug)
     return {"ok": True}
 
 
-@router.post("/build/{slug}/session/reset")
+@router.post("/build/{slug}/session/reset", response_model=OkOut)
 async def reset_build_session(slug: str):
     """Detach this agent record from its Claude Code session so the next turn
     starts fresh. Useful when the conversation gets confused or you want to
@@ -323,7 +719,7 @@ def _safe_resolve(root: _P, path: str) -> _P:
     return target
 
 
-@router.get("/build/{slug}/tree")
+@router.get("/build/{slug}/tree", response_model=TreeOut)
 async def build_agent_tree(slug: str):
     root = _agent_cwd(slug)
     SKIP = {".git", "node_modules", "dist", ".next", "__pycache__"}
@@ -349,7 +745,7 @@ async def build_agent_tree(slug: str):
     return {"root": str(root), "tree": walk(root) if root.exists() else []}
 
 
-@router.get("/build/{slug}/file")
+@router.get("/build/{slug}/file", response_model=FileOut)
 async def build_agent_file_get(slug: str, path: str):
     root = _agent_cwd(slug)
     target = _safe_resolve(root, path)
@@ -361,7 +757,7 @@ async def build_agent_file_get(slug: str, path: str):
         raise HTTPException(415, "binary file")
 
 
-@router.put("/build/{slug}/file")
+@router.put("/build/{slug}/file", response_model=OkOut)
 async def build_agent_file_put(slug: str, path: str, body: _Content):
     root = _agent_cwd(slug)
     target = _safe_resolve(root, path)
@@ -371,14 +767,14 @@ async def build_agent_file_put(slug: str, path: str, body: _Content):
     return {"ok": True}
 
 
-@router.get("/build/{slug}/brief")
+@router.get("/build/{slug}/brief", response_model=ContentOut)
 async def build_agent_brief_get(slug: str):
     root = _agent_cwd(slug)
     p = root / "PROJECT.md"
     return {"content": p.read_text() if p.exists() else ""}
 
 
-@router.put("/build/{slug}/brief")
+@router.put("/build/{slug}/brief", response_model=OkOut)
 async def build_agent_brief_put(slug: str, body: _Content):
     root = _agent_cwd(slug)
     (root / "PROJECT.md").write_text(body.content)
@@ -386,14 +782,14 @@ async def build_agent_brief_put(slug: str, body: _Content):
     return {"ok": True}
 
 
-@router.get("/build/{slug}/todo")
+@router.get("/build/{slug}/todo", response_model=ContentOut)
 async def build_agent_todo_get(slug: str):
     root = _agent_cwd(slug)
     p = root / "TODO.md"
     return {"content": p.read_text() if p.exists() else ""}
 
 
-@router.put("/build/{slug}/todo")
+@router.put("/build/{slug}/todo", response_model=OkOut)
 async def build_agent_todo_put(slug: str, body: _Content):
     root = _agent_cwd(slug)
     (root / "TODO.md").write_text(body.content)
@@ -401,7 +797,7 @@ async def build_agent_todo_put(slug: str, body: _Content):
     return {"ok": True}
 
 
-@router.get("/build/{slug}/interventions")
+@router.get("/build/{slug}/interventions", response_model=ContentOut)
 async def build_agent_interventions_get(slug: str):
     root = _agent_cwd(slug)
     p = root / "INTERVENTIONS.md"
@@ -444,12 +840,12 @@ def _tasks_root(slug: str) -> _P:
     return _P(a["cwd"])
 
 
-@router.get("/build/{slug}/tasks")
+@router.get("/build/{slug}/tasks", response_model=BuildTasksOut)
 async def build_agent_tasks_list(slug: str, include_done: bool = True):
     return {"tasks": tasks.list_tasks(_tasks_root(slug), include_done=include_done, owner=slug)}
 
 
-@router.post("/build/{slug}/tasks")
+@router.post("/build/{slug}/tasks", response_model=Task)
 async def build_agent_tasks_add(slug: str, body: _TaskCreate):
     root = _tasks_root(slug)
     # Guard: a parent (if given) must belong to this agent's own tasks.
@@ -463,7 +859,7 @@ async def build_agent_tasks_add(slug: str, body: _TaskCreate):
     return task
 
 
-@router.patch("/build/{slug}/tasks/{task_id}")
+@router.patch("/build/{slug}/tasks/{task_id}", response_model=Task)
 async def build_agent_tasks_patch(slug: str, task_id: str, body: _TaskPatch):
     if body.status is None and body.text is None:
         raise HTTPException(400, "no fields to update")
@@ -477,7 +873,7 @@ async def build_agent_tasks_patch(slug: str, task_id: str, body: _TaskPatch):
     return task
 
 
-@router.delete("/build/{slug}/tasks/{task_id}")
+@router.delete("/build/{slug}/tasks/{task_id}", response_model=DeletedOut)
 async def build_agent_tasks_delete(slug: str, task_id: str):
     if not tasks.remove(_tasks_root(slug), task_id, owner=slug):
         raise HTTPException(404, f"task not found: {task_id}")
@@ -495,7 +891,7 @@ class _InterventionIn(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
-@router.post("/build/{slug}/interventions")
+@router.post("/build/{slug}/interventions", response_model=InterventionAppendOut)
 async def build_agent_interventions_post(slug: str, body: _InterventionIn):
     from datetime import datetime, timezone
     text = body.text.strip()
@@ -529,7 +925,7 @@ def _git(slug: str, *args: str, check: bool = True) -> subprocess.CompletedProce
     )
 
 
-@router.get("/build/{slug}/diff")
+@router.get("/build/{slug}/diff", response_model=DiffOut)
 async def build_agent_diff(slug: str):
     """Return per-file diff status + per-file unified diff content. Computed
     against HEAD (working tree + index combined: --cached + worktree). Files
@@ -568,7 +964,7 @@ class _RevertIn(BaseModel):
     path: str
 
 
-@router.post("/build/{slug}/diff/revert-file")
+@router.post("/build/{slug}/diff/revert-file", response_model=OkOut)
 async def build_agent_revert_file(slug: str, body: _RevertIn):
     """Restore <path> to HEAD's version. For untracked files, deletes them.
     Operator-confirmed in the UI."""
@@ -602,7 +998,7 @@ class _StartPreviewIn(BaseModel):
     port: int = 8501
 
 
-@router.get("/build/{slug}/preview/status")
+@router.get("/build/{slug}/preview/status", response_model=PreviewStatusOut)
 async def build_agent_preview_status(slug: str, request: Request):
     """Status, plus boot-time helpers per ADR-009 section 6.
 
@@ -627,7 +1023,7 @@ async def build_agent_preview_status(slug: str, request: Request):
     return payload
 
 
-@router.post("/build/{slug}/preview/start")
+@router.post("/build/{slug}/preview/start", response_model=PreviewStartOut)
 async def build_agent_preview_start(slug: str, body: _StartPreviewIn):
     cwd = _agent_cwd(slug)
     r = dev_servers.start(slug, cwd=str(cwd), command=body.command, port=body.port)
@@ -637,17 +1033,17 @@ async def build_agent_preview_start(slug: str, body: _StartPreviewIn):
     return r
 
 
-@router.post("/build/{slug}/preview/stop")
+@router.post("/build/{slug}/preview/stop", response_model=PreviewStopOut)
 async def build_agent_preview_stop(slug: str):
     return dev_servers.stop(slug)
 
 
-@router.get("/build/{slug}/preview/log")
+@router.get("/build/{slug}/preview/log", response_model=PreviewLogOut)
 async def build_agent_preview_log(slug: str):
     return {"log": dev_servers.tail_log(slug)}
 
 
-@router.post("/build/{slug}/commit")
+@router.post("/build/{slug}/commit", response_model=CommitOut)
 async def build_agent_commit(slug: str, body: _CommitIn):
     """Stage everything in the agent's cwd and create a commit. The operator
     uses this to mark 'this state is good, snapshot it' so they can revert
@@ -764,7 +1160,7 @@ def _agent_queue_snapshot(rec: dict) -> dict:
     }
 
 
-@router.get("/{agent_id}")
+@router.get("/{agent_id}", response_model=AgentDetail)
 async def get_agent(agent_id: str):
     """Unified detail, resolved from the registry (by slug, routing id, or linked
     id). The assistant persona/instructions live in the definition body; there is
@@ -828,7 +1224,7 @@ async def get_agent(agent_id: str):
         "autonomy": triggers.triggers_to_preset(rec.get("triggers") or []),
         # See list_agents comment. Autonomy-model per-agent MODE lives here until
         # C7 flips the field name.
-        "autonomy_mode": rec.get("autonomy") or "reactive",
+        "autonomy_mode": rec.get("autonomy") or agents_registry.DEFAULT_AUTONOMY,
         "mentionable": bool(rec.get("mentionable")),
         "delegatable": bool(rec.get("delegatable")),
         "queue": snap["queue"],
@@ -867,7 +1263,7 @@ def _activation_chain(rec: dict) -> dict:
     from services import autonomy_override
 
     brake = autonomy_override.read()
-    autonomy = rec.get("autonomy") or "reactive"
+    autonomy = rec.get("autonomy") or agents_registry.DEFAULT_AUTONOMY
     triggers = rec.get("triggers") or []
     # A manual-only trigger set cannot start anything on its own, so it is not a
     # way in. Distinguish "no triggers" from "only manual".
@@ -927,7 +1323,7 @@ class AgentDefinitionUpdate(BaseModel):
     definition: str | None = None  # the markdown body (persona / instructions)
 
 
-@router.put("/{agent_id}")
+@router.put("/{agent_id}", response_model=Agent)
 async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
     """Write the declarative definition (name/purpose/triggers/limits/body) to the
     agent's markdown file via the registry. Trigger writes land in frontmatter and
@@ -958,7 +1354,7 @@ async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/")
+@router.post("/", response_model=Agent)
 async def create_agent(body: AgentCreate):
     """Create an Agent in the registry (a markdown definition file). The
     persona/instructions become the definition body; there is no separate memory
@@ -985,7 +1381,7 @@ async def create_agent(body: AgentCreate):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete("/{agent_id}")
+@router.delete("/{agent_id}", response_model=RetireAgentOut)
 async def delete_agent(agent_id: str):
     """Retire an agent from the registry: it leaves the roster while the
     declarative definition is preserved (retired flag). A maker also flips its
@@ -998,24 +1394,23 @@ async def delete_agent(agent_id: str):
     return {"ok": True, "retired": rec["slug"]}
 
 
-@router.get("/{agent_id}/jobs")
-async def agent_jobs(agent_id: str, limit: int = 50):
+@router.get("/{agent_id}/jobs", response_model=AgentJobsOut)
+async def agent_jobs(agent_id: str,
+                     limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE)):
     """Job history filtered to this agent, sourced from the unified Job store
     (`services.jobs` / `.runtime/jobs.jsonl`). Declared as a two-segment path so
     it never falls into the `/{agent_id}` catch-all. Interactive chat turns are
     not Jobs and never appear here."""
-    limit = max(1, min(limit, 200))
     records = jobs.read(agent_id=agent_id, limit=limit)
     return {"agent_id": agent_id, "jobs": records, "count": len(records)}
 
 
-@router.get("/{agent_id}/runs")
-async def agent_runs(agent_id: str, limit: int = 50):
+@router.get("/{agent_id}/runs", response_model=AgentRunsOut)
+async def agent_runs(agent_id: str,
+                     limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE)):
     """Recent activity feed for an agent: cron-runs JSONL (filtered) + last
     heartbeat from .runtime/heartbeats/{id}.json + heartbeat freshness flag.
     Powers per-agent activity cards on the Agents page."""
-    limit = max(1, min(limit, 200))
-
     # Heartbeat
     heartbeat = None
     heartbeat_age_s = None

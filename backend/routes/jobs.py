@@ -9,12 +9,14 @@ backward-compatible alias over the same data until Phase 5.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 import logging
 
+from routes.api_models import Job, Task
 from services import jobs, tasks, task_scope, agents_registry, usage_ledger
+from wsplatform.http import DEFAULT_PAGE, MAX_PAGE, Page, PageMeta
 
 log = logging.getLogger("workshop.routes.jobs")
 
@@ -234,15 +236,25 @@ _ACTIONS = {
 }
 
 
-@router.get("")
+@router.get("", response_model=Page[Job])
 async def list_jobs(
     agent_id: str | None = None,
     project_slug: str | None = None,
     status: str | None = None,
     task_id: str | None = None,
     parent_id: str | None = None,
-    limit: int = 50,
-) -> dict:
+    # ADR 0023 clause 2: a limit with no `le=` is what turns one bad client into
+    # an outage. The default is unchanged (it was already 50); the ceiling is new.
+    limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE),
+) -> Page[Job]:
+    """The run feed, newest first, filtered by any of agent / project / status /
+    task / parent.
+
+    `page.total` is null: `jobs.read` collapses an append-only log by id and
+    stops at `limit`, so counting the filtered set would mean a second full
+    pass over every line ever written. ADR 0023 clause 1 makes that legal and
+    says explicitly that a null total must not be read as zero.
+    """
     records = jobs.read(
         agent_id=agent_id,
         project_slug=project_slug,
@@ -254,10 +266,10 @@ async def list_jobs(
     names = _name_map()
     cache: dict = {}
     enriched = [_enrich(r, names, cache) for r in records]
-    return {"jobs": enriched, "count": len(enriched)}
+    return Page[Job](items=enriched, page=PageMeta(limit=limit, total=None))
 
 
-@router.get("/{job_id}")
+@router.get("/{job_id}", response_model=Job)
 async def get_job(job_id: str) -> dict:
     rec = jobs.get(job_id)
     if rec is None:
@@ -287,7 +299,29 @@ class JobTaskAction(BaseModel):
     note: str | None = None
 
 
-@router.post("/{job_id}/tasks/{task_id}/action")
+class JobTaskActionOut(BaseModel):
+    """The verb that was applied, the task in its resulting state, and whether
+    the job itself was cleared off the attention feed.
+
+    `ok` is ADR 0023 clause 7 debt (a 2xx already says ok) and is kept because
+    removing it is a wire-shape change to a route the frontend reads, which the
+    ADR's migration posture will not accept without the frontend edit in the
+    same commit."""
+
+    ok: bool
+    action: str
+    task: Task
+    job_cleared: bool
+
+
+class JobDismissOut(BaseModel):
+    """Same clause 7 debt as above; see `JobTaskActionOut`."""
+
+    ok: bool
+    dismissed: bool
+
+
+@router.post("/{job_id}/tasks/{task_id}/action", response_model=JobTaskActionOut)
 async def act_on_job_task(job_id: str, task_id: str, body: JobTaskAction) -> dict:
     """Resolve one awaiting_input job's bound task: approve / reject / unblock /
     cancel. Applies the status transition on the job's scope store (project or
@@ -347,7 +381,7 @@ async def act_on_job_task(job_id: str, task_id: str, body: JobTaskAction) -> dic
     return {"ok": True, "action": body.action, "task": updated, "job_cleared": job_cleared}
 
 
-@router.post("/{job_id}/dismiss")
+@router.post("/{job_id}/dismiss", response_model=JobDismissOut)
 async def dismiss_job(job_id: str) -> dict:
     """The always-available escape hatch: clear a job off the attention feed
     regardless of its binding or task state. Needed because a malformed

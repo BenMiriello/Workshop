@@ -63,7 +63,7 @@ def client(roots, monkeypatch):
 
 
 def _row(payload: dict, title: str) -> dict:
-    return next(t for t in payload["tasks"] if t["title"] == title)
+    return next(t for t in payload["items"] if t["title"] == title)
 
 
 # ---- state_type -------------------------------------------------------------
@@ -100,7 +100,7 @@ def test_state_type_is_on_every_list_row(client, roots):
     tasks.add(roots["workshop"], title="waiting")
     tasks.add(roots["workshop"], title="stuck", status="blocked")
     r = client.get("/api/tasks").json()
-    assert {t["title"]: t["state_type"] for t in r["tasks"]} == {
+    assert {t["title"]: t["state_type"] for t in r["items"]} == {
         "waiting": "unstarted", "stuck": "started"}
 
 
@@ -174,11 +174,11 @@ def test_the_ready_filter_returns_only_what_the_scheduler_could_pick(client, roo
     dep = tasks.add(roots["workshop"], title="upstream")
     tasks.add(roots["workshop"], title="waiting on it", depends_on=[dep["id"]])
     r = client.get("/api/tasks?ready=true").json()
-    assert sorted(t["title"] for t in r["tasks"]) == ["free", "upstream"]
-    assert r["total"] == 2
+    assert sorted(t["title"] for t in r["items"]) == ["free", "upstream"]
+    assert r["page"]["total"] == 2
     # And its complement, so the filter is a real predicate rather than a shortcut.
     not_ready = client.get("/api/tasks?ready=false").json()
-    assert sorted(t["title"] for t in not_ready["tasks"]) == ["drafted", "waiting on it"]
+    assert sorted(t["title"] for t in not_ready["items"]) == ["drafted", "waiting on it"]
 
 
 def test_ready_is_on_the_detail_record_too(client, roots):
@@ -284,7 +284,10 @@ def test_a_cross_scope_blocker_resolves_under_a_scope_filter(client, roots):
     tasks.add(roots["workshop"], title="Use the new field",
               depends_on=[upstream["id"]])
     r = client.get("/api/tasks?scope=workshop").json()
-    assert r["scopes"] == 1
+    # The retired top-level `scopes` COUNT now lives at GET /tasks/scopes, which
+    # NAMES the scopes instead of counting the ones one request swept (ADR 0023
+    # clause 1: a non-member of the collection is a different resource).
+    assert client.get("/api/tasks/scopes").json()["scopes"] == ["workshop", "project:other"]
     assert _row(r, "Use the new field")["blocked_by"][0]["scope"] == "project:other"
 
 
@@ -309,7 +312,7 @@ def test_a_done_dependency_is_visible_even_when_done_is_filtered_out(client, roo
     dep = tasks.add(roots["workshop"], title="landed", status="done")
     tasks.add(roots["workshop"], title="downstream", depends_on=[dep["id"]])
     r = client.get("/api/tasks?include_done=false").json()
-    assert [t["title"] for t in r["tasks"]] == ["downstream"]
+    assert [t["title"] for t in r["items"]] == ["downstream"]
     assert _row(r, "downstream")["ready"] is True
     assert _row(r, "downstream")["blocked_by"] == []
 
@@ -327,7 +330,7 @@ def test_queue_sorts_by_priority_then_oldest_first(client, roots):
                          (c["id"], "2026-08-01T00:00:00+00:00")):
         _set_created(roots["workshop"], tid, created)
     r = client.get("/api/tasks?sort=queue").json()
-    assert [t["title"] for t in r["tasks"]] == ["urgent", "old normal", "new normal"]
+    assert [t["title"] for t in r["items"]] == ["urgent", "old normal", "new normal"]
 
 
 def _set_created(root: Path, task_id: str, created: str) -> None:
@@ -345,22 +348,27 @@ def test_queue_puts_the_task_the_scheduler_would_claim_first(client, roots):
         _set_created(roots["workshop"], t["id"], f"2026-0{i + 1}-01T00:00:00+00:00")
     tasks.add(roots["workshop"], title="top priority", priority=8)
     r = client.get("/api/tasks?sort=queue&ready=true").json()
-    assert r["tasks"][0]["title"] == tasks.next_ready(roots["workshop"])["title"]
-    assert r["tasks"][0]["title"] == "top priority"
+    assert r["items"][0]["title"] == tasks.next_ready(roots["workshop"])["title"]
+    assert r["items"][0]["title"] == "top priority"
 
 
 def test_queue_is_a_known_sort_key(client, roots):
+    """The response no longer echoes `sort` back (ADR 0023 clause 1 dropped it as
+    an echo of the request), so the key being known is asserted by the request
+    being ACCEPTED: an unknown sort would raise out of `tasks.sort_tasks`."""
     assert "queue" in tasks.SORT_KEYS
     tasks.add(roots["workshop"], title="only")
-    assert client.get("/api/tasks?sort=queue").json()["sort"] == "queue"
+    r = client.get("/api/tasks?sort=queue")
+    assert r.status_code == 200
+    assert [t["title"] for t in r.json()["items"]] == ["only"]
 
 
 def test_queue_reversed_is_the_exact_inverse(client, roots):
     tasks.add(roots["workshop"], title="low", priority=1)
     tasks.add(roots["workshop"], title="high", priority=9)
-    fwd = [t["title"] for t in client.get("/api/tasks?sort=queue").json()["tasks"]]
+    fwd = [t["title"] for t in client.get("/api/tasks?sort=queue").json()["items"]]
     back = [t["title"] for t in
-            client.get("/api/tasks?sort=queue&desc=true").json()["tasks"]]
+            client.get("/api/tasks?sort=queue&desc=true").json()["items"]]
     assert fwd == ["high", "low"]
     assert back == list(reversed(fwd))
 

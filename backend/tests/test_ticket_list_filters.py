@@ -64,7 +64,7 @@ def eight(roots):
 
 
 def _titles(payload: dict) -> list[str]:
-    return sorted(t["title"] for t in payload["tasks"])
+    return sorted(t["title"] for t in payload["items"])
 
 
 # ---- single value: unchanged ------------------------------------------------
@@ -72,18 +72,18 @@ def _titles(payload: dict) -> list[str]:
 def test_one_status_behaves_exactly_as_before(client, eight):
     r = client.get("/api/tasks?status=blocked").json()
     assert _titles(r) == ["blocked"]
-    assert r["total"] == 1
+    assert r["page"]["total"] == 1
 
 
 def test_no_status_filters_nothing(client, eight):
-    assert len(client.get("/api/tasks").json()["tasks"]) == len(tasks.STATUSES)
+    assert len(client.get("/api/tasks").json()["items"]) == len(tasks.STATUSES)
 
 
 def test_an_empty_status_is_not_a_filter(client, eight):
     """`?status=` (and `?status=,,`) is what a UI sends for "no filter"; it must
     not narrow to nothing."""
-    assert len(client.get("/api/tasks?status=").json()["tasks"]) == len(tasks.STATUSES)
-    assert len(client.get("/api/tasks?status=,,").json()["tasks"]) == len(tasks.STATUSES)
+    assert len(client.get("/api/tasks?status=").json()["items"]) == len(tasks.STATUSES)
+    assert len(client.get("/api/tasks?status=,,").json()["items"]) == len(tasks.STATUSES)
 
 
 # ---- comma-separated status -------------------------------------------------
@@ -91,7 +91,7 @@ def test_an_empty_status_is_not_a_filter(client, eight):
 def test_status_accepts_the_active_set_in_one_request(client, eight):
     r = client.get("/api/tasks?status=todo,blocked,doing,in_review").json()
     assert _titles(r) == ["blocked", "doing", "in_review", "todo"]
-    assert r["total"] == 4
+    assert r["page"]["total"] == 4
 
 
 def test_whitespace_around_a_comma_is_tolerated(client, eight):
@@ -102,7 +102,7 @@ def test_whitespace_around_a_comma_is_tolerated(client, eight):
 def test_a_repeated_status_is_still_one_row(client, eight):
     r = client.get("/api/tasks?status=todo,todo").json()
     assert _titles(r) == ["todo"]
-    assert r["total"] == 1
+    assert r["page"]["total"] == 1
 
 
 def test_an_unknown_status_is_a_400_that_names_it(client, eight):
@@ -126,13 +126,13 @@ def test_the_active_view_is_one_state_type_pair(client, eight):
     """What the UI's default view means, said in the vocabulary it means it in."""
     r = client.get("/api/tasks?state_type=unstarted,started").json()
     assert _titles(r) == ["blocked", "doing", "in_review", "todo"]
-    assert r["total"] == 4
+    assert r["page"]["total"] == 4
 
 
 def test_state_type_agrees_with_the_state_type_on_the_rows(client, eight):
     """One map, so a filtered view can never contain a row that contradicts it."""
     for st in tasks.STATE_TYPES:
-        rows = client.get(f"/api/tasks?state_type={st}").json()["tasks"]
+        rows = client.get(f"/api/tasks?state_type={st}").json()["items"]
         assert {row["state_type"] for row in rows} == {st}
 
 
@@ -162,7 +162,7 @@ def test_the_filter_composes_with_scope(client, roots):
     tasks.add(roots["project:other"], title="there started", status="doing")
     r = client.get("/api/tasks?scope=workshop&state_type=started").json()
     assert _titles(r) == ["here started"]
-    assert r["total"] == 1
+    assert r["page"]["total"] == 1
 
 
 def test_the_filter_composes_with_q(client, eight):
@@ -180,10 +180,10 @@ def test_include_done_false_still_drops_terminal_rows(client, eight):
 
 def test_total_is_the_size_of_the_filtered_set(client, eight):
     r = client.get("/api/tasks?state_type=unstarted,started").json()
-    assert r["total"] == 4
-    assert r["count"] == 4
+    assert r["page"]["total"] == 4
+    assert len(r["items"]) == 4
     # Not the unfiltered size, which is what a client-side narrowing reports.
-    assert r["total"] != len(tasks.STATUSES)
+    assert r["page"]["total"] != len(tasks.STATUSES)
 
 
 def test_paging_pages_the_filtered_set_not_everything(client, eight):
@@ -195,9 +195,9 @@ def test_paging_pages_the_filtered_set_not_everything(client, eight):
         page = client.get(
             f"/api/tasks?state_type=unstarted,started&sort=created&limit=2"
             f"&offset={offset}").json()
-        assert page["total"] == 4
-        assert page["count"] == 2
-        seen += [t["title"] for t in page["tasks"]]
+        assert page["page"]["total"] == 4
+        assert len(page["items"]) == 2
+        seen += [t["title"] for t in page["items"]]
     assert sorted(seen) == ["blocked", "doing", "in_review", "todo"]
 
 
@@ -207,6 +207,6 @@ def test_the_filter_runs_before_the_sort(client, eight):
     filtered order is known."""
     r = client.get("/api/tasks?status=todo,doing,done&sort=status").json()
     # _STATUS_RANK: doing (1) < todo (3) < done (6/terminal-last).
-    ranks = [tasks._STATUS_RANK.get(t["status"], 99) for t in r["tasks"]]
+    ranks = [tasks._STATUS_RANK.get(t["status"], 99) for t in r["items"]]
     assert ranks == sorted(ranks)
-    assert [t["title"] for t in r["tasks"]][0] == "doing"
+    assert [t["title"] for t in r["items"]][0] == "doing"

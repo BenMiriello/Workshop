@@ -61,14 +61,14 @@ def test_sort_by_priority_puts_the_biggest_first(client, roots):
     tasks.add(roots["workshop"], title="high", priority=9)
     tasks.add(roots["workshop"], title="mid", priority=5)
     r = client.get("/api/tasks?sort=priority")
-    assert [t["title"] for t in r.json()["tasks"]] == ["high", "mid", "low"]
+    assert [t["title"] for t in r.json()["items"]] == ["high", "mid", "low"]
 
 
 def test_sort_by_title_is_alphabetical_and_case_insensitive(client, roots):
     for name in ("banana", "Apple", "cherry"):
         tasks.add(roots["workshop"], title=name)
     r = client.get("/api/tasks?sort=title")
-    assert [t["title"] for t in r.json()["tasks"]] == ["Apple", "banana", "cherry"]
+    assert [t["title"] for t in r.json()["items"]] == ["Apple", "banana", "cherry"]
 
 
 def test_sort_by_status_leads_with_what_is_stuck(client, roots):
@@ -76,38 +76,40 @@ def test_sort_by_status_leads_with_what_is_stuck(client, roots):
     tasks.add(roots["workshop"], title="waiting", status="todo")
     tasks.add(roots["workshop"], title="stuck", status="blocked")
     r = client.get("/api/tasks?sort=status")
-    assert [t["title"] for t in r.json()["tasks"]] == ["stuck", "waiting", "finished"]
+    assert [t["title"] for t in r.json()["items"]] == ["stuck", "waiting", "finished"]
 
 
 def test_an_unknown_sort_key_falls_back_instead_of_erroring(client, roots):
     tasks.add(roots["workshop"], title="only")
     r = client.get("/api/tasks?sort=nonsense")
     assert r.status_code == 200
-    assert len(r.json()["tasks"]) == 1
+    assert len(r.json()["items"]) == 1
 
 
 def test_limit_pages_and_total_reports_the_whole_filtered_set(client, roots):
     for i in range(5):
         tasks.add(roots["workshop"], title=f"t{i}", priority=i)
     r = client.get("/api/tasks?sort=priority&limit=2").json()
-    assert [t["title"] for t in r["tasks"]] == ["t4", "t3"]
-    assert r["count"] == 2
-    # `total` is the filtered set BEFORE paging, which is what a "showing 2 of 5"
-    # line needs. `count` is this page.
-    assert r["total"] == 5
+    assert [t["title"] for t in r["items"]] == ["t4", "t3"]
+    assert len(r["items"]) == 2
+    # `page.total` is the filtered set BEFORE paging, which is what a
+    # "showing 2 of 5" line needs. `len(items)` is this page; ADR 0023 dropped
+    # the old top-level `count` because a derivable field can disagree.
+    assert r["page"]["total"] == 5
+    assert r["page"]["limit"] == 2
 
     nxt = client.get("/api/tasks?sort=priority&limit=2&offset=2").json()
-    assert [t["title"] for t in nxt["tasks"]] == ["t2", "t1"]
-    assert nxt["total"] == 5
-    assert nxt["offset"] == 2
+    assert [t["title"] for t in nxt["items"]] == ["t2", "t1"]
+    assert nxt["page"]["total"] == 5
+    assert nxt["page"]["offset"] == 2
 
 
 def test_offset_past_the_end_is_an_empty_page_not_an_error(client, roots):
     tasks.add(roots["workshop"], title="only")
     r = client.get("/api/tasks?offset=50")
     assert r.status_code == 200
-    assert r.json()["tasks"] == []
-    assert r.json()["total"] == 1
+    assert r.json()["items"] == []
+    assert r.json()["page"]["total"] == 1
 
 
 def test_q_matches_title_or_body_case_insensitively(client, roots):
@@ -115,15 +117,15 @@ def test_q_matches_title_or_body_case_insensitively(client, roots):
     tasks.add(roots["workshop"], title="Unrelated", body="mentions the ALERTER here")
     tasks.add(roots["workshop"], title="Nothing to do with it", body="quiet")
     r = client.get("/api/tasks?q=alerter").json()
-    assert {t["title"] for t in r["tasks"]} == {"Rebuild the alerter", "Unrelated"}
-    assert r["total"] == 2
+    assert {t["title"] for t in r["items"]} == {"Rebuild the alerter", "Unrelated"}
+    assert r["page"]["total"] == 2
 
 
 def test_q_composes_with_the_status_filter(client, roots):
     tasks.add(roots["workshop"], title="alerter one", status="done")
     tasks.add(roots["workshop"], title="alerter two", status="todo")
     r = client.get("/api/tasks?q=alerter&status=todo").json()
-    assert [t["title"] for t in r["tasks"]] == ["alerter two"]
+    assert [t["title"] for t in r["items"]] == ["alerter two"]
 
 
 # ---- discussion -------------------------------------------------------------

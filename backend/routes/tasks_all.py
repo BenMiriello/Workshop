@@ -29,12 +29,15 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from routes.api_models import (DeletedOut, Job, LabelCount, Readiness, Task,
+                               TaskLink)
 from services import (tasks, task_scope, task_dedup, jobs, ownership,
                       knowledge, learnings, permissions, ticket_readiness,
                       latitude as latitude_svc)
+from wsplatform.http import DEFAULT_PAGE, MAX_PAGE, Page, PageMeta
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -256,7 +259,7 @@ def _csv_filter(raw: str | None, allowed, label: str) -> set[str] | None:
     return set(vals)
 
 
-@router.get("")
+@router.get("", response_model=Page[Task])
 async def list_all(
     status: str | None = None,
     state_type: str | None = None,
@@ -269,9 +272,17 @@ async def list_all(
     ready: bool | None = None,
     sort: str = "updated",
     desc: bool | None = None,
-    limit: int | None = None,
+    # WAS `limit: int | None = None`, i.e. genuinely unbounded: omitting the
+    # parameter returned the ENTIRE task set across every scope, bodies,
+    # comments and evidence inline. ADR 0023 clause 2 names this exact
+    # signature as the concrete violation that "disappears", and gives the
+    # replacement verbatim: `Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE)`. Both
+    # constants come from `wsplatform.http` so this router cannot invent the
+    # ninth default. THIS IS A BEHAVIOUR CHANGE on a live surface: a caller
+    # that sent no `limit` used to get everything and now gets 50.
+    limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE),
     offset: int = 0,
-) -> dict:
+) -> Page[Task]:
     """Tasks across every scope, each tagged with its resolved `scope` key.
 
     Filters: `status` (comma-separated, from the eight task statuses),
@@ -304,10 +315,38 @@ async def list_all(
     Every row carries the derived `state_type`, `ready` and `blocked_by`
     (`_with_triage`). None of the three is stored.
 
-    `total` is the size of the filtered set BEFORE paging; `count` is how many
-    are in this page. The list used to return raw file order with no way to page,
-    so a caller that wanted the newest ticket got the oldest and a caller with
-    more than a screenful got an arbitrary slice.
+    `page.total` is the size of the filtered set BEFORE paging. The list used to
+    return raw file order with no way to page, so a caller that wanted the newest
+    ticket got the oldest and a caller with more than a screenful got an
+    arbitrary slice.
+
+    THE ENVELOPE, AND WHAT HAPPENED TO THE OTHER FOUR KEYS. This response was
+    `{tasks, count, total, scopes, offset, sort}` -- by ADR 0023's own account
+    the best envelope in a 415-route surface, and the only one that separated
+    the page from the total. It is SUPERSEDED rather than generalised, per
+    clause 1, and each key went somewhere deliberate:
+
+      tasks  -> `items`. An entity-named collection key cannot be typed
+                generically, and a generic `Page<T>` in the generated client is
+                the whole prize; entity-named keys are also the mechanism that
+                produced 52 distinct envelope names across 39 routers.
+      total  -> `page.total`, carried forward verbatim. This is the separation
+                the ADR says was right here first.
+      offset -> `page.offset`. Offset paging survives on this route because it
+                already exists (clause 2 grandfathers it and forbids new ones);
+                it moves inside `page` so the top level is exactly `items` +
+                `page`.
+      count  -> DELETED. It was `len(items)`, and a derivable field is a field
+                that can disagree with what it describes.
+      sort   -> DELETED. It echoed back what the caller sent.
+      scopes -> MOVED to `GET /tasks/scopes`, which already existed. It was a
+                count of the scopes this request swept, which is not a member of
+                this collection, and anything that is not a member of the
+                collection is a different resource with its own endpoint. That
+                route NAMES the scopes rather than counting them, which is
+                strictly more information; the one thing it does not reproduce
+                is the narrowing a `?scope=` query applied here, and that is a
+                number the caller already knows, because it sent it.
     """
     want_status = _csv_filter(status, tasks.STATUSES, "status")
     want_type = _csv_filter(state_type, tasks.STATE_TYPES, "state_type")
@@ -318,7 +357,6 @@ async def list_all(
     want_labels = {v.strip() for v in (labels or "").split(",") if v.strip()} or None
     want_assignee = {v.strip() for v in (assignee or "").split(",") if v.strip()} or None
     out: list[dict] = []
-    scopes = 0
     lat_cache: dict[str, str | None] = {}
     needle = (q or "").strip().casefold()
     # ONE index per request, built while the scopes are being read anyway.
@@ -329,7 +367,6 @@ async def list_all(
     for skey, root in _scope_roots():
         if scope and skey != scope:
             continue
-        scopes += 1
         try:
             # The FULL store, even when include_done is false: `ready` and
             # `blocked_by` both have to see a FINISHED dependency to know it is
@@ -396,12 +433,38 @@ async def list_all(
     out = tasks.sort_tasks(out, sort, desc)
     total = len(out)
     start = max(0, int(offset or 0))
-    page = out[start:start + limit] if limit and limit > 0 else out[start:]
-    return {"tasks": page, "count": len(page), "total": total, "scopes": scopes,
-            "offset": start, "sort": sort}
+    rows = out[start:start + limit]
+    return Page[Task](
+        items=rows,
+        page=PageMeta(limit=limit, total=total, offset=start),
+    )
 
 
-@router.get("/scopes")
+class ScopePickup(BaseModel):
+    """Whether work filed to a scope can be run by hand, and whether anything
+    will pick it up unattended. See `scope_pickup` for why those are two
+    questions and not one."""
+
+    scope: str | None = None
+    runnable: bool
+    automatic: bool
+    why: str
+
+
+class ScopesOut(BaseModel):
+    """The scope keys with a task store, plus their pickup facts.
+
+    This route is also where `GET /tasks`'s retired `scopes` key went: that was
+    a COUNT of the scopes a list request swept, and this names them instead.
+    ADR 0023 clause 1: anything that is not a member of the collection is a
+    different resource with its own endpoint, and this endpoint already existed,
+    which is what made the split cheap."""
+
+    scopes: list[str]
+    pickup: dict[str, ScopePickup]
+
+
+@router.get("/scopes", response_model=ScopesOut)
 async def list_scopes() -> dict:
     """The scope keys that currently have a task store, for the create/filter
     controls. Cheap directory + registry scan, no task load.
@@ -413,7 +476,11 @@ async def list_scopes() -> dict:
     return {"scopes": keys, "pickup": {k: scope_pickup(k) for k in keys}}
 
 
-@router.get("/labels")
+class LabelsOut(BaseModel):
+    labels: list[LabelCount]
+
+
+@router.get("/labels", response_model=LabelsOut)
 async def list_labels(scope: str | None = None) -> dict:
     """Every label in use, with how many tickets carry it.
 
@@ -442,7 +509,11 @@ async def list_labels(scope: str | None = None) -> dict:
     return {"labels": [{"label": k, "count": n} for k, n in ordered]}
 
 
-@router.get("/assignees")
+class AssigneesOut(BaseModel):
+    assignees: list[LabelCount]
+
+
+@router.get("/assignees", response_model=AssigneesOut)
 async def list_assignees(scope: str | None = None) -> dict:
     """Every assignee in use, with how many tickets each holds.
 
@@ -498,7 +569,21 @@ class TaskCreateIn(BaseModel):
     latitude: str | None = None
 
 
-@router.post("")
+class TaskCreateOut(BaseModel):
+    """The filed task plus the dedup verdict that produced it.
+
+    `task` is null only when dedup declined to create one (an exact match with
+    nothing to return); `decision` is exact | merge | related | distinct, and
+    `matched_id` / `cosine` describe what it matched against."""
+
+    task: Task | None = None
+    decision: str | None = None
+    matched_id: str | None = None
+    cosine: float | None = None
+    message: str | None = None
+
+
+@router.post("", response_model=TaskCreateOut)
 async def create(body: TaskCreateIn) -> dict:
     """File a task into a scope through the dedup path, so a manual ticket
     dedupes against open tasks exactly like a chat-filed one. Returns the task
@@ -636,7 +721,7 @@ def _detail(task: dict, scope: str, root: Path) -> dict:
     return _with_latitude(rec, scope)
 
 
-@router.get("/{scope}/{task_id}")
+@router.get("/{scope}/{task_id}", response_model=Task)
 async def get_one(scope: str, task_id: str) -> dict:
     root = _require_root(scope)
     t = tasks.get_task(root, task_id)
@@ -781,7 +866,7 @@ def _pending_tracker_fields(root: Path, task_id: str, body: TaskPatchIn) -> dict
     return pending
 
 
-@router.patch("/{scope}/{task_id}")
+@router.patch("/{scope}/{task_id}", response_model=Task)
 async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
     root = _require_root(scope)
     if all(v is None for v in (
@@ -871,7 +956,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
     return _detail(t, scope, root)
 
 
-@router.delete("/{scope}/{task_id}")
+@router.delete("/{scope}/{task_id}", response_model=DeletedOut)
 async def delete_one(scope: str, task_id: str) -> dict:
     root = _require_root(scope)
     if not tasks.remove(root, task_id):
@@ -886,7 +971,7 @@ class TaskCommentIn(BaseModel):
     author: str | None = None
 
 
-@router.post("/{scope}/{task_id}/comments")
+@router.post("/{scope}/{task_id}/comments", response_model=Task)
 async def add_task_comment(scope: str, task_id: str, body: TaskCommentIn) -> dict:
     """Append a comment to a ticket's discussion.
 
@@ -905,7 +990,7 @@ async def add_task_comment(scope: str, task_id: str, body: TaskCommentIn) -> dic
     return _detail(rec, scope, root)
 
 
-@router.delete("/{scope}/{task_id}/comments/{comment_id}")
+@router.delete("/{scope}/{task_id}/comments/{comment_id}", response_model=Task)
 async def delete_task_comment(scope: str, task_id: str, comment_id: str) -> dict:
     root = _require_root(scope)
     rec = tasks.delete_comment(root, task_id, comment_id)
@@ -914,7 +999,17 @@ async def delete_task_comment(scope: str, task_id: str, comment_id: str) -> dict
     return _detail(rec, scope, root)
 
 
-@router.get("/{scope}/{task_id}/jobs")
+class TaskJobsOut(BaseModel):
+    """The runs this ticket produced. NOT the ADR 0023 collection envelope: the
+    shape is left as it is because changing it is a wire change to a route
+    TicketDetail reads, and the ADR's one non-optional migration rule is that
+    such a change lands with its frontend edit in the same commit."""
+
+    jobs: list[Job]
+    count: int
+
+
+@router.get("/{scope}/{task_id}/jobs", response_model=TaskJobsOut)
 async def task_jobs(scope: str, task_id: str) -> dict:
     """The Jobs (runs) this task produced, enriched like the /jobs feed so each
     run carries its title, status, and receipt summary."""
@@ -981,7 +1076,24 @@ def _grantee(task: dict, scope: str) -> str:
     return a if a.startswith("agent:") else scope
 
 
-@router.post("/{scope}/{task_id}/review")
+class TaskReviewOut(BaseModel):
+    """What the review verb did. `grant` (the minted standing grant),
+    `learning` (the recorded rule) and `promotion` (whether that rule has now
+    proved itself) are present only for the verb that produces them.
+
+    `grant` and `learning` stay `dict`: they are whole records owned by
+    `services/permissions.py` and `services/learnings.py`, and narrowing them
+    from this router is how a response_model silently drops a field its owner
+    added."""
+
+    action: str
+    task: Task
+    grant: dict | None = None
+    learning: dict | None = None
+    promotion: bool | None = None
+
+
+@router.post("/{scope}/{task_id}/review", response_model=TaskReviewOut)
 async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
     """Answer a blocked task. Returns {action, task, grant?, learning?, promotion?}.
 
@@ -1127,7 +1239,15 @@ class DuplicateOfIn(BaseModel):
     target_scope: str | None = None
 
 
-@router.post("/{scope}/{task_id}/duplicate-of")
+class MarkDuplicateOut(BaseModel):
+    """The folded ticket in its cancelled state, and a stub of the canonical one
+    it now points at."""
+
+    task: Task
+    canonical: TaskLink
+
+
+@router.post("/{scope}/{task_id}/duplicate-of", response_model=MarkDuplicateOut)
 async def mark_duplicate(scope: str, task_id: str, body: DuplicateOfIn) -> dict:
     """Fold this ticket into the canonical one: link, cancel, and say so.
 
@@ -1480,7 +1600,28 @@ class TaskApproveIn(BaseModel):
     run: bool = False
 
 
-@router.post("/{scope}/{task_id}/approve")
+class TaskRunOut(BaseModel):
+    """A launched sweep: the Job opened for it and what it was launched against.
+
+    `ok` is ADR 0023 clause 7 debt; see `routes/api_models.OkOut`."""
+
+    ok: bool
+    job_id: str
+    scope: str
+    task_id: str
+
+
+class TaskApproveOut(BaseModel):
+    """The approved ticket, the PRE-approval readiness report the operator is
+    being told about (advisory, it never refuses the approval), and the run when
+    `run: true` asked for one."""
+
+    task: Task
+    readiness: Readiness
+    run: TaskRunOut | None = None
+
+
+@router.post("/{scope}/{task_id}/approve", response_model=TaskApproveOut)
 async def approve_task(scope: str, task_id: str, body: TaskApproveIn | None = None) -> dict:
     """Approve a draft: the operator agrees this work should happen. `draft` ->
     `todo`, which is the only thing that makes a ticket eligible to be run.
@@ -1528,7 +1669,7 @@ async def approve_task(scope: str, task_id: str, body: TaskApproveIn | None = No
     return out
 
 
-@router.post("/{scope}/{task_id}/run")
+@router.post("/{scope}/{task_id}/run", response_model=TaskRunOut)
 async def run_task(scope: str, task_id: str) -> dict:
     """Run exactly this task now. 409 if a sweep already holds the tree. Single
     operator: no confirmation gate, no allowlist.

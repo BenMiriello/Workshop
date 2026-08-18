@@ -159,7 +159,7 @@ def test_the_detail_response_reports_readiness(client):
 def test_the_list_response_reports_readiness(client):
     c, root = client
     tasks.add(root, title="Fix the thing")
-    rows = c.get("/api/tasks?scope=development").json()["tasks"]
+    rows = c.get("/api/tasks?scope=development").json()["items"]
     assert rows, "no rows came back"
     assert all("readiness" in r for r in rows), "a row arrived with no readiness"
     bad = [r for r in rows if r["readiness"]["ok"] is False]
@@ -171,7 +171,7 @@ def test_a_row_and_its_page_agree(client):
     page it opens says otherwise, which is worse than showing neither."""
     c, root = client
     t = tasks.add(root, **WELL_SPECIFIED)
-    row = next(r for r in c.get("/api/tasks?scope=development").json()["tasks"]
+    row = next(r for r in c.get("/api/tasks?scope=development").json()["items"]
                if r["id"] == t["id"])
     page = c.get(f"/api/tasks/development/{t['id']}").json()
     assert row["readiness"]["ok"] == page["readiness"]["ok"]
