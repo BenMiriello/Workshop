@@ -78,6 +78,7 @@
 - [Queue state must be visible with obvious affordances](queue-state-must-be-visible-with-obvious-afforda-1a0028fb29f.md)
 - [read_thread reports active_run non-atomically with the committed reply](read-thread-reports-active-run-non-atomically-wi-19ff6e56d74.md)
 - [Research-first before design or styling decisions](research-first-before-design-or-styling-decision-1a0028fb2ea.md)
+- [response_model on a route is not enough: its fields must be typed too](response-model-on-a-route-is-not-enough-its-fiel-1a013175a03.md)
 - [Reversibility gate denies actions when unwatched](reversibility-gate-denies-actions-when-unwatched-1a0028fb2d9.md)
 - [Run/job/chat linkage is a separate workstream](run-job-chat-linkage-is-a-separate-workstream-1a0028fb2b0.md)
 - [Scope is a location: Workshop and Projects only](scope-is-a-location-workshop-and-projects-only-1a0028fb2d1.md)

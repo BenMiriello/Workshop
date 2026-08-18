@@ -1,0 +1,10 @@
+<!-- author: self; chat: 70a3bfc156e341b6949bf6f944ac6888 -->
+ADR 0023 clause 6 and `check_response_model.py` operate on ROUTES: they ask whether a route names a real Pydantic model, and reject `response_model=dict` because it satisfies the keyword while generating `unknown` in the client.
+
+Measured 2026-08-18, once 268 of 411 routes had a real model: **the same defect was alive one level down.** A route can declare a perfectly good model whose FIELDS are `dict[str, Any]` / `list[dict]` / bare `Any`. openapi-typescript renders those as `Record<string, never>` (a type whose every property is `never`) or `unknown`. The frontend then hand-writes the shape anyway, so the drift the whole item exists to remove survives intact, having moved from the route to its fields. 98 field slots across 55 schemas were in that state.
+
+**The fix pattern**, when a payload has a known core and an open tail: declare the core fields AND set `model_config = ConfigDict(extra="allow")`. That generates a typed floor plus a `[key: string]: unknown` index signature. Verified that pydantic retains extras through both `model_dump()` and `model_dump(exclude_unset=True)` (the mode these routes serialise in), so unlike a closed model it **cannot drop a field**. This matters wherever the writer is open-ended: `set_turn_marks(**fields)` takes arbitrary kwargs, and a card kind owns the shape of its own state.
+
+**Read the model off the WRITERS and confirm against live data**, never off the frontend's types (which are the thing known to have drifted). An under-declared response model is not a documentation gap: FastAPI filters the return value through it and silently drops unnamed keys, so it is a live API field that disappears with a green test suite.
+
+**Enforced by** `scripts/check_opaque_fields.py`, ratcheted at 98, wired into `reviewer.sh` as `opaque_fields`. It is a ratchet permanently, not on the way to zero: some payloads are deliberately open (`ThreadEvents.events`, because the renderer splits replies on positional fields a closed model would drop, which is the 2026-08-14 regression).
