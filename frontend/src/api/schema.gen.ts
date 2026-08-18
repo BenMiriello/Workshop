@@ -8234,6 +8234,28 @@ export interface components {
             text: string;
         };
         /**
+         * Backlink
+         * @description A note whose wikilink resolves here, and the line it does it on. At most
+         *     one entry per referring note, even when it links several times.
+         */
+        Backlink: {
+            /** Context */
+            context: string;
+            /** Line */
+            line: number;
+            /** Path */
+            path: string;
+        };
+        /** Backlinks */
+        Backlinks: {
+            /** Backlinks */
+            backlinks: components["schemas"]["Backlink"][];
+            /** Count */
+            count: number;
+            /** Path */
+            path: string;
+        };
+        /**
          * BaseApp
          * @description One top-level directory containing a `.git/`. The git fields are absent
          *     when `git log` failed (a repo with no commits, or a timeout), which is why
@@ -8752,6 +8774,15 @@ export interface components {
         BuildTasksOut: {
             /** Tasks */
             tasks: components["schemas"]["Task"][];
+        };
+        /**
+         * Capabilities
+         * @description What this provider exposes, in the "<app>.<verb>" shape used across the
+         *     Workshop. Every entry maps to a route in this file.
+         */
+        Capabilities: {
+            /** Provides */
+            provides: string[];
         };
         /**
          * CardState
@@ -10438,6 +10469,23 @@ export interface components {
              */
             unrestricted_tools: boolean;
         };
+        /**
+         * Note
+         * @description One note in full, with its outgoing links already resolved so the reader
+         *     does not need a second call to render them.
+         */
+        Note: {
+            /** Content */
+            content: string;
+            /** Links */
+            links: components["schemas"]["NoteLink"][];
+            /** Modified */
+            modified: number;
+            /** Path */
+            path: string;
+            /** Title */
+            title: string;
+        };
         /** NoteCreate */
         NoteCreate: {
             /**
@@ -10448,6 +10496,51 @@ export interface components {
             /** Path */
             path: string;
         };
+        /** NoteDeleted */
+        NoteDeleted: {
+            /** Deleted */
+            deleted: boolean;
+            /** Path */
+            path: string;
+        };
+        /**
+         * NoteLink
+         * @description One outgoing wikilink. `raw` is what was written between the brackets,
+         *     `target` is it stripped of any `#heading` / `|alias`, and `resolved` is the
+         *     vault-relative path it points at -- null when nothing matches, which is what
+         *     makes a broken link visible rather than silently dropped.
+         */
+        NoteLink: {
+            /** Raw */
+            raw: string;
+            /** Resolved */
+            resolved?: string | null;
+            /** Target */
+            target?: string | null;
+        };
+        /** NoteList */
+        NoteList: {
+            /** Count */
+            count: number;
+            /** Notes */
+            notes: components["schemas"]["NoteMeta"][];
+        };
+        /**
+         * NoteMeta
+         * @description A note as the LIST sees it: cheap metadata, no content. `title` is the
+         *     note's first-line name, which is also what `update_note` syncs the filename
+         *     to.
+         */
+        NoteMeta: {
+            /** Modified */
+            modified: number;
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
+            /** Title */
+            title: string;
+        };
         /** NoteRename */
         NoteRename: {
             /** To */
@@ -10457,6 +10550,25 @@ export interface components {
         NoteUpdate: {
             /** Content */
             content: string;
+        };
+        /**
+         * NoteWritten
+         * @description The result of a create, update or rename. `links_updated` and
+         *     `notes_rewritten` appear only when the write MOVED the file -- an explicit
+         *     rename, or an update whose new first line changed the name -- since only a
+         *     move rewrites referring wikilinks.
+         */
+        NoteWritten: {
+            /** Links Updated */
+            links_updated?: number | null;
+            /** Modified */
+            modified: number;
+            /** Notes Rewritten */
+            notes_rewritten?: number | null;
+            /** Path */
+            path: string;
+            /** Title */
+            title: string;
         };
         /**
          * OkOut
@@ -11526,6 +11638,19 @@ export interface components {
             /** Scopes */
             scopes: string[];
         };
+        /**
+         * SearchHit
+         * @description One MATCHING LINE, not one matching note: a note that matches twice
+         *     appears twice, which is why `limit` bounds lines rather than files.
+         */
+        SearchHit: {
+            /** Line */
+            line: number;
+            /** Path */
+            path: string;
+            /** Snippet */
+            snippet: string;
+        };
         /** SearchIn */
         SearchIn: {
             /**
@@ -11535,6 +11660,15 @@ export interface components {
             limit: number;
             /** Query */
             query: string;
+        };
+        /** SearchResults */
+        SearchResults: {
+            /** Count */
+            count: number;
+            /** Query */
+            query: string;
+            /** Results */
+            results: components["schemas"]["SearchHit"][];
         };
         /**
          * ServiceLog
@@ -22146,7 +22280,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["Backlinks"];
                 };
             };
             /** @description Validation Error */
@@ -22175,7 +22309,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["Capabilities"];
                 };
             };
         };
@@ -22195,7 +22329,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["NoteList"];
                 };
             };
         };
@@ -22219,7 +22353,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["NoteWritten"];
                 };
             };
             /** @description Validation Error */
@@ -22250,7 +22384,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["Note"];
                 };
             };
             /** @description Validation Error */
@@ -22285,7 +22419,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["NoteWritten"];
                 };
             };
             /** @description Validation Error */
@@ -22316,7 +22450,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["NoteDeleted"];
                 };
             };
             /** @description Validation Error */
@@ -22351,7 +22485,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["NoteWritten"];
                 };
             };
             /** @description Validation Error */
@@ -22383,7 +22517,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["SearchResults"];
                 };
             };
             /** @description Validation Error */
