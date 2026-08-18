@@ -3,6 +3,7 @@ import { usePoll } from "../lib/usePoll";
 import { Power, Cpu, Play, Square } from "lucide-react";
 import { Button, ConfirmDialog, Notice, Select, StatusDot, Toggle } from "@workshop/ui";
 import { describeAutonomy } from "../lib/autonomy";
+import { formatMiB, formatVramBytes } from "../lib/bytes";
 import { SettingsSection, SettingsRow as Row } from "./AppSettings";
 
 // Autonomy & GPU controls. The global cron-autonomy pause (AUTONOMY_DISABLED)
@@ -71,16 +72,6 @@ type OllamaStatus = {
     utilization_pct?: number;
     error?: string;
   };
-};
-
-const fmtMiB = (m: number | undefined) =>
-  m == null ? "–" : m >= 1024 ? `${(m / 1024).toFixed(1)} GiB` : `${m} MiB`;
-
-const fmtBytes = (b: number | null) => {
-  if (b == null) return "–";
-  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(1)} GiB`;
-  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(0)} MiB`;
-  return `${b} B`;
 };
 
 type BrokerLease = {
@@ -444,7 +435,7 @@ export default function AutonomyControls() {
         ) : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
             <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
-              {fmtMiB(oll.gpu.memory_used_mib)} / {fmtMiB(oll.gpu.memory_total_mib)}
+              {formatMiB(oll.gpu.memory_used_mib)} / {formatMiB(oll.gpu.memory_total_mib)}
               {" · "}{oll.gpu.utilization_pct}% util
             </span>
             <Button
@@ -466,7 +457,7 @@ export default function AutonomyControls() {
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
             <StatusDot status="ok">up</StatusDot>
             <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
-              mode={bro.mode} · committed {fmtMiB(bro.committed_mib)}/{fmtMiB(bro.total_vram_mib)}
+              mode={bro.mode} · committed {formatMiB(bro.committed_mib)}/{formatMiB(bro.total_vram_mib)}
               {" · "}q={bro.queue_depth} · {bro.active_lease_count} lease{bro.active_lease_count === 1 ? "" : "s"}
             </span>
           </span>
@@ -519,7 +510,7 @@ export default function AutonomyControls() {
             <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
               {bro.my_leases.map((l) => (
                 <span key={l.id} style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.78rem" }}>
-                  {l.app} · {fmtMiB(l.vram_budget_mib)} budget · {fmtMiB(l.vram_actual_mib)} actual · pri {l.priority}
+                  {l.app} · {formatMiB(l.vram_budget_mib)} budget · {formatMiB(l.vram_actual_mib)} actual · pri {l.priority}
                   {l.implicit ? " · implicit" : ""}
                 </span>
               ))}
@@ -580,7 +571,7 @@ export default function AutonomyControls() {
             {oll.loaded_models.map((m) => (
               <span key={m.name} style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>
                 <Cpu size={11} strokeWidth={1.8} style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
-                {m.name} · {fmtBytes(m.size_vram_bytes)}
+                {m.name} · {formatVramBytes(m.size_vram_bytes)}
               </span>
             ))}
           </div>

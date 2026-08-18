@@ -3,7 +3,8 @@ import { Pin, PinOff, Trash2, Save, MapPin } from "lucide-react";
 import { useCrumbTrail, type Crumb } from "../../../components/appNav";
 import { Segmented, Stepper, ConfirmDialog } from "@workshop/ui";
 import { API, jget, pct, SpeciesLink, BirdThumb } from "./ui";
-import { useRecStatus, fmtBytes, PlayButton } from "./recordings";
+import { useRecStatus, PlayButton } from "./recordings";
+import { formatBytes } from "../../../lib/bytes";
 import BirdsHeader from "./BirdsHeader";
 import { usePoll } from "../../../lib/usePoll";
 
@@ -91,7 +92,7 @@ export default function Recordings() {
                   </div>
                 </SpeciesLink>
                 <span className="pill neutral" style={{ flexShrink: 0 }}>{pct(r.confidence)}</span>
-                <span className="muted" style={{ fontSize: ".75rem", minWidth: 56, textAlign: "right", flexShrink: 0 }}>{fmtBytes(r.bytes)}</span>
+                <span className="muted" style={{ fontSize: ".75rem", minWidth: 56, textAlign: "right", flexShrink: 0 }}>{formatBytes(r.bytes)}</span>
                 <button type="button" className={`bird-act${r.pinned ? " ok" : ""}`} onClick={() => pin(r)}
                   title={r.pinned ? "Pinned. Protected from auto-cleanup. Click to unpin." : "Pin to keep this recording (deleted last)"}>
                   {r.pinned ? <Pin size={15} /> : <PinOff size={15} />}
@@ -128,7 +129,7 @@ function UsageMeter({ status }: { status: ReturnType<typeof useRecStatus> }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: ".4rem" }}>
         <span style={{ fontWeight: 500 }}>Storage used</span>
         <span className="muted" style={{ fontSize: ".85rem" }}>
-          {fmtBytes(status.used_bytes)} of {fmtBytes(status.cap_bytes)} · {status.count} clip{status.count === 1 ? "" : "s"}
+          {formatBytes(status.used_bytes)} of {formatBytes(status.cap_bytes)} · {status.count} clip{status.count === 1 ? "" : "s"}
         </span>
       </div>
       <div style={{ position: "relative", height: 10, borderRadius: 6, background: "var(--bg-inset)", overflow: "hidden" }}>
@@ -139,7 +140,7 @@ function UsageMeter({ status }: { status: ReturnType<typeof useRecStatus> }) {
         )}
       </div>
       <div className="muted" style={{ fontSize: ".75rem", marginTop: ".4rem" }}>
-        {status.protected_bytes > 0 && <>Protected: {fmtBytes(status.protected_bytes)} · </>}
+        {status.protected_bytes > 0 && <>Protected: {formatBytes(status.protected_bytes)} · </>}
         When full: {status.when_full === "stop" ? "stop saving new recordings" : "remove oldest recordings"}
       </div>
       {status.state !== "ok" && status.message && (

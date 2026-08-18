@@ -4,7 +4,7 @@
 // enough (seconds, not milliseconds) to absorb the runtime between the two
 // calls.
 import { describe, expect, it } from "vitest";
-import { formatDuration, timeAbsolute, timeAbsoluteShort, timeAgo } from "./time";
+import { formatDuration, timeAbsolute, timeAbsoluteShort, timeAgo, timeAgoSeconds } from "./time";
 
 const agoIso = (ms: number) => new Date(Date.now() - ms).toISOString();
 const SEC = 1000;
@@ -79,5 +79,34 @@ describe("formatDuration", () => {
   it("is empty when either timestamp fails to parse", () => {
     expect(formatDuration("not a date", agoIso(0))).toBe("");
     expect(formatDuration(agoIso(5 * MIN), "not a date")).toBe("");
+  });
+});
+
+describe("timeAgoSeconds", () => {
+  it("steps seconds, minutes, hours and days from an elapsed count", () => {
+    expect(timeAgoSeconds(5)).toBe("5s ago");
+    expect(timeAgoSeconds(300)).toBe("5m ago");
+    expect(timeAgoSeconds(5 * 3600)).toBe("5h ago");
+    expect(timeAgoSeconds(5 * 86400)).toBe("5d ago");
+  });
+
+  it("rounds where timeAgo floors, and that difference is deliberate", () => {
+    // The two `fmtAge` copies this replaced both rounded. Folding them into
+    // `timeAgo` would have changed what a freshness line says.
+    expect(timeAgoSeconds(90)).toBe("2m ago");
+    expect(timeAgo(new Date(Date.now() - 90_000).toISOString())).toBe("1m ago");
+  });
+
+  it("stays in days past a month, where timeAgo moves to months", () => {
+    expect(timeAgoSeconds(45 * 86400)).toBe("45d ago");
+    expect(timeAgo(agoIso(45 * DAY))).toBe("1mo ago");
+  });
+
+  it("clamps a negative age to zero, the same invariant timeAgo holds", () => {
+    expect(timeAgoSeconds(-3)).toBe("0s ago");
+  });
+
+  it("is empty for a non-finite age rather than rendering NaN", () => {
+    expect(timeAgoSeconds(Number.NaN)).toBe("");
   });
 });

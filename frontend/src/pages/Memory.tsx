@@ -37,6 +37,8 @@ import { Ref } from "../components/Ref";
 import { backlinksFor } from "../lib/refs";
 import { useResolvedRefs } from "../lib/useResolvedRefs";
 import { shortHttpError } from "../lib/httpError";
+import { timeAbsolute } from "../lib/time";
+import { formatBytes } from "../lib/bytes";
 import {
   getPolicy,
   setItem as setItemShare,
@@ -195,12 +197,6 @@ type StoredFile = {
   missing: boolean;
 };
 type FilesResp = { files: StoredFile[]; count: number; scopes: string[] };
-
-function fmtTs(ts?: string | null): string {
-  if (!ts) return "";
-  const d = new Date(ts);
-  return isNaN(d.getTime()) ? "" : d.toLocaleString();
-}
 
 // Who wrote it (design doc sec 5, sec 11): `author` is an origin string
 // (services/origin on the backend) -- "operator", "self", "agent:<slug>",
@@ -697,7 +693,7 @@ function Library({ initialSource }: { initialSource: SourceFilter }) {
                       <Tag hue={catFor(it.note.scope || "workshop")}>{scopeLabel(it.note.scope)}</Tag>
                       <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{noteTypeLabel(it.note.type)}</span>
                       {it.note.updated && (
-                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(it.note.updated)}</span>
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{timeAbsolute(it.note.updated)}</span>
                       )}
                     </Row>
                   </Stack>
@@ -715,7 +711,7 @@ function Library({ initialSource }: { initialSource: SourceFilter }) {
                     <span className="ws-note-card__title">{it.doc.title}</span>
                     <span className="ws-doc-card__path">{it.doc.path}</span>
                     {it.doc.mtime && (
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(it.doc.mtime)}</span>
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{timeAbsolute(it.doc.mtime)}</span>
                     )}
                   </Stack>
                 </Card>
@@ -729,7 +725,7 @@ function Library({ initialSource }: { initialSource: SourceFilter }) {
                         <Row wrap className="ws-note-card__footer" style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                           <Tag hue={catFor(it.chat.scope || "workshop")}>{scopeLabel(it.chat.scope)}</Tag>
                           <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                            {fmtTs(it.chat.last_user_at || it.chat.created_at)}
+                            {timeAbsolute(it.chat.last_user_at || it.chat.created_at)}
                           </span>
                         </Row>
                       </Stack>
@@ -943,7 +939,7 @@ function Provenance({ author, updated, body }: { author?: string; updated?: stri
   return (
     <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
       <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{authorLabel(author)}</span>
-      {updated && <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{fmtTs(updated)}</span>}
+      {updated && <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{timeAbsolute(updated)}</span>}
       {chatRefs.map((r) => <Ref key={r} resolved={resolved[r]} />)}
     </Row>
   );
@@ -1597,13 +1593,13 @@ function Files() {
                       ? <StatusDot status="warn">Bytes missing</StatusDot>
                       : <Tag hue={catFor(f.kind)}>{f.kind}</Tag>}
                   </td>
-                  <td>{fmtBytes(f.size)}</td>
+                  <td>{formatBytes(f.size)}</td>
                   <td>
                     {f.scope
                       ? <Tag hue={catFor(f.scope)}>{scopeLabel(f.scope)}</Tag>
                       : <span className="ws-muted">unscoped</span>}
                   </td>
-                  <td>{fmtTs(f.created_at)}</td>
+                  <td>{timeAbsolute(f.created_at)}</td>
                   <td>
                     <Button
                       size="sm"
@@ -1656,9 +1652,3 @@ function Files() {
   );
 }
 
-// Whole numbers below a megabyte: the tenths of a KB are noise in a table.
-function fmtBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}

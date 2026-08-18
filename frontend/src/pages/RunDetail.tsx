@@ -19,6 +19,7 @@ import type { StatusKind } from "@workshop/ui";
 import { type Job, jobIsLive, jobStatusKind, runHref } from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
 import { shortHttpError } from "../lib/httpError";
+import { timeAbsolute } from "../lib/time";
 
 // One RUN's detail: its binding, trigger, timing, outcome, and freeform
 // evidence. Linked from Work's Runs tab, Home attention cards, and an agent's
@@ -68,12 +69,6 @@ function ranSummary(job: Job): string {
 }
 
 const statusKind = jobStatusKind;
-
-function fmtTs(ts?: string): string {
-  if (!ts) return "";
-  const d = new Date(ts);
-  return isNaN(d.getTime()) ? "" : d.toLocaleString();
-}
 
 function duration(job: Job): string {
   if (!job.started_at) return "";
@@ -309,7 +304,7 @@ export default function JobDetail() {
       meta={job && (
         <>
           <StatusDot status={jobStatusKind(job.status)}>{job.status}</StatusDot>
-          {job.started_at && <span>started {fmtTs(job.started_at)}</span>}
+          {job.started_at && <span>started {timeAbsolute(job.started_at)}</span>}
           {duration(job) && <span>{duration(job)}</span>}
           <code className="ws-mono">{id}</code>
         </>
@@ -602,14 +597,14 @@ export default function JobDetail() {
           <SectionLabel>Timing</SectionLabel>
           <Card compact>
             <Stack gap="sm">
-              <Row between wrap><span className="ws-muted">Started</span><span>{fmtTs(job.started_at) || "not started"}</span></Row>
+              <Row between wrap><span className="ws-muted">Started</span><span>{timeAbsolute(job.started_at) || "not started"}</span></Row>
               {/* Never the bare word "running": a run with no end time is
                   either still going or it died without recording one, and those
                   are different facts. */}
               <Row between wrap>
                 <span className="ws-muted">Ended</span>
                 <span>
-                  {fmtTs(job.ended_at) || (live ? "still running" : "no end time was recorded")}
+                  {timeAbsolute(job.ended_at) || (live ? "still running" : "no end time was recorded")}
                 </span>
               </Row>
               {(typeof job.tasks_done === "number" || typeof job.tasks_failed === "number") && (

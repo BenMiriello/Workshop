@@ -7,6 +7,7 @@ import {
 } from "@workshop/ui";
 import { TableScroll, Table } from "@workshop/ui";
 import { timeAgo } from "../lib/time";
+import { shortSha } from "../lib/sha";
 import { shortHttpError } from "../lib/httpError";
 
 // /deploys — cross-project index of every hosted target across the workshop.
@@ -32,8 +33,6 @@ type Deploy = {
 type Override = { engaged: boolean; reason?: string | null; engaged_at?: string | null; engaged_by?: string | null };
 
 type Filter = "all" | "prod" | "preview" | "failed" | "autonomous";
-
-function short(sha?: string): string { return (sha || "").slice(0, 7); }
 
 
 export default function Deploys() {
@@ -250,7 +249,7 @@ export default function Deploys() {
                     )}
                   </td>
                   <td className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                    {d.current?.commit_sha ? `v${short(d.current.commit_sha)}` : ""}
+                    {d.current?.commit_sha ? `v${shortSha(d.current.commit_sha)}` : ""}
                   </td>
                   <td>
                     <Badge>{d.autonomy}</Badge>

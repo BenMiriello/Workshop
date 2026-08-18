@@ -20,13 +20,6 @@ export type RecStatus = {
   storage_mb: number;
 };
 
-export function fmtBytes(b: number): string {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
-  if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
 // Polls the recording-storage status. Also refetches when any Birds view
 // broadcasts a settings change (so toggling a pref updates the banner at once).
 export function useRecStatus(intervalMs = 8000): RecStatus | null {

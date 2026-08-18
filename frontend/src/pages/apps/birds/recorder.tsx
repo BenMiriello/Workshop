@@ -2,6 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from "react";
 import { reverseGeocode } from "./geocode";
+import { specColor } from "./specColor";
 import { localizeEvents, type SpecCol, type SpeciesEvent, type Sample } from "./specLocalize";
 import { userStorage } from "../../../lib/storage";
 import { usePoll } from "../../../lib/usePoll";
@@ -166,13 +167,6 @@ function reduceColumn(data: Uint8Array, topBin: number): number[] {
 
 // Per-species rolling state used to group overlapping windows into one event.
 type SeriesEntry = { common: string; samples: Sample[]; lastSeen: number; markerId: number };
-function specColor(v: number): string {
-  const t = v / 255;
-  if (t < 0.25) { const k = t / 0.25; return `rgb(${10 + k * 10},${20 + k * 60},${40 + k * 60})`; }
-  if (t < 0.55) { const k = (t - 0.25) / 0.3; return `rgb(20,${80 + k * 90},${100 + k * 60})`; }
-  if (t < 0.8) { const k = (t - 0.55) / 0.25; return `rgb(${20 + k * 200},${170 + k * 60},${160 - k * 100})`; }
-  const k = (t - 0.8) / 0.2; return `rgb(${220 + k * 35},${230 + k * 25},${60 + k * 195})`;
-}
 
 // Session view (live log + species + "was listening") is mirrored to localStorage
 // so it survives a full page reload, not just navigation.

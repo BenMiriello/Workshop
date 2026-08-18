@@ -10,6 +10,7 @@ import {
 } from "@workshop/ui";
 import { jobStatusKind, runHref } from "../lib/jobs";
 import { timeAgo } from "../lib/time";
+import { shortSha } from "../lib/sha";
 import { shortHttpError } from "../lib/httpError";
 
 
@@ -39,9 +40,6 @@ type Run = {
 };
 
 type Notice = { deploy_id?: string; branch?: string; remote_sha?: string; detected_at?: string; reason?: string; none?: boolean };
-
-
-function short(sha?: string): string { return (sha || "").slice(0, 7); }
 
 
 export default function DeployDetail() {
@@ -260,7 +258,7 @@ export default function DeployDetail() {
 
       {notice && !notice.none && notice.remote_sha && (
         <Notice tone="warn" icon={<TriangleAlert aria-hidden />}>
-          Change detected at <code>{short(notice.remote_sha)}</code> on{" "}
+          Change detected at <code>{shortSha(notice.remote_sha)}</code> on{" "}
           <code>{notice.branch}</code>, paused ({notice.reason}).
           {notice.detected_at ? ` Noticed ${timeAgo(notice.detected_at)}.` : ""}
         </Notice>
@@ -380,7 +378,7 @@ export default function DeployDetail() {
                       {r.kind === "deploy-rollback" && <Badge>rollback</Badge>}
                       {r.trigger === "event" && <Badge>auto</Badge>}
                       <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                        {r.evidence?.commit_sha ? short(r.evidence.commit_sha) : short(r.binding?.ref)}
+                        {r.evidence?.commit_sha ? shortSha(r.evidence.commit_sha) : shortSha(r.binding?.ref)}
                       </span>
                       <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{timeAgo(r.started_at)}</span>
                       {r.evidence?.summary && (
@@ -421,7 +419,7 @@ export default function DeployDetail() {
         <ConfirmDialog
           open
           onCancel={() => setConfirmRollback(null)}
-          title={`Rollback to ${short(confirmRollback.evidence?.commit_sha) || confirmRollback.id}?`}
+          title={`Rollback to ${shortSha(confirmRollback.evidence?.commit_sha) || confirmRollback.id}?`}
           body={<>The current version is preserved in run history.</>}
           confirmLabel="Rollback"
           onConfirm={() => kickRollback(confirmRollback)}

@@ -6,6 +6,7 @@ import { AppSettings } from "../../components/AppSettings";
 import FinanceSettings from "./finance/FinanceSettings";
 import { ConnectBankButton } from "./finance/PlaidLink";
 import { userStorage } from "../../lib/storage";
+import { timeAgoSeconds } from "../../lib/time";
 import {
   Button,
   Card,
@@ -91,14 +92,6 @@ const fmt = (n: number | null, ccy: string | null) => {
     _ccyFmts.set(code, f);
   }
   return f.format(n);
-};
-
-const fmtAge = (ms: number) => {
-  const sec = ms / 1000;
-  if (sec < 60) return `${Math.round(sec)}s ago`;
-  if (sec < 3600) return `${Math.round(sec / 60)}m ago`;
-  if (sec < 86400) return `${Math.round(sec / 3600)}h ago`;
-  return `${Math.round(sec / 86400)}d ago`;
 };
 
 export default function Finance() {
@@ -244,10 +237,10 @@ export default function Finance() {
     if (isLoading) return "loading…";
     if (isLocal && !balCache) {
       // Showing localStorage data, no live fetch succeeded yet
-      return localBalTs ? `saved ${fmtAge(Date.now() - localBalTs)}` : "saved data";
+      return localBalTs ? `saved ${timeAgoSeconds((Date.now() - localBalTs) / 1000)}` : "saved data";
     }
     if (balCache) {
-      const label = `updated ${fmtAge(balCache.age_s * 1000)}`;
+      const label = `updated ${timeAgoSeconds(balCache.age_s)}`;
       return label;
     }
     return "fresh";
@@ -308,7 +301,7 @@ export default function Finance() {
                 {isLocal && (
                   <>
                     {", showing last saved data"}
-                    {localBalTs ? ` from ${fmtAge(Date.now() - localBalTs)}` : ""}
+                    {localBalTs ? ` from ${timeAgoSeconds((Date.now() - localBalTs) / 1000)}` : ""}
                   </>
                 )}
               </>

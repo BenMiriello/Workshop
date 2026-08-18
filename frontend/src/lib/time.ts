@@ -84,3 +84,33 @@ export function formatDuration(startIso?: string | null, endIso?: string | null)
   const s = secs % 60;
   return s ? `${m}m ${s}s` : `${m}m`;
 }
+
+/** Relative age from an already-measured ELAPSED count, in seconds.
+ *
+ * This is not `timeAgo` and must not be folded into it. `timeAgo` starts from
+ * a timestamp; this starts from an age a caller was handed (`cache.age_s`
+ * from the finance API, a launcher probe's own stopwatch), where there is no
+ * timestamp to parse and subtracting one from `Date.now()` would only
+ * reintroduce the clock skew the API already resolved.
+ *
+ * It also rounds where `timeAgo` floors, and stops at days where `timeAgo`
+ * carries on into months and years. Both were true of the two copies this
+ * replaces (`apps/registry.tsx`, `pages/apps/Finance.tsx`), so unifying the
+ * ladders would have changed what is on screen: 90 seconds reads "2m ago"
+ * here and would read "1m ago" through `timeAgo`, and a 45-day-old cache
+ * reads "45d ago" here and "1mo ago" there. A freshness number is read for
+ * "how stale is this", where a day count stays legible past a month; a list
+ * row is read for "when", where "1mo" is what fits.
+ *
+ * Callers holding milliseconds divide at the call site, so the unit is
+ * visible where it is chosen: the two copies took DIFFERENT units under the
+ * same name (`fmtAge(seconds)` and `fmtAge(ms)`), which is a 1000x bug one
+ * careless import away. */
+export function timeAgoSeconds(seconds: number): string {
+  if (!Number.isFinite(seconds)) return "";
+  const s = Math.max(0, seconds);
+  if (s < 60) return `${Math.round(s)}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}

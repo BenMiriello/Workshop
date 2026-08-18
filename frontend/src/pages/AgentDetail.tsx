@@ -40,6 +40,7 @@ import {
 } from "../lib/agentTriggers";
 import { ticketHref } from "../lib/tasks";
 import { shortHttpError } from "../lib/httpError";
+import { timeAbsolute } from "../lib/time";
 
 // One Agent, one config surface, typed by ROLE. There is no `runtime` field.
 // This page is the definition (editable), triggers, the grant set
@@ -108,12 +109,6 @@ const TRIGGER_KINDS: SegmentedOption<TriggerKind>[] = [
   { value: "discord", label: "Discord" },
   { value: "loop", label: "Loop" },
 ];
-
-function fmtTs(ts?: string | null): string {
-  if (!ts) return "";
-  const d = new Date(ts);
-  return isNaN(d.getTime()) ? "" : d.toLocaleString();
-}
 
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
@@ -521,7 +516,7 @@ function AgentNotes({ slug }: { slug: string }) {
                   <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                     <span style={{ fontWeight: 600, wordBreak: "break-word" }}>{n.title || n.id}</span>
                     {n.updated && (
-                      <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(n.updated)}</span>
+                      <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{timeAbsolute(n.updated)}</span>
                     )}
                   </Row>
                   {n.hook && (
@@ -1092,7 +1087,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
                     </Row>
                     <span className="ws-card__meta">
                       <Clock size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
-                      {fmtTs(j.started_at)}
+                      {timeAbsolute(j.started_at)}
                     </span>
                   </Row>
                 </Card>

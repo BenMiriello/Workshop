@@ -11,7 +11,8 @@ import { pct, conf, jget, apost, API, Stat, StatGrid } from "./ui";
 import ActivityCard from "./ActivityCard";
 import BirdsHeader from "./BirdsHeader";
 import { useBirdsScope } from "./scope";
-import { PlayButton, fmtBytes } from "./recordings";
+import { PlayButton } from "./recordings";
+import { formatBytes } from "../../../lib/bytes";
 import { usePoll } from "../../../lib/usePoll";
 
 // One species' page: photo + description (client-side reference lookup), stats,
@@ -314,7 +315,7 @@ function BirdRecordings({ sci, common, initialMode, clipCount, onChange }: {
                   <span className="mono muted">{c.at}</span>
                   {c.location && <span className="muted" style={{ marginLeft: ".5rem", display: "inline-flex", alignItems: "center", gap: ".25rem" }}><MapPin size={10} /> {c.location}</span>}
                 </span>
-                <span className="muted" style={{ fontSize: ".74rem" }}>{fmtBytes(c.bytes)}</span>
+                <span className="muted" style={{ fontSize: ".74rem" }}>{formatBytes(c.bytes)}</span>
                 <span className="muted" style={{ fontSize: ".78rem" }}>{conf(c.confidence)}</span>
                 <button type="button" className={`bird-act${c.pinned ? " ok" : ""}`} onClick={() => pin(c)}
                   title={c.pinned ? "Pinned. Click to unpin." : "Pin to keep this recording (deleted last)"}>

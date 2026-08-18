@@ -22,6 +22,7 @@ import { Suspense } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Outlet, Route } from "react-router-dom";
 import { RouteBoundary, RouteSkeleton, lazyPage } from "../lib/lazyPage";
+import { timeAgoSeconds } from "../lib/time";
 import { Banknote, Bird, MapPin, NotebookPen, PiggyBank, TrainFront } from "lucide-react";
 import type { LucideProps } from "lucide-react";
 
@@ -88,13 +89,6 @@ function BirdsLayout() {
 // Each loader owns its own failure: a card that cannot reach its app says so
 // rather than the launcher inventing a status for it.
 
-function fmtAge(s: number): string {
-  if (s < 60) return `${Math.round(s)}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
-}
-
 async function financeStatus(): Promise<AppStatus> {
   try {
     const [statusR, balR] = await Promise.all([
@@ -110,7 +104,7 @@ async function financeStatus(): Promise<AppStatus> {
     const entry = status.entries?.["balances"];
     const age = entry ? Math.max(0, entry.age_s) : null;
     return {
-      text: `${n} account${n === 1 ? "" : "s"} · ${age != null ? `updated ${fmtAge(age)}` : "no data yet"}`,
+      text: `${n} account${n === 1 ? "" : "s"} · ${age != null ? `updated ${timeAgoSeconds(age)}` : "no data yet"}`,
       tone: "muted",
     };
   } catch {
@@ -142,7 +136,7 @@ async function locationStatus(): Promise<AppStatus> {
     // A ping age is information, not health — significant-change tracking only
     // pings on movement, so hours-old while stationary is normal. Green only
     // when genuinely recent; otherwise neutral.
-    return { text: `last ping ${fmtAge(age)}`, tone: age < 3600 ? "ok" : "muted" };
+    return { text: `last ping ${timeAgoSeconds(age)}`, tone: age < 3600 ? "ok" : "muted" };
   } catch {
     return { text: "unavailable", tone: "err" };
   }

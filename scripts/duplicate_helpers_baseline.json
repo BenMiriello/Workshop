@@ -1,0 +1,114 @@
+{
+  "groups": {
+    "0f663842cbd5": {
+      "files": 2,
+      "names": [
+        "copy"
+      ],
+      "where": [
+        "frontend/src/pages/apps/health/HealthSettings.tsx:110",
+        "frontend/src/pages/apps/location/LocationSettings.tsx:112"
+      ]
+    },
+    "25dcbeda50c8": {
+      "files": 2,
+      "names": [
+        "onDown"
+      ],
+      "where": [
+        "packages/ui/src/Menu.tsx:76",
+        "packages/ui/src/Popover.tsx:89"
+      ]
+    },
+    "58a8760ab334": {
+      "files": 5,
+      "names": [
+        "j"
+      ],
+      "where": [
+        "frontend/src/lib/chat.ts:477",
+        "frontend/src/lib/marketplace.ts:31",
+        "frontend/src/lib/memoryPolicy.ts:31",
+        "frontend/src/lib/refs.ts:18",
+        "frontend/src/lib/voiceApi.ts:5"
+      ]
+    },
+    "704d4e45550b": {
+      "files": 3,
+      "names": [
+        "freshNoteId"
+      ],
+      "where": [
+        "frontend/src/pages/AgentDetail.tsx:407",
+        "frontend/src/pages/Memory.tsx:230",
+        "frontend/src/pages/ProjectDetail.tsx:179"
+      ]
+    },
+    "852a764bc54b": {
+      "files": 2,
+      "names": [
+        "projectStateKind",
+        "stateKind"
+      ],
+      "where": [
+        "frontend/src/pages/Home.tsx:219",
+        "frontend/src/pages/ProjectDetail.tsx:154"
+      ]
+    },
+    "d4ce9ee8f055": {
+      "files": 4,
+      "names": [
+        "slugify"
+      ],
+      "where": [
+        "frontend/src/pages/AgentBuild.tsx:113",
+        "frontend/src/pages/AgentDetail.tsx:113",
+        "frontend/src/pages/ProjectDetail.tsx:171",
+        "frontend/src/pages/Projects.tsx:30"
+      ]
+    },
+    "e7c4d28bf9e5": {
+      "files": 2,
+      "names": [
+        "cap",
+        "capitalize"
+      ],
+      "where": [
+        "frontend/src/lib/tasks.ts:616",
+        "frontend/src/pages/apps/birds/Atlas.tsx:227",
+        "frontend/src/pages/apps/birds/Atlas.tsx:616"
+      ]
+    },
+    "ef85ce556c33": {
+      "files": 2,
+      "names": [
+        "done"
+      ],
+      "where": [
+        "frontend/src/components/chat/CopyMessage.tsx:18",
+        "packages/ui/src/feedback.tsx:120"
+      ]
+    },
+    "f30ce253ee85": {
+      "files": 2,
+      "names": [
+        "useNow"
+      ],
+      "where": [
+        "frontend/src/components/chat/work/TicketCard.tsx:75",
+        "frontend/src/components/chat/work/WorkPanel.tsx:160"
+      ]
+    },
+    "f8390d820c56": {
+      "files": 2,
+      "names": [
+        "firstLine"
+      ],
+      "where": [
+        "frontend/src/components/chat/TicketDraftsDialog.tsx:79",
+        "frontend/src/components/chat/work/TicketRow.tsx:33"
+      ]
+    }
+  },
+  "note": "body-hash -> how many FILES declare it. A new hash, or a pinned hash in more files, is a regression. See the header of check_duplicate_helpers.py."
+}

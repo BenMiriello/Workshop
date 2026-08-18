@@ -11,6 +11,7 @@ import {
 } from "@workshop/ui";
 import { jobStatusKind } from "../lib/jobs";
 import { timeAgo } from "../lib/time";
+import { shortSha } from "../lib/sha";
 import { shortHttpError } from "../lib/httpError";
 
 // Deploys panel — per-project target bindings.
@@ -57,10 +58,6 @@ type ProviderCatalog = {
   target_fields: { key: string; required: boolean; description: string }[];
   source_kinds: string[];
 };
-
-function short(sha?: string): string {
-  return (sha || "").slice(0, 7);
-}
 
 
 export default function DeploysPanel({ slug }: { slug: string }) {
@@ -152,7 +149,7 @@ export default function DeploysPanel({ slug }: { slug: string }) {
         body: JSON.stringify({ to_run_id: run.id }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setBanner(`Rollback started for ${deploy.name} to ${short(run.evidence?.commit_sha)}.`);
+      setBanner(`Rollback started for ${deploy.name} to ${shortSha(run.evidence?.commit_sha)}.`);
       await load();
       if (openRunsFor === deploy.id) await loadRuns(deploy);
     } catch (e) {
@@ -269,7 +266,7 @@ export default function DeploysPanel({ slug }: { slug: string }) {
         <ConfirmDialog
           open={true}
           onCancel={() => setConfirmRollback(null)}
-          title={`Rollback ${confirmRollback.deploy.name} to ${short(confirmRollback.run.evidence?.commit_sha) || confirmRollback.run.id}?`}
+          title={`Rollback ${confirmRollback.deploy.name} to ${shortSha(confirmRollback.run.evidence?.commit_sha) || confirmRollback.run.id}?`}
           body={
             <>
               This will promote a prior successful deploy back to production.
@@ -351,7 +348,7 @@ function DeployRow({
               </a>
               {current.commit_sha && (
                 <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                  v{short(current.commit_sha)}
+                  v{shortSha(current.commit_sha)}
                 </span>
               )}
               {current.deployed_at && (
@@ -394,7 +391,7 @@ function DeployRow({
                   <StatusDot status={jobStatusKind(r.status)}>{r.status}</StatusDot>
                   {r.kind === "deploy-rollback" && <Badge>rollback</Badge>}
                   <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                    {r.evidence?.commit_sha ? short(r.evidence.commit_sha) : short(r.binding?.ref)}
+                    {r.evidence?.commit_sha ? shortSha(r.evidence.commit_sha) : shortSha(r.binding?.ref)}
                   </span>
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{timeAgo(r.started_at)}</span>
                   {r.evidence?.summary && (

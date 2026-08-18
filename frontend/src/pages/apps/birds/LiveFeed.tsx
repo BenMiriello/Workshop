@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Radio } from "lucide-react";
 import { jget } from "./ui";
+import { specColor } from "./specColor";
 import { usePoll } from "../../../lib/usePoll";
 
 // Viewer for live-broadcasting devices. Polls /live (scoped to who you can see)
@@ -15,14 +16,6 @@ type Feed = {
   owner: string | null; cols: number[][]; hearing: Hear[];
 };
 
-// Same palette as the recorder's spectrogram, so a remote feed looks identical.
-function specColor(v: number): string {
-  const t = v / 255;
-  if (t < 0.25) { const k = t / 0.25; return `rgb(${10 + k * 10},${20 + k * 60},${40 + k * 60})`; }
-  if (t < 0.55) { const k = (t - 0.25) / 0.3; return `rgb(20,${80 + k * 90},${100 + k * 60})`; }
-  if (t < 0.8) { const k = (t - 0.55) / 0.25; return `rgb(${20 + k * 200},${170 + k * 60},${160 - k * 100})`; }
-  const k = (t - 0.8) / 0.2; return `rgb(${220 + k * 35},${230 + k * 25},${60 + k * 195})`;
-}
 
 // The remote spectrogram. `cols` arrives as a rolling window re-polled every ~1.2s;
 // painting it whole each poll makes motion jump a full window at a time. Instead we
