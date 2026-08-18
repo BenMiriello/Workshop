@@ -7,7 +7,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from routes.api_models import (ContentOut, DeletedOut, FileOut, Job, OkOut,
+from routes.api_models import (AgentLimits, AgentTrigger, ContentOut, DeletedOut, FileOut, Job, OkOut,
                                QueueCounts, AwaitingRow, Task, TreeOut)
 from services import agents_registry, build_agents, dev_servers, jobs, triggers
 from services import agent_authority
@@ -82,8 +82,8 @@ class Agent(BaseModel):
     name: str
     purpose: str = ""
     capabilities: list[str] = []
-    triggers: list[dict] = []
-    limits: dict = {}
+    triggers: list[AgentTrigger] = []
+    limits: AgentLimits | None = None
     role: str | None = None
     # May only NARROW what the role permits; null = no request = the role's set.
     tools: list[str] | None = None
@@ -126,8 +126,8 @@ class RosterAgent(BaseModel):
     slug: str | None = None
     name: str | None = None
     purpose: str | None = None
-    triggers: list[dict] = []
-    limits: dict = {}
+    triggers: list[AgentTrigger] = []
+    limits: AgentLimits | None = None
     autonomy: AutonomyPreset
     autonomy_mode: AutonomyMode
     role: str | None = None
@@ -205,7 +205,7 @@ class AgentTemplate(BaseModel):
     name: str
     role: str | None = None
     purpose: str = ""
-    triggers: list[dict] = []
+    triggers: list[AgentTrigger] = []
     definition: str = ""
 
 
@@ -1304,8 +1304,8 @@ def _activation_chain(rec: dict) -> dict:
 class AgentDefinitionUpdate(BaseModel):
     name: str | None = None
     purpose: str | None = None
-    triggers: list[dict] | None = None
-    limits: dict | None = None
+    triggers: list[AgentTrigger] | None = None
+    limits: AgentLimits | None = None
     capabilities: list[str] | None = None
     role: str | None = None            # closed enum: maker|reviewer|triager|keeper|broker
                                        # ("" clears it; unknown -> 400)

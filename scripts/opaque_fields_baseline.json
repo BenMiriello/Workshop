@@ -1,5 +1,5 @@
 {
-  "opaque_fields": 80,
+  "opaque_fields": 65,
   "per_schema": {
     "ActiveTurn": [
       "live"
@@ -8,18 +8,10 @@
       "scope_defaults"
     ],
     "Agent": [
-      "limits",
-      "memory",
-      "triggers"
-    ],
-    "AgentDefinitionUpdate": [
-      "limits",
-      "triggers"
+      "memory"
     ],
     "AgentDetail": [
-      "limits",
-      "memory",
-      "triggers"
+      "memory"
     ],
     "AgentGroup": [
       "members",
@@ -27,9 +19,6 @@
     ],
     "AgentRunsOut": [
       "heartbeat"
-    ],
-    "AgentTemplate": [
-      "triggers"
     ],
     "Awaiting": [
       "context"
@@ -112,14 +101,6 @@
     "Project": [
       "repo"
     ],
-    "ProjectAutonomyOut": [
-      "limits",
-      "triggers"
-    ],
-    "ProjectAutonomyPutOut": [
-      "limits",
-      "triggers"
-    ],
     "ProviderInfo": [
       "target_fields"
     ],
@@ -133,10 +114,8 @@
       "caveats"
     ],
     "RosterAgent": [
-      "limits",
       "memory",
-      "memory_blocks",
-      "triggers"
+      "memory_blocks"
     ],
     "ScheduleBody": [
       "data"
@@ -172,10 +151,6 @@
     "ToolCall": [
       "kwargs"
     ],
-    "TriggersIn": [
-      "limits",
-      "triggers"
-    ],
     "UsageTimeseries": [
       "points"
     ],
@@ -186,5 +161,5 @@
       "review"
     ]
   },
-  "schemas_with_opaque_fields": 52
+  "schemas_with_opaque_fields": 47
 }

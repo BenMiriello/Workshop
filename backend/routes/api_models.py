@@ -61,6 +61,65 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 
+# ------------------------------------------------------------------- triggers
+
+class TriggerBudget(BaseModel):
+    """What one autonomous loop may spend. `triggers.DEFAULT_LOOP_BUDGET` is
+    `{"max_wall_s": 3000}` and is the only key any writer sets today;
+    `extra="allow"` so adding a second dimension (tokens, iterations) does not
+    need this model changed before the field can reach a client."""
+
+    model_config = ConfigDict(extra="allow")
+
+    max_wall_s: int | None = None
+
+
+class AgentTrigger(BaseModel):
+    """What makes a scope run. `triggers.make_trigger` is the ONE producer, and
+    which keys appear depends on `kind` -- it sets only the ones its kind uses,
+    so this is a union expressed as one model rather than five.
+
+      manual    kind
+      discord   kind, channels, and `disabled_reason` when channels is empty
+      cron      kind, cron_expression, and `disabled_reason` when it is blank
+      event     kind, event_sources
+      loop      kind, max_iterations, budget, completion_gate
+
+    That per-kind sparseness is why the routes serving this must declare
+    `response_model_exclude_unset=True`: without it a manual trigger would go
+    out carrying `cron_expression: null` and six other keys it has never had.
+
+    `disabled_reason` is the trigger saying out loud that it can never match,
+    rather than being wired to nothing in silence.
+
+    Confirmed against the live registry and the templates on 2026-08-18: the
+    keys observed are exactly kind, channels, disabled_reason, cron_expression
+    and event_sources, with no key `make_trigger` cannot produce.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    kind: str
+    channels: list[str] | None = None
+    cron_expression: str | None = None
+    event_sources: list[str] | None = None
+    max_iterations: int | None = None
+    budget: TriggerBudget | None = None
+    completion_gate: str | None = None
+    disabled_reason: str | None = None
+
+
+class AgentLimits(BaseModel):
+    """The ceiling a scope's autonomous work runs under.
+    `agents_registry.DEFAULT_LIMITS` is `{max_iterations, budget}` and a
+    definition may override either from its frontmatter."""
+
+    model_config = ConfigDict(extra="allow")
+
+    max_iterations: int | None = None
+    budget: TriggerBudget | None = None
+
+
 # --------------------------------------------------------------- tasks
 
 class TaskSource(BaseModel):

@@ -24,7 +24,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from routes.api_models import (AwaitingRow, ContentOut, FileOut, Job, OkOut,
+from routes.api_models import (AgentLimits, AgentTrigger, AwaitingRow, ContentOut, FileOut, Job, OkOut,
                                QueueCounts, TreeOut)
 from services import tasks, jobs, triggers, latitude as latitude_svc
 from wsplatform import paths
@@ -720,8 +720,8 @@ class TriggersIn(BaseModel):
     # Decision rights for work in this tree: strict | standard | open. Null (or
     # "standard", which is never stored) means inherit — see services/latitude.py.
     latitude: str | None = None
-    limits: dict | None = None
-    triggers: list[dict] = Field(default_factory=list)
+    limits: AgentLimits | None = None
+    triggers: list[AgentTrigger] = Field(default_factory=list)
 
 
 def _stored_triggers(autonomy: dict) -> list[dict]:
@@ -813,8 +813,8 @@ class ProjectAutonomyOut(BaseModel):
 
     autonomy: str
     latitude: str | None = None
-    limits: dict = {}
-    triggers: list[dict] = []
+    limits: AgentLimits | None = None
+    triggers: list[AgentTrigger] = []
     # ADR 0023 clause 4 bans `updated` as an instant field name in favour of
     # `updated_at`. Unchanged here: it is the key the stored registry record
     # uses and the key AutonomyPanel reads, so renaming it is a wire change
@@ -826,7 +826,7 @@ class ProjectAutonomyOut(BaseModel):
     awaiting: list[AwaitingRow] = []
 
 
-@router.get("/{slug}/autonomy", response_model=ProjectAutonomyOut)
+@router.get("/{slug}/autonomy", response_model=ProjectAutonomyOut, response_model_exclude_unset=True)
 async def get_autonomy(slug: str) -> dict:
     raw = _ensure_project(slug)
     autonomy = raw.get("autonomy") or {}
@@ -858,13 +858,13 @@ class ProjectAutonomyPutOut(BaseModel):
 
     autonomy: str
     latitude: str | None = None
-    limits: dict = {}
-    triggers: list[dict] = []
+    limits: AgentLimits | None = None
+    triggers: list[AgentTrigger] = []
     updated: str
     running: bool
 
 
-@router.put("/{slug}/autonomy", response_model=ProjectAutonomyPutOut)
+@router.put("/{slug}/autonomy", response_model=ProjectAutonomyPutOut, response_model_exclude_unset=True)
 async def put_autonomy(slug: str, body: TriggersIn) -> dict:
     # Preset shape wins when present; otherwise fall back to the raw trigger list
     # (the advanced escape hatch, and the pre-O6 request shape, unchanged).

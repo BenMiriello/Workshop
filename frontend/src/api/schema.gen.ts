@@ -7558,11 +7558,7 @@ export interface components {
             latitude?: string | null;
             /** Letta Agent Id */
             letta_agent_id?: string | null;
-            /**
-             * Limits
-             * @default {}
-             */
-            limits: Record<string, never>;
+            limits?: components["schemas"]["AgentLimits"] | null;
             /** Memory */
             memory?: unknown;
             /**
@@ -7606,7 +7602,7 @@ export interface components {
              * Triggers
              * @default []
              */
-            triggers: Record<string, never>[];
+            triggers: components["schemas"]["AgentTrigger"][];
         };
         /** AgentCreate */
         AgentCreate: {
@@ -7643,8 +7639,7 @@ export interface components {
             delegatable?: boolean | null;
             /** Latitude */
             latitude?: string | null;
-            /** Limits */
-            limits?: Record<string, never> | null;
+            limits?: components["schemas"]["AgentLimits"] | null;
             /** Mentionable */
             mentionable?: boolean | null;
             /** Name */
@@ -7654,7 +7649,7 @@ export interface components {
             /** Role */
             role?: string | null;
             /** Triggers */
-            triggers?: Record<string, never>[] | null;
+            triggers?: components["schemas"]["AgentTrigger"][] | null;
         };
         /**
          * AgentDetail
@@ -7718,11 +7713,7 @@ export interface components {
             latitude?: string | null;
             /** Letta Agent Id */
             letta_agent_id?: string | null;
-            /**
-             * Limits
-             * @default {}
-             */
-            limits: Record<string, never>;
+            limits?: components["schemas"]["AgentLimits"] | null;
             /**
              * Linked Chat Ids
              * @default []
@@ -7784,7 +7775,7 @@ export interface components {
              * Triggers
              * @default []
              */
-            triggers: Record<string, never>[];
+            triggers: components["schemas"]["AgentTrigger"][];
         };
         /**
          * AgentGroup
@@ -7823,6 +7814,19 @@ export interface components {
             count: number;
             /** Jobs */
             jobs: components["schemas"]["Job"][];
+        };
+        /**
+         * AgentLimits
+         * @description The ceiling a scope's autonomous work runs under.
+         *     `agents_registry.DEFAULT_LIMITS` is `{max_iterations, budget}` and a
+         *     definition may override either from its frontmatter.
+         */
+        AgentLimits: {
+            budget?: components["schemas"]["TriggerBudget"] | null;
+            /** Max Iterations */
+            max_iterations?: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * AgentRunsOut
@@ -7880,7 +7884,7 @@ export interface components {
              * Triggers
              * @default []
              */
-            triggers: Record<string, never>[];
+            triggers: components["schemas"]["AgentTrigger"][];
         };
         /** AgentTemplatesOut */
         AgentTemplatesOut: {
@@ -7888,6 +7892,48 @@ export interface components {
             groups: components["schemas"]["AgentGroup"][];
             /** Templates */
             templates: components["schemas"]["AgentTemplate"][];
+        };
+        /**
+         * AgentTrigger
+         * @description What makes a scope run. `triggers.make_trigger` is the ONE producer, and
+         *     which keys appear depends on `kind` -- it sets only the ones its kind uses,
+         *     so this is a union expressed as one model rather than five.
+         *
+         *       manual    kind
+         *       discord   kind, channels, and `disabled_reason` when channels is empty
+         *       cron      kind, cron_expression, and `disabled_reason` when it is blank
+         *       event     kind, event_sources
+         *       loop      kind, max_iterations, budget, completion_gate
+         *
+         *     That per-kind sparseness is why the routes serving this must declare
+         *     `response_model_exclude_unset=True`: without it a manual trigger would go
+         *     out carrying `cron_expression: null` and six other keys it has never had.
+         *
+         *     `disabled_reason` is the trigger saying out loud that it can never match,
+         *     rather than being wired to nothing in silence.
+         *
+         *     Confirmed against the live registry and the templates on 2026-08-18: the
+         *     keys observed are exactly kind, channels, disabled_reason, cron_expression
+         *     and event_sources, with no key `make_trigger` cannot produce.
+         */
+        AgentTrigger: {
+            budget?: components["schemas"]["TriggerBudget"] | null;
+            /** Channels */
+            channels?: string[] | null;
+            /** Completion Gate */
+            completion_gate?: string | null;
+            /** Cron Expression */
+            cron_expression?: string | null;
+            /** Disabled Reason */
+            disabled_reason?: string | null;
+            /** Event Sources */
+            event_sources?: string[] | null;
+            /** Kind */
+            kind: string;
+            /** Max Iterations */
+            max_iterations?: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * AheadBehind
@@ -11426,11 +11472,7 @@ export interface components {
             last_run?: components["schemas"]["Job"] | null;
             /** Latitude */
             latitude?: string | null;
-            /**
-             * Limits
-             * @default {}
-             */
-            limits: Record<string, never>;
+            limits?: components["schemas"]["AgentLimits"] | null;
             queue: components["schemas"]["QueueCounts"];
             /** Running */
             running: boolean;
@@ -11438,7 +11480,7 @@ export interface components {
              * Triggers
              * @default []
              */
-            triggers: Record<string, never>[];
+            triggers: components["schemas"]["AgentTrigger"][];
             /** Updated */
             updated?: string | null;
         };
@@ -11453,18 +11495,14 @@ export interface components {
             autonomy: string;
             /** Latitude */
             latitude?: string | null;
-            /**
-             * Limits
-             * @default {}
-             */
-            limits: Record<string, never>;
+            limits?: components["schemas"]["AgentLimits"] | null;
             /** Running */
             running: boolean;
             /**
              * Triggers
              * @default []
              */
-            triggers: Record<string, never>[];
+            triggers: components["schemas"]["AgentTrigger"][];
             /** Updated */
             updated: string;
         };
@@ -12128,11 +12166,7 @@ export interface components {
             last_active?: string | null;
             /** Latitude */
             latitude?: string | null;
-            /**
-             * Limits
-             * @default {}
-             */
-            limits: Record<string, never>;
+            limits?: components["schemas"]["AgentLimits"] | null;
             /** Memory */
             memory?: unknown;
             /**
@@ -12165,7 +12199,7 @@ export interface components {
              * Triggers
              * @default []
              */
-            triggers: Record<string, never>[];
+            triggers: components["schemas"]["AgentTrigger"][];
         };
         /** RouteDecision */
         RouteDecision: {
@@ -13874,18 +13908,30 @@ export interface components {
             /** Tree */
             tree: components["schemas"]["TreeNode"][];
         };
+        /**
+         * TriggerBudget
+         * @description What one autonomous loop may spend. `triggers.DEFAULT_LOOP_BUDGET` is
+         *     `{"max_wall_s": 3000}` and is the only key any writer sets today;
+         *     `extra="allow"` so adding a second dimension (tokens, iterations) does not
+         *     need this model changed before the field can reach a client.
+         */
+        TriggerBudget: {
+            /** Max Wall S */
+            max_wall_s?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** TriggersIn */
         TriggersIn: {
             /** Cron */
             cron?: string | null;
             /** Latitude */
             latitude?: string | null;
-            /** Limits */
-            limits?: Record<string, never> | null;
+            limits?: components["schemas"]["AgentLimits"] | null;
             /** Preset */
             preset?: string | null;
             /** Triggers */
-            triggers?: Record<string, never>[];
+            triggers?: components["schemas"]["AgentTrigger"][];
         };
         /**
          * TurnMarks
