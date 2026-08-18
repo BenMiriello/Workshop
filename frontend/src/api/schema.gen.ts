@@ -8898,7 +8898,9 @@ export interface components {
          */
         CardStates: {
             /** Card States */
-            card_states: Record<string, never>;
+            card_states: {
+                [key: string]: components["schemas"]["StoredCardState"];
+            };
         };
         /** ChangePasswordBody */
         ChangePasswordBody: {
@@ -12714,6 +12716,37 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * StoredCardState
+         * @description One in-chat ui-card's outcome, as it is STORED on the thread.
+         *
+         *     NOT the write body -- that is `routes.chat.CardState`, which carries the
+         *     `key` this is filed under and never carries `ts`, because
+         *     `chat_store.set_card_state` stamps that itself. The two shapes are
+         *     genuinely different and the generated client now says so.
+         *
+         *     Measured over every live thread on 2026-08-18: 12 entries across 6 threads,
+         *     all five fields present on all twelve. `extra="allow"` keeps the per-kind
+         *     openness the write path has always had -- a card kind owns the shape of its
+         *     own state, so a typed floor here must be unable to DROP anything a future
+         *     kind files. Verified: pydantic retains extras through `model_dump()` and
+         *     through `model_dump(exclude_unset=True)`, which is the mode these routes
+         *     serialise in.
+         */
+        StoredCardState: {
+            /** Note */
+            note?: string | null;
+            /** Phase */
+            phase: string;
+            /** Slug */
+            slug?: string | null;
+            /** Title */
+            title?: string | null;
+            /** Ts */
+            ts?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * Subscriptions
          * @description Read-only. Metadata keys (leading `_`) and non-list values are stripped,
          *     so this is consistently source -> agent ids.
@@ -12747,6 +12780,27 @@ export interface components {
             branch: components["schemas"]["CurrentBranch"];
             /** Branches */
             branches: components["schemas"]["Branch"][];
+        };
+        /**
+         * SyncBranch
+         * @description Which branch the sync endpoint is serving. A THIRD branch shape, and
+         *     deliberately so: the client compares `id` to notice the branch changed under
+         *     it and re-read from zero, and renders `head` to grey out a branch action
+         *     that would be a no-op. It needs neither the fork previews a `Branch` list
+         *     entry computes nor the parent pointer `CurrentBranch` carries, and it is the
+         *     only one of the three that carries `head` at all.
+         *
+         *     Declaring this `str` is what took the whole chat surface down on 2026-08-17:
+         *     `/threads/{id}/events` is THE sync endpoint, so every thread with a
+         *     relational branch row 500d on load, on poll and on turn completion.
+         */
+        SyncBranch: {
+            /** Head */
+            head?: string | null;
+            /** Id */
+            id: string;
+            /** Name */
+            name?: string | null;
         };
         /**
          * Task
@@ -13190,7 +13244,9 @@ export interface components {
             /** Archived At */
             archived_at?: string | null;
             /** Card States */
-            card_states?: Record<string, never> | null;
+            card_states?: {
+                [key: string]: components["schemas"]["StoredCardState"];
+            } | null;
             /** Claude Session */
             claude_session?: string | null;
             /** Cleared Through */
@@ -13230,12 +13286,10 @@ export interface components {
             scope: string;
             /** Summary */
             summary?: string | null;
-            /** Ticket Drafts */
-            ticket_drafts?: Record<string, never> | null;
+            ticket_drafts?: components["schemas"]["TicketDraftScan"] | null;
             /** Title */
             title: string;
-            /** Turn Marks */
-            turn_marks?: Record<string, never> | null;
+            turn_marks?: components["schemas"]["TurnMarks"] | null;
             /** Updated At */
             updated_at?: string | null;
             /** Voice Session */
@@ -13258,8 +13312,7 @@ export interface components {
          */
         ThreadEvents: {
             active_turn?: components["schemas"]["ActiveTurn"] | null;
-            /** Branch */
-            branch?: string | null;
+            branch?: components["schemas"]["SyncBranch"] | null;
             /** Branch Count */
             branch_count: number;
             /** Cleared Through */
@@ -13312,7 +13365,9 @@ export interface components {
             /** Archived At */
             archived_at?: string | null;
             /** Card States */
-            card_states?: Record<string, never> | null;
+            card_states?: {
+                [key: string]: components["schemas"]["StoredCardState"];
+            } | null;
             /** Claude Session */
             claude_session?: string | null;
             /** Cleared Through */
@@ -13347,12 +13402,10 @@ export interface components {
             scope: string;
             /** Summary */
             summary?: string | null;
-            /** Ticket Drafts */
-            ticket_drafts?: Record<string, never> | null;
+            ticket_drafts?: components["schemas"]["TicketDraftScan"] | null;
             /** Title */
             title: string;
-            /** Turn Marks */
-            turn_marks?: Record<string, never> | null;
+            turn_marks?: components["schemas"]["TurnMarks"] | null;
             /** Updated At */
             updated_at?: string | null;
             /** Voice Session */
@@ -13416,7 +13469,9 @@ export interface components {
             /** Archived At */
             archived_at?: string | null;
             /** Card States */
-            card_states?: Record<string, never> | null;
+            card_states?: {
+                [key: string]: components["schemas"]["StoredCardState"];
+            } | null;
             /** Claude Session */
             claude_session?: string | null;
             /** Cleared Through */
@@ -13457,12 +13512,10 @@ export interface components {
             scope: string;
             /** Summary */
             summary?: string | null;
-            /** Ticket Drafts */
-            ticket_drafts?: Record<string, never> | null;
+            ticket_drafts?: components["schemas"]["TicketDraftScan"] | null;
             /** Title */
             title: string;
-            /** Turn Marks */
-            turn_marks?: Record<string, never> | null;
+            turn_marks?: components["schemas"]["TurnMarks"] | null;
             /** Updated At */
             updated_at?: string | null;
             /** Voice Session */
@@ -13485,6 +13538,29 @@ export interface components {
             scope: components["schemas"]["WorkTask"][];
             /** Scope Key */
             scope_key?: string | null;
+        };
+        /**
+         * TicketDraftScan
+         * @description The SCAN state the ticket-draft pass leaves on a thread: when it last
+         *     ran and how much of the conversation it had read, which is how
+         *     `messages_since` is computed on the next read.
+         *
+         *     `services/ticket_drafts.py` writes exactly `generated_at` and
+         *     `message_count` -- deliberately NOT the drafts, because the filed tickets
+         *     ARE the drafts and a second copy here is what that refactor removed. Three
+         *     live threads still carry a `drafts` list written before it, so the field is
+         *     declared rather than dropped: a response model that omits it would delete
+         *     those from the wire.
+         */
+        TicketDraftScan: {
+            /** Drafts */
+            drafts?: Record<string, never>[] | null;
+            /** Generated At */
+            generated_at?: string | null;
+            /** Message Count */
+            message_count?: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * TicketDrafts
@@ -13596,6 +13672,27 @@ export interface components {
             preset?: string | null;
             /** Triggers */
             triggers?: Record<string, never>[];
+        };
+        /**
+         * TurnMarks
+         * @description What this thread has already been TOLD, so a turn can avoid saying it
+         *     twice. These three are `chat_store.get_turn_marks`'s own documented set and
+         *     the only three any writer sets today (`routes/chat.py` writes
+         *     `contract_hash`, `live_hash` and `seen_scope_version`).
+         *
+         *     `set_turn_marks(thread_id, **fields)` takes arbitrary keywords by signature,
+         *     so this is a floor and not a closed set; `extra="allow"` is what makes
+         *     adding a fourth mark a one-line change rather than a silently dropped field.
+         */
+        TurnMarks: {
+            /** Contract Hash */
+            contract_hash?: string | null;
+            /** Live Hash */
+            live_hash?: string | null;
+            /** Seen Scope Version */
+            seen_scope_version?: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * TurnPart
