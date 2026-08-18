@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from services import usage_ledger
 
@@ -62,6 +62,21 @@ class UsageStatus(BaseModel):
     projects: dict[str, ProjectUsage]
 
 
+class UsagePoint(BaseModel):
+    """One interval of the usage chart. `t` is the only fixed key: the remaining
+    columns are PROJECT SLUGS mapped to that interval's token count, so they
+    differ per instance and per window, and `UsageTimeseries.projects` is what
+    names them.
+
+    Declared as a floor rather than left open because `t` is the x-axis and a
+    client that cannot see it cannot draw anything. `extra="allow"` carries the
+    dynamic slug columns through untouched."""
+
+    model_config = ConfigDict(extra="allow")
+
+    t: str | None = None
+
+
 class UsageTimeseries(BaseModel):
     """Per-interval per-project tokens. Each point is `{t: <iso>, <slug>: <int>,
     ...}`, so the project columns are dynamic and the point is left open;
@@ -71,7 +86,7 @@ class UsageTimeseries(BaseModel):
     window_s: int
     bin_s: int
     projects: list[str]
-    points: list[dict[str, Any]]
+    points: list[UsagePoint]
 
 
 @router.get("", response_model=UsageStatus, response_model_exclude_unset=True)

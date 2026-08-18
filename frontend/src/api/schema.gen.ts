@@ -10621,6 +10621,30 @@ export interface components {
             task: components["schemas"]["Task"];
         };
         /**
+         * McpCounts
+         * @description MCP servers tallied by health. The four buckets are the platform's five
+         *     status kinds minus `running` (a server is not a process we run), so this is
+         *     the same vocabulary the UI already renders, plus the total it would
+         *     otherwise have to sum itself.
+         *
+         *     Read off a live `claude mcp list` on 2026-08-18:
+         *     `{"ok": 1, "warn": 0, "danger": 3, "stopped": 0, "total": 4}`.
+         */
+        McpCounts: {
+            /** Danger */
+            danger?: number | null;
+            /** Ok */
+            ok?: number | null;
+            /** Stopped */
+            stopped?: number | null;
+            /** Total */
+            total?: number | null;
+            /** Warn */
+            warn?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * McpHealth
          * @description `available: false` with a `reason` is what an unrunnable CLI looks like.
          *     There is no fallback list, because a made-up server list would report health
@@ -10634,8 +10658,7 @@ export interface components {
             cached: boolean;
             /** Checked At */
             checked_at?: number | null;
-            /** Counts */
-            counts?: Record<string, never> | null;
+            counts?: components["schemas"]["McpCounts"] | null;
             /** Enabled */
             enabled?: string[] | null;
             /** Reason */
@@ -10735,8 +10758,7 @@ export interface components {
             cost_available: boolean;
             /** Cost Checked At */
             cost_checked_at?: number | null;
-            /** Counts */
-            counts?: Record<string, never> | null;
+            counts?: components["schemas"]["McpCounts"] | null;
             /** Cwd */
             cwd: string;
             /** Reason */
@@ -10775,6 +10797,25 @@ export interface components {
             version: number;
         };
         /**
+         * MentionableAgent
+         * @description One addressable agent, as `mentions.mentionable_agents` projects it --
+         *     four fields, not the whole registry record. The picker shows a name and a
+         *     purpose and addresses by slug; the rest of an agent definition is not the
+         *     mention list's business.
+         */
+        MentionableAgent: {
+            /** Name */
+            name?: string | null;
+            /** Purpose */
+            purpose?: string | null;
+            /** Role */
+            role?: string | null;
+            /** Slug */
+            slug?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * MentionableAgents
          * @description Server-resolved because the rule is a policy, not a display preference: an
          *     agent is addressable only if it opted in AND this chat's scope reaches it.
@@ -10782,7 +10823,7 @@ export interface components {
          */
         MentionableAgents: {
             /** Agents */
-            agents: Record<string, never>[];
+            agents: components["schemas"]["MentionableAgent"][];
             /** Scope */
             scope: string;
         };
@@ -14105,6 +14146,23 @@ export interface components {
             removed: number;
         };
         /**
+         * UsagePoint
+         * @description One interval of the usage chart. `t` is the only fixed key: the remaining
+         *     columns are PROJECT SLUGS mapped to that interval's token count, so they
+         *     differ per instance and per window, and `UsageTimeseries.projects` is what
+         *     names them.
+         *
+         *     Declared as a floor rather than left open because `t` is the x-axis and a
+         *     client that cannot see it cannot draw anything. `extra="allow"` carries the
+         *     dynamic slug columns through untouched.
+         */
+        UsagePoint: {
+            /** T */
+            t?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * UsageStatus
          * @description A trailing window. Only the 5h window carries a cap (`capped: true`);
          *     the rest are reporting-only lookbacks.
@@ -14140,7 +14198,7 @@ export interface components {
             /** Bin S */
             bin_s: number;
             /** Points */
-            points: Record<string, never>[];
+            points: components["schemas"]["UsagePoint"][];
             /** Projects */
             projects: string[];
             /** Window S */

@@ -32,6 +32,8 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
+from routes.api_models import McpCounts
+
 from services import context_report, mcp_health, mcp_registry
 
 log = logging.getLogger("workshop.routes.mcp")
@@ -101,7 +103,7 @@ class McpServers(BaseModel):
     available: bool
     reason: str | None = None
     servers: list[McpServerRow]
-    counts: dict[str, Any] | None = None
+    counts: McpCounts | None = None
     checked_at: float | None = None
     cached: bool | None = None
     cost_available: bool

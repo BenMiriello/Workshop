@@ -61,6 +61,24 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 
+class McpCounts(BaseModel):
+    """MCP servers tallied by health. The four buckets are the platform's five
+    status kinds minus `running` (a server is not a process we run), so this is
+    the same vocabulary the UI already renders, plus the total it would
+    otherwise have to sum itself.
+
+    Read off a live `claude mcp list` on 2026-08-18:
+    `{"ok": 1, "warn": 0, "danger": 3, "stopped": 0, "total": 4}`."""
+
+    model_config = ConfigDict(extra="allow")
+
+    ok: int | None = None
+    warn: int | None = None
+    danger: int | None = None
+    stopped: int | None = None
+    total: int | None = None
+
+
 # ------------------------------------------------------------------- triggers
 
 class TriggerBudget(BaseModel):

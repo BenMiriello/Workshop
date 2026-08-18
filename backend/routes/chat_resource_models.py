@@ -24,6 +24,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from routes.api_models import McpCounts
+
 
 class ThreadContext(BaseModel):
     """The context meter. OUR estimate, measured over the prompt a turn would
@@ -95,7 +97,7 @@ class McpHealth(BaseModel):
     available: bool
     reason: str | None = None
     servers: list[McpServer] | None = None
-    counts: dict[str, Any] | None = None
+    counts: McpCounts | None = None
     checked_at: float | None = None
     cached: bool
     enabled: list[str] | None = None
@@ -145,10 +147,24 @@ class AttachmentDeleted(BaseModel):
 
 # ----------------------------------------------------------------- mentionable
 
+class MentionableAgent(BaseModel):
+    """One addressable agent, as `mentions.mentionable_agents` projects it --
+    four fields, not the whole registry record. The picker shows a name and a
+    purpose and addresses by slug; the rest of an agent definition is not the
+    mention list's business."""
+
+    model_config = ConfigDict(extra="allow")
+
+    slug: str | None = None
+    name: str | None = None
+    role: str | None = None
+    purpose: str | None = None
+
+
 class MentionableAgents(BaseModel):
     """Server-resolved because the rule is a policy, not a display preference: an
     agent is addressable only if it opted in AND this chat's scope reaches it.
     Computing it on the client would put the policy in two places."""
 
     scope: str
-    agents: list[dict[str, Any]]
+    agents: list[MentionableAgent]

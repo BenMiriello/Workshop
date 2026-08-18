@@ -1,5 +1,5 @@
 {
-  "opaque_fields": 60,
+  "opaque_fields": 56,
   "per_schema": {
     "ActiveTurn": [
       "live"
@@ -73,17 +73,8 @@
       "cols",
       "hearing"
     ],
-    "McpHealth": [
-      "counts"
-    ],
     "McpServerRow": [
       "tools"
-    ],
-    "McpServers": [
-      "counts"
-    ],
-    "MentionableAgents": [
-      "agents"
     ],
     "MetricLatest": [
       "qty"
@@ -138,9 +129,6 @@
     "ToolCall": [
       "kwargs"
     ],
-    "UsageTimeseries": [
-      "points"
-    ],
     "WriteIn": [
       "selector"
     ],
@@ -148,5 +136,5 @@
       "review"
     ]
   },
-  "schemas_with_opaque_fields": 43
+  "schemas_with_opaque_fields": 39
 }
