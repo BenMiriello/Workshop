@@ -1,8 +1,11 @@
 # Chat ↔ Agent integration: two tracks, one surface (2026-08-18)
 
-Status: plan. Step 0 (the chat delegation-contract fix) is SHIPPED in this pass.
-The rest is staged for build. Single-operator system; voice-mode files are out
-of scope.
+Status: mostly ALREADY BUILT (verified in code 2026-08-18); this doc is now a
+map of where each piece lives, not a build plan. Step 0 (the chat
+delegation-contract fix) was shipped in this pass. An earlier draft of this doc
+listed most of section 7 as "not yet built" -- that was written from the design
+docs, not the live code, and was wrong. See section 7 for the receipts.
+Single-operator system; voice-mode files are out of scope.
 
 Origin: operator raised that the chat keeps launching "background" subagents,
 promising to report back, and then going silent. Root cause diagnosed in code
@@ -86,18 +89,21 @@ thread link.
   already records `source_kind="chat"` + `source_ref=<thread id>`
   (`models.py:414`, index `ix_ticket_source_chat`).
 
-Gaps to add:
+Both gaps this doc originally listed are ALREADY BUILT:
 
-1. **Agent identity on a Run.** A Run must clearly record which agent produced it
-   (agent slug + role), so the work element and the inbox can name the actor.
-2. **Per-thread work-element state.** A `card_states` sidecar on the chat thread
-   (already designed in `chat-work-linkage-2026-07-18.md`, not built): a small
-   JSON map keyed by the work element's id, so the element persists across reload
-   instead of reverting to an editable card. This also fixes the card-duplication
-   bug described in that doc.
+1. **Agent identity on a Run: BUILT.** `jobs.start()` already records
+   `agent_id` and `chat_id` (`services/jobs.py`), and `routes/jobs._enrich`
+   computes an `agent_name` display field. The frontend `Job` type carries both
+   (`frontend/src/lib/jobs.ts:17,37`).
+2. **Per-thread work-element state: BUILT.** The `card_states` sidecar exists
+   end to end: `chat_store.set_card_state` + the `card_states` thread field,
+   the `CardStates` / `StoredCardState` models (`routes/chat_models.py:371`),
+   `POST /threads/{id}/card-state` (`routes/chat.py:956`), and the client state
+   in `useChatThread.ts` read by `UiCard.tsx:373`. The card-duplication bug is
+   already fixed: the server stopped appending a separate `job-status` card and
+   the source card renders the run itself (`uiCardActions.ts:68`, `chat.py:1292`).
 
-Net: Track B's data model is most of the way there; we add agent-identity-on-run
-and the per-thread element state. Track A needs no data model.
+Net: Track B's data model is done. Track A needs no data model.
 
 ---
 
@@ -118,9 +124,14 @@ Out-of-band: when the operator has left the chat, a Track B finish/block/questio
 also lands in the global inbox (`inbox.py`, typed notify / question / review),
 which already exists and is scope-filtered.
 
-Reuse, do not invent: the streaming element is the live-progress element from
-`chat-work-linkage-2026-07-18.md`; this plan adds the actor-name header and the
-Track A vs Track B label to it.
+This is ALREADY BUILT as the `work/` module: `WorkPanel.tsx`, `TicketRow.tsx`,
+`TicketCard.tsx`, `QuestionView.tsx`, `AgentAvatar.tsx`, driven by `ticketCard.ts`
+/ `workRows.ts`. It already shows the agent by name with an avatar
+(`TicketCard.tsx:377`, `TicketRow.tsx:69`), the live clock and run status, the
+receipt counts, and a blocked-run question/answer flow routed to the named agent
+(`QuestionView.tsx`). The transcript polls it live (`chat.py:1171`). The only
+thing not surfaced this way is a Track A subagent, which by design folds into the
+reply rather than becoming a card.
 
 ---
 
@@ -136,14 +147,32 @@ model can no longer be truthfully told it may background a subagent.
 
 ---
 
-## 7. Build order for the rest (not yet built)
+## 7. What is already built (verified 2026-08-18), with receipts
 
-1. Agent identity on the Run record (backend), so the actor is nameable.
-2. `card_states` sidecar + fix the card-duplication bug
-   (per `chat-work-linkage-2026-07-18.md`).
-3. The shared work element with the actor-name header (frontend), rendering both
-   tracks.
-4. Chat start controls: direct "run agent X here" + role-routed file-and-run,
-   both writing the same Run and rendering the same element.
+1. Agent identity on the Run: `jobs.start()` records `agent_id` + `chat_id`;
+   `routes/jobs._enrich` adds `agent_name` (`lib/jobs.ts:17,37`). BUILT.
+2. `card_states` sidecar + card-duplication fix: `chat_store.set_card_state`,
+   `CardStates` model, `POST /threads/{id}/card-state`, client `useChatThread` +
+   `UiCard`; the separate `job-status` card was removed (`uiCardActions.ts:68`).
+   BUILT.
+3. Shared work element with the actor name: the `work/` module (WorkPanel,
+   TicketRow, TicketCard, QuestionView, AgentAvatar). Shows agent name + avatar,
+   live status/clock, receipts, and a question/answer flow. BUILT.
+4. Chat start controls: role-routed file-and-run via the task-proposal card
+   (`addTasksAndRun` in `uiCardActions.ts`), AND direct named invocation via an
+   `@slug` mention that runs a specific agent in the chat (`chat.py:2960-3040`,
+   gated by the agent's `mentionable` / `delegatable` flags). BUILT.
 
-Each is a discrete, reviewable ticket when this leaves Direct mode.
+Plus the out-of-band surface (`inbox.py`, notify/question/review) already exists.
+
+## 8. Genuinely optional remainder (decide if any is worth a ticket)
+
+- A Track A subagent could render a lightweight "Subagent" chip in the transcript
+  instead of only folding into the reply. Low value: it finishes inside the
+  reply, so a persistent card would mostly be noise.
+- A one-tap "run agent X here" affordance (a picker) as a shortcut for typing the
+  `@slug` mention. Convenience only; the mechanism already exists.
+- Runs still live in the `jobs.py` file store, not the Run table. That migration
+  is its own already-filed ticket and is independent of this integration.
+
+None of these are load-bearing. The two-track integration works today.
