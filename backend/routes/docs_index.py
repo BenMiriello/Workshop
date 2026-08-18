@@ -65,7 +65,34 @@ def _mtime_iso(f: Path) -> str | None:
         return None
 
 
-@router.get("")
+
+class DocRow(BaseModel):
+    """One markdown file under `docs/`. `section` is the first path segment
+    under docs/, or "" for a loose top-level file. `title` is the first `# `
+    heading, falling back to the filename stem."""
+
+    path: str
+    title: str
+    section: str
+    mtime: str | None = None
+
+
+class DocIndex(BaseModel):
+    docs: list[DocRow]
+    count: int
+
+
+class DocContent(BaseModel):
+    """Raw markdown. `mtime` is present on a write and absent on a read, which
+    is the difference between "here is the file" and "here is the file as I
+    just left it"."""
+
+    path: str
+    content: str
+    mtime: str | None = None
+
+
+@router.get("", response_model=DocIndex)
 def list_docs() -> dict:
     """Every `.md` under docs/, each tagged with its top-level section (the first
     path segment under docs/, or "" for a loose top-level file), title (first
@@ -105,7 +132,7 @@ def _resolve_within_docs(path: str) -> Path:
     return candidate
 
 
-@router.get("/file")
+@router.get("/file", response_model=DocContent)
 def read_doc(path: str = Query(..., description="repo-relative path to a doc under docs/")) -> dict:
     """Raw markdown of a single doc. The path must resolve to a `.md` file inside
     docs/ (traversal outside docs/ is rejected as a correctness check, not a
@@ -121,7 +148,7 @@ class PutDocIn(BaseModel):
     content: str
 
 
-@router.put("/file")
+@router.put("/file", response_model=DocContent)
 def write_doc(body: PutDocIn) -> dict:
     """Write raw markdown to an EXISTING `.md` file inside `docs/`. Same
     containment check as `read_doc`, so a write can escape `docs/` in exactly

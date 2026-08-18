@@ -9495,6 +9495,43 @@ export interface components {
             keep_imported: boolean;
         };
         /**
+         * DocContent
+         * @description Raw markdown. `mtime` is present on a write and absent on a read, which
+         *     is the difference between "here is the file" and "here is the file as I
+         *     just left it".
+         */
+        DocContent: {
+            /** Content */
+            content: string;
+            /** Mtime */
+            mtime?: string | null;
+            /** Path */
+            path: string;
+        };
+        /** DocIndex */
+        DocIndex: {
+            /** Count */
+            count: number;
+            /** Docs */
+            docs: components["schemas"]["DocRow"][];
+        };
+        /**
+         * DocRow
+         * @description One markdown file under `docs/`. `section` is the first path segment
+         *     under docs/, or "" for a loose top-level file. `title` is the first `# `
+         *     heading, falling back to the filename stem.
+         */
+        DocRow: {
+            /** Mtime */
+            mtime?: string | null;
+            /** Path */
+            path: string;
+            /** Section */
+            section: string;
+            /** Title */
+            title: string;
+        };
+        /**
          * Draft
          * @description The unsent text in a composer, plus the files attached to it -- a draft is
          *     everything in the box. `superseded` is set when a write LOST to a strictly
@@ -21584,7 +21621,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["DocIndex"];
                 };
             };
         };
@@ -21607,7 +21644,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["DocContent"];
                 };
             };
             /** @description Validation Error */
@@ -21640,7 +21677,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["DocContent"];
                 };
             };
             /** @description Validation Error */
