@@ -2040,7 +2040,17 @@ span.ws-filterchip__open { cursor: default; }
 .ws-segmented { position: relative; display: inline-flex; padding: 3px; gap: 2px; background: var(--field-bg); border-radius: var(--radius-md); }
 .ws-segmented__thumb {
   position: absolute; top: 3px; bottom: 3px; left: 0; width: 0; z-index: 0;
-  border-radius: calc(var(--radius-md) - 3px); background: var(--card); box-shadow: var(--shadow-sm);
+  border-radius: calc(var(--radius-md) - 3px); background: var(--card);
+  /* --card and --field-bg (the track under it) sit only ~4% of lightness
+     apart in both modes, which the shadow alone doesn't fix: --shadow-card is
+     literally `none` in dark, and --shadow-sm is a 2px blur too soft to read
+     against a track this close in tone. Add the same faint ring a card gets
+     in dark mode (rule 6: float on shadow in light, a ring in dark) — it is
+     `transparent` in every light scheme, so this changes nothing there and
+     the shadow keeps doing that job. Operator, 2026-08-18: "the background
+     color for the selected option... is just too close to the background of
+     the container." */
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--card-ring);
   pointer-events: none;
   transition: transform var(--dur-base) var(--ease-out), width var(--dur-base) var(--ease-out);
 }
@@ -2055,8 +2065,9 @@ span.ws-filterchip__open { cursor: default; }
 .ws-segmented button svg { width: 15px; height: 15px; stroke-width: 1.8; }
 .ws-segmented button:hover { color: var(--fg); }
 .ws-segmented button[aria-pressed="true"] { color: var(--fg); }
-/* Fallback indicator when JS hasn't attached a sliding thumb */
-.ws-segmented:not(.has-thumb) button[aria-pressed="true"] { background: var(--card); box-shadow: var(--shadow-sm); }
+/* Fallback indicator when JS hasn't attached a sliding thumb. Same ring as the
+   thumb above, for the same reason. */
+.ws-segmented:not(.has-thumb) button[aria-pressed="true"] { background: var(--card); box-shadow: var(--shadow-sm), 0 0 0 1px var(--card-ring); }
 .ws-segmented button:focus-visible { box-shadow: var(--focus-ring); }
 .ws-segmented button:active { transform: scale(0.97); }
 /* Dimmed, non-interactive option (e.g. an engine currently offline). Cursor
@@ -2738,7 +2749,7 @@ span.ws-filterchip__open { cursor: default; }
      control scrolls, the thumb's offset no longer tracks the visible row, so
      the pressed state carries the background itself. */
   .ws-segmented__thumb { display: none; }
-  .ws-segmented button[aria-pressed="true"] { background: var(--card); box-shadow: var(--shadow-sm); }
+  .ws-segmented button[aria-pressed="true"] { background: var(--card); box-shadow: var(--shadow-sm), 0 0 0 1px var(--card-ring); }
 
 }
 

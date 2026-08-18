@@ -12,6 +12,22 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.13 - 2026-08-18 - the segmented control's selected option gets a ring
+
+**Compatible (no name added or moved).** A CSS-only release: `.ws-segmented`.
+
+The sliding thumb's fill (`--card`) and the track underneath it (`--field-bg`)
+sit only about 4% of lightness apart in both modes, and `--shadow-card` is
+literally `none` in dark, so the selected option was barely distinguishable
+from the rest of the control. Operator, 2026-08-18: "the background color for
+the selected option... is just too close to the background of the container."
+
+The thumb (and the two non-JS fallback selected states it has) now also carries
+`0 0 0 1px var(--card-ring)`, the same faint ring a card gets in dark mode per
+the design system's own rule (float on shadow in light, a ring in dark).
+`--card-ring` is `transparent` in every light scheme, so light mode is
+unchanged and keeps doing the job with the shadow alone.
+
 ## 0.5.12 - 2026-08-15 - a link is underlined, not tinted, and now actually is
 
 **Compatible (no name added or moved).** A CSS-only release: `.ws-link`.
