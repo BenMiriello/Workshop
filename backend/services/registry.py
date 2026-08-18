@@ -47,7 +47,13 @@ Kind = Literal["app", "kit"]
 # move the registry too, keeping smokes off the real data. Also independently
 # overridable for tests that want a separate registry path.
 def _workshop_root() -> Path:
-    return projects_routes.PROJECTS_ROOT.parent
+    # `_projects_root()`, not the module-level `PROJECTS_ROOT` this used to
+    # read: that constant was replaced by the accessor when paths moved to
+    # `wsplatform.paths` (ADR 0024), and nothing updated this line, so every
+    # call raised AttributeError and GET /base-apps/registry had been a 500.
+    # The accessor is also the one that honours the test override, which is the
+    # property the comment above depends on.
+    return projects_routes._projects_root().parent
 
 
 def _registry_path() -> Path:

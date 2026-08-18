@@ -9,6 +9,7 @@ Public surface is on tailnet only via Tailscale Serve; no internet exposure.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
