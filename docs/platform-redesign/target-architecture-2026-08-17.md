@@ -860,8 +860,16 @@ those is the 2026-08-14 regression. A gate at zero would demand that regression 
   commute 27, trackers 16, finance 8, budget 6, owntracks 2, environment 2,
   plaid_webhook 1) plus chat's two SSE streams and the attachment download, which
   have no JSON body to describe. Moving those eight routers out of platform core is
-  item 3's business, not item 2's. On 2b, `lib/chat.ts` now reads fourteen wire
-  shapes off the schema; the rest of the frontend still hand-writes its types.
+  item 3's business, not item 2's. On 2b, `lib/chat.ts` reads fourteen wire shapes
+  off the schema and `lib/tasks.ts` eleven more including `Task` itself; the rest
+  of the frontend still hand-writes its types.
+- **The FIELD level of item 2, which the original plan did not separate out.**
+  `response_model` on a route says nothing about whether that model's fields say
+  anything, and once 268 routes had one the same defect was alive underneath:
+  98 field slots generated as `Record<string, never>`. `check_opaque_fields.py`
+  pins it, and the chat and ticket models have taken it to 80. The remaining 80
+  are mostly agents, deploys, projects and jobs, plus the handful that are
+  deliberately open.
 - **`task → ticket`.** Deliberately deferred to item 3, for the reasons measured in
   §5 above. `job → run` is unblocked now that 1a has freed the word, and is the
   next mechanical piece.
