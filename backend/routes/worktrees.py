@@ -10,7 +10,7 @@ user-facing slug is `branch_slug`.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from services import worktrees
 
@@ -30,7 +30,139 @@ class _PublishIn(BaseModel):
     body: str = ""
 
 
-@router.get("/{project_slug}")
+# ---- response models (ADR 0023 clause 6) -----------------------------------
+# Read off services/worktrees.py and the services/github.py helpers it calls.
+# FastAPI FILTERS a return value through the declared model and drops any key
+# it does not name, so an under-declared field here is a live API field that
+# vanishes.
+#
+# A PR record STAYS OPEN: it is `gh pr list --json ...`'s output verbatim, so
+# its keys belong to the GitHub CLI. The fields this repo reads are named; the
+# rest ride through rather than being guessed at or dropped.
+
+
+class BranchRow(BaseModel):
+    """One worktree of this project. Only branches under the `wt/<project>/`
+    prefix are listed, so an unrelated worktree on the same repo is invisible
+    here rather than mistaken for a project branch."""
+
+    project_slug: str
+    branch_slug: str
+    branch: str
+    dir: str
+    head: str | None = None
+
+
+class BranchCreated(BaseModel):
+    project_slug: str
+    branch_slug: str
+    branch: str
+    dir: str
+    created: str
+
+
+class DiffFile(BaseModel):
+    """One changed file with its FULL patch text. `status` is git's name-status
+    letter (M, A, D, R...)."""
+
+    path: str
+    status: str
+    diff: str
+
+
+class BranchDiff(BaseModel):
+    """`summary` is git's own shortstat line, or the literal "no changes vs
+    main" when the branch is empty against the base."""
+
+    summary: str
+    files: list[DiffFile]
+
+
+class MergeResult(BaseModel):
+    """A fast-forward is attempted first and a real merge commit only if that
+    fails. On failure the in-progress merge is ABORTED before answering, so the
+    working tree is clean and `reason` describes a merge that left nothing
+    behind. The route turns `ok: false` into a 409, so this body is the success
+    case in practice."""
+
+    ok: bool
+    commit: str | None = None
+    reason: str | None = None
+
+
+class PullRequest(BaseModel):
+    """A PR as `gh` reports it. Left open: the field set is the GitHub CLI's."""
+
+    model_config = ConfigDict(extra="allow")
+
+    number: int | None = None
+    title: str | None = None
+    headRefName: str | None = None
+    url: str | None = None
+    state: str | None = None
+    isDraft: bool | None = None
+
+
+class PublishResult(BaseModel):
+    """Publish rebases onto the base BEFORE pushing. A rebase conflict answers
+    `ok: false` with `conflict: true` and does not push, so the caller can park
+    the task instead of looping -- which is why this is a body rather than an
+    exception."""
+
+    ok: bool
+    branch: str | None = None
+    base: str | None = None
+    conflict: bool | None = None
+    detail: str | None = None
+    remote_url: str | None = None
+    pr: PullRequest | None = None
+
+
+class CleanupResult(BaseModel):
+    """Branch slugs, not branch refs. A branch still ahead of the base is KEPT:
+    cleanup is best-effort per branch and never discards unmerged work."""
+
+    removed: list[str]
+    kept: list[str]
+
+
+class AheadBehind(BaseModel):
+    """Counts against `origin/<base>`. Both read 0 when the rev-list could not
+    run, which is indistinguishable from being level -- an honest limitation of
+    the underlying command, recorded here rather than papered over."""
+
+    ahead: int
+    behind: int
+
+
+class WorktreeState(BaseModel):
+    """`task_id` is the branch slug: a branch is named after the ticket that
+    owns it, so the two are the same string by construction."""
+
+    branch_slug: str
+    dir: str
+    task_id: str
+    ahead_behind: AheadBehind
+    pr: PullRequest | None = None
+
+
+class RepoState(BaseModel):
+    """The canonical-state view. An UNBOUND project (no GitHub remote) answers
+    with just `{bound: false}` and nothing else, which is why every other field
+    is optional."""
+
+    bound: bool
+    default_branch: str | None = None
+    remote_url: str | None = None
+    worktrees: list[WorktreeState] | None = None
+    open_prs: list[PullRequest] | None = None
+
+
+class BranchDiscarded(BaseModel):
+    ok: bool
+
+
+@router.get("/{project_slug}", response_model=list[BranchRow])
 async def list_for_project(project_slug: str):
     try:
         return worktrees.list_branches(project_slug)
@@ -38,7 +170,7 @@ async def list_for_project(project_slug: str):
         raise HTTPException(400, str(e))
 
 
-@router.post("/{project_slug}")
+@router.post("/{project_slug}", response_model=BranchCreated)
 async def create(project_slug: str, body: _CreateIn):
     try:
         return worktrees.create_branch(project_slug, body.branch_slug)
@@ -46,7 +178,7 @@ async def create(project_slug: str, body: _CreateIn):
         raise HTTPException(400, str(e))
 
 
-@router.get("/{project_slug}/{branch_slug}/diff")
+@router.get("/{project_slug}/{branch_slug}/diff", response_model=BranchDiff)
 async def diff(project_slug: str, branch_slug: str):
     try:
         return worktrees.diff_branch(project_slug, branch_slug)
@@ -54,7 +186,7 @@ async def diff(project_slug: str, branch_slug: str):
         raise HTTPException(400, str(e))
 
 
-@router.post("/{project_slug}/{branch_slug}/merge")
+@router.post("/{project_slug}/{branch_slug}/merge", response_model=MergeResult)
 async def merge(project_slug: str, branch_slug: str, body: _MergeIn):
     try:
         result = worktrees.merge_branch(project_slug, branch_slug, message=body.message)
@@ -65,7 +197,7 @@ async def merge(project_slug: str, branch_slug: str, body: _MergeIn):
     return result
 
 
-@router.post("/{project_slug}/{branch_slug}/publish")
+@router.post("/{project_slug}/{branch_slug}/publish", response_model=PublishResult)
 async def publish(project_slug: str, branch_slug: str, body: _PublishIn):
     """Push the branch to origin and open a PR (bound projects only)."""
     try:
@@ -76,7 +208,7 @@ async def publish(project_slug: str, branch_slug: str, body: _PublishIn):
         raise HTTPException(400, str(e))
 
 
-@router.post("/{project_slug}/cleanup")
+@router.post("/{project_slug}/cleanup", response_model=CleanupResult)
 async def cleanup(project_slug: str):
     """Remove worktrees whose branch is already merged into the canonical base
     (bound projects only; unbound returns empty)."""
@@ -86,7 +218,7 @@ async def cleanup(project_slug: str):
         raise HTTPException(400, str(e))
 
 
-@router.get("/{project_slug}/repo-state")
+@router.get("/{project_slug}/repo-state", response_model=RepoState)
 async def repo_state(project_slug: str):
     """Canonical-state view: default branch, remote, active worktrees + PRs,
     ahead/behind, open PRs. Unbound projects return {bound: false}."""
@@ -96,7 +228,7 @@ async def repo_state(project_slug: str):
         raise HTTPException(400, str(e))
 
 
-@router.delete("/{project_slug}/{branch_slug}")
+@router.delete("/{project_slug}/{branch_slug}", response_model=BranchDiscarded)
 async def discard(project_slug: str, branch_slug: str):
     try:
         return worktrees.discard_branch(project_slug, branch_slug)

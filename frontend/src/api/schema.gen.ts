@@ -7889,6 +7889,18 @@ export interface components {
             /** Templates */
             templates: components["schemas"]["AgentTemplate"][];
         };
+        /**
+         * AheadBehind
+         * @description Counts against `origin/<base>`. Both read 0 when the rev-list could not
+         *     run, which is indistinguishable from being level -- an honest limitation of
+         *     the underlying command, recorded here rather than papered over.
+         */
+        AheadBehind: {
+            /** Ahead */
+            ahead: number;
+            /** Behind */
+            behind: number;
+        };
         /** AppList */
         AppList: {
             /** Apps */
@@ -8604,6 +8616,35 @@ export interface components {
             /** Preview */
             preview?: string | null;
         };
+        /** BranchCreated */
+        BranchCreated: {
+            /** Branch */
+            branch: string;
+            /** Branch Slug */
+            branch_slug: string;
+            /** Created */
+            created: string;
+            /** Dir */
+            dir: string;
+            /** Project Slug */
+            project_slug: string;
+        };
+        /**
+         * BranchDiff
+         * @description `summary` is git's own shortstat line, or the literal "no changes vs
+         *     main" when the branch is empty against the base.
+         */
+        BranchDiff: {
+            /** Files */
+            files: components["schemas"]["routes__worktrees__DiffFile"][];
+            /** Summary */
+            summary: string;
+        };
+        /** BranchDiscarded */
+        BranchDiscarded: {
+            /** Ok */
+            ok: boolean;
+        };
         /**
          * BranchList
          * @description Empty rather than an error when the relational store is unreachable: a
@@ -8612,6 +8653,24 @@ export interface components {
         BranchList: {
             /** Branches */
             branches: components["schemas"]["Branch"][];
+        };
+        /**
+         * BranchRow
+         * @description One worktree of this project. Only branches under the `wt/<project>/`
+         *     prefix are listed, so an unrelated worktree on the same repo is invisible
+         *     here rather than mistaken for a project branch.
+         */
+        BranchRow: {
+            /** Branch */
+            branch: string;
+            /** Branch Slug */
+            branch_slug: string;
+            /** Dir */
+            dir: string;
+            /** Head */
+            head?: string | null;
+            /** Project Slug */
+            project_slug: string;
         };
         /** BriefBody */
         BriefBody: {
@@ -8865,6 +8924,17 @@ export interface components {
             permission_modes: string[];
             /** Platform Permission Mode */
             platform_permission_mode: string;
+        };
+        /**
+         * CleanupResult
+         * @description Branch slugs, not branch refs. A branch still ahead of the base is KEPT:
+         *     cleanup is best-effort per branch and never discards unmerged work.
+         */
+        CleanupResult: {
+            /** Kept */
+            kept: string[];
+            /** Removed */
+            removed: string[];
         };
         /**
          * ClearResult
@@ -9365,23 +9435,10 @@ export interface components {
             /** Label */
             label: string;
         };
-        /**
-         * DiffFile
-         * @description One changed file. `status` is git's two-character XY porcelain code;
-         *     `??` means untracked, whose `diff` is the whole file rendered as additions.
-         */
-        DiffFile: {
-            /** Diff */
-            diff: string;
-            /** Path */
-            path: string;
-            /** Status */
-            status: string;
-        };
         /** DiffOut */
         DiffOut: {
             /** Files */
-            files: components["schemas"]["DiffFile"][];
+            files: components["schemas"]["routes__agents__DiffFile"][];
             /** Summary */
             summary: string;
         };
@@ -10390,6 +10447,22 @@ export interface components {
             scope: string;
         };
         /**
+         * MergeResult
+         * @description A fast-forward is attempted first and a real merge commit only if that
+         *     fails. On failure the in-progress merge is ABORTED before answering, so the
+         *     working tree is clean and `reason` describes a merge that left nothing
+         *     behind. The route turns `ok: false` into a 409, so this body is the success
+         *     case in practice.
+         */
+        MergeResult: {
+            /** Commit */
+            commit?: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
          * MessageAccepted
          * @description Every branch is an acceptance -- running now, handed to the turn in
          *     flight, or queued. `injected` means the bytes reached the running process,
@@ -11150,6 +11223,48 @@ export interface components {
             /** Version */
             version?: string | null;
         };
+        /**
+         * PublishResult
+         * @description Publish rebases onto the base BEFORE pushing. A rebase conflict answers
+         *     `ok: false` with `conflict: true` and does not push, so the caller can park
+         *     the task instead of looping -- which is why this is a body rather than an
+         *     exception.
+         */
+        PublishResult: {
+            /** Base */
+            base?: string | null;
+            /** Branch */
+            branch?: string | null;
+            /** Conflict */
+            conflict?: boolean | null;
+            /** Detail */
+            detail?: string | null;
+            /** Ok */
+            ok: boolean;
+            pr?: components["schemas"]["PullRequest"] | null;
+            /** Remote Url */
+            remote_url?: string | null;
+        };
+        /**
+         * PullRequest
+         * @description A PR as `gh` reports it. Left open: the field set is the GitHub CLI's.
+         */
+        PullRequest: {
+            /** Headrefname */
+            headRefName?: string | null;
+            /** Isdraft */
+            isDraft?: boolean | null;
+            /** Number */
+            number?: number | null;
+            /** State */
+            state?: string | null;
+            /** Title */
+            title?: string | null;
+            /** Url */
+            url?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** PutDocIn */
         PutDocIn: {
             /** Content */
@@ -11449,6 +11564,24 @@ export interface components {
         RenameThread: {
             /** Title */
             title: string;
+        };
+        /**
+         * RepoState
+         * @description The canonical-state view. An UNBOUND project (no GitHub remote) answers
+         *     with just `{bound: false}` and nothing else, which is why every other field
+         *     is optional.
+         */
+        RepoState: {
+            /** Bound */
+            bound: boolean;
+            /** Default Branch */
+            default_branch?: string | null;
+            /** Open Prs */
+            open_prs?: components["schemas"]["PullRequest"][] | null;
+            /** Remote Url */
+            remote_url?: string | null;
+            /** Worktrees */
+            worktrees?: components["schemas"]["WorktreeState"][] | null;
         };
         /** RescopeThread */
         RescopeThread: {
@@ -13026,6 +13159,21 @@ export interface components {
             /** Updated */
             updated: string;
         };
+        /**
+         * WorktreeState
+         * @description `task_id` is the branch slug: a branch is named after the ticket that
+         *     owns it, so the two are the same string by construction.
+         */
+        WorktreeState: {
+            ahead_behind: components["schemas"]["AheadBehind"];
+            /** Branch Slug */
+            branch_slug: string;
+            /** Dir */
+            dir: string;
+            pr?: components["schemas"]["PullRequest"] | null;
+            /** Task Id */
+            task_id: string;
+        };
         /** WriteIn */
         WriteIn: {
             /** Content */
@@ -13120,6 +13268,19 @@ export interface components {
             /** Text */
             text?: string | null;
         };
+        /**
+         * DiffFile
+         * @description One changed file. `status` is git's two-character XY porcelain code;
+         *     `??` means untracked, whose `diff` is the whole file rendered as additions.
+         */
+        routes__agents__DiffFile: {
+            /** Diff */
+            diff: string;
+            /** Path */
+            path: string;
+            /** Status */
+            status: string;
+        };
         /** RegisterBody */
         routes__auth__RegisterBody: {
             /** Email */
@@ -13192,6 +13353,19 @@ export interface components {
              * @default 7
              */
             days: number;
+        };
+        /**
+         * DiffFile
+         * @description One changed file with its FULL patch text. `status` is git's name-status
+         *     letter (M, A, D, R...).
+         */
+        routes__worktrees__DiffFile: {
+            /** Diff */
+            diff: string;
+            /** Path */
+            path: string;
+            /** Status */
+            status: string;
         };
     };
     responses: never;
@@ -25533,7 +25707,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BranchRow"][];
                 };
             };
             /** @description Validation Error */
@@ -25568,7 +25742,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BranchCreated"];
                 };
             };
             /** @description Validation Error */
@@ -25599,7 +25773,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CleanupResult"];
                 };
             };
             /** @description Validation Error */
@@ -25630,7 +25804,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RepoState"];
                 };
             };
             /** @description Validation Error */
@@ -25662,7 +25836,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BranchDiscarded"];
                 };
             };
             /** @description Validation Error */
@@ -25694,7 +25868,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BranchDiff"];
                 };
             };
             /** @description Validation Error */
@@ -25730,7 +25904,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MergeResult"];
                 };
             };
             /** @description Validation Error */
@@ -25766,7 +25940,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PublishResult"];
                 };
             };
             /** @description Validation Error */
