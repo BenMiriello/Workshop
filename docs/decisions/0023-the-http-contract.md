@@ -137,7 +137,11 @@ must additionally return `page.total`; no new route gets one.
 
 **Every route that returns a collection declares
 `limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE)`.** Both constants live in
-one module (`platform/http.py`) so a router cannot invent the ninth default.
+one module (`wsplatform/http.py`) so a router cannot invent the ninth
+default. **The package is `wsplatform/`, never `platform/`**: a top-level
+package called `platform` shadows the standard library module of that name
+process-wide and the backend dies before a single test is collected. See ADR
+0024, "The name".
 `DEFAULT_PAGE` is 50 and `MAX_PAGE` is 200.
 
 A route with a genuinely different ceiling declares its own `le=` and says why

@@ -143,11 +143,15 @@ the check reads and counts, and the count may not exceed its baseline. The 438
 that exist are overwhelmingly not lazy loads. They are cycle escapes, and 22 of
 the 24 mutual pairs say so.
 
-**R3. Dependencies point one way.** The order is `api → domains → platform →
+**R3. Dependencies point one way.** The order is `api -> domains -> platform ->
 db`, and the arrow notation in the plan is ambiguous, so state it plainly: **a
 layer may import anything strictly below it.** `api` may import `domains`,
 `platform` and `db`. `domains` may import `platform` and `db`. `platform` may
-import `db`. **`db` imports nothing from any layer above it**, which is the rule
+import `db`.
+
+Throughout this record, **`platform` names the LAYER and `wsplatform/` names the
+DIRECTORY**. They are deliberately different words: see "The name" above for why
+the directory cannot be called `platform`. **`db` imports nothing from any layer above it**, which is the rule
 `db/models.py` breaks three times today.
 
 A cross-domain import (`domains/chat` importing `domains/tickets`) is a
@@ -190,6 +194,12 @@ If it has behaviour that belongs to one domain, it stays in that domain.
 `services/paths.py` and `services/ownership.py` are already the correct shape
 for this (in-degree 49 and 44, ~148 lines each, near-zero fan-out) and are the
 first two things to move.
+
+**Status: half done.** `paths.py` moved in `723132d` and now lives at
+`backend/wsplatform/paths.py`; `backend/services/paths.py` no longer exists.
+`ownership.py` has NOT moved, and moving it alone scores zero: it carries a
+function-local `from services import auth_store`, so the upward edge simply
+relocates. Those two move together across roughly 135 files or not at all.
 
 ### The reference implementation
 
@@ -240,9 +250,15 @@ are therefore one check on one graph, not two checks.
 both resolved to module paths. Each import edge is tagged with whether its
 enclosing scope was module or function.
 
-**Layer assignment.** By top-level directory: `api` = 3, `domains` = 2,
-`platform` = 1, `db` = 0. During the migration, `routes/` maps to `api` and
-`services/` maps to `domains`. **Anything unmapped is reported as `unlayered`
+**Layer assignment.** By top-level directory, where the DIRECTORY for the
+platform layer is `wsplatform/`: `api` = 3, `domains` = 2, `wsplatform` = 1,
+`db` = 0. During the migration, `routes/` maps to `api` and `services/` maps to
+`domains`. A checker built from an earlier draft of this table, which said
+`platform` = 1, would find no directory of that name and report the entire
+platform layer as `unlayered`. The shipped `scripts/check_module_layout.py`
+maps `wsplatform` correctly; it also numbers the layers in the opposite
+direction (`routes` = 0 ... `db` = 3), which is the same ordering read the
+other way and changes no verdict. **Anything unmapped is reported as `unlayered`
 and counted, not passed by default**, so a new top-level directory cannot slip
 through by being unrecognised.
 

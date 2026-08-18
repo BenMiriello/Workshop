@@ -325,17 +325,26 @@ rename is offered. Clause 1's backfill deletes the 3,691 synthetic rows before
 Postgres becomes authoritative. Clause 6 lands before anyone increases the
 worker count, and the check below is what makes that safe to forget.
 
-**Related and urgent, decided elsewhere but noted here because it can destroy
-what this ADR depends on.** `db/models.py` does not describe the live schema's
-composite tenant foreign keys: `_org_target()` is invoked once, at
-`models.py:757`, for `chat_thread`, while the live database carries
-`ticket_project_id_org_fkey`, `ticket_parent_id_org_fkey`,
-`ticket_type_id_org_fkey` and `ticket_state_id_org_fkey` in composite form.
-`compare_metadata()` against the live schema returns 46 entries, 29 of them
-removals. The next `alembic revision --autogenerate` writes a migration that
-**drops every composite tenant foreign key**. That is item 0b in the plan's
-sequence and it is hours of work, and every clause here assumes those keys still
-exist.
+**Related, and RESOLVED after this record was drafted.** This section originally
+opened "Related and urgent" and described a live emergency: `db/models.py` did
+not describe the live schema's composite tenant foreign keys, `_org_target()`
+was invoked once, and `compare_metadata()` returned 46 entries with 29 removals,
+so the next `alembic revision --autogenerate` would have dropped every composite
+tenant foreign key.
+
+**That was item 0b in the plan's sequence and it landed the same day, in
+`f032cc4`.** `compare_metadata()` now returns zero in both directions.
+`_org_target()` is invoked six times (`db/models.py:318`, `:342`, `:370`,
+`:525`, `:591`, `:645`, defined at `:125`), and 15 composite tenant foreign keys
+plus 6 `UNIQUE (id, org_id)` pairs are declared through helpers. The fix also
+found two `ON DELETE SET NULL` clauses that had lost their column lists, which
+on a composite key raises rather than clearing.
+
+The correction is kept rather than deleted because the dependency it names is
+still real: **every clause in this record assumes those composite keys exist**,
+and they now do because someone went and made the model say so. An earlier draft
+of this paragraph also quoted "17 composite foreign keys" further down, against
+the four listed here and the fifteen actually declared; treat 15 as the number.
 
 **Not decided here.** Whether the ephemeral cross-request state in clause 6
 lands in Postgres or in Redis. Live turn state is written several times a second
@@ -390,6 +399,15 @@ Over `db/models.py` and the migrations:
    checking mechanically, because the failure it prevents is silent and one of
    its consequences is unrecoverable.
 
-Rule 2 deserves the loudest failure of the five. `compare_metadata()` currently
-proposes dropping 17 composite foreign keys, and the single most valuable safety
-property in this schema is invisible to the tool that maintains it.
+Rule 2 deserves the loudest failure of the five, and the reason is historical
+rather than current. When this record was drafted, `compare_metadata()` proposed
+dropping every composite tenant foreign key, so the single most valuable safety
+property in the schema was invisible to the tool that maintains it. `f032cc4`
+closed that (see "Related, and RESOLVED" above): the drift is now zero in both
+directions and 15 composite keys are declared through helpers.
+
+That is exactly why the rule still wants a check. The property was correct in
+the database and absent from the model for long enough that one routine
+`autogenerate` would have destroyed it, and nothing would have said so. A gap
+that has been closed once by hand is a gap that reopens the next time someone
+adds a table.
