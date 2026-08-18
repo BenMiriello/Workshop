@@ -175,6 +175,28 @@ No OS path is ever shown. Real thumbnails for pdf/image are a **named follow-up*
 operator still wants them; they are deferred only so the control ships without a
 render pipeline first: icon + starting-text, thumbnails second).
 
+**Inline versus end-of-message (operator question, 2026-08-18).** Both, and the rule is
+position-follows-role, which is what good chat UIs converge on (ChatGPT/Claude.ai weave
+cited sources inline and list produced artifacts separately; messaging apps put
+attachments in a card below the text). The same `<Ref>` chip renders in both places, so
+a reference is always the managed link regardless of where it sits:
+
+- **Inline** when the reference is part of what the message is *saying*: a resource
+  named in the flow of a sentence ("I updated `workshop:doc/...` to fix the off-by-one").
+  It reads as a link in the prose, like any hyperlink. Best when there are few and they
+  are woven into the narrative.
+- **End-of-message block** when the reference is an *output or attachment* of the
+  message: notes/files the turn created, files the operator attached to their own
+  message. This is the existing receipts row, and it is the right home for artifacts,
+  especially several, because threading five produced files into prose reads worse than
+  a compact trailing list.
+- **Never both for the same ref.** A ref that appears inline is not repeated in the
+  trailing block, and vice versa. The dedupe is by ref identity.
+
+So the answer to "one or the other?" is: one component, two placements, chosen by
+whether the ref is something the message *mentions* (inline) or something it *produced
+or carries* (trailing block).
+
 ### Layer 4 — The ratchet (so it does not regrow)
 
 A reviewer-gate check, in the family of the existing `check_*` gates, that fails when
