@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { chatApi, type CardState, type Thread, type ThreadSummary } from "../../lib/chat";
-import { isTransientNetworkError } from "../../lib/httpError";
+import { withTransientRetry } from "../../lib/httpError";
 import {
   NEW_CHAT, forgetThread, readSelection, writeSelection,
 } from "../../lib/chatSelection";
@@ -133,26 +133,19 @@ export function useChatThread({
     // lingers after the operator has already moved to another chat (which is how
     // a general chat ended up showing a stale development-scoped error). Only a
     // persistent transient failure, or any non-transient error, surfaces.
-    const backoff = [400, 1200, 2500];
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const list = await chatApi.listThreads(scope);
-        setThreads(list);
-        return list;
-      } catch (e) {
-        if (isTransientNetworkError(e) && attempt < backoff.length) {
-          await new Promise((r) => setTimeout(r, backoff[attempt]));
-          continue;
-        }
-        onError({
-          text: `Couldn't refresh the list of conversations: ${e}. The list may be out of date.`,
-          endpoint: threadListEndpoint(scope),
-          // Reading the list again is the whole action, so the retry is the call
-          // that just failed.
-          retry: () => { void refreshThreads(); },
-        });
-        return [];
-      }
+    try {
+      const list = await withTransientRetry(() => chatApi.listThreads(scope));
+      setThreads(list);
+      return list;
+    } catch (e) {
+      onError({
+        text: `Couldn't refresh the list of conversations: ${e}. The list may be out of date.`,
+        endpoint: threadListEndpoint(scope),
+        // Reading the list again is the whole action, so the retry is the call
+        // that just failed.
+        retry: () => { void refreshThreads(); },
+      });
+      return [];
     }
   }, [scope, onError]);
 

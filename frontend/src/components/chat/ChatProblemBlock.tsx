@@ -45,7 +45,7 @@ export default function ChatProblemBlock({
   if (shape === "line") {
     return (
       <Notice
-        tone="error"
+        tone={problem.tone ?? "error"}
         icon={icon}
         detail={detail}
         where={endpoint}

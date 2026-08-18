@@ -50,6 +50,31 @@ export function isTransientNetworkError(e: unknown): boolean {
   return e instanceof TypeError;
 }
 
+/**
+ * Run `fn`, and if it fails with a transient network error (a restart window,
+ * a dropped fetch), wait and try again on the given backoff before giving up.
+ * A non-transient error, a real refusal the server chose to give, throws at
+ * once with no retry. The final failure (transient or not) is rethrown, so the
+ * caller still owns what to show. One place, so every chat poll rides out a
+ * restart the same way instead of each banner-ing its own hiccup.
+ */
+export async function withTransientRetry<T>(
+  fn: () => Promise<T>,
+  backoffMs: number[] = [400, 1200, 2500],
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (isTransientNetworkError(e) && attempt < backoffMs.length) {
+        await new Promise((r) => setTimeout(r, backoffMs[attempt]));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
 // Short, plain sentences for the statuses common enough to name. Anything
 // else falls back to the response's own statusText, then to "request failed".
 const STATUS_SENTENCES: Record<number, string> = {

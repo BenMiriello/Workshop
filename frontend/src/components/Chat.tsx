@@ -679,7 +679,14 @@ export default function Chat({
     // Files with no text is a complete message. `take` hands over what is
     // attached and clears it in the same step, so "sent" and "cleared" can never
     // disagree.
-    if (!text && !files.items.some((a) => a.status === "ready")) return;
+    //
+    // The SAME gate the Send button uses (canSendWith): text-only or a READY
+    // attachment sends, but never mid-upload. This path is reached by Enter on a
+    // real keyboard, and it used to check only for an empty message, so pressing
+    // Enter while an image was still uploading sent the text and silently
+    // dropped the attachment (take() returns only ready refs and clears the
+    // rest) while the operator believed the file went with it.
+    if (!canSendWith(text, files.items)) return;
     // clearInput, not setInput(""): a send-clear must be written through to
     // every synced surface immediately and then defended, or a stale copy from
     // another tab/device can restore the text you just sent.

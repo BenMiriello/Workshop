@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ERROR_BODY_CAP, HttpError, isTransientNetworkError, shortHttpError } from "./httpError";
+import {
+  ERROR_BODY_CAP, HttpError, isTransientNetworkError, shortHttpError, withTransientRetry,
+} from "./httpError";
 
 // What a failed request is allowed to put on screen.
 //
@@ -99,5 +101,36 @@ describe("a failure worth a quiet retry", () => {
     expect(isTransientNetworkError(new HttpError(403, "403 Not allowed."))).toBe(false);
     expect(isTransientNetworkError(new HttpError(500, "500 The server errored."))).toBe(false);
     expect(isTransientNetworkError(new Error("something else"))).toBe(false);
+  });
+});
+
+describe("riding out a restart window with withTransientRetry", () => {
+  it("retries a transient failure and returns the eventual success", async () => {
+    let calls = 0;
+    const out = await withTransientRetry(async () => {
+      calls += 1;
+      if (calls < 3) throw new HttpError(502, "Server unavailable (502). Retrying.");
+      return "ok";
+    }, [0, 0, 0]);
+    expect(out).toBe("ok");
+    expect(calls).toBe(3);
+  });
+
+  it("does not retry a non-transient error, and throws it at once", async () => {
+    let calls = 0;
+    await expect(withTransientRetry(async () => {
+      calls += 1;
+      throw new HttpError(403, "403 Not allowed.");
+    }, [0, 0, 0])).rejects.toThrow("403 Not allowed.");
+    expect(calls).toBe(1);
+  });
+
+  it("gives up after the backoff is exhausted and rethrows the transient error", async () => {
+    let calls = 0;
+    await expect(withTransientRetry(async () => {
+      calls += 1;
+      throw new HttpError(503, "Server unavailable (503). Retrying.");
+    }, [0])).rejects.toThrow("Server unavailable (503)");
+    expect(calls).toBe(2); // the first try, plus one retry
   });
 });

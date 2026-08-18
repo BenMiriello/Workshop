@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { usePoll } from "../../lib/usePoll";
 import { chatApi } from "../../lib/chat";
+import { withTransientRetry } from "../../lib/httpError";
 import {
   initialThreadState, threadReducer, snapshotThread,
   type ThreadAction, type ThreadState,
@@ -365,7 +366,13 @@ export function useThreadLog({
     const requestedAt = Date.now();
     (async () => {
       try {
-        const page = await chatApi.threadEvents(threadId, 0, { tail: INITIAL_TAIL });
+        // A cold open during a backend restart 502s the same way the thread
+        // list does; ride it out quietly rather than banner over an empty
+        // transcript for a blip. The poll path below already suppresses a
+        // banner when content is on screen, so this is the one first-load case
+        // that needed it.
+        const page = await withTransientRetry(
+          () => chatApi.threadEvents(threadId, 0, { tail: INITIAL_TAIL }));
         if (cancelled || threadIdRef.current !== threadId) return;
         dispatch({
           type: "eventsReceived",

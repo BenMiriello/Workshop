@@ -41,6 +41,11 @@ export type ChatProblem = {
   text: string;
   endpoint?: string | null;
   retry?: (() => void) | null;
+  /** How loud to be. Defaults to `error` (an alert-triangle, role=alert): the
+   *  vast majority of these ARE failures. `info` is for a message that is not a
+   *  failure at all but has nowhere else to land, e.g. answering a retired slash
+   *  command with where its job went. Rendered as a neutral Info line, no alarm. */
+  tone?: "info" | "warn" | "error";
 };
 
 export type ProblemPlacement = "in-log" | "chat-block";

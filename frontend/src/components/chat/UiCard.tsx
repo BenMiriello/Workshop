@@ -515,7 +515,7 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
             <CircleCheck size={16} strokeWidth={1.8} aria-hidden />
             <span>{heading}</span>
           </Row>
-          <ActionButtons actions={success?.actions ?? []} busyId={busyId} onRun={(a) => void runAction(a)} />
+          <ActionButtons actions={success?.actions ?? []} busyId={busyId} onRun={(a) => void runAction(a)} requireHandler />
           {errorBlock}
         </Stack>
       </Card>
