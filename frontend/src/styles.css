@@ -708,20 +708,28 @@ input[type="range"].grad::-moz-range-thumb {
    orphaned icon rows in the operator's thread were that, not a wrap. The work
    fold reserves its own room on `.chat-work__toggle` and never wanted this.
 
-   THE RESIDUAL, stated because it is visible: when the last line ends within
-   the reserve of the right edge there is nowhere to put an inline box, so it
-   wraps and the icons ride down with it. CSS has no break-prohibition between
-   text and a following atomic inline, so the alternative is letting text run
-   underneath the icons, which is worse. Measured after this change: 1 bubble in
-   12, where the last line had 14px of room and needed 42px. */
+   WHEN THE LAST LINE IS FULL the reserve cannot fit beside it, and the answer
+   is that the last WORD gives way, not the icons. See the word joiner below. */
 .chat-bubble__body > .chat-clamp:not(:has(.ws-md))::after,
 .chat-bubble__body .ws-md > :last-child::after {
-  content: "";
-  display: inline-block;
-  /* 0 by default, so a bubble with no actions reserves nothing at all. */
-  width: var(--chat-actions-gap, 0);
-  height: 1em;
-  vertical-align: text-bottom;
+  /* U+FEFF, a WORD JOINER, and it is the whole trick. The reserve has to be
+     glued to the last word so the two cannot be separated, because line
+     breaking is greedy: with a breakable box the browser leaves the last word
+     where it is and drops the box (and the icons with it) onto a row of its
+     own, which is exactly the orphan row the operator kept seeing. A joiner
+     forbids the break, so when the reserve does not fit the LAST WORD wraps
+     down with it and the icons stay on the last line of text, which is what
+     was asked for. Measured across two threads at 390, 440 and 1280: orphaned
+     rows 4 of 12 and 3 of 17, both to zero, with no text under an icon. It is
+     zero-width, so it draws nothing; the copy button sends the stored message
+     text and never the DOM, so it cannot reach the clipboard either. */
+  content: "\feff";
+  /* An INLINE box, not inline-block: an atomic inline always offers a break
+     before it no matter what precedes it, and that is the break being removed.
+     The width therefore has to come from padding rather than `width`.
+     0 by default, so a bubble with no actions reserves nothing at all. */
+  display: inline;
+  padding-left: var(--chat-actions-gap, 0);
 }
 /* THE RESERVE IS THE ICONS' FOOTPRINT MEASURED FROM THE TEXT'S OWN EDGE, not
    from the bubble's. The icons are placed against the BUBBLE (`right: 0.5rem`)
