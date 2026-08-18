@@ -7,8 +7,8 @@
 // transcript's first fetch (`events?after=0`, the whole history, the largest
 // payload in the chat) only STARTED after that commit and had no flag of its
 // own. For one full round trip plus the parse, an open chat rendered "Ask
-// anything, or tell me to change the plan." That is the "my chat opens blank"
-// report, and it is why `loading` now covers hydration too.
+// anything." That is the "my chat opens blank" report, and it is why
+// `loading` now covers hydration too.
 //
 // LOADING IS CHECKED FIRST, BEFORE EMPTINESS. It used to be the other way
 // round — "if there are blocks, show nothing, whatever `loading` says" — on

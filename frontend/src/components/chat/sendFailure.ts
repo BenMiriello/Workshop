@@ -94,7 +94,7 @@ export function sendFailureText(e: unknown): string {
   const detail = trimDetail(raw, status);
   if (status !== null) {
     if (status === 502 || status === 503 || status === 504) {
-      return "Not sent: the server is restarting or unreachable. Press Retry in a moment.";
+      return "Not sent: the server is briefly unavailable. Press Retry in a moment.";
     }
     if (status === 401 || status === 403) {
       // A REFUSAL THAT CAME WITH A REASON KEEPS ITS REASON. Not every 403 is a

@@ -13,15 +13,29 @@ import { renderToString } from "react-dom/server";
 import { RouteBoundary, RouteError, RouteSkeleton } from "./lazyPage";
 
 describe("RouteError", () => {
-  it("says the page failed and offers a way out", () => {
+  it("says the page failed and offers a way out, for a genuine stale chunk", () => {
     const html = renderToString(
       <RouteError error={new Error("Failed to fetch dynamically imported module")} />,
     );
     expect(html).toContain("This page failed to load");
+    expect(html).toContain("app was updated");
     expect(html).toContain("Reload");
-    // The real cause is shown rather than swallowed: a stale-chunk failure and
-    // a genuine render bug must be distinguishable without a devtools session.
-    expect(html).toContain("dynamically imported module");
+  });
+
+  // A render bug is not a stale chunk, and telling someone to reload for it
+  // (implying a rebuild will fix code that has been broken all along) is
+  // false. It also must not dump the raw browser exception into the page —
+  // that reads as a developer error in a user-facing app. Reported 2026-08-18:
+  // the Tickets page repeatedly showed the stale-chunk copy for an unrelated
+  // bug, literally printing "(The operation is insecure.)" to the operator.
+  it("does not claim a stale chunk, and does not print the raw error, for an ordinary bug", () => {
+    const html = renderToString(
+      <RouteError error={new Error("The operation is insecure.")} />,
+    );
+    expect(html).toContain("Something went wrong");
+    expect(html).not.toContain("app was updated");
+    expect(html).not.toContain("The operation is insecure");
+    expect(html).toContain("Reload");
   });
 });
 

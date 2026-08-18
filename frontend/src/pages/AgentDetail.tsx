@@ -689,7 +689,12 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     return (
       <div>
         <PageHeader title="Agent" />
-        <StateBlock variant="error" title="Couldn't load agent" hint={<code>{err}</code>} />
+        <StateBlock
+          variant="error"
+          title="Couldn't load agent"
+          hint={<code>GET /api/agents/{agentId} ({err})</code>}
+          action={<Button size="sm" onClick={load}>Retry</Button>}
+        />
       </div>
     );
   }

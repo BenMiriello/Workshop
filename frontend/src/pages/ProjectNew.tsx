@@ -5,6 +5,7 @@ import {
   Card,
   Field,
   Input,
+  Notice,
   PageHeader,
   SectionLabel,
   Segmented,
@@ -198,7 +199,7 @@ export default function ProjectNew() {
           </Field>
           {err && (
             <div style={{ marginTop: "var(--space-3)" }}>
-              <StateBlock variant="error" title="Couldn't create project" hint={<code>{err}</code>} />
+              <Notice tone="error" detail={err}>Couldn't create project.</Notice>
             </div>
           )}
           <div style={{ marginTop: "var(--space-4)", display: "flex", gap: "var(--space-3)", justifyContent: "flex-end" }}>

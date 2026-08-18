@@ -324,12 +324,13 @@ export default function ContextModal({
           )}
 
           {healthFailed && (
-            <StateBlock
-              variant="error"
-              title="Couldn't check MCP servers"
-              hint={`GET /api/chat/threads/${threadId ?? ""}/mcp/health failed.`}
-              action={<Button variant="ghost" onClick={() => void load(true)}>Try again</Button>}
-            />
+            <Notice
+              tone="error"
+              where={`/api/chat/threads/${threadId ?? ""}/mcp/health`}
+              action={<Button size="sm" variant="ghost" onClick={() => void load(true)}>Try again</Button>}
+            >
+              Couldn't check MCP servers.
+            </Notice>
           )}
 
           {!healthFailed && health && !health.available && (

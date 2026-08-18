@@ -591,7 +591,12 @@ export default function AgentBuild() {
     return (
       <div>
         <PageHeader title="Build agent" />
-        <StateBlock variant="error" title="Couldn't load agent" hint={<code>{err}</code>} />
+        <StateBlock
+          variant="error"
+          title="Couldn't load agent"
+          hint={<code>GET /api/agents/build/{slug} ({err})</code>}
+          action={<Button size="sm" onClick={loadAll}>Retry</Button>}
+        />
       </div>
     );
   }

@@ -7,6 +7,7 @@ import {
   ConfirmDialog,
   Field,
   Input,
+  Notice,
   PageHeader,
   Segmented,
   Skeleton,
@@ -395,14 +396,13 @@ export function ChatsArchived() {
 
       {actionErr && (
         <div style={{ marginBottom: "var(--space-3)" }}>
-          <StateBlock
-            variant="error"
-            title="That didn't go through"
-            hint={<>
-              {actionErr.text} <code>{actionErr.endpoint}</code>
-            </>}
-            action={<Button size="sm" onClick={() => setActionErr(null)}>Dismiss</Button>}
-          />
+          <Notice
+            tone="error"
+            where={actionErr.endpoint}
+            action={<Button size="sm" variant="ghost" onClick={() => setActionErr(null)}>Dismiss</Button>}
+          >
+            {actionErr.text}
+          </Notice>
         </div>
       )}
 

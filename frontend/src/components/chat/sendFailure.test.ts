@@ -19,8 +19,12 @@ describe("a message that did not send", () => {
     }
   });
 
-  it("names a restart rather than blaming the message, on a gateway failure", () => {
-    expect(sendFailureText(new Error("Server unavailable (502). Retrying."))).toMatch(/restarting/);
+  it("says the server, not the message, on a gateway failure, without infra jargon", () => {
+    const s = sendFailureText(new Error("Server unavailable (502). Retrying."));
+    expect(s).toMatch(/server is briefly unavailable/);
+    // "restarting" describes our process mechanics, not what the operator sees:
+    // a user-facing app should not narrate its own backend's lifecycle.
+    expect(s).not.toMatch(/restart/);
   });
 
   it("distinguishes the server failing from the server refusing", () => {

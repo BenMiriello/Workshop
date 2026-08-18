@@ -27,6 +27,7 @@ import {
   CardGrid,
   ConfirmDialog,
   Modal,
+  Notice,
   PageHeader,
   Row,
   Stack,
@@ -923,7 +924,12 @@ export default function ProjectDetail() {
     return (
       <div>
         <PageHeader title="Project" />
-        <StateBlock variant="error" title="Couldn't load project" hint={<code>{err}</code>} />
+        <StateBlock
+          variant="error"
+          title="Couldn't load project"
+          hint={<code>GET /api/projects/{slug} ({err})</code>}
+          action={<Button size="sm" onClick={loadAll}>Retry</Button>}
+        />
       </div>
     );
   }
@@ -1231,12 +1237,14 @@ export default function ProjectDetail() {
                 <Skeleton width="60%" />
               </Stack>
             ) : tasksErr ? (
-              <StateBlock
-                variant="error"
-                title="Couldn't load tasks"
-                hint={<code>GET /api/tasks?scope={taskScope} ({tasksErr})</code>}
-                action={<Button size="sm" onClick={loadTasks}>Retry</Button>}
-              />
+              <Notice
+                tone="error"
+                where={`/api/tasks?scope=${taskScope}`}
+                detail={tasksErr}
+                action={<Button size="sm" variant="ghost" onClick={loadTasks}>Retry</Button>}
+              >
+                Couldn't load tasks.
+              </Notice>
             ) : ownerOrder.length === 0 ? (
               <StateBlock
                 title={tasks.length === 0 ? "No tasks yet" : "No open tasks"}
@@ -1317,12 +1325,14 @@ export default function ProjectDetail() {
                 <Skeleton width="50%" />
               </Stack>
             ) : notesErr ? (
-              <StateBlock
-                variant="error"
-                title="Couldn't load notes"
-                hint={<code>GET /api/knowledge/{noteScope}/notes ({notesErr})</code>}
-                action={<Button size="sm" onClick={loadNotes}>Retry</Button>}
-              />
+              <Notice
+                tone="error"
+                where={`/api/knowledge/${noteScope}/notes`}
+                detail={notesErr}
+                action={<Button size="sm" variant="ghost" onClick={loadNotes}>Retry</Button>}
+              >
+                Couldn't load notes.
+              </Notice>
             ) : notes.length === 0 ? (
               <StateBlock
                 title="No notes yet"
@@ -1426,12 +1436,14 @@ export default function ProjectDetail() {
                     <Skeleton width="45%" />
                   </Stack>
                 ) : repoStateErr ? (
-                  <StateBlock
-                    variant="error"
-                    title="Couldn't load repo state"
-                    hint={<code>GET /api/worktrees/{slug}/repo-state ({repoStateErr})</code>}
-                    action={<Button size="sm" onClick={loadRepoState}>Retry</Button>}
-                  />
+                  <Notice
+                    tone="error"
+                    where={`/api/worktrees/${slug}/repo-state`}
+                    detail={repoStateErr}
+                    action={<Button size="sm" variant="ghost" onClick={loadRepoState}>Retry</Button>}
+                  >
+                    Couldn't load repo state.
+                  </Notice>
                 ) : (repoState?.worktrees ?? []).length === 0 ? (
                   <StateBlock
                     title="No active worktrees"
@@ -1699,11 +1711,7 @@ export default function ProjectDetail() {
             </Field>
           )}
           {connectErr && (
-            <StateBlock
-              variant="error"
-              title="Couldn't connect"
-              hint={<code>{connectErr}</code>}
-            />
+            <Notice tone="error" detail={connectErr}>Couldn't connect.</Notice>
           )}
         </Stack>
       </Modal>

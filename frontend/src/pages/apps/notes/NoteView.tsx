@@ -11,6 +11,7 @@ import {
   Input,
   Modal,
   ConfirmDialog,
+  Notice,
   StateBlock,
   Skeleton,
   ActionBar,
@@ -215,7 +216,7 @@ export default function NoteView({
           Backlinks{backlinks ? ` (${backlinks.length})` : ""}
         </SectionLabel>
         {blError ? (
-          <StateBlock variant="error" title="Could not load backlinks" hint={blError} />
+          <Notice tone="error" detail={blError}>Could not load backlinks.</Notice>
         ) : backlinks === null ? (
           <Skeleton width="60%" />
         ) : backlinks.length === 0 ? (

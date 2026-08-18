@@ -22,6 +22,7 @@ import {
   CardGrid,
   Divider,
   PageHeader,
+  Notice,
   Row,
   SectionLabel,
   Segmented,
@@ -231,20 +232,14 @@ function AgentButtonSetting({ appId }: { appId: string }) {
       {state.kind === "loading" ? (
         <Skeleton width="14rem" style={{ height: "var(--space-6)" }} />
       ) : state.kind === "error" ? (
-        <StateBlock
-          variant="error"
-          title="Couldn't load the assistant setting"
-          hint={
-            <>
-              <code>PUT /api/base-apps/manifests/{appId}/ui</code>: {state.message}
-            </>
-          }
-          action={
-            <Button variant="ghost" size="sm" onClick={() => void load()}>
-              Retry
-            </Button>
-          }
-        />
+        <Notice
+          tone="error"
+          where={`/api/base-apps/manifests/${appId}/ui`}
+          detail={state.message}
+          action={<Button variant="ghost" size="sm" onClick={() => void load()}>Retry</Button>}
+        >
+          Couldn't load the assistant setting.
+        </Notice>
       ) : (
         <Toggle
           checked={state.on}
@@ -285,20 +280,14 @@ function ManageDetails({
         return <Skeleton width="11rem" style={{ height: "var(--space-6)" }} />;
       case "error":
         return (
-          <StateBlock
-            variant="error"
-            title="Couldn't load projects"
-            hint={
-              <>
-                <code>GET /api/projects/</code>: {projects.message}
-              </>
-            }
-            action={
-              <Button variant="ghost" size="sm" onClick={onRetry}>
-                Retry
-              </Button>
-            }
-          />
+          <Notice
+            tone="error"
+            where="/api/projects/"
+            detail={projects.message}
+            action={<Button variant="ghost" size="sm" onClick={onRetry}>Retry</Button>}
+          >
+            Couldn't load projects.
+          </Notice>
         );
       case "loaded": {
         const linked = projects.slugs.has(card.key);

@@ -79,19 +79,31 @@ export function RouteSkeleton() {
   );
 }
 
+/** Whether `error` is actually the browser failing to fetch a chunk (the case
+ *  this whole file exists to repair), as opposed to an ordinary bug in the
+ *  page's own code. The two need different copy: telling someone to reload
+ *  fixes the first and does nothing for the second, and claiming "the app was
+ *  updated" for a bug that was there all along is simply false. Matches the
+ *  actual strings Vite/the browser produce for a failed dynamic import,
+ *  across Chromium, Firefox and Safari. */
+function isChunkLoadError(error: Error): boolean {
+  return /failed to fetch dynamically imported module|error loading dynamically imported module|importing a module script failed/i
+    .test(error.message);
+}
+
 /** What a failed route shows. Split out from the boundary so it can be tested:
  *  React does not call `getDerivedStateFromError` during server rendering, so a
  *  boundary cannot be exercised by renderToString. */
 export function RouteError({ error }: { error: Error }) {
+  const stale = isChunkLoadError(error);
   return (
     <StateBlock
       variant="error"
-      title="This page failed to load"
+      title={stale ? "This page failed to load" : "Something went wrong on this page"}
       hint={
-        <>
-          The app was updated while this tab was open, so part of it is out of
-          date. Reload to get the current version. ({error.message})
-        </>
+        stale
+          ? "The app was updated while this tab was open, so part of it is out of date. Reload to get the current version."
+          : "Reloading may clear it. If it keeps happening, the detail is in this tab's browser console."
       }
       action={
         <Button
@@ -115,6 +127,19 @@ export class RouteBoundary extends Component<
 
   static getDerivedStateFromError(error: Error) {
     return { error };
+  }
+
+  // The route-level message is deliberately non-technical (see RouteError), so
+  // the raw error and its component stack have to land SOMEWHERE or a bug like
+  // this is undiagnosable forever except by guessing from the visible text.
+  // This is that somewhere: the full detail, plus which route it was, to the
+  // console every time.
+  componentDidCatch(error: Error, info: { componentStack?: string | null }) {
+    console.error(
+      `[route:${window.location.pathname}] ${error.name}: ${error.message}`,
+      error,
+      info.componentStack,
+    );
   }
 
   render() {

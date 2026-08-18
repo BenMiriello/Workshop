@@ -11,6 +11,7 @@ import {
   Button,
   Card,
   CardGrid,
+  Notice,
   NumCell,
   PageHeader,
   SectionLabel,
@@ -289,40 +290,33 @@ export default function Finance() {
         </div>
       )}
 
-      {/* Network / HTTP error — show alongside any data we have, not instead of it */}
+      {/* Network / HTTP error — shown alongside any data we have, not instead of it,
+          so this is a Notice (a line), never a StateBlock (a region): the dashboard
+          below is still there. */}
       {fetchErr && (
         <div style={{ marginBottom: "var(--space-4)" }}>
-          <StateBlock
-            variant="error"
-            title="Couldn't load live data"
-            hint={
-              <>
-                {fetchErr}
-                {isLocal && (
-                  <>
-                    {", showing last saved data"}
-                    {localBalTs ? ` from ${timeAgoSeconds((Date.now() - localBalTs) / 1000)}` : ""}
-                  </>
-                )}
-              </>
-            }
+          <Notice
+            tone="error"
+            detail={isLocal
+              ? `showing last saved data${localBalTs ? ` from ${timeAgoSeconds((Date.now() - localBalTs) / 1000)}` : ""}`
+              : undefined}
             action={
-              <Button size="sm" onClick={() => doRefresh(true)} loading={refreshing}>
+              <Button size="sm" variant="ghost" onClick={() => doRefresh(true)} loading={refreshing}>
                 Retry
               </Button>
             }
-          />
+          >
+            Couldn't load live data: {fetchErr}
+          </Notice>
         </div>
       )}
 
       {/* Per-institution errors (partial failure — some banks work, others don't) */}
       {itemErrors.length > 0 && !fetchErr && (
         <div style={{ marginBottom: "var(--space-4)" }}>
-          <StateBlock
-            variant="error"
-            title={`${itemErrors.length} institution${itemErrors.length > 1 ? "s" : ""} unavailable`}
-            hint={itemErrors.map((ie) => `${ie.name}: ${ie.error}`).join(" · ")}
-          />
+          <Notice tone="error" detail={itemErrors.map((ie) => `${ie.name}: ${ie.error}`).join(" · ")}>
+            {itemErrors.length} institution{itemErrors.length > 1 ? "s" : ""} unavailable.
+          </Notice>
         </div>
       )}
 
