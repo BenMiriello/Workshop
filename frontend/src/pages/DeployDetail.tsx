@@ -8,7 +8,7 @@ import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot,
   Badge, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Menu, MenuItem, type StatusKind,
 } from "@workshop/ui";
-import { jobStatusKind, runHref } from "../lib/jobs";
+import { jobStatusKind, runHref, type JobEvidence } from "../lib/jobs";
 import { timeAgo } from "../lib/time";
 import { shortSha } from "../lib/sha";
 import { shortHttpError } from "../lib/httpError";
@@ -36,7 +36,7 @@ type Run = {
   started_at?: string;
   ended_at?: string;
   binding?: { deploy_id?: string; ref?: string };
-  evidence?: { summary?: string; url?: string; commit_sha?: string; upload_ref?: string; log_tail?: string; missing_keys?: string[] };
+  evidence?: JobEvidence | null;
 };
 
 type Notice = { deploy_id?: string; branch?: string; remote_sha?: string; detected_at?: string; reason?: string; none?: boolean };

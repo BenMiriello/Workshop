@@ -69,17 +69,6 @@ def _display_agent(agent_id: str | None, names: dict[str, str]) -> str | None:
     return agent_id
 
 
-def _friendly_error(err: str | None) -> str:
-    if not err or not err.strip():
-        return "Failed (no detail recorded)."
-    s = err.strip()
-    if s.startswith("ollama_failed:"):
-        detail = s[len("ollama_failed:"):].strip()
-        base = "Local model server (Ollama) was unreachable."
-        return f"{base} {detail}" if detail else base
-    return s
-
-
 def _clip(s: str | None, n: int = 100) -> str:
     s = (s or "").split("\n", 1)[0].strip()
     return s if len(s) <= n else s[: n - 1].rstrip() + "…"
@@ -197,21 +186,18 @@ def _enrich(job: dict, names: dict[str, str], cache: dict | None = None) -> dict
     if own_chat and tctx.get("chat_id") and tctx["chat_id"] != own_chat:
         tctx.update(_chat_display(own_chat))
     j.update(tctx)  # task_text, task_status, chat_id, chat_title
+    # `evidence` is structured by the time it leaves the store: services.jobs
+    # folds the two retired string producers into `{"summary": ...}` on read.
     ev = job.get("evidence")
-    receipt = ev if isinstance(ev, dict) and ev.get("kind") == "receipt" else None
-    if receipt and (rs := (receipt.get("summary") or "").strip()):
-        # The worker's own account of what it did doubles as the job's summary.
-        j["summary"] = rs[:240]
+    ev = ev if isinstance(ev, dict) else None
+    # The worker's own account of what it did doubles as the job's summary,
+    # whether it wrote a full receipt or only a line.
+    detail = str((ev or {}).get("summary") or "").strip()
+    if detail:
+        j["summary"] = detail[:240]
     if job.get("status") == "failed":
-        if isinstance(ev, str):
-            j["error"] = _friendly_error(ev)
-        elif receipt:
-            j["error"] = (receipt.get("summary") or "").strip()[:240] or "Failed (see receipt)."
-        else:
-            j["error"] = _friendly_error(None)
-    elif isinstance(ev, str) and ev.strip():
-        # A short freeform evidence string doubles as the job's one-line summary.
-        j["summary"] = ev.strip()[:240]
+        halted = str((ev or {}).get("halted") or "").strip()
+        j["error"] = (detail or halted)[:240] or "Failed (no detail recorded)."
     j["title"] = _title(job, agent_disp, tctx)
     # A compact "where / who / from" subtitle for the feed row.
     bits: list[str] = []

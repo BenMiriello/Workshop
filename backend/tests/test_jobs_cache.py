@@ -91,3 +91,57 @@ def test_a_missing_log_reads_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(jobs, "JOBS_LOG", tmp_path / "nope.jsonl")
     assert jobs.read(limit=10) == []
     assert jobs.get("j1") is None
+
+
+# --- the retired freeform-string evidence shape ------------------------------
+# `evidence` is a structured record. It was ALSO written as a bare string by two
+# producers that no longer exist: the Letta overseer's per-tick narration and an
+# `ollama_failed:` prefix protocol. Both were folded to `{"summary": ...}` at
+# this boundary on 2026-08-18 so that no reader above the store carries a branch
+# for the old shape. These pin that, because the log still holds 1,956 records
+# in the old shape and nothing else in the codebase can read them.
+
+def test_a_freeform_string_evidence_reads_as_a_summary(tmp_path, monkeypatch):
+    log = tmp_path / "jobs.jsonl"
+    monkeypatch.setattr(jobs, "JOBS_LOG", log)
+    _write(log, [_rec("j1", evidence="Monitoring ongoing tasks.")])
+    assert jobs.get("j1")["evidence"] == {"summary": "Monitoring ongoing tasks."}
+
+
+def test_the_ollama_prefix_protocol_reads_as_a_sentence(tmp_path, monkeypatch):
+    """The prefix was parsed by a display helper in routes/jobs.py, which is
+    deleted. Its one job now happens here, where every reader gets it."""
+    log = tmp_path / "jobs.jsonl"
+    monkeypatch.setattr(jobs, "JOBS_LOG", log)
+    _write(log, [_rec("j1", evidence="ollama_failed: connection refused")])
+    assert jobs.get("j1")["evidence"] == {
+        "summary": "Local model server (Ollama) was unreachable. connection refused"}
+
+
+def test_a_receipt_written_as_a_json_string_is_parsed(tmp_path, monkeypatch):
+    """Shell workers close runs through the stdlib-only jobs CLI shim and some
+    passed the receipt as a JSON string. It is a receipt, not a summary."""
+    log = tmp_path / "jobs.jsonl"
+    monkeypatch.setattr(jobs, "JOBS_LOG", log)
+    _write(log, [_rec("j1", evidence=json.dumps(
+        {"kind": "receipt", "files": ["one.py"], "commits": []}))])
+    assert jobs.get("j1")["evidence"] == {
+        "kind": "receipt", "files": ["one.py"], "commits": []}
+
+
+def test_a_structured_record_is_untouched(tmp_path, monkeypatch):
+    log = tmp_path / "jobs.jsonl"
+    monkeypatch.setattr(jobs, "JOBS_LOG", log)
+    _write(log, [_rec("j1", evidence={"halted": "tree busy"})])
+    assert jobs.get("j1")["evidence"] == {"halted": "tree busy"}
+
+
+def test_the_write_path_cannot_produce_a_string(tmp_path, monkeypatch):
+    """Coercing only on read would let a new producer reintroduce the shape."""
+    log = tmp_path / "jobs.jsonl"
+    monkeypatch.setattr(jobs, "JOBS_LOG", log)
+    jobs.start(trigger="manual", job_id="j1")
+    jobs.finish("j1", status="failed", evidence="worker died on the gate")
+    raw = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
+    written = [r["evidence"] for r in raw if "evidence" in r]
+    assert written == [{"summary": "worker died on the gate"}]

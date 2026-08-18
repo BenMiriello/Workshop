@@ -9,7 +9,7 @@ import {
   Badge, Tag, Skeleton, Field, Input, Select, Modal, ConfirmDialog, type StatusKind,
   Notice,
 } from "@workshop/ui";
-import { jobStatusKind } from "../lib/jobs";
+import { jobStatusKind, type JobEvidence } from "../lib/jobs";
 import { timeAgo } from "../lib/time";
 import { shortSha } from "../lib/sha";
 import { shortHttpError } from "../lib/httpError";
@@ -48,7 +48,7 @@ type Run = {
   started_at?: string;
   ended_at?: string;
   binding?: { deploy_id?: string; ref?: string };
-  evidence?: { summary?: string; url?: string; commit_sha?: string; log_tail?: string; missing_keys?: string[] };
+  evidence?: JobEvidence | null;
 };
 
 type ProviderCatalog = {

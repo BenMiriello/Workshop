@@ -4,6 +4,13 @@
 // Jobs.tsx, JobDetail.tsx, Home.tsx, and AgentDetail.tsx; those drift. Import
 // from here instead. Backed by GET /api/jobs and /api/jobs/{id}.
 import type { StatusKind } from "@workshop/ui";
+import type { components } from "../api/schema.gen";
+
+// What a run produced, straight off the backend's own model. Hand-writing this
+// is what let the raw-dump era persist: `evidence` was `unknown` here and four
+// separate readers each guessed at it. See routes/api_models.JobEvidence.
+export type JobEvidence = components["schemas"]["JobEvidence"];
+export type JobAwaitingQuestion = components["schemas"]["JobAwaitingQuestion"];
 
 export type Job = {
   id: string;
@@ -25,7 +32,7 @@ export type Job = {
   tokens_own?: number | null;
   parent_id?: string;
   task_id?: string;
-  evidence?: unknown;
+  evidence?: JobEvidence | JobAwaitingQuestion[] | null;
   budget?: Record<string, unknown>;
   // Display fields computed by the API (routes/jobs._enrich); absent on raw
   // records but always present from GET /api/jobs and /api/jobs/{id}.

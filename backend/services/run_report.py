@@ -93,8 +93,9 @@ def _outcome_lines(job: dict, status: str) -> list[str]:
         halted = ev.get("halted")
         if halted:
             lines.append(f"Stopped before working: {halted}.")
-    elif isinstance(ev, str) and ev and status != "done":
-        lines.append(ev if ev.endswith(".") else f"{ev}.")
+        summary = str(ev.get("summary") or "").strip()
+        if summary and not gate and not halted and status != "done":
+            lines.append(summary if summary.endswith(".") else f"{summary}.")
     if status != "done":
         lines.append("Nothing here is verified.")
     return lines

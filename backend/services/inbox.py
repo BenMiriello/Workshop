@@ -385,8 +385,6 @@ def _run_body(job: dict) -> str:
             if val:
                 lines.append(str(val).strip().splitlines()[0][:200])
                 break
-    elif isinstance(ev, str) and ev.strip():
-        lines.append(ev.strip().splitlines()[0][:200])
     lines.append(f"Started by {job.get('trigger') or 'a trigger'}, nobody watching.")
     return "\n".join(lines)
 

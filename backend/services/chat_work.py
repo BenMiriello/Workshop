@@ -23,7 +23,6 @@ What is deliberately NOT here:
 """
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -65,22 +64,6 @@ def task_scope_for(context_key: str | None) -> str | None:
     return scope
 
 
-def _evidence_dict(ev: Any) -> dict | None:
-    """A job's `evidence` as a dict, whichever way it was written.
-
-    Runs are closed by shell workers through the stdlib-only `services.jobs` CLI
-    shim, and some of them pass the receipt as a JSON STRING rather than as an
-    object. The frontend already has to cope with both, so this does too; a
-    freeform string that is not JSON is simply not a receipt.
-    """
-    if isinstance(ev, str):
-        try:
-            ev = json.loads(ev)
-        except (ValueError, TypeError):
-            return None
-    return ev if isinstance(ev, dict) else None
-
-
 def _run_summary(job: dict, names: dict[str, str]) -> dict:
     """The latest run of a ticket, in the fields a job record HAS.
 
@@ -92,8 +75,8 @@ def _run_summary(job: dict, names: dict[str, str]) -> dict:
     """
     from routes.jobs import _display_agent
 
-    ev = _evidence_dict(job.get("evidence"))
-    receipt = ev if ev and ev.get("kind") == "receipt" else {}
+    ev = job.get("evidence")
+    receipt = ev if isinstance(ev, dict) and ev.get("kind") == "receipt" else {}
     files, commits = receipt.get("files"), receipt.get("commits")
     out: dict[str, Any] = {
         "id": job.get("id"),

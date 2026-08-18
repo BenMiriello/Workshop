@@ -1,7 +1,18 @@
 # Run-status view design + canonical status source (2026-07-18)
 
-Status: design doc (B2). Depends on: T0 (entity-model-2026-07-18.md), B1 (chat-work-linkage-2026-07-18.md).
+Status: design doc (B2), **built; §3.3 superseded 2026-08-18.** Depends on: T0
+(entity-model-2026-07-18.md), B1 (chat-work-linkage-2026-07-18.md).
 Single-operator system. Voice-mode files are out of scope.
+
+**§3.3 update.** This doc's answer to its own open question ("define what evidence
+means or remove it") was to keep the field opaque and render only two shapes. That
+was right about the UI and wrong about the field: it left `evidence` as `Any`, and
+four separate readers each grew their own coercion for it. Measured on 2026-08-18,
+the freeform-string shape belonged **entirely to two deleted systems** (the Letta
+overseer and an `ollama_failed:` writer with no remaining spelling). `evidence` is
+now the typed `JobEvidence` model, folded to one shape at the store boundary. The
+rendering rule below still stands; the "the field is opaque" premise does not. See
+coherence-overhaul-2026-08-16.md §11.6.
 
 ---
 

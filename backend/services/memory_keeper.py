@@ -285,8 +285,6 @@ def _job_failure_reason(rec: dict) -> str:
             v = str(ev.get(key) or "").strip()
             if v:
                 return v[:300]
-    elif isinstance(ev, str):
-        return ev.strip()[:300]
     return ""
 
 

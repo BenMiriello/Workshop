@@ -456,6 +456,81 @@ class Task(BaseModel):
 
 # ---------------------------------------------------------------- jobs
 
+class TypecheckVerdict(BaseModel):
+    """The two typecheck gates a reviewed run reports. Values are the gate's
+    own words ("skipped", "pass", a failure line), not a bool: "skipped" and
+    "passed" are different facts about a run and a bool loses that."""
+
+    model_config = ConfigDict(extra="allow")
+
+    py: str | None = None
+    ts: str | None = None
+
+
+class JobAwaitingQuestion(BaseModel):
+    """One ticket a job stopped to ask about. `evidence` is a LIST of these
+    when `status == "awaiting_input"`; `routes/jobs.answer` reads `id` off each
+    to decide whether every question has now been answered."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str | None = None
+    status: str | None = None
+    text: str | None = None
+    question: str | None = None
+    blocked_reason: str | None = None
+
+
+class JobEvidence(BaseModel):
+    """What a run produced. One structured record, not a freeform dump.
+
+    Read off the writers and cross-checked against all 2,761 live jobs on
+    2026-08-18. `extra="allow"`, so these keys are a FLOOR: a provider or a
+    future worker may add its own and nothing here drops it. Two keys carried
+    only by history (`source`, `relay_route`, 7 records from a one-shot job
+    import that has since been deleted) are deliberately NOT declared; they
+    ride through as extras rather than being enshrined as live vocabulary.
+
+    `summary` is the field every reader wants: the worker's own one-line
+    account, present on 2,024 of the 2,032 structured records. It is also
+    where the store folds the two retired freeform-string producers, so a
+    reader never has to ask which shape it got.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    # Common to every producer.
+    kind: str | None = None
+    summary: str | None = None
+    # Set when a sweep stopped BEFORE doing any work, which must not read like
+    # a run that did work and failed.
+    halted: str | None = None
+    reviewer: str | None = None
+    gate: str | None = None
+
+    # The reviewed-work receipt `project_ralph.sh` writes (kind="receipt").
+    # `files` is repo-relative paths from the COMMITTED diff and `commits` is
+    # full shas, both built by `build_receipt_evidence`. Readers report their
+    # LENGTH, not their contents.
+    files: list[str] | None = None
+    commits: list[str] | None = None
+    diff_files: int | None = None
+    baseline: str | None = None
+    head: str | None = None
+    design: str | None = None
+    typecheck: TypecheckVerdict | None = None
+    iterations: int | None = None
+    tokens: int | None = None
+
+    # Deploy and rollback runs (services/deploy_runner.py).
+    url: str | None = None
+    commit_sha: str | None = None
+    upload_ref: str | None = None
+    log_tail: str | None = None
+    missing_keys: list[str] | None = None
+    done: bool | None = None
+
+
 class Job(BaseModel):
     """One bounded execution: a sweep, a cron tick, an event reaction, a manual
     run. The stored half is `services/jobs.py`'s record (every key optional
@@ -479,7 +554,7 @@ class Job(BaseModel):
     exit_code: int | None = None
     tasks_done: int | None = None
     tasks_failed: int | None = None
-    evidence: Any = None
+    evidence: JobEvidence | list[JobAwaitingQuestion] | None = None
     budget: dict[str, Any] | None = None
     task_id: str | None = None
     parent_id: str | None = None

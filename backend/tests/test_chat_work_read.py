@@ -7,7 +7,6 @@ easy to break later: the chat edge is `source.ref`, a chat with no task scope
 gets an empty scope list rather than the workshop backlog, and a run summary
 carries only fields a job record actually has.
 """
-import json
 import sys
 from pathlib import Path
 
@@ -26,9 +25,9 @@ def env(tmp_path, monkeypatch):
     """A private runtime, one project task store, and a job log nothing writes.
 
     `jobs.read` is stubbed rather than pointed at a temp log because the runs
-    this asserts on are shapes (no run, a receipt, a string) rather than
-    behaviour of the job store, and the sweeps that run during a reconcile read
-    the same function.
+    this asserts on are shapes (no run, a receipt, a non-receipt dict) rather
+    than behaviour of the job store, and the sweeps that run during a reconcile
+    read the same function.
     """
     monkeypatch.setattr(ownership, "_RUNTIME", tmp_path)
     ownership.set_current_owner(1)
@@ -216,20 +215,23 @@ class TestRunSummary:
         assert run["exit_code"] == 0 and run["trigger"] == "manual"
         assert run["files"] == 2 and run["commits"] == 1
 
-    def test_a_receipt_written_as_a_json_string_is_parsed(self, env):
-        """Runs are closed by shell workers through the stdlib-only jobs CLI
-        shim, and some of them pass the receipt as a string. The frontend already
-        has to cope with both."""
+    def test_a_non_receipt_dict_yields_null_counts(self, env):
+        """Counts come off the receipt shape and nothing else. A halted sweep
+        wrote real evidence, but it is not a receipt and did not count files.
+
+        There is deliberately no case here for evidence arriving as a STRING:
+        `services.jobs` folds the two retired string producers to
+        `{"summary": ...}` at the store's read boundary, so no string reaches
+        this module. That coercion is pinned in test_jobs_cache.py."""
         t = chat_store.create_thread(context_key="project:demo")
         tk = _file_ticket(env["root"], t["id"])
         env["runs"][tk["id"]] = [{
-            "id": "j2", "status": "done", "trigger": "cron",
-            "evidence": json.dumps({"kind": "receipt", "files": ["one.py"],
-                                    "commits": []}),
+            "id": "j2", "status": "failed", "trigger": "cron",
+            "evidence": {"halted": "tree busy"},
         }]
         run = env["client"].get(
             f"/chat/threads/{t['id']}/work").json()["filed"][0]["run"]
-        assert run["files"] == 1 and run["commits"] == 0
+        assert run["files"] is None and run["commits"] is None
 
     def test_freeform_string_evidence_yields_null_counts(self, env):
         """Null, not zero: a zero would claim the receipt said nothing changed,

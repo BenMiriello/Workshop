@@ -19,7 +19,7 @@ Record shape (all keys optional except id/trigger/status/started_at):
       "exit_code":     0,
       "tasks_done":    3,
       "tasks_failed":  0,
-      "evidence":      {...} | "text",     # freeform proof of work
+      "evidence":      {...},              # structured proof of work
       "budget":        {...}               # loop caps that bounded the run
     }
 
@@ -162,7 +162,7 @@ def finish(
         exit_code=exit_code,
         tasks_done=tasks_done,
         tasks_failed=tasks_failed,
-        evidence=evidence,
+        evidence=_structured_evidence(evidence),
         budget=budget,
     )
     _append(line)
@@ -192,6 +192,41 @@ def finish(
 # Read / index API
 # ---------------------------------------------------------------------------
 
+_OLLAMA_PREFIX = "ollama_failed:"
+
+
+def _structured_evidence(ev: Any) -> Any:
+    """A Job's `evidence` as the structured record it is declared to be.
+
+    Evidence is a dict, or a list for the awaiting-input question list. It was
+    ALSO written as a freeform STRING by two producers that no longer exist:
+    the Letta overseer's per-tick narration (1,618 records) and an
+    `ollama_failed:` prefix protocol whose writer is gone (338 records).
+    Measured over the whole log 2026-08-18; nothing live writes a string.
+
+    Both fold to `{"summary": ...}` here, at the store's one read boundary, and
+    on the way in at `finish()`. Above this line the old shape does not exist,
+    so no reader has to carry a branch for it. Delete this once the log's own
+    history has been rewritten; until then it is what makes that history
+    readable without four separate coercions spread across the callers.
+    """
+    if not isinstance(ev, str):
+        return ev
+    s = ev.strip()
+    if not s:
+        return None
+    if s[:1] in "{[":
+        try:
+            return json.loads(s)
+        except ValueError:
+            pass
+    if s.startswith(_OLLAMA_PREFIX):
+        detail = s[len(_OLLAMA_PREFIX):].strip()
+        base = "Local model server (Ollama) was unreachable."
+        return {"summary": f"{base} {detail}" if detail else base}
+    return {"summary": s}
+
+
 def _collapse(lines: Iterable[dict]) -> dict[str, dict]:
     """Merge append-only lines into one record per id (later overrides)."""
     by_id: dict[str, dict] = {}
@@ -199,6 +234,9 @@ def _collapse(lines: Iterable[dict]) -> dict[str, dict]:
         jid = rec.get("id")
         if not jid:
             continue
+        if "evidence" in rec:
+            rec = dict(rec)
+            rec["evidence"] = _structured_evidence(rec["evidence"])
         if jid in by_id:
             by_id[jid].update(rec)
         else:
@@ -373,7 +411,7 @@ def reconcile_stuck(*, min_age_sec: int = 120, max_age_sec: int = 7200,
         finish(
             rec["id"],
             status="failed",
-            evidence="liveness watchdog: launching process dead while running",
+            evidence={"halted": "liveness watchdog: launching process dead while running"},
         )
         failed.append(rec)
     return failed
@@ -466,8 +504,8 @@ def _cli(argv: list[str]) -> int:
         if evidence is not None:
             # Mirror --budget: a structured evidence payload (the receipt object,
             # the awaiting-input question list) arrives as a JSON string on the
-            # CLI. Parse it so it is stored as a real object, not a string. A
-            # plain-text legacy evidence string falls through unchanged.
+            # CLI. Parse it so it is stored as a real object. Anything that is
+            # not JSON is folded to `{"summary": ...}` by finish().
             try:
                 evidence = json.loads(evidence)
             except json.JSONDecodeError:
