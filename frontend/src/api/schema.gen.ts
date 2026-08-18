@@ -8116,6 +8116,26 @@ export interface components {
             running: boolean;
         };
         /**
+         * AutonomyOverride
+         * @description THE off-switch, and the only one. An absent file reads as clear; a
+         *     corrupt or unreadable one reads as ENGAGED (fail-closed), with `reason`
+         *     naming which failure it was and `engaged_by` set to "system" rather than to
+         *     an operator who did not do it.
+         *
+         *     Distinct from an individual agent's autonomy field: this is a brake over
+         *     everything, that one is a setting, and engaging this never mutates it.
+         */
+        AutonomyOverride: {
+            /** Engaged */
+            engaged: boolean;
+            /** Engaged At */
+            engaged_at?: string | null;
+            /** Engaged By */
+            engaged_by?: string | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
          * AutonomyRunOut
          * @description The sweep that was launched: the Job it adopts and the process running it.
          */
@@ -8128,6 +8148,26 @@ export interface components {
             slug: string;
             /** Started */
             started: boolean;
+        };
+        /** AutonomyStatus */
+        AutonomyStatus: {
+            cron_autonomy: components["schemas"]["CronAutonomy"];
+            jobs: components["schemas"]["JobsSummary"];
+            override: components["schemas"]["AutonomyOverride"];
+            queue_runner: components["schemas"]["QueueRunnerState"];
+        };
+        /**
+         * AutonomyToggled
+         * @description The enable/disable pair. `at` is present only on disable, since there is
+         *     no instant to report for clearing.
+         */
+        AutonomyToggled: {
+            /** At */
+            at?: string | null;
+            /** Disabled */
+            disabled: boolean;
+            /** Ok */
+            ok: boolean;
         };
         /**
          * Awaiting
@@ -8564,6 +8604,43 @@ export interface components {
              */
             force: boolean;
         };
+        /**
+         * BrokerLease
+         * @description A lease as `gpubrokerd` returns it. Left open for the same reason
+         *     `BrokerStatus` is.
+         */
+        BrokerLease: {
+            [key: string]: unknown;
+        };
+        /**
+         * BrokerRegistered
+         * @description Idempotent. Called on backend startup and exposed here so the operator
+         *     can re-register after the broker restarts.
+         */
+        BrokerRegistered: {
+            /** Registered */
+            registered: boolean;
+        };
+        /** BrokerReleased */
+        BrokerReleased: {
+            /** Released Count */
+            released_count: number;
+        };
+        /**
+         * BrokerStatus
+         * @description `gpubrokerd`'s own status body with `available` and this app's leases
+         *     spliced on. The broker is ADDITIVE: when it is down this is just
+         *     `{available: false}` and Workshop's own off-switch remains the authoritative
+         *     control plane. Its body is the broker's schema, not ours, hence extra.
+         */
+        BrokerStatus: {
+            /** Available */
+            available: boolean;
+            /** My Leases */
+            my_leases?: Record<string, never>[] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** BudgetPatch */
         BudgetPatch: {
             /** App Total */
@@ -8822,6 +8899,17 @@ export interface components {
             /** Max Turns */
             max_turns?: number | null;
         };
+        /**
+         * ConcurrencySnapshot
+         * @description How MANY agent processes may run at once, which is a different question
+         *     from WHETHER background work runs at all: this bounds the machine, the
+         *     override bounds the policy. A change takes effect on the next acquire with
+         *     no restart, and lowering a limit never cancels anything in flight.
+         */
+        ConcurrencySnapshot: {
+            helpers: components["schemas"]["SlotPool"];
+            turns: components["schemas"]["SlotPool"];
+        };
         /** ConnectGithubIn */
         ConnectGithubIn: {
             /**
@@ -8968,6 +9056,20 @@ export interface components {
         CredentialSourceIn: {
             /** Source */
             source: string;
+        };
+        /**
+         * CronAutonomy
+         * @description The same override state under the names the Settings screen reads. One
+         *     source: a second stat of a flag file of its own is exactly how the UI came
+         *     to report "enabled" while every tick skipped.
+         */
+        CronAutonomy: {
+            /** Disabled */
+            disabled: boolean;
+            /** Disabled At */
+            disabled_at?: string | null;
+            /** Reason */
+            reason?: string | null;
         };
         /**
          * CurrentBranch
@@ -9504,6 +9606,26 @@ export interface components {
             /** Reaped */
             reaped?: Record<string, never>[] | null;
         };
+        /**
+         * GpuSnapshot
+         * @description One `nvidia-smi` sample of the first GPU. `available: false` with an
+         *     `error` is what a host with no nvidia-smi, or unparseable output, looks
+         *     like -- distinct from a card reporting zeros.
+         */
+        GpuSnapshot: {
+            /** Available */
+            available: boolean;
+            /** Error */
+            error?: string | null;
+            /** Memory Free Mib */
+            memory_free_mib?: number | null;
+            /** Memory Total Mib */
+            memory_total_mib?: number | null;
+            /** Memory Used Mib */
+            memory_used_mib?: number | null;
+            /** Utilization Pct */
+            utilization_pct?: number | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -9797,6 +9919,22 @@ export interface components {
             ok: boolean;
             task: components["schemas"]["Task"];
         };
+        /**
+         * JobsSummary
+         * @description Recent Job activity, over the last 200 records. `by_status` is a tally
+         *     keyed by status; `last` is the newest record in full.
+         */
+        JobsSummary: {
+            /** By Status */
+            by_status: {
+                [key: string]: number;
+            };
+            last?: components["schemas"]["Job"] | null;
+            /** Recent Count */
+            recent_count: number;
+            /** Running */
+            running: number;
+        };
         /** KickIn */
         KickIn: {
             /** Message */
@@ -9878,6 +10016,18 @@ export interface components {
             hearing: unknown[];
             /** Token */
             token: string;
+        };
+        /**
+         * LoadedModel
+         * @description One resident Ollama model, projected from `/api/ps`.
+         */
+        LoadedModel: {
+            /** Expires At */
+            expires_at?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Size Vram Bytes */
+            size_vram_bytes?: number | null;
         };
         /** LocalRequest */
         LocalRequest: {
@@ -10216,6 +10366,33 @@ export interface components {
             ok: boolean;
         };
         /**
+         * OllamaStatus
+         * @description `ollama_up: false` comes back with an empty model list rather than an
+         *     error, so the Settings screen renders a reachable-but-down state.
+         */
+        OllamaStatus: {
+            gpu: components["schemas"]["GpuSnapshot"];
+            /** Loaded Models */
+            loaded_models: components["schemas"]["LoadedModel"][];
+            /** Ollama Up */
+            ollama_up: boolean;
+        };
+        /**
+         * OllamaUnloaded
+         * @description The post-unload GPU snapshot rides along so the UI can show the freed
+         *     memory immediately. `note` appears only when nothing was resident, which is
+         *     a success with nothing to do rather than a failure.
+         */
+        OllamaUnloaded: {
+            gpu: components["schemas"]["GpuSnapshot"];
+            /** Note */
+            note?: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Unloaded */
+            unloaded: components["schemas"]["UnloadResult"][];
+        };
+        /**
          * OperationCancelled
          * @description `cancelled: false` is not an error: it means the operation landed while
          *     this request was on the wire, which is a race, not a failure.
@@ -10225,6 +10402,25 @@ export interface components {
             cancelled: boolean;
             /** Operation */
             operation: string;
+        };
+        /**
+         * OverrideCleared
+         * @description `cleared` names the switches this call actually released. It is a list
+         *     because there used to be two of them read as one truth -- the overlay and a
+         *     legacy flag file -- and clearing only one left the loop off while the UI
+         *     reported it cleared. One switch now, and the field says so explicitly.
+         */
+        OverrideCleared: {
+            /** Cleared */
+            cleared: string[];
+            /** Engaged */
+            engaged: boolean;
+            /** Engaged At */
+            engaged_at?: string | null;
+            /** Engaged By */
+            engaged_by?: string | null;
+            /** Reason */
+            reason?: string | null;
         };
         /**
          * PageMeta
@@ -10682,6 +10878,33 @@ export interface components {
             todo: number;
         };
         /**
+         * QueueRunnerState
+         * @description Real loop state FOR ONE TREE. Runners are per tree: both the lock and the
+         *     pidfile are keyed on it.
+         *
+         *     `pid` is reported only when the lock says somebody is actually there -- a
+         *     pidfile outlives a SIGKILLed runner because its EXIT trap never fires, so
+         *     the pid alone is not evidence. `enabled` is the brake, and it is deliberately
+         *     independent of `running`: starting or stopping a worker says nothing about
+         *     whether unattended work is permitted.
+         */
+        QueueRunnerState: {
+            /** Dir */
+            dir?: string | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Last Line */
+            last_line?: string | null;
+            /** Lock Path */
+            lock_path: string;
+            /** Log Path */
+            log_path: string;
+            /** Pid */
+            pid?: number | null;
+            /** Running */
+            running: boolean;
+        };
+        /**
          * QueueState
          * @description `queue_error` is why the queue is not moving, when it is not moving for a
          *     reason the operator has to see. A queue that stopped and does not say so is
@@ -11088,6 +11311,25 @@ export interface components {
             /** Dir */
             dir: string;
         };
+        /**
+         * RunnerTarget
+         * @description A tree a runner may be pointed at. The platform repo appears only in
+         *     developer mode: offering it and then having the gate refuse it would be
+         *     another control that lies.
+         */
+        RunnerTarget: {
+            /** Dir */
+            dir: string;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+        };
+        /** RunnerTargets */
+        RunnerTargets: {
+            /** Targets */
+            targets: components["schemas"]["RunnerTarget"][];
+        };
         /** ScheduleBody */
         ScheduleBody: {
             /** Data */
@@ -11247,6 +11489,19 @@ export interface components {
             reason: string;
             /** Template */
             template: string;
+        };
+        /**
+         * SlotPool
+         * @description One pool's limit and what is actually in it. The active counts are the
+         *     only view the system has of how many model processes it is holding.
+         */
+        SlotPool: {
+            /** Active */
+            active: number;
+            /** Limit */
+            limit: number;
+            /** Waiting */
+            waiting: number;
         };
         /** SpawnTask */
         SpawnTask: {
@@ -12196,6 +12451,21 @@ export interface components {
             /** Turn Id */
             turn_id: string;
         };
+        /**
+         * UnloadResult
+         * @description One model's eviction. `ok` is the HTTP verdict from Ollama, so a model
+         *     that refused carries a `status`; a transport failure carries an `error`.
+         */
+        UnloadResult: {
+            /** Error */
+            error?: string | null;
+            /** Model */
+            model: string;
+            /** Ok */
+            ok: boolean;
+            /** Status */
+            status?: number | null;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -12647,7 +12917,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomyToggled"];
                 };
             };
         };
@@ -12667,7 +12937,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomyToggled"];
                 };
             };
         };
@@ -12687,7 +12957,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomyOverride"];
                 };
             };
         };
@@ -12711,7 +12981,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomyOverride"];
                 };
             };
             /** @description Validation Error */
@@ -12740,7 +13010,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OverrideCleared"];
                 };
             };
         };
@@ -12760,7 +13030,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AutonomyStatus"];
                 };
             };
         };
@@ -19887,7 +20157,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConcurrencySnapshot"];
                 };
             };
         };
@@ -19911,7 +20181,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConcurrencySnapshot"];
                 };
             };
             /** @description Validation Error */
@@ -20564,7 +20834,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BrokerLease"];
                 };
             };
             /** @description Validation Error */
@@ -20593,7 +20863,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BrokerRegistered"];
                 };
             };
         };
@@ -20613,7 +20883,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BrokerReleased"];
                 };
             };
         };
@@ -20637,7 +20907,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BrokerLease"];
                 };
             };
             /** @description Validation Error */
@@ -20666,7 +20936,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BrokerStatus"];
                 };
             };
         };
@@ -21995,7 +22265,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OllamaStatus"];
                 };
             };
         };
@@ -22015,7 +22285,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OllamaUnloaded"];
                 };
             };
         };
@@ -23079,7 +23349,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["QueueRunnerState"];
                 };
             };
             /** @description Validation Error */
@@ -23112,7 +23382,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["QueueRunnerState"];
                 };
             };
             /** @description Validation Error */
@@ -23143,7 +23413,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["QueueRunnerState"];
                 };
             };
             /** @description Validation Error */
@@ -23172,7 +23442,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RunnerTargets"];
                 };
             };
         };

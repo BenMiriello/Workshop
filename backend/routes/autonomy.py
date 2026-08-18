@@ -29,6 +29,7 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, HTTPException
 
+from routes import autonomy_models as am
 from services import agent_slots, autonomy_override, gpubroker_client, jobs
 from pydantic import BaseModel, Field
 from wsplatform import paths
@@ -138,7 +139,7 @@ def _queue_runner_state(dir_str: str | None = None) -> dict:
 # ============================================================
 
 
-@router.post("/agents/autonomy/disable")
+@router.post("/agents/autonomy/disable", response_model=am.AutonomyToggled)
 async def autonomy_disable():
     # Writes the ONE switch. This used to touch .runtime/AUTONOMY_DISABLED, a
     # second off-switch that only the shell loop read — so the API and the loop
@@ -148,7 +149,7 @@ async def autonomy_disable():
     return {"ok": True, "disabled": True, "at": rec.get("engaged_at")}
 
 
-@router.post("/agents/autonomy/enable")
+@router.post("/agents/autonomy/enable", response_model=am.AutonomyToggled)
 async def autonomy_enable():
     # Clearing this is now SUFFICIENT. Before, an operator could clear the flag
     # here and still have every tick skip, because the JSON overlay was engaged
@@ -157,7 +158,7 @@ async def autonomy_enable():
     return {"ok": True, "disabled": False}
 
 
-@router.get("/agents/autonomy/status")
+@router.get("/agents/autonomy/status", response_model=am.AutonomyStatus)
 async def autonomy_status():
     # One source. `read()` already reports the union of everything that can hold
     # autonomy off, so the endpoint no longer stats a flag file of its own — that
@@ -193,7 +194,7 @@ class ConcurrencyPatch(BaseModel):
 # Top-level, NOT under /agents: `agents.router` is mounted first and owns
 # `/agents/{agent_id}`, so a two-segment `/agents/concurrency` would be captured
 # as an agent id and 404 instead of reaching this.
-@router.get("/concurrency")
+@router.get("/concurrency", response_model=am.ConcurrencySnapshot)
 async def get_agent_concurrency():
     """Limits plus what is running right now: {turns:{limit,active,waiting},
     helpers:{...}}. The active counts are the only view the system has of how
@@ -201,7 +202,7 @@ async def get_agent_concurrency():
     return agent_slots.snapshot()
 
 
-@router.put("/concurrency")
+@router.put("/concurrency", response_model=am.ConcurrencySnapshot)
 async def put_agent_concurrency(body: ConcurrencyPatch):
     """Change how many model processes may run at once. Takes effect on the next
     acquire, with no restart: raising a limit lets work that is already waiting
@@ -222,14 +223,14 @@ class OverrideEngageIn(BaseModel):
     reason: str | None = None
 
 
-@router.get("/agents/autonomy/override")
+@router.get("/agents/autonomy/override", response_model=am.AutonomyOverride)
 async def get_autonomy_override():
     """Current override state: {engaged, reason, engaged_at, engaged_by}. File
     absent reads as clear; corrupt / unreadable reads as engaged (fail-closed)."""
     return autonomy_override.read()
 
 
-@router.post("/agents/autonomy/override")
+@router.post("/agents/autonomy/override", response_model=am.AutonomyOverride)
 async def engage_autonomy_override(body: OverrideEngageIn):
     """Engage the override. Every scope answers `reactive` for background
     dispatch until cleared. Per-agent autonomy fields are NEVER mutated."""
@@ -245,7 +246,7 @@ async def engage_autonomy_override(body: OverrideEngageIn):
     return autonomy_override.read()
 
 
-@router.delete("/agents/autonomy/override")
+@router.delete("/agents/autonomy/override", response_model=am.OverrideCleared)
 async def clear_autonomy_override():
     """Clear the override. Each agent immediately resumes its configured mode
     without a restore step (the field was never mutated).
@@ -338,7 +339,7 @@ def _validated_run_target(dir_str: str) -> str:
     return target
 
 
-@router.get("/queue/runner")
+@router.get("/queue/runner", response_model=am.QueueRunnerState)
 async def queue_runner_status(dir: str | None = None):
     """Real loop state for one tree: is a worker resident, and is work
     permitted. No `dir` reports on the platform repo's lock, which is what the
@@ -346,7 +347,7 @@ async def queue_runner_status(dir: str | None = None):
     return _queue_runner_state(dir)
 
 
-@router.get("/queue/runner/targets")
+@router.get("/queue/runner/targets", response_model=am.RunnerTargets)
 async def queue_runner_targets():
     """The trees a runner may be pointed at, for the scope picker.
 
@@ -380,7 +381,7 @@ async def queue_runner_targets():
     return {"targets": out}
 
 
-@router.post("/queue/runner/start")
+@router.post("/queue/runner/start", response_model=am.QueueRunnerState)
 async def queue_runner_start(body: RunnerStart):
     # The brake is NOT touched here. See the section comment above.
     target = _validated_run_target(body.dir)
@@ -399,7 +400,7 @@ async def queue_runner_start(body: RunnerStart):
     return _queue_runner_state(target)
 
 
-@router.post("/queue/runner/stop")
+@router.post("/queue/runner/stop", response_model=am.QueueRunnerState)
 async def queue_runner_stop(dir: str | None = None):
     """Stop the resident runner + any in-flight sweep. The sweep's own
     lease/reclaim path returns a half-worked ticket to the queue, so stopping
@@ -494,7 +495,7 @@ def _nvidia_smi_snapshot() -> dict:
     }
 
 
-@router.get("/ollama/status")
+@router.get("/ollama/status", response_model=am.OllamaStatus)
 async def ollama_status():
     """Snapshot of Ollama + GPU state for the Settings UI."""
     async with httpx.AsyncClient(timeout=3.0) as client:
@@ -534,7 +535,7 @@ async def _unload_one(client: httpx.AsyncClient, model: str) -> dict:
         return {"model": model, "ok": False, "error": str(e)}
 
 
-@router.post("/ollama/unload")
+@router.post("/ollama/unload", response_model=am.OllamaUnloaded)
 async def ollama_unload():
     """Evict every currently-resident Ollama model so the GPU is freed.
 
@@ -574,7 +575,7 @@ async def ollama_unload():
 # ============================================================
 
 
-@router.get("/gpu/broker/status")
+@router.get("/gpu/broker/status", response_model=am.BrokerStatus)
 async def broker_status():
     s = await gpubroker_client.status()
     if not s.get("available"):
@@ -583,7 +584,7 @@ async def broker_status():
     return {**s, "my_leases": mine}
 
 
-@router.post("/gpu/broker/register")
+@router.post("/gpu/broker/register", response_model=am.BrokerRegistered)
 async def broker_register():
     """Idempotent app registration. Called on backend startup; exposed here
     so the operator can re-register from the UI if the broker was restarted."""
@@ -591,7 +592,7 @@ async def broker_register():
     return {"registered": ok}
 
 
-@router.post("/gpu/broker/reserve")
+@router.post("/gpu/broker/reserve", response_model=am.BrokerLease)
 async def broker_reserve(body: dict):
     """Operator hold: acquire a high-priority short-TTL lease so other apps
     yield. Body: {duration_s: int, reason: str}."""
@@ -603,13 +604,13 @@ async def broker_reserve(body: dict):
     return res
 
 
-@router.post("/gpu/broker/release-mine")
+@router.post("/gpu/broker/release-mine", response_model=am.BrokerReleased)
 async def broker_release_mine():
     n = await gpubroker_client.release_all_mine()
     return {"released_count": n}
 
 
-@router.post("/gpu/broker/boost")
+@router.post("/gpu/broker/boost", response_model=am.BrokerLease)
 async def broker_boost(body: dict):
     pri = int(body.get("priority", 80))
     ttl = int(body.get("ttl_s", 1800))
