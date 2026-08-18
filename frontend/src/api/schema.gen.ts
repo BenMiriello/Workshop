@@ -10629,12 +10629,30 @@ export interface components {
             /** Path */
             path: string;
         };
-        /** NoteDeleted */
-        NoteDeleted: {
-            /** Deleted */
-            deleted: boolean;
-            /** Path */
-            path: string;
+        /**
+         * NoteDetail
+         * @description One note's body plus its provenance and facets, in one read, so the
+         *     editor can round-trip them without a second endpoint.
+         *
+         *     `author` is an origin string (see services/origin) and is "" on older
+         *     notes. `chat` is the originating thread id, or "" when none was recorded.
+         *     `type` is the note kind the ranked digest reads.
+         */
+        NoteDetail: {
+            /** Author */
+            author: string;
+            /** Chat */
+            chat: string;
+            /** Content */
+            content: string;
+            /** Note Id */
+            note_id: string;
+            /** Pinned */
+            pinned: boolean;
+            /** Scope */
+            scope: string;
+            /** Type */
+            type: string;
         };
         /**
          * NoteLink
@@ -10674,10 +10692,37 @@ export interface components {
             /** Title */
             title: string;
         };
+        /**
+         * NoteRef
+         * @description What a write answers with: the address of the note, not the note. The
+         *     caller already holds the content it just sent.
+         */
+        NoteRef: {
+            /** Note Id */
+            note_id: string;
+            /** Scope */
+            scope: string;
+        };
         /** NoteRename */
         NoteRename: {
             /** To */
             to: string;
+        };
+        /**
+         * NoteSummary
+         * @description One note in a scope listing. `title` falls back to the id for a note the
+         *     index has never seen, and `hook` is the one-line summary the ambient digest
+         *     ranks on -- empty for such a note rather than absent.
+         */
+        NoteSummary: {
+            /** Hook */
+            hook: string;
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Updated */
+            updated?: string | null;
         };
         /** NoteUpdate */
         NoteUpdate: {
@@ -11846,19 +11891,6 @@ export interface components {
             /** Scopes */
             scopes: string[];
         };
-        /**
-         * SearchHit
-         * @description One MATCHING LINE, not one matching note: a note that matches twice
-         *     appears twice, which is why `limit` bounds lines rather than files.
-         */
-        SearchHit: {
-            /** Line */
-            line: number;
-            /** Path */
-            path: string;
-            /** Snippet */
-            snippet: string;
-        };
         /** SearchIn */
         SearchIn: {
             /**
@@ -11876,7 +11908,7 @@ export interface components {
             /** Query */
             query: string;
             /** Results */
-            results: components["schemas"]["SearchHit"][];
+            results: components["schemas"]["routes__notes__SearchHit"][];
         };
         /**
          * ServiceLog
@@ -13325,6 +13357,58 @@ export interface components {
             preset?: string | null;
             /** Until */
             until?: string | null;
+        };
+        /**
+         * NoteDeleted
+         * @description `existed` is False when the note was already gone. Delete is idempotent
+         *     and this is how the caller tells the two apart without an error.
+         */
+        routes__knowledge__NoteDeleted: {
+            /** Existed */
+            existed: boolean;
+            /** Note Id */
+            note_id: string;
+            /** Scope */
+            scope: string;
+        };
+        /**
+         * SearchHit
+         * @description One matching note. `score` is null on the plaintext path and `debug`
+         *     reads "fallback" there, both kept for shape-compat with older callers that
+         *     predate the semantic layer. `author` is carried so the recall site can
+         *     label a model-distilled note differently from an operator-written one.
+         */
+        routes__knowledge__SearchHit: {
+            /** Author */
+            author: string;
+            /** Debug */
+            debug?: string | null;
+            /** Note Id */
+            note_id: string;
+            /** Score */
+            score?: number | null;
+            /** Text */
+            text: string;
+        };
+        /** NoteDeleted */
+        routes__notes__NoteDeleted: {
+            /** Deleted */
+            deleted: boolean;
+            /** Path */
+            path: string;
+        };
+        /**
+         * SearchHit
+         * @description One MATCHING LINE, not one matching note: a note that matches twice
+         *     appears twice, which is why `limit` bounds lines rather than files.
+         */
+        routes__notes__SearchHit: {
+            /** Line */
+            line: number;
+            /** Path */
+            path: string;
+            /** Snippet */
+            snippet: string;
         };
         /** RegisterBody */
         routes__push__RegisterBody: {
@@ -22006,7 +22090,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["routes__knowledge__SearchHit"][];
                 };
             };
             /** @description Validation Error */
@@ -22037,7 +22121,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NoteSummary"][];
                 };
             };
             /** @description Validation Error */
@@ -22069,7 +22153,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NoteDetail"];
                 };
             };
             /** @description Validation Error */
@@ -22105,7 +22189,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NoteRef"];
                 };
             };
             /** @description Validation Error */
@@ -22137,7 +22221,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["routes__knowledge__NoteDeleted"];
                 };
             };
             /** @description Validation Error */
@@ -22172,7 +22256,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["routes__knowledge__SearchHit"][];
                 };
             };
             /** @description Validation Error */
@@ -22709,7 +22793,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NoteDeleted"];
+                    "application/json": components["schemas"]["routes__notes__NoteDeleted"];
                 };
             };
             /** @description Validation Error */

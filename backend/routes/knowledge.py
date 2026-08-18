@@ -43,6 +43,75 @@ class RecallIn(BaseModel):
     limit: int = 5
 
 
+# ---- response models (ADR 0023 clause 6) -----------------------------------
+# Read off services/knowledge.py. FastAPI FILTERS a return value through the
+# declared model and drops any key it does not name, so an under-declared field
+# here is a live API field that vanishes.
+#
+# `updated` is an ISO instant but is NOT named `updated_at`, which is an ADR
+# 0023 clause 4 violation. It is the name the store, the API and the frontend
+# all use today; renaming it is a wire-shape change that lands with its
+# frontend edit, so it is recorded here rather than half-changed.
+
+
+class NoteSummary(BaseModel):
+    """One note in a scope listing. `title` falls back to the id for a note the
+    index has never seen, and `hook` is the one-line summary the ambient digest
+    ranks on -- empty for such a note rather than absent."""
+
+    id: str
+    title: str
+    hook: str
+    updated: str | None = None
+
+
+class NoteDetail(BaseModel):
+    """One note's body plus its provenance and facets, in one read, so the
+    editor can round-trip them without a second endpoint.
+
+    `author` is an origin string (see services/origin) and is "" on older
+    notes. `chat` is the originating thread id, or "" when none was recorded.
+    `type` is the note kind the ranked digest reads."""
+
+    scope: str
+    note_id: str
+    content: str
+    author: str
+    type: str
+    pinned: bool
+    chat: str
+
+
+class NoteRef(BaseModel):
+    """What a write answers with: the address of the note, not the note. The
+    caller already holds the content it just sent."""
+
+    scope: str
+    note_id: str
+
+
+class NoteDeleted(BaseModel):
+    """`existed` is False when the note was already gone. Delete is idempotent
+    and this is how the caller tells the two apart without an error."""
+
+    scope: str
+    note_id: str
+    existed: bool
+
+
+class SearchHit(BaseModel):
+    """One matching note. `score` is null on the plaintext path and `debug`
+    reads "fallback" there, both kept for shape-compat with older callers that
+    predate the semantic layer. `author` is carried so the recall site can
+    label a model-distilled note differently from an operator-written one."""
+
+    note_id: str
+    text: str
+    author: str
+    score: float | None = None
+    debug: str | None = None
+
+
 def _scope(scope_key: str) -> str:
     try:
         knowledge._parse_scope(scope_key)
@@ -51,12 +120,12 @@ def _scope(scope_key: str) -> str:
     return scope_key
 
 
-@router.get("/{scope_key}/notes")
+@router.get("/{scope_key}/notes", response_model=list[NoteSummary])
 async def list_notes(scope_key: str):
     return knowledge.list_notes(_scope(scope_key))
 
 
-@router.get("/{scope_key}/notes/{note_id}")
+@router.get("/{scope_key}/notes/{note_id}", response_model=NoteDetail)
 async def get_note(scope_key: str, note_id: str):
     _scope(scope_key)
     try:
@@ -69,7 +138,7 @@ async def get_note(scope_key: str, note_id: str):
     return {"scope": scope_key, "note_id": note_id, "content": body, **meta}
 
 
-@router.put("/{scope_key}/notes/{note_id}")
+@router.put("/{scope_key}/notes/{note_id}", response_model=NoteRef)
 async def put_note(scope_key: str, note_id: str, body: PutNoteIn):
     _scope(scope_key)
     try:
@@ -81,7 +150,7 @@ async def put_note(scope_key: str, note_id: str, body: PutNoteIn):
         raise HTTPException(400, str(e))
 
 
-@router.delete("/{scope_key}/notes/{note_id}")
+@router.delete("/{scope_key}/notes/{note_id}", response_model=NoteDeleted)
 async def delete_note(scope_key: str, note_id: str):
     _scope(scope_key)
     try:
@@ -90,13 +159,13 @@ async def delete_note(scope_key: str, note_id: str):
         raise HTTPException(400, str(e))
 
 
-@router.post("/{scope_key}/search")
+@router.post("/{scope_key}/search", response_model=list[SearchHit])
 async def search(scope_key: str, body: SearchIn):
     _scope(scope_key)
     return await knowledge.search(scope_key, body.query, body.limit)
 
 
-@router.post("/recall")
+@router.post("/recall", response_model=list[SearchHit])
 async def recall(body: RecallIn):
     _scope(body.from_scope)
     _scope(body.target_scope)
