@@ -101,7 +101,7 @@ export function splitUiCards(text: string): AnswerPart[] {
 // Placeholder for a card whose fenced block is still streaming in.
 export function UiCardPending() {
   return (
-    <Card>
+    <Card className="chat-card">
       <Stack gap="sm">
         <Skeleton width="32%" />
         <Skeleton width="100%" />
@@ -476,7 +476,7 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
   // buttons, raw text preserved so nothing is lost.
   if (!spec || !known) {
     return (
-      <Card>
+      <Card className="chat-card">
         <Stack gap="sm">
           <span className="ws-card__title">{spec?.title || "Card"}</span>
           <span className="ws-card__meta">This card can't be acted on here.</span>
@@ -496,7 +496,7 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
 
   if (phase === "dismissed") {
     return (
-      <Card>
+      <Card className="chat-card">
         <Row className="ws-card__meta">
           <MinusCircle size={14} strokeWidth={1.8} aria-hidden /> Dismissed
         </Row>
@@ -526,7 +526,7 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
     }
     const heading = success?.note || (success?.title ? `Created ${success.title}` : "Done");
     return (
-      <Card>
+      <Card className="chat-card">
         <Stack>
           <Row>
             <CircleCheck size={16} strokeWidth={1.8} aria-hidden />
@@ -559,7 +559,7 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
   });
 
   return (
-    <Card>
+    <Card className="chat-card">
       <Stack>
         <Row>
           {spec.kind === "prompt"

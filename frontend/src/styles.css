@@ -2672,6 +2672,23 @@ p.chat-workpanel__note { margin: 0; }
    this card's header are the same ticket seen twice and must not become two
    designs of it. The geometry differs because the affordances do — a row is a
    link, this header is a disclosure — and only the geometry differs. */
+/* An agent-emitted card inside the transcript: a prompt, a task proposal, a
+   project proposal, a filed ticket. It sits ON the assistant bubble, which is
+   itself var(--card), so the kit default left it blending in: --card-ring is
+   transparent in light mode, so only the faint --shadow-card separated it, and
+   the --space-5 default padding made a one-line card mostly empty space. 4a
+   separates it by a visible border and tight padding instead. Overrides
+   .ws-card (both single-class; styles.css loads after the kit, so this wins).
+   See docs/platform-redesign/tickets-in-chat-visual-fidelity-2026-08-16.md and
+   its 4a-outline.txt (the in-chat card: var(--card), 1px var(--border), ~10px,
+   no shadow, ~10-11px padding). */
+.chat-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  padding: var(--space-3);
+}
 .chat-ticket-card { display: flex; flex-direction: column; gap: var(--space-2); }
 /* Collapsed, this IS the card: one line, in the measure of the prose above it. */
 .chat-ticket-card__head {

@@ -235,7 +235,7 @@ export default function TicketCard({
 
   return (
     <>
-      <Card className="chat-ticket-card">
+      <Card className="chat-card chat-ticket-card">
         {/* A LINE IN A PARAGRAPH OF PROSE. Glyph, title, one pill, chevron, and
             nothing else: this sits inside an answer and has to read as part of
             the sentence that produced it. */}
