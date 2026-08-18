@@ -830,17 +830,38 @@ already existed. Three are ratchets against a pinned baseline; one is absolute.
 | `check_no_process_globals.py` | §2.6 item 3: module-level mutable globals in `backend/` | ratchet |
 | `check_response_model.py` | ADR 0023 clause 6, scoped per changed route file | ratchet |
 | `check_no_raw_storage.py` | ADR 0025 clause 4: `localStorage`/`sessionStorage` outside one module | **absolute** |
+| `check_opaque_fields.py` | ADR 0023 clause 6, the FIELD level: response fields typed `dict[str, Any]`, `list[dict]` or bare `Any` | ratchet |
 
-The last one is absolute rather than ratcheted because the tree is already at zero.
-A new raw call is not debt getting marginally worse, it is a key a second signed-in
-account on the same machine can read, so there is nothing to ratchet toward.
+`check_no_raw_storage` is absolute rather than ratcheted because the tree is already
+at zero. A new raw call is not debt getting marginally worse, it is a key a second
+signed-in account on the same machine can read, so there is nothing to ratchet toward.
+
+`check_opaque_fields` was added 2026-08-18, after the route-level work exposed the
+gap it covers. `check_response_model` counts ROUTES, and once 268 of 411 had a real
+model the same defect turned out to be alive one level down: a route can declare a
+perfectly good Pydantic model whose FIELDS are `dict[str, Any]`, and the generated
+client renders those as `Record<string, never>` — a type whose every property is
+`never`. The frontend then hand-writes the shape anyway, and the drift the whole
+item exists to remove survives intact, having moved from the route to its fields.
+98 field slots across 55 schemas are in that state, so it is pinned, not gated at
+zero. It stays a ratchet permanently for a second reason: some payloads are
+deliberately open, and `ThreadEvents.events` is the one that matters — the renderer
+splits replies on positional fields a closed model would drop, and dropping exactly
+those is the 2026-08-14 regression. A gate at zero would demand that regression back.
 
 ### Not done, and why
 
 - **Items 1 to 6 in their large form.** What landed is item 0, item 0b, item 7, and
-  two clauses of item 5. Items 2, 3, 4 and 6 are weeks of work each and have not
-  started. The four contracts they are built against now exist, which is the thing
-  that had to happen first.
+  two clauses of item 5. Items 3, 4 and 6 have not started. The four contracts they
+  are built against now exist, which is the thing that had to happen first.
+- **Item 2 is most of the way through 2a and has begun 2b.** `response_model` went
+  from 90 of 411 routes to 268 across 24 commits, one router each. The 143 without
+  one are 140 APP routes that should not be in `backend/routes/` at all (birds 78,
+  commute 27, trackers 16, finance 8, budget 6, owntracks 2, environment 2,
+  plaid_webhook 1) plus chat's two SSE streams and the attachment download, which
+  have no JSON body to describe. Moving those eight routers out of platform core is
+  item 3's business, not item 2's. On 2b, `lib/chat.ts` now reads fourteen wire
+  shapes off the schema; the rest of the frontend still hand-writes its types.
 - **`task → ticket`.** Deliberately deferred to item 3, for the reasons measured in
   §5 above. `job → run` is unblocked now that 1a has freed the word, and is the
   next mechanical piece.
