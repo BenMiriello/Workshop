@@ -410,6 +410,30 @@ if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(frontend/src|mobile)/.*\.tsx?$'; t
   fi
 fi
 
+# 4.6c-3 Duplicated helper bodies. RATCHET, not absolute: 10 groups exist today
+# and failing every task until they are all consolidated is how a checker gets
+# disabled. The baseline is keyed by body hash to file count, so a copy MOVING
+# between files is not a regression (which matters while the chat rename is in
+# flight) but a new body or an extra copy is.
+#
+# Note its honest limit, stated in its own header: it catches COPY-PASTE, not
+# independent reimplementation. None of the three fmtTs copies it was written
+# for would have matched lib/time.ts's timeAbsolute, because one used isNaN and
+# the other Number.isNaN. So a green result here is not evidence that a helper
+# has no equivalent already.
+DUPLICATE_HELPERS_CHECK="skipped"
+if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(frontend/src|packages/ui/src)/.*\.tsx?$'; then
+  if [[ -f "$WORKSHOP/scripts/check_duplicate_helpers.py" && -f "$WORKSHOP/scripts/duplicate_helpers_baseline.json" ]]; then
+    if python3 "$WORKSHOP/scripts/check_duplicate_helpers.py" --only-changed "$BASELINE" >/dev/null 2>&1; then
+      DUPLICATE_HELPERS_CHECK="ok"
+    else
+      DUPLICATE_HELPERS_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("duplicate_helpers_check_unavailable")
+  fi
+fi
+
 # 4.6c-2 Generated-client staleness (ADR 0023). ABSOLUTE, like raw storage and
 # unlike the ratchets: `frontend/src/api/schema.gen.ts` is a committed build
 # artifact, so "stale" means the committed types no longer describe the API the
@@ -566,6 +590,10 @@ if [[ "$GENERATED_CLIENT_CHECK" == "fail" ]]; then
   REASONS+=("generated_client_stale")
   COMPLETE="false"
 fi
+if [[ "$DUPLICATE_HELPERS_CHECK" == "fail" ]]; then
+  REASONS+=("duplicate_helper")
+  COMPLETE="false"
+fi
 # OCCUPANCY_NOTICE and DOC_STATUS_NOTICE are deliberately NOT checked here —
 # both are measurement (R1/R2), not gates. See their computation above for why.
 
@@ -630,7 +658,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK
+export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -669,6 +697,7 @@ out = {
     # new one is a cross-account leak rather than incremental debt.
     "no_raw_storage": os.environ.get("NO_RAW_STORAGE_CHECK", "skipped"),
     "generated_client": os.environ.get("GENERATED_CLIENT_CHECK", "skipped"),
+    "duplicate_helpers": os.environ.get("DUPLICATE_HELPERS_CHECK", "skipped"),
     # executed machine-checkable acceptance assertions (empty unless the caller
     # passed REVIEWER_CRITERIA_FILE); surfaced so the Work UI shows what was checked.
     "criteria":  criteria,
@@ -686,7 +715,7 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi
