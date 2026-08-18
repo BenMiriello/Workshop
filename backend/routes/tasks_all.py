@@ -259,7 +259,7 @@ def _csv_filter(raw: str | None, allowed, label: str) -> set[str] | None:
     return set(vals)
 
 
-@router.get("", response_model=Page[Task])
+@router.get("", response_model=Page[Task], response_model_exclude_unset=True)
 async def list_all(
     status: str | None = None,
     state_type: str | None = None,
@@ -464,7 +464,7 @@ class ScopesOut(BaseModel):
     pickup: dict[str, ScopePickup]
 
 
-@router.get("/scopes", response_model=ScopesOut)
+@router.get("/scopes", response_model=ScopesOut, response_model_exclude_unset=True)
 async def list_scopes() -> dict:
     """The scope keys that currently have a task store, for the create/filter
     controls. Cheap directory + registry scan, no task load.
@@ -480,7 +480,7 @@ class LabelsOut(BaseModel):
     labels: list[LabelCount]
 
 
-@router.get("/labels", response_model=LabelsOut)
+@router.get("/labels", response_model=LabelsOut, response_model_exclude_unset=True)
 async def list_labels(scope: str | None = None) -> dict:
     """Every label in use, with how many tickets carry it.
 
@@ -513,7 +513,7 @@ class AssigneesOut(BaseModel):
     assignees: list[LabelCount]
 
 
-@router.get("/assignees", response_model=AssigneesOut)
+@router.get("/assignees", response_model=AssigneesOut, response_model_exclude_unset=True)
 async def list_assignees(scope: str | None = None) -> dict:
     """Every assignee in use, with how many tickets each holds.
 
@@ -583,7 +583,7 @@ class TaskCreateOut(BaseModel):
     message: str | None = None
 
 
-@router.post("", response_model=TaskCreateOut)
+@router.post("", response_model=TaskCreateOut, response_model_exclude_unset=True)
 async def create(body: TaskCreateIn) -> dict:
     """File a task into a scope through the dedup path, so a manual ticket
     dedupes against open tasks exactly like a chat-filed one. Returns the task
@@ -721,7 +721,7 @@ def _detail(task: dict, scope: str, root: Path) -> dict:
     return _with_latitude(rec, scope)
 
 
-@router.get("/{scope}/{task_id}", response_model=Task)
+@router.get("/{scope}/{task_id}", response_model=Task, response_model_exclude_unset=True)
 async def get_one(scope: str, task_id: str) -> dict:
     root = _require_root(scope)
     t = tasks.get_task(root, task_id)
@@ -866,7 +866,7 @@ def _pending_tracker_fields(root: Path, task_id: str, body: TaskPatchIn) -> dict
     return pending
 
 
-@router.patch("/{scope}/{task_id}", response_model=Task)
+@router.patch("/{scope}/{task_id}", response_model=Task, response_model_exclude_unset=True)
 async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
     root = _require_root(scope)
     if all(v is None for v in (
@@ -956,7 +956,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
     return _detail(t, scope, root)
 
 
-@router.delete("/{scope}/{task_id}", response_model=DeletedOut)
+@router.delete("/{scope}/{task_id}", response_model=DeletedOut, response_model_exclude_unset=True)
 async def delete_one(scope: str, task_id: str) -> dict:
     root = _require_root(scope)
     if not tasks.remove(root, task_id):
@@ -971,7 +971,7 @@ class TaskCommentIn(BaseModel):
     author: str | None = None
 
 
-@router.post("/{scope}/{task_id}/comments", response_model=Task)
+@router.post("/{scope}/{task_id}/comments", response_model=Task, response_model_exclude_unset=True)
 async def add_task_comment(scope: str, task_id: str, body: TaskCommentIn) -> dict:
     """Append a comment to a ticket's discussion.
 
@@ -990,7 +990,7 @@ async def add_task_comment(scope: str, task_id: str, body: TaskCommentIn) -> dic
     return _detail(rec, scope, root)
 
 
-@router.delete("/{scope}/{task_id}/comments/{comment_id}", response_model=Task)
+@router.delete("/{scope}/{task_id}/comments/{comment_id}", response_model=Task, response_model_exclude_unset=True)
 async def delete_task_comment(scope: str, task_id: str, comment_id: str) -> dict:
     root = _require_root(scope)
     rec = tasks.delete_comment(root, task_id, comment_id)
@@ -1009,7 +1009,7 @@ class TaskJobsOut(BaseModel):
     count: int
 
 
-@router.get("/{scope}/{task_id}/jobs", response_model=TaskJobsOut)
+@router.get("/{scope}/{task_id}/jobs", response_model=TaskJobsOut, response_model_exclude_unset=True)
 async def task_jobs(scope: str, task_id: str) -> dict:
     """The Jobs (runs) this task produced, enriched like the /jobs feed so each
     run carries its title, status, and receipt summary."""
@@ -1093,7 +1093,7 @@ class TaskReviewOut(BaseModel):
     promotion: bool | None = None
 
 
-@router.post("/{scope}/{task_id}/review", response_model=TaskReviewOut)
+@router.post("/{scope}/{task_id}/review", response_model=TaskReviewOut, response_model_exclude_unset=True)
 async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
     """Answer a blocked task. Returns {action, task, grant?, learning?, promotion?}.
 
@@ -1247,7 +1247,7 @@ class MarkDuplicateOut(BaseModel):
     canonical: TaskLink
 
 
-@router.post("/{scope}/{task_id}/duplicate-of", response_model=MarkDuplicateOut)
+@router.post("/{scope}/{task_id}/duplicate-of", response_model=MarkDuplicateOut, response_model_exclude_unset=True)
 async def mark_duplicate(scope: str, task_id: str, body: DuplicateOfIn) -> dict:
     """Fold this ticket into the canonical one: link, cancel, and say so.
 
@@ -1621,7 +1621,7 @@ class TaskApproveOut(BaseModel):
     run: TaskRunOut | None = None
 
 
-@router.post("/{scope}/{task_id}/approve", response_model=TaskApproveOut)
+@router.post("/{scope}/{task_id}/approve", response_model=TaskApproveOut, response_model_exclude_unset=True)
 async def approve_task(scope: str, task_id: str, body: TaskApproveIn | None = None) -> dict:
     """Approve a draft: the operator agrees this work should happen. `draft` ->
     `todo`, which is the only thing that makes a ticket eligible to be run.
@@ -1669,7 +1669,7 @@ async def approve_task(scope: str, task_id: str, body: TaskApproveIn | None = No
     return out
 
 
-@router.post("/{scope}/{task_id}/run", response_model=TaskRunOut)
+@router.post("/{scope}/{task_id}/run", response_model=TaskRunOut, response_model_exclude_unset=True)
 async def run_task(scope: str, task_id: str) -> dict:
     """Run exactly this task now. 409 if a sweep already holds the tree. Single
     operator: no confirmation gate, no allowlist.

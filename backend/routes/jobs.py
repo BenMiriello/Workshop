@@ -236,7 +236,7 @@ _ACTIONS = {
 }
 
 
-@router.get("", response_model=Page[Job])
+@router.get("", response_model=Page[Job], response_model_exclude_unset=True)
 async def list_jobs(
     agent_id: str | None = None,
     project_slug: str | None = None,
@@ -269,7 +269,7 @@ async def list_jobs(
     return Page[Job](items=enriched, page=PageMeta(limit=limit, total=None))
 
 
-@router.get("/{job_id}", response_model=Job)
+@router.get("/{job_id}", response_model=Job, response_model_exclude_unset=True)
 async def get_job(job_id: str) -> dict:
     rec = jobs.get(job_id)
     if rec is None:
@@ -321,7 +321,7 @@ class JobDismissOut(BaseModel):
     dismissed: bool
 
 
-@router.post("/{job_id}/tasks/{task_id}/action", response_model=JobTaskActionOut)
+@router.post("/{job_id}/tasks/{task_id}/action", response_model=JobTaskActionOut, response_model_exclude_unset=True)
 async def act_on_job_task(job_id: str, task_id: str, body: JobTaskAction) -> dict:
     """Resolve one awaiting_input job's bound task: approve / reject / unblock /
     cancel. Applies the status transition on the job's scope store (project or
@@ -381,7 +381,7 @@ async def act_on_job_task(job_id: str, task_id: str, body: JobTaskAction) -> dic
     return {"ok": True, "action": body.action, "task": updated, "job_cleared": job_cleared}
 
 
-@router.post("/{job_id}/dismiss", response_model=JobDismissOut)
+@router.post("/{job_id}/dismiss", response_model=JobDismissOut, response_model_exclude_unset=True)
 async def dismiss_job(job_id: str) -> dict:
     """The always-available escape hatch: clear a job off the attention feed
     regardless of its binding or task state. Needed because a malformed

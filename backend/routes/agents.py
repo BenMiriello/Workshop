@@ -448,7 +448,7 @@ class AdoptGroupIn(BaseModel):
     project: str | None = None
 
 
-@router.get("/templates", response_model=AgentTemplatesOut)
+@router.get("/templates", response_model=AgentTemplatesOut, response_model_exclude_unset=True)
 async def list_agent_templates():
     """The shipped agent templates and template groups. Templates are files, not
     registry members: nothing here is registered or dispatched until it is forked
@@ -459,7 +459,7 @@ async def list_agent_templates():
     }
 
 
-@router.post("/from-template", response_model=Agent)
+@router.post("/from-template", response_model=Agent, response_model_exclude_unset=True)
 async def create_agent_from_template(body: FromTemplateIn):
     """Fork a template into a real agent. The copy is independent — the only
     trace of its origin is a `template: <slug>@<version>` stamp in frontmatter.
@@ -476,7 +476,7 @@ async def create_agent_from_template(body: FromTemplateIn):
         raise HTTPException(400, str(e))
 
 
-@router.post("/adopt-group", response_model=AdoptGroupOut)
+@router.post("/adopt-group", response_model=AdoptGroupOut, response_model_exclude_unset=True)
 async def adopt_agent_group(body: AdoptGroupIn):
     """Adopt a template group into a scope: fork each member with its overrides,
     then apply the group's `scope_defaults` to the project's autonomy record.
@@ -544,7 +544,7 @@ def _drop_from_project_roster(rec: dict) -> None:
     projects_route._save_registry(data)
 
 
-@router.get("/", response_model=list[RosterAgent])
+@router.get("/", response_model=list[RosterAgent], response_model_exclude_unset=True)
 async def list_agents():
     """One unified roster: every Agent across both scopes, sourced from the
     agents registry (definition files + a maker's execution state).
@@ -588,7 +588,7 @@ async def list_agents():
     return out
 
 
-@router.get("/delegates", response_model=DelegatesOut)
+@router.get("/delegates", response_model=DelegatesOut, response_model_exclude_unset=True)
 async def list_delegates():
     """Claude Code subagents this instance can DELEGATE to.
 
@@ -604,7 +604,7 @@ async def list_delegates():
     return {"delegates": agents_registry.native_subagents()}
 
 
-@router.get("/tools", response_model=ToolsOut)
+@router.get("/tools", response_model=ToolsOut, response_model_exclude_unset=True)
 async def list_tools():
     return {"tools": known_tools()}
 
@@ -625,12 +625,12 @@ class BuildAgentCreate(BaseModel):
     branch_slug: str | None = None
 
 
-@router.get("/build", response_model=list[BuildAgent])
+@router.get("/build", response_model=list[BuildAgent], response_model_exclude_unset=True)
 async def list_build_agents():
     return build_agents.list_agents()
 
 
-@router.post("/build", response_model=BuildAgent)
+@router.post("/build", response_model=BuildAgent, response_model_exclude_unset=True)
 async def create_build_agent(body: BuildAgentCreate):
     try:
         return build_agents.create_agent(
@@ -649,7 +649,7 @@ class BuildAgentRename(BaseModel):
     purpose: str | None = Field(default=None, max_length=280)
 
 
-@router.patch("/build/{slug}", response_model=BuildAgent)
+@router.patch("/build/{slug}", response_model=BuildAgent, response_model_exclude_unset=True)
 async def rename_build_agent(slug: str, body: BuildAgentRename):
     try:
         return build_agents.rename(slug, name=body.name, purpose=body.purpose)
@@ -659,7 +659,7 @@ async def rename_build_agent(slug: str, body: BuildAgentRename):
         raise HTTPException(400, str(e))
 
 
-@router.get("/build/{slug}", response_model=BuildAgentDetail)
+@router.get("/build/{slug}", response_model=BuildAgentDetail, response_model_exclude_unset=True)
 async def get_build_agent(slug: str):
     try:
         rec = build_agents.get_agent(slug)
@@ -679,13 +679,13 @@ async def get_build_agent(slug: str):
     return rec
 
 
-@router.post("/build/{slug}/retire", response_model=OkOut)
+@router.post("/build/{slug}/retire", response_model=OkOut, response_model_exclude_unset=True)
 async def retire_build_agent(slug: str):
     build_agents.retire(slug)
     return {"ok": True}
 
 
-@router.post("/build/{slug}/session/reset", response_model=OkOut)
+@router.post("/build/{slug}/session/reset", response_model=OkOut, response_model_exclude_unset=True)
 async def reset_build_session(slug: str):
     """Detach this agent record from its Claude Code session so the next turn
     starts fresh. Useful when the conversation gets confused or you want to
@@ -719,7 +719,7 @@ def _safe_resolve(root: _P, path: str) -> _P:
     return target
 
 
-@router.get("/build/{slug}/tree", response_model=TreeOut)
+@router.get("/build/{slug}/tree", response_model=TreeOut, response_model_exclude_unset=True)
 async def build_agent_tree(slug: str):
     root = _agent_cwd(slug)
     SKIP = {".git", "node_modules", "dist", ".next", "__pycache__"}
@@ -745,7 +745,7 @@ async def build_agent_tree(slug: str):
     return {"root": str(root), "tree": walk(root) if root.exists() else []}
 
 
-@router.get("/build/{slug}/file", response_model=FileOut)
+@router.get("/build/{slug}/file", response_model=FileOut, response_model_exclude_unset=True)
 async def build_agent_file_get(slug: str, path: str):
     root = _agent_cwd(slug)
     target = _safe_resolve(root, path)
@@ -757,7 +757,7 @@ async def build_agent_file_get(slug: str, path: str):
         raise HTTPException(415, "binary file")
 
 
-@router.put("/build/{slug}/file", response_model=OkOut)
+@router.put("/build/{slug}/file", response_model=OkOut, response_model_exclude_unset=True)
 async def build_agent_file_put(slug: str, path: str, body: _Content):
     root = _agent_cwd(slug)
     target = _safe_resolve(root, path)
@@ -767,14 +767,14 @@ async def build_agent_file_put(slug: str, path: str, body: _Content):
     return {"ok": True}
 
 
-@router.get("/build/{slug}/brief", response_model=ContentOut)
+@router.get("/build/{slug}/brief", response_model=ContentOut, response_model_exclude_unset=True)
 async def build_agent_brief_get(slug: str):
     root = _agent_cwd(slug)
     p = root / "PROJECT.md"
     return {"content": p.read_text() if p.exists() else ""}
 
 
-@router.put("/build/{slug}/brief", response_model=OkOut)
+@router.put("/build/{slug}/brief", response_model=OkOut, response_model_exclude_unset=True)
 async def build_agent_brief_put(slug: str, body: _Content):
     root = _agent_cwd(slug)
     (root / "PROJECT.md").write_text(body.content)
@@ -782,14 +782,14 @@ async def build_agent_brief_put(slug: str, body: _Content):
     return {"ok": True}
 
 
-@router.get("/build/{slug}/todo", response_model=ContentOut)
+@router.get("/build/{slug}/todo", response_model=ContentOut, response_model_exclude_unset=True)
 async def build_agent_todo_get(slug: str):
     root = _agent_cwd(slug)
     p = root / "TODO.md"
     return {"content": p.read_text() if p.exists() else ""}
 
 
-@router.put("/build/{slug}/todo", response_model=OkOut)
+@router.put("/build/{slug}/todo", response_model=OkOut, response_model_exclude_unset=True)
 async def build_agent_todo_put(slug: str, body: _Content):
     root = _agent_cwd(slug)
     (root / "TODO.md").write_text(body.content)
@@ -797,7 +797,7 @@ async def build_agent_todo_put(slug: str, body: _Content):
     return {"ok": True}
 
 
-@router.get("/build/{slug}/interventions", response_model=ContentOut)
+@router.get("/build/{slug}/interventions", response_model=ContentOut, response_model_exclude_unset=True)
 async def build_agent_interventions_get(slug: str):
     root = _agent_cwd(slug)
     p = root / "INTERVENTIONS.md"
@@ -840,12 +840,12 @@ def _tasks_root(slug: str) -> _P:
     return _P(a["cwd"])
 
 
-@router.get("/build/{slug}/tasks", response_model=BuildTasksOut)
+@router.get("/build/{slug}/tasks", response_model=BuildTasksOut, response_model_exclude_unset=True)
 async def build_agent_tasks_list(slug: str, include_done: bool = True):
     return {"tasks": tasks.list_tasks(_tasks_root(slug), include_done=include_done, owner=slug)}
 
 
-@router.post("/build/{slug}/tasks", response_model=Task)
+@router.post("/build/{slug}/tasks", response_model=Task, response_model_exclude_unset=True)
 async def build_agent_tasks_add(slug: str, body: _TaskCreate):
     root = _tasks_root(slug)
     # Guard: a parent (if given) must belong to this agent's own tasks.
@@ -859,7 +859,7 @@ async def build_agent_tasks_add(slug: str, body: _TaskCreate):
     return task
 
 
-@router.patch("/build/{slug}/tasks/{task_id}", response_model=Task)
+@router.patch("/build/{slug}/tasks/{task_id}", response_model=Task, response_model_exclude_unset=True)
 async def build_agent_tasks_patch(slug: str, task_id: str, body: _TaskPatch):
     if body.status is None and body.text is None:
         raise HTTPException(400, "no fields to update")
@@ -873,7 +873,7 @@ async def build_agent_tasks_patch(slug: str, task_id: str, body: _TaskPatch):
     return task
 
 
-@router.delete("/build/{slug}/tasks/{task_id}", response_model=DeletedOut)
+@router.delete("/build/{slug}/tasks/{task_id}", response_model=DeletedOut, response_model_exclude_unset=True)
 async def build_agent_tasks_delete(slug: str, task_id: str):
     if not tasks.remove(_tasks_root(slug), task_id, owner=slug):
         raise HTTPException(404, f"task not found: {task_id}")
@@ -891,7 +891,7 @@ class _InterventionIn(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
-@router.post("/build/{slug}/interventions", response_model=InterventionAppendOut)
+@router.post("/build/{slug}/interventions", response_model=InterventionAppendOut, response_model_exclude_unset=True)
 async def build_agent_interventions_post(slug: str, body: _InterventionIn):
     from datetime import datetime, timezone
     text = body.text.strip()
@@ -925,7 +925,7 @@ def _git(slug: str, *args: str, check: bool = True) -> subprocess.CompletedProce
     )
 
 
-@router.get("/build/{slug}/diff", response_model=DiffOut)
+@router.get("/build/{slug}/diff", response_model=DiffOut, response_model_exclude_unset=True)
 async def build_agent_diff(slug: str):
     """Return per-file diff status + per-file unified diff content. Computed
     against HEAD (working tree + index combined: --cached + worktree). Files
@@ -964,7 +964,7 @@ class _RevertIn(BaseModel):
     path: str
 
 
-@router.post("/build/{slug}/diff/revert-file", response_model=OkOut)
+@router.post("/build/{slug}/diff/revert-file", response_model=OkOut, response_model_exclude_unset=True)
 async def build_agent_revert_file(slug: str, body: _RevertIn):
     """Restore <path> to HEAD's version. For untracked files, deletes them.
     Operator-confirmed in the UI."""
@@ -998,7 +998,7 @@ class _StartPreviewIn(BaseModel):
     port: int = 8501
 
 
-@router.get("/build/{slug}/preview/status", response_model=PreviewStatusOut)
+@router.get("/build/{slug}/preview/status", response_model=PreviewStatusOut, response_model_exclude_unset=True)
 async def build_agent_preview_status(slug: str, request: Request):
     """Status, plus boot-time helpers per ADR-009 section 6.
 
@@ -1023,7 +1023,7 @@ async def build_agent_preview_status(slug: str, request: Request):
     return payload
 
 
-@router.post("/build/{slug}/preview/start", response_model=PreviewStartOut)
+@router.post("/build/{slug}/preview/start", response_model=PreviewStartOut, response_model_exclude_unset=True)
 async def build_agent_preview_start(slug: str, body: _StartPreviewIn):
     cwd = _agent_cwd(slug)
     r = dev_servers.start(slug, cwd=str(cwd), command=body.command, port=body.port)
@@ -1033,17 +1033,17 @@ async def build_agent_preview_start(slug: str, body: _StartPreviewIn):
     return r
 
 
-@router.post("/build/{slug}/preview/stop", response_model=PreviewStopOut)
+@router.post("/build/{slug}/preview/stop", response_model=PreviewStopOut, response_model_exclude_unset=True)
 async def build_agent_preview_stop(slug: str):
     return dev_servers.stop(slug)
 
 
-@router.get("/build/{slug}/preview/log", response_model=PreviewLogOut)
+@router.get("/build/{slug}/preview/log", response_model=PreviewLogOut, response_model_exclude_unset=True)
 async def build_agent_preview_log(slug: str):
     return {"log": dev_servers.tail_log(slug)}
 
 
-@router.post("/build/{slug}/commit", response_model=CommitOut)
+@router.post("/build/{slug}/commit", response_model=CommitOut, response_model_exclude_unset=True)
 async def build_agent_commit(slug: str, body: _CommitIn):
     """Stage everything in the agent's cwd and create a commit. The operator
     uses this to mark 'this state is good, snapshot it' so they can revert
@@ -1160,7 +1160,7 @@ def _agent_queue_snapshot(rec: dict) -> dict:
     }
 
 
-@router.get("/{agent_id}", response_model=AgentDetail)
+@router.get("/{agent_id}", response_model=AgentDetail, response_model_exclude_unset=True)
 async def get_agent(agent_id: str):
     """Unified detail, resolved from the registry (by slug, routing id, or linked
     id). The assistant persona/instructions live in the definition body; there is
@@ -1323,7 +1323,7 @@ class AgentDefinitionUpdate(BaseModel):
     definition: str | None = None  # the markdown body (persona / instructions)
 
 
-@router.put("/{agent_id}", response_model=Agent)
+@router.put("/{agent_id}", response_model=Agent, response_model_exclude_unset=True)
 async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
     """Write the declarative definition (name/purpose/triggers/limits/body) to the
     agent's markdown file via the registry. Trigger writes land in frontmatter and
@@ -1354,7 +1354,7 @@ async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/", response_model=Agent)
+@router.post("/", response_model=Agent, response_model_exclude_unset=True)
 async def create_agent(body: AgentCreate):
     """Create an Agent in the registry (a markdown definition file). The
     persona/instructions become the definition body; there is no separate memory
@@ -1381,7 +1381,7 @@ async def create_agent(body: AgentCreate):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.delete("/{agent_id}", response_model=RetireAgentOut)
+@router.delete("/{agent_id}", response_model=RetireAgentOut, response_model_exclude_unset=True)
 async def delete_agent(agent_id: str):
     """Retire an agent from the registry: it leaves the roster while the
     declarative definition is preserved (retired flag). A maker also flips its
@@ -1394,7 +1394,7 @@ async def delete_agent(agent_id: str):
     return {"ok": True, "retired": rec["slug"]}
 
 
-@router.get("/{agent_id}/jobs", response_model=AgentJobsOut)
+@router.get("/{agent_id}/jobs", response_model=AgentJobsOut, response_model_exclude_unset=True)
 async def agent_jobs(agent_id: str,
                      limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE)):
     """Job history filtered to this agent, sourced from the unified Job store
@@ -1405,7 +1405,7 @@ async def agent_jobs(agent_id: str,
     return {"agent_id": agent_id, "jobs": records, "count": len(records)}
 
 
-@router.get("/{agent_id}/runs", response_model=AgentRunsOut)
+@router.get("/{agent_id}/runs", response_model=AgentRunsOut, response_model_exclude_unset=True)
 async def agent_runs(agent_id: str,
                      limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE)):
     """Recent activity feed for an agent: cron-runs JSONL (filtered) + last
