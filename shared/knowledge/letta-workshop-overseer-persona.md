@@ -4,8 +4,10 @@ verbatim archive of one Letta memory block, kept so the decommission did not
 destroy what those agents held. The runtime it addressed is gone, and so are the
 tools it names: `cloud_run_ralph` was deleted on 2026-08-17 (it was a second way
 to drive a ticket that bypassed the claim fence, the lease, acceptance and the
-budget). The body is preserved unedited on purpose; correcting it would falsify
-the record.
+budget), and on 2026-08-18 the whole `POST /tools/{name}` surface and its
+`services/letta_tools/` implementations went with it, having had zero callers
+since the teardown. The body is preserved unedited on purpose; correcting it
+would falsify the record.
 
 **Provenance.** Exported from Letta (`http://127.0.0.1:8283`) before its decommission (memory-consolidation-2026-08-16.md, decision D8), 2026-08-16. Letta itself does not track a block-level creation timestamp; the agent's own creation date is recorded below as the nearest available date.
 

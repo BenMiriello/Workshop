@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from deps_auth import require_loopback, require_internal_caller
+from deps_auth import require_loopback
 from deps_user import (
     require_user,
     require_operator,
@@ -16,7 +16,7 @@ from middleware.compression import SSEAwareGZipMiddleware
 # location/birds/health/…) are NOT imported here; they mount from the installed-
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
-from routes import agents, projects, base_apps, relay, services, events, jobs, push, tools, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes
+from routes import agents, projects, base_apps, relay, services, events, jobs, push, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes
 from routes import mcp as mcp_routes
 from routes import stores as stores_routes
 from routes import deploys as deploys_routes
@@ -354,7 +354,6 @@ app.include_router(services.router, dependencies=_LOOPBACK)
 app.include_router(events.router, dependencies=_LOOPBACK)
 # Letta tool sandbox runs off-loopback (Docker bridge); internal-only, no
 # personal data, never proxied to the public origin.
-app.include_router(tools.router, dependencies=[Depends(require_internal_caller)])
 
 # Public auth entry (register/login/logout/me) — no gate; it establishes identity.
 app.include_router(auth.router)

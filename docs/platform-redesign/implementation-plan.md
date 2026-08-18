@@ -1,6 +1,15 @@
 # Platform redesign: implementation plan
 
-Status: build plan, 2026-07-12, reviewed and finalized. Authoritative build sequence. Written to the locked decisions in `proposal.md` section 0 and grounded in the codebase inventory.
+Status: **BUILT, and now HISTORICAL.** Build plan of 2026-07-12, reviewed and
+finalized, written to the locked decisions in `proposal.md` section 0. It shipped;
+read it for why the current shape is the shape, not as work outstanding.
+
+Two things it describes no longer exist, so do not go looking for them:
+its **MIG** step (`scripts/migrate_jobs.py`) ran once and the script was deleted
+on 2026-08-18 (a completed one-shot whose source ledgers it had itself renamed
+`.migrated` is a hazard, not a tool), and the `letta_tools/*` carve-out in the
+global rules below is moot: Letta was decommissioned on 2026-08-16 and the
+package and its `POST /tools/{name}` surface were deleted on 2026-08-18.
 
 Legend: ADD (new file/symbol), MOD (modify), DEL (delete + all call sites), MIG (on-disk migration).
 

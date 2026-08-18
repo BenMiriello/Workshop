@@ -372,12 +372,17 @@ class TestDoors789TheLoops:
         # safeties it honoured, and it still skipped the claim, lease, receipt,
         # acceptance and budget that scripts/project_ralph.sh takes. A ticket is
         # driven through the shell entrypoints, which all apply the gate above.
-        from routes import tools as tools_route
-        from services.letta_tools import cloud
-        assert not hasattr(cloud, "cloud_run_ralph"), \
-            "the ralph bypass is back; it skips claim/lease/receipt/acceptance"
-        assert "cloud_run_ralph" not in tools_route.DISPATCH, \
-            "POST /tools/cloud_run_ralph is reachable again"
+        # Stronger than the old assertion, which checked that ONE tool was
+        # absent from a dispatch table that still existed. The whole
+        # `POST /tools/{name}` surface is deleted (2026-08-18): it was Letta's
+        # HTTP shim, Letta is gone, it had zero callers, and every tool on it
+        # had a live replacement. Nothing can be added back to a table that
+        # does not exist.
+        import importlib
+        for mod in ("routes.tools", "services.letta_tools",
+                    "services.letta_tools.cloud"):
+            with pytest.raises(ModuleNotFoundError):
+                importlib.import_module(mod)
 
 
 # --------------------------------------------------------------------------
