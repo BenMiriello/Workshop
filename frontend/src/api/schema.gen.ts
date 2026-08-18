@@ -9136,6 +9136,45 @@ export interface components {
             /** Ok */
             ok: boolean;
         };
+        /**
+         * Deploy
+         * @description One deploy target. `Deploy.to_json` STRIPS None values, so a record
+         *     carries only the fields that have been set -- which is why everything below
+         *     the required four is optional and why absence here means unset rather than
+         *     null.
+         *
+         *     `current` is the live deployment: {run_id, commit_sha, deployed_at, url,
+         *     upload_ref}. It is provider-shaped like `target`, so it stays open.
+         */
+        Deploy: {
+            /** Autonomy */
+            autonomy?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Current */
+            current?: Record<string, never> | null;
+            /** Domain */
+            domain?: string | null;
+            /** Id */
+            id: string;
+            /** Last Run Id */
+            last_run_id?: string | null;
+            /** Name */
+            name: string;
+            /** Project Slug */
+            project_slug: string;
+            /** Source */
+            source: Record<string, never>;
+            /** Target */
+            target: Record<string, never>;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /** DeployDeleted */
+        DeployDeleted: {
+            /** Ok */
+            ok: boolean;
+        };
         /** DeployIn */
         DeployIn: {
             /**
@@ -9161,6 +9200,47 @@ export interface components {
              */
             target: Record<string, never>;
         };
+        /**
+         * DeployList
+         * @description Most-recently-updated first.
+         */
+        DeployList: {
+            /** Deploys */
+            deploys: components["schemas"]["Deploy"][];
+        };
+        /**
+         * DeployLog
+         * @description The tail of one run's build/upload log.
+         */
+        DeployLog: {
+            /** Deploy Id */
+            deploy_id: string;
+            /** Log */
+            log: string;
+            /** Run Id */
+            run_id: string;
+        };
+        /**
+         * DeployNotice
+         * @description 'Change detected but paused' -- written when a tick found new work and an
+         *     override was holding it, so the operator sees it even though no Job fired.
+         *     Cleared automatically on the next kick. `none: true` is the no-notice
+         *     answer, which is why every other field is optional.
+         */
+        DeployNotice: {
+            /** Branch */
+            branch?: string | null;
+            /** Deploy Id */
+            deploy_id?: string | null;
+            /** Detected At */
+            detected_at?: string | null;
+            /** None */
+            none?: boolean | null;
+            /** Reason */
+            reason?: string | null;
+            /** Remote Sha */
+            remote_sha?: string | null;
+        };
         /** DeployPatch */
         DeployPatch: {
             /** Autonomy */
@@ -9173,6 +9253,32 @@ export interface components {
             source?: Record<string, never> | null;
             /** Target */
             target?: Record<string, never> | null;
+        };
+        /**
+         * DeployRuns
+         * @description Both `deploy` and `deploy-rollback` runs bound to this target, merged and
+         *     newest-first, then capped at `limit`.
+         */
+        DeployRuns: {
+            /** Runs */
+            runs: components["schemas"]["Job"][];
+        };
+        /**
+         * DeploysOverride
+         * @description The workspace-level kill switch FOR SHIPPING, and it is independent of
+         *     the workshop autonomy override: freezing agent dispatch and freezing prod
+         *     deploys are separate decisions. An absent file reads as clear; a corrupt or
+         *     unreadable one reads as engaged (fail-closed) with `engaged_by` "system".
+         */
+        DeploysOverride: {
+            /** Engaged */
+            engaged: boolean;
+            /** Engaged At */
+            engaged_at?: string | null;
+            /** Engaged By */
+            engaged_by?: string | null;
+            /** Reason */
+            reason?: string | null;
         };
         /** DeviceTokenBody */
         DeviceTokenBody: {
@@ -10806,6 +10912,40 @@ export interface components {
             /** Tools Active */
             tools_active: boolean;
         };
+        /** ProviderCatalog */
+        ProviderCatalog: {
+            /** Providers */
+            providers: components["schemas"]["ProviderInfo"][];
+        };
+        /**
+         * ProviderEnvRequirement
+         * @description A credential the provider needs. Each provider module declares its own,
+         *     so the set is open beyond the key.
+         */
+        ProviderEnvRequirement: {
+            /** Key */
+            key?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ProviderInfo
+         * @description One entry of the 'Add target' catalog. `target_fields` is what that
+         *     provider's `target` config expects, served as DATA so the modal renders a
+         *     new provider with no frontend edit.
+         */
+        ProviderInfo: {
+            /** Env Requirements */
+            env_requirements: components["schemas"]["ProviderEnvRequirement"][];
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Source Kinds */
+            source_kinds: string[];
+            /** Target Fields */
+            target_fields: Record<string, never>[];
+        };
         /** PublishIn */
         PublishIn: {
             /**
@@ -11277,6 +11417,16 @@ export interface components {
             context?: string | null;
             /** Task */
             task: string;
+        };
+        /**
+         * RunKicked
+         * @description A deploy and a rollback both answer with the job that will do it, not
+         *     with the outcome -- the work is asynchronous and the run is how it is
+         *     followed.
+         */
+        RunKicked: {
+            /** Job Id */
+            job_id: string;
         };
         /**
          * RunSummary
@@ -12474,6 +12624,43 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * WatcherResult
+         * @description One deploy's tick decision. `status` is one of no-deploy, not-autonomous,
+         *     no-project-dir, no-remote, no-change, skipped-running, paused, kicked, error
+         *     or crashed, and which other fields are present follows from it -- `sha` only
+         *     once a remote was read, `job_id` only on kicked, `reason` only where there
+         *     is one to give.
+         *
+         *     The three identity fields are stamped by `tick_all` and are absent from a
+         *     single-deploy tick, which returns the bare decision.
+         */
+        WatcherResult: {
+            /** Deploy Id */
+            deploy_id?: string | null;
+            /** Job Id */
+            job_id?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Project Slug */
+            project_slug?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Sha */
+            sha?: string | null;
+            /** Status */
+            status: string;
+        };
+        /**
+         * WatcherSweep
+         * @description One pass over every Deploy. A crash in one is captured as its own
+         *     `crashed` result rather than raised: a broken remote for one Deploy must not
+         *     stop the others.
+         */
+        WatcherSweep: {
+            /** Results */
+            results: components["schemas"]["WatcherResult"][];
         };
         /**
          * WorkCounts
@@ -20210,7 +20397,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DeployList"];
                 };
             };
         };
@@ -20230,7 +20417,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DeploysOverride"];
                 };
             };
         };
@@ -20254,7 +20441,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DeploysOverride"];
                 };
             };
             /** @description Validation Error */
@@ -20283,7 +20470,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DeploysOverride"];
                 };
             };
         };
@@ -20303,7 +20490,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ProviderCatalog"];
                 };
             };
         };
@@ -20323,7 +20510,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WatcherSweep"];
                 };
             };
         };
@@ -20348,7 +20535,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DeployLog"];
                 };
             };
             /** @description Validation Error */
@@ -22730,7 +22917,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DeployList"];
                 };
             };
             /** @description Validation Error */
@@ -22765,7 +22952,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Deploy"];
                 };
             };
             /** @description Validation Error */
@@ -22797,7 +22984,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DeployDeleted"];
                 };
             };
             /** @description Validation Error */
@@ -22833,7 +23020,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Deploy"];
                 };
             };
             /** @description Validation Error */
@@ -22865,7 +23052,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DeployNotice"];
                 };
             };
             /** @description Validation Error */
@@ -22899,7 +23086,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DeployRuns"];
                 };
             };
             /** @description Validation Error */
@@ -22935,7 +23122,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RunKicked"];
                 };
             };
             /** @description Validation Error */
@@ -22971,7 +23158,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RunKicked"];
                 };
             };
             /** @description Validation Error */
@@ -23003,7 +23190,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WatcherResult"];
                 };
             };
             /** @description Validation Error */
