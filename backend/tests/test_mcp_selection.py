@@ -167,8 +167,13 @@ class TestNarrowPathArgv:
 
 class TestAgenticPathArgv:
     def test_unchosen_agentic_turn_sends_no_mcp_flags(self):
+        """No MCP flags, no blocking startup env. It is NOT flagless: the
+        baseline deny list rides every tool-bearing turn (a4833a1), so the only
+        flags here are that. Asserted by name rather than by emptiness, or this
+        stops noticing when an MCP flag reappears."""
         flags, env, block = llm_router.tool_flags(permission_mode="auto")
-        assert flags == [] and env == {} and block is False
+        assert flags == ["--disallowedTools", *llm_router.BASELINE_DISALLOWED_TOOLS]
+        assert env == {} and block is False
         assert llm_router.agentic_mcp_flags(None, "/tmp") == []
 
     def test_a_subset_switches_the_turn_into_strict_mode(self, tmp_path, monkeypatch):

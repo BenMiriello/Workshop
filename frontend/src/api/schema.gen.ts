@@ -6827,40 +6827,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/tools/_list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Tools */
-        get: operations["list_tools_tools__list_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/tools/{tool_name}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Call Tool */
-        post: operations["call_tool_tools__tool_name__post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/trackers": {
         parameters: {
             query?: never;
@@ -10412,7 +10378,7 @@ export interface components {
             /** Error */
             error?: string | null;
             /** Evidence */
-            evidence?: unknown;
+            evidence?: components["schemas"]["JobEvidence"] | components["schemas"]["JobAwaitingQuestion"][] | null;
             /** Exit Code */
             exit_code?: number | null;
             /** Id */
@@ -10453,6 +10419,26 @@ export interface components {
             trigger_label?: string | null;
         };
         /**
+         * JobAwaitingQuestion
+         * @description One ticket a job stopped to ask about. `evidence` is a LIST of these
+         *     when `status == "awaiting_input"`; `routes/jobs.answer` reads `id` off each
+         *     to decide whether every question has now been answered.
+         */
+        JobAwaitingQuestion: {
+            /** Blocked Reason */
+            blocked_reason?: string | null;
+            /** Id */
+            id?: string | null;
+            /** Question */
+            question?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Text */
+            text?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * JobDismissOut
          * @description Same clause 7 debt as above; see `JobTaskActionOut`.
          */
@@ -10461,6 +10447,65 @@ export interface components {
             dismissed: boolean;
             /** Ok */
             ok: boolean;
+        };
+        /**
+         * JobEvidence
+         * @description What a run produced. One structured record, not a freeform dump.
+         *
+         *     Read off the writers and cross-checked against all 2,761 live jobs on
+         *     2026-08-18. `extra="allow"`, so these keys are a FLOOR: a provider or a
+         *     future worker may add its own and nothing here drops it. Two keys carried
+         *     only by history (`source`, `relay_route`, 7 records from a one-shot job
+         *     import that has since been deleted) are deliberately NOT declared; they
+         *     ride through as extras rather than being enshrined as live vocabulary.
+         *
+         *     `summary` is the field every reader wants: the worker's own one-line
+         *     account, present on 2,024 of the 2,032 structured records. It is also
+         *     where the store folds the two retired freeform-string producers, so a
+         *     reader never has to ask which shape it got.
+         */
+        JobEvidence: {
+            /** Baseline */
+            baseline?: string | null;
+            /** Commit Sha */
+            commit_sha?: string | null;
+            /** Commits */
+            commits?: string[] | null;
+            /** Design */
+            design?: string | null;
+            /** Diff Files */
+            diff_files?: number | null;
+            /** Done */
+            done?: boolean | null;
+            /** Files */
+            files?: string[] | null;
+            /** Gate */
+            gate?: string | null;
+            /** Halted */
+            halted?: string | null;
+            /** Head */
+            head?: string | null;
+            /** Iterations */
+            iterations?: number | null;
+            /** Kind */
+            kind?: string | null;
+            /** Log Tail */
+            log_tail?: string | null;
+            /** Missing Keys */
+            missing_keys?: string[] | null;
+            /** Reviewer */
+            reviewer?: string | null;
+            /** Summary */
+            summary?: string | null;
+            /** Tokens */
+            tokens?: number | null;
+            typecheck?: components["schemas"]["TypecheckVerdict"] | null;
+            /** Upload Ref */
+            upload_ref?: string | null;
+            /** Url */
+            url?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /** JobTaskAction */
         JobTaskAction: {
@@ -12354,11 +12399,6 @@ export interface components {
             /** Memory */
             memory?: unknown;
             /**
-             * Memory Blocks
-             * @default []
-             */
-            memory_blocks: Record<string, never>[];
-            /**
              * Mentionable
              * @default false
              */
@@ -13742,8 +13782,6 @@ export interface components {
             claude_session?: string | null;
             /** Cleared Through */
             cleared_through?: number | null;
-            /** Context Cut */
-            context_cut?: string | null;
             /** Context Key */
             context_key: string;
             /** Context Tokens */
@@ -13863,8 +13901,6 @@ export interface components {
             claude_session?: string | null;
             /** Cleared Through */
             cleared_through?: number | null;
-            /** Context Cut */
-            context_cut?: string | null;
             /** Context Key */
             context_key: string;
             /** Context Tokens */
@@ -13967,8 +14003,6 @@ export interface components {
             claude_session?: string | null;
             /** Cleared Through */
             cleared_through?: number | null;
-            /** Context Cut */
-            context_cut?: string | null;
             /** Context Key */
             context_key: string;
             /** Context Tokens */
@@ -14109,38 +14143,6 @@ export interface components {
             /** Spec Hash */
             spec_hash?: string | null;
         };
-        /** ToolCall */
-        ToolCall: {
-            /**
-             * Kwargs
-             * @default {}
-             */
-            kwargs: Record<string, never>;
-        };
-        /** ToolList */
-        ToolList: {
-            /** Tools */
-            tools: string[];
-        };
-        /**
-         * ToolResult
-         * @description A tool call. `error` at HTTP 200 is an ADR 0023 `failure_at_200` and it
-         *     is the ADR's own worked example: an unknown tool raises 404 two lines above,
-         *     while a bad argument shape and a raised exception both `return` an error
-         *     body at 200. A client therefore cannot tell success from failure by status
-         *     code on this route.
-         *
-         *     It is DESCRIBED here, not fixed. The error text is deliberately fed back to
-         *     the calling agent so it can self-correct, and moving it to a 4xx changes the
-         *     contract for every agent tool call at once -- which is its own change, with
-         *     its own blast radius, not a side effect of adding a schema.
-         */
-        ToolResult: {
-            /** Error */
-            error?: string | null;
-            /** Result */
-            result?: string | null;
-        };
         /** ToolsOut */
         ToolsOut: {
             /** Tools */
@@ -14246,6 +14248,20 @@ export interface components {
             stopped: boolean;
             /** Turn Id */
             turn_id: string;
+        };
+        /**
+         * TypecheckVerdict
+         * @description The two typecheck gates a reviewed run reports. Values are the gate's
+         *     own words ("skipped", "pass", a failure line), not a bool: "skipped" and
+         *     "passed" are different facts about a run and a bool loses that.
+         */
+        TypecheckVerdict: {
+            /** Py */
+            py?: string | null;
+            /** Ts */
+            ts?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * UnloadResult
@@ -26539,61 +26555,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskRunOut"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_tools_tools__list_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ToolList"];
-                };
-            };
-        };
-    };
-    call_tool_tools__tool_name__post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                tool_name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["ToolCall"] | null;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ToolResult"];
                 };
             };
             /** @description Validation Error */

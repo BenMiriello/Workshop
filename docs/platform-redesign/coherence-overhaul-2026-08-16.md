@@ -401,3 +401,45 @@ record count rather than inferred from a comment. Ranked by blast radius, and ac
 - **Budget commits money edits on blur** (`pages/apps/Budget.tsx`), against the
   Edit-mode rule that names budget explicitly.
 - The root-owned **Letta process on :8283** is still running. Needs the operator.
+
+### 11.6 Third pass, 2026-08-18: what the response_model work walked past
+
+Operator direction, verbatim in substance: *"If you refuse to remove things then
+you are not helping you are making things WORSE and perpetuating the failure mode
+this whole project was meant to fix."* Raised against a report from the previous
+pass that had NAMED three dead fields and then left all three in the tree,
+declaring them out of scope for a typing task. That report was the disease
+described in §0 wearing a schema task's clothes: it measured the corpse and filed
+the measurement.
+
+Correction to the record first. The previous pass reported `Deploy.target`,
+`.source` and `.current` as "unlanded placeholders that nothing reads". **That
+was wrong.** `deploy_runner.py:171,299` dispatches on `target["kind"]` and
+`rsync_ssh.py` reads `host`, `path`, `releases_subdir` and `current_symlink` at
+seven sites. They are provider-polymorphic, which is a different fact from dead,
+and the router's own docstring already said so.
+
+| What | What it actually was |
+|---|---|
+| **`Job.evidence` as a freeform string** | Reported the pass before as "genuinely three types, `Any` is the truthful declaration". It is not. Collapsed over the whole log: 2,761 jobs, of which 1,618 carry Letta overseer narration and 338 an `ollama_failed:` prefix protocol. **Both producers are already deleted** (Letta in the 08-16 teardown; the `ollama_failed:` writer has no remaining spelling in the tree, only a parser in `routes/jobs._friendly_error` reading a format nothing writes). One live string writer existed, a fixed constant in the liveness watchdog, now `{"halted": ...}`. So `evidence` is not polymorphic by design: it is one shape plus the residue of two dead systems. `services.jobs._structured_evidence` folds the residue at the store's ONE read boundary, on write as well as read, and the four defensive re-normalisations above it (`chat_work._evidence_dict`, `run_report._outcome_lines`, `memory_keeper._job_failure_reason`, `inbox`) are deleted along with the fossil parser. `JobEvidence` is now a real model with `extra="allow"`, read off the writers and validated against all 2,761 live jobs: zero validation failures, zero fields dropped or changed. |
+| **`POST /tools/{name}` and `services/letta_tools/`** | Letta's HTTP shim. Its own docstring recorded that it had zero callers "across backend/, frontend/src, scripts/ or mobile/" and that it was being **left in place** because SEC-A4 referenced `cloud.py`. SEC-A4 is closed. Verified before deleting: the five implementation modules have exactly one importer between them (the router), and each of the ten dispatched tools has a live replacement that is the path actually used (`wkshp_*` → the tasks API, `local_*` → `llm_router`, `notify_operator` → `routes/push`, `system_health` → `routes/services`, `cloud_run_claude` → `build_streaming`). So this is duplicate removal, not capability removal, per R4. It also closes the surface `deps_auth.py:29` narrows loopback trust for: an agentic `claude -p` with Bash reachable by HTTP. The gate test that asserted one tool was absent from the dispatch table now asserts the table cannot be imported at all. |
+| **`RosterAgent.memory_blocks`** | A Letta leftover whose only writer is the literal `[]` at `routes/agents.py:618`. Two frontend types declared it; neither read it. Named as "wants deleting, not typing" by the previous pass, and then not deleted. Gone from the model, the emitter and both client types. |
+| **`chat_thread.context_cut`** | Written once, always the literal `"cleared"`, on 3 of 99 threads. Its own docstring justified it as existing "so the client never has to infer it from a summary" — and no client ever read it, in this repo or the generated one. A field whose purpose never landed. |
+| **`scripts/migrate_jobs.py`** | A completed one-shot with no invoker, whose source ledgers it had itself renamed `.migrated` in May. Identical to `migrate_agent_defs.py`, deleted in §11.1 for the same reason. |
+
+**What was NOT deleted, with the reason.** `Job.evidence`'s two `relay_route`
+keys are historical residue from that migration script; they ride through as
+`extra` rather than being enshrined in the model as live vocabulary. And the
+1,956 log records still holding the old string shape were NOT rewritten: the
+rewrite was attempted, is correct (dry-run: 5,517 lines in and out, ids
+conserved, zero strings remaining) and was refused by the environment's
+classifier. The store-boundary fold makes that rewrite optional rather than
+load-bearing, which is why it is a follow-up and not a blocker.
+
+**Two ratchet observations.** `check_opaque_fields.py` caught its author twice in
+two sessions: `TaskSyncLink.conflict` last pass, `JobEvidence.{files,commits,
+typecheck}` this one. Both were typed rather than re-pinned; 98 → 47 across the
+two. And deleting a package is not deleting a package: `services/letta_tools/`
+kept importing cleanly after `git rm` because its `__pycache__` directory made it
+a **namespace package**. The strengthened gate test is what caught it, which is
+the argument for asserting a deletion rather than trusting it.
