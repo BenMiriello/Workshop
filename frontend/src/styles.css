@@ -1092,14 +1092,24 @@ input[type="range"].grad::-moz-range-thumb {
    of the collapse. */
 .chat-work > .chat-reveal > .chat-reveal__inner { padding-top: var(--space-1); }
 .chat-work__toggle {
-  display: inline-flex; align-items: center; gap: 0.3rem;
+  display: flex; align-items: center; gap: 0.3rem; width: 100%; min-width: 0;
   background: none; border: none; padding: 0.15rem 0; margin: 0;
   color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer;
+  text-align: left;
 }
 .chat-work__toggle:hover { color: var(--fg); }
 .chat-work__chev { flex: 0 0 auto; transition: transform var(--dur-fast) var(--ease-in-out); }
 .chat-work__toggle.is-open .chat-work__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-work__chev { transition: none; } }
+/* The collapsed row's taste of what was said, same shape as .chat-agent__preview:
+   flex to fill, ellipsis at the reader's real width, never wraps. The step
+   count moves to `.chat-work__meta` (fixed width, right of the preview) so it
+   still reads even when the preview truncates hard. */
+.chat-work__preview {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85;
+}
+.chat-work__meta { flex: 0 0 auto; opacity: 0.8; }
 .chat-work__list { display: flex; flex-direction: column; gap: 0.2rem; }
 /* Interim narration is a block like any other in TurnWork's list (WorkText next
    to StepRun), but it carried no spacing of its own: `.chat-work` gets a bottom

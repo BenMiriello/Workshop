@@ -374,6 +374,29 @@ export function stepDuration(seg: ChatSegment): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
+/** A one-line taste of what the model said mid-turn, for the collapsed work
+ *  toggle. Operator, 2026-08-18: "hide steps" folded interim narration away
+ *  with the tool calls and gave no sign there was anything to read; this is
+ *  what lets the collapsed row say more than a step count without opening it.
+ *
+ *  Newlines are folded to spaces HERE, same technique as `agentChipLine`: the
+ *  string itself must not wrap, so CSS ellipsis can cut it at the reader's
+ *  real width instead of a guessed character count.
+ *
+ *  Text segments are joined with a SPACE, never concatenated bare — two
+ *  narration stretches run together with no separator at all is a different
+ *  bug this replaces, not a smaller version of it.
+ *
+ *  "" when the turn narrated nothing, so a pure-tool-calls turn keeps the
+ *  plain step count with nothing invented to fill the row. */
+export function workNarrationPreview(work: ChatSegment[]): string {
+  const text = work
+    .filter((s): s is Extract<ChatSegment, { t: "text" }> => s.t === "text")
+    .map((s) => s.text)
+    .join(" ");
+  return text.replace(/\s+/g, " ").trim();
+}
+
 /** How long a whole turn took, for the line that summarises its work.
  *
  *  Silent under 30 seconds. A total is only interesting if somebody waited for

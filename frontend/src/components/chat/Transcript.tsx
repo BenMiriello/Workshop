@@ -6,7 +6,7 @@ import ApprovalBlock from "./ApprovalBlock";
 import { agentBrief, agentChipLine, agentSummary } from "./segments";
 import {
   blockedLabel, buildTurnBlocks, groupCount, groupLabel, hadErrorResult, isRunning,
-  runningSeconds, stepAlert, stepDuration, turnDuration, turnWorkSummary,
+  runningSeconds, stepAlert, stepDuration, turnDuration, turnWorkSummary, workNarrationPreview,
   type TurnItem,
 } from "./grouping";
 import { openInitial, onLive, onToggle } from "./disclosure";
@@ -587,6 +587,12 @@ function SettledWork({
   // shows.
   const summary = [turnWorkSummary(work) || "Steps", turnDuration(tookMs)]
     .filter(Boolean).join(" · ");
+  // WHAT WAS SAID, not just what was done. A pure step count told the reader
+  // nothing was worth reading; when the turn narrated mid-run, the collapsed
+  // row now leads with a taste of it and keeps the count as trailing meta,
+  // the same split AgentChip already uses (name leads, meta trails). Empty for
+  // a turn that only made tool calls, so that case reads exactly as before.
+  const preview = workNarrationPreview(work);
   // A turn blocked on a decision is never summarised away, even when it is no
   // longer the latest: the buttons are the only thing that can restart it.
   const pending = work.some((s) => s.t === "approval" && s.state === "pending");
@@ -602,9 +608,19 @@ function SettledWork({
         onClick={() => setDisc((d) => onToggle(d, Date.now()))}
         aria-expanded={open}
         aria-controls={id}
+        title={!open && preview ? preview : undefined}
       >
         <ChevronRight size={13} aria-hidden className="chat-work__chev" />
-        {open ? "Hide steps" : summary}
+        {open ? (
+          "Hide steps"
+        ) : preview ? (
+          <>
+            <span className="chat-work__preview">{preview}</span>
+            <span className="chat-work__meta">{summary}</span>
+          </>
+        ) : (
+          summary
+        )}
       </button>
       {/* ONE CLICK, NOT TWO, BUT ONLY ON A SETTLED TURN. Opening a turn the
           reader has already read opens its groups with it: the turn line

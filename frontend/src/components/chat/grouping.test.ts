@@ -3,7 +3,7 @@ import type { ChatSegment } from "../../lib/chat";
 import {
   buildTurnBlocks, groupLabel, groupCount, groupTools, groupIsRunning, turnWorkSummary,
   isRunning, hadErrorResult, stepAlert, blockedLabel, stepDuration,
-  runningSeconds, turnDuration, type TurnItem, type TurnBlock,
+  runningSeconds, turnDuration, workNarrationPreview, type TurnItem, type TurnBlock,
 } from "./grouping";
 
 const read = (path: string, extra: Partial<Extract<ChatSegment, { t: "tool" }>> = {}): ChatSegment =>
@@ -420,5 +420,27 @@ describe("turnDuration", () => {
     expect(turnDuration(undefined)).toBe("");
     expect(turnDuration(NaN)).toBe("");
     expect(turnDuration(-5000)).toBe("");
+  });
+});
+
+describe("workNarrationPreview", () => {
+  it("is empty for a turn that only made tool calls", () => {
+    expect(workNarrationPreview([read("a.ts"), bash("ls")])).toBe("");
+  });
+
+  it("joins two narration stretches with a space, never bare concatenation", () => {
+    // The bug this replaces: two prose segments run together with no
+    // separator at all read as one unreadable word. A space is the minimum
+    // fix; CSS ellipsis handles the rest at render time.
+    expect(workNarrationPreview([text("Checking the config."), bash("cat x"), text("Found it.")]))
+      .toBe("Checking the config. Found it.");
+  });
+
+  it("folds internal newlines to spaces, same technique as agentChipLine", () => {
+    expect(workNarrationPreview([text("Line one.\nLine two.")])).toBe("Line one. Line two.");
+  });
+
+  it("trims and collapses surrounding whitespace", () => {
+    expect(workNarrationPreview([text("  spaced out  ")])).toBe("spaced out");
   });
 });
