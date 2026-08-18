@@ -371,6 +371,37 @@ Also live-relevant: `clawd-a` is not in the `docker` group on this host (the roo
 docker migration), which softens part of [SEC-C1]/[SEC-A1] but does not replace the
 execution identity.
 
+**Layer 1 built (bwrap view, OFF by default), 2026-08-18.** `backend/services/scoped_exec.py`
+wraps the turn spawn (`build_streaming.py` `_spawn_and_drive_inner`) in bwrap when
+`WORKSHOP_SCOPED_EXEC=1`: the scope root is bind-mounted at `/workspace`, the child
+chdir's there, only the read-only system dirs it needs are bound, network stays
+shared, and the journal/stdin fds are inherited so nothing on disk needs binding for
+them. Proven by `test_scoped_exec.py` (real bwrap): the scope is presented at
+`/workspace`, the real host path and any out-of-scope path are absent. Demonstrated
+live: inside the sandbox `~/.ssh` and `~/.config/clawdbot/auth.env` do not exist and
+cwd is `/workspace`. The runtime briefing reports `/workspace` when the flag is on
+(`chat_context.runtime_briefing`), so the cwd it states matches what the agent's tools
+print. The mountpoint is fixed on purpose: it is what makes a CLI tool print
+`/workspace/...` instead of the real `/home/...` path (the operator flagged the raw
+path in tool output; this is its fix).
+
+**Attended flip checklist (the remaining work, operator + agent together):**
+1. Set `WORKSHOP_SCOPED_EXEC=1` in the backend env (systemd `instance.env`), restart.
+2. Run a real turn and watch: does `claude` start inside the sandbox, reach the API,
+   and can it read/write the scope. If it needs `~/.claude` (settings/hooks) or another
+   path, add that bind to `scoped_exec._RO_SYSTEM` or a new read-only bind and retest.
+3. Confirm crash/restart turn-adoption still works (interrupt with a restart, the turn
+   resumes) and the per-turn journal is still written.
+4. Refine the rest of the self-project briefing prose (the `~/workshop` references)
+   to `/workspace` so instructions match the sandbox.
+5. Only then leave the flag on. Until every step passes live, the flag stays off.
+
+The uid layer (a dedicated sub-user for escape containment) composes on top: it is
+`sudo -u <user>` in front of the exact argv `scoped_exec.wrap` returns, plus a
+root-created system user and a tightly-scoped NOPASSWD sudoers rule naming only the
+turn wrapper. Operator chose bwrap-first; the uid layer follows once the sandbox is
+proven.
+
 ## 10. Verification and rollback
 
 - Every stage lands on a branch off `main`, small and self-contained, and goes through

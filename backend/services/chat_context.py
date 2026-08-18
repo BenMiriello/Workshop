@@ -997,8 +997,15 @@ def runtime_briefing(provider: "ContextProvider") -> str:
     slug = getattr(provider, "slug", "") or ""
     project_slug = getattr(provider, "project_slug", None) or slug
 
+    # When the turn runs in the Layer 1 sandbox (WORKSHOP_SCOPED_EXEC=1), its real
+    # cwd is the mountpoint, not the host path. Report that so the briefing agrees
+    # with what the agent's own tools print. Stack detection still reads the REAL
+    # dir below, because the backend building this briefing is not in the sandbox.
+    from services import scoped_exec
+    display_dir = scoped_exec.MOUNTPOINT if scoped_exec.enabled() else dirp
+
     lines = ["=== RUNTIME BRIEFING (your environment; re-read every turn) ==="]
-    lines.append(f"Working directory (cwd): {dirp}. All relative paths resolve here.")
+    lines.append(f"Working directory (cwd): {display_dir}. All relative paths resolve here.")
     lines.append(
         "Host: Linux, shell: bash. You ARE a Claude Code session with the full "
         "default toolset (Read, Write, Edit, MultiEdit, Bash, Grep, Glob, "

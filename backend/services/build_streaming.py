@@ -2056,9 +2056,16 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
         _push(turn, "error", {"detail": turn.error})
         await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
         return
+    # Layer 1 (managed-file-references-and-path-scoping-2026-08-18.md): confine the
+    # turn to its scope, mounted at /workspace, when WORKSHOP_SCOPED_EXEC=1. OFF by
+    # default -- wrap() returns cmd unchanged -- so the live spawn is untouched
+    # until the flag is flipped attended. cwd stays the real path: that is where
+    # bwrap itself starts before entering the namespace.
+    from services import scoped_exec
+    spawn_cmd = scoped_exec.wrap(cmd, meta["cwd"])
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, cwd=meta["cwd"], env=env,
+            *spawn_cmd, cwd=meta["cwd"], env=env,
             stdin=in_fd, stdout=out_f, stderr=err_f,
             start_new_session=True,  # detach: survive a backend restart / pkill uvicorn
         )
