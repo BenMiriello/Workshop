@@ -10069,46 +10069,6 @@ export interface components {
             /** Url */
             url: string;
         };
-        /**
-         * InboxItem
-         * @description Something waiting on the operator. `kind` is question, review or notify,
-         *     and they rank in that order because a blocked agent must not be buried under
-         *     notifications.
-         */
-        InboxItem: {
-            /** Agent */
-            agent?: string | null;
-            /** Answer */
-            answer?: string | null;
-            /** Body */
-            body: string;
-            /** Chat Id */
-            chat_id?: string | null;
-            /** Created At */
-            created_at?: string | null;
-            /** Dedupe Key */
-            dedupe_key?: string | null;
-            /** Id */
-            id: string;
-            /** Kind */
-            kind: string;
-            /** Options */
-            options: string[];
-            /** Resolved At */
-            resolved_at?: string | null;
-            /** Run Id */
-            run_id?: string | null;
-            /** Scope */
-            scope: string;
-            /** Snoozed Until */
-            snoozed_until?: string | null;
-            /** State */
-            state: string;
-            /** Ticket Id */
-            ticket_id?: string | null;
-            /** Title */
-            title: string;
-        };
         /** IngestHelp */
         IngestHelp: {
             /** Hint */
@@ -13378,7 +13338,7 @@ export interface components {
             /** Filed */
             filed: components["schemas"]["WorkTask"][];
             /** Inbox */
-            inbox: components["schemas"]["InboxItem"][];
+            inbox: components["schemas"]["routes__chat_models__InboxItem"][];
             /** Scope */
             scope: components["schemas"]["WorkTask"][];
             /** Scope Key */
@@ -14017,6 +13977,46 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /**
+         * InboxItem
+         * @description Something waiting on the operator. `kind` is question, review or notify,
+         *     and they rank in that order because a blocked agent must not be buried under
+         *     notifications.
+         */
+        routes__chat_models__InboxItem: {
+            /** Agent */
+            agent?: string | null;
+            /** Answer */
+            answer?: string | null;
+            /** Body */
+            body: string;
+            /** Chat Id */
+            chat_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Dedupe Key */
+            dedupe_key?: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Options */
+            options: string[];
+            /** Resolved At */
+            resolved_at?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Scope */
+            scope: string;
+            /** Snoozed Until */
+            snoozed_until?: string | null;
+            /** State */
+            state: string;
+            /** Ticket Id */
+            ticket_id?: string | null;
+            /** Title */
+            title: string;
+        };
         /** OverrideEngageIn */
         routes__deploys__OverrideEngageIn: {
             /**
@@ -14026,6 +14026,56 @@ export interface components {
             by: string | null;
             /** Reason */
             reason?: string | null;
+        };
+        /**
+         * InboxItem
+         * @description An item waiting on the operator. `kind` is question, review or notify.
+         *
+         *     A SNOOZED item stays OPEN and keeps its dedupe key: it just stops surfacing
+         *     until `snoozed_until`, and wakes early if the thing it is about changes.
+         *     That is why snoozing does not touch `state`.
+         *
+         *     `review` appears only on a resolve that also acted on a ticket, and says
+         *     what happened to the WORK -- so the caller can state it rather than infer it
+         *     from a closed row.
+         */
+        routes__inbox__InboxItem: {
+            /** Agent */
+            agent?: string | null;
+            /** Answer */
+            answer?: string | null;
+            /** Body */
+            body: string;
+            /** Chat Id */
+            chat_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Dedupe Key */
+            dedupe_key?: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Options */
+            options: string[];
+            /** Resolved At */
+            resolved_at?: string | null;
+            /** Review */
+            review?: Record<string, never> | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Scope */
+            scope: string;
+            /** Snoozed Until */
+            snoozed_until?: string | null;
+            /** State */
+            state: string;
+            /** Ticket Id */
+            ticket_id?: string | null;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
         };
         /** ResolveIn */
         routes__inbox__ResolveIn: {
@@ -22597,7 +22647,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["routes__inbox__InboxItem"];
                 };
             };
             /** @description Validation Error */
@@ -22632,7 +22682,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["routes__inbox__InboxItem"];
                 };
             };
             /** @description Validation Error */

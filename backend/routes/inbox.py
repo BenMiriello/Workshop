@@ -13,7 +13,9 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from services import inbox
 
@@ -50,7 +52,41 @@ def _is_approval(answer: str | None) -> bool:
     return str(answer or "").strip().lower() in _APPROVALS
 
 
-@router.post("/{item_id}/snooze")
+
+
+class InboxItem(BaseModel):
+    """An item waiting on the operator. `kind` is question, review or notify.
+
+    A SNOOZED item stays OPEN and keeps its dedupe key: it just stops surfacing
+    until `snoozed_until`, and wakes early if the thing it is about changes.
+    That is why snoozing does not touch `state`.
+
+    `review` appears only on a resolve that also acted on a ticket, and says
+    what happened to the WORK -- so the caller can state it rather than infer it
+    from a closed row."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    kind: str
+    state: str
+    agent: str | None = None
+    scope: str
+    title: str
+    body: str
+    options: list[str]
+    chat_id: str | None = None
+    ticket_id: str | None = None
+    run_id: str | None = None
+    dedupe_key: str | None = None
+    created_at: str | None = None
+    resolved_at: str | None = None
+    answer: str | None = None
+    snoozed_until: str | None = None
+    review: dict[str, Any] | None = None
+
+
+@router.post("/{item_id}/snooze", response_model=InboxItem)
 async def snooze_inbox(item_id: str, body: SnoozeIn):
     """Defer an item. It stays open and keeps its dedupe key; it just stops
     surfacing until then, and wakes early if the thing it is about changes
@@ -118,7 +154,7 @@ async def _answer_the_task(item: dict, *, answer: str | None, dismissed: bool) -
         raise
 
 
-@router.post("/{item_id}/resolve")
+@router.post("/{item_id}/resolve", response_model=InboxItem)
 async def resolve_inbox(item_id: str, body: ResolveIn):
     """Answer or dismiss. Both close the item; which one is recorded, because
     "I answered" and "I dismissed" are different facts and a run of dismissals
