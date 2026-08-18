@@ -867,9 +867,35 @@ those is the 2026-08-14 regression. A gate at zero would demand that regression 
   `response_model` on a route says nothing about whether that model's fields say
   anything, and once 268 routes had one the same defect was alive underneath:
   98 field slots generated as `Record<string, never>`. `check_opaque_fields.py`
-  pins it, and the chat and ticket models have taken it to 80. The remaining 80
-  are mostly agents, deploys, projects and jobs, plus the handful that are
-  deliberately open.
+  pins it, and successive passes have taken it to **49**: the chat thread-state
+  maps, the six ticket fields, agent triggers and limits, group members, the
+  repo binding, the standalone surface, the MCP tally, the usage chart's points,
+  the mention list and the reaper's report. Each was read off its writer and
+  checked against live data before it landed.
+
+  The remaining 49 divide into three kinds, and only the first is debt:
+
+  1. **Not yet reached.** Store items, event bodies, history payloads, broker
+     leases, grant caveats, the inbox review record.
+  2. **Genuinely open, with the evidence to say so.** `Job.evidence` is a STRING
+     on 1958 of 5517 live jobs, a dict on 75 (in two unrelated key sets) and a
+     list on 2 — its own module docstring says `{...} | "text"`. `Job.binding`
+     is queried by an arbitrary caller-supplied key and `Job.budget` is
+     `json.loads` of a shell argument. `ThreadEvents.events` and the live
+     message stay open by the 2026-08-14 argument. `ContextDetail`'s block
+     belongs to another process's CLI.
+  3. **Unlanded designs.** `Deploy.target`/`.source`/`.current` have zero records
+     and no reader; `RosterAgent.memory_blocks` is a Letta leftover whose only
+     writer sets `[]`. These want deleting or building, not describing.
+
+  A separate wire defect surfaced on the way: `agents.py`, `tasks_all.py` and
+  `jobs.py` were annotated before the added-null-keys problem was understood, so
+  they were emitting 6 and 8 keys as `null` that their emitters never sent,
+  measured on 3 agents and all 89 tickets. Fixed with
+  `response_model_exclude_unset` on all 57 routes. NOT applied to `projects.py`:
+  its handlers returned constructed models before it had a `response_model` at
+  all, so those nulls predate the annotation and removing them would be a new
+  wire change rather than a fix.
 - **`task → ticket`.** Deliberately deferred to item 3, for the reasons measured in
   §5 above. `job → run` is unblocked now that 1a has freed the word, and is the
   next mechanical piece.
