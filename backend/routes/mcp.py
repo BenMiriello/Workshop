@@ -109,7 +109,7 @@ class McpServers(BaseModel):
     cwd: str
 
 
-@router.get("/servers", response_model=McpServers)
+@router.get("/servers", response_model=McpServers, response_model_exclude_unset=True)
 async def list_servers(refresh: bool = False):
     """Every configured MCP server: where it comes from, whether it connects,
     what it exposes and what it costs.

@@ -97,7 +97,7 @@ class GrantRevoked(BaseModel):
 # --------------------------------------------------------------------------- #
 # App-level grants document (unchanged shape; mirrors /base-apps/grants).
 # --------------------------------------------------------------------------- #
-@router.get("/grants", response_model=GrantsDocument)
+@router.get("/grants", response_model=GrantsDocument, response_model_exclude_unset=True)
 async def get_grants():
     """The operator-owned grants document plus the resource-scoped grants:
     {"grants": [...], "guests": [...], "resource_grants": [...]}. The first two
@@ -107,7 +107,7 @@ async def get_grants():
     return {**doc, "resource_grants": permissions.load_resource_grants()}
 
 
-@router.put("/grants", response_model=AppGrantsDocument)
+@router.put("/grants", response_model=AppGrantsDocument, response_model_exclude_unset=True)
 async def put_grants(doc: dict = Body(...)):
     """Replace the full app-level grants document ({"grants", "guests"}). Validates
     the top-level shape (400 on a bad shape) and atomically saves. Resource grants
@@ -130,7 +130,7 @@ class MintIn(BaseModel):
     subtree: bool = False
 
 
-@router.post("/grants/mint", response_model=ResourceGrant)
+@router.post("/grants/mint", response_model=ResourceGrant, response_model_exclude_unset=True)
 async def mint_grant(body: MintIn):
     """Mint a scoped capability token over a Store (or a subtree of Store URIs).
     Returns the grant record; its `id` is the token a provider checks per call.
@@ -155,7 +155,7 @@ class RevokeIn(BaseModel):
     id: str | None = None
 
 
-@router.post("/grants/revoke", response_model=GrantRevoked)
+@router.post("/grants/revoke", response_model=GrantRevoked, response_model_exclude_unset=True)
 async def revoke_grant(body: RevokeIn):
     """Revoke a scoped grant by token/id. {revoked: bool}."""
     token = body.token or body.id

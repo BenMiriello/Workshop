@@ -143,20 +143,20 @@ class NoteDeleted(BaseModel):
     deleted: bool
 
 
-@router.get("/capabilities", response_model=Capabilities)
+@router.get("/capabilities", response_model=Capabilities, response_model_exclude_unset=True)
 def capabilities() -> dict:
     """List the capabilities this provider exposes."""
     return {"provides": PROVIDES}
 
 
-@router.get("/notes", response_model=NoteList)
+@router.get("/notes", response_model=NoteList, response_model_exclude_unset=True)
 def list_notes() -> dict:
     """List every note in the vault with cheap metadata."""
     notes = vault.list_notes()
     return {"notes": notes, "count": len(notes)}
 
 
-@router.get("/notes/{note_path:path}", response_model=Note)
+@router.get("/notes/{note_path:path}", response_model=Note, response_model_exclude_unset=True)
 def get_note(note_path: str) -> dict:
     """Read one note plus its resolved outgoing wikilinks. 404 if missing."""
     try:
@@ -167,14 +167,14 @@ def get_note(note_path: str) -> dict:
         raise HTTPException(404, f"note not found: {note_path}")
 
 
-@router.get("/search", response_model=SearchResults)
+@router.get("/search", response_model=SearchResults, response_model_exclude_unset=True)
 def search_notes(q: str = Query(..., min_length=1), limit: int = Query(50, ge=1, le=500)) -> dict:
     """Case-insensitive full-text search across the vault."""
     results = vault.search(q, limit=limit)
     return {"query": q, "results": results, "count": len(results)}
 
 
-@router.get("/backlinks/{note_path:path}", response_model=Backlinks)
+@router.get("/backlinks/{note_path:path}", response_model=Backlinks, response_model_exclude_unset=True)
 def get_backlinks(note_path: str) -> dict:
     """Notes whose wikilinks resolve to this note. 404 if the target is missing."""
     try:
@@ -186,7 +186,7 @@ def get_backlinks(note_path: str) -> dict:
     return {"path": note_path, "backlinks": links, "count": len(links)}
 
 
-@router.post("/notes", response_model=NoteWritten, status_code=201)
+@router.post("/notes", response_model=NoteWritten, status_code=201, response_model_exclude_unset=True)
 def create_note(body: NoteCreate) -> dict:
     """Create a new note. 409 if it already exists, 400 on an unsafe path."""
     try:
@@ -197,7 +197,7 @@ def create_note(body: NoteCreate) -> dict:
         raise HTTPException(409, f"note already exists: {body.path}")
 
 
-@router.put("/notes/{note_path:path}", response_model=NoteWritten)
+@router.put("/notes/{note_path:path}", response_model=NoteWritten, response_model_exclude_unset=True)
 def update_note(note_path: str, body: NoteUpdate) -> dict:
     """Overwrite an existing note. 404 if missing, 400 on an unsafe path."""
     try:
@@ -208,7 +208,7 @@ def update_note(note_path: str, body: NoteUpdate) -> dict:
         raise HTTPException(404, f"note not found: {note_path}")
 
 
-@router.post("/notes/{note_path:path}/rename", response_model=NoteWritten)
+@router.post("/notes/{note_path:path}/rename", response_model=NoteWritten, response_model_exclude_unset=True)
 def rename_note(note_path: str, body: NoteRename) -> dict:
     """Move a note and rewrite referring wikilinks. 404 source, 409 dest, 400 unsafe."""
     try:
@@ -221,7 +221,7 @@ def rename_note(note_path: str, body: NoteRename) -> dict:
         raise HTTPException(409, f"note already exists: {body.to}")
 
 
-@router.delete("/notes/{note_path:path}", response_model=NoteDeleted)
+@router.delete("/notes/{note_path:path}", response_model=NoteDeleted, response_model_exclude_unset=True)
 def delete_note(note_path: str) -> dict:
     """Delete a note. 404 if missing, 400 on an unsafe path."""
     try:

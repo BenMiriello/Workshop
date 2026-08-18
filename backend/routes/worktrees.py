@@ -162,7 +162,7 @@ class BranchDiscarded(BaseModel):
     ok: bool
 
 
-@router.get("/{project_slug}", response_model=list[BranchRow])
+@router.get("/{project_slug}", response_model=list[BranchRow], response_model_exclude_unset=True)
 async def list_for_project(project_slug: str):
     try:
         return worktrees.list_branches(project_slug)
@@ -170,7 +170,7 @@ async def list_for_project(project_slug: str):
         raise HTTPException(400, str(e))
 
 
-@router.post("/{project_slug}", response_model=BranchCreated)
+@router.post("/{project_slug}", response_model=BranchCreated, response_model_exclude_unset=True)
 async def create(project_slug: str, body: _CreateIn):
     try:
         return worktrees.create_branch(project_slug, body.branch_slug)
@@ -178,7 +178,7 @@ async def create(project_slug: str, body: _CreateIn):
         raise HTTPException(400, str(e))
 
 
-@router.get("/{project_slug}/{branch_slug}/diff", response_model=BranchDiff)
+@router.get("/{project_slug}/{branch_slug}/diff", response_model=BranchDiff, response_model_exclude_unset=True)
 async def diff(project_slug: str, branch_slug: str):
     try:
         return worktrees.diff_branch(project_slug, branch_slug)
@@ -186,7 +186,7 @@ async def diff(project_slug: str, branch_slug: str):
         raise HTTPException(400, str(e))
 
 
-@router.post("/{project_slug}/{branch_slug}/merge", response_model=MergeResult)
+@router.post("/{project_slug}/{branch_slug}/merge", response_model=MergeResult, response_model_exclude_unset=True)
 async def merge(project_slug: str, branch_slug: str, body: _MergeIn):
     try:
         result = worktrees.merge_branch(project_slug, branch_slug, message=body.message)
@@ -197,7 +197,7 @@ async def merge(project_slug: str, branch_slug: str, body: _MergeIn):
     return result
 
 
-@router.post("/{project_slug}/{branch_slug}/publish", response_model=PublishResult)
+@router.post("/{project_slug}/{branch_slug}/publish", response_model=PublishResult, response_model_exclude_unset=True)
 async def publish(project_slug: str, branch_slug: str, body: _PublishIn):
     """Push the branch to origin and open a PR (bound projects only)."""
     try:
@@ -208,7 +208,7 @@ async def publish(project_slug: str, branch_slug: str, body: _PublishIn):
         raise HTTPException(400, str(e))
 
 
-@router.post("/{project_slug}/cleanup", response_model=CleanupResult)
+@router.post("/{project_slug}/cleanup", response_model=CleanupResult, response_model_exclude_unset=True)
 async def cleanup(project_slug: str):
     """Remove worktrees whose branch is already merged into the canonical base
     (bound projects only; unbound returns empty)."""
@@ -218,7 +218,7 @@ async def cleanup(project_slug: str):
         raise HTTPException(400, str(e))
 
 
-@router.get("/{project_slug}/repo-state", response_model=RepoState)
+@router.get("/{project_slug}/repo-state", response_model=RepoState, response_model_exclude_unset=True)
 async def repo_state(project_slug: str):
     """Canonical-state view: default branch, remote, active worktrees + PRs,
     ahead/behind, open PRs. Unbound projects return {bound: false}."""
@@ -228,7 +228,7 @@ async def repo_state(project_slug: str):
         raise HTTPException(400, str(e))
 
 
-@router.delete("/{project_slug}/{branch_slug}", response_model=BranchDiscarded)
+@router.delete("/{project_slug}/{branch_slug}", response_model=BranchDiscarded, response_model_exclude_unset=True)
 async def discard(project_slug: str, branch_slug: str):
     try:
         return worktrees.discard_branch(project_slug, branch_slug)

@@ -233,7 +233,7 @@ class VoiceSessionPrewarm(BaseModel):
     warmed: bool
 
 
-@router.get("/voice/health", response_model=VoiceHealth)
+@router.get("/voice/health", response_model=VoiceHealth, response_model_exclude_unset=True)
 async def voice_health():
     """Engine truth, including WHICH perception tier is actually running.
 
@@ -245,14 +245,14 @@ async def voice_health():
     return {**voice_engine.health(), "perception": detectors.status()}
 
 
-@router.get("/voice/voices", response_model=VoiceCatalog)
+@router.get("/voice/voices", response_model=VoiceCatalog, response_model_exclude_unset=True)
 async def voice_voices():
     if not voice_engine.TTS.available:
         return {"available": False, "voices": []}
     return {"available": True, "voices": voice_engine.TTS.voices()}
 
 
-@router.get("/voice/prefs", response_model=VoicePrefs)
+@router.get("/voice/prefs", response_model=VoicePrefs, response_model_exclude_unset=True)
 async def voice_get_prefs():
     return _load_prefs()
 
@@ -276,7 +276,7 @@ class PrefsBody(BaseModel):
     interrupt_rate: float | None = None
 
 
-@router.put("/voice/prefs", response_model=VoicePrefs)
+@router.put("/voice/prefs", response_model=VoicePrefs, response_model_exclude_unset=True)
 async def voice_put_prefs(body: PrefsBody):
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     return _save_prefs(patch)
@@ -292,7 +292,7 @@ class SessionBody(BaseModel):
     model: str | None = None
 
 
-@router.post("/voice/session", response_model=VoiceSessionPrewarm)
+@router.post("/voice/session", response_model=VoiceSessionPrewarm, response_model_exclude_unset=True)
 async def voice_session(body: SessionBody):
     """Prewarm the resident worker for a voice session. Called on surface mount
     so the process is up before the first utterance finishes.

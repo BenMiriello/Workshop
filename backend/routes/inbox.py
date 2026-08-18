@@ -86,7 +86,7 @@ class InboxItem(BaseModel):
     review: dict[str, Any] | None = None
 
 
-@router.post("/{item_id}/snooze", response_model=InboxItem)
+@router.post("/{item_id}/snooze", response_model=InboxItem, response_model_exclude_unset=True)
 async def snooze_inbox(item_id: str, body: SnoozeIn):
     """Defer an item. It stays open and keeps its dedupe key; it just stops
     surfacing until then, and wakes early if the thing it is about changes
@@ -154,7 +154,7 @@ async def _answer_the_task(item: dict, *, answer: str | None, dismissed: bool) -
         raise
 
 
-@router.post("/{item_id}/resolve", response_model=InboxItem)
+@router.post("/{item_id}/resolve", response_model=InboxItem, response_model_exclude_unset=True)
 async def resolve_inbox(item_id: str, body: ResolveIn):
     """Answer or dismiss. Both close the item; which one is recorded, because
     "I answered" and "I dismissed" are different facts and a run of dismissals

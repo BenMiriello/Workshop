@@ -171,7 +171,7 @@ def _login_response(response: Response, user: dict, request: Request) -> dict:
     return {"user": auth_store.public_user(user)}
 
 
-@router.post("/register", response_model=Session)
+@router.post("/register", response_model=Session, response_model_exclude_unset=True)
 async def register(body: RegisterBody, request: Request, response: Response) -> dict:
     if not _registration_open():
         raise HTTPException(status_code=403, detail="registration is closed")
@@ -184,7 +184,7 @@ async def register(body: RegisterBody, request: Request, response: Response) -> 
     return _login_response(response, user, request)
 
 
-@router.post("/login", response_model=Session)
+@router.post("/login", response_model=Session, response_model_exclude_unset=True)
 async def login(body: LoginBody, request: Request, response: Response) -> dict:
     user = auth_store.verify_credentials(str(body.email), body.password)
     if user is None:
@@ -192,7 +192,7 @@ async def login(body: LoginBody, request: Request, response: Response) -> dict:
     return _login_response(response, user, request)
 
 
-@router.post("/logout", response_model=LogoutResult)
+@router.post("/logout", response_model=LogoutResult, response_model_exclude_unset=True)
 async def logout(body: LogoutBody, request: Request, response: Response,
                  user: dict = Depends(current_user)) -> dict:
     if body.all_devices:
@@ -204,7 +204,7 @@ async def logout(body: LogoutBody, request: Request, response: Response,
     return {"ok": True, "scope": "session"}
 
 
-@router.post("/password", response_model=Session)
+@router.post("/password", response_model=Session, response_model_exclude_unset=True)
 async def change_password(body: ChangePasswordBody, request: Request, response: Response,
                           user: dict = Depends(current_user)) -> dict:
     full = auth_store.get_by_id(user["id"])
@@ -222,7 +222,7 @@ async def change_password(body: ChangePasswordBody, request: Request, response: 
     return _login_response(response, full, request)
 
 
-@router.get("/me", response_model=PublicUser)
+@router.get("/me", response_model=PublicUser, response_model_exclude_unset=True)
 async def me(user: dict = Depends(current_user)) -> dict:
     full = auth_store.get_by_id(user["id"])
     if full is None:
@@ -233,7 +233,7 @@ async def me(user: dict = Depends(current_user)) -> dict:
 # ---- device tokens (native background producers) ----
 
 
-@router.post("/device-token", response_model=DeviceTokenIssued)
+@router.post("/device-token", response_model=DeviceTokenIssued, response_model_exclude_unset=True)
 async def issue_device_token(body: DeviceTokenBody, user: dict = Depends(current_user)) -> dict:
     """Mint a revocable device token for this account's native background tasks
     (location/audio), which run outside the WebView and cannot use the cookie.
@@ -242,7 +242,7 @@ async def issue_device_token(body: DeviceTokenBody, user: dict = Depends(current
     return {"device_token": raw, "label": body.label or "device"}
 
 
-@router.get("/devices", response_model=DeviceList)
+@router.get("/devices", response_model=DeviceList, response_model_exclude_unset=True)
 async def list_devices(
     limit: int = 10, offset: int = 0, user: dict = Depends(current_user)
 ) -> dict:
@@ -251,7 +251,7 @@ async def list_devices(
     return auth_store.list_devices(user["id"], limit=limit, offset=offset)
 
 
-@router.delete("/devices/{device_id}", response_model=DeviceRevoked)
+@router.delete("/devices/{device_id}", response_model=DeviceRevoked, response_model_exclude_unset=True)
 async def revoke_device(device_id: str, user: dict = Depends(current_user)) -> dict:
     removed = auth_store.revoke_device_by_prefix(user["id"], device_id)
     return {"ok": True, "removed": removed}

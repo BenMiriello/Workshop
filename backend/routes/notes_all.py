@@ -249,7 +249,7 @@ class ScopeTree(BaseModel):
     scopes: list[ScopeNode]
 
 
-@router.get("", response_model=AllNotes)
+@router.get("", response_model=AllNotes, response_model_exclude_unset=True)
 async def list_all(scope: str | None = None, q: str | None = None) -> dict:
     """Notes across every scope, each tagged with its resolved `scope` key plus
     `author` / `type` / `pinned` (design doc sec 11: provenance and the ranked-
@@ -294,14 +294,14 @@ async def list_all(scope: str | None = None, q: str | None = None) -> dict:
     return {"notes": out, "count": len(out), "scopes": scopes}
 
 
-@router.get("/scopes", response_model=ScopeList)
+@router.get("/scopes", response_model=ScopeList, response_model_exclude_unset=True)
 async def list_scopes() -> dict:
     """The scope keys that currently have a knowledge directory, for the
     filter/create controls. Cheap directory + registry scan, no note load."""
     return {"scopes": [skey for skey, _ in _scope_roots()]}
 
 
-@router.get("/scopes/tree", response_model=ScopeTree)
+@router.get("/scopes/tree", response_model=ScopeTree, response_model_exclude_unset=True)
 async def list_scopes_tree() -> dict:
     """The same scope keys as `/scopes`, shaped as a tree instead of a flat
     list (design doc sec 11: "a scope filter shaped like the TREE, not a flat

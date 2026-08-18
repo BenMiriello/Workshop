@@ -74,7 +74,7 @@ class UsageTimeseries(BaseModel):
     points: list[dict[str, Any]]
 
 
-@router.get("", response_model=UsageStatus)
+@router.get("", response_model=UsageStatus, response_model_exclude_unset=True)
 async def get_usage(window: str = "5h") -> dict:
     """Snapshot of a trailing usage window: app-wide totals + per-project share.
     Pure read over `.runtime/usage.jsonl` + `.runtime/usage-budget.json`; no side
@@ -83,7 +83,7 @@ async def get_usage(window: str = "5h") -> dict:
     return usage_ledger.status(window_s=_resolve_window(window))
 
 
-@router.get("/timeseries", response_model=UsageTimeseries)
+@router.get("/timeseries", response_model=UsageTimeseries, response_model_exclude_unset=True)
 async def get_usage_timeseries(window: str = "5h") -> dict:
     """Per-interval per-project token usage across a trailing window, for the
     chart. Pure read; no side effects."""
@@ -95,7 +95,7 @@ class BudgetPatch(BaseModel):
     autonomy_budget_fraction: float | None = Field(default=None, ge=0.1, le=1.0)
 
 
-@router.put("/budget", response_model=UsageStatus)
+@router.put("/budget", response_model=UsageStatus, response_model_exclude_unset=True)
 async def put_budget(body: BudgetPatch) -> dict:
     """Edit the two operator-tunable budget knobs (app-wide cap, autonomy
     fraction) and return the refreshed window snapshot. Operator-gated at the

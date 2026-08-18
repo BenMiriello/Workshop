@@ -120,12 +120,12 @@ def _scope(scope_key: str) -> str:
     return scope_key
 
 
-@router.get("/{scope_key}/notes", response_model=list[NoteSummary])
+@router.get("/{scope_key}/notes", response_model=list[NoteSummary], response_model_exclude_unset=True)
 async def list_notes(scope_key: str):
     return knowledge.list_notes(_scope(scope_key))
 
 
-@router.get("/{scope_key}/notes/{note_id}", response_model=NoteDetail)
+@router.get("/{scope_key}/notes/{note_id}", response_model=NoteDetail, response_model_exclude_unset=True)
 async def get_note(scope_key: str, note_id: str):
     _scope(scope_key)
     try:
@@ -138,7 +138,7 @@ async def get_note(scope_key: str, note_id: str):
     return {"scope": scope_key, "note_id": note_id, "content": body, **meta}
 
 
-@router.put("/{scope_key}/notes/{note_id}", response_model=NoteRef)
+@router.put("/{scope_key}/notes/{note_id}", response_model=NoteRef, response_model_exclude_unset=True)
 async def put_note(scope_key: str, note_id: str, body: PutNoteIn):
     _scope(scope_key)
     try:
@@ -150,7 +150,7 @@ async def put_note(scope_key: str, note_id: str, body: PutNoteIn):
         raise HTTPException(400, str(e))
 
 
-@router.delete("/{scope_key}/notes/{note_id}", response_model=NoteDeleted)
+@router.delete("/{scope_key}/notes/{note_id}", response_model=NoteDeleted, response_model_exclude_unset=True)
 async def delete_note(scope_key: str, note_id: str):
     _scope(scope_key)
     try:
@@ -159,13 +159,13 @@ async def delete_note(scope_key: str, note_id: str):
         raise HTTPException(400, str(e))
 
 
-@router.post("/{scope_key}/search", response_model=list[SearchHit])
+@router.post("/{scope_key}/search", response_model=list[SearchHit], response_model_exclude_unset=True)
 async def search(scope_key: str, body: SearchIn):
     _scope(scope_key)
     return await knowledge.search(scope_key, body.query, body.limit)
 
 
-@router.post("/recall", response_model=list[SearchHit])
+@router.post("/recall", response_model=list[SearchHit], response_model_exclude_unset=True)
 async def recall(body: RecallIn):
     _scope(body.from_scope)
     _scope(body.target_scope)

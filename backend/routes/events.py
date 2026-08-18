@@ -150,7 +150,7 @@ class Subscriptions(BaseModel):
     path: str
 
 
-@router.post("/{source}", response_model=EventAccepted)
+@router.post("/{source}", response_model=EventAccepted, response_model_exclude_unset=True)
 async def receive_event(source: str, request: Request):
     body = await request.body()
 
@@ -206,7 +206,7 @@ async def receive_event(source: str, request: Request):
     }
 
 
-@router.get("/recent", response_model=RecentEvents)
+@router.get("/recent", response_model=RecentEvents, response_model_exclude_unset=True)
 async def recent_events(limit: int = 20, source: str | None = None):
     """Tail the events log. Limit caps at 200 to keep responses bounded."""
     limit = max(1, min(limit, 200))
@@ -232,7 +232,7 @@ async def recent_events(limit: int = 20, source: str | None = None):
     return {"events": out, "count": len(out)}
 
 
-@router.get("/subscriptions", response_model=Subscriptions)
+@router.get("/subscriptions", response_model=Subscriptions, response_model_exclude_unset=True)
 async def list_subscriptions():
     """Read-only view of which agents are wired to which sources. Strips
     metadata keys (those starting with `_`) and any non-list values so the

@@ -52,7 +52,7 @@ class PushStatus(BaseModel):
     host: str | None = None
 
 
-@router.post("/register", response_model=Registered)
+@router.post("/register", response_model=Registered, response_model_exclude_unset=True)
 async def register(body: RegisterBody) -> dict[str, Any]:
     try:
         return push.register_token(body.token, body.platform)
@@ -60,11 +60,11 @@ async def register(body: RegisterBody) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
-@router.delete("/register", response_model=Unregistered)
+@router.delete("/register", response_model=Unregistered, response_model_exclude_unset=True)
 async def unregister(body: RegisterBody) -> dict[str, Any]:
     return push.remove_token(body.token)
 
 
-@router.get("/status", response_model=PushStatus)
+@router.get("/status", response_model=PushStatus, response_model_exclude_unset=True)
 async def status() -> dict[str, Any]:
     return push.status()

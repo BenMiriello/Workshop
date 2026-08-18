@@ -147,7 +147,7 @@ class ServiceRegistry(BaseModel):
     credentials_cached: bool
 
 
-@router.get("/", response_model=ServiceRegistry)
+@router.get("/", response_model=ServiceRegistry, response_model_exclude_unset=True)
 async def list_services(refresh: bool = False):
     from services import auth_health
 

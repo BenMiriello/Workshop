@@ -47,7 +47,7 @@ class Backlinks(BaseModel):
     refs: list[str]
 
 
-@router.post("/resolve", response_model=ResolvedRefs)
+@router.post("/resolve", response_model=ResolvedRefs, response_model_exclude_unset=True)
 async def resolve(body: ResolveIn) -> dict:
     """`{resolved: {ref: {kind, title, href, status} | null}}` for every ref in
     the batch, de-duplicated. A ref that cannot be positively confirmed to
@@ -60,7 +60,7 @@ async def resolve(body: ResolveIn) -> dict:
     return {"resolved": out}
 
 
-@router.get("/backlinks", response_model=Backlinks)
+@router.get("/backlinks", response_model=Backlinks, response_model_exclude_unset=True)
 async def get_backlinks(ref: str) -> dict:
     """Every ref whose current body names `ref` -- the "referenced by" read.
     An index lookup, not a scan (see services/backlinks)."""

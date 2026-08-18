@@ -216,12 +216,12 @@ class DeployLog(BaseModel):
 # ---- cross-project ---------------------------------------------------------
 
 
-@router.get("/deploys", response_model=DeployList)
+@router.get("/deploys", response_model=DeployList, response_model_exclude_unset=True)
 def list_all():
     return {"deploys": deploys.list_all()}
 
 
-@router.get("/deploys/providers", response_model=ProviderCatalog)
+@router.get("/deploys/providers", response_model=ProviderCatalog, response_model_exclude_unset=True)
 def providers():
     return {"providers": deploy_providers.describe_all()}
 
@@ -229,17 +229,17 @@ def providers():
 # Deploys autonomy override — the workspace-level kill switch for shipping.
 # Independent of the workshop autonomy override (services/autonomy_override.py):
 # freezing agent dispatch and freezing prod deploys are separate decisions.
-@router.get("/deploys/autonomy/override", response_model=DeploysOverride)
+@router.get("/deploys/autonomy/override", response_model=DeploysOverride, response_model_exclude_unset=True)
 def override_read():
     return deploys_override.read()
 
 
-@router.post("/deploys/autonomy/override", response_model=DeploysOverride)
+@router.post("/deploys/autonomy/override", response_model=DeploysOverride, response_model_exclude_unset=True)
 def override_engage(body: OverrideEngageIn):
     return deploys_override.engage(reason=body.reason, by=body.by)
 
 
-@router.delete("/deploys/autonomy/override", response_model=DeploysOverride)
+@router.delete("/deploys/autonomy/override", response_model=DeploysOverride, response_model_exclude_unset=True)
 def override_clear():
     return deploys_override.clear()
 
@@ -247,12 +247,12 @@ def override_clear():
 # ---- per-project -----------------------------------------------------------
 
 
-@router.get("/projects/{slug}/deploys", response_model=DeployList)
+@router.get("/projects/{slug}/deploys", response_model=DeployList, response_model_exclude_unset=True)
 def list_project(slug: str):
     return {"deploys": deploys.list_by_project(slug)}
 
 
-@router.post("/projects/{slug}/deploys", response_model=Deploy)
+@router.post("/projects/{slug}/deploys", response_model=Deploy, response_model_exclude_unset=True)
 def create(slug: str, body: DeployIn):
     if body.target.get("kind") not in deploy_providers.kinds():
         raise HTTPException(400, f"unknown provider: {body.target.get('kind')}")
@@ -270,7 +270,7 @@ def create(slug: str, body: DeployIn):
     return rec
 
 
-@router.patch("/projects/{slug}/deploys/{deploy_id}", response_model=Deploy)
+@router.patch("/projects/{slug}/deploys/{deploy_id}", response_model=Deploy, response_model_exclude_unset=True)
 def patch(slug: str, deploy_id: str, body: DeployPatch):
     rec = deploys.get(deploy_id)
     if not rec or rec.get("project_slug") != slug:
@@ -284,7 +284,7 @@ def patch(slug: str, deploy_id: str, body: DeployPatch):
         raise HTTPException(400, str(e))
 
 
-@router.delete("/projects/{slug}/deploys/{deploy_id}", response_model=DeployDeleted)
+@router.delete("/projects/{slug}/deploys/{deploy_id}", response_model=DeployDeleted, response_model_exclude_unset=True)
 def remove(slug: str, deploy_id: str):
     rec = deploys.get(deploy_id)
     if not rec or rec.get("project_slug") != slug:
@@ -293,7 +293,7 @@ def remove(slug: str, deploy_id: str):
     return {"ok": True}
 
 
-@router.post("/projects/{slug}/deploys/{deploy_id}:deploy", response_model=RunKicked)
+@router.post("/projects/{slug}/deploys/{deploy_id}:deploy", response_model=RunKicked, response_model_exclude_unset=True)
 def kick(slug: str, deploy_id: str, body: KickIn):
     rec = deploys.get(deploy_id)
     if not rec or rec.get("project_slug") != slug:
@@ -307,7 +307,7 @@ def kick(slug: str, deploy_id: str, body: KickIn):
     return {"job_id": job_id}
 
 
-@router.post("/projects/{slug}/deploys/{deploy_id}:rollback", response_model=RunKicked)
+@router.post("/projects/{slug}/deploys/{deploy_id}:rollback", response_model=RunKicked, response_model_exclude_unset=True)
 def rollback(slug: str, deploy_id: str, body: RollbackIn):
     rec = deploys.get(deploy_id)
     if not rec or rec.get("project_slug") != slug:
@@ -327,7 +327,7 @@ def rollback(slug: str, deploy_id: str, body: RollbackIn):
     return {"job_id": job_id}
 
 
-@router.get("/projects/{slug}/deploys/{deploy_id}/runs", response_model=DeployRuns)
+@router.get("/projects/{slug}/deploys/{deploy_id}/runs", response_model=DeployRuns, response_model_exclude_unset=True)
 def list_runs(slug: str, deploy_id: str, limit: int = 20):
     rec = deploys.get(deploy_id)
     if not rec or rec.get("project_slug") != slug:
@@ -340,7 +340,7 @@ def list_runs(slug: str, deploy_id: str, limit: int = 20):
     return {"runs": runs[:limit]}
 
 
-@router.post("/deploys/watcher/tick", response_model=WatcherSweep)
+@router.post("/deploys/watcher/tick", response_model=WatcherSweep, response_model_exclude_unset=True)
 def watcher_tick():
     """One-shot manual sweep across all autonomous Deploys. Returns per-deploy
     decisions so the operator can see what happened. Called by the frontend
@@ -348,7 +348,7 @@ def watcher_tick():
     return {"results": deploy_watcher.tick_all()}
 
 
-@router.post("/projects/{slug}/deploys/{deploy_id}:tick", response_model=WatcherResult)
+@router.post("/projects/{slug}/deploys/{deploy_id}:tick", response_model=WatcherResult, response_model_exclude_unset=True)
 def watcher_tick_one(slug: str, deploy_id: str):
     """Force a single-Deploy watcher tick. Handy for testing without waiting
     for the loop interval."""
@@ -358,7 +358,7 @@ def watcher_tick_one(slug: str, deploy_id: str):
     return deploy_watcher.tick_one(deploy_id)
 
 
-@router.get("/projects/{slug}/deploys/{deploy_id}/notice", response_model=DeployNotice)
+@router.get("/projects/{slug}/deploys/{deploy_id}/notice", response_model=DeployNotice, response_model_exclude_unset=True)
 def read_notice(slug: str, deploy_id: str):
     """The 'change detected but paused' notice, if any. Cleared automatically
     on the next kick."""
@@ -368,7 +368,7 @@ def read_notice(slug: str, deploy_id: str):
     return deploy_watcher.read_notice(deploy_id) or {"none": True}
 
 
-@router.get("/deploys/{deploy_id}/log/{run_id}", response_model=DeployLog)
+@router.get("/deploys/{deploy_id}/log/{run_id}", response_model=DeployLog, response_model_exclude_unset=True)
 def read_log(deploy_id: str, run_id: str, tail: int = 200):
     from services.deploy_runner import RUNS_ROOT
     p: Path = RUNS_ROOT / deploy_id / "runs" / f"{run_id}.log"

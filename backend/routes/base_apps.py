@@ -372,7 +372,7 @@ def _git_meta(repo: Path):
         return None
 
 
-@router.get("/", response_model=list[BaseApp])
+@router.get("/", response_model=list[BaseApp], response_model_exclude_unset=True)
 async def list_base_apps():
     if not BASE_APPS_ROOT.exists():
         raise HTTPException(404, "base apps root missing")
@@ -393,7 +393,7 @@ async def list_base_apps():
 # expose the declared manifests; nothing here enforces scope or grants.
 
 
-@router.get("/launcher", response_model=LauncherCards)
+@router.get("/launcher", response_model=LauncherCards, response_model_exclude_unset=True)
 async def get_launcher():
     """Launcher cards for the apps installed on THIS instance, in installed order.
 
@@ -404,13 +404,13 @@ async def get_launcher():
     return {"apps": app_registry.launcher_cards()}
 
 
-@router.get("/manifests", response_model=AppManifests)
+@router.get("/manifests", response_model=AppManifests, response_model_exclude_unset=True)
 async def get_app_manifests():
     """Return the full app manifest map: {"apps": {<id>: {...}}}."""
     return {"apps": manifests.load_manifests()}
 
 
-@router.get("/manifests/{app_id}", response_model=AppManifest)
+@router.get("/manifests/{app_id}", response_model=AppManifest, response_model_exclude_unset=True)
 async def get_app_manifest(app_id: str):
     """Return a single app's manifest, or 404 if it is not declared."""
     entry = manifests.get_manifest(app_id)
@@ -423,7 +423,7 @@ class AppUiIn(BaseModel):
     agent_button: bool | None = None
 
 
-@router.put("/manifests/{app_id}/ui", response_model=AppManifest)
+@router.put("/manifests/{app_id}/ui", response_model=AppManifest, response_model_exclude_unset=True)
 async def set_app_manifest_ui(app_id: str, body: AppUiIn):
     """Update an app's per-app UI settings (currently `agent_button`, which gates
     the floating assistant dock inside the app) and persist apps.json. Returns the
@@ -443,7 +443,7 @@ async def set_app_manifest_ui(app_id: str, body: AppUiIn):
 # CONSULTED source of truth — default-permissive for the operator — not a wall.
 
 
-@router.get("/permissions/{app_id}", response_model=AppPermissions)
+@router.get("/permissions/{app_id}", response_model=AppPermissions, response_model_exclude_unset=True)
 async def get_app_permissions(app_id: str):
     """Assistant capabilities for an app under the operator identity: what a data
     assistant bound to this app may actually do (can_read, resolved action
@@ -473,13 +473,13 @@ class InstallIn(BaseModel):
     target_slug: str | None = None
 
 
-@router.get("/registry", response_model=RegistryCatalog)
+@router.get("/registry", response_model=RegistryCatalog, response_model_exclude_unset=True)
 async def list_registry():
     """Return the registry catalog: {"items": [...]}."""
     return {"items": registry.list_items()}
 
 
-@router.get("/registry/{item_id}", response_model=RegistryItem)
+@router.get("/registry/{item_id}", response_model=RegistryItem, response_model_exclude_unset=True)
 async def get_registry_item(item_id: str):
     """Return a single registry item, or 404 if it is not published."""
     item = registry.get_item(item_id)
@@ -488,7 +488,7 @@ async def get_registry_item(item_id: str):
     return item
 
 
-@router.post("/registry/publish", response_model=RegistryItem)
+@router.post("/registry/publish", response_model=RegistryItem, response_model_exclude_unset=True)
 async def publish_registry_item(body: PublishIn):
     """Publish a project as a new local release. 404 if the project is unknown,
     400 if it is not a git repo with at least one commit."""
@@ -504,7 +504,7 @@ async def publish_registry_item(body: PublishIn):
         raise HTTPException(e.status, e.message)
 
 
-@router.post("/registry/{item_id}/install", response_model=InstalledProject)
+@router.post("/registry/{item_id}/install", response_model=InstalledProject, response_model_exclude_unset=True)
 async def install_registry_item(item_id: str, body: InstallIn = Body(default=InstallIn())):
     """Fork a registry item into the workspace and register it as a project.
     404 if the item is missing, 409 if the target slug exists and cannot be
@@ -515,7 +515,7 @@ async def install_registry_item(item_id: str, body: InstallIn = Body(default=Ins
         raise HTTPException(e.status, e.message)
 
 
-@router.get("/registry/projects/{slug}/status", response_model=RegistryUpdateStatus)
+@router.get("/registry/projects/{slug}/status", response_model=RegistryUpdateStatus, response_model_exclude_unset=True)
 async def registry_project_status(slug: str):
     """Whether a newer upstream release is available for an installed project.
     Returns {current, latest, update_available}. 404 if the project is unknown
@@ -526,7 +526,7 @@ async def registry_project_status(slug: str):
         raise HTTPException(e.status, e.message)
 
 
-@router.post("/registry/projects/{slug}/update", response_model=RegistryUpdateResult)
+@router.post("/registry/projects/{slug}/update", response_model=RegistryUpdateResult, response_model_exclude_unset=True)
 async def registry_project_update(slug: str):
     """Pull the project's latest upstream release and merge it into the current
     branch (doc 03 section 4, "update via branch merge"). On a clean merge:
@@ -550,7 +550,7 @@ class GcRunIn(BaseModel):
     apply: bool = True
 
 
-@router.get("/gc/preview", response_model=GcReport)
+@router.get("/gc/preview", response_model=GcReport, response_model_exclude_unset=True)
 async def gc_preview():
     """Report what is reapable: merged worktrees, per-project checkpoint counts
     (squashable beyond retention, report-only), and stopped dev-server runtimes.
@@ -558,7 +558,7 @@ async def gc_preview():
     return gc.preview()
 
 
-@router.post("/gc/run", response_model=GcReport)
+@router.post("/gc/run", response_model=GcReport, response_model_exclude_unset=True)
 async def gc_run(body: GcRunIn = Body(default=GcRunIn())):
     """Perform the SAFE reaps (merged worktrees + stopped runtimes) when
     apply=true; with apply=false this is equivalent to preview for those two
@@ -584,7 +584,7 @@ async def gc_run(body: GcRunIn = Body(default=GcRunIn())):
 # registry constant and its surface reflection (_reflect_surface).
 
 
-@router.get("/run/{slug}/manifest", response_model=AppRunManifest)
+@router.get("/run/{slug}/manifest", response_model=AppRunManifest, response_model_exclude_unset=True)
 async def run_manifest(slug: str):
     """The resolved app manifest (declared workshop.app.json, else auto-detected):
     {name, detected, services[], deps[]}."""
@@ -594,7 +594,7 @@ async def run_manifest(slug: str):
         raise HTTPException(e.status, e.message)
 
 
-@router.post("/run/{slug}/start", response_model=AppStatus)
+@router.post("/run/{slug}/start", response_model=AppStatus, response_model_exclude_unset=True)
 async def run_start(slug: str):
     """Start all enabled services. Returns immediately with a 'starting' snapshot;
     build + spawn proceed on a background thread. Poll status for progress."""
@@ -604,25 +604,25 @@ async def run_start(slug: str):
         raise HTTPException(e.status, e.message)
 
 
-@router.post("/run/{slug}/stop", response_model=AppStatus)
+@router.post("/run/{slug}/stop", response_model=AppStatus, response_model_exclude_unset=True)
 async def run_stop(slug: str):
     """Stop all services and set desired state = stopped (monitor won't restart)."""
     return app_runner.stop_app(slug)
 
 
-@router.get("/run/{slug}/status", response_model=AppStatus)
+@router.get("/run/{slug}/status", response_model=AppStatus, response_model_exclude_unset=True)
 async def run_status(slug: str):
     """Live per-service status + health, app phase, desired state, declared deps."""
     return app_runner.app_status(slug)
 
 
-@router.get("/run/{slug}/logs", response_model=ServiceLog)
+@router.get("/run/{slug}/logs", response_model=ServiceLog, response_model_exclude_unset=True)
 async def run_logs(slug: str, service: str):
     """Tail one service's combined build+run log."""
     return {"service": service, "log": app_runner.app_logs(slug, service)}
 
 
-@router.post("/run/{slug}/services/{service}/restart", response_model=AppStatus)
+@router.post("/run/{slug}/services/{service}/restart", response_model=AppStatus, response_model_exclude_unset=True)
 async def run_restart_service(slug: str, service: str):
     """Re-spawn one service (no rebuild). Manual counterpart to the monitor."""
     try:
@@ -631,7 +631,7 @@ async def run_restart_service(slug: str, service: str):
         raise HTTPException(e.status, e.message)
 
 
-@router.get("/run", response_model=AppList)
+@router.get("/run", response_model=AppList, response_model_exclude_unset=True)
 async def run_list():
     """Status of every app the runner knows about."""
     return {"apps": app_runner.list_apps()}
@@ -648,14 +648,14 @@ class EnvValuesIn(BaseModel):
     values: dict[str, str]
 
 
-@router.get("/run/{slug}/env", response_model=EnvOverview)
+@router.get("/run/{slug}/env", response_model=EnvOverview, response_model_exclude_unset=True)
 async def run_env(slug: str):
     """Declared env requirements + per-key SET status (never values). Also lists
     any stored keys not declared as requirements."""
     return app_runner.env_overview(slug)
 
 
-@router.put("/run/{slug}/env", response_model=EnvOverview)
+@router.put("/run/{slug}/env", response_model=EnvOverview, response_model_exclude_unset=True)
 async def run_env_set(slug: str, body: EnvValuesIn):
     """Set/merge env values for a project. A blank value clears that key. Returns
     the refreshed presence-only overview (no values echoed back)."""
@@ -664,7 +664,7 @@ async def run_env_set(slug: str, body: EnvValuesIn):
     return app_runner.env_overview(slug)
 
 
-@router.delete("/run/{slug}/env/{key}", response_model=EnvOverview)
+@router.delete("/run/{slug}/env/{key}", response_model=EnvOverview, response_model_exclude_unset=True)
 async def run_env_delete(slug: str, key: str):
     """Unset one env value. Returns the refreshed overview."""
     from services import secrets_store
@@ -672,7 +672,7 @@ async def run_env_delete(slug: str, key: str):
     return app_runner.env_overview(slug)
 
 
-@router.get("/ports", response_model=PortRegistry)
+@router.get("/ports", response_model=PortRegistry, response_model_exclude_unset=True)
 async def ports():
     """The central port registry: every current local-service port allocation
     (preview / deploy / app), after a reconcile pass. The single source of truth

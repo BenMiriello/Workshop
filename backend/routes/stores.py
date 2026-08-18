@@ -157,7 +157,7 @@ class StoreWrite(BaseModel):
     modified: float | None = None
 
 
-@router.get("/stores", response_model=StoreCatalog)
+@router.get("/stores", response_model=StoreCatalog, response_model_exclude_unset=True)
 async def list_stores(type: str | None = None, app: str | None = None, project: str | None = None):
     """The declared Store catalog with each Store's policy tier.
 
@@ -184,7 +184,7 @@ async def list_stores(type: str | None = None, app: str | None = None, project: 
     return {"stores": out, "types": stores.types(), "tiers": list(policy.TIERS)}
 
 
-@router.get("/stores/policies", response_model=StorePolicies)
+@router.get("/stores/policies", response_model=StorePolicies, response_model_exclude_unset=True)
 async def list_policies():
     """The operator's policy records. An empty list is the normal, correct state
     for an installation that gates nothing."""
@@ -195,7 +195,7 @@ async def list_policies():
         raise HTTPException(500, f"policy error: {e}")
 
 
-@router.get("/stores/export", response_model=StoreExport)
+@router.get("/stores/export", response_model=StoreExport, response_model_exclude_unset=True)
 async def export_store(uri: str):
     """Serialize a Store to a portable artifact directory and return its path.
     Read-only over the source (never moves/deletes/chmods). 404 if not declared."""
@@ -216,7 +216,7 @@ class ReadIn(BaseModel):
     token: str | None = None                 # an existing grant, if the caller holds one
 
 
-@router.post("/stores/{store_id}/read", response_model=StoreRead)
+@router.post("/stores/{store_id}/read", response_model=StoreRead, response_model_exclude_unset=True)
 async def read_store(store_id: str, body: ReadIn = Body(...)):
     """Read/list/search a Store.
 
@@ -258,7 +258,7 @@ class WriteIn(BaseModel):
     token: str | None = None
 
 
-@router.post("/stores/{store_id}/write", response_model=StoreWrite)
+@router.post("/stores/{store_id}/write", response_model=StoreWrite, response_model_exclude_unset=True)
 async def write_store(store_id: str, body: WriteIn = Body(...)):
     """Write/append through a Store. Grant-checked; never adjudicated, because
     there is no filtered view of a write."""

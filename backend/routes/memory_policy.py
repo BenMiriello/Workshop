@@ -54,14 +54,14 @@ class MemoryPolicy(BaseModel):
     items: dict[str, str]
 
 
-@router.get("", response_model=MemoryPolicy)
+@router.get("", response_model=MemoryPolicy, response_model_exclude_unset=True)
 def read_policy() -> dict:
     """The whole document. Absent file reads as the defaults and is not created
     by reading it."""
     return memory_policy.read()
 
 
-@router.put("/defaults", response_model=MemoryPolicy)
+@router.put("/defaults", response_model=MemoryPolicy, response_model_exclude_unset=True)
 def put_defaults(body: DefaultsBody) -> dict:
     """Merge into the global per-kind defaults. This is where the operator
     changes the chat-transcript default, which ships as `private`."""
@@ -71,7 +71,7 @@ def put_defaults(body: DefaultsBody) -> dict:
         raise HTTPException(400, str(e)) from e
 
 
-@router.put("/scopes", response_model=MemoryPolicy)
+@router.put("/scopes", response_model=MemoryPolicy, response_model_exclude_unset=True)
 def put_scopes(body: ScopesBody) -> dict:
     try:
         return memory_policy.set_scopes(body.scopes)
@@ -79,7 +79,7 @@ def put_scopes(body: ScopesBody) -> dict:
         raise HTTPException(400, str(e)) from e
 
 
-@router.put("/item", response_model=MemoryPolicy)
+@router.put("/item", response_model=MemoryPolicy, response_model_exclude_unset=True)
 def put_item(body: ItemBody) -> dict:
     """Set or clear one item's override, keyed by its Phase 3 ref."""
     try:

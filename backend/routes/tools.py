@@ -88,7 +88,7 @@ class ToolList(BaseModel):
     tools: list[str]
 
 
-@router.post("/{tool_name}", response_model=ToolResult)
+@router.post("/{tool_name}", response_model=ToolResult, response_model_exclude_unset=True)
 def call_tool(tool_name: str, body: ToolCall | None = None) -> dict:
     func = DISPATCH.get(tool_name)
     if func is None:
@@ -105,6 +105,6 @@ def call_tool(tool_name: str, body: ToolCall | None = None) -> dict:
     return {"result": result if isinstance(result, str) else str(result)}
 
 
-@router.get("/_list", response_model=ToolList)
+@router.get("/_list", response_model=ToolList, response_model_exclude_unset=True)
 def list_tools() -> dict:
     return {"tools": sorted(DISPATCH.keys())}
