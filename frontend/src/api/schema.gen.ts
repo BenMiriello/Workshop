@@ -7889,6 +7889,123 @@ export interface components {
             /** Templates */
             templates: components["schemas"]["AgentTemplate"][];
         };
+        /** AppList */
+        AppList: {
+            /** Apps */
+            apps: components["schemas"]["AppStatus"][];
+        };
+        /**
+         * AppManifest
+         * @description `manifests._normalize_entry`'s output, which is a closed shape: every
+         *     field is filled in by the normalizer, so none of it is conditional.
+         *     `provides`/`needs` are flattened capability strings, with any declared store
+         *     types carried alongside in the parallel `*_types` maps.
+         */
+        AppManifest: {
+            /** Actions */
+            actions: {
+                [key: string]: string;
+            };
+            /** Api Prefixes */
+            api_prefixes: string[];
+            /** Kit */
+            kit: string;
+            /** Need Types */
+            need_types: {
+                [key: string]: string;
+            };
+            /** Needs */
+            needs: string[];
+            /** Provide Types */
+            provide_types: {
+                [key: string]: string;
+            };
+            /** Provides */
+            provides: string[];
+            /** Sensitivity */
+            sensitivity: string;
+            /** Title */
+            title: string;
+            /** Ui */
+            ui: {
+                [key: string]: boolean;
+            };
+        };
+        /** AppManifests */
+        AppManifests: {
+            /** Apps */
+            apps: {
+                [key: string]: components["schemas"]["AppManifest"];
+            };
+        };
+        /**
+         * AppPermissions
+         * @description What an assistant bound to this app may actually do. This is what the chat
+         *     layer consults so an assistant's preamble states its real allowed actions.
+         *     `actions` maps each DECLARED action to a resolved decision; an app that
+         *     declares none gets an empty map, and `can_read` covers the read surface.
+         */
+        AppPermissions: {
+            /** Actions */
+            actions: {
+                [key: string]: string;
+            };
+            /** App */
+            app: string;
+            /** Can Read */
+            can_read: boolean;
+            /** Identity */
+            identity: string;
+            /** Reachable Apps */
+            reachable_apps: string[];
+        };
+        /**
+         * AppRunManifest
+         * @description The resolved manifest: the declared `workshop.app.json`, else what was
+         *     auto-detected. A known project with nothing runnable yet answers with the
+         *     same shape and empty lists rather than an error.
+         */
+        AppRunManifest: {
+            /** Builtin */
+            builtin?: boolean | null;
+            /** Deps */
+            deps: components["schemas"]["DepSpec"][];
+            /** Detected */
+            detected: boolean;
+            /** Env Requirements */
+            env_requirements: components["schemas"]["EnvRequirementOut"][];
+            /** Name */
+            name: string;
+            /** Self */
+            self?: boolean | null;
+            /** Services */
+            services: components["schemas"]["ServiceSpec"][];
+        };
+        /**
+         * AppStatus
+         * @description Probed on every call, never cached, so the snapshot is current. `desired`
+         *     and `deps` are absent on the stop path for an app the runner never held, and
+         *     `self`/`backend` only appear where they apply -- described as emitted rather
+         *     than padded, since padding is a wire-shape change.
+         */
+        AppStatus: {
+            /** Backend */
+            backend?: string | null;
+            /** Deps */
+            deps?: components["schemas"]["DepStatus"][] | null;
+            /** Desired */
+            desired?: string | null;
+            /** Manifest Detected */
+            manifest_detected?: boolean | null;
+            /** Phase */
+            phase: string;
+            /** Self */
+            self?: boolean | null;
+            /** Services */
+            services: components["schemas"]["ServiceStatus"][];
+            /** Slug */
+            slug: string;
+        };
         /** AppUiIn */
         AppUiIn: {
             /** Agent Button */
@@ -8075,6 +8192,26 @@ export interface components {
              * @default
              */
             text: string;
+        };
+        /**
+         * BaseApp
+         * @description One top-level directory containing a `.git/`. The git fields are absent
+         *     when `git log` failed (a repo with no commits, or a timeout), which is why
+         *     every one of them is optional.
+         */
+        BaseApp: {
+            /** Branch */
+            branch?: string | null;
+            /** Commit */
+            commit?: string | null;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Subject */
+            subject?: string | null;
+            /** Ts */
+            ts?: string | null;
         };
         /** Body_analyze_birds_analyze_post */
         Body_analyze_birds_analyze_post: {
@@ -8879,6 +9016,24 @@ export interface components {
             /** Deleted */
             deleted: boolean;
         };
+        /** DepSpec */
+        DepSpec: {
+            /** Compose File */
+            compose_file?: string | null;
+            /** Compose Service */
+            compose_service?: string | null;
+            /** Name */
+            name: string;
+        };
+        /** DepStatus */
+        DepStatus: {
+            /** Error */
+            error?: string | null;
+            /** Name */
+            name: string;
+            /** Ok */
+            ok: boolean;
+        };
         /** DeployIn */
         DeployIn: {
             /**
@@ -9157,6 +9312,49 @@ export interface components {
             /** Levels */
             levels: string[];
         };
+        /**
+         * EnvOverview
+         * @description Presence only -- values are write-only and never returned here.
+         *     `undeclared_set` is keys with a stored value and no declared requirement, so
+         *     they are visible rather than silently held.
+         */
+        EnvOverview: {
+            /** Missing Required */
+            missing_required: string[];
+            /** Requirements */
+            requirements: components["schemas"]["EnvRequirementOut"][];
+            /** Self */
+            self?: boolean | null;
+            /** Slug */
+            slug: string;
+            /** Undeclared Set */
+            undeclared_set: string[];
+        };
+        /**
+         * EnvRequirementOut
+         * @description A declared env requirement. `set` is presence only and is stamped by
+         *     `env_overview`; the manifest route returns the requirement without it.
+         */
+        EnvRequirementOut: {
+            /** Description */
+            description?: string | null;
+            /** Example */
+            example?: string | null;
+            /** Group */
+            group?: string | null;
+            /** How To Obtain */
+            how_to_obtain?: string | null;
+            /** Key */
+            key: string;
+            /** Required */
+            required: boolean;
+            /** Secret */
+            secret: boolean;
+            /** Service */
+            service?: string | null;
+            /** Set */
+            set?: boolean | null;
+        };
         /** EnvValuesIn */
         EnvValuesIn: {
             /** Values */
@@ -9252,6 +9450,18 @@ export interface components {
             /** Template */
             template: string;
         };
+        /**
+         * GcReport
+         * @description Checkpoint history is REPORTED, never rewritten here: rewriting history is
+         *     exactly what the git-guard hook blocks for agents. Each checkpoint entry is
+         *     `describe_checkpoint_thinning`'s report for one project and is left open.
+         */
+        GcReport: {
+            /** Checkpoints */
+            checkpoints: Record<string, never>[];
+            merged_worktrees: components["schemas"]["GcWorktrees"];
+            stopped_runtimes: components["schemas"]["GcRuntimes"];
+        };
         /** GcRunIn */
         GcRunIn: {
             /**
@@ -9259,6 +9469,40 @@ export interface components {
              * @default true
              */
             apply: boolean;
+        };
+        /**
+         * GcRuntimes
+         * @description `available: false` means the dev-server module is not loadable, which is a
+         *     different answer from 'nothing to reap'.
+         */
+        GcRuntimes: {
+            /** Applied */
+            applied: boolean;
+            /** Available */
+            available: boolean;
+            /** Candidates */
+            candidates?: Record<string, never>[] | null;
+            /** Cleared */
+            cleared?: Record<string, never>[] | null;
+            /** Count */
+            count: number;
+        };
+        /**
+         * GcWorktrees
+         * @description `candidates` on a preview, `reaped`/`failed` after an apply. `count` means
+         *     candidates before and reaped after.
+         */
+        GcWorktrees: {
+            /** Applied */
+            applied: boolean;
+            /** Candidates */
+            candidates?: Record<string, never>[] | null;
+            /** Count */
+            count: number;
+            /** Failed */
+            failed?: Record<string, never>[] | null;
+            /** Reaped */
+            reaped?: Record<string, never>[] | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -9381,6 +9625,39 @@ export interface components {
         InstallIn: {
             /** Target Slug */
             target_slug?: string | null;
+        };
+        /**
+         * InstalledProject
+         * @description The projects-hub record a fork is registered as, with the registry
+         *     provenance `update_from_upstream` later reads.
+         */
+        InstalledProject: {
+            /** Claude Session */
+            claude_session?: string | null;
+            /** Created */
+            created: string;
+            /** Dir */
+            dir: string;
+            /** From Registry */
+            from_registry?: Record<string, never> | null;
+            /** Last Touched */
+            last_touched: string;
+            /** Needs */
+            needs: string[];
+            /** Provides */
+            provides: string[];
+            /** Purpose */
+            purpose: string;
+            /** Sensitivity */
+            sensitivity: string;
+            /** Slug */
+            slug: string;
+            /** State */
+            state: string;
+            /** Surfaces */
+            surfaces: Record<string, never>;
+            /** Title */
+            title: string;
         };
         /**
          * InterventionAppendOut
@@ -9548,6 +9825,44 @@ export interface components {
         LabelsOut: {
             /** Labels */
             labels: components["schemas"]["LabelCount"][];
+        };
+        /**
+         * LauncherCard
+         * @description A launcher card. The display fields come from the app spec's own `card`
+         *     and vary by app -- an external app carries `href`/`external`/`probe` where a
+         *     built-in carries `route` -- so the set is left open rather than narrowed to
+         *     whichever subset the built-ins happen to use today.
+         */
+        LauncherCard: {
+            /** Agent Button */
+            agent_button: boolean;
+            /** External */
+            external?: boolean | null;
+            /** Href */
+            href?: string | null;
+            /** Icon */
+            icon?: string | null;
+            /** Id */
+            id: string;
+            /** Probe */
+            probe?: string | null;
+            /** Route */
+            route?: string | null;
+            /** Tagline */
+            tagline?: string | null;
+            /** Title */
+            title?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * LauncherCards
+         * @description Empty on a fresh instance with nothing installed, which is the correct
+         *     blank-container state rather than an error.
+         */
+        LauncherCards: {
+            /** Apps */
+            apps: components["schemas"]["LauncherCard"][];
         };
         /** LiveBody */
         LiveBody: {
@@ -9985,6 +10300,38 @@ export interface components {
             permission_mode?: string | null;
             /** State */
             state: string;
+        };
+        /**
+         * PortAllocation
+         * @description One live port claim. The owner string is the allocating surface plus its
+         *     subject, which is what makes a claim reconcilable against a dead process.
+         */
+        PortAllocation: {
+            /** Claimed At */
+            claimed_at?: string | null;
+            /** Kind */
+            kind?: string | null;
+            /** Owner */
+            owner?: string | null;
+            /** Pid */
+            pid?: number | null;
+            /** Port */
+            port?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PortRegistry
+         * @description The single source of truth that prevents port conflicts across all three
+         *     runners. `windows` is the per-kind (lo, hi) range.
+         */
+        PortRegistry: {
+            /** Allocations */
+            allocations: components["schemas"]["PortAllocation"][];
+            /** Windows */
+            windows: {
+                [key: string]: number[];
+            };
         };
         /** PostMessage */
         PostMessage: {
@@ -10457,6 +10804,87 @@ export interface components {
             /** Target Scope */
             target_scope: string;
         };
+        /** RegistryCatalog */
+        RegistryCatalog: {
+            /** Items */
+            items: components["schemas"]["RegistryItem"][];
+        };
+        /**
+         * RegistryItem
+         * @description A published local release. `manifest` is the source project's manifest
+         *     blob captured at publish time and is left open: it is a snapshot of another
+         *     document's shape, not this route's.
+         */
+        RegistryItem: {
+            /** Bundle Path */
+            bundle_path: string;
+            /** Description */
+            description: string;
+            /** History */
+            history: components["schemas"]["RegistryRelease"][];
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Manifest */
+            manifest?: Record<string, never> | null;
+            /** Published At */
+            published_at: string;
+            /** Sensitivity */
+            sensitivity: string;
+            /** Source Slug */
+            source_slug: string;
+            /** Title */
+            title: string;
+            /** Version */
+            version: string;
+        };
+        /** RegistryRelease */
+        RegistryRelease: {
+            /** Bundle Path */
+            bundle_path: string;
+            /** Published At */
+            published_at: string;
+            /** Version */
+            version: string;
+        };
+        /**
+         * RegistryUpdateResult
+         * @description Three outcomes from one emitter: a clean merge (`updated`, `merged`), an
+         *     aborted conflict (`conflict` with a `reason`, working tree restored), and
+         *     already-current (`reason: "up to date"`). Optional accordingly.
+         */
+        RegistryUpdateResult: {
+            /** Conflict */
+            conflict?: boolean | null;
+            /** Current */
+            current?: string | null;
+            /** From */
+            from?: string | null;
+            /** Latest */
+            latest?: string | null;
+            /** Merged */
+            merged?: boolean | null;
+            /** Reason */
+            reason?: string | null;
+            /** To */
+            to?: string | null;
+            /** Updated */
+            updated: boolean;
+        };
+        /**
+         * RegistryUpdateStatus
+         * @description `latest` is null when the upstream item has no releases; that is not the
+         *     same as being up to date, which is why `update_available` is its own field.
+         */
+        RegistryUpdateStatus: {
+            /** Current */
+            current?: string | null;
+            /** Latest */
+            latest?: string | null;
+            /** Update Available */
+            update_available: boolean;
+        };
         /** RenameBranch */
         RenameBranch: {
             /** Name */
@@ -10715,6 +11143,82 @@ export interface components {
             limit: number;
             /** Query */
             query: string;
+        };
+        /**
+         * ServiceLog
+         * @description The tail of one service's combined build+run log, at most 16 KiB.
+         */
+        ServiceLog: {
+            /** Log */
+            log: string;
+            /** Service */
+            service: string;
+        };
+        /**
+         * ServiceSpec
+         * @description One declared service. `env_keys` is the KEY NAMES only -- values never
+         *     cross this boundary.
+         */
+        ServiceSpec: {
+            /** Build */
+            build?: string | null;
+            /** Cwd */
+            cwd?: string | null;
+            /** Depends On */
+            depends_on: string[];
+            /** Disabled Reason */
+            disabled_reason?: string | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Env Keys */
+            env_keys: string[];
+            /** Expose */
+            expose: boolean;
+            /** Health */
+            health?: string | null;
+            /** Name */
+            name: string;
+            /** Port Env */
+            port_env?: string | null;
+            /** Start */
+            start?: string | null;
+        };
+        /**
+         * ServiceStatus
+         * @description `restarts` counts CRASH restarts only, and only the container backend is
+         *     in a position to observe them -- the subprocess backend always reports 0
+         *     because it has no supervisor watching. An operator pressing Restart is
+         *     deliberately not counted: that tally once read as a crashloop on a service
+         *     that had simply been redeployed 425 times.
+         *
+         *     `started_at` is a float of epoch seconds on the subprocess path and whatever
+         *     docker reports on the container path, so it is left open.
+         */
+        ServiceStatus: {
+            /** Error */
+            error?: string | null;
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Expose */
+            expose: boolean;
+            /** Healthy */
+            healthy?: boolean | null;
+            /** Name */
+            name: string;
+            /** Oom Killed */
+            oom_killed: boolean;
+            /** Pid */
+            pid?: number | null;
+            /** Port */
+            port?: number | null;
+            /** Restarts */
+            restarts: number;
+            /** Started At */
+            started_at?: unknown;
+            /** Status */
+            status?: string | null;
+            /** Url */
+            url?: string | null;
         };
         /** SessionBody */
         SessionBody: {
@@ -13625,7 +14129,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BaseApp"][];
                 };
             };
         };
@@ -13645,7 +14149,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["GcReport"];
                 };
             };
         };
@@ -13669,7 +14173,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["GcReport"];
                 };
             };
             /** @description Validation Error */
@@ -13698,7 +14202,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["LauncherCards"];
                 };
             };
         };
@@ -13718,7 +14222,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppManifests"];
                 };
             };
         };
@@ -13740,7 +14244,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppManifest"];
                 };
             };
             /** @description Validation Error */
@@ -13775,7 +14279,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppManifest"];
                 };
             };
             /** @description Validation Error */
@@ -13806,7 +14310,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppPermissions"];
                 };
             };
             /** @description Validation Error */
@@ -13835,7 +14339,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PortRegistry"];
                 };
             };
         };
@@ -13855,7 +14359,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RegistryCatalog"];
                 };
             };
         };
@@ -13877,7 +14381,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RegistryUpdateStatus"];
                 };
             };
             /** @description Validation Error */
@@ -13908,7 +14412,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RegistryUpdateResult"];
                 };
             };
             /** @description Validation Error */
@@ -13941,7 +14445,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RegistryItem"];
                 };
             };
             /** @description Validation Error */
@@ -13972,7 +14476,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RegistryItem"];
                 };
             };
             /** @description Validation Error */
@@ -14007,7 +14511,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["InstalledProject"];
                 };
             };
             /** @description Validation Error */
@@ -14036,7 +14540,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppList"];
                 };
             };
         };
@@ -14058,7 +14562,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EnvOverview"];
                 };
             };
             /** @description Validation Error */
@@ -14093,7 +14597,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EnvOverview"];
                 };
             };
             /** @description Validation Error */
@@ -14125,7 +14629,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EnvOverview"];
                 };
             };
             /** @description Validation Error */
@@ -14158,7 +14662,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ServiceLog"];
                 };
             };
             /** @description Validation Error */
@@ -14189,7 +14693,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppRunManifest"];
                 };
             };
             /** @description Validation Error */
@@ -14452,7 +14956,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppStatus"];
                 };
             };
             /** @description Validation Error */
@@ -14483,7 +14987,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppStatus"];
                 };
             };
             /** @description Validation Error */
@@ -14514,7 +15018,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppStatus"];
                 };
             };
             /** @description Validation Error */
@@ -14545,7 +15049,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppStatus"];
                 };
             };
             /** @description Validation Error */

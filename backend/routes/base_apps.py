@@ -8,11 +8,12 @@ to match the original top-nav tab); moved to /base-apps/ per ADR-008 so
 import os
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from services import app_overlay, app_registry, app_runner, gc, manifests, permissions, port_registry, registry
 
@@ -20,6 +21,339 @@ router = APIRouter()
 
 # Defaults to the tenant home. Configurable to scan a different root if needed.
 BASE_APPS_ROOT = Path(os.environ.get("WORKSHOP_BASE_APPS_ROOT", str(Path.home())))
+
+
+# ---- Response models (ADR 0023 clause 6) ------------------------------------
+# Read off the emitters -- services/app_registry, manifests, permissions,
+# registry, gc, app_runner, port_registry -- not off the frontend's types.
+# FastAPI FILTERS a return value through the declared model and silently drops
+# any key the model does not name, so an under-declared field here is a live API
+# field that disappears. Where a payload is genuinely open at this layer it is
+# typed openly and the reason is on the model.
+#
+# Clause 4 (RFC3339, `*_at`) is NOT applied: `ts`, `published_at`, `claimed_at`
+# and `started_at` (a float of epoch seconds) are the names and encodings the
+# stores and the frontend already use, and renaming them is a wire-shape change
+# that the ADR's migration posture says must land with its frontend edit.
+
+
+class BaseApp(BaseModel):
+    """One top-level directory containing a `.git/`. The git fields are absent
+    when `git log` failed (a repo with no commits, or a timeout), which is why
+    every one of them is optional."""
+
+    name: str
+    path: str
+    commit: str | None = None
+    subject: str | None = None
+    ts: str | None = None
+    branch: str | None = None
+
+
+class LauncherCard(BaseModel):
+    """A launcher card. The display fields come from the app spec's own `card`
+    and vary by app -- an external app carries `href`/`external`/`probe` where a
+    built-in carries `route` -- so the set is left open rather than narrowed to
+    whichever subset the built-ins happen to use today."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    agent_button: bool
+    title: str | None = None
+    tagline: str | None = None
+    icon: str | None = None
+    route: str | None = None
+    href: str | None = None
+    external: bool | None = None
+    probe: str | None = None
+
+
+class LauncherCards(BaseModel):
+    """Empty on a fresh instance with nothing installed, which is the correct
+    blank-container state rather than an error."""
+
+    apps: list[LauncherCard]
+
+
+class AppManifest(BaseModel):
+    """`manifests._normalize_entry`'s output, which is a closed shape: every
+    field is filled in by the normalizer, so none of it is conditional.
+    `provides`/`needs` are flattened capability strings, with any declared store
+    types carried alongside in the parallel `*_types` maps."""
+
+    title: str
+    sensitivity: str
+    api_prefixes: list[str]
+    provides: list[str]
+    needs: list[str]
+    provide_types: dict[str, str]
+    need_types: dict[str, str]
+    actions: dict[str, str]
+    ui: dict[str, bool]
+    kit: str
+
+
+class AppManifests(BaseModel):
+    apps: dict[str, AppManifest]
+
+
+class AppPermissions(BaseModel):
+    """What an assistant bound to this app may actually do. This is what the chat
+    layer consults so an assistant's preamble states its real allowed actions.
+    `actions` maps each DECLARED action to a resolved decision; an app that
+    declares none gets an empty map, and `can_read` covers the read surface."""
+
+    app: str
+    identity: str
+    can_read: bool
+    actions: dict[str, str]
+    reachable_apps: list[str]
+
+
+class RegistryRelease(BaseModel):
+    version: str
+    bundle_path: str
+    published_at: str
+
+
+class RegistryItem(BaseModel):
+    """A published local release. `manifest` is the source project's manifest
+    blob captured at publish time and is left open: it is a snapshot of another
+    document's shape, not this route's."""
+
+    id: str
+    kind: str
+    title: str
+    description: str
+    version: str
+    source_slug: str
+    sensitivity: str
+    manifest: dict[str, Any] | None = None
+    published_at: str
+    bundle_path: str
+    history: list[RegistryRelease]
+
+
+class RegistryCatalog(BaseModel):
+    items: list[RegistryItem]
+
+
+class InstalledProject(BaseModel):
+    """The projects-hub record a fork is registered as, with the registry
+    provenance `update_from_upstream` later reads."""
+
+    slug: str
+    title: str
+    purpose: str
+    dir: str
+    sensitivity: str
+    state: str
+    surfaces: dict[str, Any]
+    needs: list[str]
+    provides: list[str]
+    created: str
+    last_touched: str
+    claude_session: str | None = None
+    from_registry: dict[str, Any] | None = None
+
+
+class RegistryUpdateStatus(BaseModel):
+    """`latest` is null when the upstream item has no releases; that is not the
+    same as being up to date, which is why `update_available` is its own field."""
+
+    current: str | None = None
+    latest: str | None = None
+    update_available: bool
+
+
+class RegistryUpdateResult(BaseModel):
+    """Three outcomes from one emitter: a clean merge (`updated`, `merged`), an
+    aborted conflict (`conflict` with a `reason`, working tree restored), and
+    already-current (`reason: "up to date"`). Optional accordingly."""
+
+    updated: bool
+    from_: str | None = Field(default=None, alias="from")
+    to: str | None = None
+    merged: bool | None = None
+    conflict: bool | None = None
+    reason: str | None = None
+    current: str | None = None
+    latest: str | None = None
+
+
+class GcWorktrees(BaseModel):
+    """`candidates` on a preview, `reaped`/`failed` after an apply. `count` means
+    candidates before and reaped after."""
+
+    applied: bool
+    count: int
+    candidates: list[dict[str, Any]] | None = None
+    reaped: list[dict[str, Any]] | None = None
+    failed: list[dict[str, Any]] | None = None
+
+
+class GcRuntimes(BaseModel):
+    """`available: false` means the dev-server module is not loadable, which is a
+    different answer from 'nothing to reap'."""
+
+    available: bool
+    applied: bool
+    count: int
+    candidates: list[dict[str, Any]] | None = None
+    cleared: list[dict[str, Any]] | None = None
+
+
+class GcReport(BaseModel):
+    """Checkpoint history is REPORTED, never rewritten here: rewriting history is
+    exactly what the git-guard hook blocks for agents. Each checkpoint entry is
+    `describe_checkpoint_thinning`'s report for one project and is left open."""
+
+    merged_worktrees: GcWorktrees
+    checkpoints: list[dict[str, Any]]
+    stopped_runtimes: GcRuntimes
+
+
+class ServiceSpec(BaseModel):
+    """One declared service. `env_keys` is the KEY NAMES only -- values never
+    cross this boundary."""
+
+    name: str
+    start: str | None = None
+    cwd: str | None = None
+    build: str | None = None
+    port_env: str | None = None
+    health: str | None = None
+    expose: bool
+    enabled: bool
+    disabled_reason: str | None = None
+    depends_on: list[str]
+    env_keys: list[str]
+
+
+class DepSpec(BaseModel):
+    name: str
+    compose_file: str | None = None
+    compose_service: str | None = None
+
+
+class EnvRequirementOut(BaseModel):
+    """A declared env requirement. `set` is presence only and is stamped by
+    `env_overview`; the manifest route returns the requirement without it."""
+
+    key: str
+    description: str | None = None
+    required: bool
+    secret: bool
+    example: str | None = None
+    how_to_obtain: str | None = None
+    service: str | None = None
+    group: str | None = None
+    set: bool | None = None
+
+
+class AppRunManifest(BaseModel):
+    """The resolved manifest: the declared `workshop.app.json`, else what was
+    auto-detected. A known project with nothing runnable yet answers with the
+    same shape and empty lists rather than an error."""
+
+    name: str
+    detected: bool
+    builtin: bool | None = None
+    self: bool | None = None
+    services: list[ServiceSpec]
+    deps: list[DepSpec]
+    env_requirements: list[EnvRequirementOut]
+
+
+class ServiceStatus(BaseModel):
+    """`restarts` counts CRASH restarts only, and only the container backend is
+    in a position to observe them -- the subprocess backend always reports 0
+    because it has no supervisor watching. An operator pressing Restart is
+    deliberately not counted: that tally once read as a crashloop on a service
+    that had simply been redeployed 425 times.
+
+    `started_at` is a float of epoch seconds on the subprocess path and whatever
+    docker reports on the container path, so it is left open."""
+
+    name: str
+    status: str | None = None
+    pid: int | None = None
+    port: int | None = None
+    url: str | None = None
+    expose: bool
+    healthy: bool | None = None
+    error: str | None = None
+    restarts: int
+    oom_killed: bool
+    exit_code: int | None = None
+    started_at: Any = None
+
+
+class DepStatus(BaseModel):
+    name: str
+    ok: bool
+    error: str | None = None
+
+
+class AppStatus(BaseModel):
+    """Probed on every call, never cached, so the snapshot is current. `desired`
+    and `deps` are absent on the stop path for an app the runner never held, and
+    `self`/`backend` only appear where they apply -- described as emitted rather
+    than padded, since padding is a wire-shape change."""
+
+    slug: str
+    phase: str
+    desired: str | None = None
+    manifest_detected: bool | None = None
+    backend: str | None = None
+    self: bool | None = None
+    services: list[ServiceStatus]
+    deps: list[DepStatus] | None = None
+
+
+class AppList(BaseModel):
+    apps: list[AppStatus]
+
+
+class ServiceLog(BaseModel):
+    """The tail of one service's combined build+run log, at most 16 KiB."""
+
+    service: str
+    log: str
+
+
+class EnvOverview(BaseModel):
+    """Presence only -- values are write-only and never returned here.
+    `undeclared_set` is keys with a stored value and no declared requirement, so
+    they are visible rather than silently held."""
+
+    slug: str
+    self: bool | None = None
+    requirements: list[EnvRequirementOut]
+    undeclared_set: list[str]
+    missing_required: list[str]
+
+
+class PortAllocation(BaseModel):
+    """One live port claim. The owner string is the allocating surface plus its
+    subject, which is what makes a claim reconcilable against a dead process."""
+
+    model_config = ConfigDict(extra="allow")
+
+    port: int | None = None
+    owner: str | None = None
+    kind: str | None = None
+    pid: int | None = None
+    claimed_at: str | None = None
+
+
+class PortRegistry(BaseModel):
+    """The single source of truth that prevents port conflicts across all three
+    runners. `windows` is the per-kind (lo, hi) range."""
+
+    windows: dict[str, list[int]]
+    allocations: list[PortAllocation]
 
 
 def _git_meta(repo: Path):
@@ -38,7 +372,7 @@ def _git_meta(repo: Path):
         return None
 
 
-@router.get("/")
+@router.get("/", response_model=list[BaseApp])
 async def list_base_apps():
     if not BASE_APPS_ROOT.exists():
         raise HTTPException(404, "base apps root missing")
@@ -59,7 +393,7 @@ async def list_base_apps():
 # expose the declared manifests; nothing here enforces scope or grants.
 
 
-@router.get("/launcher")
+@router.get("/launcher", response_model=LauncherCards)
 async def get_launcher():
     """Launcher cards for the apps installed on THIS instance, in installed order.
 
@@ -70,13 +404,13 @@ async def get_launcher():
     return {"apps": app_registry.launcher_cards()}
 
 
-@router.get("/manifests")
+@router.get("/manifests", response_model=AppManifests)
 async def get_app_manifests():
     """Return the full app manifest map: {"apps": {<id>: {...}}}."""
     return {"apps": manifests.load_manifests()}
 
 
-@router.get("/manifests/{app_id}")
+@router.get("/manifests/{app_id}", response_model=AppManifest)
 async def get_app_manifest(app_id: str):
     """Return a single app's manifest, or 404 if it is not declared."""
     entry = manifests.get_manifest(app_id)
@@ -89,7 +423,7 @@ class AppUiIn(BaseModel):
     agent_button: bool | None = None
 
 
-@router.put("/manifests/{app_id}/ui")
+@router.put("/manifests/{app_id}/ui", response_model=AppManifest)
 async def set_app_manifest_ui(app_id: str, body: AppUiIn):
     """Update an app's per-app UI settings (currently `agent_button`, which gates
     the floating assistant dock inside the app) and persist apps.json. Returns the
@@ -109,7 +443,7 @@ async def set_app_manifest_ui(app_id: str, body: AppUiIn):
 # CONSULTED source of truth — default-permissive for the operator — not a wall.
 
 
-@router.get("/permissions/{app_id}")
+@router.get("/permissions/{app_id}", response_model=AppPermissions)
 async def get_app_permissions(app_id: str):
     """Assistant capabilities for an app under the operator identity: what a data
     assistant bound to this app may actually do (can_read, resolved action
@@ -139,13 +473,13 @@ class InstallIn(BaseModel):
     target_slug: str | None = None
 
 
-@router.get("/registry")
+@router.get("/registry", response_model=RegistryCatalog)
 async def list_registry():
     """Return the registry catalog: {"items": [...]}."""
     return {"items": registry.list_items()}
 
 
-@router.get("/registry/{item_id}")
+@router.get("/registry/{item_id}", response_model=RegistryItem)
 async def get_registry_item(item_id: str):
     """Return a single registry item, or 404 if it is not published."""
     item = registry.get_item(item_id)
@@ -154,7 +488,7 @@ async def get_registry_item(item_id: str):
     return item
 
 
-@router.post("/registry/publish")
+@router.post("/registry/publish", response_model=RegistryItem)
 async def publish_registry_item(body: PublishIn):
     """Publish a project as a new local release. 404 if the project is unknown,
     400 if it is not a git repo with at least one commit."""
@@ -170,7 +504,7 @@ async def publish_registry_item(body: PublishIn):
         raise HTTPException(e.status, e.message)
 
 
-@router.post("/registry/{item_id}/install")
+@router.post("/registry/{item_id}/install", response_model=InstalledProject)
 async def install_registry_item(item_id: str, body: InstallIn = Body(default=InstallIn())):
     """Fork a registry item into the workspace and register it as a project.
     404 if the item is missing, 409 if the target slug exists and cannot be
@@ -181,7 +515,7 @@ async def install_registry_item(item_id: str, body: InstallIn = Body(default=Ins
         raise HTTPException(e.status, e.message)
 
 
-@router.get("/registry/projects/{slug}/status")
+@router.get("/registry/projects/{slug}/status", response_model=RegistryUpdateStatus)
 async def registry_project_status(slug: str):
     """Whether a newer upstream release is available for an installed project.
     Returns {current, latest, update_available}. 404 if the project is unknown
@@ -192,7 +526,7 @@ async def registry_project_status(slug: str):
         raise HTTPException(e.status, e.message)
 
 
-@router.post("/registry/projects/{slug}/update")
+@router.post("/registry/projects/{slug}/update", response_model=RegistryUpdateResult)
 async def registry_project_update(slug: str):
     """Pull the project's latest upstream release and merge it into the current
     branch (doc 03 section 4, "update via branch merge"). On a clean merge:
@@ -216,7 +550,7 @@ class GcRunIn(BaseModel):
     apply: bool = True
 
 
-@router.get("/gc/preview")
+@router.get("/gc/preview", response_model=GcReport)
 async def gc_preview():
     """Report what is reapable: merged worktrees, per-project checkpoint counts
     (squashable beyond retention, report-only), and stopped dev-server runtimes.
@@ -224,7 +558,7 @@ async def gc_preview():
     return gc.preview()
 
 
-@router.post("/gc/run")
+@router.post("/gc/run", response_model=GcReport)
 async def gc_run(body: GcRunIn = Body(default=GcRunIn())):
     """Perform the SAFE reaps (merged worktrees + stopped runtimes) when
     apply=true; with apply=false this is equivalent to preview for those two
@@ -250,7 +584,7 @@ async def gc_run(body: GcRunIn = Body(default=GcRunIn())):
 # registry constant and its surface reflection (_reflect_surface).
 
 
-@router.get("/run/{slug}/manifest")
+@router.get("/run/{slug}/manifest", response_model=AppRunManifest)
 async def run_manifest(slug: str):
     """The resolved app manifest (declared workshop.app.json, else auto-detected):
     {name, detected, services[], deps[]}."""
@@ -260,7 +594,7 @@ async def run_manifest(slug: str):
         raise HTTPException(e.status, e.message)
 
 
-@router.post("/run/{slug}/start")
+@router.post("/run/{slug}/start", response_model=AppStatus)
 async def run_start(slug: str):
     """Start all enabled services. Returns immediately with a 'starting' snapshot;
     build + spawn proceed on a background thread. Poll status for progress."""
@@ -270,25 +604,25 @@ async def run_start(slug: str):
         raise HTTPException(e.status, e.message)
 
 
-@router.post("/run/{slug}/stop")
+@router.post("/run/{slug}/stop", response_model=AppStatus)
 async def run_stop(slug: str):
     """Stop all services and set desired state = stopped (monitor won't restart)."""
     return app_runner.stop_app(slug)
 
 
-@router.get("/run/{slug}/status")
+@router.get("/run/{slug}/status", response_model=AppStatus)
 async def run_status(slug: str):
     """Live per-service status + health, app phase, desired state, declared deps."""
     return app_runner.app_status(slug)
 
 
-@router.get("/run/{slug}/logs")
+@router.get("/run/{slug}/logs", response_model=ServiceLog)
 async def run_logs(slug: str, service: str):
     """Tail one service's combined build+run log."""
     return {"service": service, "log": app_runner.app_logs(slug, service)}
 
 
-@router.post("/run/{slug}/services/{service}/restart")
+@router.post("/run/{slug}/services/{service}/restart", response_model=AppStatus)
 async def run_restart_service(slug: str, service: str):
     """Re-spawn one service (no rebuild). Manual counterpart to the monitor."""
     try:
@@ -297,7 +631,7 @@ async def run_restart_service(slug: str, service: str):
         raise HTTPException(e.status, e.message)
 
 
-@router.get("/run")
+@router.get("/run", response_model=AppList)
 async def run_list():
     """Status of every app the runner knows about."""
     return {"apps": app_runner.list_apps()}
@@ -314,14 +648,14 @@ class EnvValuesIn(BaseModel):
     values: dict[str, str]
 
 
-@router.get("/run/{slug}/env")
+@router.get("/run/{slug}/env", response_model=EnvOverview)
 async def run_env(slug: str):
     """Declared env requirements + per-key SET status (never values). Also lists
     any stored keys not declared as requirements."""
     return app_runner.env_overview(slug)
 
 
-@router.put("/run/{slug}/env")
+@router.put("/run/{slug}/env", response_model=EnvOverview)
 async def run_env_set(slug: str, body: EnvValuesIn):
     """Set/merge env values for a project. A blank value clears that key. Returns
     the refreshed presence-only overview (no values echoed back)."""
@@ -330,7 +664,7 @@ async def run_env_set(slug: str, body: EnvValuesIn):
     return app_runner.env_overview(slug)
 
 
-@router.delete("/run/{slug}/env/{key}")
+@router.delete("/run/{slug}/env/{key}", response_model=EnvOverview)
 async def run_env_delete(slug: str, key: str):
     """Unset one env value. Returns the refreshed overview."""
     from services import secrets_store
@@ -338,7 +672,7 @@ async def run_env_delete(slug: str, key: str):
     return app_runner.env_overview(slug)
 
 
-@router.get("/ports")
+@router.get("/ports", response_model=PortRegistry)
 async def ports():
     """The central port registry: every current local-service port allocation
     (preview / deploy / app), after a reconcile pass. The single source of truth
