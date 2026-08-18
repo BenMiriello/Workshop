@@ -112,3 +112,57 @@ def test_a_missing_journal_replays(tmp_path, monkeypatch):
     _live(monkeypatch, {"turn_id": "run-1", "journal_offset": 120,
                         "meta": {"segments": SEGS}})
     assert bs._resume_from(_turn()) == 0
+
+
+# --- a finished turn's journal is terminal on re-attach -----------------------
+# The resume-past-result hole: a turn that wrote its `result` before a restart is
+# adopted with the offset at end-of-file, so the tail loop never re-reads the
+# result, `saw_result` never flips, and the idle process (stdin still open) never
+# dies -- the turn spins "running" forever over a reply already on disk.
+# `_journal_terminal_result` is how the driver recognises that and commits.
+# docs/platform-redesign/turn-recovery-terminal-journal-2026-08-17.md.
+import json as _json
+
+
+def _write_journal(d, *events):
+    d.joinpath("stream.jsonl").write_text(
+        "".join(_json.dumps(e) + "\n" for e in events))
+
+
+def test_terminal_result_detected(journal):
+    _write_journal(journal,
+                   {"type": "assistant", "message": {"content": []}},
+                   {"type": "result", "subtype": "success",
+                    "usage": {"input_tokens": 10, "output_tokens": 5}})
+    term = bs._journal_terminal_result("run-1")
+    assert term is not None and term.get("subtype") == "success"
+
+
+def test_mid_answer_journal_is_not_terminal(journal):
+    # A turn working on an injected second prompt: its first result is NOT the
+    # last event, so the tail is not a result and the check does not fire.
+    _write_journal(journal,
+                   {"type": "result", "subtype": "success"},
+                   {"type": "assistant", "message": {"content": []}})
+    assert bs._journal_terminal_result("run-1") is None
+
+
+def test_empty_journal_is_not_terminal(journal):
+    journal.joinpath("stream.jsonl").write_text("")
+    assert bs._journal_terminal_result("run-1") is None
+
+
+def test_unparseable_tail_is_not_terminal(journal):
+    journal.joinpath("stream.jsonl").write_text("{not json\n")
+    assert bs._journal_terminal_result("run-1") is None
+
+
+def test_missing_journal_is_not_terminal(tmp_path, monkeypatch):
+    monkeypatch.setattr(bs, "_journal_dir", lambda tid: tmp_path / "gone")
+    assert bs._journal_terminal_result("run-1") is None
+
+
+def test_trailing_blank_lines_ignored(journal):
+    journal.joinpath("stream.jsonl").write_text(
+        _json.dumps({"type": "result", "subtype": "success"}) + "\n\n\n")
+    assert bs._journal_terminal_result("run-1") is not None

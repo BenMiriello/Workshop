@@ -2169,6 +2169,38 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     offset = _resume_from(turn)
     last_persist = 0.0
 
+    # RESUMED PAST A FINISHED TURN. A turn that wrote its `result` before a
+    # restart is adopted here with `proc is None`, and if the draft resumed us to
+    # the end of the journal we will never re-read that result: the tail loop
+    # sees no new bytes, `saw_result` stays false, and the idle process (stdin
+    # still open) never dies, so nothing ever retires the turn and it spins
+    # "running" forever over a reply that is already written. The result is on
+    # disk; read it and let the first loop pass finalize from the restored draft.
+    #
+    # Scoped tightly so it cannot end a turn that is still working: only on the
+    # re-attach path (proc is None), only when we resumed to/past end-of-file (any
+    # unread bytes are drained normally, which sets saw_result the ordinary way),
+    # and only when the journal's LAST event is a result (a turn mid-answer on an
+    # injected prompt has later output, so its tail is not a result). See
+    # docs/platform-redesign/turn-recovery-terminal-journal-2026-08-17.md.
+    if proc is None and offset > 0:
+        try:
+            _term_size = (_journal_dir(turn.id) / "stream.jsonl").stat().st_size
+        except OSError:
+            _term_size = -1
+        if offset >= _term_size >= 0:
+            term = _journal_terminal_result(turn.id)
+            if term is not None:
+                log.info("turn %s: journal already terminal on re-attach; "
+                         "committing the finished reply without re-driving", turn.id)
+                state["saw_result"] = True
+                state["result_subtype"] = term.get("subtype") or ""
+                state["spend_result"] = _spend_tokens_from_usage(term.get("usage"))
+                if not state["last_ctx"]:
+                    _ctx = _ctx_tokens_from_usage(term.get("usage"))
+                    if _ctx:
+                        state["last_ctx"] = _ctx
+
     def _persist() -> None:
         # The live snapshot, not the log. The journal on disk is the buffer and
         # this is the copy a reload reads; the record gets one write, at commit.
@@ -3108,6 +3140,44 @@ def _recover_pid(session_id: str | None) -> int | None:
     except OSError:
         return None
     return None
+
+
+def _journal_terminal_result(turn_id: str) -> dict | None:
+    """The turn's own terminal `result` payload if its journal ends on one.
+
+    A finished turn's LAST journal event is its `result` line: the CLI emits one
+    per prompt it reads and does not exit afterwards (stdin stays open). So the
+    last non-empty line parsing as a `result` means the model is done and only
+    the idle process remains. Reads the tail only -- a long journal is not read
+    into memory to look at its final line.
+
+    Returns None on any doubt (empty, unreadable, last line is not a result),
+    because the caller uses this to END a turn and every uncertainty must resolve
+    to "keep waiting", not "stop".
+    """
+    p = _journal_dir(turn_id) / "stream.jsonl"
+    try:
+        size = p.stat().st_size
+        if not size:
+            return None
+        with open(p, "rb") as fh:
+            # The last event is one line; 64KB is generous headroom for it.
+            if size > 65536:
+                fh.seek(size - 65536)
+            tail = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    line = ""
+    for cand in tail.splitlines():
+        if cand.strip():
+            line = cand
+    if not line:
+        return None
+    try:
+        ev = json.loads(line)
+    except Exception:
+        return None
+    return ev if isinstance(ev, dict) and ev.get("type") == "result" else None
 
 
 def _resume_from(turn: "Turn") -> int:
