@@ -1019,6 +1019,17 @@ def runtime_briefing(provider: "ContextProvider") -> str:
         "WebFetch, WebSearch, Task). Use them directly. Don't ask the operator "
         "to run things you can run yourself."
     )
+    lines.append(
+        "NAMING A DOC, NOTE, OR TICKET IN YOUR REPLY: when you point the operator "
+        "at one, write it as a managed link so it renders as a clickable chip, not "
+        "raw text. A markdown doc is `[label](workshop:doc/<repo-relative-path>)` "
+        "(label is usually the filename, e.g. [PROJECT.md](workshop:doc/PROJECT.md)); "
+        "a note is `[title](workshop:note/<scope>/<id>)`; a ticket is "
+        "`[title](workshop:ticket/<id>)`. The operator gets a chip with a preview "
+        "and a copy-path action. Do this when you actually reference the thing, not "
+        "on every mention. Code files (.py, .tsx) have no managed link yet, so name "
+        "those in prose as usual."
+    )
 
     labels, is_scaffold = _detect_stack(dirp)
     if labels:

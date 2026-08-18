@@ -76,9 +76,19 @@ class TestContainment:
             docs_index.write_doc(docs_index.PutDocIn(path="docs/brand-new.md", content="x\n"))
         assert exc.value.status_code == 404
 
-    def test_read_route_rejects_the_same_traversal(self, tree):
-        # The read route's own containment check, unchanged by this phase --
-        # pinned here so the two routes are proven to agree.
+    def test_read_route_allows_any_repo_markdown(self, tree):
+        # The read route is deliberately BROADER than write: a managed doc ref
+        # (workshop:doc/<path>) addresses any markdown in the tree, not only
+        # docs/, so a root-level doc is an openable managed link. Write stays
+        # docs/-only (the tests above), read follows the ref.
+        (tree / "PROJECT.md").write_text("# Project\n\nroot doc\n")
+        out = docs_index.read_doc(path="PROJECT.md")
+        assert out["path"] == "PROJECT.md"
+        assert "root doc" in out["content"]
+
+    def test_read_route_rejects_escaping_the_repo(self, tree):
+        # Containment is the repo root: a path resolving outside the tree is
+        # still rejected, on read as on write.
         with pytest.raises(HTTPException) as exc:
-            docs_index.read_doc(path="docs/../secret.md")
+            docs_index.read_doc(path="../../../../etc/passwd")
         assert exc.value.status_code == 400

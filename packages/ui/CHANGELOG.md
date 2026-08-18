@@ -12,6 +12,15 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.14 - 2026-08-18 - Markdown forwards `components` and `urlTransform`
+
+**Compatible (additive, no name moved).** `Markdown` gains two optional props,
+`components` and `urlTransform`, passed straight through to react-markdown.
+Default rendering is unchanged when they are absent. They let a consumer render
+an in-app link (Workshop's `workshop:<kind>/...` refs) as a chip instead of a
+bare `<a>`, and keep a custom URL scheme from being stripped. Pass hoisted
+(constant) objects, not per-render literals, or the parse memo is defeated.
+
 ## 0.5.13 - 2026-08-18 - the segmented control's selected option gets a ring
 
 **Compatible (no name added or moved).** A CSS-only release: `.ws-segmented`.

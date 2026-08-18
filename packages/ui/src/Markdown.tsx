@@ -22,18 +22,44 @@
 // fresh `[remarkGfm]` literal per render is a new prop identity every time,
 // which would defeat both this memo and react-markdown's own internal caching.
 import { memo } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cx } from "./cx";
 
 const REMARK_PLUGINS = [remarkGfm];
 
+// `components` and `urlTransform` are the two react-markdown knobs a consumer
+// needs to render an in-app link (e.g. Workshop's `workshop:<kind>/...` refs) as
+// something other than a bare `<a>`. Both are optional; the default rendering is
+// unchanged when they are absent. IMPORTANT for the memo below: pass a HOISTED
+// (module-constant) object for either, never a fresh literal per render, or the
+// shallow compare fails and every keystroke re-parses the markdown again (the
+// exact regression this memo exists to prevent). A custom link renderer that
+// needs per-message data should read it from React context, not close over it,
+// so its `components` object can stay a constant.
+type MarkdownProps = {
+  children: string;
+  className?: string;
+  components?: Components;
+  // react-markdown strips any URL scheme it does not recognise (http/https/
+  // mailto/tel/relative) down to empty, which would erase a `workshop:` link
+  // before a custom renderer ever sees it. A consumer passes a transform that
+  // preserves its own scheme.
+  urlTransform?: (url: string) => string;
+};
+
 export const Markdown = memo(function Markdown(
-  { children, className }: { children: string; className?: string },
+  { children, className, components, urlTransform }: MarkdownProps,
 ) {
   return (
     <div className={cx("ws-md", className)}>
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{children}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        components={components}
+        urlTransform={urlTransform}
+      >
+        {children}
+      </ReactMarkdown>
     </div>
   );
 });

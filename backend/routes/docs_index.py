@@ -132,12 +132,30 @@ def _resolve_within_docs(path: str) -> Path:
     return candidate
 
 
+def _resolve_within_root(path: str) -> Path:
+    """`path` resolved against the repo root and confirmed to sit inside it.
+    Broader than `_resolve_within_docs` on purpose: a managed doc ref
+    (`workshop:doc/<repo-relative-path>`) addresses ANY markdown in the tree,
+    not only `docs/`, so a root-level doc like PROJECT.md or TODO.md is an
+    openable managed link and not a chip that 404s. Still no escaping the tree:
+    `..`, an absolute path outside the repo, and a symlink resolving outside all
+    fail the same `relative_to` check. Read-only callers only."""
+    root = _root().resolve()
+    candidate = (root / path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="path must be inside the repo")
+    return candidate
+
+
 @router.get("/file", response_model=DocContent, response_model_exclude_unset=True)
-def read_doc(path: str = Query(..., description="repo-relative path to a doc under docs/")) -> dict:
+def read_doc(path: str = Query(..., description="repo-relative path to any .md in the repo")) -> dict:
     """Raw markdown of a single doc. The path must resolve to a `.md` file inside
-    docs/ (traversal outside docs/ is rejected as a correctness check, not a
-    permission wall). Read-only."""
-    candidate = _resolve_within_docs(path)
+    the repo root (traversal outside the tree is rejected as a correctness check,
+    not a permission wall). Read-only, so it addresses any markdown in the tree,
+    which is what a managed `workshop:doc/...` ref points at."""
+    candidate = _resolve_within_root(path)
     if candidate.suffix != ".md" or not candidate.is_file():
         raise HTTPException(status_code=404, detail="doc not found")
     return {"path": str(candidate.relative_to(_root())), "content": candidate.read_text()}

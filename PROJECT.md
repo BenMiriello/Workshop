@@ -229,3 +229,41 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   new ticket (9dc3b4f5) that creates the destination, its false premise is
   corrected, and it is unblocked so the dependency does the gating. Verified the
   gate: not ready while the prerequisite is open, ready the moment it is done.
+- 2026-08-18 (3) — Operator: stop shipping half-solutions, the managed links have
+  NEVER rendered and paths are still raw, build the whole thing now. Two root
+  causes found and fixed. (1) The `<Ref>` chip was rendered NOWHERE in chat: the
+  resolver and component existed (I had called that "shipped") but no transcript
+  path ever rendered one, so a link was structurally impossible to see. Built the
+  producing side: kit `Markdown` (0.5.14) forwards `components`/`urlTransform`;
+  new `ChatMarkdown` renders `workshop:` links as chips via a resolved-ref
+  context; the briefing tells the dev agent to reference docs/notes/tickets as
+  managed links. `doc` refs only resolved under `docs/`, so PROJECT.md and TODO.md
+  (the operator's own example) resolved to None: broadened `_clean_doc_path` and
+  the docs read route to any `.md` in the tree (write stays docs/-only), and made
+  the Memory viewer open a root doc read-only. (2) Scoped exec was off only
+  because the backend was never restarted onto the flag; and a naive flip would
+  have broken the dev agent. Made confinement the DEFAULT (on where bwrap
+  functions, `=0` escape hatch), and pre-flighted every interaction live before
+  flipping: dropped `--unshare-pid` (it made `systemctl --user` fail, which
+  apply.sh needs; process isolation is the uid layer's job, SEC-A1), dropped
+  `--die-with-parent` (it would kill a turn on backend restart, breaking the
+  pause-not-break guarantee), added a dev grant set (systemd socket, config,
+  git, ~/.claude[.json]), remapped in-tree argv paths to /workspace so the MCP
+  server (absolute host paths in `--mcp-config`) still launches, and made
+  `session_alive` scoped-aware so existing threads re-mint a session seamlessly
+  instead of a doomed --resume. Proven: a real authenticated `claude -p` turn
+  runs confined at /workspace, systemctl/git/config/MCP all work, ssh and home
+  are absent. Tests green, typecheck+design clean.
+- 2026-08-18 (2) — Operator on scoped execution (Layer 1): confinement should be
+  the DEFAULT, not an opt-in flag. Access beyond a turn's scope is a GRANT, not
+  the absence of a sandbox (capability model, same as macOS TCC; holds for remote
+  server and a future desktop app alike). `WORKSHOP_SCOPED_EXEC` off-by-default is
+  a migration artifact, not a design stance. Two real reasons it is still a flag:
+  (a) flipping changes how every live turn spawns and still owes one attended
+  verification; (b) the build/dev role legitimately needs binds beyond `/workspace`
+  (restart systemd units, read instance.env, run apply.sh), so making confinement
+  the floor requires enumerating that one role's grant set first. Chat turns need
+  nothing past their scope and could be confined today. Direction: after the
+  attended verify, invert the code default to scoped-on and express the dev role's
+  wider reach as an explicit named grant set, so a fresh deploy is confined out of
+  the box and the flag becomes at most an escape hatch.

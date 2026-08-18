@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Bot, ChevronRight, Wrench } from "lucide-react";
-import { Markdown } from "@workshop/ui/markdown";
+import { ChatMarkdown as Markdown } from "./ChatMarkdown";
 import type { ChatSegment } from "../../lib/chat";
 import ApprovalBlock from "./ApprovalBlock";
 import { agentBrief, agentChipLine, agentSummary } from "./segments";

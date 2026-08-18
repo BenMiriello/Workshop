@@ -130,11 +130,16 @@ def file_ref(attachment_id: str) -> str:
 # path to still sit inside it. `..`, a leading `/`, and a symlink that escapes
 # all fail the same way here as there.
 def _clean_doc_path(rel: str) -> Path | None:
+    """A `workshop:doc/<rel>` key resolved to a markdown file anywhere in the
+    tree (not only `docs/`), so a root-level doc like PROJECT.md or TODO.md is a
+    real managed link. Containment is the repo root: `..`, an absolute path
+    outside it, and a symlink resolving outside all fail the `relative_to`
+    check. The `.md`-only test lives in the caller."""
     from wsplatform import paths
-    docs = (paths.workshop_root() / "docs").resolve()
+    root = paths.workshop_root().resolve()
     try:
-        candidate = (paths.workshop_root() / rel).resolve()
-        candidate.relative_to(docs)
+        candidate = (root / rel).resolve()
+        candidate.relative_to(root)
     except (ValueError, OSError):
         return None
     return candidate

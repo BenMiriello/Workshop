@@ -215,12 +215,27 @@ def session_alive(session_id: str | None, cwd: str) -> bool:
     if not session_id:
         return False
     home = os.path.expanduser("~")
-    encoded = cwd.rstrip("/").replace("/", "-")
+    # The CLI keys the session dir on the cwd IT sees. Under scoped exec that is
+    # the mountpoint (/workspace), not the real path, so a session must be found
+    # in that dir for --resume to succeed. Checking the real-cwd dir (or globbing
+    # every dir) would find a session the CLI, chdir'd to /workspace, cannot then
+    # resume, and the turn would fail. So when scoped, look only where the CLI
+    # will look; the failed-resume self-heal is the backstop, not the norm.
+    from services import scoped_exec
+    scoped = scoped_exec.enabled()
+    eff_cwd = scoped_exec.MOUNTPOINT if scoped else cwd
+    encoded = eff_cwd.rstrip("/").replace("/", "-")
     primary = os.path.join(home, ".claude", "projects", encoded, f"{session_id}.jsonl")
     if os.path.exists(primary):
         return True
-    # Encoding could shift across CLI versions; the id is a unique uuid, so a
-    # scoped glob across all projects is a safe fallback.
+    if scoped:
+        # A session minted before the flip lives under the old real-cwd dir the
+        # CLI can no longer reach. Treat it as gone so the next turn mints a fresh
+        # one and re-sends the assembled history, seamlessly, instead of a doomed
+        # --resume.
+        return False
+    # Un-scoped: encoding could shift across CLI versions; the id is a unique
+    # uuid, so a glob across all projects is a safe fallback.
     return bool(glob.glob(os.path.join(home, ".claude", "projects", "*", f"{session_id}.jsonl")))
 
 

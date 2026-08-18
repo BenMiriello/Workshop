@@ -568,11 +568,14 @@ function Library({ initialSource }: { initialSource: SourceFilter }) {
         setOpen({ mode: "editNote", note: hit });
       }
     } else if (wantPath && openedRef.current !== `doc:${wantPath}` && docs.length) {
+      openedRef.current = `doc:${wantPath}`;
+      // A doc chip can point at any markdown in the tree, including a root-level
+      // one (PROJECT.md, TODO.md) that the docs/ list does not carry. Open the
+      // listed row when there is one; otherwise synthesize a minimal row so the
+      // link still opens (the modal fetches content by path either way).
       const hit = docs.find((d) => d.path === wantPath);
-      if (hit) {
-        openedRef.current = `doc:${wantPath}`;
-        setOpen({ mode: "editDoc", doc: hit });
-      }
+      const name = wantPath.split("/").pop() || wantPath;
+      setOpen({ mode: "editDoc", doc: hit ?? { path: wantPath, title: name, section: "", mtime: null } });
     }
   }, [wantNote, wantPath, notes, docs]);
 
@@ -1190,6 +1193,10 @@ function EditDoc({
   }, [doc.path]);
 
   const dirty = editing && draft !== (content ?? "");
+  // Writing is docs/-only (PUT /documents/file keeps that containment), so a
+  // root-level doc opened through a chip is view-only here. The operator edits
+  // those through the dev agent, not this modal.
+  const writable = doc.path.startsWith("docs/");
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -1226,9 +1233,11 @@ function EditDoc({
         ) : (
           <>
             <Button onClick={onClose}>Close</Button>
-            <Button variant="primary" disabled={loading} onClick={() => setEditing(true)}>
-              <Pencil aria-hidden /> Edit
-            </Button>
+            {writable && (
+              <Button variant="primary" disabled={loading} onClick={() => setEditing(true)}>
+                <Pencil aria-hidden /> Edit
+              </Button>
+            )}
           </>
         )
       }
