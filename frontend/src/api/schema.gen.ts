@@ -10488,6 +10488,36 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * MemoryPolicy
+         * @description CURATION, NOT CONFINEMENT. Everything on this box runs as one uid, so
+         *     nothing here restricts what a process may read; it restricts what a SEARCH
+         *     surfaces, so a chat's recall stays about that chat's own work. No field
+         *     below may be described as permission or access control.
+         *
+         *     Three layers, narrowest wins: `defaults` per kind (the chat-transcript
+         *     default ships as `private`), `scopes` overriding a kind for one scope, and
+         *     `items` overriding everything for one ref. Clearing an override REMOVES its
+         *     key rather than storing a sentinel, so absence is the inherit case.
+         *
+         *     An absent file reads as the defaults and is NOT created by reading it.
+         */
+        MemoryPolicy: {
+            /** Defaults */
+            defaults: {
+                [key: string]: string;
+            };
+            /** Items */
+            items: {
+                [key: string]: string;
+            };
+            /** Scopes */
+            scopes: {
+                [key: string]: string;
+            };
+            /** Version */
+            version: number;
+        };
+        /**
          * MentionableAgents
          * @description Server-resolved because the rule is a policy, not a display preference: an
          *     agent is addressable only if it opted in AND this chat's scope reaches it.
@@ -22689,7 +22719,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["MemoryPolicy"];
                 };
             };
         };
@@ -22713,7 +22743,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["MemoryPolicy"];
                 };
             };
             /** @description Validation Error */
@@ -22746,7 +22776,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["MemoryPolicy"];
                 };
             };
             /** @description Validation Error */
@@ -22779,7 +22809,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["MemoryPolicy"];
                 };
             };
             /** @description Validation Error */
