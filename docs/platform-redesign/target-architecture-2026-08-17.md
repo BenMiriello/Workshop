@@ -655,6 +655,54 @@ run.
   so those three move together across 135 files or not at all. One at a time is
   whack-a-mole and each step scores zero. **That is the next piece of item 3.**
 
+- **Two of the gates pull in opposite directions, and this build created the
+  tension.** Measured on the second pass, 2026-08-17.
+
+  `check_one_definition` wants exactly one declaration of each closed enum. That
+  is why `db/models.py:54,62-63` imports `LATITUDES` from `services.latitude`,
+  `CHAT_MODES` from `services.chat_store` and `EFFORTS`/`STATE_TYPES` from
+  `services.tasks` rather than restating them. Two of those three edges were added
+  deliberately in this build, on the precedent of the third.
+
+  `check_module_layout` wants no upward edges. Those same three imports are
+  `db -> services`, and they are **3 of the 42 upward violations**.
+
+  So one gate is satisfied by the exact edit the other penalises. Left alone, the
+  next contributor picks whichever gate they happened to run.
+
+  **The resolution dissolves the tension rather than trading one gate for the
+  other, and the evidence says it is cheap.** All four symbols are plain tuples of
+  strings:
+
+      LATITUDES    = ("strict", "standard", "open")
+      CHAT_MODES   = ("direct", "orchestrated", "auto")
+      EFFORTS      = ("quick", "standard", "deep")
+      STATE_TYPES  = ("backlog", "unstarted", "started", "completed", "canceled")
+
+  They are **vocabulary, not service logic**. In `wsplatform/` both `db/` and
+  `services/` import them DOWNWARD: one declaration survives, the upward edge
+  disappears, and both gates go green. Measured cost of the current arrangement is
+  architectural only, not runtime: importing `services.tasks` pulls 51 modules and
+  none of them are SQLAlchemy, FastAPI or `db.*`.
+
+  This is also the general answer for §2.1: a shared vocabulary needs somewhere to
+  live that is below everything that speaks it. Without that, "one definition"
+  and "no upward edges" are permanently in conflict for every enum the schema and
+  the services both need.
+
+- **Roughly 14 of the 42 upward violations are a categorisation error, not a
+  dependency problem.** `db/repair_branch_heads.py`, `db/repair_chain_order.py`,
+  `db/chat_list_parity.py`, `db/prune_synthetic_users.py`, `db/backfill.py`,
+  `db/chat_verify.py` and `db/prune_test_threads.py` are one-shot maintenance
+  CLIs: seven of the eight have a `__main__` block and **zero importers**. They
+  are not the data layer, they are tools that happen to live in the data layer's
+  package, and it is legitimate for a tool to reach up into services.
+
+  Moving them out removes those violations by describing the tree honestly rather
+  than by refactoring anything. Same argument as §2.7 (code and instance state
+  must not share a directory), one level down: a library and a one-shot tool
+  should not share a package either.
+
 ### The gate now
 
 Four checks were added to `scripts/reviewer.sh` this build, joining the three that
