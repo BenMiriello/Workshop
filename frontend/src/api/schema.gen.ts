@@ -7455,6 +7455,26 @@ export interface components {
             /** Ok */
             ok: boolean;
         };
+        /**
+         * ActiveTurn
+         * @description The turn in flight. `live` is the draft reply as it is being written --
+         *     the claim's immutable facts (model, agent, start ts) overlaid with what the
+         *     turn rewrites constantly -- and is left open for the same reason `events` is.
+         *
+         *     `accepts_input` is added by the route, not by `chat_log`, because only this
+         *     layer sees the turn registry. A command turn takes no input, and a client
+         *     that does not know that sends into a void.
+         */
+        ActiveTurn: {
+            /** Accepts Input */
+            accepts_input?: boolean | null;
+            /** Live */
+            live?: Record<string, never> | null;
+            /** Started Seq */
+            started_seq?: number | null;
+            /** Turn Id */
+            turn_id: string;
+        };
         /** AdoptGroupIn */
         AdoptGroupIn: {
             /** Group */
@@ -7879,6 +7899,20 @@ export interface components {
             /** Assignees */
             assignees: components["schemas"]["LabelCount"][];
         };
+        /** AttachmentDeleted */
+        AttachmentDeleted: {
+            /** Deleted */
+            deleted: string;
+        };
+        /** AttachmentList */
+        AttachmentList: {
+            /** Count */
+            count: number;
+            /** Files */
+            files: components["schemas"]["AttachmentRow"][];
+            /** Scopes */
+            scopes: string[];
+        };
         /**
          * AttachmentRefIn
          * @description A file the client already uploaded. `name` and `kind` are carried for the
@@ -7899,6 +7933,43 @@ export interface components {
              * @default
              */
             name: string;
+        };
+        /**
+         * AttachmentRow
+         * @description `missing` says the index has a row whose blob is gone, which the list
+         *     shows rather than hiding: a file that cannot be opened should say so where
+         *     you would go looking for it.
+         */
+        AttachmentRow: {
+            /** Created At */
+            created_at: string;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Missing */
+            missing: boolean;
+            /** Name */
+            name: string;
+            /** Scope */
+            scope: string;
+            /** Size */
+            size: number;
+            /** Thread Id */
+            thread_id: string;
+        };
+        /** AttachmentUploaded */
+        AttachmentUploaded: {
+            /** Created At */
+            created_at?: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Size */
+            size: number;
         };
         /**
          * Authority
@@ -8302,6 +8373,47 @@ export interface components {
             /** Role */
             role?: string;
         };
+        /**
+         * Branch
+         * @description One line of the conversation. The CURRENT branch is included and flagged
+         *     rather than filtered out: a list that silently omits where you are makes the
+         *     other entries unreadable.
+         */
+        Branch: {
+            /** Created At */
+            created_at: string;
+            /** Fork Message Id */
+            fork_message_id?: string | null;
+            /** Forked At */
+            forked_at?: string | null;
+            /** Forked From */
+            forked_from?: string | null;
+            /** Forked From Role */
+            forked_from_role?: string | null;
+            /** Id */
+            id: string;
+            /** Is Current */
+            is_current: boolean;
+            /** Is Root */
+            is_root: boolean;
+            /** Last At */
+            last_at: string;
+            /** Name */
+            name?: string | null;
+            /** Ordinal */
+            ordinal?: number | null;
+            /** Preview */
+            preview?: string | null;
+        };
+        /**
+         * BranchList
+         * @description Empty rather than an error when the relational store is unreachable: a
+         *     chat renders without this, it just cannot be branched.
+         */
+        BranchList: {
+            /** Branches */
+            branches: components["schemas"]["Branch"][];
+        };
         /** BriefBody */
         BriefBody: {
             /**
@@ -8445,12 +8557,28 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /**
+         * CardStates
+         * @description Which in-chat cards have been acted on. Opaque per card kind: the client
+         *     that renders a card owns the shape of its own state.
+         */
+        CardStates: {
+            /** Card States */
+            card_states: Record<string, never>;
+        };
         /** ChangePasswordBody */
         ChangePasswordBody: {
             /** Current Password */
             current_password: string;
             /** New Password */
             new_password: string;
+        };
+        /** ChatModeSet */
+        ChatModeSet: {
+            /** Id */
+            id: string;
+            /** Mode */
+            mode?: string | null;
         };
         /**
          * ChatPrefs
@@ -8470,6 +8598,50 @@ export interface components {
             default_permission_mode?: string | null;
         };
         /**
+         * ChatPrefsOut
+         * @description Operator-level chat settings. The CHOICES are served, never assumed by the
+         *     client: which permission modes a chat may pick is this system's decision
+         *     (bypass is not among them) and the effort ladder is the vendor's. A null
+         *     default means 'no preference', which renders as the model-default option
+         *     rather than as a blank.
+         */
+        ChatPrefsOut: {
+            /** Default Effort */
+            default_effort?: string | null;
+            /** Default Mode */
+            default_mode?: string | null;
+            /** Default Permission Mode */
+            default_permission_mode?: string | null;
+            /** Efforts */
+            efforts: string[];
+            /** Modes */
+            modes: string[];
+            /** Permission Modes */
+            permission_modes: string[];
+            /** Platform Permission Mode */
+            platform_permission_mode: string;
+        };
+        /**
+         * ClearResult
+         * @description Same five paths as `CompactResult`. `cleared_through` is how many messages
+         *     are behind the cut; zero on the deferred path because the cut has not landed
+         *     yet.
+         */
+        ClearResult: {
+            /** Busy */
+            busy?: boolean | null;
+            /** Cancelled */
+            cancelled?: boolean | null;
+            /** Cleared */
+            cleared: boolean;
+            /** Cleared Through */
+            cleared_through: number;
+            /** Deferred */
+            deferred?: boolean | null;
+            /** Session Reset */
+            session_reset: boolean;
+        };
+        /**
          * CommitOut
          * @description `ok: false` with a `reason` at HTTP 200 is an ADR 0023 clause 3 violation
          *     (failure never arrives at 200). Declared rather than fixed: "nothing to
@@ -8483,6 +8655,28 @@ export interface components {
             ok: boolean;
             /** Reason */
             reason?: string | null;
+        };
+        /**
+         * CompactResult
+         * @description Five exit paths, so most fields are optional: cancelled mid-flight,
+         *     nothing to fold, deferred behind a live turn, landed, or refused as busy.
+         *     `folded` is how many messages went behind the boundary.
+         */
+        CompactResult: {
+            /** Busy */
+            busy?: boolean | null;
+            /** Cancelled */
+            cancelled?: boolean | null;
+            /** Deferred */
+            deferred?: boolean | null;
+            /** Error */
+            error?: string | null;
+            /** Folded */
+            folded?: number | null;
+            /** Session Reset */
+            session_reset?: boolean | null;
+            /** Summary Chars */
+            summary_chars?: number | null;
         };
         /** ConcurrencyPatch */
         ConcurrencyPatch: {
@@ -8535,6 +8729,49 @@ export interface components {
         ContentOut: {
             /** Content */
             content: string;
+        };
+        /**
+         * ContextDetail
+         * @description The breakdown EXPLAINS the meter; it must never quietly replace it. Our
+         *     `used_tokens` stays the headline number, and the CLI's own reading arrives
+         *     beside it as `cli_used_tokens` against `cli_window_tokens`, computed on a
+         *     different window.
+         *
+         *     `available: false` with a `reason` is what an unreadable breakdown looks
+         *     like. The CLI-derived lists stay open: `/context` is parsed out of another
+         *     process's markdown and its section set belongs to that CLI.
+         */
+        ContextDetail: {
+            /** Agents */
+            agents?: Record<string, never>[] | null;
+            /** Available */
+            available: boolean;
+            /** Cached */
+            cached: boolean;
+            /** Categories */
+            categories?: Record<string, never>[] | null;
+            /** Checked At */
+            checked_at?: number | null;
+            /** Cli Used Tokens */
+            cli_used_tokens?: number | null;
+            /** Cli Window Tokens */
+            cli_window_tokens?: number | null;
+            /** Mcp */
+            mcp?: Record<string, never>[] | null;
+            /** Memory */
+            memory?: Record<string, never>[] | null;
+            /** Model */
+            model?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Skills */
+            skills?: Record<string, never>[] | null;
+            /** Used Tokens */
+            used_tokens: number;
+            /** Window Tokens */
+            window_tokens: number;
+        } & {
+            [key: string]: unknown;
         };
         /** CreateProjectIn */
         CreateProjectIn: {
@@ -8594,6 +8831,28 @@ export interface components {
         CredentialSourceIn: {
             /** Source */
             source: string;
+        };
+        /**
+         * CurrentBranch
+         * @description `chat_repo.current_branch` -- the raw row, which is a DIFFERENT shape from
+         *     a `Branch` list entry: it carries the head pointer and the parent id, and
+         *     none of the fork previews the list computes.
+         */
+        CurrentBranch: {
+            /** Created At */
+            created_at?: string | null;
+            /** Fork Message Id */
+            fork_message_id?: string | null;
+            /** Head Message Id */
+            head_message_id?: string | null;
+            /** Id */
+            id: string;
+            /** Name */
+            name?: string | null;
+            /** Ordinal */
+            ordinal?: number | null;
+            /** Parent Branch Id */
+            parent_branch_id?: string | null;
         };
         /** DecideBody */
         DecideBody: {
@@ -8691,6 +8950,27 @@ export interface components {
              */
             keep_imported: boolean;
         };
+        /**
+         * Draft
+         * @description The unsent text in a composer, plus the files attached to it -- a draft is
+         *     everything in the box. `superseded` is set when a write LOST to a strictly
+         *     newer stored entry, so the caller reconciles instead of believing a write
+         *     that did not happen.
+         */
+        Draft: {
+            /** Attachments */
+            attachments?: Record<string, never>[] | null;
+            /** Client Id */
+            client_id: string;
+            /** Key */
+            key: string;
+            /** Superseded */
+            superseded?: boolean | null;
+            /** Text */
+            text: string;
+            /** Ts */
+            ts: number;
+        };
         /** DraftPatch */
         DraftPatch: {
             /** Body */
@@ -8718,6 +8998,135 @@ export interface components {
              */
             ts: number;
         };
+        /**
+         * DraftTask
+         * @description A draft ticket. `dedup` is the merge verdict and is stamped only by the
+         *     PROPOSE path, so it is absent when the drafts are simply read back.
+         */
+        DraftTask: {
+            /** Acceptance */
+            acceptance?: Record<string, never> | null;
+            /** Assignee */
+            assignee?: string | null;
+            /**
+             * Attempts
+             * @default 0
+             */
+            attempts: number;
+            awaiting?: components["schemas"]["Awaiting"] | null;
+            /** Blocked By */
+            blocked_by?: components["schemas"]["TaskLink"][] | null;
+            /** Blocked Reason */
+            blocked_reason?: string | null;
+            blocked_request?: components["schemas"]["Awaiting"] | null;
+            /** Body */
+            body: string;
+            /** Claim Pid */
+            claim_pid?: number | null;
+            /** Claim Token */
+            claim_token?: number | null;
+            /**
+             * Comments
+             * @default []
+             */
+            comments: components["schemas"]["TaskComment"][];
+            /** Created */
+            created: string;
+            /** Dedup */
+            dedup?: string | null;
+            /**
+             * Depends On
+             * @default []
+             */
+            depends_on: string[];
+            /** Discovered From */
+            discovered_from?: string | null;
+            effective_latitude?: components["schemas"]["EffectiveLatitude"] | null;
+            /** Effort */
+            effort?: string | null;
+            /**
+             * Evidence
+             * @default []
+             */
+            evidence: Record<string, never>[];
+            /**
+             * Exec
+             * @default {}
+             */
+            exec: Record<string, never>;
+            /** Execution */
+            execution?: string | null;
+            /**
+             * External Refs
+             * @default []
+             */
+            external_refs: Record<string, never>[];
+            /** Id */
+            id: string;
+            /**
+             * Job Ids
+             * @default []
+             */
+            job_ids: string[];
+            /**
+             * Labels
+             * @default []
+             */
+            labels: string[];
+            /** Last Heartbeat */
+            last_heartbeat?: string | null;
+            /** Latitude */
+            latitude?: string | null;
+            /** Lease Until */
+            lease_until?: string | null;
+            links?: components["schemas"]["TaskLinks"] | null;
+            /** Max Attempts */
+            max_attempts?: number | null;
+            origin?: components["schemas"]["TaskOrigin"] | null;
+            /** Owner */
+            owner: string;
+            /** Parent */
+            parent?: string | null;
+            /**
+             * Priority
+             * @default 0
+             */
+            priority: number;
+            /** Provenance */
+            provenance?: string | null;
+            readiness?: components["schemas"]["Readiness"] | null;
+            /** Ready */
+            ready?: boolean | null;
+            /**
+             * Relates To
+             * @default []
+             */
+            relates_to: string[];
+            /** Scope */
+            scope?: string | null;
+            /** Scoped By */
+            scoped_by: string;
+            source: components["schemas"]["TaskSource"];
+            /** State Type */
+            state_type?: string | null;
+            /** Status */
+            status: string;
+            /** Sync */
+            sync?: Record<string, never> | null;
+            /** Text */
+            text: string;
+            /** Title */
+            title: string;
+            /**
+             * Touches
+             * @default []
+             */
+            touches: string[];
+            /** Triage */
+            triage?: Record<string, never> | null;
+            /** Updated */
+            updated: string;
+        };
         /** DuplicateOfIn */
         DuplicateOfIn: {
             /** Target Id */
@@ -8736,6 +9145,17 @@ export interface components {
             source: string;
             /** Value */
             value: string;
+        };
+        /**
+         * EffortCaps
+         * @description `levels` is the vendor's ladder for this model; `default` folds in the
+         *     operator's preference, which is why it can differ per reading.
+         */
+        EffortCaps: {
+            /** Default */
+            default?: string | null;
+            /** Levels */
+            levels: string[];
         };
         /** EnvValuesIn */
         EnvValuesIn: {
@@ -8785,6 +9205,20 @@ export interface components {
              * @default
              */
             query: string;
+        };
+        /**
+         * ForkResult
+         * @description `queued_held` is how many messages the server was holding for the line
+         *     just left. It is REPORTED, not acted on: cancelling them would destroy work
+         *     the operator never asked to destroy, and staying silent is how it became a
+         *     surprise.
+         */
+        ForkResult: {
+            branch: components["schemas"]["CurrentBranch"];
+            /** Branches */
+            branches: components["schemas"]["Branch"][];
+            /** Queued Held */
+            queued_held: number;
         };
         /**
          * ForkThread
@@ -8853,6 +9287,46 @@ export interface components {
             /** Url */
             url: string;
         };
+        /**
+         * InboxItem
+         * @description Something waiting on the operator. `kind` is question, review or notify,
+         *     and they rank in that order because a blocked agent must not be buried under
+         *     notifications.
+         */
+        InboxItem: {
+            /** Agent */
+            agent?: string | null;
+            /** Answer */
+            answer?: string | null;
+            /** Body */
+            body: string;
+            /** Chat Id */
+            chat_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Dedupe Key */
+            dedupe_key?: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Options */
+            options: string[];
+            /** Resolved At */
+            resolved_at?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Scope */
+            scope: string;
+            /** Snoozed Until */
+            snoozed_until?: string | null;
+            /** State */
+            state: string;
+            /** Ticket Id */
+            ticket_id?: string | null;
+            /** Title */
+            title: string;
+        };
         /** IngestHelp */
         IngestHelp: {
             /** Hint */
@@ -8879,6 +9353,29 @@ export interface components {
             draft_key?: string | null;
             /** Sent At */
             sent_at?: string | null;
+        };
+        /**
+         * InjectResult
+         * @description THE CHAT HAS THE MESSAGE either way -- it is in the log before any
+         *     delivery is attempted, so re-sending would show it twice. `delivered` says
+         *     whether the RUNNING turn took it; false means a fresh turn was started.
+         */
+        InjectResult: {
+            /** At Segment */
+            at_segment?: number | null;
+            /** Delivered */
+            delivered: boolean;
+            /** Injected */
+            injected?: boolean | null;
+            queue?: components["schemas"]["QueueState"] | null;
+            /** Queued */
+            queued?: boolean | null;
+            /** Queued For Turn */
+            queued_for_turn: boolean;
+            /** Reason */
+            reason: string;
+            /** Turn Id */
+            turn_id: string;
         };
         /** InstallIn */
         InstallIn: {
@@ -9156,6 +9653,38 @@ export interface components {
             task: components["schemas"]["Task"];
         };
         /**
+         * McpHealth
+         * @description `available: false` with a `reason` is what an unrunnable CLI looks like.
+         *     There is no fallback list, because a made-up server list would report health
+         *     for things that may not exist. `enabled` is this chat's own selection, null
+         *     for 'all'.
+         */
+        McpHealth: {
+            /** Available */
+            available: boolean;
+            /** Cached */
+            cached: boolean;
+            /** Checked At */
+            checked_at?: number | null;
+            /** Counts */
+            counts?: Record<string, never> | null;
+            /** Enabled */
+            enabled?: string[] | null;
+            /** Reason */
+            reason?: string | null;
+            /** Servers */
+            servers?: components["schemas"]["McpServer"][] | null;
+        };
+        /**
+         * McpSelection
+         * @description Null means ALL. Sending every server the machine currently has is stored
+         *     as 'all' rather than as that frozen list.
+         */
+        McpSelection: {
+            /** Enabled */
+            enabled?: string[] | null;
+        };
+        /**
          * McpSelectionIn
          * @description `null` = every server (the default, and what a chat that never chose
          *     has). A list = exactly those. `[]` = none, which is a real choice.
@@ -9163,6 +9692,58 @@ export interface components {
         McpSelectionIn: {
             /** Servers */
             servers?: string[] | null;
+        };
+        /**
+         * McpServer
+         * @description One row of `claude mcp list`, annotated by `mcp_registry`.
+         *     `spec_available` false means the server cannot be re-declared, so a turn
+         *     running a subset cannot include it -- saying so is the whole point, since the
+         *     alternative is a switch that appears to work and silently removes a server's
+         *     tools.
+         */
+        McpServer: {
+            /** Name */
+            name: string;
+            /** Scope */
+            scope?: string | null;
+            /** Shadowed */
+            shadowed?: boolean | null;
+            /** Source */
+            source?: string | null;
+            /** Spec Available */
+            spec_available?: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * MentionableAgents
+         * @description Server-resolved because the rule is a policy, not a display preference: an
+         *     agent is addressable only if it opted in AND this chat's scope reaches it.
+         *     Computing it on the client would put the policy in two places.
+         */
+        MentionableAgents: {
+            /** Agents */
+            agents: Record<string, never>[];
+            /** Scope */
+            scope: string;
+        };
+        /**
+         * MessageAccepted
+         * @description Every branch is an acceptance -- running now, handed to the turn in
+         *     flight, or queued. `injected` means the bytes reached the running process,
+         *     NOT that the model read them: measured, the model addresses a mid-turn
+         *     message at the end of its current plan.
+         */
+        MessageAccepted: {
+            /** At Segment */
+            at_segment?: number | null;
+            /** Injected */
+            injected?: boolean | null;
+            queue?: components["schemas"]["QueueState"] | null;
+            /** Queued */
+            queued?: boolean | null;
+            /** Turn Id */
+            turn_id: string;
         };
         /**
          * MetricLatest
@@ -9207,6 +9788,23 @@ export interface components {
         ModeIn: {
             /** Mode */
             mode: string;
+        };
+        /** ModelCaps */
+        ModelCaps: {
+            efforts: components["schemas"]["EffortCaps"];
+            /** Vendor */
+            vendor: string;
+        };
+        /**
+         * ModesPayload
+         * @description Vendor-level, not per model: a permission mode is a property of the CLI
+         *     running the turn, not of the model answering it.
+         */
+        ModesPayload: {
+            /** Default */
+            default?: string | null;
+            /** Options */
+            options: string[];
         };
         /**
          * NativeSubagent
@@ -9303,6 +9901,17 @@ export interface components {
             ok: boolean;
         };
         /**
+         * OperationCancelled
+         * @description `cancelled: false` is not an error: it means the operation landed while
+         *     this request was on the wire, which is a race, not a failure.
+         */
+        OperationCancelled: {
+            /** Cancelled */
+            cancelled: boolean;
+            /** Operation */
+            operation: string;
+        };
+        /**
          * PageMeta
          * @description ADR 0023 clause 1's `page` object: `limit`, `next_cursor` (None means
          *     this is the last page, or the route has not adopted cursor pagination),
@@ -9364,6 +9973,18 @@ export interface components {
             message?: string | null;
             /** Request Id */
             request_id: string;
+        };
+        /**
+         * PermissionAnswered
+         * @description A mode change is recorded only AFTER the answer landed: recording it for a
+         *     turn that never got the approval would leave the chat looser than the
+         *     operator believes, on the strength of a click that did nothing.
+         */
+        PermissionAnswered: {
+            /** Permission Mode */
+            permission_mode?: string | null;
+            /** State */
+            state: string;
         };
         /** PostMessage */
         PostMessage: {
@@ -9619,6 +10240,29 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /**
+         * Provider
+         * @description One entry in the chat's scope picker. Every agent is a place you can type,
+         *     so agents appear here alongside the built-in providers and the project
+         *     build contexts.
+         */
+        Provider: {
+            /** Default Model */
+            default_model?: string | null;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Model Caps */
+            model_caps: {
+                [key: string]: components["schemas"]["ModelCaps"];
+            };
+            /** Models */
+            models: string[];
+            modes: components["schemas"]["ModesPayload"];
+            /** Tools Active */
+            tools_active: boolean;
+        };
         /** PublishIn */
         PublishIn: {
             /**
@@ -9689,6 +10333,47 @@ export interface components {
             ready: number;
             /** Todo */
             todo: number;
+        };
+        /**
+         * QueueState
+         * @description `queue_error` is why the queue is not moving, when it is not moving for a
+         *     reason the operator has to see. A queue that stopped and does not say so is
+         *     the same lie as a message that looks sent and is not.
+         */
+        QueueState: {
+            /** Queue Error */
+            queue_error: string;
+            /** Queue Held */
+            queue_held: boolean;
+            /** Queued */
+            queued: components["schemas"]["QueuedMessage"][];
+        };
+        /**
+         * QueuedMessage
+         * @description A message the SERVER has taken responsibility for but has not sent. The
+         *     per-turn overrides ride with it so a queued message runs under the model,
+         *     effort and permission mode it was typed with, not whatever the thread holds
+         *     when it finally drains.
+         */
+        QueuedMessage: {
+            /** Attachments */
+            attachments?: Record<string, never>[] | null;
+            /** Client Id */
+            client_id: string;
+            /** Effort */
+            effort?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Permission Mode */
+            permission_mode?: string | null;
+            /** Received At */
+            received_at: string;
+            /** Recorded */
+            recorded?: boolean | null;
+            /** Text */
+            text: string;
+            /** Ts */
+            ts: string;
         };
         /** ReadIn */
         ReadIn: {
@@ -9777,6 +10462,11 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** RenameBranchResult */
+        RenameBranchResult: {
+            /** Branches */
+            branches: components["schemas"]["Branch"][];
+        };
         /** RenameThread */
         RenameThread: {
             /** Title */
@@ -9786,6 +10476,33 @@ export interface components {
         RescopeThread: {
             /** Context Key */
             context_key: string;
+        };
+        /**
+         * Rescoped
+         * @description POST /rescope answers with a summary-shaped record rather than the full
+         *     document, and it is NOT `ThreadSummary`: it carries no `scope`, `mode` or
+         *     `archived_at`. Described as it is rather than aligned, since aligning it
+         *     would be a wire-shape change.
+         */
+        Rescoped: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Context Key */
+            context_key: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Id */
+            id: string;
+            /** Last Message */
+            last_message: string;
+            /** Message Count */
+            message_count: number;
+            /** Model */
+            model?: string | null;
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at?: string | null;
         };
         /** RetireAgentOut */
         RetireAgentOut: {
@@ -9910,6 +10627,34 @@ export interface components {
             /** Task */
             task: string;
         };
+        /**
+         * RunSummary
+         * @description The latest run of a ticket, in the fields a job record HAS. `files` and
+         *     `commits` are COUNTS and are null unless the evidence is the structured
+         *     receipt `project_ralph.sh` writes: zero would claim the receipt said nothing
+         *     changed, and a key that comes and goes makes every reader test for two
+         *     spellings of the same absence.
+         */
+        RunSummary: {
+            /** Agent Name */
+            agent_name?: string | null;
+            /** Commits */
+            commits?: number | null;
+            /** Ended At */
+            ended_at?: string | null;
+            /** Exit Code */
+            exit_code?: number | null;
+            /** Files */
+            files?: number | null;
+            /** Id */
+            id?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Trigger */
+            trigger?: string | null;
+        };
         /** RunnerStart */
         RunnerStart: {
             /** Dir */
@@ -10022,6 +10767,32 @@ export interface components {
             /** Text */
             text?: string | null;
         };
+        /**
+         * SpawnedTask
+         * @description `decision` is the dedup verdict (`new`, `merge`, `exact`, ...). A merge or
+         *     exact is never run: it folded into an existing ticket, and running that would
+         *     be a surprise re-run of unrelated work. `job_id` appears only on file-and-run
+         *     for a freshly filed ticket, and `run_error` only when that launch failed.
+         */
+        SpawnedTask: {
+            /** Cosine */
+            cosine?: number | null;
+            /** Decision */
+            decision: string;
+            /** Job Id */
+            job_id?: string | null;
+            /** Matched Id */
+            matched_id?: string | null;
+            /** Message */
+            message: string;
+            /** Run Error */
+            run_error?: unknown;
+            /** Scope */
+            scope?: string | null;
+            task?: components["schemas"]["Task"] | null;
+            /** Thread Id */
+            thread_id: string;
+        };
         /** StartTurnIn */
         StartTurnIn: {
             /** Attachments */
@@ -10058,6 +10829,12 @@ export interface components {
             public?: string | null;
             /** Standalone */
             standalone?: Record<string, never> | null;
+        };
+        /** SwitchResult */
+        SwitchResult: {
+            branch: components["schemas"]["CurrentBranch"];
+            /** Branches */
+            branches: components["schemas"]["Branch"][];
         };
         /**
          * Task
@@ -10452,6 +11229,388 @@ export interface components {
             /** Ref */
             ref?: string | null;
         };
+        /**
+         * ThreadContext
+         * @description The context meter. OUR estimate, measured over the prompt a turn would
+         *     actually send -- summary included -- because an estimate over a trimmed
+         *     history while turns send the whole thing is how a chat read 12% while
+         *     re-sending every message ever written in it.
+         */
+        ThreadContext: {
+            /** Model */
+            model?: string | null;
+            /** Pct */
+            pct: number;
+            /** Source */
+            source: string;
+            /** Used Tokens */
+            used_tokens: number;
+            /** Window Tokens */
+            window_tokens: number;
+        };
+        /** ThreadDeleted */
+        ThreadDeleted: {
+            /** Deleted */
+            deleted: boolean;
+        };
+        /**
+         * ThreadDocument
+         * @description The thread WITH its transcript, which is what `chat_store.get_thread`
+         *     returns and what POST /threads answers with. Only the create route serves
+         *     this shape; every read route strips `messages` -- see `ThreadSettings`.
+         *
+         *     A turn in flight appears as a trailing assistant message carrying
+         *     `streaming: true` and its `turn_id`, built as a VIEW of `meta.live_message`
+         *     rather than stored. `messages` is left open for the same reason
+         *     `ThreadEvents.events` is; see the module docstring.
+         */
+        ThreadDocument: {
+            /** Name Attempts */
+            _name_attempts?: number | null;
+            /** Seed Title */
+            _seed_title?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Sessions */
+            agent_sessions?: {
+                [key: string]: string;
+            } | null;
+            /** Archived At */
+            archived_at?: string | null;
+            /** Card States */
+            card_states?: Record<string, never> | null;
+            /** Claude Session */
+            claude_session?: string | null;
+            /** Cleared Through */
+            cleared_through?: number | null;
+            /** Context Cut */
+            context_cut?: string | null;
+            /** Context Key */
+            context_key: string;
+            /** Context Tokens */
+            context_tokens?: number | null;
+            /** Converted At */
+            converted_at?: string | null;
+            /** Converted From */
+            converted_from?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Cut Mode */
+            cut_mode?: string | null;
+            /** Effort */
+            effort?: string | null;
+            /** Id */
+            id: string;
+            /** Mcp Servers Enabled */
+            mcp_servers_enabled?: string[] | null;
+            /**
+             * Messages
+             * @default []
+             */
+            messages: Record<string, never>[];
+            /** Mode */
+            mode: string;
+            /** Model */
+            model?: string | null;
+            /** Permission Mode */
+            permission_mode?: string | null;
+            /** Scope */
+            scope: string;
+            /** Summary */
+            summary?: string | null;
+            /** Ticket Drafts */
+            ticket_drafts?: Record<string, never> | null;
+            /** Title */
+            title: string;
+            /** Turn Marks */
+            turn_marks?: Record<string, never> | null;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Voice Session */
+            voice_session?: string | null;
+        };
+        /**
+         * ThreadEvents
+         * @description THE sync endpoint. Everything needed to render a transcript is here, and a
+         *     client merges it with nothing except the live SSE for the active turn.
+         *
+         *     `events` is `list[dict]` deliberately -- see the module docstring. `after` is
+         *     a cursor, not an index. `has_more` and `first_seq` carry information only on
+         *     a `tail`/`before` page; an `after=0` call already returns the whole log.
+         *
+         *     `cleared_through` and `cut_mode` are the cut the SERVER is applying, derived
+         *     from the same resolution the prompt uses, which is what makes the divider and
+         *     the prompt incapable of disagreeing. The queue rides here rather than on a
+         *     second endpoint so the transcript and the queue cannot disagree about a
+         *     message that is in one and not the other.
+         */
+        ThreadEvents: {
+            active_turn?: components["schemas"]["ActiveTurn"] | null;
+            /** Branch */
+            branch?: string | null;
+            /** Branch Count */
+            branch_count: number;
+            /** Cleared Through */
+            cleared_through: number;
+            /** Cut Mode */
+            cut_mode: string;
+            /** Events */
+            events: Record<string, never>[];
+            /** First Seq */
+            first_seq?: number | null;
+            /** Has More */
+            has_more: boolean;
+            /** Last Seq */
+            last_seq: number;
+            /** Queue Error */
+            queue_error: string;
+            /** Queue Held */
+            queue_held: boolean;
+            /** Queued */
+            queued: components["schemas"]["QueuedMessage"][];
+        };
+        /**
+         * ThreadSettings
+         * @description A thread as SETTINGS: everything `chat_store._document` returns except the
+         *     transcript. Every route that answers with a thread is answering a settings
+         *     question; the transcript is served by GET /events. Measured 2026-08-14, the
+         *     worst thread's `messages` was 4.77 MB of a 4.79 MB response no client reads,
+         *     which is what `_without_messages` exists to strip.
+         *
+         *     The field set is the measured union of all 95 live `meta.json` files, minus
+         *     the six internal keys, plus the derived three. `seed_title` and
+         *     `name_attempts` are aliased because their stored names lead with an
+         *     underscore, which pydantic reserves for private attributes.
+         *
+         *     Almost everything is optional because meta accretes: a thread created before
+         *     a field existed simply does not carry it, and `_document` copies what is
+         *     there rather than filling in defaults.
+         */
+        ThreadSettings: {
+            /** Name Attempts */
+            _name_attempts?: number | null;
+            /** Seed Title */
+            _seed_title?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Sessions */
+            agent_sessions?: {
+                [key: string]: string;
+            } | null;
+            /** Archived At */
+            archived_at?: string | null;
+            /** Card States */
+            card_states?: Record<string, never> | null;
+            /** Claude Session */
+            claude_session?: string | null;
+            /** Cleared Through */
+            cleared_through?: number | null;
+            /** Context Cut */
+            context_cut?: string | null;
+            /** Context Key */
+            context_key: string;
+            /** Context Tokens */
+            context_tokens?: number | null;
+            /** Converted At */
+            converted_at?: string | null;
+            /** Converted From */
+            converted_from?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Cut Mode */
+            cut_mode?: string | null;
+            /** Effort */
+            effort?: string | null;
+            /** Id */
+            id: string;
+            /** Mcp Servers Enabled */
+            mcp_servers_enabled?: string[] | null;
+            /** Mode */
+            mode: string;
+            /** Model */
+            model?: string | null;
+            /** Permission Mode */
+            permission_mode?: string | null;
+            /** Scope */
+            scope: string;
+            /** Summary */
+            summary?: string | null;
+            /** Ticket Drafts */
+            ticket_drafts?: Record<string, never> | null;
+            /** Title */
+            title: string;
+            /** Turn Marks */
+            turn_marks?: Record<string, never> | null;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Voice Session */
+            voice_session?: string | null;
+        };
+        /**
+         * ThreadSummary
+         * @description One sidebar row. `chat_store._summary_row` and `chat_list_pg._shape_row`
+         *     emit exactly this, field for field -- that identity is what keeps the file
+         *     fold and the Postgres path from drifting.
+         *
+         *     `scope` is DERIVED from `context_key` on every read and is stored by nobody.
+         *     `last_user_at` is when the OPERATOR last spoke, which is what the list orders
+         *     by; `updated_at` moves for background writes and would put a chat nobody has
+         *     touched above the one they were just in.
+         */
+        ThreadSummary: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Archived At */
+            archived_at?: string | null;
+            /** Context Key */
+            context_key: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Id */
+            id: string;
+            /** Last Message */
+            last_message: string;
+            /** Last User At */
+            last_user_at?: string | null;
+            /** Message Count */
+            message_count: number;
+            /** Mode */
+            mode: string;
+            /** Model */
+            model?: string | null;
+            /** Scope */
+            scope: string;
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /**
+         * ThreadWithQueue
+         * @description GET /threads/{id}: the settings document merged with the queue, from one
+         *     read, so opening a chat shows what is waiting in it on the first paint.
+         */
+        ThreadWithQueue: {
+            /** Name Attempts */
+            _name_attempts?: number | null;
+            /** Seed Title */
+            _seed_title?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Sessions */
+            agent_sessions?: {
+                [key: string]: string;
+            } | null;
+            /** Archived At */
+            archived_at?: string | null;
+            /** Card States */
+            card_states?: Record<string, never> | null;
+            /** Claude Session */
+            claude_session?: string | null;
+            /** Cleared Through */
+            cleared_through?: number | null;
+            /** Context Cut */
+            context_cut?: string | null;
+            /** Context Key */
+            context_key: string;
+            /** Context Tokens */
+            context_tokens?: number | null;
+            /** Converted At */
+            converted_at?: string | null;
+            /** Converted From */
+            converted_from?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Cut Mode */
+            cut_mode?: string | null;
+            /** Effort */
+            effort?: string | null;
+            /** Id */
+            id: string;
+            /** Mcp Servers Enabled */
+            mcp_servers_enabled?: string[] | null;
+            /** Mode */
+            mode: string;
+            /** Model */
+            model?: string | null;
+            /** Permission Mode */
+            permission_mode?: string | null;
+            /** Queue Error */
+            queue_error: string;
+            /** Queue Held */
+            queue_held: boolean;
+            /** Queued */
+            queued: components["schemas"]["QueuedMessage"][];
+            /** Scope */
+            scope: string;
+            /** Summary */
+            summary?: string | null;
+            /** Ticket Drafts */
+            ticket_drafts?: Record<string, never> | null;
+            /** Title */
+            title: string;
+            /** Turn Marks */
+            turn_marks?: Record<string, never> | null;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Voice Session */
+            voice_session?: string | null;
+        };
+        /**
+         * ThreadWork
+         * @description Everything this chat's work surfaces show, in one read. The badge, the
+         *     Work panel and every ticket card in the transcript poll this and nothing
+         *     else -- they used to poll `/inbox` and `/tasks` on separate intervals, which
+         *     let three surfaces hold three copies of one ticket and disagree.
+         */
+        ThreadWork: {
+            counts: components["schemas"]["WorkCounts"];
+            /** Filed */
+            filed: components["schemas"]["WorkTask"][];
+            /** Inbox */
+            inbox: components["schemas"]["InboxItem"][];
+            /** Scope */
+            scope: components["schemas"]["WorkTask"][];
+            /** Scope Key */
+            scope_key?: string | null;
+        };
+        /**
+         * TicketDrafts
+         * @description This chat's open draft tickets, with staleness against the transcript.
+         *     `messages_since` is what lets the UI say '5 messages since these were
+         *     drafted' rather than making the operator guess. Zero drafts is a normal
+         *     answer: most of what is said in a conversation is discussion, reversal, or
+         *     work already done.
+         */
+        TicketDrafts: {
+            /** Drafts */
+            drafts: components["schemas"]["DraftTask"][];
+            /** Generated At */
+            generated_at?: string | null;
+            /** Message Count */
+            message_count: number;
+            /** Messages Since */
+            messages_since: number;
+            /** Scope */
+            scope?: string | null;
+        };
+        /**
+         * TicketScope
+         * @description Where this chat's tickets file, and whether that scope can run them.
+         *     `runnable` answers 'can this be run by hand'; `automatic` answers 'will
+         *     anything pick it up on its own', which is false for every project scope today
+         *     and was previously invisible until the ticket sat forever.
+         */
+        TicketScope: {
+            /** Automatic */
+            automatic: boolean;
+            /** Runnable */
+            runnable: boolean;
+            /** Scope */
+            scope: string;
+            /** Why */
+            why: string;
+        };
         /** ToolCall */
         ToolCall: {
             /**
@@ -10515,6 +11674,24 @@ export interface components {
             /** Text */
             text: string;
         };
+        /**
+         * TurnStopped
+         * @description Never an error. Stopping a turn that already finished is a no-op that
+         *     returns `stopped: false`, because 'it is already stopped' is the outcome the
+         *     caller wanted. `committed: false` with `stopped: true` means the commit is
+         *     still coming -- said plainly rather than claiming an ending that has not been
+         *     written yet.
+         */
+        TurnStopped: {
+            /** Committed */
+            committed?: boolean | null;
+            /** Reason */
+            reason: string;
+            /** Stopped */
+            stopped: boolean;
+            /** Turn Id */
+            turn_id: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -10523,6 +11700,151 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * WorkCounts
+         * @description `needs_you` is THE badge. An open-ticket count is ambient information
+         *     wearing an alarm's clothing, so only what actually wants the operator counts
+         *     there; the other three are chip counts. `all` is the size of the set the chip
+         *     opens, not the size of the page shown.
+         */
+        WorkCounts: {
+            /** All */
+            all: number;
+            /** Needs You */
+            needs_you: number;
+            /** Running */
+            running: number;
+            /** This Chat */
+            this_chat: number;
+        };
+        /**
+         * WorkTask
+         * @description A ticket as the work panel shows it: the canonical Task plus its latest
+         *     run, stamped on by `chat_work.thread_work`.
+         */
+        WorkTask: {
+            /** Acceptance */
+            acceptance?: Record<string, never> | null;
+            /** Assignee */
+            assignee?: string | null;
+            /**
+             * Attempts
+             * @default 0
+             */
+            attempts: number;
+            awaiting?: components["schemas"]["Awaiting"] | null;
+            /** Blocked By */
+            blocked_by?: components["schemas"]["TaskLink"][] | null;
+            /** Blocked Reason */
+            blocked_reason?: string | null;
+            blocked_request?: components["schemas"]["Awaiting"] | null;
+            /** Body */
+            body: string;
+            /** Claim Pid */
+            claim_pid?: number | null;
+            /** Claim Token */
+            claim_token?: number | null;
+            /**
+             * Comments
+             * @default []
+             */
+            comments: components["schemas"]["TaskComment"][];
+            /** Created */
+            created: string;
+            /**
+             * Depends On
+             * @default []
+             */
+            depends_on: string[];
+            /** Discovered From */
+            discovered_from?: string | null;
+            effective_latitude?: components["schemas"]["EffectiveLatitude"] | null;
+            /** Effort */
+            effort?: string | null;
+            /**
+             * Evidence
+             * @default []
+             */
+            evidence: Record<string, never>[];
+            /**
+             * Exec
+             * @default {}
+             */
+            exec: Record<string, never>;
+            /** Execution */
+            execution?: string | null;
+            /**
+             * External Refs
+             * @default []
+             */
+            external_refs: Record<string, never>[];
+            /** Id */
+            id: string;
+            /**
+             * Job Ids
+             * @default []
+             */
+            job_ids: string[];
+            /**
+             * Labels
+             * @default []
+             */
+            labels: string[];
+            /** Last Heartbeat */
+            last_heartbeat?: string | null;
+            /** Latitude */
+            latitude?: string | null;
+            /** Lease Until */
+            lease_until?: string | null;
+            links?: components["schemas"]["TaskLinks"] | null;
+            /** Max Attempts */
+            max_attempts?: number | null;
+            origin?: components["schemas"]["TaskOrigin"] | null;
+            /** Owner */
+            owner: string;
+            /** Parent */
+            parent?: string | null;
+            /**
+             * Priority
+             * @default 0
+             */
+            priority: number;
+            /** Provenance */
+            provenance?: string | null;
+            readiness?: components["schemas"]["Readiness"] | null;
+            /** Ready */
+            ready?: boolean | null;
+            /**
+             * Relates To
+             * @default []
+             */
+            relates_to: string[];
+            run?: components["schemas"]["RunSummary"] | null;
+            /** Scope */
+            scope?: string | null;
+            /** Scoped By */
+            scoped_by: string;
+            source: components["schemas"]["TaskSource"];
+            /** State Type */
+            state_type?: string | null;
+            /** Status */
+            status: string;
+            /** Sync */
+            sync?: Record<string, never> | null;
+            /** Text */
+            text: string;
+            /** Title */
+            title: string;
+            /**
+             * Touches
+             * @default []
+             */
+            touches: string[];
+            /** Triage */
+            triage?: Record<string, never> | null;
+            /** Updated */
+            updated: string;
         };
         /** WriteIn */
         WriteIn: {
@@ -15788,7 +17110,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AttachmentList"];
                 };
             };
             /** @description Validation Error */
@@ -15821,7 +17143,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AttachmentUploaded"];
                 };
             };
             /** @description Validation Error */
@@ -15883,7 +17205,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AttachmentDeleted"];
                 };
             };
             /** @description Validation Error */
@@ -15914,7 +17236,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Draft"];
                 };
             };
             /** @description Validation Error */
@@ -15949,7 +17271,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Draft"];
                 };
             };
             /** @description Validation Error */
@@ -15980,7 +17302,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DeletedOut"];
                 };
             };
             /** @description Validation Error */
@@ -16009,7 +17331,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ChatPrefsOut"];
                 };
             };
         };
@@ -16033,7 +17355,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ChatPrefsOut"];
                 };
             };
             /** @description Validation Error */
@@ -16064,7 +17386,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Provider"][];
                 };
             };
             /** @description Validation Error */
@@ -16096,7 +17418,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadSummary"][];
                 };
             };
             /** @description Validation Error */
@@ -16129,7 +17451,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadDocument"];
                 };
             };
             /** @description Validation Error */
@@ -16160,7 +17482,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadWithQueue"];
                 };
             };
             /** @description Validation Error */
@@ -16191,7 +17513,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadDeleted"];
                 };
             };
             /** @description Validation Error */
@@ -16226,7 +17548,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadSettings"];
                 };
             };
             /** @description Validation Error */
@@ -16257,7 +17579,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadSettings"];
                 };
             };
             /** @description Validation Error */
@@ -16288,7 +17610,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BranchList"];
                 };
             };
             /** @description Validation Error */
@@ -16323,7 +17645,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ForkResult"];
                 };
             };
             /** @description Validation Error */
@@ -16355,7 +17677,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SwitchResult"];
                 };
             };
             /** @description Validation Error */
@@ -16391,7 +17713,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RenameBranchResult"];
                 };
             };
             /** @description Validation Error */
@@ -16426,7 +17748,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CardStates"];
                 };
             };
             /** @description Validation Error */
@@ -16457,7 +17779,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ClearResult"];
                 };
             };
             /** @description Validation Error */
@@ -16488,7 +17810,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CompactResult"];
                 };
             };
             /** @description Validation Error */
@@ -16519,7 +17841,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadContext"];
                 };
             };
             /** @description Validation Error */
@@ -16552,7 +17874,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContextDetail"];
                 };
             };
             /** @description Validation Error */
@@ -16588,7 +17910,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadEvents"];
                 };
             };
             /** @description Validation Error */
@@ -16623,7 +17945,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["InjectResult"];
                 };
             };
             /** @description Validation Error */
@@ -16656,7 +17978,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["McpHealth"];
                 };
             };
             /** @description Validation Error */
@@ -16691,7 +18013,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["McpSelection"];
                 };
             };
             /** @description Validation Error */
@@ -16722,7 +18044,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MentionableAgents"];
                 };
             };
             /** @description Validation Error */
@@ -16757,7 +18079,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MessageAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -16792,7 +18114,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ChatModeSet"];
                 };
             };
             /** @description Validation Error */
@@ -16823,7 +18145,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OperationCancelled"];
                 };
             };
             /** @description Validation Error */
@@ -16854,7 +18176,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["QueueState"];
                 };
             };
             /** @description Validation Error */
@@ -16886,7 +18208,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["QueueState"];
                 };
             };
             /** @description Validation Error */
@@ -16921,7 +18243,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Rescoped"];
                 };
             };
             /** @description Validation Error */
@@ -16952,7 +18274,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadSettings"];
                 };
             };
             /** @description Validation Error */
@@ -16987,7 +18309,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SpawnedTask"];
                 };
             };
             /** @description Validation Error */
@@ -17051,7 +18373,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TicketDrafts"];
                 };
             };
             /** @description Validation Error */
@@ -17082,7 +18404,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TicketDrafts"];
                 };
             };
             /** @description Validation Error */
@@ -17114,7 +18436,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TicketDrafts"];
                 };
             };
             /** @description Validation Error */
@@ -17150,7 +18472,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TicketDrafts"];
                 };
             };
             /** @description Validation Error */
@@ -17181,7 +18503,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TicketScope"];
                 };
             };
             /** @description Validation Error */
@@ -17216,7 +18538,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MessageAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -17252,7 +18574,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PermissionAnswered"];
                 };
             };
             /** @description Validation Error */
@@ -17283,7 +18605,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ThreadWork"];
                 };
             };
             /** @description Validation Error */
@@ -17314,7 +18636,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TurnStopped"];
                 };
             };
             /** @description Validation Error */

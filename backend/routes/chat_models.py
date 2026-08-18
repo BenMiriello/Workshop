@@ -1,0 +1,758 @@
+"""Response models for `routes/chat.py` (ADR 0023 clause 6).
+
+WHY A SIBLING MODULE. `health.py` and `location.py`, the ADR's two exemplars,
+declare their models inline, and that is the pattern where it fits. `chat.py` is
+already 4,110 lines -- the largest file in `backend/` and long past
+`check_module_layout.py`'s 800-line big-file threshold -- so another 600 lines of
+model declarations would make the worst file in the tree measurably worse for no
+gain. Shapes returned by more than one ROUTER still belong in `api_models.py`;
+these are chat's own, so they live beside chat.
+
+WHAT A `response_model` DOES, and why it is the dangerous half of this work.
+FastAPI FILTERS the handler's return value through the declared model and
+silently DROPS any key the model does not name. An under-declared model is not a
+documentation gap, it is a live API field that disappears with a green test
+suite. Every model below was read off the EMITTER -- `services/chat_store.py`,
+`chat_list_pg.py`, `chat_queue.py`, `chat_branches.py`, `db/chat_repo.py`,
+`chat_work.py`, `inbox.py`, `ticket_drafts.py`, `draft_store.py`,
+`mcp_health.py`, `mcp_registry.py`, `context_report.py`, `build_streaming.py` --
+and not off `frontend/src/lib/chat.ts`, whose types are known-incomplete (that
+incompleteness is the finding ADR 0023 exists to fix).
+
+THE THREAD DOCUMENT'S FIELD SET WAS MEASURED, NOT GUESSED. `chat_store._document`
+returns `meta` minus `_INTERNAL_META` plus three derived keys, and `meta` is
+patched by a dozen callers, so the enumerable set is not obvious from the code.
+Counted over all 95 live `meta.json` files on 2026-08-18: 30 distinct keys, of
+which 6 are stripped as internal. `ThreadSettings` below is that measured set plus
+the derived three, plus `agent_sessions`, which `chat_store._patch` writes and
+no live thread carries yet.
+
+TWO PAYLOADS ARE DELIBERATELY LEFT OPEN, and both are the ADR's own reasoning:
+
+  * `ThreadEvents.events` and any live-message view stay `list[dict]` / `dict`.
+    The event log is heterogeneous by design (message, boundary, scope, turn
+    kinds, each with its own keys) and the renderer splits replies on positional
+    fields -- `meta.cut_id`, `seg.cut_after`, `meta.cut_head` -- that a closed
+    model would drop. Dropping exactly those fields is the 2026-08-14 regression
+    that put the operator's message above half an hour of work, and pinning this
+    seam already has its own open ticket ("Pin the backend-to-renderer seam with
+    a contract test"). Narrowing it here, ahead of that test, would be doing the
+    dangerous half of that ticket without the half that catches it.
+  * `ContextDetail`'s CLI-derived block. `/context` is parsed out of another
+    process's markdown; its section set is that CLI's, not ours.
+
+RFC3339 AND `*_at` (ADR 0023 clause 4) ARE NOT APPLIED HERE. `ts`, `created`,
+`updated`, `checked_at` (epoch seconds) and `sent_at` are the names and encodings
+the live stores, the live frontend and the on-disk logs use. Renaming them is a
+wire-shape change to every chat surface, and the ADR's migration posture makes
+such a change incomplete until the frontend reads the new name in the SAME
+commit. Recorded as debt here rather than half-changed.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from routes.api_models import Task
+
+
+# ------------------------------------------------------------------ providers
+
+class EffortCaps(BaseModel):
+    """`levels` is the vendor's ladder for this model; `default` folds in the
+    operator's preference, which is why it can differ per reading."""
+
+    levels: list[str]
+    default: str | None = None
+
+
+class ModelCaps(BaseModel):
+    vendor: str
+    efforts: EffortCaps
+
+
+class ModesPayload(BaseModel):
+    """Vendor-level, not per model: a permission mode is a property of the CLI
+    running the turn, not of the model answering it."""
+
+    options: list[str]
+    default: str | None = None
+
+
+class Provider(BaseModel):
+    """One entry in the chat's scope picker. Every agent is a place you can type,
+    so agents appear here alongside the built-in providers and the project
+    build contexts."""
+
+    # `model_caps` collides with pydantic's protected `model_` namespace. The
+    # key is the wire name the frontend already reads, so the namespace is
+    # opened rather than the field renamed.
+    model_config = ConfigDict(protected_namespaces=())
+
+    key: str
+    label: str
+    models: list[str]
+    default_model: str | None = None
+    tools_active: bool
+    model_caps: dict[str, ModelCaps]
+    modes: ModesPayload
+
+
+# -------------------------------------------------------------------- threads
+
+class ThreadSummary(BaseModel):
+    """One sidebar row. `chat_store._summary_row` and `chat_list_pg._shape_row`
+    emit exactly this, field for field -- that identity is what keeps the file
+    fold and the Postgres path from drifting.
+
+    `scope` is DERIVED from `context_key` on every read and is stored by nobody.
+    `last_user_at` is when the OPERATOR last spoke, which is what the list orders
+    by; `updated_at` moves for background writes and would put a chat nobody has
+    touched above the one they were just in."""
+
+    id: str
+    context_key: str
+    scope: str
+    mode: str
+    agent_id: str | None = None
+    model: str | None = None
+    title: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    archived_at: str | None = None
+    last_user_at: str | None = None
+    message_count: int
+    last_message: str
+
+
+class ThreadSettings(BaseModel):
+    """A thread as SETTINGS: everything `chat_store._document` returns except the
+    transcript. Every route that answers with a thread is answering a settings
+    question; the transcript is served by GET /events. Measured 2026-08-14, the
+    worst thread's `messages` was 4.77 MB of a 4.79 MB response no client reads,
+    which is what `_without_messages` exists to strip.
+
+    The field set is the measured union of all 95 live `meta.json` files, minus
+    the six internal keys, plus the derived three. `seed_title` and
+    `name_attempts` are aliased because their stored names lead with an
+    underscore, which pydantic reserves for private attributes.
+
+    Almost everything is optional because meta accretes: a thread created before
+    a field existed simply does not carry it, and `_document` copies what is
+    there rather than filling in defaults."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    context_key: str
+    # Derived on every read from `context_key`. A stored copy is written by
+    # nobody and trusted by nobody -- see chat_store._document.
+    scope: str
+    mode: str
+    agent_id: str | None = None
+    model: str | None = None
+    title: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    archived_at: str | None = None
+    effort: str | None = None
+    permission_mode: str | None = None
+    # None means ALL servers, which is both the default and what every chat did
+    # before the control existed. A list is an explicit subset; never [].
+    mcp_servers_enabled: list[str] | None = None
+    claude_session: str | None = None
+    context_tokens: int | None = None
+    # A MARKER, not a count, and the only value it ever holds is the literal
+    # string "cleared" (chat_store.clear_thread_context). The name reads like a
+    # message index and is not one; recorded as it is rather than renamed, since
+    # renaming it is a wire-shape change.
+    context_cut: str | None = None
+    turn_marks: dict[str, Any] | None = None
+    card_states: dict[str, Any] | None = None
+    ticket_drafts: dict[str, Any] | None = None
+    # The resident voice worker's session id, a bare string -- one more copy of
+    # "what this thread has already been told", which is why /clear drops it.
+    voice_session: str | None = None
+    # slug -> claude session id, one per @mentioned agent.
+    agent_sessions: dict[str, str] | None = None
+    converted_from: str | None = None
+    converted_at: str | None = None
+    # Present only when the resolved boundary has one; `_document` pops it
+    # otherwise, so a fork past a compaction does not carry a summary of a line
+    # that no longer exists.
+    summary: str | None = None
+    # Derived, and present only when a cut resolved.
+    cleared_through: int | None = None
+    cut_mode: str | None = None
+    seed_title: str | None = Field(default=None, alias="_seed_title")
+    name_attempts: int | None = Field(default=None, alias="_name_attempts")
+
+
+class QueuedMessage(BaseModel):
+    """A message the SERVER has taken responsibility for but has not sent. The
+    per-turn overrides ride with it so a queued message runs under the model,
+    effort and permission mode it was typed with, not whatever the thread holds
+    when it finally drains."""
+
+    client_id: str
+    text: str
+    ts: str
+    received_at: str
+    # Already in the log: a delivery was attempted against a turn that could not
+    # read it, so finding it in the transcript does not mean it was answered.
+    recorded: bool | None = None
+    attachments: list[dict[str, Any]] | None = None
+    model: str | None = None
+    effort: str | None = None
+    permission_mode: str | None = None
+
+
+class QueueState(BaseModel):
+    """`queue_error` is why the queue is not moving, when it is not moving for a
+    reason the operator has to see. A queue that stopped and does not say so is
+    the same lie as a message that looks sent and is not."""
+
+    queued: list[QueuedMessage]
+    queue_held: bool
+    queue_error: str
+
+
+class ThreadDocument(ThreadSettings):
+    """The thread WITH its transcript, which is what `chat_store.get_thread`
+    returns and what POST /threads answers with. Only the create route serves
+    this shape; every read route strips `messages` -- see `ThreadSettings`.
+
+    A turn in flight appears as a trailing assistant message carrying
+    `streaming: true` and its `turn_id`, built as a VIEW of `meta.live_message`
+    rather than stored. `messages` is left open for the same reason
+    `ThreadEvents.events` is; see the module docstring."""
+
+    messages: list[dict[str, Any]] = []
+
+
+class ThreadWithQueue(ThreadSettings, QueueState):
+    """GET /threads/{id}: the settings document merged with the queue, from one
+    read, so opening a chat shows what is waiting in it on the first paint."""
+
+
+class ThreadDeleted(BaseModel):
+    deleted: bool
+
+
+class Rescoped(BaseModel):
+    """POST /rescope answers with a summary-shaped record rather than the full
+    document, and it is NOT `ThreadSummary`: it carries no `scope`, `mode` or
+    `archived_at`. Described as it is rather than aligned, since aligning it
+    would be a wire-shape change."""
+
+    id: str
+    context_key: str
+    agent_id: str | None = None
+    model: str | None = None
+    title: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    message_count: int
+    last_message: str
+
+
+class ChatModeSet(BaseModel):
+    id: str
+    mode: str | None = None
+
+
+class CardStates(BaseModel):
+    """Which in-chat cards have been acted on. Opaque per card kind: the client
+    that renders a card owns the shape of its own state."""
+
+    card_states: dict[str, Any]
+
+
+# --------------------------------------------------------------------- drafts
+
+class Draft(BaseModel):
+    """The unsent text in a composer, plus the files attached to it -- a draft is
+    everything in the box. `superseded` is set when a write LOST to a strictly
+    newer stored entry, so the caller reconciles instead of believing a write
+    that did not happen."""
+
+    key: str
+    text: str
+    ts: int
+    client_id: str
+    attachments: list[dict[str, Any]] | None = None
+    superseded: bool | None = None
+
+
+# ---------------------------------------------------------------------- prefs
+
+class ChatPrefsOut(BaseModel):
+    """Operator-level chat settings. The CHOICES are served, never assumed by the
+    client: which permission modes a chat may pick is this system's decision
+    (bypass is not among them) and the effort ladder is the vendor's. A null
+    default means 'no preference', which renders as the model-default option
+    rather than as a blank."""
+
+    default_mode: str | None = None
+    modes: list[str]
+    default_effort: str | None = None
+    efforts: list[str]
+    default_permission_mode: str | None = None
+    permission_modes: list[str]
+    platform_permission_mode: str
+
+
+# --------------------------------------------------------------------- events
+
+class ActiveTurn(BaseModel):
+    """The turn in flight. `live` is the draft reply as it is being written --
+    the claim's immutable facts (model, agent, start ts) overlaid with what the
+    turn rewrites constantly -- and is left open for the same reason `events` is.
+
+    `accepts_input` is added by the route, not by `chat_log`, because only this
+    layer sees the turn registry. A command turn takes no input, and a client
+    that does not know that sends into a void."""
+
+    turn_id: str
+    started_seq: int | None = None
+    live: dict[str, Any] | None = None
+    accepts_input: bool | None = None
+
+
+class ThreadEvents(BaseModel):
+    """THE sync endpoint. Everything needed to render a transcript is here, and a
+    client merges it with nothing except the live SSE for the active turn.
+
+    `events` is `list[dict]` deliberately -- see the module docstring. `after` is
+    a cursor, not an index. `has_more` and `first_seq` carry information only on
+    a `tail`/`before` page; an `after=0` call already returns the whole log.
+
+    `cleared_through` and `cut_mode` are the cut the SERVER is applying, derived
+    from the same resolution the prompt uses, which is what makes the divider and
+    the prompt incapable of disagreeing. The queue rides here rather than on a
+    second endpoint so the transcript and the queue cannot disagree about a
+    message that is in one and not the other."""
+
+    events: list[dict[str, Any]]
+    last_seq: int
+    branch: str | None = None
+    branch_count: int
+    active_turn: ActiveTurn | None = None
+    has_more: bool
+    first_seq: int | None = None
+    cleared_through: int
+    cut_mode: str
+    queued: list[QueuedMessage]
+    queue_held: bool
+    queue_error: str
+
+
+# ------------------------------------------------------------------- branches
+
+class Branch(BaseModel):
+    """One line of the conversation. The CURRENT branch is included and flagged
+    rather than filtered out: a list that silently omits where you are makes the
+    other entries unreadable."""
+
+    id: str
+    name: str | None = None
+    ordinal: int | None = None
+    is_current: bool
+    is_root: bool
+    created_at: str
+    fork_message_id: str | None = None
+    forked_from: str | None = None
+    forked_from_role: str | None = None
+    forked_at: str | None = None
+    preview: str | None = None
+    last_at: str
+
+
+class BranchList(BaseModel):
+    """Empty rather than an error when the relational store is unreachable: a
+    chat renders without this, it just cannot be branched."""
+
+    branches: list[Branch]
+
+
+class CurrentBranch(BaseModel):
+    """`chat_repo.current_branch` -- the raw row, which is a DIFFERENT shape from
+    a `Branch` list entry: it carries the head pointer and the parent id, and
+    none of the fork previews the list computes."""
+
+    id: str
+    name: str | None = None
+    ordinal: int | None = None
+    fork_message_id: str | None = None
+    head_message_id: str | None = None
+    parent_branch_id: str | None = None
+    # A real datetime here, unlike the ISO string `Branch` carries: this row is
+    # handed back raw and only its UUIDs are stringified.
+    created_at: datetime | None = None
+
+
+class ForkResult(BaseModel):
+    """`queued_held` is how many messages the server was holding for the line
+    just left. It is REPORTED, not acted on: cancelling them would destroy work
+    the operator never asked to destroy, and staying silent is how it became a
+    surprise."""
+
+    branch: CurrentBranch
+    branches: list[Branch]
+    queued_held: int
+
+
+class SwitchResult(BaseModel):
+    branch: CurrentBranch
+    branches: list[Branch]
+
+
+class RenameBranchResult(BaseModel):
+    branches: list[Branch]
+
+
+# -------------------------------------------------------------- ticket drafts
+
+class DraftTask(Task):
+    """A draft ticket. `dedup` is the merge verdict and is stamped only by the
+    PROPOSE path, so it is absent when the drafts are simply read back."""
+
+    dedup: str | None = None
+
+
+class TicketDrafts(BaseModel):
+    """This chat's open draft tickets, with staleness against the transcript.
+    `messages_since` is what lets the UI say '5 messages since these were
+    drafted' rather than making the operator guess. Zero drafts is a normal
+    answer: most of what is said in a conversation is discussion, reversal, or
+    work already done."""
+
+    drafts: list[DraftTask]
+    scope: str | None = None
+    generated_at: str | None = None
+    message_count: int
+    messages_since: int
+
+
+class TicketScope(BaseModel):
+    """Where this chat's tickets file, and whether that scope can run them.
+    `runnable` answers 'can this be run by hand'; `automatic` answers 'will
+    anything pick it up on its own', which is false for every project scope today
+    and was previously invisible until the ticket sat forever."""
+
+    scope: str
+    runnable: bool
+    automatic: bool
+    why: str
+
+
+# ----------------------------------------------------------------------- work
+
+class RunSummary(BaseModel):
+    """The latest run of a ticket, in the fields a job record HAS. `files` and
+    `commits` are COUNTS and are null unless the evidence is the structured
+    receipt `project_ralph.sh` writes: zero would claim the receipt said nothing
+    changed, and a key that comes and goes makes every reader test for two
+    spellings of the same absence."""
+
+    id: str | None = None
+    status: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    agent_name: str | None = None
+    trigger: str | None = None
+    exit_code: int | None = None
+    files: int | None = None
+    commits: int | None = None
+
+
+class WorkTask(Task):
+    """A ticket as the work panel shows it: the canonical Task plus its latest
+    run, stamped on by `chat_work.thread_work`."""
+
+    run: RunSummary | None = None
+
+
+class InboxItem(BaseModel):
+    """Something waiting on the operator. `kind` is question, review or notify,
+    and they rank in that order because a blocked agent must not be buried under
+    notifications."""
+
+    id: str
+    kind: str
+    state: str
+    agent: str | None = None
+    scope: str
+    title: str
+    body: str
+    options: list[str]
+    chat_id: str | None = None
+    ticket_id: str | None = None
+    run_id: str | None = None
+    dedupe_key: str | None = None
+    created_at: str | None = None
+    resolved_at: str | None = None
+    answer: str | None = None
+    snoozed_until: str | None = None
+
+
+class WorkCounts(BaseModel):
+    """`needs_you` is THE badge. An open-ticket count is ambient information
+    wearing an alarm's clothing, so only what actually wants the operator counts
+    there; the other three are chip counts. `all` is the size of the set the chip
+    opens, not the size of the page shown."""
+
+    needs_you: int
+    running: int
+    this_chat: int
+    all: int
+
+
+class ThreadWork(BaseModel):
+    """Everything this chat's work surfaces show, in one read. The badge, the
+    Work panel and every ticket card in the transcript poll this and nothing
+    else -- they used to poll `/inbox` and `/tasks` on separate intervals, which
+    let three surfaces hold three copies of one ticket and disagree."""
+
+    inbox: list[InboxItem]
+    filed: list[WorkTask]
+    scope: list[WorkTask]
+    counts: WorkCounts
+    scope_key: str | None = None
+
+
+class SpawnedTask(BaseModel):
+    """`decision` is the dedup verdict (`new`, `merge`, `exact`, ...). A merge or
+    exact is never run: it folded into an existing ticket, and running that would
+    be a surprise re-run of unrelated work. `job_id` appears only on file-and-run
+    for a freshly filed ticket, and `run_error` only when that launch failed."""
+
+    task: Task | None = None
+    scope: str | None = None
+    thread_id: str
+    decision: str
+    matched_id: str | None = None
+    cosine: float | None = None
+    message: str
+    job_id: str | None = None
+    run_error: Any = None
+
+
+# ---------------------------------------------------------- context + folding
+
+class OperationCancelled(BaseModel):
+    """`cancelled: false` is not an error: it means the operation landed while
+    this request was on the wire, which is a race, not a failure."""
+
+    cancelled: bool
+    operation: str
+
+
+class CompactResult(BaseModel):
+    """Five exit paths, so most fields are optional: cancelled mid-flight,
+    nothing to fold, deferred behind a live turn, landed, or refused as busy.
+    `folded` is how many messages went behind the boundary."""
+
+    folded: int | None = None
+    session_reset: bool | None = None
+    error: str | None = None
+    summary_chars: int | None = None
+    cancelled: bool | None = None
+    deferred: bool | None = None
+    busy: bool | None = None
+
+
+class ClearResult(BaseModel):
+    """Same five paths as `CompactResult`. `cleared_through` is how many messages
+    are behind the cut; zero on the deferred path because the cut has not landed
+    yet."""
+
+    cleared: bool
+    cleared_through: int
+    session_reset: bool
+    deferred: bool | None = None
+    cancelled: bool | None = None
+    busy: bool | None = None
+
+
+class ThreadContext(BaseModel):
+    """The context meter. OUR estimate, measured over the prompt a turn would
+    actually send -- summary included -- because an estimate over a trimmed
+    history while turns send the whole thing is how a chat read 12% while
+    re-sending every message ever written in it."""
+
+    used_tokens: int
+    window_tokens: int
+    pct: int
+    model: str | None = None
+    source: str
+
+
+class ContextDetail(BaseModel):
+    """The breakdown EXPLAINS the meter; it must never quietly replace it. Our
+    `used_tokens` stays the headline number, and the CLI's own reading arrives
+    beside it as `cli_used_tokens` against `cli_window_tokens`, computed on a
+    different window.
+
+    `available: false` with a `reason` is what an unreadable breakdown looks
+    like. The CLI-derived lists stay open: `/context` is parsed out of another
+    process's markdown and its section set belongs to that CLI."""
+
+    model_config = ConfigDict(extra="allow")
+
+    model: str | None = None
+    window_tokens: int
+    used_tokens: int
+    available: bool
+    # Epoch seconds, and it is when the CLI actually RAN, not when the cache was
+    # read: reporting the moment of a cache hit would be a lie about freshness.
+    checked_at: float | None = None
+    cached: bool
+    reason: str | None = None
+    cli_used_tokens: int | None = None
+    cli_window_tokens: int | None = None
+    categories: list[dict[str, Any]] | None = None
+    mcp: list[dict[str, Any]] | None = None
+    agents: list[dict[str, Any]] | None = None
+    memory: list[dict[str, Any]] | None = None
+    skills: list[dict[str, Any]] | None = None
+
+
+# ------------------------------------------------------------------------ mcp
+
+class McpServer(BaseModel):
+    """One row of `claude mcp list`, annotated by `mcp_registry`.
+    `spec_available` false means the server cannot be re-declared, so a turn
+    running a subset cannot include it -- saying so is the whole point, since the
+    alternative is a switch that appears to work and silently removes a server's
+    tools."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    spec_available: bool | None = None
+    scope: str | None = None
+    source: str | None = None
+    shadowed: bool | None = None
+
+
+class McpHealth(BaseModel):
+    """`available: false` with a `reason` is what an unrunnable CLI looks like.
+    There is no fallback list, because a made-up server list would report health
+    for things that may not exist. `enabled` is this chat's own selection, null
+    for 'all'."""
+
+    available: bool
+    reason: str | None = None
+    servers: list[McpServer] | None = None
+    counts: dict[str, Any] | None = None
+    checked_at: float | None = None
+    cached: bool
+    enabled: list[str] | None = None
+
+
+class McpSelection(BaseModel):
+    """Null means ALL. Sending every server the machine currently has is stored
+    as 'all' rather than as that frozen list."""
+
+    enabled: list[str] | None = None
+
+
+# ---------------------------------------------------------------- attachments
+
+class AttachmentUploaded(BaseModel):
+    id: str
+    name: str
+    kind: str
+    size: int
+    created_at: str | None = None
+
+
+class AttachmentRow(BaseModel):
+    """`missing` says the index has a row whose blob is gone, which the list
+    shows rather than hiding: a file that cannot be opened should say so where
+    you would go looking for it."""
+
+    id: str
+    name: str
+    kind: str
+    size: int
+    scope: str
+    thread_id: str
+    created_at: str
+    missing: bool
+
+
+class AttachmentList(BaseModel):
+    files: list[AttachmentRow]
+    count: int
+    scopes: list[str]
+
+
+class AttachmentDeleted(BaseModel):
+    deleted: str
+
+
+# ----------------------------------------------------------------- mentionable
+
+class MentionableAgents(BaseModel):
+    """Server-resolved because the rule is a policy, not a display preference: an
+    agent is addressable only if it opted in AND this chat's scope reaches it.
+    Computing it on the client would put the policy in two places."""
+
+    scope: str
+    agents: list[dict[str, Any]]
+
+
+# ---------------------------------------------------------------------- turns
+
+class MessageAccepted(BaseModel):
+    """Every branch is an acceptance -- running now, handed to the turn in
+    flight, or queued. `injected` means the bytes reached the running process,
+    NOT that the model read them: measured, the model addresses a mid-turn
+    message at the end of its current plan."""
+
+    turn_id: str
+    injected: bool | None = None
+    queued: bool | None = None
+    at_segment: int | None = None
+    queue: QueueState | None = None
+
+
+class InjectResult(BaseModel):
+    """THE CHAT HAS THE MESSAGE either way -- it is in the log before any
+    delivery is attempted, so re-sending would show it twice. `delivered` says
+    whether the RUNNING turn took it; false means a fresh turn was started."""
+
+    delivered: bool
+    injected: bool | None = None
+    queued_for_turn: bool
+    queued: bool | None = None
+    turn_id: str
+    at_segment: int | None = None
+    queue: QueueState | None = None
+    reason: str
+
+
+class PermissionAnswered(BaseModel):
+    """A mode change is recorded only AFTER the answer landed: recording it for a
+    turn that never got the approval would leave the chat looser than the
+    operator believes, on the strength of a click that did nothing."""
+
+    state: str
+    permission_mode: str | None = None
+
+
+class TurnStopped(BaseModel):
+    """Never an error. Stopping a turn that already finished is a no-op that
+    returns `stopped: false`, because 'it is already stopped' is the outcome the
+    caller wanted. `committed: false` with `stopped: true` means the commit is
+    still coming -- said plainly rather than claiming an ending that has not been
+    written yet."""
+
+    turn_id: str
+    stopped: bool
+    committed: bool | None = None
+    reason: str

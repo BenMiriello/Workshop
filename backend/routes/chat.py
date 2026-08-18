@@ -24,6 +24,8 @@ from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from routes import chat_models as cm
+from routes.api_models import DeletedOut
 from services import chat_attachments
 from services import chat_branches
 from services import chat_drain
@@ -289,12 +291,12 @@ def _resolve_permission_mode(body_mode: str | None, thread: dict) -> str:
             or model_caps.DEFAULT_PERMISSION_MODE)
 
 
-@router.get("/providers")
+@router.get("/providers", response_model=list[cm.Provider])
 async def providers(scope: str | None = None):
     return chat_context.list_providers(scope=scope)
 
 
-@router.get("/threads")
+@router.get("/threads", response_model=list[cm.ThreadSummary])
 async def threads(context: str | None = None, archived: bool = False):
     """The live conversations, or the archive. Never both: see list_threads.
 
@@ -361,25 +363,25 @@ class DraftPut(BaseModel):
     attachments: list[AttachmentRefIn] | None = None
 
 
-@router.get("/drafts/{key:path}")
+@router.get("/drafts/{key:path}", response_model=cm.Draft)
 async def read_draft(key: str):
     return draft_store.get_draft(key)
 
 
-@router.put("/drafts/{key:path}")
+@router.put("/drafts/{key:path}", response_model=cm.Draft)
 async def write_draft(key: str, body: DraftPut):
     return draft_store.put_draft(
         key, body.text, body.ts, body.client_id,
         [a.model_dump() for a in (body.attachments or [])])
 
 
-@router.delete("/drafts/{key:path}")
+@router.delete("/drafts/{key:path}", response_model=DeletedOut)
 async def remove_draft(key: str):
     draft_store.clear_draft(key)
     return {"deleted": True}
 
 
-@router.post("/threads")
+@router.post("/threads", response_model=cm.ThreadDocument)
 async def new_thread(body: CreateThread):
     if body.mode is not None and body.mode not in chat_context.CHAT_MODES:
         raise HTTPException(400, f"mode must be one of {list(chat_context.CHAT_MODES)}")
@@ -420,7 +422,7 @@ def _prefs_payload() -> dict:
     }
 
 
-@router.get("/prefs")
+@router.get("/prefs", response_model=cm.ChatPrefsOut)
 async def get_chat_prefs():
     """Operator-level chat settings: the mode a NEW chat starts in, plus the
     effort and permission-mode defaults every chat that never chose for itself
@@ -429,7 +431,7 @@ async def get_chat_prefs():
     return _prefs_payload()
 
 
-@router.post("/prefs")
+@router.post("/prefs", response_model=cm.ChatPrefsOut)
 async def set_chat_prefs(body: ChatPrefs):
     if body.default_mode is not None:
         if body.default_mode not in chat_context.CHAT_MODES:
@@ -468,7 +470,7 @@ def _without_messages(t: dict) -> dict:
     return {k: v for k, v in t.items() if k != "messages"}
 
 
-@router.get("/threads/{thread_id}")
+@router.get("/threads/{thread_id}", response_model=cm.ThreadWithQueue)
 async def thread(thread_id: str):
     """The thread as a document: meta plus a `messages` list.
 
@@ -562,7 +564,7 @@ async def stream_thread(thread_id: str, request: Request, since: int = 0):
 _BACK_PAGE_DEFAULT = 50
 
 
-@router.get("/threads/{thread_id}/events")
+@router.get("/threads/{thread_id}/events", response_model=cm.ThreadEvents)
 async def thread_events(thread_id: str, after: int = 0, limit: int | None = None,
                         tail: int | None = None, before: int | None = None):
     """The thread's event log from a cursor. THE sync endpoint.
@@ -769,7 +771,7 @@ def _active_turn_payload(thread_id: str, meta: dict) -> dict | None:
     return turn
 
 
-@router.patch("/threads/{thread_id}")
+@router.patch("/threads/{thread_id}", response_model=cm.ThreadSettings)
 async def rename(thread_id: str, body: RenameThread):
     t = chat_store.rename_thread(thread_id, body.title)
     if t is None:
@@ -777,7 +779,7 @@ async def rename(thread_id: str, body: RenameThread):
     return _without_messages(t)
 
 
-@router.post("/threads/{thread_id}/archive")
+@router.post("/threads/{thread_id}/archive", response_model=cm.ThreadSettings)
 async def archive(thread_id: str):
     """Close the conversation without destroying it. This is what the chat's own
     menu does; DELETE below is reachable only from the archive."""
@@ -787,7 +789,7 @@ async def archive(thread_id: str):
     return _without_messages(t)
 
 
-@router.post("/threads/{thread_id}/restore")
+@router.post("/threads/{thread_id}/restore", response_model=cm.ThreadSettings)
 async def restore(thread_id: str):
     t = chat_store.restore_thread(thread_id)
     if t is None:
@@ -801,7 +803,7 @@ async def restore(thread_id: str):
 # and "branch from here" are the same act: the line you were on keeps its own
 # ref and stays listed below. Two buttons would be two names for one operation.
 
-@router.get("/threads/{thread_id}/branches")
+@router.get("/threads/{thread_id}/branches", response_model=cm.BranchList)
 async def branches(thread_id: str):
     """Every branch of this conversation, most recently active first.
 
@@ -839,7 +841,7 @@ def _require_quiet_for_branching(thread_id: str, verb: str) -> None:
                  "stop it first.")
 
 
-@router.post("/threads/{thread_id}/branches")
+@router.post("/threads/{thread_id}/branches", response_model=cm.ForkResult)
 async def fork_thread(thread_id: str, body: ForkThread):
     """Carry on from `anchor`. Nothing is deleted."""
     from db import chat_repo
@@ -898,7 +900,7 @@ async def fork_thread(thread_id: str, body: ForkThread):
     return {**out, "queued_held": held}
 
 
-@router.post("/threads/{thread_id}/branches/{branch_id}")
+@router.post("/threads/{thread_id}/branches/{branch_id}", response_model=cm.SwitchResult)
 async def switch_branch(thread_id: str, branch_id: str):
     """Make another branch the visible one. Reversible, and nothing moves but
     one pointer, which is why it does not ask for confirmation."""
@@ -926,7 +928,7 @@ async def switch_branch(thread_id: str, branch_id: str):
     return out
 
 
-@router.patch("/threads/{thread_id}/branches/{branch_id}")
+@router.patch("/threads/{thread_id}/branches/{branch_id}", response_model=cm.RenameBranchResult)
 async def rename_branch(thread_id: str, branch_id: str, body: RenameBranch):
     from db import chat_repo
     try:
@@ -939,7 +941,7 @@ async def rename_branch(thread_id: str, branch_id: str, body: RenameBranch):
     return out
 
 
-@router.delete("/threads/{thread_id}")
+@router.delete("/threads/{thread_id}", response_model=cm.ThreadDeleted)
 async def remove(thread_id: str):
     # The queue goes with the conversation it belongs to. Left behind it would
     # be text nothing can ever deliver, held forever under an id with no thread.
@@ -950,7 +952,7 @@ async def remove(thread_id: str):
     return {"deleted": chat_store.delete_thread(thread_id)}
 
 
-@router.post("/threads/{thread_id}/card-state")
+@router.post("/threads/{thread_id}/card-state", response_model=cm.CardStates)
 async def set_card_state(thread_id: str, body: CardState):
     """Record that an in-chat card has been acted on.
 
@@ -1087,7 +1089,7 @@ def _drafts_scope(thread_id: str) -> tuple[str, object]:
     return scope_key, root
 
 
-@router.get("/threads/{thread_id}/ticket-drafts")
+@router.get("/threads/{thread_id}/ticket-drafts", response_model=cm.TicketDrafts)
 async def get_ticket_drafts(thread_id: str):
     """This chat's open DRAFT TICKETS, with staleness against the transcript.
 
@@ -1102,7 +1104,7 @@ async def get_ticket_drafts(thread_id: str):
         raise HTTPException(404, "thread not found")
 
 
-@router.post("/threads/{thread_id}/ticket-drafts")
+@router.post("/threads/{thread_id}/ticket-drafts", response_model=cm.TicketDrafts)
 async def make_ticket_drafts(thread_id: str):
     """Scan the conversation and file 0..N proposals as draft tickets.
 
@@ -1119,7 +1121,7 @@ async def make_ticket_drafts(thread_id: str):
         raise HTTPException(502, f"could not draft tickets: {e}")
 
 
-@router.patch("/threads/{thread_id}/ticket-drafts/{task_id}")
+@router.patch("/threads/{thread_id}/ticket-drafts/{task_id}", response_model=cm.TicketDrafts)
 async def patch_ticket_draft(thread_id: str, task_id: str, body: DraftPatch):
     """Edit a proposed ticket before approving it. Writes the real ticket."""
     scope_key, root = _drafts_scope(thread_id)
@@ -1134,7 +1136,7 @@ async def patch_ticket_draft(thread_id: str, task_id: str, body: DraftPatch):
     return ticket_drafts.get(thread_id, root, scope_key)
 
 
-@router.delete("/threads/{thread_id}/ticket-drafts/{task_id}")
+@router.delete("/threads/{thread_id}/ticket-drafts/{task_id}", response_model=cm.TicketDrafts)
 async def delete_ticket_draft(thread_id: str, task_id: str):
     """Discard a proposal. `cancelled`, not deleted: no ticket is ever deleted by
     any path, so a rejected proposal stays auditable and cannot be re-proposed
@@ -1145,7 +1147,7 @@ async def delete_ticket_draft(thread_id: str, task_id: str):
     return ticket_drafts.get(thread_id, root, scope_key)
 
 
-@router.get("/threads/{thread_id}/ticket-scope")
+@router.get("/threads/{thread_id}/ticket-scope", response_model=cm.TicketScope)
 async def ticket_scope(thread_id: str):
     """Where this chat's tickets file, and whether that scope can run them."""
     t = chat_store.get_thread(thread_id)
@@ -1161,7 +1163,7 @@ async def ticket_scope(thread_id: str):
     return scope_pickup(scope_key)
 
 
-@router.get("/threads/{thread_id}/work")
+@router.get("/threads/{thread_id}/work", response_model=cm.ThreadWork)
 async def thread_work(thread_id: str):
     """Everything this chat's work surfaces show, in one read.
 
@@ -1177,7 +1179,7 @@ async def thread_work(thread_id: str):
     return out
 
 
-@router.post("/threads/{thread_id}/spawn-task")
+@router.post("/threads/{thread_id}/spawn-task", response_model=cm.SpawnedTask)
 async def spawn_task(thread_id: str, body: SpawnTask):
     """Turn a chat into a self-contained background task (Stage 4). Files a ticket
     into a project's structured queue, with provenance back to this chat, so the
@@ -1308,7 +1310,7 @@ async def spawn_task(thread_id: str, body: SpawnTask):
     return resp
 
 
-@router.post("/threads/{thread_id}/mode")
+@router.post("/threads/{thread_id}/mode", response_model=cm.ChatModeSet)
 async def set_chat_mode(thread_id: str, body: SetChatMode):
     """Switch a chat between Direct, Orchestrated and Auto.
 
@@ -1325,7 +1327,7 @@ async def set_chat_mode(thread_id: str, body: SetChatMode):
     return {"id": thread_id, "mode": t.get("mode")}
 
 
-@router.post("/threads/{thread_id}/rescope")
+@router.post("/threads/{thread_id}/rescope", response_model=cm.Rescoped)
 async def rescope_thread(thread_id: str, body: RescopeThread):
     """Re-bind a thread to a new scope. Chat and Project are loosely coupled:
     this is a binding change, not a conversion or a promotion.
@@ -1725,7 +1727,7 @@ def _detach_live_session(thread_id: str, t: dict, provider) -> bool:
     return had
 
 
-@router.post("/threads/{thread_id}/operation/cancel")
+@router.post("/threads/{thread_id}/operation/cancel", response_model=cm.OperationCancelled)
 async def cancel_thread_operation(thread_id: str):
     """Call off the /compact or /clear in flight on this thread.
 
@@ -1753,7 +1755,7 @@ async def cancel_thread_operation(thread_id: str):
     return {"cancelled": bool(op), "operation": op or ""}
 
 
-@router.post("/threads/{thread_id}/compact")
+@router.post("/threads/{thread_id}/compact", response_model=cm.CompactResult)
 async def compact_thread(thread_id: str):
     """Reclaim the LIVE window: drop the session, keep the transcript.
 
@@ -1968,7 +1970,7 @@ async def _land_fold_when_quiet(thread_id: str, summary: str, folded_through: in
         thread_ops.end(thread_id)
 
 
-@router.post("/threads/{thread_id}/clear")
+@router.post("/threads/{thread_id}/clear", response_model=cm.ClearResult)
 async def clear_thread_context(thread_id: str):
     """Drop this thread's context, keeping the transcript — the other half of
     the /clear vs /compact split (see `slashCommands.ts`).
@@ -2094,7 +2096,7 @@ def _window_for(model: str | None, measured: int = 0) -> int:
     return window
 
 
-@router.get("/threads/{thread_id}/context")
+@router.get("/threads/{thread_id}/context", response_model=cm.ThreadContext)
 async def thread_context(thread_id: str):
     """Real context-window usage for the composer meter.
 
@@ -2175,7 +2177,7 @@ def _side_query_cwd(provider) -> str:
             else str(context_report.WORKSHOP_ROOT))
 
 
-@router.get("/threads/{thread_id}/context/detail")
+@router.get("/threads/{thread_id}/context/detail", response_model=cm.ContextDetail)
 async def thread_context_detail(thread_id: str, refresh: bool = False):
     """What is actually filling this chat's window, broken down.
 
@@ -2228,7 +2230,7 @@ async def thread_context_detail(thread_id: str, refresh: bool = False):
             **{k: v for k, v in report.items() if k not in ("model",)}}
 
 
-@router.get("/threads/{thread_id}/mcp/health")
+@router.get("/threads/{thread_id}/mcp/health", response_model=cm.McpHealth)
 async def thread_mcp_health(thread_id: str, refresh: bool = False):
     """Which MCP servers are configured for this chat's directory, and whether
     they connect.
@@ -2272,7 +2274,7 @@ class McpSelectionIn(BaseModel):
     servers: list[str] | None = None
 
 
-@router.put("/threads/{thread_id}/mcp/servers")
+@router.put("/threads/{thread_id}/mcp/servers", response_model=cm.McpSelection)
 async def set_thread_mcp_servers(thread_id: str, body: McpSelectionIn):
     """Choose which MCP servers this chat's turns may reach.
 
@@ -2608,7 +2610,7 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
     return "\n\n".join(parts)
 
 
-@router.post("/threads/{thread_id}/messages")
+@router.post("/threads/{thread_id}/messages", response_model=cm.MessageAccepted)
 async def send_message(thread_id: str, body: PostMessage):
     """Send a message and BLOCK until the reply is committed. Voice and scripts.
 
@@ -3037,7 +3039,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
 # waits for a reply, and the chip can say "ready" or "failed" while there is
 # still something to do about it. The turn then carries only ids.
 
-@router.post("/attachments")
+@router.post("/attachments", response_model=cm.AttachmentUploaded)
 async def upload_attachment(file: UploadFile, scope: str = Form(""),
                             thread_id: str = Form("")):
     data = await file.read()
@@ -3053,7 +3055,7 @@ async def upload_attachment(file: UploadFile, scope: str = Form(""),
             "size": rec["size"], "created_at": rec["created_at"]}
 
 
-@router.get("/attachments")
+@router.get("/attachments", response_model=cm.AttachmentList)
 async def list_attachments(scope: str = "", q: str = ""):
     """Every stored attachment, newest first, for the Files tab on Memory.
 
@@ -3084,7 +3086,7 @@ async def list_attachments(scope: str = "", q: str = ""):
     return {"files": out, "count": len(out), "scopes": scopes}
 
 
-@router.delete("/attachments/{att_id}")
+@router.delete("/attachments/{att_id}", response_model=cm.AttachmentDeleted)
 async def delete_attachment(att_id: str):
     if not chat_attachments.delete(att_id):
         raise HTTPException(404, "attachment not found")
@@ -3110,7 +3112,7 @@ async def get_attachment(att_id: str):
                                  f'inline; filename="{rec["name"]}"'})
 
 
-@router.get("/threads/{thread_id}/mentionable")
+@router.get("/threads/{thread_id}/mentionable", response_model=cm.MentionableAgents)
 async def list_mentionable(thread_id: str):
     """Agents this chat may @-mention, in picker order.
 
@@ -3682,7 +3684,7 @@ async def _start_queued_batch(thread_id: str, batch: list[dict]) -> bool:
 chat_drain.register_starter(_start_queued_batch)
 
 
-@router.post("/threads/{thread_id}/queued/{client_id}/cancel")
+@router.post("/threads/{thread_id}/queued/{client_id}/cancel", response_model=cm.QueueState)
 async def cancel_queued_message(thread_id: str, client_id: str):
     """Take a queued message back out.
 
@@ -3694,7 +3696,7 @@ async def cancel_queued_message(thread_id: str, client_id: str):
     return chat_queue.drop(thread_id, [client_id])
 
 
-@router.post("/threads/{thread_id}/queued/release")
+@router.post("/threads/{thread_id}/queued/release", response_model=cm.QueueState)
 async def release_queued_messages(thread_id: str):
     """Send what is waiting: clears a Stop hold or a failed drain's diagnosis.
 
@@ -3707,7 +3709,7 @@ async def release_queued_messages(thread_id: str):
     return chat_queue.state(thread_id)
 
 
-@router.post("/threads/{thread_id}/turns")
+@router.post("/threads/{thread_id}/turns", response_model=cm.MessageAccepted)
 async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     content = (body.content or "").strip()
     atts = [a.model_dump() for a in (body.attachments or [])]
@@ -3753,7 +3755,7 @@ class PermissionAnswer(BaseModel):
     apply_suggestion: bool = False
 
 
-@router.post("/threads/{thread_id}/turns/{turn_id}/permission")
+@router.post("/threads/{thread_id}/turns/{turn_id}/permission", response_model=cm.PermissionAnswered)
 async def answer_turn_permission(thread_id: str, turn_id: str, body: PermissionAnswer):
     """Answer a tool-permission request from a running turn.
 
@@ -3985,7 +3987,7 @@ def _file_during_turn(thread_id: str, turn_id: str, content: str,
     return at_segment, int(msg.get("seq") or 0)
 
 
-@router.post("/threads/{thread_id}/inject")
+@router.post("/threads/{thread_id}/inject", response_model=cm.InjectResult)
 async def inject_into_thread(thread_id: str, body: InjectMessage):
     """Hand a message to whatever turn is going on this thread.
 
@@ -4046,7 +4048,7 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
     }
 
 
-@router.post("/turns/{turn_id}/stop")
+@router.post("/turns/{turn_id}/stop", response_model=cm.TurnStopped)
 async def stop_turn(turn_id: str):
     """Stop a running turn. What the composer's Stop button calls.
 
