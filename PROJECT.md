@@ -210,3 +210,22 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   needs the operator. NOT done: T2 (chat is the session, and "chat with an agent" is
   currently impossible because _promotion_patch rewrites the context key at creation),
   T3 (one scope module), T4 (delete the dead `run` and `agent` tables), T5, T6.
+- 2026-08-18 — Operator: three corrections in one session, all the same shape.
+  (1) "If you refuse to remove things you are making things WORSE." A pass that
+  NAMED three dead fields and left them in the tree is the entropy this effort
+  exists to stop. Removed: the Letta `POST /tools/{name}` surface plus all of
+  `services/letta_tools/` (zero callers, kept only for a since-closed security
+  ticket, and it exposed an agentic `claude -p` over HTTP), `Job.evidence`'s
+  freeform-string shape (its 1,957 records belonged entirely to two ALREADY
+  deleted systems, so "genuinely polymorphic" was wrong), `RosterAgent.memory_blocks`,
+  `chat_thread.context_cut`, `scripts/migrate_jobs.py`, and `letta-client` from
+  the venv. (2) The log history was then rewritten on his instruction and the
+  read-side fold deleted with it; the write-side guard at `finish()` stays,
+  because that is what stops the shape returning. (3) "It doesn't sound like
+  there's a blocker, it just sounded like there's an extra step you could have
+  done." Correct: a knowable missing prerequisite is a DEPENDENCY to express,
+  not a decision to escalate. The move-runs ticket had been blocked with
+  "the operator's call" because it cited a table T4 deleted; it now depends on a
+  new ticket (9dc3b4f5) that creates the destination, its false premise is
+  corrected, and it is unblocked so the dependency does the gating. Verified the
+  gate: not ready while the prerequisite is open, ready the moment it is done.
