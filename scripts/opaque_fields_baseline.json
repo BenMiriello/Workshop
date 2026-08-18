@@ -1,21 +1,14 @@
 {
-  "opaque_fields": 65,
+  "opaque_fields": 60,
   "per_schema": {
     "ActiveTurn": [
       "live"
-    ],
-    "AdoptGroupOut": [
-      "scope_defaults"
     ],
     "Agent": [
       "memory"
     ],
     "AgentDetail": [
       "memory"
-    ],
-    "AgentGroup": [
-      "members",
-      "scope_defaults"
     ],
     "AgentRunsOut": [
       "heartbeat"
@@ -98,9 +91,6 @@
     "MintIn": [
       "caveats"
     ],
-    "Project": [
-      "repo"
-    ],
     "ProviderInfo": [
       "target_fields"
     ],
@@ -132,9 +122,6 @@
     "StoreRead": [
       "items"
     ],
-    "Surfaces": [
-      "standalone"
-    ],
     "TaskReviewOut": [
       "grant",
       "learning"
@@ -161,5 +148,5 @@
       "review"
     ]
   },
-  "schemas_with_opaque_fields": 47
+  "schemas_with_opaque_fields": 43
 }

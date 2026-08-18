@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from routes.api_models import (AgentLimits, AgentTrigger, AwaitingRow, ContentOut, FileOut, Job, OkOut,
                                QueueCounts, TreeOut)
@@ -106,10 +106,58 @@ def _write_text(path: Path, content: str) -> None:
 
 # ---- Models -----------------------------------------------------------------
 
+class StandaloneSurface(BaseModel):
+    """Where a project's standalone deployment is running, reflected into the
+    registry by `local_runner._reflect_surface` so the Projects hub can show a
+    live URL. Two writers, and the union of their keys is this:
+
+      local_runner.start_deploy   runner="local", pid, port, url, started_at
+      app_runner                  runner="app", service, port, url, started_at
+
+    `None` means nothing is running; both writers clear it that way on stop.
+
+    NOTE ON THE WIRE. This router serialises full models (it returned
+    constructed `Project` instances before it had a `response_model` at all, so
+    `repo: null` and friends have always been on the wire here). Declaring these
+    six therefore adds `pid: null` to an app-runner surface and `service: null`
+    to a local one, matching how the sibling `integrated`/`public` keys already
+    render. That is a deliberate, stated trade, not an oversight -- the
+    alternative is `response_model_exclude_unset` on this router, which would
+    REMOVE keys clients have always received."""
+
+    model_config = ConfigDict(extra="allow")
+
+    runner: str | None = None
+    service: str | None = None
+    pid: int | None = None
+    port: int | None = None
+    url: str | None = None
+    started_at: str | None = None
+
+
 class Surfaces(BaseModel):
     integrated: str | None = None
-    standalone: dict | None = None
+    standalone: StandaloneSurface | None = None
     public: str | None = None
+
+
+class ProjectRepo(BaseModel):
+    """A project's binding to a GitHub remote, written by `_repo_field` below,
+    which is a closed six-key literal. `remote_url` and `default_branch` are the
+    two anything reads (services/worktrees.py resolves the canonical branch from
+    it); the rest is provenance.
+
+    Absent means UNBOUND, which all six live projects are, and which is why the
+    worktree completion path has a local-merge branch at all."""
+
+    model_config = ConfigDict(extra="allow")
+
+    provider: str | None = None
+    owner: str | None = None
+    name: str | None = None
+    remote_url: str | None = None
+    default_branch: str | None = None
+    connected_at: str | None = None
 
 
 class Project(BaseModel):
@@ -125,10 +173,9 @@ class Project(BaseModel):
     created: str
     last_touched: str
     claude_session: str | None = None
-    # Additive GitHub binding (Phase G1). Absent = a purely local project
-    # (today's behavior). Shape when present:
-    #   {provider, owner, name, remote_url, default_branch, connected_at}
-    repo: dict | None = None
+    # Additive GitHub binding (Phase G1). Absent = a purely local project,
+    # which is what all six live projects are. See ProjectRepo above.
+    repo: ProjectRepo | None = None
     # Opt-in worktree-per-task concurrency (Phase G3). Default false keeps the
     # existing single-dir sweep behavior; the dispatcher consults this flag to
     # decide whether to allocate a per-task worktree. Absent reads as false.

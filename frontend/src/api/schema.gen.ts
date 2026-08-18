@@ -7496,11 +7496,7 @@ export interface components {
              * @default false
              */
             scope_applied: boolean;
-            /**
-             * Scope Defaults
-             * @default {}
-             */
-            scope_defaults: Record<string, never>;
+            scope_defaults?: components["schemas"]["ScopeDefaults"] | null;
             /**
              * Skipped
              * @default []
@@ -7780,9 +7776,8 @@ export interface components {
         /**
          * AgentGroup
          * @description A template GROUP: a member list WITH per-member overrides plus the
-         *     `scope_defaults` the adopting scope takes on. Members are typed `dict`
-         *     because a member is `{template, slug?, overrides?}` where `overrides` is an
-         *     open bag of any Agent field.
+         *     `scope_defaults` the adopting scope takes on. A member is
+         *     `{template, slug?, overrides?}`; see `AgentGroupMember` above.
          */
         AgentGroup: {
             /**
@@ -7794,14 +7789,24 @@ export interface components {
              * Members
              * @default []
              */
-            members: Record<string, never>[];
+            members: components["schemas"]["AgentGroupMember"][];
             /** Name */
             name: string;
-            /**
-             * Scope Defaults
-             * @default {}
-             */
-            scope_defaults: Record<string, never>;
+            scope_defaults?: components["schemas"]["ScopeDefaults"] | null;
+        };
+        /**
+         * AgentGroupMember
+         * @description One member of a template group: which template to instantiate, under
+         *     which slug if not the template's own, and what to change about it.
+         */
+        AgentGroupMember: {
+            overrides?: components["schemas"]["AgentOverrides"] | null;
+            /** Slug */
+            slug?: string | null;
+            /** Template */
+            template: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * AgentJobsOut
@@ -7825,6 +7830,20 @@ export interface components {
             budget?: components["schemas"]["TriggerBudget"] | null;
             /** Max Iterations */
             max_iterations?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * AgentOverrides
+         * @description Per-member changes applied to a template when a group is adopted. An open
+         *     bag of any agent-definition field, so the two the shipped groups actually
+         *     use are declared as a floor and `extra="allow"` keeps the rest. The `tended`
+         *     group overrides `triggers` on note-triager and nothing on memory-keeper.
+         */
+        AgentOverrides: {
+            limits?: components["schemas"]["AgentLimits"] | null;
+            /** Triggers */
+            triggers?: components["schemas"]["AgentTrigger"][] | null;
         } & {
             [key: string]: unknown;
         };
@@ -11426,8 +11445,7 @@ export interface components {
             provides: string[];
             /** Purpose */
             purpose: string;
-            /** Repo */
-            repo?: Record<string, never> | null;
+            repo?: components["schemas"]["ProjectRepo"] | null;
             /**
              * Sensitivity
              * @default shareable
@@ -11510,6 +11528,32 @@ export interface components {
         ProjectPatchIn: {
             /** Concurrent Worktrees */
             concurrent_worktrees?: boolean | null;
+        };
+        /**
+         * ProjectRepo
+         * @description A project's binding to a GitHub remote, written by `_repo_field` below,
+         *     which is a closed six-key literal. `remote_url` and `default_branch` are the
+         *     two anything reads (services/worktrees.py resolves the canonical branch from
+         *     it); the rest is provenance.
+         *
+         *     Absent means UNBOUND, which all six live projects are, and which is why the
+         *     worktree completion path has a local-merge branch at all.
+         */
+        ProjectRepo: {
+            /** Connected At */
+            connected_at?: string | null;
+            /** Default Branch */
+            default_branch?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Owner */
+            owner?: string | null;
+            /** Provider */
+            provider?: string | null;
+            /** Remote Url */
+            remote_url?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * ProjectTemplate
@@ -12293,6 +12337,20 @@ export interface components {
             data: Record<string, never>;
         };
         /**
+         * ScopeDefaults
+         * @description The non-agent half of adopting a group: what the SCOPE takes on, as
+         *     opposed to what gets instantiated. Both shipped groups set `autonomy` and
+         *     `depth` and nothing else.
+         */
+        ScopeDefaults: {
+            /** Autonomy */
+            autonomy?: string | null;
+            /** Depth */
+            depth?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ScopeList
          * @description Only scopes that already HAVE a knowledge directory, so enumerating never
          *     creates an empty one.
@@ -12625,6 +12683,42 @@ export interface components {
             /** Thread Id */
             thread_id: string;
         };
+        /**
+         * StandaloneSurface
+         * @description Where a project's standalone deployment is running, reflected into the
+         *     registry by `local_runner._reflect_surface` so the Projects hub can show a
+         *     live URL. Two writers, and the union of their keys is this:
+         *
+         *       local_runner.start_deploy   runner="local", pid, port, url, started_at
+         *       app_runner                  runner="app", service, port, url, started_at
+         *
+         *     `None` means nothing is running; both writers clear it that way on stop.
+         *
+         *     NOTE ON THE WIRE. This router serialises full models (it returned
+         *     constructed `Project` instances before it had a `response_model` at all, so
+         *     `repo: null` and friends have always been on the wire here). Declaring these
+         *     six therefore adds `pid: null` to an app-runner surface and `service: null`
+         *     to a local one, matching how the sibling `integrated`/`public` keys already
+         *     render. That is a deliberate, stated trade, not an oversight -- the
+         *     alternative is `response_model_exclude_unset` on this router, which would
+         *     REMOVE keys clients have always received.
+         */
+        StandaloneSurface: {
+            /** Pid */
+            pid?: number | null;
+            /** Port */
+            port?: number | null;
+            /** Runner */
+            runner?: string | null;
+            /** Service */
+            service?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Url */
+            url?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** StartTurnIn */
         StartTurnIn: {
             /** Attachments */
@@ -12831,8 +12925,7 @@ export interface components {
             integrated?: string | null;
             /** Public */
             public?: string | null;
-            /** Standalone */
-            standalone?: Record<string, never> | null;
+            standalone?: components["schemas"]["StandaloneSurface"] | null;
         };
         /** SwitchResult */
         SwitchResult: {

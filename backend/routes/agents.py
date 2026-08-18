@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from routes.api_models import (AgentLimits, AgentTrigger, ContentOut, DeletedOut, FileOut, Job, OkOut,
                                QueueCounts, AwaitingRow, Task, TreeOut)
@@ -209,11 +209,44 @@ class AgentTemplate(BaseModel):
     definition: str = ""
 
 
+class AgentOverrides(BaseModel):
+    """Per-member changes applied to a template when a group is adopted. An open
+    bag of any agent-definition field, so the two the shipped groups actually
+    use are declared as a floor and `extra="allow"` keeps the rest. The `tended`
+    group overrides `triggers` on note-triager and nothing on memory-keeper."""
+
+    model_config = ConfigDict(extra="allow")
+
+    triggers: list[AgentTrigger] | None = None
+    limits: AgentLimits | None = None
+
+
+class AgentGroupMember(BaseModel):
+    """One member of a template group: which template to instantiate, under
+    which slug if not the template's own, and what to change about it."""
+
+    model_config = ConfigDict(extra="allow")
+
+    template: str
+    slug: str | None = None
+    overrides: AgentOverrides | None = None
+
+
+class ScopeDefaults(BaseModel):
+    """The non-agent half of adopting a group: what the SCOPE takes on, as
+    opposed to what gets instantiated. Both shipped groups set `autonomy` and
+    `depth` and nothing else."""
+
+    model_config = ConfigDict(extra="allow")
+
+    autonomy: str | None = None
+    depth: str | None = None
+
+
 class AgentGroup(BaseModel):
     """A template GROUP: a member list WITH per-member overrides plus the
-    `scope_defaults` the adopting scope takes on. Members are typed `dict`
-    because a member is `{template, slug?, overrides?}` where `overrides` is an
-    open bag of any Agent field."""
+    `scope_defaults` the adopting scope takes on. A member is
+    `{template, slug?, overrides?}`; see `AgentGroupMember` above."""
 
     name: str
     # The picker's one-line explanation of what adopting this group does. It is
@@ -221,8 +254,8 @@ class AgentGroup(BaseModel):
     # found by validating every live record through this model before shipping,
     # which is the check that makes an under-declared model visible.
     description: str = ""
-    members: list[dict] = []
-    scope_defaults: dict = {}
+    members: list[AgentGroupMember] = []
+    scope_defaults: ScopeDefaults | None = None
 
 
 class AgentTemplatesOut(BaseModel):
@@ -240,7 +273,7 @@ class SkippedMember(BaseModel):
 
 class AdoptGroupOut(BaseModel):
     group: str | None = None
-    scope_defaults: dict = {}
+    scope_defaults: ScopeDefaults | None = None
     adopted: list[Agent] = []
     skipped: list[SkippedMember] = []
     # Whether the group's non-agent half (its autonomy preset + the roster)
