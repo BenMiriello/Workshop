@@ -1120,13 +1120,16 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-work__text { font-size: var(--fs-sm); }
 .chat-work__text:not(:last-child) { margin-bottom: var(--space-2); }
 
-/* ---- Tool call: one bare row, tap to expand ----
-   THE LEAF HAS NO BOX. It used to carry the border, the inset background and
-   the rounded corners, which made a single step look heavier than a group of
-   them. The frame did not move to the group either: it went to the subagent and
-   stopped there. A step is now the same row whether it stands alone or sits
-   inside an opened group. Hierarchy from position and indentation, not borders
-   (design system rule 6). See the .chat-group note for the whole arrangement. */
+/* ---- Tool call: one row, tap to expand ----
+   THE LEAF IS THE QUIET ONE NOW. Operator, 2026-08-18, reading the two the
+   other way round from how they read below: a single tool call's border on an
+   inset fill was landing as MORE prominent than the fill wrapping a whole run
+   of them, and that is backwards ("that feels like more like what we should
+   have for the group... the one that is currently for the group should be the
+   other one"). Swapped: a step, standing alone or open inside a group, is now
+   a plain fill with no border; the bordered chip moved onto .chat-group below,
+   so a run of several steps is the heavier block now. See the .chat-group note
+   for the whole arrangement. */
 /* THE RAIL IS CENTRED UNDER THE CARET ABOVE IT. It is the mark that says "this
    is inside that", so it has to line up with the control it belongs to; a few
    pixels off reads as sloppy rather than as structure. Operator, 2026-08-12.
@@ -1141,16 +1144,10 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-group, .chat-tool, .chat-agent { --chat-rail-nudge: 5.5px; }
 .chat-group, .chat-tool { --chat-head-pad: 0.35rem; }
 .chat-agent { --chat-head-pad: 0.5rem; }
-/* A STEP IS A BORDERED CHIP (4a, f-4a-s2). The handoff draws every step as a
-   small outlined row on an inset fill, and that is the thing that makes a turn's
-   machine work read as a tight cluster of chips above the answer rather than as
-   a stack of wide bars competing with the prose. It was a bare transparent row,
-   which is why our turn looked nothing like the design even though the parts
-   were all present. */
 .chat-tool {
   margin: 0; min-width: 0;
-  background: var(--bg-inset);
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-block);
+  border-radius: var(--radius-sm);
 }
 .chat-tool__head {
   display: flex; align-items: center; gap: 0.4rem;
@@ -1265,52 +1262,27 @@ input[type="range"].grad::-moz-range-thumb {
 }
 
 /* ---- Step group: a run of adjacent tool calls behind one count ----
-   A GROUP IS A FILL, A DELEGATION IS A FRAME. Operator, 2026-08-13, revising
-   2026-08-12's "one box and it is the subagent": the group had carried a border
-   AND an inset background, both were removed, and with nothing at all the run of
-   steps stopped reading as one thing. The fill comes back; the border does not.
+   A GROUP IS NOW THE CHIP; A LONE STEP IS THE FILL. Operator, 2026-08-18,
+   inverting 2026-08-13's "a group is a fill, a delegation is a frame": read
+   live, a single tool call's border-on-inset chip was landing as the heavier
+   of the two, and he wanted it the other way round, since a whole run of
+   steps gathered under one count is the thing that should read as the block.
+   The border and the darker fill move here from .chat-tool; a delegation
+   still keeps its own frame (--bg-sunken, --radius-md), so the two stay a
+   size and a shade apart from this and from each other.
 
-   That keeps the claim the frame was making. A delegation holds a whole separate
-   context that was deliberately kept out of this conversation, and the border is
-   what says so; a group is just this turn's own steps gathered under a count, so
-   it gets the softer of the two treatments. Fill against outline is how the
-   design system already separates two vocabularies that must not be confused
-   (rule 4), and it is why one hairline still means one thing here.
-
-   The fill wraps the WHOLE group, header and steps together, so opening one
-   extends the block down around every row in it. The rows inside are untouched:
-   a step looks the same standing alone, inside an open group, or inside a
-   delegate. Operator, same date.
+   The fill (now with its border) wraps the WHOLE group, header and steps
+   together, so opening one extends the block down around every row in it.
+   The rows inside stay bare: a step's own background comes off the moment
+   it is already inside a frame, here or inside a delegate, same as before.
 
    The rail stays the nesting mark at every depth (.chat-group__body,
    .chat-tool__detail, .chat-agent__steps), so a group and a step still read as
    the same kind of thing at different depths. */
 .chat-group {
   margin: 0.3rem 0; min-width: 0;
-  /* A NAMED SURFACE, NOT A VEIL OF INK. Both of the earlier attempts were
-     relative — --card-hover ("too faint", 8/255 off --card in dark), then a 9%
-     --fg veil — and a relative fill cannot state where it lands, which is the
-     one thing this color has to do: stay clear of the DELEGATION's fill, since
-     a group and a delegation are different kinds of thing told apart by fill.
-
-     The veil failed at exactly that, and failed invisibly. It lifts whatever it
-     sits on toward --fg, which moves AWAY from --bg-inset in dark (they landed
-     26/255 apart) and straight ONTO it in light (3/255 apart, in all eight
-     schemes). Checked in dark it looked correct; half the app was painting two
-     different things one color. Operator, 2026-08-14: "it's the same background
-     color as the agent background color and that's wrong."
-
-     --bg-block is generated per scheme x mode in palette.mjs precisely so the
-     two are separated by construction rather than by luck, and the separation is
-     asserted for all sixteen in palette.test.ts. Change it there, not here.
-
-     And it took two goes. The first value cleared the assertion (1.14:1 against
-     the delegation's fill, against a 1.1 bound) and the operator still read the
-     two as one colour. A threshold that only proves "not identical" is not
-     measuring the thing being complained about; it is now 1.25, and the value
-     sits as far out as the ink on this surface allows. */
-  background: var(--bg-block);
-  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
   /* Vertical only. The horizontal inset is the head's own padding, which the
      rail's offset is derived from; adding a second one here would move the head
      and the rail apart. */
@@ -1320,19 +1292,20 @@ input[type="range"].grad::-moz-range-thumb {
    (see grouping.closeGroup: it is what keeps a row from being rebuilt as a
    different component the moment a second call lands beside it), so a lone step
    is wrapped in one. It must look exactly like the bare row it used to be: no
-   header, no rail, and none of the group's own vertical margin, since the list's
-   0.2rem gap is the only spacing a single step ever had. No fill either: the
-   fill is what says "these belong together", and one step belongs with nothing. */
-.chat-group.is-bare { margin: 0; background: none; padding: 0; }
-/* A CHIP ONLY WHERE IT IS THE OUTERMOST THING. 4a draws two shapes and no more:
-   a lone step is an outlined chip on an inset fill (its `Read` and `Grep`), and
-   a container of steps (its `ralph` subagent) is an outlined block whose steps
-   sit inside behind a rail with no frames of their own. So the border comes off
-   the moment a step is already inside one, or the list turns into boxes drawn
-   inside boxes, which is the thing the whole step block was trying to stop. */
+   header, no rail, no border, and none of the group's own vertical margin,
+   since the list's 0.2rem gap is the only spacing a single step ever had. The
+   fill still shows because it now belongs to .chat-tool itself, not to this
+   wrapper — a lone step reads as one filled row, same as a step inside an open
+   group. */
+.chat-group.is-bare { margin: 0; background: none; border: none; padding: 0; }
+/* A FRAME ONLY WHERE IT IS THE OUTERMOST THING. A step's own fill comes off
+   the moment it is already inside one: a run of calls is a bordered block
+   whose steps sit inside behind a rail with no fills of their own, and the
+   same goes for a delegation's steps. Otherwise the list turns into boxes
+   drawn inside boxes, which is the thing this rule exists to stop. */
 .chat-group:not(.is-bare) .chat-tool,
 .chat-agent .chat-tool {
-  background: none; border-color: transparent;
+  background: none;
 }
 .chat-group__head {
   display: flex; align-items: center; gap: 0.4rem;
