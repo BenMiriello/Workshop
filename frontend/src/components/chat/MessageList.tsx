@@ -212,12 +212,15 @@ function useArrivedAfterMount(): (ts?: string) => boolean {
 // array, and the other four are shared and stable.
 const MessageBubble = memo(function MessageBubble({
   msg, isLatest, selectedModel, cardCtx, answerPermission, nowMs, arrived,
-  branchFor,
+  branchFor, inflight,
 }: {
   msg: ChatMsg;
   isLatest: boolean;
   /** Landed while the reader was already looking: earns the one-second flash. */
   arrived?: boolean;
+  /** Handed to the running turn but still below the working indicator, so not
+   *  reached yet: renders dim, like a pending send. See transcriptBlocks. */
+  inflight?: boolean;
   selectedModel: string;
   cardCtx: UiCardCtx;
   answerPermission?: AnswerPermissionFor;
@@ -254,7 +257,7 @@ const MessageBubble = memo(function MessageBubble({
       {/* --copyable reserves the inline room the copy button occupies, so the
           button never lands on top of the last line of text. It is only set
           when there IS something to copy. */}
-      {body && <div className={`chat-bubble ${arrived && msg.role === "assistant" ? "ws-arrive " : ""}${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}${branchFor ? " chat-bubble--branchable" : ""}`}>
+      {body && <div className={`chat-bubble ${arrived && msg.role === "assistant" ? "ws-arrive " : ""}${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}${branchFor ? " chat-bubble--branchable" : ""}${inflight ? " chat-bubble--inflight" : ""}`}>
         <div className="chat-bubble__body">
           {/* Files the operator attached, shown on the message that carried
               them. Read-only here: the send already happened, so there is
@@ -468,6 +471,7 @@ function MessageList({
             <MessageBubble
               msg={b.msg}
               arrived={arrivedAfterMount(b.msg.ts)}
+              inflight={b.inflight}
               isLatest={b.key === latestAssistantKey}
               selectedModel={selectedModel}
               cardCtx={cardCtx}

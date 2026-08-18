@@ -691,6 +691,11 @@ export default function Chat({
     // every synced surface immediately and then defended, or a stale copy from
     // another tab/device can restore the text you just sent.
     clearInput();
+    // Collapse the tall drafting box once the message is on its way. Expand is
+    // for composing a long message; the moment it is sent the box has nothing
+    // long left in it, and holding it open buries the reply the operator is now
+    // waiting for. Re-expanding for the next long message is one tap.
+    setInputExpanded(false);
     // TYPED TEXT IS A CHAT MESSAGE, in voice mode as much as out of it.
     //
     // It used to be handed to the voice engine whenever voice was on, and that

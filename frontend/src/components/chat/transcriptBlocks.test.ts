@@ -606,31 +606,40 @@ describe("a message handed to a running turn", () => {
     });
   };
 
-  // The bubble no longer dims while it waits (see liveBlocks: dropped
-  // 2026-08-18, reported as looking "waiting" from the moment it was accepted
-  // rather than active). What still has to hold is the ORDERING these fixtures
-  // exercise: the message renders after the work that preceded it and before
-  // the work that follows, and the run's own start stays above a message typed
-  // while it was already going.
+  // The read state and the working indicator's position are the SAME fact: a
+  // message dims only while it is BELOW the indicator (not reached yet) and
+  // turns solid the moment work appears below it. Ordering still holds too: the
+  // message renders after the work that preceded it and before the work that
+  // follows, and the run's own start stays above a message typed while it was
+  // already going. See liveBlocks.
+  const dimOf = (state: ThreadState): (boolean | undefined)[] =>
+    selectTranscript(state).map((b) => (b.kind === "message" ? !!b.inflight : undefined));
 
-  it("renders with an empty stretch under it when the turn has emitted nothing since", () => {
+  it("reads as solid once the working indicator sits below it", () => {
+    // The turn emitted "a", then the message landed, then the trailing working
+    // stretch renders BELOW the message. Indicator below = reached = solid, the
+    // operator's own equivalence ("whether it's read and whether the indicator
+    // is below it are the same").
     const s = midRun([cut(text("a"), "c1")]);
     expect(shape(selectTranscript(s)))
       .toEqual(["live:a", "user:are you reading this", "live:*"]);
+    expect(dimOf(s)).toEqual([undefined, false, undefined]);
   });
 
-  it("renders with the turn's next work below it", () => {
+  it("stays solid when the turn's next work renders below it", () => {
     const s = midRun([cut(text("a"), "c1"), text("understood")]);
     expect(shape(selectTranscript(s)))
       .toEqual(["live:a", "user:are you reading this", "live:understood*"]);
+    expect(dimOf(s)).toEqual([undefined, false, undefined]);
   });
 
-  it("still sits under the working indicator when the turn has emitted nothing at all", () => {
-    // `cut_head`: it arrived before the run had written a word. The run was
+  it("dims a message typed before the turn wrote a word, under the indicator", () => {
+    // `cut_head`: it arrived before the run had written anything. The run was
     // already in flight, so its indicator stays ABOVE the message (the floor
-    // rule in workingPieceIndex).
+    // rule in workingPieceIndex), which means the message is below it: dim.
     const s = midRun([], { cut_head: ["c1"] });
     expect(shape(selectTranscript(s))).toEqual(["live:*", "user:are you reading this"]);
+    expect(dimOf(s)).toEqual([undefined, true]);
   });
 });
 

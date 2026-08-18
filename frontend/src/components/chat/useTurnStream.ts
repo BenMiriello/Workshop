@@ -352,6 +352,10 @@ export function useTurnStream({
         finishingRef.current = true;
         setAttached(false);
         setReconnecting(false);
+        // Hand the segments back to the poll: with no socket held, the stream is
+        // no longer replaying, so the poll snapshot must resume advancing them
+        // (see threadStore `streamOwned`). A re-attach later takes ownership back.
+        cb.current.dispatch({ type: "turnStreamDropped", turnId });
         cb.current.onError({
           text: "Lost the connection to this turn. It is still running; reattaching.",
           endpoint: `/api/chat/turns/${turnId}/stream`,

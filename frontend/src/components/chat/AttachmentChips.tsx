@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { AlertTriangle, FileText, Image as ImageIcon, Paperclip, X } from "lucide-react";
+import { AlertTriangle, FileText, Image as ImageIcon, Loader2, Paperclip, X } from "lucide-react";
 import { chatApi } from "../../lib/chat";
 import { formatSize, type Attachment, type AttachmentKind } from "./attachments";
 
@@ -48,7 +48,12 @@ function Chip({ att, onRemove }: { att: Attachment; onRemove: () => void }) {
           ? <img className="chat-attach__thumb" src={thumb} alt="" />
           : failed
             ? <AlertTriangle size={14} strokeWidth={1.8} />
-            : <KindIcon kind={att.kind} />}
+            : uploading
+              // A spinner in the thumbnail while the bytes go up: there is no
+              // image to show until the upload lands, and the kind icon alone
+              // read as "done". `ws-spin` is the kit's reduced-motion-aware spin.
+              ? <Loader2 size={14} strokeWidth={1.8} className="ws-spin" />
+              : <KindIcon kind={att.kind} />}
       </span>
       {/* The filename, not the path: a path tells the operator nothing they did
           not already know and pushes the name they DO need off the chip. */}

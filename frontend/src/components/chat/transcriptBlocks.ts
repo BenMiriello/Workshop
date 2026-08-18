@@ -67,7 +67,12 @@ export type TranscriptBlock =
   // the server (branching from it) uses `id`; anything that has to tell two
   // rendered blocks apart uses `key`.
   //
-  | { kind: "message"; key: string; id: string; seq: number; msg: ChatMsg }
+  // `inflight` is set only for a message handed to the RUNNING turn that the
+  // turn has not visibly reached yet: it sits below the working indicator, so
+  // no work has come after it. It renders dim, the same "not landed yet" state
+  // as a pending send, and turns solid the moment work appears below it (the
+  // indicator moves down and the message is now above it). See `liveBlocks`.
+  | { kind: "message"; key: string; id: string; seq: number; msg: ChatMsg; inflight?: boolean }
   // The turn in flight. `working` marks the block the indicator belongs on —
   // the last one, because that is where the work is still happening.
   | { kind: "live"; key: string; turnId: string; segments: ChatSegment[]; working: boolean }
@@ -313,20 +318,26 @@ function workingPieceIndex(pieces: Piece[]): number {
  *  indicator, and it is emitted even when empty, because "a turn is running and
  *  has produced nothing yet" still has to be visible.
  *
- *  A MESSAGE HANDED TO A RUNNING TURN NO LONGER DIMS WHILE IT WAITS. It used to
- *  (`awaiting`, added 2026-08-16 after "my latest message just sits unread by
- *  system"): the reasoning was that a message sent into a running turn is not
- *  read the moment it commits, it sits on the turn's stdin until the model
- *  reaches its next step, which on a long tool call can be minutes, so a
- *  genuinely-unread message looked identical to an answered one. But dimming it
- *  the whole time it waits reads the opposite way once the server HAS it and the
- *  model just hasn't produced anything new yet, which on an ordinary send is
- *  seconds, not minutes: reported 2026-08-18, "it should make my text bubbles i
- *  sent in show as active not waiting as soon as read, not only once the first
- *  system response ... comes in." The server accepting the message is what
- *  "sent" means; the working indicator already says the system is doing
- *  something, and that is enough without also dimming the specific bubble it
- *  has not visibly reached yet. */
+ *  A MESSAGE HANDED TO A RUNNING TURN DIMS ONLY WHILE IT IS BELOW THE WORKING
+ *  INDICATOR. The read state and the indicator's position are the SAME fact, and
+ *  that is the design: everything above the indicator has been reached, and a
+ *  message below it has not. This reconciles two reports that looked opposed.
+ *
+ *  A blanket `awaiting` dim (added 2026-08-16 after "my latest message just sits
+ *  unread by system") dimmed a message for the WHOLE time it waited, so it still
+ *  read as unanswered once the turn had plainly moved past it, and was removed on
+ *  2026-08-18: "show as active not waiting as soon as read." Removing it entirely
+ *  then went too far the other way: a message typed under a working indicator,
+ *  which the turn has NOT reached, rendered solid as though answered (reported
+ *  2026-08-18, "shown as though read even though it's below a 'working' message").
+ *
+ *  The position already carries the answer. `workingAt` is the slice the
+ *  indicator sits on; a message piece AFTER it has no work below it yet, so the
+ *  turn has not reached it (dim). A message piece at or before it has work below
+ *  it, which is the proof it was read (solid). When the run has emitted nothing,
+ *  `workingAt` is slice zero and every message typed is below it, exactly right:
+ *  the turn was already running and has reached none of them. The dim clears the
+ *  instant a work slice appears below the message. */
 function liveBlocks(
   turnId: string, segments: ChatSegment[], interrupts: LogEvent[],
   cutHead?: string[],
@@ -338,7 +349,9 @@ function liveBlocks(
     const piece = pieces[i];
     if (!isWork(piece)) {
       const m = piece.msg;
-      out.push({ kind: "message", key: m.id, id: m.id, seq: m.seq, msg: msgFromEvent(m) });
+      out.push({ kind: "message", key: m.id, id: m.id, seq: m.seq, msg: msgFromEvent(m),
+                 // Below the working slice = not reached yet = dim. See header.
+                 inflight: i > workingAt });
       continue;
     }
     if (piece.work.length || i === workingAt) {

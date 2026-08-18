@@ -1485,6 +1485,18 @@ a.ws-ref--link:hover > svg { color: var(--you); }
    spacing of its own, so the composer's column gap still measures from the
    textarea's own edges exactly as it did when the textarea was a direct child. */
 .chat-input-wrap { position: relative; display: block; min-width: 0; }
+/* The collapsed input HOLDS its height; the attachments yield. Under vertical
+   pressure (a phone with the keyboard up and several attachment chips stacked
+   above), the flex column has to give somewhere, and it must not be the
+   textarea: squeezing a one-to-three-row draft box down to a single row to make
+   room for the chips is the "input gets too short when I paste" report
+   (2026-08-18). `flex: 0 0 auto` takes the collapsed input out of the shrink, so
+   the attachment row (which already scrolls, see .chat-attach-row) is what
+   gives, i.e. the chips extend above without shortening the input. Left to the
+   collapsed state only: the operator said an EXPANDED box may compress, and it
+   holds an explicit tall height that must stay free to shrink on a small
+   viewport, so that case is unchanged. */
+.chat-composer:not(.is-expanded) .chat-input-wrap { flex: 0 0 auto; }
 /* How tall the box goes when held open. ONE number per breakpoint, read by the
    height rule below; the autosize handler stands down while expanded rather
    than carrying a second copy of it in JS (see useLogScroll).

@@ -367,6 +367,42 @@ describe("re-attaching to a run already on screen", () => {
     });
     expect(after.activeTurn?.segments).toEqual([]);
   });
+
+  it("refuses a CURRENT snapshot mid-replay, which the stale check does not catch", () => {
+    // The doubling of 2026-08-18: the reconnect fires the rewind AND a fresh
+    // sync. That sync is not stale (it was issued at the reconnect, after the
+    // rewind's re-stamp), so the old stale guard let it through, it restored the
+    // full throttled snapshot onto the emptied segments, and the offset-0 replay
+    // then appended the same events on top. `streamOwned` closes it: while a
+    // socket is (re)attached, the poll never supplies segments.
+    const s = apply(started(), text("a lot of streamed text"));
+    const rewound = threadReducer(s, { type: "turnReattached", turnId: "r1" });
+    const after = threadReducer(rewound, {
+      type: "eventsReceived", events: [], lastSeq: 0, requestedAt: Date.now() + 1000,
+      activeTurn: { turn_id: "r1", started_seq: 1,
+        live: { meta: { segments: [{ t: "text", text: "a lot of streamed text" }] } } },
+    });
+    expect(after.activeTurn?.segments).toEqual([]);
+    // ...and the replay alone rebuilds it, exactly once.
+    const replayed = apply(after, text("a lot of streamed text"));
+    expect(replayed.activeTurn?.segments).toEqual([{ t: "text", text: "a lot of streamed text" }]);
+  });
+
+  it("hands segments back to the poll once the stream gives up", () => {
+    // MAX_RECONNECTS exhausted: no socket is held, so the stream is not
+    // replaying and the poll is the only source left. After `turnStreamDropped`
+    // the next snapshot must advance the view again.
+    const s = apply(started(), text("partial"),
+      { type: "turnReattached", turnId: "r1" },   // owns segments, rewound to []
+      { type: "turnStreamDropped", turnId: "r1" }); // stream let go
+    expect(s.activeTurn?.streamOwned).toBe(false);
+    const after = threadReducer(s, {
+      type: "eventsReceived", events: [], lastSeq: 0, requestedAt: Date.now() + 1000,
+      activeTurn: { turn_id: "r1", started_seq: 1,
+        live: { meta: { segments: [{ t: "text", text: "server has more" }] } } },
+    });
+    expect(after.activeTurn?.segments).toEqual([{ t: "text", text: "server has more" }]);
+  });
 });
 
 describe("a mid-run message closes the live block it landed in", () => {

@@ -49,6 +49,17 @@ export type ActiveTurn = {
   // stored reading only updates at finalize, which is why the meter used to
   // sit still for a whole turn and then jump.
   ctxTokens?: number;
+  // WHO OWNS THE SEGMENTS. True while this tab holds (or is reconnecting within
+  // budget to) the turn's SSE socket: the stream is then the sole authority for
+  // segments, because it replays from offset 0 on every reconnect and
+  // applyStreamEvent APPENDS. A poll snapshot folded in during that window is
+  // the same events a second time, which rendered the whole reply twice
+  // (reported 2026-08-18). The poll advances segments ONLY when this is false,
+  // which is the give-up state useTurnStream drops into after MAX_RECONNECTS,
+  // where its own comment says the poll keeps the snapshot current. Set true by
+  // `turnReattached` (fired before every socket open), false by
+  // `turnStreamDropped` (the budget-exhausted give-up).
+  streamOwned?: boolean;
 };
 
 export type PendingStatus = "sending" | "sent" | "failed";
@@ -219,6 +230,10 @@ export type ThreadAction =
   // back. Triggers: a backend restart, an edge 502 mid-turn, and the 5s liveness
   // re-attach, so this fires on the ordinary long turn, not an exotic one.
   | { type: "turnReattached"; turnId: string }
+  // The stream ran out of reconnect budget and let go of the socket. The turn
+  // is still in flight; the poll takes over as the segment source now, so this
+  // hands ownership back to it (see `streamOwned`).
+  | { type: "turnStreamDropped"; turnId: string }
   | { type: "turnContext"; turnId: string; tokens: number }
   | { type: "turnCommitted"; turnId: string }
   // Adopt a PREVIOUSLY-HELD snapshot of this same thread in one commit, so a
@@ -334,19 +349,23 @@ function adoptTurn(
     // starting, or a re-attach rewinding the live view — cannot speak about the
     // state that move produced. Keep what we have and wait for a current one.
     if (stale) return prev;
-    // THE LOCAL COPY IS THE RENDER-AHEAD ONE. The server writes its snapshot on
-    // a throttle (a turn rewrites it hundreds of times, so it deliberately lags
-    // the stream). Taking it unconditionally would make a live turn flicker
-    // backwards every time the cursor synced. Take it only when it is AHEAD,
-    // which is the case that matters: this browser is not the one streaming.
+    // THE STREAM OWNS SEGMENTS WHILE IT IS ATTACHED. A turn this tab is
+    // streaming replays from offset 0 on every socket open and appends, so a
+    // poll snapshot folded in during that window is the reply a second time
+    // (the doubling of 2026-08-18). So the poll advances segments ONLY when the
+    // stream has GIVEN UP (`streamOwned` false), the give-up state whose own
+    // comment says the poll keeps the snapshot current. Even then, take the
+    // server's copy only when it is AHEAD: the snapshot is throttled and lags
+    // the stream, and taking it unconditionally flickers a live turn backwards.
+    const takeSegs = !prev.streamOwned && snapshotAhead(serverSegs, prev.segments);
     return {
       ...prev,
       startedSeq: payload.started_seq ?? prev.startedSeq,
-      segments: snapshotAhead(serverSegs, prev.segments) ? serverSegs : prev.segments,
-      // Same rule as the segments: take the server's only when it is ahead. The
-      // streaming tab learns these from the `cut` event first, and the snapshot
-      // is written on a throttle, so an older one must not shorten the list.
-      cutHead: (live.meta?.cut_head?.length ?? 0) > (prev.cutHead?.length ?? 0)
+      segments: takeSegs ? serverSegs : prev.segments,
+      // Same rule as the segments: the streaming tab learns these from the `cut`
+      // event and owns them; the poll only supplies them once the stream has
+      // given up, and only when its copy is longer.
+      cutHead: (!prev.streamOwned && (live.meta?.cut_head?.length ?? 0) > (prev.cutHead?.length ?? 0))
         ? live.meta?.cut_head : prev.cutHead,
       startedMs: Number.isFinite(startedMs) ? startedMs : prev.startedMs,
       model: live.meta?.model ?? prev.model,
@@ -671,6 +690,10 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         activeTurn: {
           ...run,
           segments: [],
+          // A socket just opened for this turn: the stream is now the sole
+          // authority for its segments until it gives up. See `streamOwned` and
+          // adoptTurn.
+          streamOwned: true,
           // The head cuts came from the same replayed stream and are re-sent
           // with it. Left behind, a re-attach would keep a message pinned above
           // work the replay puts back above it.
@@ -683,6 +706,15 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
           localStartedAt: Date.now(),
         },
       };
+    }
+
+    case "turnStreamDropped": {
+      const run = state.activeTurn;
+      if (!run || run.turnId !== action.turnId || !run.streamOwned) return state;
+      // The stream let go; the poll is the segment source until a socket
+      // re-attaches (which dispatches `turnReattached` and takes ownership
+      // back). Segments are left as they are: the next poll advances them.
+      return { ...state, activeTurn: { ...run, streamOwned: false } };
     }
 
     case "seedThread": {
