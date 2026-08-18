@@ -333,6 +333,44 @@ reviewer gate, not by self-report.
   appears in agent-facing output, persona text, a ref value, or changed UI copy. Pinned
   to the current baseline if not already zero, gated at zero once clean.
 
+## 9a. Build log (2026-08-18)
+
+Landed and live, verified (commits on `wt/attachment-conversion`):
+
+- **Layer 0** (`9cc01cd` + tail `779574f`, `45c2e61`): `scope_root`, the four state
+  files migrated into `.runtime/` on restart, the no-state-in-source ratchet gating
+  at zero. Live: backend healthy, `apply.sh --check` in sync.
+- **Layer 4** (`901b7d8`): the raw-path reviewer ratchet, proven to catch a planted
+  path. Baseline 1 (a comment reference), shrinks to zero when Layer 1 removes the
+  briefing cwd.
+- **Layer 2** (`9071ab4`): the `workshop:file/<id>` ref kind through `chat_attachments`,
+  attachments declared as `workshop://store/attachments/chat`, preview descriptor. 5
+  tests.
+- **Layer 3** (`cd5394b` backend, `0077e8c` frontend): preview carried through the
+  resolve API as a typed field; the `<Ref>` file chip opens a Popover with preview +
+  Open / Copy URL / Copy path (the managed address, every user, no dev gate).
+  typecheck, check_design, 980 frontend tests green; bundle rebuilt and live.
+
+**Layer 1 findings (2026-08-18), why it needs the operator.** `bwrap` 0.8.0 is present
+and a user-namespace sandbox works on this host, so the filesystem-view half is
+feasible without root. Two hard dependencies remain that are the operator's, not the
+build agent's:
+
+- **The dedicated sub-user needs root.** `sudo -n` requires a password here, so
+  creating an unprivileged execution identity (SEC-A5's uid-level isolation) is a root
+  step.
+- **The flip is attended by design.** Wiring the bwrap view into the live spawn
+  (`build_streaming` ~:2054) changes how every turn executes, and §9's Layer-1 rule
+  forbids restarting onto it until live chat is verified. It also has real integration
+  to solve first: the child writes the per-turn journal the backend tails for crash
+  resilience, and needs its OAuth token, the node/claude runtime, network, and certs
+  reachable inside the sandbox while everything outside `scope_root` is not. That is a
+  deliberate, attended build, not a tail-end bolt-on.
+
+Also live-relevant: `clawd-a` is not in the `docker` group on this host (the rootless
+docker migration), which softens part of [SEC-C1]/[SEC-A1] but does not replace the
+execution identity.
+
 ## 10. Verification and rollback
 
 - Every stage lands on a branch off `main`, small and self-contained, and goes through
