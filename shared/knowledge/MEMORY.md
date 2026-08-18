@@ -88,6 +88,7 @@
 - [System design must prioritize usability over technical purity](system-design-must-prioritize-usability-over-tec-1a0028fb2a3.md)
 - [Task filing should learn from operator patterns](task-filing-should-learn-from-operator-patterns-1a0028fb292.md)
 - [The autonomous loop has never been able to write a file](the-autonomous-loop-has-never-been-able-to-write-1a002e04bad.md)
+- [The chat sync endpoint is a single point of failure with four faces](the-chat-sync-endpoint-is-a-single-point-of-fail-1a0131b4024.md)
 - [The turn stream's wire vocabulary has one owner](the-turn-stream-s-wire-vocabulary-has-one-owner-1a003231bba.md)
 - [Ticket dependencies: first-class edge model (addendum to T0)](ticket-dependencies-first-class-edge-model-adden-19f7440aaf0.md)
 - [Ticket drafts persist on threads](ticket-drafts-persist-on-threads-1a0028fb2c0.md)
