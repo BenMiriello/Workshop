@@ -379,7 +379,22 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
   // render as a real editable control whose value nothing reads. See cardSchema.
   const normalized = useMemo(() => normalizeCardSpec(rawSpec), [rawSpec]);
   const spec = normalized?.spec ?? null;
-  const fields = useMemo(() => spec?.fields ?? [], [spec]);
+  // A PROMPT CARD ALWAYS OFFERS A TYPED ANSWER, not only whatever field types
+  // the model happened to include. A tap-only card (just `choice`/`select`)
+  // otherwise gives no way to answer with your own words, and the operator
+  // should not have to know that typing a message straight into the composer
+  // instead of the card also works. If the model already gave a free-text
+  // field there is nothing to add; composePromptAnswer already ignores an
+  // untouched field, so an unused typed-answer box changes nothing when the
+  // operator taps a choice instead.
+  const fields = useMemo(() => {
+    const base = spec?.fields ?? [];
+    if (spec?.kind !== "prompt") return base;
+    const hasFreeText = base.some((f) => !f.type || f.type === "text" || f.type === "textarea");
+    const hasTapOnly = base.some((f) => f.type === "choice" || f.type === "select");
+    if (hasFreeText || !hasTapOnly) return base;
+    return [...base, { name: "__freeform_answer", label: "Or type your own answer", type: "text" as const }];
+  }, [spec]);
   const key = useMemo(() => cardKey(raw), [raw]);
   // What the server says already happened to this card. This is what stops a
   // filed-and-run proposal from coming back as an untouched one after a reload.
@@ -522,6 +537,28 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
           filedNote={success?.note ?? null}
           pickup={pickupFor(pickupMap, filedScope)}
         />
+      );
+    }
+    // A PROMPT CARD KEEPS THE QUESTION. Collapsing straight to a receipt like
+    // "Answer sent." threw away the one thing worth re-reading here: what was
+    // asked and what was answered. The answer is also posted as its own
+    // message below (see submitPrompt), so this is the compact record of the
+    // exchange staying where it happened, not a second copy of it.
+    if (spec.kind === "prompt") {
+      return (
+        <Card className="chat-card">
+          <Stack gap="sm">
+            <Row>
+              <MessageCircleQuestion size={16} strokeWidth={1.8} aria-hidden />
+              <span className="ws-card__title">{spec.title || "Question"}</span>
+            </Row>
+            <Row>
+              <CircleCheck size={16} strokeWidth={1.8} aria-hidden />
+              <span>{success?.note || "Answered"}</span>
+            </Row>
+            {errorBlock}
+          </Stack>
+        </Card>
       );
     }
     const heading = success?.note || (success?.title ? `Created ${success.title}` : "Done");

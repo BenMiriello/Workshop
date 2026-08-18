@@ -232,7 +232,12 @@ const submitPrompt: UiCardHandler = async (state, ctx) => {
   if (!text) return { status: "error", message: "Choose or type an answer first." };
   if (!ctx.answer) return { status: "error", message: "This chat cannot send an answer right now." };
   ctx.answer(text);
-  return { status: "success", note: "Answer sent." };
+  // The note carries the ANSWER ITSELF, not a receipt: the card collapses to
+  // question-plus-answer (see UiCard's prompt success case), and "Answer
+  // sent." told the reader nothing they didn't already know from the fact
+  // the card had changed. The answer is also posted as a real message below
+  // via ctx.answer, so this is a second, in-card record of the same text.
+  return { status: "success", note: text };
 };
 
 // ---- task-proposal handlers ------------------------------------------------
