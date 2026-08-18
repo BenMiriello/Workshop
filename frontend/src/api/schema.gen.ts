@@ -11347,6 +11347,22 @@ export interface components {
             slug: string;
         };
         /**
+         * ProjectUsage
+         * @description One project's slice. `allowance` and `remaining` are NULL on an uncapped
+         *     window rather than 0: the longer lookbacks are reporting-only and have no
+         *     allowance to report, and zero would claim they had exhausted one.
+         */
+        ProjectUsage: {
+            /** Allowance */
+            allowance?: number | null;
+            /** Remaining */
+            remaining?: number | null;
+            /** Share Of App */
+            share_of_app: number;
+            /** Used */
+            used: number;
+        };
+        /**
          * Provider
          * @description One entry in the chat's scope picker. Every agent is a place you can type,
          *     so agents appear here alongside the built-in providers and the project
@@ -13350,6 +13366,48 @@ export interface components {
             ok: boolean;
             /** Status */
             status?: number | null;
+        };
+        /**
+         * UsageStatus
+         * @description A trailing window. Only the 5h window carries a cap (`capped: true`);
+         *     the rest are reporting-only lookbacks.
+         *
+         *     Interactive chat turns are never metered, so they never appear here. Only
+         *     autonomous sweeps write to the ledger, which is why a busy chat day can read
+         *     as an idle one.
+         */
+        UsageStatus: {
+            /** App Remaining */
+            app_remaining?: number | null;
+            /** App Total */
+            app_total?: number | null;
+            /** App Used */
+            app_used: number;
+            /** Capped */
+            capped: boolean;
+            /** Projects */
+            projects: {
+                [key: string]: components["schemas"]["ProjectUsage"];
+            };
+            /** Window S */
+            window_s: number;
+        };
+        /**
+         * UsageTimeseries
+         * @description Per-interval per-project tokens. Each point is `{t: <iso>, <slug>: <int>,
+         *     ...}`, so the project columns are dynamic and the point is left open;
+         *     `projects` names them and `bin_s` is returned so the client can label the
+         *     rate rather than deriving it.
+         */
+        UsageTimeseries: {
+            /** Bin S */
+            bin_s: number;
+            /** Points */
+            points: Record<string, never>[];
+            /** Projects */
+            projects: string[];
+            /** Window S */
+            window_s: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -26017,7 +26075,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["UsageStatus"];
                 };
             };
             /** @description Validation Error */
@@ -26050,7 +26108,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["UsageStatus"];
                 };
             };
             /** @description Validation Error */
@@ -26081,7 +26139,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["UsageTimeseries"];
                 };
             };
             /** @description Validation Error */

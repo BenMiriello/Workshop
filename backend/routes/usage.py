@@ -8,6 +8,8 @@ so they never appear here; only autonomous sweeps write to the ledger.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from services import usage_ledger
@@ -32,7 +34,47 @@ def _resolve_window(window: str) -> int:
     return _WINDOWS[window] or usage_ledger.full_window_s()
 
 
-@router.get("")
+
+class ProjectUsage(BaseModel):
+    """One project's slice. `allowance` and `remaining` are NULL on an uncapped
+    window rather than 0: the longer lookbacks are reporting-only and have no
+    allowance to report, and zero would claim they had exhausted one."""
+
+    used: int
+    allowance: int | None = None
+    remaining: int | None = None
+    share_of_app: float
+
+
+class UsageStatus(BaseModel):
+    """A trailing window. Only the 5h window carries a cap (`capped: true`);
+    the rest are reporting-only lookbacks.
+
+    Interactive chat turns are never metered, so they never appear here. Only
+    autonomous sweeps write to the ledger, which is why a busy chat day can read
+    as an idle one."""
+
+    window_s: int
+    capped: bool
+    app_total: int | None = None
+    app_used: int
+    app_remaining: int | None = None
+    projects: dict[str, ProjectUsage]
+
+
+class UsageTimeseries(BaseModel):
+    """Per-interval per-project tokens. Each point is `{t: <iso>, <slug>: <int>,
+    ...}`, so the project columns are dynamic and the point is left open;
+    `projects` names them and `bin_s` is returned so the client can label the
+    rate rather than deriving it."""
+
+    window_s: int
+    bin_s: int
+    projects: list[str]
+    points: list[dict[str, Any]]
+
+
+@router.get("", response_model=UsageStatus)
 async def get_usage(window: str = "5h") -> dict:
     """Snapshot of a trailing usage window: app-wide totals + per-project share.
     Pure read over `.runtime/usage.jsonl` + `.runtime/usage-budget.json`; no side
@@ -41,7 +83,7 @@ async def get_usage(window: str = "5h") -> dict:
     return usage_ledger.status(window_s=_resolve_window(window))
 
 
-@router.get("/timeseries")
+@router.get("/timeseries", response_model=UsageTimeseries)
 async def get_usage_timeseries(window: str = "5h") -> dict:
     """Per-interval per-project token usage across a trailing window, for the
     chart. Pure read; no side effects."""
@@ -53,7 +95,7 @@ class BudgetPatch(BaseModel):
     autonomy_budget_fraction: float | None = Field(default=None, ge=0.1, le=1.0)
 
 
-@router.put("/budget")
+@router.put("/budget", response_model=UsageStatus)
 async def put_budget(body: BudgetPatch) -> dict:
     """Edit the two operator-tunable budget knobs (app-wide cap, autonomy
     fraction) and return the refreshed window snapshot. Operator-gated at the
