@@ -9408,6 +9408,24 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * DetectorStatus
+         * @description A perception tier as MEASURED, not as configured. Constructing the
+         *     detector is what probes it, so `tier` reports what is actually running --
+         *     which is how the settings sheet can honestly say "energy VAD, heuristic turn
+         *     detection" when the ONNX weights are not on disk, instead of implying an
+         *     accuracy the box does not have.
+         */
+        DetectorStatus: {
+            /** Error */
+            error?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Present */
+            present: boolean;
+            /** Tier */
+            tier: string;
+        };
+        /**
          * DeviceList
          * @description Revoked tokens are excluded, so `total` is the live count rather than
          *     everything ever minted.
@@ -9682,6 +9700,26 @@ export interface components {
             default?: string | null;
             /** Levels */
             levels: string[];
+        };
+        /**
+         * EngineStatus
+         * @description One engine's truth. `error` is the load failure when `available` is
+         *     false, which is what lets the settings sheet say WHY rather than just that
+         *     something is off.
+         */
+        EngineStatus: {
+            /** Available */
+            available: boolean;
+            /** Error */
+            error?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Preview Model */
+            preview_model?: string | null;
+            /** Sample Rate */
+            sample_rate?: number | null;
+            /** Voice */
+            voice?: string | null;
         };
         /**
          * EnvOverview
@@ -10949,6 +10987,11 @@ export interface components {
             /** Items */
             items: components["schemas"]["Task"][];
             page: components["schemas"]["PageMeta"];
+        };
+        /** Perception */
+        Perception: {
+            turn_end: components["schemas"]["DetectorStatus"];
+            vad: components["schemas"]["DetectorStatus"];
         };
         /** PermissionAnswer */
         PermissionAnswer: {
@@ -13243,6 +13286,88 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * VoiceCatalog
+         * @description `available: false` comes with an empty list rather than an error, so the
+         *     picker renders a disabled state instead of failing.
+         */
+        VoiceCatalog: {
+            /** Available */
+            available: boolean;
+            /** Voices */
+            voices: string[];
+        };
+        /** VoiceHealth */
+        VoiceHealth: {
+            /** Device */
+            device?: string | null;
+            /** Device Pref */
+            device_pref?: string | null;
+            perception: components["schemas"]["Perception"];
+            stt: components["schemas"]["EngineStatus"];
+            tts: components["schemas"]["EngineStatus"];
+        };
+        /**
+         * VoicePrefs
+         * @description The modality matrix is the source of truth for how a conversation is
+         *     carried, and any of the nine input/output combinations is legal.
+         *     `mic_enabled` and `speak_replies` are LEGACY MIRRORS of it, derived on read
+         *     and folded back in on write, so older clients and older stored files keep
+         *     working. They are not independent settings and setting them is not a second
+         *     way to configure the same thing.
+         *
+         *     `reply_pace` is the only turn-taking knob anything reads. It replaced four
+         *     timers that all tried to answer the same question and could not.
+         */
+        VoicePrefs: {
+            /** Barge In */
+            barge_in: boolean;
+            /** Enabled */
+            enabled: boolean;
+            /** Enter Interrupts */
+            enter_interrupts: boolean;
+            /** Input Mode */
+            input_mode: string;
+            /** Interrupt Rate */
+            interrupt_rate: number;
+            /** Mic Enabled */
+            mic_enabled: boolean;
+            /** Output Mode */
+            output_mode: string;
+            /** Reply Pace */
+            reply_pace: string;
+            /** Speak Replies */
+            speak_replies: boolean;
+            /** Speed */
+            speed: number;
+            /** Stt Provider */
+            stt_provider: string;
+            /** Tts Provider */
+            tts_provider: string;
+            /** Typing Hold */
+            typing_hold: boolean;
+            /** Typing Hold Ms */
+            typing_hold_ms: number;
+            /** Verbosity */
+            verbosity: string;
+            /** Voice */
+            voice: string;
+        };
+        /**
+         * VoiceSessionPrewarm
+         * @description IT DOES NOT CREATE A CHAT. A call naming no live thread answers with all
+         *     three fields null/false rather than minting one: the caller is a
+         *     fire-and-forget fetch that reads no response, so a created thread would be an
+         *     empty chat nobody could be handed. Warming is keyed by thread anyway.
+         */
+        VoiceSessionPrewarm: {
+            /** Session Key */
+            session_key?: string | null;
+            /** Thread Id */
+            thread_id?: string | null;
+            /** Warmed */
+            warmed: boolean;
         };
         /**
          * WatcherResult
@@ -25912,7 +26037,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["VoiceHealth"];
                 };
             };
         };
@@ -25932,7 +26057,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["VoicePrefs"];
                 };
             };
         };
@@ -25956,7 +26081,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["VoicePrefs"];
                 };
             };
             /** @description Validation Error */
@@ -25989,7 +26114,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["VoiceSessionPrewarm"];
                 };
             };
             /** @description Validation Error */
@@ -26018,7 +26143,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["VoiceCatalog"];
                 };
             };
         };

@@ -14,7 +14,7 @@ import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from services import chat_store, voice_engine, voice_worker
 from services.gpu_warmhold import VOICE_HOLD
@@ -129,7 +129,111 @@ def _save_prefs(patch: dict) -> dict:
     return data
 
 
-@router.get("/voice/health")
+# ---- response models (ADR 0023 clause 6) -----------------------------------
+# Read off services/voice_engine.py, services/voice/detectors.py and this
+# router's own `_PREFS_DEFAULTS` / `_load_prefs`. FastAPI FILTERS a return value
+# through the declared model and drops any key it does not name.
+#
+# VoicePrefs is the field set `_PREFS_DEFAULTS` declares and `_load_prefs`
+# filters a stored file down to, deliberately: a pref that is read by nothing
+# but still appears in GET /voice/prefs is a setting the operator can believe in
+# and the system will never act on. Four retired timers were removed from that
+# set on 2026-08-17 for exactly that reason, so the model naming the same set is
+# a second statement of the same rule.
+
+
+class EngineStatus(BaseModel):
+    """One engine's truth. `error` is the load failure when `available` is
+    false, which is what lets the settings sheet say WHY rather than just that
+    something is off."""
+
+    available: bool
+    model: str | None = None
+    preview_model: str | None = None
+    voice: str | None = None
+    sample_rate: int | None = None
+    error: str | None = None
+
+    model_config = ConfigDict(protected_namespaces=())
+
+
+class DetectorStatus(BaseModel):
+    """A perception tier as MEASURED, not as configured. Constructing the
+    detector is what probes it, so `tier` reports what is actually running --
+    which is how the settings sheet can honestly say "energy VAD, heuristic turn
+    detection" when the ONNX weights are not on disk, instead of implying an
+    accuracy the box does not have."""
+
+    tier: str
+    model: str | None = None
+    present: bool
+    error: str | None = None
+
+    model_config = ConfigDict(protected_namespaces=())
+
+
+class Perception(BaseModel):
+    vad: DetectorStatus
+    turn_end: DetectorStatus
+
+
+class VoiceHealth(BaseModel):
+    stt: EngineStatus
+    tts: EngineStatus
+    device: str | None = None
+    device_pref: str | None = None
+    perception: Perception
+
+
+class VoiceCatalog(BaseModel):
+    """`available: false` comes with an empty list rather than an error, so the
+    picker renders a disabled state instead of failing."""
+
+    available: bool
+    voices: list[str]
+
+
+class VoicePrefs(BaseModel):
+    """The modality matrix is the source of truth for how a conversation is
+    carried, and any of the nine input/output combinations is legal.
+    `mic_enabled` and `speak_replies` are LEGACY MIRRORS of it, derived on read
+    and folded back in on write, so older clients and older stored files keep
+    working. They are not independent settings and setting them is not a second
+    way to configure the same thing.
+
+    `reply_pace` is the only turn-taking knob anything reads. It replaced four
+    timers that all tried to answer the same question and could not."""
+
+    enabled: bool
+    tts_provider: str
+    stt_provider: str
+    voice: str
+    speed: float
+    verbosity: str
+    input_mode: str
+    output_mode: str
+    mic_enabled: bool
+    speak_replies: bool
+    typing_hold: bool
+    typing_hold_ms: int
+    enter_interrupts: bool
+    barge_in: bool
+    reply_pace: str
+    interrupt_rate: float
+
+
+class VoiceSessionPrewarm(BaseModel):
+    """IT DOES NOT CREATE A CHAT. A call naming no live thread answers with all
+    three fields null/false rather than minting one: the caller is a
+    fire-and-forget fetch that reads no response, so a created thread would be an
+    empty chat nobody could be handed. Warming is keyed by thread anyway."""
+
+    session_key: str | None = None
+    thread_id: str | None = None
+    warmed: bool
+
+
+@router.get("/voice/health", response_model=VoiceHealth)
 async def voice_health():
     """Engine truth, including WHICH perception tier is actually running.
 
@@ -141,14 +245,14 @@ async def voice_health():
     return {**voice_engine.health(), "perception": detectors.status()}
 
 
-@router.get("/voice/voices")
+@router.get("/voice/voices", response_model=VoiceCatalog)
 async def voice_voices():
     if not voice_engine.TTS.available:
         return {"available": False, "voices": []}
     return {"available": True, "voices": voice_engine.TTS.voices()}
 
 
-@router.get("/voice/prefs")
+@router.get("/voice/prefs", response_model=VoicePrefs)
 async def voice_get_prefs():
     return _load_prefs()
 
@@ -172,7 +276,7 @@ class PrefsBody(BaseModel):
     interrupt_rate: float | None = None
 
 
-@router.put("/voice/prefs")
+@router.put("/voice/prefs", response_model=VoicePrefs)
 async def voice_put_prefs(body: PrefsBody):
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     return _save_prefs(patch)
@@ -188,7 +292,7 @@ class SessionBody(BaseModel):
     model: str | None = None
 
 
-@router.post("/voice/session")
+@router.post("/voice/session", response_model=VoiceSessionPrewarm)
 async def voice_session(body: SessionBody):
     """Prewarm the resident worker for a voice session. Called on surface mount
     so the process is up before the first utterance finishes.
