@@ -91,13 +91,87 @@ class DeviceTokenBody(BaseModel):
     label: str | None = Field(default=None, max_length=120)
 
 
+# ---- response models (ADR 0023 clause 6) -----------------------------------
+# Read off services/auth_store.py (`public_user` and `list_devices`). FastAPI
+# FILTERS a return value through the declared model and drops any key it does
+# not name, which on THIS router is a useful direction to fail in: `public_user`
+# already exists to strip anything sensitive, and a declared model is a second
+# statement of the same rule that the schema can be read against.
+#
+# No response here ever carries a password hash, a session token or a device
+# token hash. The one raw secret that does cross the wire is the device token,
+# returned ONCE at mint time, and it has its own model saying so.
+
+
+class PublicUser(BaseModel):
+    """A user as the wire sees them. `auth_store.public_user` builds exactly
+    this and exists to strip everything else."""
+
+    id: int
+    email: str
+    name: str | None = None
+    is_operator: bool
+
+
+class Session(BaseModel):
+    """Register, login and change-password all answer with the signed-in user.
+    The session itself is NOT in the body: it is an opaque server-side session
+    in an HttpOnly, Secure, SameSite=Strict cookie, invisible to JS and fully
+    revocable server-side. There is no JWT and no localStorage token."""
+
+    user: PublicUser
+
+
+class LogoutResult(BaseModel):
+    """`scope` is "session" for this device or "all" when every session for the
+    account was revoked."""
+
+    ok: bool
+    scope: str
+
+
+class DeviceTokenIssued(BaseModel):
+    """The RAW TOKEN, returned exactly once. It is not recoverable afterwards --
+    only its hash is stored -- so the caller stores it in the iOS Keychain at
+    this moment or not at all."""
+
+    device_token: str
+    label: str
+
+
+class DeviceRow(BaseModel):
+    """A minted device token, identified by a 12-character prefix of its hash.
+    The token itself is never returned again."""
+
+    id: str
+    label: str | None = None
+    created_at: str | None = None
+    last_seen: str | None = None
+
+
+class DeviceList(BaseModel):
+    """Revoked tokens are excluded, so `total` is the live count rather than
+    everything ever minted."""
+
+    devices: list[DeviceRow]
+    total: int
+
+
+class DeviceRevoked(BaseModel):
+    """`removed` is how many rows the prefix matched, so revoking an
+    already-revoked device answers 0 rather than erroring."""
+
+    ok: bool
+    removed: int
+
+
 def _login_response(response: Response, user: dict, request: Request) -> dict:
     raw = auth_store.create_session(user["id"], user_agent=request.headers.get("user-agent"))
     _set_session_cookie(response, raw)
     return {"user": auth_store.public_user(user)}
 
 
-@router.post("/register")
+@router.post("/register", response_model=Session)
 async def register(body: RegisterBody, request: Request, response: Response) -> dict:
     if not _registration_open():
         raise HTTPException(status_code=403, detail="registration is closed")
@@ -110,7 +184,7 @@ async def register(body: RegisterBody, request: Request, response: Response) -> 
     return _login_response(response, user, request)
 
 
-@router.post("/login")
+@router.post("/login", response_model=Session)
 async def login(body: LoginBody, request: Request, response: Response) -> dict:
     user = auth_store.verify_credentials(str(body.email), body.password)
     if user is None:
@@ -118,7 +192,7 @@ async def login(body: LoginBody, request: Request, response: Response) -> dict:
     return _login_response(response, user, request)
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=LogoutResult)
 async def logout(body: LogoutBody, request: Request, response: Response,
                  user: dict = Depends(current_user)) -> dict:
     if body.all_devices:
@@ -130,7 +204,7 @@ async def logout(body: LogoutBody, request: Request, response: Response,
     return {"ok": True, "scope": "session"}
 
 
-@router.post("/password")
+@router.post("/password", response_model=Session)
 async def change_password(body: ChangePasswordBody, request: Request, response: Response,
                           user: dict = Depends(current_user)) -> dict:
     full = auth_store.get_by_id(user["id"])
@@ -148,7 +222,7 @@ async def change_password(body: ChangePasswordBody, request: Request, response: 
     return _login_response(response, full, request)
 
 
-@router.get("/me")
+@router.get("/me", response_model=PublicUser)
 async def me(user: dict = Depends(current_user)) -> dict:
     full = auth_store.get_by_id(user["id"])
     if full is None:
@@ -159,7 +233,7 @@ async def me(user: dict = Depends(current_user)) -> dict:
 # ---- device tokens (native background producers) ----
 
 
-@router.post("/device-token")
+@router.post("/device-token", response_model=DeviceTokenIssued)
 async def issue_device_token(body: DeviceTokenBody, user: dict = Depends(current_user)) -> dict:
     """Mint a revocable device token for this account's native background tasks
     (location/audio), which run outside the WebView and cannot use the cookie.
@@ -168,7 +242,7 @@ async def issue_device_token(body: DeviceTokenBody, user: dict = Depends(current
     return {"device_token": raw, "label": body.label or "device"}
 
 
-@router.get("/devices")
+@router.get("/devices", response_model=DeviceList)
 async def list_devices(
     limit: int = 10, offset: int = 0, user: dict = Depends(current_user)
 ) -> dict:
@@ -177,7 +251,7 @@ async def list_devices(
     return auth_store.list_devices(user["id"], limit=limit, offset=offset)
 
 
-@router.delete("/devices/{device_id}")
+@router.delete("/devices/{device_id}", response_model=DeviceRevoked)
 async def revoke_device(device_id: str, user: dict = Depends(current_user)) -> dict:
     removed = auth_store.revoke_device_by_prefix(user["id"], device_id)
     return {"ok": True, "removed": removed}

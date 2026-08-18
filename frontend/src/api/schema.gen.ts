@@ -9311,10 +9311,59 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /**
+         * DeviceList
+         * @description Revoked tokens are excluded, so `total` is the live count rather than
+         *     everything ever minted.
+         */
+        DeviceList: {
+            /** Devices */
+            devices: components["schemas"]["DeviceRow"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * DeviceRevoked
+         * @description `removed` is how many rows the prefix matched, so revoking an
+         *     already-revoked device answers 0 rather than erroring.
+         */
+        DeviceRevoked: {
+            /** Ok */
+            ok: boolean;
+            /** Removed */
+            removed: number;
+        };
+        /**
+         * DeviceRow
+         * @description A minted device token, identified by a 12-character prefix of its hash.
+         *     The token itself is never returned again.
+         */
+        DeviceRow: {
+            /** Created At */
+            created_at?: string | null;
+            /** Id */
+            id: string;
+            /** Label */
+            label?: string | null;
+            /** Last Seen */
+            last_seen?: string | null;
+        };
         /** DeviceTokenBody */
         DeviceTokenBody: {
             /** Label */
             label?: string | null;
+        };
+        /**
+         * DeviceTokenIssued
+         * @description The RAW TOKEN, returned exactly once. It is not recoverable afterwards --
+         *     only its hash is stored -- so the caller stores it in the iOS Keychain at
+         *     this moment or not at all.
+         */
+        DeviceTokenIssued: {
+            /** Device Token */
+            device_token: string;
+            /** Label */
+            label: string;
         };
         /**
          * DiffFile
@@ -10246,6 +10295,17 @@ export interface components {
             all_devices: boolean;
         };
         /**
+         * LogoutResult
+         * @description `scope` is "session" for this device or "all" when every session for the
+         *     account was revoked.
+         */
+        LogoutResult: {
+            /** Ok */
+            ok: boolean;
+            /** Scope */
+            scope: string;
+        };
+        /**
          * MarkDuplicateOut
          * @description The folded ticket in its cancelled state, and a stub of the canonical one
          *     it now points at.
@@ -11058,6 +11118,21 @@ export interface components {
             /** Target Fields */
             target_fields: Record<string, never>[];
         };
+        /**
+         * PublicUser
+         * @description A user as the wire sees them. `auth_store.public_user` builds exactly
+         *     this and exists to strip everything else.
+         */
+        PublicUser: {
+            /** Email */
+            email: string;
+            /** Id */
+            id: number;
+            /** Is Operator */
+            is_operator: boolean;
+            /** Name */
+            name?: string | null;
+        };
         /** PublishIn */
         PublishIn: {
             /**
@@ -11745,6 +11820,16 @@ export interface components {
             status?: string | null;
             /** Url */
             url?: string | null;
+        };
+        /**
+         * Session
+         * @description Register, login and change-password all answer with the signed-in user.
+         *     The session itself is NOT in the body: it is an opaque server-side session
+         *     in an HttpOnly, Secure, SameSite=Strict cookie, invisible to JS and fully
+         *     revocable server-side. There is no JWT and no localStorage token.
+         */
+        Session: {
+            user: components["schemas"]["PublicUser"];
         };
         /** SessionBody */
         SessionBody: {
@@ -14476,7 +14561,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["DeviceTokenIssued"];
                 };
             };
             /** @description Validation Error */
@@ -14508,7 +14593,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["DeviceList"];
                 };
             };
             /** @description Validation Error */
@@ -14539,7 +14624,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["DeviceRevoked"];
                 };
             };
             /** @description Validation Error */
@@ -14572,7 +14657,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["Session"];
                 };
             };
             /** @description Validation Error */
@@ -14605,7 +14690,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["LogoutResult"];
                 };
             };
             /** @description Validation Error */
@@ -14634,7 +14719,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["PublicUser"];
                 };
             };
         };
@@ -14658,7 +14743,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["Session"];
                 };
             };
             /** @description Validation Error */
@@ -14691,7 +14776,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["Session"];
                 };
             };
             /** @description Validation Error */
