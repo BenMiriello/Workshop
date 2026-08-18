@@ -204,7 +204,7 @@ Three consequences follow directly:
    it is a fork: it silently orphans the working tree, the ticket store, the knowledge
    layer, learnings, triager and memory-keeper state, `chat_thread.scope` (33 threads
    on `development` alone, plain strings with no FK), 2,161 lines of usage records,
-   5,517 lines of job records, and — worst — **the AAD that a project's secrets are
+   5,517 lines of job records, and worst of all **the AAD that a project's secrets are
    encrypted under**, so a renamed project's secrets become undecryptable. Put a
    surrogate key behind every slug and make the slug a mutable attribute.
 4. **The identity root moves out of SQLite.** Users live in `auth.db` (SQLite,
@@ -328,7 +328,7 @@ mostly in the schema.
    application-level `WHERE org_id = ...` stays as the first layer"*. Measured:
    `org_id` appears in `db/repo.py` six times, **all as a parameter to
    `tenant_session()`, never in a SQL predicate**. RLS is currently the *only* layer.
-   It is forced and the app role cannot bypass it, so this is not a leak — it is a
+   It is forced and the app role cannot bypass it, so this is not a leak, it is a
    single point of failure with no defence in depth.
 2. **Set `app.current_user`.** All ~22 production `tenant_session()` calls pass only
    `org_id`, so three RLS policies can never evaluate true and `user_session()` has
@@ -451,6 +451,50 @@ using at the time.
 2. **The wire path `/api/tasks` (52 frontend call sites) belongs to item 2**, not
    item 1. It is a breaking wire change, and item 2 is already rewriting every
    route's contract. Doing it there costs one pass instead of two.
+
+**Correction, 2026-08-17 (second pass): `job → run` is NOT clean either, and the
+reason is a collision this document missed.** The claim above was "no standard-library
+or framework collision", which is true and irrelevant. The collision is internal, and
+it is worse than the `asyncio` one because both concepts are about a unit of execution,
+so a reader cannot disambiguate from context the way they can with `TaskGroup`.
+
+Measured: `run_id` already means **three** different things in this tree.
+
+1. **A chat thread's claim for one streaming turn.** 185 references across
+   `routes/chat.py` (49), `build_streaming.py` (32), `chat_store.py` (23),
+   `db/chat_backfill.py` (19), `db/chat_repo.py` (10), `chat_context.py` (8),
+   `chat_log.py` (7). This is the claim/release protocol: `RunInFlight`,
+   `new_run_id()`, `active_run_id`, `begin_run`/`commit_run`.
+2. **A deploy run.** `services/deploy_runner.py` (10), `DeploysPanel.tsx`,
+   `DeployDetail.tsx`.
+3. **The Job rename this item proposes.**
+
+So `job → run` cannot proceed: the word is taken twice over.
+
+**The unblocker is a rename nobody finished.** Meaning 1 is already called a Turn
+almost everywhere it is modelled:
+
+- the Postgres table is `chat_turn`
+- the dataclass in `build_streaming.py` is `Turn`
+- the frontend says `turn_id` **60 times** against `run_id` 31
+- and `db/chat_repo.py:114-124` literally does
+  `run_id = m.pop("run_id")` then `meta["turn_id"] = run_id`
+
+That is a translation layer standing in for a rename that was abandoned partway. One
+value carries three names in a single round trip: `run_id` in the log, `run_id` as a
+column on a table named `chat_turn`, and `turn_id` in the payload the client reads.
+
+**So item 1 is three renames, not two, and they interlock:**
+
+| | Rename | State |
+|---|---|---|
+| 1a | chat `run_id → turn_id` | **Do first.** Self-contained in the chat subsystem, which has 732 tests. Deletes an existing translation layer, makes the column match its table, and frees the word `run` |
+| 1b | `job → run` | Blocked on 1a. On-disk `.runtime/jobs.jsonl` must not move: four shell scripts read it (`autonomy_report.sh`, `dispatch_triggers.sh`, `cron_agent.sh`, `field_occupancy.py`), the same rule as `.tasks.json` |
+| 1c | `task → ticket` | Rides item 3, per the argument below |
+
+The general lesson, worth more than the specific fix: **before renaming X to Y, grep
+for Y.** This document measured the source of the rename and not its destination, and
+that is how it called a colliding rename clean.
 
 **Revised sequencing, and the reason:** do `job → run` on its own; let
 `task → ticket` ride with item 3, because item 3 MOVES those files into
