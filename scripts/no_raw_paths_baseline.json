@@ -1,0 +1,6 @@
+{
+  "_note": "raw OS paths in agent-facing text today; a NEW one not in this list fails the ratchet. Shrinks toward zero once Layer 1 removes the runtime-briefing cwd. See scripts/check_no_raw_paths.py.",
+  "allowed": [
+    "backend/services/chat_context.py :: /tmp/workshop-backend.log"
+  ]
+}
