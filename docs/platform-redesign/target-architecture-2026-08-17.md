@@ -844,10 +844,40 @@ account on the same machine can read, so there is nothing to ratchet toward.
 - **`task → ticket`.** Deliberately deferred to item 3, for the reasons measured in
   §5 above. `job → run` is unblocked now that 1a has freed the word, and is the
   next mechanical piece.
-- **The `hardcoded_identity` reviewer reason fires on the current tree**, from
-  `scripts/smoke_chat.sh` (an env-var default) and four test files using
-  `agent:masini` as a fixture. Pre-existing, untouched by this build, and it is
-  making the gate noisy, so it wants either a fix or a documented exemption.
+- **`hardcoded_identity` is now clean** (49f9e71): the operator's agent slug left the
+  test fixtures, the email default left `smoke_chat.sh`, and the check passes on
+  twelve identity needles. This entry previously said it was still noisy.
+
+### Recovered 2026-08-18, and the lesson in it
+
+Two agents' work sat uncommitted when their turn ended, and it could not simply be
+reverted: migration `a2c9f4b70e18` had ALREADY run against the live database, so
+`chat_turn.run_id` was gone while the committed code still selected it. Every
+Postgres chat query in the running backend raised `ProgrammingError`, swallowed by
+the mirror's fire-and-forget `except`, so nothing appeared on screen and nothing
+reached the log. Measured: `SELECT t.run_id FROM chat_turn` fails, `SELECT
+t.turn_id` succeeds. The tree had to move FORWARD to meet the schema.
+
+**A schema migration is not part of an agent's working tree.** Code can be left
+uncommitted and reverted; an applied `ALTER TABLE` cannot. The moment a migration
+runs, the uncommitted code that matches it stops being optional work and becomes
+the only thing that makes the system correct. Any future task that pairs a rename
+with a migration must commit both halves together, exactly as the stage-2
+transcript ticket already requires for the backend/renderer pair, and for the same
+reason: `apply.sh` builds from disk and any agent may run it at any time.
+
+**Cost, measured:** the mirror drifted from 2 threads to 4 during the ~3.3h window,
+5 messages now missing from Postgres. No operator-visible loss, because the JSONL
+log stays authoritative for reads. Repair belongs to the existing open ticket; it
+cannot be done selectively, because `db/chat_verify.run(rebuild)` has no per-thread
+targeting and one of the four drifted threads was live.
+
+- **ADR obligations created by the rename.** ADR 0021 has been amended in place: it
+  said RUN throughout for what is now a TURN and cited `build_streaming.claim_run`,
+  which no longer exists. ADR 0016 is NOT yet contradicted, because its "a durable
+  work item is a Ticket (code identifier `task`)" is still accurate today; it
+  becomes wrong the day the deferred `task -> ticket` rename lands, and amending it
+  is part of that work, not a separate cleanup.
 
 ## 7. The one-line answer
 

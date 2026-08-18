@@ -8,7 +8,7 @@ Status: accepted
 A chat thread has two kinds of long-lived work: a RUN (a turn being driven by
 the CLI) and an OPERATION on the stored conversation (a `/compact` fold, a
 `/clear` cut). Runs serialize against each other through the claim taken under
-the per-thread lock in `build_streaming.claim_run`. Operations serialized
+the per-thread lock in `build_streaming.claim_turn`. Operations serialized
 against nothing.
 
 The measured incident (2026-08-14 03:20, thread `57e6c4b8`): the operator
@@ -87,3 +87,13 @@ again. Persisting the flag would recreate the stale-flag class this deletes.
 
 Pinned by `backend/tests/test_thread_ops.py` and
 `backend/tests/test_context_meter_fence.py`.
+
+## Amendment, 2026-08-17
+
+This ADR says RUN throughout for the thing the CLI drives on a thread. That
+word moved. `chat_turn.run_id`, the JSONL `run_id`, and the claim function
+were renamed to `turn_id` / `claim_turn` in 348e924, because one value was
+carrying three names and `run` was needed for the Job execution records the UI
+labels Runs. Read every RUN below as a TURN; the decision itself, one
+operation at a time and operations land on a quiet thread, is unchanged, and
+the symbol reference above has been updated in place.
