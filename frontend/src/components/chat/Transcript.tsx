@@ -555,18 +555,28 @@ function StepRun({ items, cfg, nowMs, openGroups, arrived, current, onAnswerPerm
 // regression on a long thread: today an old turn shows exactly one line for all
 // of its work, and that is the right amount.
 function SettledWork({
-  work, cfg, nowMs, tookMs, defaultOpen, streaming, expanded, onAnswerPermission,
+  work, cfg, nowMs, tookMs, streaming, expanded, onAnswerPermission,
 }: {
   work: ChatSegment[]; cfg: ModelDisplay; nowMs: number; tookMs?: number;
-  /** Open on first paint. Set while the turn is still being written, so live
-   *  progress is legible without a click; it settles closed on the next turn. */
-  defaultOpen?: boolean;
   streaming?: boolean;
   expanded?: boolean;
   onAnswerPermission?: AnswerPermission;
 }) {
-  const [open, setOpen] = useState(!!defaultOpen);
+  // THE SAME PROVENANCE RULE THE GROUPS USE, because this is the same kind of
+  // disclosure: the machine opens it while the turn is being written and closes
+  // it again when the turn settles, and the operator's touch takes it away from
+  // the machine permanently.
+  //
+  // It used to be `useState(!!streaming)`, and a `useState` initialiser runs
+  // ONCE. So a turn watched live opened its work section and never closed it:
+  // the docstring said "it settles closed on the next turn" and nothing in the
+  // component could ever do that. Every turn the operator sat through stayed
+  // expanded for the rest of the session, which is the "older tool call groups
+  // should default to closed" report of 2026-08-17.
+  const [disc, setDisc] = useState(() => openInitial(!!streaming, false, Date.now()));
   const id = useId();
+  useEffect(() => { setDisc((prev) => onLive(prev, !!streaming, Date.now())); }, [streaming]);
+  const open = disc.open;
   // THE TURN'S TOTAL LIVES HERE, on the line that already summarises the turn's
   // work, rather than in a footer row of its own. A turn nobody waited on does
   // not mention its duration at all: a number under every reply is noise, and
@@ -589,20 +599,36 @@ function SettledWork({
       <button
         type="button"
         className={`chat-work__toggle${open ? " is-open" : ""}`}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setDisc((d) => onToggle(d, Date.now()))}
         aria-expanded={open}
         aria-controls={id}
       >
         <ChevronRight size={13} aria-hidden className="chat-work__chev" />
         {open ? "Hide steps" : summary}
       </button>
-      {/* ONE CLICK, NOT TWO. Opening a settled turn opens its groups with it.
-          The turn line already says "12 steps"; a group inside it saying "6
-          steps" is the same disclosure twice, and the reader who opened the
-          turn has already asked for exactly what the group would be hiding.
-          Operator-agreed, 2026-08-12. */}
-      <Reveal open={open} id={id}>
-        <TurnWork work={work} cfg={cfg} nowMs={nowMs} openGroups
+      {/* ONE CLICK, NOT TWO, BUT ONLY ON A SETTLED TURN. Opening a turn the
+          reader has already read opens its groups with it: the turn line
+          already says "12 steps", so a group inside it saying "6 steps" is the
+          same disclosure twice, and the reader who opened the turn has asked
+          for exactly what the group would hide. Operator-agreed, 2026-08-12.
+
+          `!streaming` is the 2026-08-17 correction. This used to be a bare
+          `openGroups`, so it was true WHILE THE TURN RAN too, and that forced
+          every group of a live turn open at mount. A group opened that way was
+          never opened by `live`, so `disclosure.onLive` had nothing to close --
+          it only moves a disclosure on a live TRANSITION -- and the whole run
+          of them stayed open behind the turn as it went. Only the trailing
+          group ever closed itself, which is the "they don't collapse when the
+          group is done" report.
+
+          A live turn's groups now manage themselves: `current` opens the one
+          holding the turn's position and closes it the moment anything follows
+          it, which is the earliest point the wire can say that group is
+          finished. Nothing is lost for the settled case, because `Reveal`
+          unmounts its children when it closes, so the groups of a turn watched
+          live are remounted from this flag the next time it is opened. */}
+      <Reveal open={open} id={id} animate={disc.animate}>
+        <TurnWork work={work} cfg={cfg} nowMs={nowMs} openGroups={!streaming}
                   expanded={expanded} streaming={streaming}
                   onAnswerPermission={onAnswerPermission} />
       </Reveal>
@@ -698,7 +724,7 @@ export function AssistantTurn({
           turn is done. */}
       {work.length > 0 && (
         <SettledWork work={work} cfg={cfg} nowMs={clock} tookMs={tookMs}
-                     defaultOpen={!!streaming} streaming={streaming} expanded={isLatest}
+                     streaming={streaming} expanded={isLatest}
                      onAnswerPermission={onAnswerPermission} />
       )}
       {answer.map((s, i) =>
