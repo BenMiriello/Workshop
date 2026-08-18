@@ -441,3 +441,43 @@ export const UI_CARD_ACTIONS: Record<string, UiCardHandler> = {
 export function hasCardHandler(id: string): boolean {
   return Object.prototype.hasOwnProperty.call(UI_CARD_ACTIONS, id);
 }
+
+// The actions the client offers for each known card kind when the model's own
+// `actions` list is missing or names only ids this build has no handler for.
+// The model is TOLD these ids by the card protocol, but a typo or an omission
+// must never leave a known card with a dead button or no way to act: the client
+// owns the handlers, so it owns the fallback too. Every id here must exist in
+// UI_CARD_ACTIONS (asserted in the test).
+export const DEFAULT_CARD_ACTIONS: Record<string, UiCardAction[]> = {
+  "project-proposal": [
+    { id: "createProject", label: "Create project", variant: "primary" },
+    { id: "dismiss", label: "Dismiss", variant: "ghost" },
+  ],
+  "task-proposal": [
+    { id: "addTasks", label: "File ticket", variant: "primary" },
+    { id: "addTasksAndRun", label: "File and run", variant: "default" },
+    { id: "dismiss", label: "Dismiss", variant: "ghost" },
+  ],
+};
+
+/**
+ * The actions a known card actually offers. Pure, so it is tested.
+ *
+ *  - Drops any action whose id has no handler in this build (a model typo, or
+ *    an id from a newer build): a dead disabled button explains nothing, so it
+ *    is not shown at all.
+ *  - Falls back to the kind's canonical actions when the model supplied none
+ *    this build can run, so a known card always has its real buttons.
+ *  - Hides the run action where the scope cannot run tickets, the same rule
+ *    TicketDraftsDialog applies when it hides "File and run now".
+ */
+export function resolveCardActions(
+  kind: string,
+  supplied: UiCardAction[] | undefined,
+  opts?: { runnable?: boolean },
+): UiCardAction[] {
+  const withHandlers = (supplied ?? []).filter((a) => hasCardHandler(a.id));
+  const base = withHandlers.length ? withHandlers : (DEFAULT_CARD_ACTIONS[kind] ?? []);
+  const runnable = opts?.runnable ?? true;
+  return base.filter((a) => a.id !== "addTasksAndRun" || runnable);
+}

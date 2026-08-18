@@ -230,6 +230,24 @@ export function useSendPipeline({
       // heard about this send.
       const reason = sendFailureText(e);
       dispatch({ type: "sendFailed", clientId, error: reason });
+      // ORPHANED TYPE-AHEAD. Messages typed while this creation was in flight
+      // were parked in `awaitingRef` waiting for a thread id that never came.
+      // Left there they sit as forever-in-flight bubbles with no failure state
+      // and no recovery of their own. Fail them too, so each shows its state and
+      // its own Retry, and CLEAR the ref so retry is the single owner of
+      // recovery. Retrying any of them routes through planSend exactly as a
+      // fresh send does: with no thread yet the FIRST one retried creates it
+      // (`newTurn`), and `starting` is set synchronously (setStartingBoth) so a
+      // second retry racing it HOLDS (`awaitThread`) rather than forking a rival
+      // thread; once a thread exists `sendTurn` reuses that id, so every later
+      // retry just addresses it. The batch recovers as one thread, in whatever
+      // order the operator retries, and never becomes two. Same client ids, so
+      // the log dedupes if a parked send had in fact reached the server.
+      const orphaned = awaitingRef.current;
+      awaitingRef.current = [];
+      for (const w of orphaned) {
+        dispatch({ type: "sendFailed", clientId: w.clientId, error: reason });
+      }
       return { ok: false, error: reason };
     } finally {
       setStartingBoth(false);

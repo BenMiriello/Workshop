@@ -36,6 +36,7 @@ import {
   KNOWN_KINDS,
   UI_CARD_ACTIONS,
   hasCardHandler,
+  resolveCardActions,
   slugify,
   type UiCardAction,
   type UiCardCtx,
@@ -317,30 +318,33 @@ function ActionButtons({
   actions,
   busyId,
   onRun,
-  requireHandler,
 }: {
   actions: UiCardAction[];
   busyId: string | null;
   onRun: (a: UiCardAction) => void;
-  requireHandler?: boolean;
 }) {
-  if (actions.length === 0) return null;
+  // Only ever render an action this build can actually run. A model-authored
+  // card may name an id with no handler (a typo, or an id from a newer build);
+  // a dead disabled button explains nothing, so it is dropped rather than
+  // shown. The edit phase already substitutes the kind's canonical actions
+  // (resolveCardActions) when this would otherwise be empty, so a known card
+  // still shows its real buttons; success actions come from a handler and
+  // always resolve. This filter is the last guarantee, wherever actions come in.
+  const live = actions.filter((a) => hasCardHandler(a.id));
+  if (live.length === 0) return null;
   return (
     <Row wrap>
-      {actions.map((a) => {
-        const live = hasCardHandler(a.id);
-        return (
-          <Button
-            key={a.id}
-            variant={a.variant ?? "default"}
-            loading={busyId === a.id}
-            disabled={busyId != null || (requireHandler ? !live : false)}
-            onClick={() => onRun(a)}
-          >
-            {a.label}
-          </Button>
-        );
-      })}
+      {live.map((a) => (
+        <Button
+          key={a.id}
+          variant={a.variant ?? "default"}
+          loading={busyId === a.id}
+          disabled={busyId != null}
+          onClick={() => onRun(a)}
+        >
+          {a.label}
+        </Button>
+      ))}
     </Row>
   );
 }
@@ -515,7 +519,7 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
             <CircleCheck size={16} strokeWidth={1.8} aria-hidden />
             <span>{heading}</span>
           </Row>
-          <ActionButtons actions={success?.actions ?? []} busyId={busyId} onRun={(a) => void runAction(a)} requireHandler />
+          <ActionButtons actions={success?.actions ?? []} busyId={busyId} onRun={(a) => void runAction(a)} />
           {errorBlock}
         </Stack>
       </Card>
@@ -532,11 +536,14 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
   const notReady = isTaskProposal ? readinessLine(proposalGaps(values)) : "";
   const pickup = isTaskProposal ? pickupFor(pickupMap, (values.scope || "workshop").trim()) : null;
   const pickupWarning = pickup ? pickupNote(pickup) : null;
-  // Do not offer a run that cannot happen. The same rule TicketDraftsDialog
-  // applies when it hides "File and run now".
-  const editActions = (spec.actions ?? []).filter(
-    (a) => a.id !== "addTasksAndRun" || !pickup || pickup.runnable,
-  );
+  // The actions this card offers: the model's own, minus any with no handler,
+  // falling back to the kind's canonical set if it named none this build can
+  // run, and without the run action where the scope cannot run (the same rule
+  // TicketDraftsDialog applies when it hides "File and run now"). A known card
+  // can no longer render a dead button or end up with no way to act.
+  const editActions = resolveCardActions(spec.kind, spec.actions, {
+    runnable: !pickup || pickup.runnable,
+  });
 
   return (
     <Card>
@@ -555,7 +562,7 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
           <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{pickupWarning}</span>
         )}
         {errorBlock}
-        <ActionButtons actions={editActions} busyId={busyId} onRun={(a) => void runAction(a)} requireHandler />
+        <ActionButtons actions={editActions} busyId={busyId} onRun={(a) => void runAction(a)} />
       </Stack>
     </Card>
   );

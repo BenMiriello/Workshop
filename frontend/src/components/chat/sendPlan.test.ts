@@ -62,6 +62,27 @@ describe("planSend", () => {
     expect(planSend("and this", { ...idle, hasThread: false, starting: true }))
       .toBe("awaitThread");
   });
+
+  // RECOVERING A FAILED FIRST-SEND BATCH WITHOUT FORKING THE THREAD.
+  // When the send that creates a blank chat fails, its own message and every
+  // message typed behind it are marked failed and retried through this same
+  // plan. The invariant that keeps recovery from making two threads lives here:
+  // `awaitThread` is returned ONLY while a creation is already in flight, so the
+  // first retry (nothing in flight) creates the one thread and any retry racing
+  // it holds for that thread instead of starting a second.
+  it("makes exactly one creator on retry: awaitThread requires a creation already in flight", () => {
+    // No thread, nothing starting: this retry becomes the sole creator.
+    expect(planSend("first again", { ...idle, hasThread: false, starting: false }))
+      .toBe("newTurn");
+    // No thread, but a creation is now in flight: this retry holds, it does not
+    // fork a rival thread.
+    expect(planSend("second again", { ...idle, hasThread: false, starting: true }))
+      .toBe("awaitThread");
+    // Once the thread exists, no plan creates another one; the message is
+    // addressed to it (sendTurn reuses the existing id even for a newTurn).
+    expect(planSend("third again", { ...idle, hasThread: true, turnActive: true }))
+      .toBe("inject");
+  });
 });
 
 describe("the working indicator never goes quiet on a running turn", () => {
