@@ -7902,6 +7902,19 @@ export interface components {
             behind: number;
         };
         /**
+         * AllNotes
+         * @description `scopes` is how many scopes were actually READ, not how many exist, so a
+         *     filtered request reports the size of what it looked at.
+         */
+        AllNotes: {
+            /** Count */
+            count: number;
+            /** Notes */
+            notes: components["schemas"]["NoteRow"][];
+            /** Scopes */
+            scopes: number;
+        };
+        /**
          * AppGrant
          * @description One app-to-app capability. `mode` is `read` or `rw`, and coerces to
          *     `read` for anything else rather than rejecting the row.
@@ -10899,6 +10912,33 @@ export interface components {
             to: string;
         };
         /**
+         * NoteRow
+         * @description One note in the cross-scope view, tagged with the scope it resolved in
+         *     plus the provenance and ranked-digest facets the Memory page shows per row.
+         *     `_mtime` is stripped by `list_notes_meta` on purpose -- it is a ranking
+         *     input, not something a reader should depend on.
+         */
+        NoteRow: {
+            /** Author */
+            author?: string | null;
+            /** Chat */
+            chat?: string | null;
+            /** Hook */
+            hook: string;
+            /** Id */
+            id: string;
+            /** Pinned */
+            pinned?: boolean | null;
+            /** Scope */
+            scope: string;
+            /** Title */
+            title: string;
+            /** Type */
+            type?: string | null;
+            /** Updated */
+            updated?: string | null;
+        };
+        /**
          * NoteSummary
          * @description One note in a scope listing. `title` falls back to the id for a note the
          *     index has never seen, and `hook` is the one-line summary the ambient digest
@@ -12147,6 +12187,29 @@ export interface components {
             data: Record<string, never>;
         };
         /**
+         * ScopeList
+         * @description Only scopes that already HAVE a knowledge directory, so enumerating never
+         *     creates an empty one.
+         */
+        ScopeList: {
+            /** Scopes */
+            scopes: string[];
+        };
+        /**
+         * ScopeNode
+         * @description The same keys as the flat list, shaped so a picker can convey containment
+         *     by indentation alone without building a tree widget. `parent` is null when
+         *     the real parent is not itself a visible scope.
+         */
+        ScopeNode: {
+            /** Depth */
+            depth: number;
+            /** Key */
+            key: string;
+            /** Parent */
+            parent?: string | null;
+        };
+        /**
          * ScopePickup
          * @description Whether work filed to a scope can be run by hand, and whether anything
          *     will pick it up unattended. See `scope_pickup` for why those are two
@@ -12161,6 +12224,11 @@ export interface components {
             scope?: string | null;
             /** Why */
             why: string;
+        };
+        /** ScopeTree */
+        ScopeTree: {
+            /** Scopes */
+            scopes: components["schemas"]["ScopeNode"][];
         };
         /** ScopesBody */
         ScopesBody: {
@@ -23233,7 +23301,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["AllNotes"];
                 };
             };
             /** @description Validation Error */
@@ -23530,7 +23598,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ScopeList"];
                 };
             };
         };
@@ -23550,7 +23618,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ScopeTree"];
                 };
             };
         };

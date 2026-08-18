@@ -30,6 +30,7 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from services import knowledge, ownership
 from wsplatform import dev_mode
@@ -200,7 +201,55 @@ def _scope_roots() -> list[tuple[str, Path]]:
 
 # ---- Aggregate list --------------------------------------------------------
 
-@router.get("")
+
+class NoteRow(BaseModel):
+    """One note in the cross-scope view, tagged with the scope it resolved in
+    plus the provenance and ranked-digest facets the Memory page shows per row.
+    `_mtime` is stripped by `list_notes_meta` on purpose -- it is a ranking
+    input, not something a reader should depend on."""
+
+    id: str
+    title: str
+    hook: str
+    updated: str | None = None
+    scope: str
+    author: str | None = None
+    type: str | None = None
+    pinned: bool | None = None
+    chat: str | None = None
+
+
+class AllNotes(BaseModel):
+    """`scopes` is how many scopes were actually READ, not how many exist, so a
+    filtered request reports the size of what it looked at."""
+
+    notes: list[NoteRow]
+    count: int
+    scopes: int
+
+
+class ScopeList(BaseModel):
+    """Only scopes that already HAVE a knowledge directory, so enumerating never
+    creates an empty one."""
+
+    scopes: list[str]
+
+
+class ScopeNode(BaseModel):
+    """The same keys as the flat list, shaped so a picker can convey containment
+    by indentation alone without building a tree widget. `parent` is null when
+    the real parent is not itself a visible scope."""
+
+    key: str
+    parent: str | None = None
+    depth: int
+
+
+class ScopeTree(BaseModel):
+    scopes: list[ScopeNode]
+
+
+@router.get("", response_model=AllNotes)
 async def list_all(scope: str | None = None, q: str | None = None) -> dict:
     """Notes across every scope, each tagged with its resolved `scope` key plus
     `author` / `type` / `pinned` (design doc sec 11: provenance and the ranked-
@@ -245,14 +294,14 @@ async def list_all(scope: str | None = None, q: str | None = None) -> dict:
     return {"notes": out, "count": len(out), "scopes": scopes}
 
 
-@router.get("/scopes")
+@router.get("/scopes", response_model=ScopeList)
 async def list_scopes() -> dict:
     """The scope keys that currently have a knowledge directory, for the
     filter/create controls. Cheap directory + registry scan, no note load."""
     return {"scopes": [skey for skey, _ in _scope_roots()]}
 
 
-@router.get("/scopes/tree")
+@router.get("/scopes/tree", response_model=ScopeTree)
 async def list_scopes_tree() -> dict:
     """The same scope keys as `/scopes`, shaped as a tree instead of a flat
     list (design doc sec 11: "a scope filter shaped like the TREE, not a flat
