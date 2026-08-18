@@ -9771,6 +9771,47 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * EventAccepted
+         * @description `enqueued_runs` is named honestly: this route's job ends at ENQUEUED, not
+         *     at ran. The cron loop pops those pending runs and decides whether to fire a
+         *     model at all.
+         */
+        EventAccepted: {
+            /** Enqueued Agent Ids */
+            enqueued_agent_ids: string[];
+            /** Enqueued Runs */
+            enqueued_runs: number;
+            /** Logged */
+            logged: boolean;
+            /** Ok */
+            ok: boolean;
+            /** Subscribers Pending */
+            subscribers_pending: number;
+        };
+        /**
+         * EventRecord
+         * @description One logged event. `body` is the caller's payload verbatim and stays open:
+         *     it is an arbitrary webhook's schema. `headers` has already had authorization
+         *     and cookie stripped. `known_source` is false for a source the platform does
+         *     not speak and no installed app declares, which is the honest answer for a
+         *     webhook aimed at an uninstalled app.
+         */
+        EventRecord: {
+            /** Body */
+            body: Record<string, never>;
+            /** Headers */
+            headers: {
+                [key: string]: string;
+            };
+            /** Known Source */
+            known_source: boolean;
+            signature?: components["schemas"]["Signature"] | null;
+            /** Source */
+            source: string;
+            /** Ts */
+            ts: string;
+        };
         /** ExplainResponse */
         ExplainResponse: {
             /** Architecture Hits */
@@ -11640,6 +11681,13 @@ export interface components {
             /** Target Scope */
             target_scope: string;
         };
+        /** RecentEvents */
+        RecentEvents: {
+            /** Count */
+            count: number;
+            /** Events */
+            events: components["schemas"]["EventRecord"][];
+        };
         /** RegistryCatalog */
         RegistryCatalog: {
             /** Items */
@@ -12164,6 +12212,18 @@ export interface components {
             mode: string;
         };
         /**
+         * Signature
+         * @description Whether the webhook proved it was who it said. `reason` names the
+         *     verifier's verdict, including "no_verifier_registered" for a source with no
+         *     verifier -- which is a pass, and says so rather than implying a check ran.
+         */
+        Signature: {
+            /** Ok */
+            ok: boolean;
+            /** Reason */
+            reason: string;
+        };
+        /**
          * SkippedMember
          * @description A group member that was not forked, with the incumbent named. Adopting a
          *     group twice is a no-op for a singleton role, and this is how it says so.
@@ -12384,6 +12444,19 @@ export interface components {
             title?: string | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * Subscriptions
+         * @description Read-only. Metadata keys (leading `_`) and non-list values are stripped,
+         *     so this is consistently source -> agent ids.
+         */
+        Subscriptions: {
+            /** Path */
+            path: string;
+            /** Subscriptions */
+            subscriptions: {
+                [key: string]: string[];
+            };
         };
         /** SuggestedCommand */
         SuggestedCommand: {
@@ -21570,7 +21643,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RecentEvents"];
                 };
             };
             /** @description Validation Error */
@@ -21599,7 +21672,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Subscriptions"];
                 };
             };
         };
@@ -21621,7 +21694,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EventAccepted"];
                 };
             };
             /** @description Validation Error */

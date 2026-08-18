@@ -16,7 +16,10 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from typing import Any
+
 from fastapi import APIRouter, Request
+from pydantic import BaseModel
 from wsplatform import paths
 
 
@@ -92,7 +95,62 @@ VERIFIERS = {
 }
 
 
-@router.post("/{source}")
+
+class Signature(BaseModel):
+    """Whether the webhook proved it was who it said. `reason` names the
+    verifier's verdict, including "no_verifier_registered" for a source with no
+    verifier -- which is a pass, and says so rather than implying a check ran."""
+
+    ok: bool
+    reason: str
+
+
+class EventRecord(BaseModel):
+    """One logged event. `body` is the caller's payload verbatim and stays open:
+    it is an arbitrary webhook's schema. `headers` has already had authorization
+    and cookie stripped. `known_source` is false for a source the platform does
+    not speak and no installed app declares, which is the honest answer for a
+    webhook aimed at an uninstalled app."""
+
+    ts: str
+    source: str
+    known_source: bool
+    # OPTIONAL because the log is replayed, not just appended to. Measured over
+    # the live log on 2026-08-18: 20 records, and 5 of them predate this field
+    # entirely. `/events/recent` reads history, so a required `signature` would
+    # 500 the endpoint on exactly those five rows. Absent means "written before
+    # verification existed", which is not the same as a check that passed.
+    signature: Signature | None = None
+    headers: dict[str, str]
+    body: dict[str, Any]
+
+
+class EventAccepted(BaseModel):
+    """`enqueued_runs` is named honestly: this route's job ends at ENQUEUED, not
+    at ran. The cron loop pops those pending runs and decides whether to fire a
+    model at all."""
+
+    ok: bool
+    logged: bool
+    subscribers_pending: int
+    enqueued_runs: int
+    enqueued_agent_ids: list[str]
+
+
+class RecentEvents(BaseModel):
+    events: list[EventRecord]
+    count: int
+
+
+class Subscriptions(BaseModel):
+    """Read-only. Metadata keys (leading `_`) and non-list values are stripped,
+    so this is consistently source -> agent ids."""
+
+    subscriptions: dict[str, list[str]]
+    path: str
+
+
+@router.post("/{source}", response_model=EventAccepted)
 async def receive_event(source: str, request: Request):
     body = await request.body()
 
@@ -148,7 +206,7 @@ async def receive_event(source: str, request: Request):
     }
 
 
-@router.get("/recent")
+@router.get("/recent", response_model=RecentEvents)
 async def recent_events(limit: int = 20, source: str | None = None):
     """Tail the events log. Limit caps at 200 to keep responses bounded."""
     limit = max(1, min(limit, 200))
@@ -174,7 +232,7 @@ async def recent_events(limit: int = 20, source: str | None = None):
     return {"events": out, "count": len(out)}
 
 
-@router.get("/subscriptions")
+@router.get("/subscriptions", response_model=Subscriptions)
 async def list_subscriptions():
     """Read-only view of which agents are wired to which sources. Strips
     metadata keys (those starting with `_`) and any non-list values so the
