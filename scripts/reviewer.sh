@@ -54,6 +54,11 @@
 #   - no routes/ file touched by this diff has MORE routes lacking
 #     response_model= than the pinned baseline (ADR 0023; see
 #     check_response_model.py's own header)
+#   - no response MODEL touched by this diff has more untyped fields
+#     (`dict[str, Any]`, `list[dict]`, bare `Any`) than the pinned baseline. The
+#     route-level response_model check above does not see these: a real model
+#     whose fields are `dict` still generates `Record<string, never>` in the
+#     client (ADR 0023 clause 6; see check_opaque_fields.py's own header)
 #   - zero raw localStorage/sessionStorage calls outside frontend/src/lib/storage.ts
 #     (ADR 0025 clause 4). Absolute rather than ratcheted: the tree is at zero, and
 #     a new raw call is a key a second account on the same machine can read
@@ -468,6 +473,29 @@ if printf '%s\n' "$CHANGED_ALL" \
   fi
 fi
 
+# 4.5f Opaque response FIELDS, ratcheted (ADR 0023 clause 6, second half).
+# `check_response_model` asks whether a ROUTE names a model; this asks whether
+# that model's FIELDS say anything. A field typed `dict[str, Any]` satisfies the
+# route-level check and still generates `Record<string, never>` in the client,
+# so the frontend hand-writes the shape and drifts from it -- which is the exact
+# defect the response_model work exists to remove, one level down. Same trigger
+# set as the generated-client check, and for the same reason: a model in
+# `services/` or `db/` can flow into a response and move the schema.
+OPAQUE_FIELDS_CHECK="skipped"
+if printf '%s\n' "$CHANGED_ALL" \
+   | grep -vE '^backend/tests/' \
+   | grep -qE '^(backend/|scripts/gen_openapi\.py)'; then
+  if [[ -f "$WORKSHOP/scripts/check_opaque_fields.py" && -f "$WORKSHOP/scripts/opaque_fields_baseline.json" ]]; then
+    if python3 "$WORKSHOP/scripts/check_opaque_fields.py" >/dev/null 2>&1; then
+      OPAQUE_FIELDS_CHECK="ok"
+    else
+      OPAQUE_FIELDS_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("opaque_fields_check_unavailable")
+  fi
+fi
+
 # 4.6d Field-occupancy ratchet (R2) and doc-status ratchet (R1) are measurement,
 # not gates — R2 is explicit that a newly-introduced zero-occupancy field must
 # be reported loudly, not fail the build on first introduction (a design that
@@ -590,6 +618,10 @@ if [[ "$GENERATED_CLIENT_CHECK" == "fail" ]]; then
   REASONS+=("generated_client_stale")
   COMPLETE="false"
 fi
+if [[ "$OPAQUE_FIELDS_CHECK" == "fail" ]]; then
+  REASONS+=("opaque_response_field")
+  COMPLETE="false"
+fi
 if [[ "$DUPLICATE_HELPERS_CHECK" == "fail" ]]; then
   REASONS+=("duplicate_helper")
   COMPLETE="false"
@@ -658,7 +690,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK
+export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -715,7 +747,7 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

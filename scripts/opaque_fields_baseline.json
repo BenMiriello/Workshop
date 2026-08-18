@@ -1,0 +1,214 @@
+{
+  "opaque_fields": 98,
+  "per_schema": {
+    "ActiveTurn": [
+      "live"
+    ],
+    "AdoptGroupOut": [
+      "scope_defaults"
+    ],
+    "Agent": [
+      "limits",
+      "memory",
+      "triggers"
+    ],
+    "AgentDefinitionUpdate": [
+      "limits",
+      "triggers"
+    ],
+    "AgentDetail": [
+      "limits",
+      "memory",
+      "triggers"
+    ],
+    "AgentGroup": [
+      "members",
+      "scope_defaults"
+    ],
+    "AgentRunsOut": [
+      "heartbeat"
+    ],
+    "AgentTemplate": [
+      "triggers"
+    ],
+    "Awaiting": [
+      "context"
+    ],
+    "BrokerStatus": [
+      "my_leases"
+    ],
+    "ContextDetail": [
+      "agents",
+      "categories",
+      "mcp",
+      "memory",
+      "skills"
+    ],
+    "Deploy": [
+      "current",
+      "source",
+      "target"
+    ],
+    "DeployIn": [
+      "source",
+      "target"
+    ],
+    "DeployPatch": [
+      "source",
+      "target"
+    ],
+    "DraftTask": [
+      "acceptance",
+      "evidence",
+      "exec",
+      "external_refs",
+      "sync",
+      "triage"
+    ],
+    "EventRecord": [
+      "body"
+    ],
+    "FromTemplateIn": [
+      "overrides"
+    ],
+    "GcReport": [
+      "checkpoints"
+    ],
+    "GcRuntimes": [
+      "candidates",
+      "cleared"
+    ],
+    "GcWorktrees": [
+      "candidates",
+      "failed",
+      "reaped"
+    ],
+    "HistoryRecord": [
+      "payload"
+    ],
+    "InstalledProject": [
+      "from_registry",
+      "surfaces"
+    ],
+    "Job": [
+      "binding",
+      "budget",
+      "evidence"
+    ],
+    "LiveBody": [
+      "cols",
+      "hearing"
+    ],
+    "McpHealth": [
+      "counts"
+    ],
+    "McpServerRow": [
+      "tools"
+    ],
+    "McpServers": [
+      "counts"
+    ],
+    "MentionableAgents": [
+      "agents"
+    ],
+    "MetricLatest": [
+      "qty"
+    ],
+    "MintIn": [
+      "caveats"
+    ],
+    "Project": [
+      "repo"
+    ],
+    "ProjectAutonomyOut": [
+      "limits",
+      "triggers"
+    ],
+    "ProjectAutonomyPutOut": [
+      "limits",
+      "triggers"
+    ],
+    "ProviderInfo": [
+      "target_fields"
+    ],
+    "ReadIn": [
+      "selector"
+    ],
+    "RegistryItem": [
+      "manifest"
+    ],
+    "ResourceGrant": [
+      "caveats"
+    ],
+    "RosterAgent": [
+      "limits",
+      "memory",
+      "memory_blocks",
+      "triggers"
+    ],
+    "ScheduleBody": [
+      "data"
+    ],
+    "ServiceStatus": [
+      "started_at"
+    ],
+    "SpawnTask": [
+      "acceptance"
+    ],
+    "SpawnedTask": [
+      "run_error"
+    ],
+    "StoreRead": [
+      "items"
+    ],
+    "Surfaces": [
+      "standalone"
+    ],
+    "Task": [
+      "acceptance",
+      "evidence",
+      "exec",
+      "external_refs",
+      "sync",
+      "triage"
+    ],
+    "TaskReviewOut": [
+      "grant",
+      "learning"
+    ],
+    "ThreadDocument": [
+      "messages"
+    ],
+    "ThreadEvents": [
+      "events"
+    ],
+    "TicketDraftScan": [
+      "drafts"
+    ],
+    "ToolCall": [
+      "kwargs"
+    ],
+    "TriggersIn": [
+      "limits",
+      "triggers"
+    ],
+    "UsageTimeseries": [
+      "points"
+    ],
+    "WorkTask": [
+      "acceptance",
+      "evidence",
+      "exec",
+      "external_refs",
+      "sync",
+      "triage"
+    ],
+    "WriteIn": [
+      "selector"
+    ],
+    "routes__inbox__InboxItem": [
+      "review"
+    ]
+  },
+  "schemas_with_opaque_fields": 55
+}
