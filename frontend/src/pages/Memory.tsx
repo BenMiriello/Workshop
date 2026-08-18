@@ -928,7 +928,7 @@ function ReferencedBy({ scope, noteId }: { scope: string; noteId: string }) {
     <Stack gap="sm">
       <SectionLabel>Referenced by</SectionLabel>
       <Row wrap style={{ gap: "var(--space-2)" }}>
-        {sources.map((r) => <Ref key={r} resolved={resolved[r]} />)}
+        {sources.map((r) => <Ref key={r} resolved={resolved[r]} refStr={r} />)}
       </Row>
     </Stack>
   );
@@ -945,7 +945,7 @@ function Provenance({ author, updated, body }: { author?: string; updated?: stri
     <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
       <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{authorLabel(author)}</span>
       {updated && <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{timeAbsolute(updated)}</span>}
-      {chatRefs.map((r) => <Ref key={r} resolved={resolved[r]} />)}
+      {chatRefs.map((r) => <Ref key={r} resolved={resolved[r]} refStr={r} />)}
     </Row>
   );
 }

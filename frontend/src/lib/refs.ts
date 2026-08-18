@@ -6,13 +6,23 @@ import { shortHttpError } from "./httpError";
 // call to POST /api/refs/resolve, never N. `<Ref>` (components/Ref.tsx) is
 // the one chip that renders a resolved entry.
 
-export type RefKind = "note" | "doc" | "ticket" | "chat" | "run" | "project" | "agent" | "app";
+export type RefKind = "note" | "doc" | "ticket" | "chat" | "run" | "project" | "agent" | "app" | "file";
+
+// A file ref's preview descriptor (Layer 2/3 of managed-file-references-and-
+// path-scoping-2026-08-18). Only a `file` ref carries one.
+export type RefPreview = {
+  mime?: string | null;
+  size_bytes?: number | null;
+  icon?: string | null;
+  thumb_url?: string | null;
+};
 
 export type ResolvedRef = {
   kind: RefKind;
   title: string;
   href: string;
   status: string;
+  preview?: RefPreview | null;
 };
 
 async function j<T>(r: Response): Promise<T> {

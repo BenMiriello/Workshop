@@ -1437,6 +1437,52 @@ a.ws-ref--link:hover { color: var(--you); text-decoration-color: currentColor; }
 a.ws-ref--link:hover > svg { color: var(--you); }
 .ws-ref--unresolved { color: var(--faint); }
 
+/* A file ref opens a preview panel instead of navigating (Layer 3,
+   managed-file-references-and-path-scoping-2026-08-18). The trigger reads like
+   the link chip: underline at rest, --you on hover, no border. */
+button.ws-ref--file {
+  border: 0; background: none; padding: 0; margin: 0; font: inherit;
+  color: inherit; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklab, currentColor, transparent 55%);
+}
+button.ws-ref--file:hover { color: var(--you); text-decoration-color: currentColor; }
+button.ws-ref--file:hover > svg { color: var(--you); }
+.ws-ref-pop { padding: var(--space-3); max-width: 22rem; }
+.ws-ref-card { display: flex; gap: var(--space-3); align-items: flex-start; }
+/* Preview left, never wider than the info column beside it. */
+.ws-ref-card__preview {
+  flex: 0 0 40%; max-width: 40%; min-height: 3rem;
+  display: flex; align-items: center; justify-content: center; color: var(--muted);
+}
+.ws-ref-card__thumb {
+  max-width: 100%; max-height: 8rem; border-radius: var(--radius-md); display: block;
+}
+.ws-ref-card__info { flex: 1 1 60%; min-width: 0; }
+.ws-ref-card__title { font-weight: 600; overflow-wrap: anywhere; }
+.ws-ref-card__meta {
+  color: var(--muted); font-size: var(--fs-sm); margin-top: var(--space-1);
+  overflow-wrap: anywhere;
+}
+.ws-ref-card__actions {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.ws-ref-action {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  color: inherit; text-decoration: none; font-size: var(--fs-sm);
+}
+.ws-ref-action:hover { color: var(--you); }
+.ws-ref-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.ws-ref-row__label {
+  color: var(--muted); font-size: var(--fs-sm); min-width: 2.6rem; flex: 0 0 auto;
+}
+.ws-ref-row .ws-copy { min-width: 0; }
+.ws-ref-row .ws-copy__val {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-xs); font-family: var(--font-mono);
+}
+
 /* How a turn ENDED, which is not a receipt: nothing changed, the run just
    stopped. One quiet line, no card, no accent. */
 .chat-status-line { margin-top: 0.3rem; font-size: var(--fs-xs); color: var(--muted); }
