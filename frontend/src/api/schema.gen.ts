@@ -7901,6 +7901,32 @@ export interface components {
             /** Behind */
             behind: number;
         };
+        /**
+         * AppGrant
+         * @description One app-to-app capability. `mode` is `read` or `rw`, and coerces to
+         *     `read` for anything else rather than rejecting the row.
+         */
+        AppGrant: {
+            /** Capability */
+            capability: string;
+            /** From */
+            from: string;
+            /** Mode */
+            mode: string;
+            /** To */
+            to: string;
+        };
+        /**
+         * AppGrantsDocument
+         * @description What PUT answers with: the canonical app-level document as saved. No
+         *     `resource_grants`, because this endpoint does not touch them.
+         */
+        AppGrantsDocument: {
+            /** Grants */
+            grants: components["schemas"]["AppGrant"][];
+            /** Guests */
+            guests: components["schemas"]["Guest"][];
+        };
         /** AppList */
         AppList: {
             /** Apps */
@@ -9869,6 +9895,33 @@ export interface components {
             /** Utilization Pct */
             utilization_pct?: number | null;
         };
+        /**
+         * GrantRevoked
+         * @description False when the token matched nothing, so revoking twice is not an
+         *     error.
+         */
+        GrantRevoked: {
+            /** Revoked */
+            revoked: boolean;
+        };
+        /** GrantsDocument */
+        GrantsDocument: {
+            /** Grants */
+            grants: components["schemas"]["AppGrant"][];
+            /** Guests */
+            guests: components["schemas"]["Guest"][];
+            /** Resource Grants */
+            resource_grants: components["schemas"]["ResourceGrant"][];
+        };
+        /** Guest */
+        Guest: {
+            /** App */
+            app: string;
+            /** Capabilities */
+            capabilities: string[];
+            /** Id */
+            id: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -11659,6 +11712,30 @@ export interface components {
             title: string;
             /** Updated At */
             updated_at?: string | null;
+        };
+        /**
+         * ResourceGrant
+         * @description A scoped capability token over a Store, or over a subtree of Store URIs.
+         *     ITS `id` IS THE TOKEN a provider checks per call -- there is no separate
+         *     secret, which is why minting returns the record rather than a bare string.
+         */
+        ResourceGrant: {
+            /** Caveats */
+            caveats: Record<string, never>;
+            /** Created At */
+            created_at: string;
+            /** From */
+            from: string;
+            /** Id */
+            id: string;
+            /** Store Uri */
+            store_uri: string;
+            /** Subtree */
+            subtree: boolean;
+            /** To */
+            to: string;
+            /** Verbs */
+            verbs: string[];
         };
         /** RetireAgentOut */
         RetireAgentOut: {
@@ -21762,7 +21839,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["GrantsDocument"];
                 };
             };
         };
@@ -21786,7 +21863,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AppGrantsDocument"];
                 };
             };
             /** @description Validation Error */
@@ -21819,7 +21896,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ResourceGrant"];
                 };
             };
             /** @description Validation Error */
@@ -21852,7 +21929,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["GrantRevoked"];
                 };
             };
             /** @description Validation Error */
