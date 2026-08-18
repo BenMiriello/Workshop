@@ -154,7 +154,13 @@ def _ids_from(body: bytes) -> list[str]:
             if isinstance(v, list) and v and isinstance(v[0], dict):
                 items = v
                 break
-    if not items:
+    if items is None:
+        # A list of plain STRINGS is the other collection shape this app serves,
+        # and it is how scopes arrive: `/tasks/scopes` -> {"scopes": [...]}.
+        if isinstance(doc, dict):
+            for v in doc.values():
+                if isinstance(v, list) and v and all(isinstance(x, str) for x in v):
+                    return [x for x in v if x]
         return []
     out = []
     for it in items:
@@ -166,6 +172,40 @@ def _ids_from(body: bytes) -> list[str]:
                 out.append(v)
                 break
     return out
+
+
+def _resolve(name: str, head: str, pool: dict[str, list[str]]) -> str | None:
+    """A real value for `{name}` appearing after `head`.
+
+    Two rules, both derived from how this app names things rather than from a
+    table of ids that would go stale in silence:
+
+      1. A parameter whose name mentions a scope comes from `<head>/scopes`.
+         `/tasks/scopes`, `/notes/scopes` and `/memory-policy/scopes` are all
+         spelled that way, so a scope-keyed route is reachable without knowing
+         which scopes this instance happens to have.
+      2. Otherwise the NEAREST already-probed ancestor collection supplies it,
+         walking up a segment at a time. Nearest rather than exact so the second
+         parameter of `/tasks/{scope}/{task_id}` still resolves: its head is
+         `/tasks/development`, which is nothing, and `/tasks` is one segment up.
+
+    THE LIMIT, stated rather than hidden: an id that does not belong to the
+    route it lands in gives a 404, and a 404 counts as answered here. That is
+    still a reached route -- routing, dependencies and auth all ran -- but it
+    stops short of serialising a real object, which is the part that catches a
+    wrong `response_model`. Rule 2 walking UP is what keeps that rare: the
+    nearest collection is almost always the right family.
+    """
+    if "scope" in name and f"{head}/scopes" in pool:
+        return pool[f"{head}/scopes"][0]
+    probe = head
+    while probe:
+        if probe in pool:
+            return pool[probe][0]
+        if "/" not in probe.strip("/"):
+            break
+        probe = probe.rsplit("/", 1)[0]
+    return None
 
 
 def _skip_reason(path: str) -> str | None:
@@ -249,13 +289,7 @@ def main() -> int:
             missing = False
             for name in _PARAM_RE.findall(path):
                 head = filled.split("{" + name + "}")[0].rstrip("/")
-                value = None
-                # Longest matching ancestor wins, so `/chat/threads/{id}` takes
-                # thread ids rather than something shorter and unrelated.
-                for cand in sorted(id_pool, key=len, reverse=True):
-                    if head == cand:
-                        value = id_pool[cand][0]
-                        break
+                value = _resolve(name, head, id_pool)
                 if value is None:
                     missing = True
                     break

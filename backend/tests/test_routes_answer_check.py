@@ -139,3 +139,67 @@ class TestTheCheckCatchesAWrongResponseType:
         assert "unprobed /things/{thing_id}/sub" not in r.stdout, (
             "the ancestor-id substitution regressed: the parameterised route was "
             f"never called, so neither case proves anything.\n{r.stdout}")
+
+
+def _scope_stub():
+    """A scope-keyed family, the shape `/tasks/{scope}/{task_id}` has.
+
+    Both resolver rules have to fire for this to be reached at all: `{scope}`
+    comes from `<head>/scopes` (a list of plain strings, not objects), and
+    `{item_id}` comes from the NEAREST ancestor collection, because its own head
+    is `/things/alpha`, which is not a route.
+    """
+    from fastapi import FastAPI
+    from pydantic import BaseModel
+
+    class Scopes(BaseModel):
+        scopes: list[str]
+
+    class Item(BaseModel):
+        id: str
+
+    class Items(BaseModel):
+        items: list[Item]
+
+    class Detail(BaseModel):
+        ok: bool
+
+    app = FastAPI()
+
+    @app.get("/things/scopes", response_model=Scopes)
+    async def scopes():
+        return {"scopes": ["alpha"]}
+
+    @app.get("/things", response_model=Items)
+    async def things():
+        return {"items": [{"id": "item-1"}]}
+
+    @app.get("/things/{scope}/{item_id}", response_model=Detail)
+    async def detail(scope: str, item_id: str):
+        # 500 (not 404) unless BOTH parameters were filled from the right
+        # places. A 404 counts as "answered", so a resolver regression that
+        # reached this route with junk would pass a test that only asked whether
+        # it was probed. Failing loudly is what makes the assertion below real.
+        if scope != "alpha" or item_id != "item-1":
+            raise RuntimeError(f"resolver supplied {scope!r}/{item_id!r}")
+        return {"ok": True}
+
+    return app
+
+
+class TestScopeKeyedRoutesAreReached:
+    def test_a_scope_and_an_id_are_both_filled_from_the_right_collection(self, tmp_path):
+        port = _free_port()
+        app = _scope_stub()
+        server = _serve(app, port)
+        try:
+            r = _run_check(port, app.openapi(), tmp_path)
+            assert "unprobed /things/{scope}/{item_id}" not in r.stdout, (
+                "the scope-keyed route was never reached, so the ticket-detail "
+                f"family is uncovered.\n{r.stdout}")
+            # The stub 500s on wrong ids, so green here means the scope came
+            # from /things/scopes and the id from /things, not merely that
+            # something was substituted.
+            assert r.returncode == 0, f"{r.stdout}\n{r.stderr}"
+        finally:
+            server.should_exit = True
