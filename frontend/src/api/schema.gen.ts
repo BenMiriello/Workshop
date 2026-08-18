@@ -12107,6 +12107,134 @@ export interface components {
             /** Sent At */
             sent_at?: string | null;
         };
+        /**
+         * StoreCatalog
+         * @description `tiers` is `policy.TIERS` itself rather than a list the client keeps. The
+         *     Stores page hardcoded its own copy until 2026-08-17 and it had drifted: it
+         *     offered a `closed` tier that does not exist and omitted `gated`, which does,
+         *     so a gated store could not be filtered for at all. Serving it is the fix.
+         */
+        StoreCatalog: {
+            /** Stores */
+            stores: components["schemas"]["StoreRow"][];
+            /** Tiers */
+            tiers: string[];
+            /** Types */
+            types: string[];
+        };
+        /**
+         * StoreExport
+         * @description The path of the portable artifact directory. The export is read-only over
+         *     the source: it never moves, deletes or chmods it.
+         */
+        StoreExport: {
+            /** Path */
+            path: string;
+            /** Uri */
+            uri: string;
+        };
+        /** StorePolicies */
+        StorePolicies: {
+            /** Policies */
+            policies: components["schemas"]["StorePolicyRow"][];
+        };
+        /**
+         * StorePolicyRow
+         * @description One operator-written policy record. An EMPTY list is the normal, correct
+         *     state for an installation that gates nothing.
+         */
+        StorePolicyRow: {
+            /** Adjudicator Min Tier */
+            adjudicator_min_tier?: string | null;
+            /** Default Response Mode */
+            default_response_mode?: string | null;
+            /** Fields Max */
+            fields_max: string[];
+            /** Grant Ttl S */
+            grant_ttl_s?: number | null;
+            /** Requesters Allow */
+            requesters_allow: string[];
+            /** Response Modes */
+            response_modes: string[];
+            /** Rules Text */
+            rules_text?: string | null;
+            /** Store Uri */
+            store_uri: string;
+            /** Subtree */
+            subtree: boolean;
+            /** Tier */
+            tier: string;
+            /** Topics Allow */
+            topics_allow: string[];
+            /** Topics Deny */
+            topics_deny: string[];
+            /** Verbs Max */
+            verbs_max: string[];
+        };
+        /**
+         * StoreRead
+         * @description `mode` is verbatim unless a grant caveat narrowed it. `adjudicator` names
+         *     the model that decided, and is null when the caller was served mechanically
+         *     from a grant it already held -- which is the free path and the common one.
+         */
+        StoreRead: {
+            /** Adjudicator */
+            adjudicator?: string | null;
+            /** Count */
+            count: number;
+            /** Grant Token */
+            grant_token?: string | null;
+            /** Items */
+            items: unknown[];
+            /** Mode */
+            mode: string;
+            /** Reason */
+            reason: string;
+            /** Tier */
+            tier: string;
+            /** Uri */
+            uri: string;
+            /** Verb */
+            verb: string;
+            withheld: components["schemas"]["Withheld"];
+        };
+        /**
+         * StoreRow
+         * @description A registered handle onto an app's or project's data, plus the policy tier
+         *     that governs it. `path` may not exist yet: export and consumers tolerate a
+         *     declared store whose backing file has not been created.
+         */
+        StoreRow: {
+            /** Host Project */
+            host_project?: string | null;
+            /** Name */
+            name: string;
+            /** Owner App */
+            owner_app: string;
+            /** Path */
+            path: string;
+            /** Tier */
+            tier: string;
+            /** Type */
+            type?: string | null;
+            /** Uri */
+            uri: string;
+        };
+        /**
+         * StoreWrite
+         * @description The adapter's own write result, passed through. Open on purpose: see the
+         *     section comment above.
+         */
+        StoreWrite: {
+            /** Modified */
+            modified?: number | null;
+            /** Path */
+            path?: string | null;
+            /** Title */
+            title?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** SuggestedCommand */
         SuggestedCommand: {
             /** Command */
@@ -13045,6 +13173,20 @@ export interface components {
         WatcherSweep: {
             /** Results */
             results: components["schemas"]["WatcherResult"][];
+        };
+        /**
+         * Withheld
+         * @description WHY THIS IS ALWAYS PRESENT ON A FILTERED READ. An answer that has been
+         *     truncated and is indistinguishable from a complete one makes an agent act
+         *     confidently on a partial picture -- a correctness bug, and the likelier one
+         *     to bite. The disclosure never exceeds the policy's own declaration: the kept
+         *     field names are the operator's.
+         */
+        Withheld: {
+            /** Fields Kept */
+            fields_kept?: string[] | null;
+            /** Truncated */
+            truncated?: boolean | null;
         };
         /**
          * WorkCounts
@@ -24357,7 +24499,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["StoreCatalog"];
                 };
             };
             /** @description Validation Error */
@@ -24388,7 +24530,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["StoreExport"];
                 };
             };
             /** @description Validation Error */
@@ -24417,7 +24559,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["StorePolicies"];
                 };
             };
         };
@@ -24443,7 +24585,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["StoreRead"];
                 };
             };
             /** @description Validation Error */
@@ -24478,7 +24620,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["StoreWrite"];
                 };
             };
             /** @description Validation Error */

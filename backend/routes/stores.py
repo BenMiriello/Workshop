@@ -20,7 +20,9 @@ nothing else does accidentally — resolve_identity never infers an agent.
 from __future__ import annotations
 
 from fastapi import APIRouter, Body, HTTPException
-from pydantic import BaseModel
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from services import policy, stores
 
@@ -48,7 +50,114 @@ def _tier(store_uri: str) -> str:
         raise HTTPException(500, f"policy error: {e}")
 
 
-@router.get("/stores")
+# ---- response models (ADR 0023 clause 6) -----------------------------------
+# Read off services/stores.py (the Store dataclass, `read`, `write`, `export`)
+# and services/policy.py (StorePolicy.to_dict). FastAPI FILTERS a return value
+# through the declared model and drops any key it does not name, so an
+# under-declared field here is a live API field that vanishes.
+#
+# A WRITE answers with whatever the underlying adapter returned. Today the only
+# adapter is the notes vault, so the body is that vault's write result -- but
+# the door is written to take more adapters, and enumerating one adapter's keys
+# here would silently truncate the next. It stays open, and says so.
+
+
+class StoreRow(BaseModel):
+    """A registered handle onto an app's or project's data, plus the policy tier
+    that governs it. `path` may not exist yet: export and consumers tolerate a
+    declared store whose backing file has not been created."""
+
+    uri: str
+    owner_app: str
+    name: str
+    type: str | None = None
+    path: str
+    host_project: str | None = None
+    tier: str
+
+
+class StoreCatalog(BaseModel):
+    """`tiers` is `policy.TIERS` itself rather than a list the client keeps. The
+    Stores page hardcoded its own copy until 2026-08-17 and it had drifted: it
+    offered a `closed` tier that does not exist and omitted `gated`, which does,
+    so a gated store could not be filtered for at all. Serving it is the fix."""
+
+    stores: list[StoreRow]
+    types: list[str]
+    tiers: list[str]
+
+
+class StorePolicyRow(BaseModel):
+    """One operator-written policy record. An EMPTY list is the normal, correct
+    state for an installation that gates nothing."""
+
+    store_uri: str
+    tier: str
+    subtree: bool
+    verbs_max: list[str]
+    topics_allow: list[str]
+    topics_deny: list[str]
+    requesters_allow: list[str]
+    response_modes: list[str]
+    default_response_mode: str | None = None
+    fields_max: list[str]
+    grant_ttl_s: int | None = None
+    rules_text: str | None = None
+    adjudicator_min_tier: str | None = None
+
+
+class StorePolicies(BaseModel):
+    policies: list[StorePolicyRow]
+
+
+class StoreExport(BaseModel):
+    """The path of the portable artifact directory. The export is read-only over
+    the source: it never moves, deletes or chmods it."""
+
+    uri: str
+    path: str
+
+
+class Withheld(BaseModel):
+    """WHY THIS IS ALWAYS PRESENT ON A FILTERED READ. An answer that has been
+    truncated and is indistinguishable from a complete one makes an agent act
+    confidently on a partial picture -- a correctness bug, and the likelier one
+    to bite. The disclosure never exceeds the policy's own declaration: the kept
+    field names are the operator's."""
+
+    truncated: bool | None = None
+    fields_kept: list[str] | None = None
+
+
+class StoreRead(BaseModel):
+    """`mode` is verbatim unless a grant caveat narrowed it. `adjudicator` names
+    the model that decided, and is null when the caller was served mechanically
+    from a grant it already held -- which is the free path and the common one."""
+
+    uri: str
+    verb: str
+    mode: str
+    tier: str
+    items: list[Any]
+    count: int
+    withheld: Withheld
+    grant_token: str | None = None
+    adjudicator: str | None = None
+    reason: str
+
+
+class StoreWrite(BaseModel):
+    """The adapter's own write result, passed through. Open on purpose: see the
+    section comment above."""
+
+    model_config = ConfigDict(extra="allow")
+
+    path: str | None = None
+    title: str | None = None
+    modified: float | None = None
+
+
+@router.get("/stores", response_model=StoreCatalog)
 async def list_stores(type: str | None = None, app: str | None = None, project: str | None = None):
     """The declared Store catalog with each Store's policy tier.
 
@@ -75,7 +184,7 @@ async def list_stores(type: str | None = None, app: str | None = None, project: 
     return {"stores": out, "types": stores.types(), "tiers": list(policy.TIERS)}
 
 
-@router.get("/stores/policies")
+@router.get("/stores/policies", response_model=StorePolicies)
 async def list_policies():
     """The operator's policy records. An empty list is the normal, correct state
     for an installation that gates nothing."""
@@ -86,7 +195,7 @@ async def list_policies():
         raise HTTPException(500, f"policy error: {e}")
 
 
-@router.get("/stores/export")
+@router.get("/stores/export", response_model=StoreExport)
 async def export_store(uri: str):
     """Serialize a Store to a portable artifact directory and return its path.
     Read-only over the source (never moves/deletes/chmods). 404 if not declared."""
@@ -107,7 +216,7 @@ class ReadIn(BaseModel):
     token: str | None = None                 # an existing grant, if the caller holds one
 
 
-@router.post("/stores/{store_id}/read")
+@router.post("/stores/{store_id}/read", response_model=StoreRead)
 async def read_store(store_id: str, body: ReadIn = Body(...)):
     """Read/list/search a Store.
 
@@ -149,7 +258,7 @@ class WriteIn(BaseModel):
     token: str | None = None
 
 
-@router.post("/stores/{store_id}/write")
+@router.post("/stores/{store_id}/write", response_model=StoreWrite)
 async def write_store(store_id: str, body: WriteIn = Body(...)):
     """Write/append through a Store. Grant-checked; never adjudicated, because
     there is no filtered view of a write."""
