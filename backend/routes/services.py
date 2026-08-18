@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 import httpx
 from fastapi import APIRouter
+from pydantic import BaseModel, ConfigDict
 
 
 router = APIRouter(prefix="/services", tags=["services"])
@@ -91,7 +92,62 @@ async def _probe(client: httpx.AsyncClient, s: Service) -> dict:
         }
 
 
-@router.get("/")
+
+
+class ServiceProbe(BaseModel):
+    """One process, probed on THIS request -- there is no background polling, so
+    the reading is current rather than a stale cache. `status` is up, degraded
+    (answered, wrong status) or down (did not answer); `error` is present only
+    on down."""
+
+    name: str
+    category: str
+    url: str
+    probe_path: str
+    status: str
+    http_status: int | None = None
+    latency_ms: int
+    error: str | None = None
+    notes: str | None = None
+
+
+class ServiceSummary(BaseModel):
+    up: int
+    degraded: int
+    down: int
+
+
+class CredentialRow(BaseModel):
+    """A credential is NOT a service and is kept in its own key rather than
+    folded into the list. A process is up or down at a URL; a credential is
+    present, valid, or unprovable, and `verified` is which of those was actually
+    established. Flattening the two would mean inventing a URL for a token and a
+    confidence level for a port."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    label: str | None = None
+    kind: str
+    state: str | None = None
+    verified: bool | None = None
+    detail: str | None = None
+
+
+class ServiceRegistry(BaseModel):
+    """`credentials_cached` says whether the credential half came from cache; a
+    run in which anything was unreadable is deliberately not cached, so a CLI
+    that was busy a second ago is retried rather than remembered as broken."""
+
+    services: list[ServiceProbe]
+    summary: ServiceSummary
+    credentials: list[CredentialRow]
+    credentials_summary: dict[str, int]
+    credentials_checked_at: float | None = None
+    credentials_cached: bool
+
+
+@router.get("/", response_model=ServiceRegistry)
 async def list_services(refresh: bool = False):
     from services import auth_health
 

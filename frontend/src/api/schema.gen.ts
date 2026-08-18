@@ -9183,6 +9183,30 @@ export interface components {
             /** Token */
             token: string;
         };
+        /**
+         * CredentialRow
+         * @description A credential is NOT a service and is kept in its own key rather than
+         *     folded into the list. A process is up or down at a URL; a credential is
+         *     present, valid, or unprovable, and `verified` is which of those was actually
+         *     established. Flattening the two would mean inventing a URL for a token and a
+         *     confidence level for a port.
+         */
+        CredentialRow: {
+            /** Detail */
+            detail?: string | null;
+            /** Kind */
+            kind: string;
+            /** Label */
+            label?: string | null;
+            /** Name */
+            name: string;
+            /** State */
+            state?: string | null;
+            /** Verified */
+            verified?: boolean | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** CredentialSourceIn */
         CredentialSourceIn: {
             /** Source */
@@ -12306,6 +12330,54 @@ export interface components {
             service: string;
         };
         /**
+         * ServiceProbe
+         * @description One process, probed on THIS request -- there is no background polling, so
+         *     the reading is current rather than a stale cache. `status` is up, degraded
+         *     (answered, wrong status) or down (did not answer); `error` is present only
+         *     on down.
+         */
+        ServiceProbe: {
+            /** Category */
+            category: string;
+            /** Error */
+            error?: string | null;
+            /** Http Status */
+            http_status?: number | null;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Name */
+            name: string;
+            /** Notes */
+            notes?: string | null;
+            /** Probe Path */
+            probe_path: string;
+            /** Status */
+            status: string;
+            /** Url */
+            url: string;
+        };
+        /**
+         * ServiceRegistry
+         * @description `credentials_cached` says whether the credential half came from cache; a
+         *     run in which anything was unreadable is deliberately not cached, so a CLI
+         *     that was busy a second ago is retried rather than remembered as broken.
+         */
+        ServiceRegistry: {
+            /** Credentials */
+            credentials: components["schemas"]["CredentialRow"][];
+            /** Credentials Cached */
+            credentials_cached: boolean;
+            /** Credentials Checked At */
+            credentials_checked_at?: number | null;
+            /** Credentials Summary */
+            credentials_summary: {
+                [key: string]: number;
+            };
+            /** Services */
+            services: components["schemas"]["ServiceProbe"][];
+            summary: components["schemas"]["ServiceSummary"];
+        };
+        /**
          * ServiceSpec
          * @description One declared service. `env_keys` is the KEY NAMES only -- values never
          *     cross this boundary.
@@ -12370,6 +12442,15 @@ export interface components {
             status?: string | null;
             /** Url */
             url?: string | null;
+        };
+        /** ServiceSummary */
+        ServiceSummary: {
+            /** Degraded */
+            degraded: number;
+            /** Down */
+            down: number;
+            /** Up */
+            up: number;
         };
         /**
          * Session
@@ -25144,7 +25225,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ServiceRegistry"];
                 };
             };
             /** @description Validation Error */
