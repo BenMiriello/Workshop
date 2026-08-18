@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_no_raw_storage.py — localStorage / sessionStorage have exactly one caller.
+"""check_no_raw_storage.py ,  localStorage / sessionStorage have exactly one caller.
 
 ADR 0025 (docs/decisions/0025-one-owner-per-server-entity.md) clause 4 + "The
 check" item 2: every browser storage key is namespaced by the signed-in user
@@ -23,8 +23,8 @@ rather than a real TS parser (the same tradeoff `check_no_hardcoding.sh` makes
 with plain `git grep`), and then looks for the identifier in what's left.
 
 WHAT IT SCANS. `frontend/src/**/*.{ts,tsx}` and `mobile/**/*.{ts,tsx}`,
-excluding `*.test.ts*` (this repo's frontend test policy — pure logic modules,
-no DOM harness — Read PLAN item 4) and the one allowed module itself.
+excluding `*.test.ts*` (this repo's frontend test policy ,  pure logic modules,
+no DOM harness ,  Read PLAN item 4) and the one allowed module itself.
 
 Usage:
     python3 scripts/check_no_raw_storage.py            # human-readable
@@ -41,10 +41,54 @@ import sys
 from pathlib import Path
 
 _WORKSHOP = Path(__file__).resolve().parents[1]
-_ROOTS = [_WORKSHOP / "frontend" / "src", _WORKSHOP / "mobile"]
+# Scan roots. `packages/ui/src` and `frontend/index.html` were ADDED 2026-08-17
+# after a review found this check printing "clean" while eight raw calls sat
+# outside its reach.
+#
+# WHY THAT MATTERED MORE THAN A MISSED FILE. This script does not merely stay
+# silent on what it cannot see, it ASSERTS a fact: "storage.ts is the only
+# caller of localStorage/sessionStorage". That statement was false of the tree.
+# A gate that reports a clean it did not verify is worse than no gate, because
+# a reader stops looking.
+#
+# `packages/ui` is not a side project: `frontend/package.json` depends on
+# `@workshop/ui` and the kit compiles INTO the bundle, so its storage calls run
+# in exactly the same browser profile as the app's.
+#
+# This is the same failure shape as the `job -> run` rename recorded in 97e0584:
+# the SOURCE of the centralisation was measured and its DESTINATION was not.
+_ROOTS = [
+    _WORKSHOP / "frontend" / "src",
+    _WORKSHOP / "mobile",
+    _WORKSHOP / "packages" / "ui" / "src",
+]
+
+# Single files outside any root that still ship storage access.
+_EXTRA_FILES = [_WORKSHOP / "frontend" / "index.html"]
 
 # The one file allowed to call the native API. Relative to _WORKSHOP, posix form.
 _ALLOWED = {"frontend/src/lib/storage.ts"}
+
+# ADR 0025 clause 4: "Keys that genuinely describe the device rather than the
+# person (a station label on a shared kiosk, A THEME PREFERENCE ...) may stay
+# global, but only by being listed in the namespacing module with a reason."
+#
+# For these two files that module cannot be the list. `packages/ui` is the
+# platform kit and must not import out of `frontend/src`, and an inline
+# bootstrap script in `index.html` cannot import a module at all. So the list
+# lives here, which is the only place that can hold it, and every entry carries
+# its reason so an exemption is a reviewed line rather than a silent hole.
+_DEVICE_SCOPED_FILES = {
+    "packages/ui/src/theme.ts":
+        "ws-theme and ws-palette. Appearance of THIS browser, not of a person, "
+        "and the ADR names a theme preference as the legitimate case. The kit "
+        "is platform-owned and cannot import frontend/src/lib/storage.ts.",
+    "frontend/index.html":
+        "The pre-React bootstrap reads ws-theme/ws-palette to paint before "
+        "first render (a namespaced read is impossible there: no user is known "
+        "yet), and sessionStorage __sw_killed__ is a one-shot service-worker "
+        "kill flag, which is device state for one tab.",
+}
 
 _TOKEN_RE = re.compile(r"\b(localStorage|sessionStorage)\b")
 
@@ -138,12 +182,15 @@ def _iter_files() -> list[Path]:
                 if ".test." in name or name.endswith(".test.ts") or name.endswith(".test.tsx"):
                     continue
                 files.append(p)
+    for f in _EXTRA_FILES:
+        if f.is_file():
+            files.append(f)
     return files
 
 
 def scan_file(path: Path) -> list[tuple[int, str, str]]:
     rel = path.relative_to(_WORKSHOP).as_posix()
-    if rel in _ALLOWED:
+    if rel in _ALLOWED or rel in _DEVICE_SCOPED_FILES:
         return []
     try:
         text = path.read_text(errors="replace")
@@ -167,8 +214,9 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
+    scanned = sorted(_iter_files())
     violations = []
-    for path in sorted(_iter_files()):
+    for path in scanned:
         for line_no, token, snippet in scan_file(path):
             violations.append({
                 "file": path.relative_to(_WORKSHOP).as_posix(),
@@ -185,8 +233,16 @@ def main() -> int:
         return 1 if violations else 0
 
     if not violations:
-        print("check_no_raw_storage: clean — frontend/src/lib/storage.ts is the only caller "
-              "of localStorage/sessionStorage")
+        # Say exactly what was checked. The previous wording claimed storage.ts
+        # was "the only caller", which was false of the tree and is the reason
+        # the scan roots were widened: a gate that overstates its own result
+        # stops anyone looking further.
+        print(f"check_no_raw_storage: clean over {len(scanned)} file(s) in "
+              "frontend/src, mobile, packages/ui/src and frontend/index.html")
+        print("    sole namespaced caller: frontend/src/lib/storage.ts")
+        for rel, why in sorted(_DEVICE_SCOPED_FILES.items()):
+            print(f"    device-scoped, exempt: {rel}")
+            print(f"        {why}")
         return 0
 
     print(f"check_no_raw_storage: {len(violations)} reference(s) to localStorage/sessionStorage "
@@ -196,7 +252,7 @@ def main() -> int:
     print("\nRoute the access through userStorage.local / userStorage.session "
           "(frontend/src/lib/storage.ts) instead. If this key genuinely describes the "
           "device rather than the person, add it to DEVICE_SCOPED there, with a reason, "
-          "and call it through the module anyway — the module is still the only caller.")
+          "and call it through the module anyway, since the module is still the only caller.")
     return 1
 
 
