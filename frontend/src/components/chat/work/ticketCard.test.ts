@@ -36,6 +36,23 @@ function ticket(over: Partial<WorkTicket> = {}): WorkTicket {
     status: "todo" as TaskStatus,
     scope: "workshop",
     updated: "2026-08-15T11:59:00Z",
+    created: "2026-08-15T11:00:00Z",
+    // The schema marks these required because `_normalize` always emits them
+    // and the ticket routes do not use `response_model_exclude_unset`. A
+    // fixture without them is not a ticket the server could send.
+    owner: "operator",
+    scoped_by: "operator",
+    source: { kind: "operator", ref: null },
+    priority: 0,
+    attempts: 0,
+    labels: [],
+    depends_on: [],
+    relates_to: [],
+    job_ids: [],
+    touches: [],
+    evidence: [],
+    comments: [],
+    external_refs: [],
     run: null,
     ...over,
   };

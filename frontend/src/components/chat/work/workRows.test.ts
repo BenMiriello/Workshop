@@ -19,8 +19,25 @@ function ticket(
     text: `Ticket ${id}`,
     status,
     scope: opts.scope ?? "development",
-    updated: opts.updated,
-    created: opts.created,
+    // Both are required on the wire (`_normalize` stamps them), so they are
+    // strings here rather than absent. Empty when this case does not set one:
+    // `sortKey` reads `t.updated || t.created`, so "" falls through exactly as
+    // an absent field did, which is the fallback these tests exercise.
+    updated: opts.updated ?? "",
+    created: opts.created ?? "",
+    owner: "operator",
+    scoped_by: "operator",
+    source: { kind: "operator", ref: null },
+    priority: 0,
+    attempts: 0,
+    labels: [],
+    depends_on: [],
+    relates_to: [],
+    job_ids: [],
+    touches: [],
+    evidence: [],
+    comments: [],
+    external_refs: [],
     run: opts.run
       ? {
           id: `run-${id}`,

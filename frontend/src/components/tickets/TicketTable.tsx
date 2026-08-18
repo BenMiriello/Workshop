@@ -64,7 +64,7 @@ export function TicketTable({ tasks, showScope }: { tasks: Task[]; showScope: bo
                 <StatusDot status={taskStatusKind(t.status)}>{taskStatusLabel(t.status)}</StatusDot>
               </td>
               <td><TagStrip labels={t.labels} /></td>
-              {showScope && <td className="ws-tt__muted">{scopeLabel(t.scope)}</td>}
+              {showScope && <td className="ws-tt__muted">{scopeLabel(t.scope ?? undefined)}</td>}
               <td className="ws-tt__num">
                 {typeof t.priority === "number" && t.priority !== 0 ? t.priority : ""}
               </td>

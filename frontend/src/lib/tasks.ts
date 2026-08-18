@@ -1,3 +1,15 @@
+// GENERATED, not hand-written. The wire shapes below alias into the backend's
+// own OpenAPI schema (`npm run gen:api-types`), which knows them because
+// `routes/api_models.py` describes what the ticket routes return.
+//
+// FOUR NARROWINGS SURVIVE, and each one is TRUE rather than hopeful.
+// `services/tasks.py::_normalize` COERCES an unrecognised status to "todo" or
+// "done" before it ever reaches the wire, so the eight-value union below is
+// what a client can actually receive, not a guess about it. The backend types
+// these four as `str` because a Literal on a response model 500s on any
+// historical record outside the set, which is a real cost for no client gain;
+// the narrowing therefore lives on this side, where it is a read and not a
+// validation. Everything not narrowed is the schema verbatim.
 // The Task type + status mapping + the title/description accessors, in ONE
 // place. A Task is the canonical unit of work (a "ticket" in UI prose); the
 // store, CLI, and API all say `task`, so every identifier here stays `task`.
@@ -8,6 +20,7 @@
 // back to splitting `text` for a payload cached before the change. Backed by GET
 // /api/tasks and /api/tasks/{scope}/{id}.
 import type { StatusKind } from "@workshop/ui";
+import type { components } from "../api/schema.gen";
 import { DEVELOPMENT_SCOPE, scopeLabel as _scopeLabel, scopeHref as _scopeHref } from "./scope";
 
 // All eight shipped statuses (backend services/tasks.py STATUSES). ProjectDetail
@@ -95,12 +108,7 @@ export const taskStateTypeOf = (
     ? (task.state_type as TaskStateType)
     : taskStateType(task.status);
 
-export type TaskEvidence = {
-  kind?: string;
-  ref?: string;
-  ts?: string;
-  [k: string]: unknown;
-};
+export type TaskEvidence = components["schemas"]["TaskEvidenceEntry"];
 
 // A comment is what a person or an agent SAID about the ticket; evidence is what
 // the system RECORDED about a run. They are different channels on purpose: a
@@ -110,34 +118,23 @@ export type TaskEvidence = {
 // A comment is NOT part of the spec. An answer a worker must act on is written
 // into the ticket body by the question path, because a worker is handed the
 // ticket text and nothing else.
-export type TaskComment = {
-  id: string;
-  author: string;
-  text: string;
-  ts: string;
-};
+export type TaskComment = components["schemas"]["TaskComment"];
 
 // A linked ticket, resolved server-side. The edge fields on the record
 // (`depends_on`, `relates_to`, `parent`) hold BARE ids with no scope, so a
 // client cannot build a working href from them: every screen that tried used
 // the CURRENT ticket's scope and produced a 404 for anything cross-scope. The
 // detail endpoint resolves them instead, which is the only place that can.
-export type TaskLink = {
-  id: string;
-  scope: string;
-  title: string;
-  status: TaskStatus;
-};
+export type TaskLink =
+  Omit<components["schemas"]["TaskLink"], "status"> & { status: TaskStatus };
 
-export type TaskLinks = {
-  parent: TaskLink | null;
-  children: TaskLink[];
-  depends_on: TaskLink[];
-  relates_to: TaskLink[];
-  // Ids that resolved in no scope at all. Rendered as dead references rather
-  // than as links, so a dangling edge is visible instead of silent.
-  missing: string[];
-};
+export type TaskLinks =
+  Omit<components["schemas"]["TaskLinks"], "parent" | "children" | "depends_on" | "relates_to"> & {
+    parent: TaskLink | null;
+    children: TaskLink[];
+    depends_on: TaskLink[];
+    relates_to: TaskLink[];
+  };
 
 // Acceptance gate the worker must clear before a task can finish. Matches the
 // store's shape (backend services/tasks.py): reviewer = a reviewer pass judges
@@ -162,10 +159,13 @@ export const TASK_ACCEPTANCE_LABELS: Record<TaskAcceptanceKind, string> = {
   operator: "operator approves",
 };
 
-export type TaskAcceptance = {
-  kind: TaskAcceptanceKind;
-  spec?: string | null;
-};
+// Intersected, NOT `Omit`-ed. The generated type carries an index signature
+// (the backend's `extra="allow"`, which is what stops a preserved-verbatim key
+// being dropped), and `Omit` on a type with an index signature widens `keyof`
+// to `string | number` and throws every named property away. The intersection
+// narrows `kind` and keeps `spec` and `criteria` readable.
+export type TaskAcceptance =
+  components["schemas"]["TaskAcceptance"] & { kind: TaskAcceptanceKind };
 
 // ---- latitude ---------------------------------------------------------------
 // What a worker is TOLD to do where the ticket does not say (backend
@@ -254,12 +254,7 @@ export const executionLabel = (v?: string | null): string =>
 // has reviewed this" and "reviewed, nothing to do".
 export type TriageDecision = "ok" | "split" | "underspecified" | "none";
 
-export type TicketTriage = {
-  at?: string | null;
-  decision?: TriageDecision | string | null;
-  reason?: string | null;
-  spec_hash?: string | null;
-};
+export type TicketTriage = components["schemas"]["TicketTriage"];
 
 const TRIAGE_LABEL: Record<TriageDecision, string> = {
   ok: "reviewed, specified well enough",
@@ -279,10 +274,11 @@ export const triageLabel = (v?: string | null): string =>
 // an inherited setting gets mistaken for a deliberate one.
 export type LatitudeSource = "invocation" | "task" | "scope" | "default";
 
-export type EffectiveLatitude = {
-  value: Latitude;
-  source: LatitudeSource;
-};
+export type EffectiveLatitude =
+  Omit<components["schemas"]["EffectiveLatitude"], "value" | "source"> & {
+    value: Latitude;
+    source: LatitudeSource;
+  };
 
 const LATITUDE_SOURCE_LABEL: Record<LatitudeSource, string> = {
   invocation: "set for this run",
@@ -298,108 +294,39 @@ export const latitudeSourceLabel = (source?: string): string =>
 // permission, a missing resource, an ambiguous ticket — so one surface answers
 // all of them. `kind` is an open slug, not a union: the named kinds are the ones
 // with a producer today, not the boundary of what can stop a job.
-export type BlockRequest = {
-  question?: string;
-  since?: string;
-  kind?: string;
-  ask?: string;
-  why?: string | null;
-  unblocks_if?: string | null;
-  options?: string[] | null;
-  default?: string | null;
-  // Present => the ask names a resource and a verb, so a grant can be prefilled
-  // from it. Absent => the answer is a judgment, so the review offers a rule.
-  proposal?: { uri: string; verb: string } | null;
-  raised_by?: string | null;
-  // Groups a mass-block: every task carrying the same key is one answer.
-  dedupe_key?: string | null;
-  context?: Record<string, unknown>;
-  dismissed?: boolean;
-};
+export type BlockRequest =
+  Omit<components["schemas"]["Awaiting"], "context"> & {
+    // The backend leaves `context` a free-form dict, so the schema renders it as
+    // an empty record. Narrowed here by the client that reads it, exactly as the
+    // chat client narrows the event log; see scripts/check_opaque_fields.py for
+    // why a deliberately open payload is allowed to stay open.
+    context?: Record<string, unknown>;
+  };
 
-export type Task = {
-  id: string;
-  // Canonical pair. `text` is the server's projection of the two and is kept for
-  // readers that still show one blob.
-  title: string;
-  body: string;
-  text: string;
-  labels?: string[];
-  // Who wrote the scope (operator | agent | import). When a run fails on a bad
-  // spec, this is the question being asked.
-  scoped_by?: string;
-  status: TaskStatus;
-  owner?: string;
-  assignee?: string | null;
-  parent?: string | null;
-  priority?: number;
-  effort?: string | null;
-  // Can a machine do this at all (see TaskExecution). null = not classified.
-  execution?: TaskExecution | null;
-  // The queue triager's mark: what it decided and against which version of the
-  // spec. Stored flat AND projected under `exec`; read it flat, like every other
-  // execution field. `spec_hash` is deliberately not surfaced in the UI — it is
-  // the triager's own bookkeeping, and showing a hash to a person says nothing.
-  triage?: TicketTriage | null;
-  // The ticket's OWN override. null/absent = inherit from the scope; it is NOT
-  // "standard". Read `effective_latitude` to know what a run would actually use.
-  latitude?: Latitude | null;
-  // Resolved by the API (invocation > task > scope > default), with its source.
-  effective_latitude?: EffectiveLatitude;
-  depends_on?: string[];
-  // Soft link (entity-model 2026-07-18 §4.2). No scheduling effect; visual
-  // grouping only. blocks is DERIVED from the inverse of depends_on and
-  // computed client-side from the current ticket list.
-  relates_to?: string[];
-  acceptance?: TaskAcceptance | null;
-  max_attempts?: number | null;
-  blocked_reason?: string | null;
-  job_ids?: string[];
-  // Where this ticket came from, resolved server-side into something linkable.
-  // Provenance was always recorded and never shown, which made a ticket opened
-  // from the inbox a dead end: the conversation that produced it existed and
-  // was unreachable. `context_key` is null when the chat has since been deleted.
-  origin?: {
-    kind: "chat";
-    id: string;
-    title: string | null;
-    context_key: string | null;
-  } | null;
-  evidence?: TaskEvidence[];
-  comments?: TaskComment[];
-  source?: { kind?: string; ref?: string | null };
-  // How many times a worker has attempted this ticket, and the per-ticket cap.
-  attempts?: number;
-  awaiting?: BlockRequest | null;
-  // The SAME record as `awaiting`, under the name the Review surface uses for it
-  // (the API projects it; the store keeps one record). Present whenever the task
-  // carries a block request.
-  blocked_request?: BlockRequest | null;
-  created?: string;
-  updated?: string;
-  // Attached by the cross-scope API (routes/tasks_all): the resolved scope key
-  // (e.g. "workshop", "project:birds", "agent:foo").
-  scope?: string;
-  // ---- derived on the way out, never stored (routes/tasks_all._with_triage) --
-  // The coarse category above `status` (see TaskStateType).
-  state_type?: TaskStateType;
-  // Could the scheduler pick this up right now? A PURE predicate over stored
-  // state, matching `tasks.is_ready`, so it lags a crashed claim by one watchdog
-  // interval and treats a dependency it cannot see as satisfied.
-  ready?: boolean;
-  // Why not: the non-terminal subset of `depends_on`, resolved ACROSS scopes.
-  // Deliberately more honest than `ready`, so a row can read `ready: true` next
-  // to a non-empty `blocked_by`. That is the documented scheduler gap
-  // (ticket-system-consolidation-2026-08-12 §3.2), not a contradiction.
-  blocked_by?: TaskLink[];
-  // On BOTH the detail response and every list row (`_with_triage`). It used to
-  // be detail-only, which is why the list could not show a readiness marker
-  // without refetching each row. Dependencies resolve against the ticket's OWN
-  // scope in both places, so a row and the page it opens always agree.
-  readiness?: TicketReadiness;
-  // Also detail-only: the graph edges resolved to real, linkable tickets.
-  links?: TaskLinks;
-};
+export type Task =
+  Omit<components["schemas"]["Task"],
+       "status" | "execution" | "latitude" | "state_type" | "acceptance"
+       | "triage" | "evidence" | "comments" | "awaiting" | "blocked_request"
+       | "blocked_by" | "links" | "readiness" | "effective_latitude"> & {
+    status: TaskStatus;
+    execution?: TaskExecution | null;
+    latitude?: Latitude | null;
+    state_type?: TaskStateType;
+    acceptance?: TaskAcceptance | null;
+    triage?: TicketTriage | null;
+    // Required, matching the schema: `_normalize` always emits both, and the
+    // ticket routes do not use `response_model_exclude_unset`, so a default is
+    // always on the wire. Re-adding them as optional would be weaker than what
+    // the server actually promises.
+    evidence: TaskEvidence[];
+    comments: TaskComment[];
+    awaiting?: BlockRequest | null;
+    blocked_request?: BlockRequest | null;
+    blocked_by?: TaskLink[];
+    links?: TaskLinks;
+    readiness?: TicketReadiness;
+    effective_latitude?: EffectiveLatitude;
+  };
 
 // ---- ordering ---------------------------------------------------------------
 // Mirrors backend tasks.SORT_KEYS. The list endpoint sorts; the client only
@@ -521,13 +448,10 @@ export function cleanTitle(titleLine: string): string {
 // because 0 of 40 live tickets passed every check when this shipped and a full
 // gate would have stopped the queue rather than improved it. Attached by
 // GET /api/tasks/{scope}/{id}.
-export type ReadinessGap = { check: string; why: string };
+export type ReadinessGap = components["schemas"]["ReadinessItem"];
 
-export type TicketReadiness = {
-  ok: boolean;
-  missing: ReadinessGap[];
-  warnings: string[];
-};
+export type TicketReadiness =
+  Omit<components["schemas"]["Readiness"], "missing"> & { missing: ReadinessGap[] };
 
 // ---- the readiness line -----------------------------------------------------
 // ONE line of prose, never a checklist. A readiness checklist was deleted from
