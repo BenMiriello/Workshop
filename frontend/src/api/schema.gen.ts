@@ -8095,7 +8095,10 @@ export interface components {
          *     to a model, so a wrong one here can only mislabel a chip.
          */
         AttachmentRef: {
-            /** Id */
+            /**
+             * Id
+             * @default
+             */
             id: string;
             /**
              * Kind
@@ -9644,8 +9647,7 @@ export interface components {
          *     PROPOSE path, so it is absent when the drafts are simply read back.
          */
         DraftTask: {
-            /** Acceptance */
-            acceptance?: Record<string, never> | null;
+            acceptance?: components["schemas"]["TaskAcceptance"] | null;
             /** Assignee */
             assignee?: string | null;
             /**
@@ -9688,19 +9690,15 @@ export interface components {
              * Evidence
              * @default []
              */
-            evidence: Record<string, never>[];
-            /**
-             * Exec
-             * @default {}
-             */
-            exec: Record<string, never>;
+            evidence: components["schemas"]["TaskEvidenceEntry"][];
+            exec?: components["schemas"]["TaskExecFields"] | null;
             /** Execution */
             execution?: string | null;
             /**
              * External Refs
              * @default []
              */
-            external_refs: Record<string, never>[];
+            external_refs: components["schemas"]["TaskExternalRef"][];
             /** Id */
             id: string;
             /**
@@ -9751,8 +9749,7 @@ export interface components {
             state_type?: string | null;
             /** Status */
             status: string;
-            /** Sync */
-            sync?: Record<string, never> | null;
+            sync?: components["schemas"]["TaskSyncLink"] | null;
             /** Text */
             text: string;
             /** Title */
@@ -9762,8 +9759,7 @@ export interface components {
              * @default []
              */
             touches: string[];
-            /** Triage */
-            triage?: Record<string, never> | null;
+            triage?: components["schemas"]["TicketTriage"] | null;
             /** Updated */
             updated: string;
         };
@@ -12843,8 +12839,7 @@ export interface components {
          *     `POST /agents/build/{slug}/tasks` returns a store record with none of them.
          */
         Task: {
-            /** Acceptance */
-            acceptance?: Record<string, never> | null;
+            acceptance?: components["schemas"]["TaskAcceptance"] | null;
             /** Assignee */
             assignee?: string | null;
             /**
@@ -12885,19 +12880,15 @@ export interface components {
              * Evidence
              * @default []
              */
-            evidence: Record<string, never>[];
-            /**
-             * Exec
-             * @default {}
-             */
-            exec: Record<string, never>;
+            evidence: components["schemas"]["TaskEvidenceEntry"][];
+            exec?: components["schemas"]["TaskExecFields"] | null;
             /** Execution */
             execution?: string | null;
             /**
              * External Refs
              * @default []
              */
-            external_refs: Record<string, never>[];
+            external_refs: components["schemas"]["TaskExternalRef"][];
             /** Id */
             id: string;
             /**
@@ -12948,8 +12939,7 @@ export interface components {
             state_type?: string | null;
             /** Status */
             status: string;
-            /** Sync */
-            sync?: Record<string, never> | null;
+            sync?: components["schemas"]["TaskSyncLink"] | null;
             /** Text */
             text: string;
             /** Title */
@@ -12959,10 +12949,43 @@ export interface components {
              * @default []
              */
             touches: string[];
-            /** Triage */
-            triage?: Record<string, never> | null;
+            triage?: components["schemas"]["TicketTriage"] | null;
             /** Updated */
             updated: string;
+        };
+        /**
+         * TaskAcceptance
+         * @description How a run proves it finished. `extra="allow"` is REQUIRED here, not
+         *     incidental: `_normalize_acceptance`'s docstring promises it "preserves every
+         *     existing key (kind/spec/allow_no_diff/...) verbatim so callers that read them
+         *     are unaffected", and only re-shapes `criteria`. A closed model would break
+         *     that promise. Measured over 28 live stores: the non-null acceptances carry
+         *     `kind` and `spec`.
+         */
+        TaskAcceptance: {
+            /** Criteria */
+            criteria?: components["schemas"]["TaskAcceptanceCriterion"][] | null;
+            /** Kind */
+            kind?: string | null;
+            /** Spec */
+            spec?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * TaskAcceptanceCriterion
+         * @description One machine-checkable assertion, normalized by `_normalize_acceptance`:
+         *     a criterion with no `cmd` is dropped, `desc` defaults to the `cmd`, and
+         *     `expect` defaults to "exit0". All three are therefore present whenever the
+         *     criterion survived normalization.
+         */
+        TaskAcceptanceCriterion: {
+            /** Cmd */
+            cmd?: string | null;
+            /** Desc */
+            desc?: string | null;
+            /** Expect */
+            expect?: string | null;
         };
         /** TaskAcceptanceIn */
         TaskAcceptanceIn: {
@@ -13055,6 +13078,84 @@ export interface components {
             /** Message */
             message?: string | null;
             task?: components["schemas"]["Task"] | null;
+        };
+        /**
+         * TaskEvidenceEntry
+         * @description What the SYSTEM recorded about a run, as opposed to a comment, which is
+         *     what a person or agent SAID. Measured over 28 live stores: 33 entries, every
+         *     one carrying `kind`, `ref` and `ts`. Open at the edges because the writers
+         *     are many and nothing normalizes an entry on the way in.
+         */
+        TaskEvidenceEntry: {
+            /** Kind */
+            kind?: string | null;
+            /** Ref */
+            ref?: string | null;
+            /** Ts */
+            ts?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * TaskExecFields
+         * @description The workshop-private execution fields gathered under one key, so a sync
+         *     adapter can read what it must NOT send to a remote tracker.
+         *
+         *     A PROJECTION, never stored: `tasks.py` builds it as
+         *     `{k: rec.get(k) for k in EXEC_FIELDS}`, so all fourteen keys are always
+         *     present and every one of them is also declared flat on `Task` below. Read
+         *     them flat; this exists for the sync adapters. `extra="allow"` so widening
+         *     `EXEC_FIELDS` cannot silently drop the new one from the wire.
+         */
+        TaskExecFields: {
+            acceptance?: components["schemas"]["TaskAcceptance"] | null;
+            /** Attempts */
+            attempts?: number | null;
+            awaiting?: components["schemas"]["Awaiting"] | null;
+            /** Blocked Reason */
+            blocked_reason?: string | null;
+            /** Claim Pid */
+            claim_pid?: number | null;
+            /** Claim Token */
+            claim_token?: number | null;
+            /** Evidence */
+            evidence?: components["schemas"]["TaskEvidenceEntry"][] | null;
+            /** Job Ids */
+            job_ids?: string[] | null;
+            /** Last Heartbeat */
+            last_heartbeat?: string | null;
+            /** Latitude */
+            latitude?: string | null;
+            /** Lease Until */
+            lease_until?: string | null;
+            /** Max Attempts */
+            max_attempts?: number | null;
+            /** Touches */
+            touches?: string[] | null;
+            triage?: components["schemas"]["TicketTriage"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * TaskExternalRef
+         * @description A FROZEN reference to a tracker issue this ticket used to be linked to.
+         *     Written once, at unlink, by `tasks.py`'s disconnect path. Note `key`, not
+         *     `remote_key`: the archive entry renames the field, and describing it as it
+         *     is beats quietly correcting it.
+         */
+        TaskExternalRef: {
+            /** Key */
+            key?: string | null;
+            /** Provider */
+            provider?: string | null;
+            /** Remote Id */
+            remote_id?: string | null;
+            /** Unlinked At */
+            unlinked_at?: string | null;
+            /** Url */
+            url?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * TaskJobsOut
@@ -13223,6 +13324,71 @@ export interface components {
             kind: string;
             /** Ref */
             ref?: string | null;
+        };
+        /**
+         * TaskSyncConflict
+         * @description Both sides changed the same words since the last sync.
+         *     `tracker_sync._merge_one` builds this. The tracker owns the words so it wins
+         *     the write, and the operator's version is kept here rather than thrown away --
+         *     which is the whole reason the record exists.
+         *
+         *     `fields` is drawn from `title`, `body`, `labels` (the only three compared),
+         *     so `mine` and `theirs` are partial shadows and reuse that model.
+         */
+        TaskSyncConflict: {
+            /** Fields */
+            fields?: string[] | null;
+            mine?: components["schemas"]["TaskSyncShadow"] | null;
+            /** Since */
+            since?: string | null;
+            theirs?: components["schemas"]["TaskSyncShadow"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * TaskSyncLink
+         * @description The LIVE link to a remote tracker issue, `tracker_sync._sync_record`.
+         *     None means unlinked; a link that was disconnected is collapsed into
+         *     `external_refs` and never deleted, because a ticket has to be able to say
+         *     what it used to be.
+         */
+        TaskSyncLink: {
+            conflict?: components["schemas"]["TaskSyncConflict"] | null;
+            /** Last Synced */
+            last_synced?: string | null;
+            /** Provider */
+            provider?: string | null;
+            /** Remote Id */
+            remote_id?: string | null;
+            /** Remote Key */
+            remote_key?: string | null;
+            /** Remote Updated */
+            remote_updated?: string | null;
+            shadow?: components["schemas"]["TaskSyncShadow"] | null;
+            /** State */
+            state?: string | null;
+            /** Url */
+            url?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * TaskSyncShadow
+         * @description What the remote issue looked like at the last sync, so a conflict can be
+         *     detected against what we last saw rather than against what we last sent.
+         *     `tracker_sync._shadow_of`.
+         */
+        TaskSyncShadow: {
+            /** Body */
+            body?: string | null;
+            /** Labels */
+            labels?: string[] | null;
+            /** State */
+            state?: string | null;
+            /** Title */
+            title?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * ThreadContext
@@ -13628,6 +13794,25 @@ export interface components {
             /** Why */
             why: string;
         };
+        /**
+         * TicketTriage
+         * @description The queue triager's mark: what it decided, and against WHICH version of
+         *     the spec. `_normalize_triage` returns exactly these four or None, and an
+         *     unrecognized decision reads as "none" rather than being dropped -- losing the
+         *     mark would re-select the ticket, which is the failure this field exists to
+         *     stop. `spec_hash` is the triager's own bookkeeping and is deliberately not
+         *     shown in the UI.
+         */
+        TicketTriage: {
+            /** At */
+            at?: string | null;
+            /** Decision */
+            decision?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Spec Hash */
+            spec_hash?: string | null;
+        };
         /** ToolCall */
         ToolCall: {
             /**
@@ -13987,8 +14172,7 @@ export interface components {
          *     run, stamped on by `chat_work.thread_work`.
          */
         WorkTask: {
-            /** Acceptance */
-            acceptance?: Record<string, never> | null;
+            acceptance?: components["schemas"]["TaskAcceptance"] | null;
             /** Assignee */
             assignee?: string | null;
             /**
@@ -14029,19 +14213,15 @@ export interface components {
              * Evidence
              * @default []
              */
-            evidence: Record<string, never>[];
-            /**
-             * Exec
-             * @default {}
-             */
-            exec: Record<string, never>;
+            evidence: components["schemas"]["TaskEvidenceEntry"][];
+            exec?: components["schemas"]["TaskExecFields"] | null;
             /** Execution */
             execution?: string | null;
             /**
              * External Refs
              * @default []
              */
-            external_refs: Record<string, never>[];
+            external_refs: components["schemas"]["TaskExternalRef"][];
             /** Id */
             id: string;
             /**
@@ -14093,8 +14273,7 @@ export interface components {
             state_type?: string | null;
             /** Status */
             status: string;
-            /** Sync */
-            sync?: Record<string, never> | null;
+            sync?: components["schemas"]["TaskSyncLink"] | null;
             /** Text */
             text: string;
             /** Title */
@@ -14104,8 +14283,7 @@ export interface components {
              * @default []
              */
             touches: string[];
-            /** Triage */
-            triage?: Record<string, never> | null;
+            triage?: components["schemas"]["TicketTriage"] | null;
             /** Updated */
             updated: string;
         };

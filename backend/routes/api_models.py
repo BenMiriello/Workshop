@@ -18,14 +18,33 @@ Every field below was read off the emitter -- `services/tasks.py::_normalize`,
 hand-written types, which are known-incomplete (the TS `Task` declares 36
 fields against the 39 `_normalize` emits).
 
-WHERE A FIELD IS TYPED `dict` / `list[dict]`. Deliberate, and only where the
-substructure is genuinely open today: `evidence` entries take whatever key the
-writer put on them, `acceptance` is preserved verbatim key-for-key by
-`_normalize_acceptance`, `limits` and `budget` are free-form bundles, and
-`sync` carries a per-tracker shadow. Declaring a narrow model for one of those
-would drop the keys it did not guess. Where a substructure IS normalized to a
-closed shape (`awaiting`, `source`, a comment, a readiness report) it is typed,
-because there it can be typed truthfully.
+WHERE A FIELD IS TYPED `dict` / `list[dict]`. This paragraph used to say the
+remaining ones were deliberate, because "declaring a narrow model for one of
+them would drop the keys it did not guess". That reasoning was right about the
+danger and wrong about the options: a model with
+`model_config = ConfigDict(extra="allow")` declares a FLOOR and keeps
+everything else, so it cannot drop an unguessed key. Verified on the chat
+models 2026-08-18 -- pydantic retains extras through both `model_dump()` and
+`model_dump(exclude_unset=True)`, which is the mode these routes serialise in.
+
+So `acceptance`, `evidence`, `triage`, `sync`, `external_refs` and `exec` are
+now typed. Each was read off its writer, not guessed:
+`_normalize_acceptance` (which is why acceptance keeps `extra="allow"` -- its
+docstring promises every existing key verbatim), `_normalize_triage` (a closed
+four-key mark), `tracker_sync._sync_record` and `_shadow_of`, the
+`external_refs` append at `tasks.py:2129`, and `EXEC_FIELDS`, which makes
+`exec` a fixed 14-key projection of fields this model already declares.
+
+Fields stay nullable rather than required even where the normalizer looks like
+it guarantees them. A `response_model` is applied to HISTORICAL records as well
+as new ones, and on 2026-08-18 a field typed required because the write path
+always emits it took `/events/recent` to a 500 on the 5 of 20 stored records
+that predated it. The value here is the key SET being known; requiredness adds
+risk and no client capability.
+
+`limits` and `budget` on `Job` and the agent records remain open: they are
+free-form bundles with no normalizer to read a floor off, so there is nothing
+truthful to declare yet.
 
 RFC3339 AND `*_at` (ADR 0023 clause 4) ARE NOT APPLIED HERE. `created`,
 `updated` and a comment's `ts` are the names the live records, the live
@@ -39,7 +58,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # --------------------------------------------------------------- tasks
@@ -142,6 +161,151 @@ class TaskOrigin(BaseModel):
     context_key: str | None = None
 
 
+class TaskAcceptanceCriterion(BaseModel):
+    """One machine-checkable assertion, normalized by `_normalize_acceptance`:
+    a criterion with no `cmd` is dropped, `desc` defaults to the `cmd`, and
+    `expect` defaults to "exit0". All three are therefore present whenever the
+    criterion survived normalization."""
+
+    desc: str | None = None
+    cmd: str | None = None
+    expect: str | None = None
+
+
+class TaskAcceptance(BaseModel):
+    """How a run proves it finished. `extra="allow"` is REQUIRED here, not
+    incidental: `_normalize_acceptance`'s docstring promises it "preserves every
+    existing key (kind/spec/allow_no_diff/...) verbatim so callers that read them
+    are unaffected", and only re-shapes `criteria`. A closed model would break
+    that promise. Measured over 28 live stores: the non-null acceptances carry
+    `kind` and `spec`."""
+
+    model_config = ConfigDict(extra="allow")
+
+    kind: str | None = None
+    spec: str | None = None
+    criteria: list[TaskAcceptanceCriterion] | None = None
+
+
+class TaskEvidenceEntry(BaseModel):
+    """What the SYSTEM recorded about a run, as opposed to a comment, which is
+    what a person or agent SAID. Measured over 28 live stores: 33 entries, every
+    one carrying `kind`, `ref` and `ts`. Open at the edges because the writers
+    are many and nothing normalizes an entry on the way in."""
+
+    model_config = ConfigDict(extra="allow")
+
+    kind: str | None = None
+    ref: str | None = None
+    ts: str | None = None
+
+
+class TicketTriage(BaseModel):
+    """The queue triager's mark: what it decided, and against WHICH version of
+    the spec. `_normalize_triage` returns exactly these four or None, and an
+    unrecognized decision reads as "none" rather than being dropped -- losing the
+    mark would re-select the ticket, which is the failure this field exists to
+    stop. `spec_hash` is the triager's own bookkeeping and is deliberately not
+    shown in the UI."""
+
+    at: str | None = None
+    decision: str | None = None
+    spec_hash: str | None = None
+    reason: str | None = None
+
+
+class TaskSyncShadow(BaseModel):
+    """What the remote issue looked like at the last sync, so a conflict can be
+    detected against what we last saw rather than against what we last sent.
+    `tracker_sync._shadow_of`."""
+
+    model_config = ConfigDict(extra="allow")
+
+    title: str | None = None
+    body: str | None = None
+    labels: list[str] | None = None
+    state: str | None = None
+
+
+class TaskSyncConflict(BaseModel):
+    """Both sides changed the same words since the last sync.
+    `tracker_sync._merge_one` builds this. The tracker owns the words so it wins
+    the write, and the operator's version is kept here rather than thrown away --
+    which is the whole reason the record exists.
+
+    `fields` is drawn from `title`, `body`, `labels` (the only three compared),
+    so `mine` and `theirs` are partial shadows and reuse that model."""
+
+    model_config = ConfigDict(extra="allow")
+
+    fields: list[str] | None = None
+    since: str | None = None
+    mine: TaskSyncShadow | None = None
+    theirs: TaskSyncShadow | None = None
+
+
+class TaskSyncLink(BaseModel):
+    """The LIVE link to a remote tracker issue, `tracker_sync._sync_record`.
+    None means unlinked; a link that was disconnected is collapsed into
+    `external_refs` and never deleted, because a ticket has to be able to say
+    what it used to be."""
+
+    model_config = ConfigDict(extra="allow")
+
+    provider: str | None = None
+    remote_id: str | None = None
+    remote_key: str | None = None
+    url: str | None = None
+    remote_updated: str | None = None
+    last_synced: str | None = None
+    state: str | None = None
+    shadow: TaskSyncShadow | None = None
+    conflict: TaskSyncConflict | None = None
+
+
+class TaskExternalRef(BaseModel):
+    """A FROZEN reference to a tracker issue this ticket used to be linked to.
+    Written once, at unlink, by `tasks.py`'s disconnect path. Note `key`, not
+    `remote_key`: the archive entry renames the field, and describing it as it
+    is beats quietly correcting it."""
+
+    model_config = ConfigDict(extra="allow")
+
+    provider: str | None = None
+    key: str | None = None
+    url: str | None = None
+    remote_id: str | None = None
+    unlinked_at: str | None = None
+
+
+class TaskExecFields(BaseModel):
+    """The workshop-private execution fields gathered under one key, so a sync
+    adapter can read what it must NOT send to a remote tracker.
+
+    A PROJECTION, never stored: `tasks.py` builds it as
+    `{k: rec.get(k) for k in EXEC_FIELDS}`, so all fourteen keys are always
+    present and every one of them is also declared flat on `Task` below. Read
+    them flat; this exists for the sync adapters. `extra="allow"` so widening
+    `EXEC_FIELDS` cannot silently drop the new one from the wire."""
+
+    model_config = ConfigDict(extra="allow")
+
+    touches: list[str] | None = None
+    latitude: str | None = None
+    acceptance: TaskAcceptance | None = None
+    max_attempts: int | None = None
+    attempts: int | None = None
+    claim_token: int | None = None
+    lease_until: str | None = None
+    last_heartbeat: str | None = None
+    claim_pid: int | None = None
+    job_ids: list[str] | None = None
+    evidence: list[TaskEvidenceEntry] | None = None
+    awaiting: Awaiting | None = None
+    blocked_reason: str | None = None
+    triage: TicketTriage | None = None
+
+
 class Task(BaseModel):
     """The canonical Task on the wire.
 
@@ -168,7 +332,7 @@ class Task(BaseModel):
     relates_to: list[str] = []
     labels: list[str] = []
     # Preserved verbatim key-for-key by `_normalize_acceptance`; see docstring.
-    acceptance: dict[str, Any] | None = None
+    acceptance: TaskAcceptance | None = None
     max_attempts: int | None = None
     blocked_reason: str | None = None
     awaiting: Awaiting | None = None
@@ -183,7 +347,7 @@ class Task(BaseModel):
     last_heartbeat: str | None = None
     claim_pid: int | None = None
     job_ids: list[str] = []
-    evidence: list[dict[str, Any]] = []
+    evidence: list[TaskEvidenceEntry] = []
     comments: list[TaskComment] = []
     source: TaskSource
     provenance: str | None = None
@@ -191,14 +355,14 @@ class Task(BaseModel):
     discovered_from: str | None = None
     effort: str | None = None
     execution: str | None = None
-    triage: dict[str, Any] | None = None
+    triage: TicketTriage | None = None
     latitude: str | None = None
     scoped_by: str
-    sync: dict[str, Any] | None = None
-    external_refs: list[dict[str, Any]] = []
+    sync: TaskSyncLink | None = None
+    external_refs: list[TaskExternalRef] = []
     # The workshop-private execution fields gathered under one key, so a sync
     # adapter can read what it must NOT send.
-    exec: dict[str, Any] = {}
+    exec: TaskExecFields | None = None
     created: str
     updated: str
 

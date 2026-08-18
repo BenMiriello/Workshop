@@ -281,7 +281,17 @@ class AttachmentRef(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    id: str
+    # Every field defaults, `id` included. The write path validates
+    # `AttachmentRefIn`, which requires `id`, so anything stored today has one --
+    # but this model is applied to HISTORY as well, and it rides on
+    # `GET /threads/{id}/events`, which is the single endpoint the transcript
+    # load, the live poll, the active-turn snapshot, the cut divider, the branch
+    # identity and the send queue all share. A 500 there presents as four
+    # unrelated-looking bugs at once and names none of them (measured
+    # 2026-08-17: a wrong response_model field type took it down for ~7 minutes
+    # and produced exactly that). Requiring `id` buys no client capability,
+    # since a client that has the reference already has the id.
+    id: str = ""
     name: str = ""
     kind: str = ""
 

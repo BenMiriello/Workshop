@@ -1,5 +1,5 @@
 {
-  "opaque_fields": 98,
+  "opaque_fields": 80,
   "per_schema": {
     "ActiveTurn": [
       "live"
@@ -56,14 +56,6 @@
     "DeployPatch": [
       "source",
       "target"
-    ],
-    "DraftTask": [
-      "acceptance",
-      "evidence",
-      "exec",
-      "external_refs",
-      "sync",
-      "triage"
     ],
     "EventRecord": [
       "body"
@@ -164,14 +156,6 @@
     "Surfaces": [
       "standalone"
     ],
-    "Task": [
-      "acceptance",
-      "evidence",
-      "exec",
-      "external_refs",
-      "sync",
-      "triage"
-    ],
     "TaskReviewOut": [
       "grant",
       "learning"
@@ -195,14 +179,6 @@
     "UsageTimeseries": [
       "points"
     ],
-    "WorkTask": [
-      "acceptance",
-      "evidence",
-      "exec",
-      "external_refs",
-      "sync",
-      "triage"
-    ],
     "WriteIn": [
       "selector"
     ],
@@ -210,5 +186,5 @@
       "review"
     ]
   },
-  "schemas_with_opaque_fields": 55
+  "schemas_with_opaque_fields": 52
 }
