@@ -681,7 +681,35 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-bubble__body { min-width: 0; }
 /* Reserve the inline room the copy button sits in, so it never overlaps the end
    of the last line. This is horizontal only — it adds no row and no height. */
-.chat-bubble--copyable .chat-bubble__body { padding-right: 1.25rem; }
+/* ROOM FOR THE ACTIONS ON THE LAST LINE, NOT DOWN THE WHOLE MESSAGE.
+   These used to be `padding-right` on the body, which reserved the gutter on
+   EVERY line of the message for two icons that only ever sit on the last one.
+   Measured in the built app on 2026-08-18: a 21-line reply carried 46.4px of
+   dead column down all 21 lines. Operator, twice: they "occupy the entire
+   vertical space above them", and they are "pushing everything else over to
+   the left". Both are that one rule.
+
+   So the space is reserved by a zero-content inline-block at the END of the
+   inline flow instead. An inline box joins the last line, so only that line
+   gives up width, and when the last line is already full it wraps and takes the
+   actions with it rather than letting them land on top of text.
+
+   TWO SELECTORS BECAUSE THERE ARE TWO BODY SHAPES, both confirmed in the DOM: a
+   user message is raw text directly inside `.chat-clamp` (inline flow, so the
+   clamp itself takes the spacer), and an assistant message is markdown blocks,
+   where the spacer has to go inside the LAST block or it would land on a new
+   line of its own. `:not(:has(.ws-md))` is what keeps the first rule off the
+   second shape. */
+.chat-bubble__body > :last-child:not(:has(.ws-md))::after,
+.chat-bubble__body .ws-md > :last-child::after {
+  content: "";
+  display: inline-block;
+  /* 0 by default, so a bubble with no actions reserves nothing at all. */
+  width: var(--chat-actions-gap, 0);
+  height: 1em;
+  vertical-align: text-bottom;
+}
+.chat-bubble--copyable { --chat-actions-gap: 1.25rem; }
 
 /* Copy the message. Absolutely placed so it costs no vertical space: with no
    expand control it sits at the corner of the last text row, and when a Show
@@ -732,9 +760,9 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-msg.user .chat-branch { color: color-mix(in srgb, var(--accent-fg) 50%, var(--accent)); }
 .chat-msg.user .chat-branch:hover:enabled,
 .chat-msg.user .chat-branch:focus-visible { color: var(--accent-fg); }
-/* Room for both controls, still horizontal only: neither adds a row. */
-.chat-bubble--branchable .chat-bubble__body { padding-right: 1.45rem; }
-.chat-bubble--branchable.chat-bubble--copyable .chat-bubble__body { padding-right: 2.9rem; }
+/* Room for both controls, on the last line only. See the spacer above. */
+.chat-bubble--branchable { --chat-actions-gap: 1.45rem; }
+.chat-bubble--branchable.chat-bubble--copyable { --chat-actions-gap: 2.9rem; }
 /* THREE ROWS, THEN IT SCROLLS. The operator asked for exactly this: a picker
    that stays a small target no matter how many times a conversation has been
    branched. The kit's menu already scrolls at 16rem; this is the tighter cap
@@ -998,7 +1026,14 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-work > .chat-reveal > .chat-reveal__inner { padding-top: var(--space-1); }
 .chat-work__toggle {
   display: inline-flex; align-items: center; gap: 0.3rem;
-  background: none; border: none; padding: 0.15rem 0; margin: 0;
+  background: none; border: none; margin: 0;
+  /* The gap keeps this one-line summary clear of the copy/branch buttons. It
+     needs its own reserve because when a turn has work but no answer text the
+     clamp below renders empty, so THIS line is the bubble's bottom line and the
+     last-line spacer above lands in something invisible. Measured that exact
+     collision at 12px2 on 2026-08-18. The summary is a few words, so reserving
+     the gap on it costs nothing when it is not the bottom line. */
+  padding: 0.15rem var(--chat-actions-gap, 0) 0.15rem 0;
   color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-work__toggle:hover { color: var(--fg); }
