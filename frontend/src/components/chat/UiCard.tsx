@@ -13,7 +13,7 @@
 // thread re-renders each card in edit state from the stored block; createProject
 // handles 409 so a re-submit after reload stays safe. No server-side card state.
 import { useEffect, useMemo, useState } from "react";
-import { CircleCheck, MinusCircle, Sparkles } from "lucide-react";
+import { CircleCheck, MessageCircleQuestion, MinusCircle, Sparkles } from "lucide-react";
 import {
   Button,
   Card,
@@ -301,6 +301,19 @@ function CardField({
           </Select>
         </Field>
       );
+    case "choice":
+      // Tap-friendly options for a prompt card's answer. Same control the
+      // sensitivity field uses; the options come from the card.
+      return (
+        <Field label={label} help={help}>
+          <Segmented
+            options={(field.options || []).map((o) => ({ value: o.value, label: o.label }))}
+            value={value || field.options?.[0]?.value || ""}
+            onChange={onChange}
+            ariaLabel={label}
+          />
+        </Field>
+      );
     default:
       return (
         <Field label={label} help={help}>
@@ -549,7 +562,9 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
     <Card>
       <Stack>
         <Row>
-          <Sparkles size={16} strokeWidth={1.8} aria-hidden />
+          {spec.kind === "prompt"
+            ? <MessageCircleQuestion size={16} strokeWidth={1.8} aria-hidden />
+            : <Sparkles size={16} strokeWidth={1.8} aria-hidden />}
           <span className="ws-card__title">{spec.title || "Card"}</span>
         </Row>
         <Stack>

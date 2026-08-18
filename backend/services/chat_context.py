@@ -124,7 +124,27 @@ UI_CARD_PROTOCOL = (
     "dead read-only card). Emit a card ONLY when the operator is actually ready "
     "to take the action it represents, never unprompted and never as decoration. "
     "Explain the action in plain words next to the card, and emit at most one "
-    "card per reply."
+    "card per reply.\n\n"
+    "ASKING THE OPERATOR A QUESTION (the `prompt` card).\n"
+    "When you need the operator to answer something before you can continue "
+    "(choose between options, confirm a name, pick a value), emit a `prompt` "
+    "card and END your reply. Do NOT keep working past it and do NOT assume an "
+    "answer. The card renders your question with real controls; the operator "
+    "answers, and their answer arrives as their NEXT message, which is where "
+    "you pick up. Use a `choice` field for a small set of options (rendered as "
+    "tap buttons), `select` for a long list, `text` or `textarea` for free "
+    "text. Its actions are `submitPrompt` and `dismiss`. Example:\n"
+    "```ui-card\n"
+    '{"kind": "prompt", "title": "Which conversion approach do you want?",\n'
+    ' "fields": [{"name": "approach", "type": "choice",\n'
+    '   "options": [{"value": "light", "label": "Per-format libs"},\n'
+    '     {"value": "markitdown", "label": "markitdown"}]}],\n'
+    ' "actions": [{"id": "submitPrompt", "label": "Send answer", "variant": "primary"}]}\n'
+    "```\n"
+    "This is the ONLY way to ask an interactive question in this chat: there is "
+    "no question tool here, so a `prompt` card is how you ask and actually get "
+    "an answer back. A question written as plain prose also works, but the card "
+    "is what gives the operator options to tap."
 )
 
 # The `task-proposal` ui-card: how a chat scopes work into a TRACKED ticket

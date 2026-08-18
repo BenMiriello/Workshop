@@ -28,6 +28,7 @@ export type UiCardFieldType =
   | "template"
   | "sensitivity"
   | "select"
+  | "choice" // tap-friendly options (kit Segmented), for a prompt card's answer
   | "taskscope"; // a select the client fills from GET /api/tasks/scopes
 
 export type UiCardSelectOption = { value: string; label: string };
@@ -74,6 +75,7 @@ export type UiCardSpec = {
 export const KNOWN_KINDS = new Set<string>([
   "project-proposal",
   "task-proposal",
+  "prompt",
 ]);
 
 // ---- Handler contract ------------------------------------------------------
@@ -87,6 +89,10 @@ export type UiCardCtx = {
   contextKey: string;
   threadId: string | null;
   rescopeThread: (id: string, contextKey: string) => Promise<unknown>;
+  // Post text back into the conversation as the operator's own message. This is
+  // how a `prompt` card returns an answer to the agent: it sends the answer, the
+  // agent resumes on it. See ADR 0027.
+  answer?: (text: string) => void;
   // Server-backed record of which cards in this thread have already been acted
   // on, and the writer for it. Cards are no longer stateless across a reload:
   // one that was filed and run renders its outcome instead of offering the same
@@ -192,6 +198,42 @@ const moveChatToProject: UiCardHandler = async (state, ctx) => {
 };
 
 const dismiss: UiCardHandler = async () => ({ status: "dismiss" });
+
+// ---- prompt card: agent-triggered input (ADR 0027) -------------------------
+// A `prompt` card asks the operator something and returns the answer to the
+// conversation. The agent emits it and ends its reply; the operator answers,
+// the answer posts as their own message, and the agent resumes on it.
+
+/** Compose a prompt card's field values into the answer text the operator
+ *  sends back. A single field answers with just its value (so a one-question
+ *  card reads as a plain reply); several fields answer with one labelled line
+ *  each. A chosen option's human label is preferred over its raw value. Pure. */
+export function composePromptAnswer(
+  fields: UiCardField[] | undefined,
+  values: Record<string, string>,
+): string {
+  const answerable = (fields ?? []).filter(
+    (f) => f.type !== "template" && f.type !== "sensitivity",
+  );
+  const parts = answerable
+    .map((f) => {
+      const raw = (values[f.name] ?? f.value ?? "").trim();
+      const label = (f.options || []).find((o) => o.value === raw)?.label ?? raw;
+      return { name: (f.label || f.name).trim(), value: label };
+    })
+    .filter((p) => p.value.length > 0);
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0].value;
+  return parts.map((p) => `${p.name}: ${p.value}`).join("\n");
+}
+
+const submitPrompt: UiCardHandler = async (state, ctx) => {
+  const text = composePromptAnswer(state.spec.fields, state.values);
+  if (!text) return { status: "error", message: "Choose or type an answer first." };
+  if (!ctx.answer) return { status: "error", message: "This chat cannot send an answer right now." };
+  ctx.answer(text);
+  return { status: "success", note: "Answer sent." };
+};
 
 // ---- task-proposal handlers ------------------------------------------------
 // A task-proposal card scopes work into a tracked ticket. `addTasks` files it;
@@ -435,6 +477,7 @@ export const UI_CARD_ACTIONS: Record<string, UiCardHandler> = {
   openWork,
   openTicket,
   viewRun,
+  submitPrompt,
   dismiss,
 };
 
@@ -456,6 +499,10 @@ export const DEFAULT_CARD_ACTIONS: Record<string, UiCardAction[]> = {
   "task-proposal": [
     { id: "addTasks", label: "File ticket", variant: "primary" },
     { id: "addTasksAndRun", label: "File and run", variant: "default" },
+    { id: "dismiss", label: "Dismiss", variant: "ghost" },
+  ],
+  "prompt": [
+    { id: "submitPrompt", label: "Send answer", variant: "primary" },
     { id: "dismiss", label: "Dismiss", variant: "ghost" },
   ],
 };

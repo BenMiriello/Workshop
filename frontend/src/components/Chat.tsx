@@ -897,12 +897,18 @@ export default function Chat({
     },
     [thread.setCardStates, activeIdRef],
   );
+  // A prompt card answers by sending the operator's choice back into the chat
+  // (ADR 0027). Held in a ref so it does not change the card context's identity
+  // on every render and re-render the whole transcript (see the note below).
+  const submitTextRef = useRef(pipeline.submitText);
+  submitTextRef.current = pipeline.submitText;
+  const answerPrompt = useCallback((text: string) => { submitTextRef.current(text); }, []);
   const cardCtx = useMemo<UiCardCtx>(
     () => ({
       navigate, contextKey, threadId: activeId, rescopeThread: chatApi.rescopeThread,
-      cardStates: thread.cardStates, recordCardState,
+      cardStates: thread.cardStates, recordCardState, answer: answerPrompt,
     }),
-    [navigate, contextKey, activeId, thread.cardStates, recordCardState],
+    [navigate, contextKey, activeId, thread.cardStates, recordCardState, answerPrompt],
   );
 
   // WHAT A TICKET CARD READS, and it is NOT `UiCardCtx`. The work store returns

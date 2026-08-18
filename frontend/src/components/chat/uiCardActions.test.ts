@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   composeTaskText, resolveCardActions, DEFAULT_CARD_ACTIONS, UI_CARD_ACTIONS, hasCardHandler,
+  composePromptAnswer,
 } from "./uiCardActions";
 
 // composeTaskText is the whole seam between a proposal card and the ticket
@@ -99,5 +100,37 @@ describe("resolveCardActions", () => {
         expect(UI_CARD_ACTIONS[a.id]).toBeTypeOf("function");
       }
     }
+  });
+
+  it("gives the prompt card its own canonical actions (submit + dismiss)", () => {
+    expect(resolveCardActions("prompt", undefined).map((a) => a.id)).toEqual(["submitPrompt", "dismiss"]);
+  });
+});
+
+// A prompt card (ADR 0027) returns the operator's answer to the conversation.
+// composePromptAnswer is the pure seam: card values in, the message text out.
+describe("composePromptAnswer", () => {
+  it("answers a single-question card with just the chosen option's label", () => {
+    const fields = [{ name: "approach", type: "choice" as const, options: [
+      { value: "light", label: "Per-format libs" },
+      { value: "markitdown", label: "markitdown" },
+    ] }];
+    expect(composePromptAnswer(fields, { approach: "markitdown" })).toBe("markitdown");
+  });
+
+  it("answers a free-text question with the typed value", () => {
+    expect(composePromptAnswer([{ name: "name", type: "text" }], { name: "atlas" })).toBe("atlas");
+  });
+
+  it("labels each answer when the card asks more than one thing", () => {
+    const fields = [
+      { name: "size", label: "Size", type: "choice" as const, options: [{ value: "s", label: "Small" }] },
+      { name: "note", label: "Note", type: "text" as const },
+    ];
+    expect(composePromptAnswer(fields, { size: "s", note: "urgent" })).toBe("Size: Small\nNote: urgent");
+  });
+
+  it("is empty when nothing was answered, so the handler can refuse to send", () => {
+    expect(composePromptAnswer([{ name: "x", type: "text" }], {})).toBe("");
   });
 });
