@@ -40,19 +40,14 @@ from wsplatform import paths
 Decision = Literal["allow", "confirm", "deny"]
 ActionPolicy = Literal["read", "confirm", "allow"]
 
-# grants.json lives next to the backend package (operator-owned, backend-managed).
-GRANTS_PATH = Path(os.environ.get(
-    "WORKSHOP_GRANTS_PATH",
-    str(Path(__file__).resolve().parent.parent / "grants.json"),
-))
-
-# Resource-scoped grants (Phase 4) live in a SEPARATE file so the app-level
-# grants.json loader path never sees the new shape (additive, no regression to
-# validate_grants / load_grants). Shape: {"grants": [<resource grant>, ...]}.
-RESOURCE_GRANTS_PATH = Path(os.environ.get(
-    "WORKSHOP_RESOURCE_GRANTS_PATH",
-    str(Path(__file__).resolve().parent.parent / "resource-grants.json"),
-))
+# grants.json is per-instance state, now under the untracked runtime root rather
+# than beside the backend package (Layer 0 eviction). Resolved per-call through
+# `wsplatform.paths` so the startup relocation and the WORKSHOP_GRANTS_PATH /
+# WORKSHOP_RESOURCE_GRANTS_PATH overrides are honored at read time, not frozen at
+# import (a module constant computed before the startup move would point at the
+# old, now-absent, location). Resource-scoped grants (Phase 4) live in a SEPARATE
+# file so the app-level loader never sees the new shape; both derive from paths
+# (imported above).
 
 # The verbs a resource grant may carry.
 #
@@ -233,11 +228,12 @@ def _coerce_doc(data: Any) -> dict[str, Any]:
 
 def _write_doc(doc: dict[str, Any]) -> None:
     """Atomically write the grants doc (temp file + rename)."""
-    GRANTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    path = paths.grants_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(doc, indent=2) + "\n"
-    tmp = GRANTS_PATH.with_suffix(GRANTS_PATH.suffix + ".tmp")
+    tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, GRANTS_PATH)
+    os.replace(tmp, path)
 
 
 def load_grants() -> dict[str, Any]:
@@ -246,14 +242,15 @@ def load_grants() -> dict[str, Any]:
     Auto-creates an empty doc on disk if missing. If the file exists but is
     unreadable/corrupt, returns an in-memory empty doc (never raises) so reads
     stay available."""
-    if not GRANTS_PATH.exists():
+    path = paths.grants_path()
+    if not path.exists():
         try:
             _write_doc({"grants": [], "guests": []})
         except OSError:
             pass
         return {"grants": [], "guests": []}
     try:
-        data = json.loads(GRANTS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {"grants": [], "guests": []}
     return _coerce_doc(data)
@@ -668,14 +665,15 @@ def _coerce_resource_grant(row: Any) -> dict[str, Any] | None:
 def load_resource_grants() -> list[dict[str, Any]]:
     """The resource-grant list. Auto-creates an empty file if missing; tolerant
     of a corrupt file (returns [])."""
-    if not RESOURCE_GRANTS_PATH.exists():
+    path = paths.resource_grants_path()
+    if not path.exists():
         try:
             _write_resource_grants([])
         except OSError:
             pass
         return []
     try:
-        data = json.loads(RESOURCE_GRANTS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
     rows = data.get("grants") if isinstance(data, dict) else None
@@ -690,11 +688,12 @@ def load_resource_grants() -> list[dict[str, Any]]:
 
 
 def _write_resource_grants(rows: list[dict[str, Any]]) -> None:
-    RESOURCE_GRANTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    path = paths.resource_grants_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"grants": rows}, indent=2) + "\n"
-    tmp = RESOURCE_GRANTS_PATH.with_suffix(RESOURCE_GRANTS_PATH.suffix + ".tmp")
+    tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, RESOURCE_GRANTS_PATH)
+    os.replace(tmp, path)
 
 
 def _resolve_grant(token_or_grant: Any) -> dict[str, Any] | None:

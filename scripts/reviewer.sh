@@ -381,6 +381,26 @@ if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/.*\.py$'; then
   fi
 fi
 
+# 4.6c-v No new mutable STATE file committed under a source directory (Layer 0 of
+# managed-file-references-and-path-scoping-2026-08-18.md §9). Gated on this diff
+# adding/changing a json/jsonl/db under backend|frontend|packages — that is the
+# only way an offender enters the tree, and a docs- or code-only diff has nothing
+# to move. Pinned-baseline ratchet (currently allowlists backend/grants.json,
+# which is relocated at startup and deleted post-verify); it fails only on a NEW
+# state file. See check_no_state_in_source.py's own header.
+NO_STATE_IN_SOURCE_CHECK="skipped"
+if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(backend|frontend|packages)/.*\.(json|jsonl|db|sqlite|sqlite3)$'; then
+  if [[ -f "$WORKSHOP/scripts/check_no_state_in_source.py" && -f "$WORKSHOP/scripts/no_state_in_source_baseline.json" ]]; then
+    if python3 "$WORKSHOP/scripts/check_no_state_in_source.py" >/dev/null 2>&1; then
+      NO_STATE_IN_SOURCE_CHECK="ok"
+    else
+      NO_STATE_IN_SOURCE_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("no_state_in_source_check_unavailable")
+  fi
+fi
+
 # 4.6c-iv response_model= on every route (ADR 0023, §2.4). Gated on touching a
 # routes/ file specifically (narrower than the two checks above, because this
 # one IS scoped per-file) and uses `--only-changed` exactly like
@@ -637,6 +657,10 @@ if [[ "$NO_PROCESS_GLOBALS_CHECK" == "fail" ]]; then
   REASONS+=("process_globals_regression")
   COMPLETE="false"
 fi
+if [[ "$NO_STATE_IN_SOURCE_CHECK" == "fail" ]]; then
+  REASONS+=("state_file_in_source")
+  COMPLETE="false"
+fi
 if [[ "$RESPONSE_MODEL_CHECK" == "fail" ]]; then
   REASONS+=("response_model_regression")
   COMPLETE="false"
@@ -725,7 +749,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK
+export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -759,6 +783,9 @@ out = {
     # reasons each script's own header explains.
     "module_layout": os.environ.get("MODULE_LAYOUT_CHECK", "skipped"),
     "no_process_globals": os.environ.get("NO_PROCESS_GLOBALS_CHECK", "skipped"),
+    # Layer 0 ratchet (managed-file-references-and-path-scoping-2026-08-18.md §9):
+    # no NEW mutable state file under a source dir. Pinned baseline, GATES.
+    "no_state_in_source": os.environ.get("NO_STATE_IN_SOURCE_CHECK", "skipped"),
     "response_model": os.environ.get("RESPONSE_MODEL_CHECK", "skipped"),
     # Absolute, not ratcheted: the tree is at zero raw storage calls, so any
     # new one is a cross-account leak rather than incremental debt.
@@ -786,7 +813,7 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

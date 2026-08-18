@@ -46,18 +46,16 @@ feature is banned is how we know the tiers mean something.
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from services import permissions, stores
-
-# Operator-owned, backend-managed — same posture as grants.json / resource-grants.json.
-POLICY_PATH = Path(os.environ.get(
-    "WORKSHOP_STORE_POLICIES_PATH",
-    str(Path(__file__).resolve().parent.parent / "store-policies.json"),
-))
+# Per-instance state, now under the untracked runtime root rather than beside
+# the backend package (Layer 0 eviction). Same posture as grants.json /
+# resource-grants.json; resolved per-call through
+# `wsplatform.paths.store_policies_path` so the startup relocation and the
+# WORKSHOP_STORE_POLICIES_PATH override are honored at read time, not at import.
+from wsplatform import paths
 
 TIERS = ("open", "gated", "mediated")
 
@@ -280,10 +278,11 @@ def load_policies() -> list[StorePolicy]:
 
     Raises PolicyError on a well-formed file with an illegal record — see the
     module docstring for why those two directions differ."""
-    if not POLICY_PATH.exists():
+    path = paths.store_policies_path()
+    if not path.exists():
         return []
     try:
-        data = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
     rows = data.get("policies") if isinstance(data, dict) else None

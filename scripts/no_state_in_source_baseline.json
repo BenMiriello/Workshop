@@ -1,0 +1,6 @@
+{
+  "_note": "state files tracked under a source dir today; a NEW one not in this list fails the ratchet. Drop entries as they are relocated. See scripts/check_no_state_in_source.py.",
+  "allowed": [
+    "backend/grants.json"
+  ]
+}

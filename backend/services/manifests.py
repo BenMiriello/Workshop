@@ -16,14 +16,13 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 from typing import Any
 
-# apps.json lives next to the backend package (operator-editable, backend-owned).
-MANIFESTS_PATH = Path(os.environ.get(
-    "WORKSHOP_APPS_MANIFEST",
-    str(Path(__file__).resolve().parent.parent / "apps.json"),
-))
+# apps.json is per-instance state, now under the untracked runtime root rather
+# than beside the backend package (Layer 0 eviction). Resolved per-call through
+# `wsplatform.paths.apps_manifest_path` so the startup relocation and the
+# WORKSHOP_APPS_MANIFEST override are honored at read time, not frozen at import.
+from wsplatform import paths
 
 DEFAULT_KIT = "@workshop/ui@^0.2"
 
@@ -109,11 +108,12 @@ def _split_typed(raw: Any) -> tuple[list[str], dict[str, str]]:
 
 def _write_seed() -> None:
     """Create apps.json from SEED. Atomic-safe (write temp + rename)."""
-    MANIFESTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    mpath = paths.apps_manifest_path()
+    mpath.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"apps": SEED}, indent=2) + "\n"
-    tmp = MANIFESTS_PATH.with_suffix(MANIFESTS_PATH.suffix + ".tmp")
+    tmp = mpath.with_suffix(mpath.suffix + ".tmp")
     tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, MANIFESTS_PATH)
+    os.replace(tmp, mpath)
 
 
 def load_manifests() -> dict[str, dict[str, Any]]:
@@ -123,7 +123,8 @@ def load_manifests() -> dict[str, dict[str, Any]]:
     seed is returned. If it exists but is unreadable/corrupt, the in-memory SEED
     is returned (never raises) so the read endpoint stays available.
     """
-    if not MANIFESTS_PATH.exists():
+    mpath = paths.apps_manifest_path()
+    if not mpath.exists():
         try:
             _write_seed()
         except OSError:
@@ -132,7 +133,7 @@ def load_manifests() -> dict[str, dict[str, Any]]:
         return {k: _normalize_entry(k, v) for k, v in SEED.items()}
 
     try:
-        data = json.loads(MANIFESTS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(mpath.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {k: _normalize_entry(k, v) for k, v in SEED.items()}
 
@@ -156,8 +157,9 @@ def set_app_ui(app_id: str, ui: dict[str, Any]) -> dict[str, Any] | None:
     re-normalized manifest entry, or None if the app is not declared. Only known
     UI keys are accepted (currently `agent_button`); unknown keys are ignored.
     """
+    mpath = paths.apps_manifest_path()
     try:
-        data = json.loads(MANIFESTS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(mpath.read_text(encoding="utf-8"))
         apps = data.get("apps") if isinstance(data, dict) else None
     except (OSError, json.JSONDecodeError):
         apps = None
@@ -176,11 +178,11 @@ def set_app_ui(app_id: str, ui: dict[str, Any]) -> dict[str, Any] | None:
     entry["ui"] = cur_ui
     apps[app_id] = entry
 
-    MANIFESTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    mpath.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"apps": apps}, indent=2) + "\n"
-    tmp = MANIFESTS_PATH.with_suffix(MANIFESTS_PATH.suffix + ".tmp")
+    tmp = mpath.with_suffix(mpath.suffix + ".tmp")
     tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, MANIFESTS_PATH)
+    os.replace(tmp, mpath)
 
     return _normalize_entry(app_id, entry)
 
@@ -193,8 +195,9 @@ def upsert_manifest(app_id: str, entry: dict[str, Any]) -> dict[str, Any]:
     entry but keeps the on-disk `ui` block (e.g. the operator's agent_button
     toggle) intact. Atomically rewrites apps.json and returns the normalized entry.
     """
+    mpath = paths.apps_manifest_path()
     try:
-        data = json.loads(MANIFESTS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(mpath.read_text(encoding="utf-8"))
         apps = data.get("apps") if isinstance(data, dict) else None
     except (OSError, json.JSONDecodeError):
         apps = None
@@ -207,11 +210,11 @@ def upsert_manifest(app_id: str, entry: dict[str, Any]) -> dict[str, Any]:
         merged["ui"] = prev["ui"]  # never clobber operator UI overrides
     apps[app_id] = merged
 
-    MANIFESTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    mpath.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"apps": apps}, indent=2) + "\n"
-    tmp = MANIFESTS_PATH.with_suffix(MANIFESTS_PATH.suffix + ".tmp")
+    tmp = mpath.with_suffix(mpath.suffix + ".tmp")
     tmp.write_text(payload, encoding="utf-8")
-    os.replace(tmp, MANIFESTS_PATH)
+    os.replace(tmp, mpath)
 
     return _normalize_entry(app_id, merged)
 

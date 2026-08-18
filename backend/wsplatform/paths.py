@@ -122,6 +122,104 @@ def chat_cwd() -> Path:
     return d
 
 
+def scope_root(scope_key: str) -> Path:
+    """The canonical root directory of a tree-owning scope: the one directory
+    that is the whole world of that scope.
+
+        project:<slug> -> projects_root()/<slug>
+        app:<name>     -> workshop_root()/apps/<name>
+        agent:<slug>   -> runtime_dir()/agents/<slug>
+
+    The SINGLE mapping every other per-scope path derives from (Layer 0 of
+    docs/platform-redesign/managed-file-references-and-path-scoping-2026-08-18.md).
+    `knowledge.scope_dir` and any other per-scope subtree must spell their parent
+    as `scope_root(scope)/…` rather than joining `projects/`, `apps/` or
+    `agents/` themselves — a scope smeared across three literals is a scope you
+    cannot mount, address or confine with one path.
+
+    Splits the key via `services.scope_tree.parse` (the one owner of the scope
+    model) rather than re-implementing the kind/slug split; the function-local
+    import keeps this module the pure `os`/`pathlib` leaf ADR 0024 made it, the
+    same shape `chat_cwd()` already uses for `services.ownership`.
+
+    Raises ValueError for the non-tree scopes (`workshop`, `development`,
+    `role:<role>`): those are facets of one `shared/knowledge/` layer, not a
+    per-scope tree, so there is no single root to point at.
+    """
+    from services import scope_tree
+    scope = scope_tree.parse(scope_key)
+    if scope.kind == "project":
+        return projects_root() / scope.slug
+    if scope.kind == "app":
+        return workshop_root() / "apps" / scope.slug
+    if scope.kind == "agent":
+        return runtime_dir() / "agents" / scope.slug
+    raise ValueError(
+        f"scope_root has no tree root for {scope_key!r} (kind {scope.kind!r}); "
+        "only project/app/agent own a scope tree")
+
+
+# --- per-instance state files (Layer 0 eviction) ----------------------------
+# The four state files that used to sit inside the source tree (backend/) move
+# under the untracked runtime root. Each keeps its documented env override; when
+# neither the env var nor the new runtime file is present yet, a ONE-TIME
+# fallback reads the old in-source location so a read still works in the window
+# before the startup migration (services/state_file_relocate.run_once) physically
+# moves it. Once the migration has run, the new path exists and the fallback is
+# never taken again — so nothing keeps writing to the source tree.
+def _state_file(env_var: str, name: str) -> Path:
+    raw = os.environ.get(env_var)
+    if raw:
+        return Path(raw).expanduser()
+    new = runtime_dir() / name
+    if not new.exists():
+        old = workshop_root() / "backend" / name
+        if old.exists():
+            return old
+    return new
+
+
+def grants_path() -> Path:
+    """`.runtime/grants.json` — app-level capability grants (was backend/)."""
+    return _state_file("WORKSHOP_GRANTS_PATH", "grants.json")
+
+
+def resource_grants_path() -> Path:
+    """`.runtime/resource-grants.json` — resource-scoped Store grants (was
+    backend/); the live, backend-written file (~136 KB on this instance)."""
+    return _state_file("WORKSHOP_RESOURCE_GRANTS_PATH", "resource-grants.json")
+
+
+def apps_manifest_path() -> Path:
+    """`.runtime/apps.json` — per-app manifests / identity + ui overrides (was
+    backend/)."""
+    return _state_file("WORKSHOP_APPS_MANIFEST", "apps.json")
+
+
+def store_policies_path() -> Path:
+    """`.runtime/store-policies.json` — per-store access tiers (was backend/)."""
+    return _state_file("WORKSHOP_STORE_POLICIES_PATH", "store-policies.json")
+
+
+def state_file_relocations() -> list[tuple[Path, Path]]:
+    """`(old_in_source, new_in_runtime)` for every evicted state file, for the
+    startup migration to move. Env overrides are honored on the new side, so a
+    deployment that points a file elsewhere still gets that destination."""
+    specs = [
+        ("WORKSHOP_GRANTS_PATH", "grants.json"),
+        ("WORKSHOP_RESOURCE_GRANTS_PATH", "resource-grants.json"),
+        ("WORKSHOP_APPS_MANIFEST", "apps.json"),
+        ("WORKSHOP_STORE_POLICIES_PATH", "store-policies.json"),
+    ]
+    out: list[tuple[Path, Path]] = []
+    for env_var, name in specs:
+        raw = os.environ.get(env_var)
+        new = Path(raw).expanduser() if raw else runtime_dir() / name
+        old = workshop_root() / "backend" / name
+        out.append((old, new))
+    return out
+
+
 def root(*parts: str) -> Path:
     return workshop_root().joinpath(*parts)
 

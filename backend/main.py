@@ -77,6 +77,20 @@ async def lifespan(app: FastAPI):
     # still matter (chat_store.list_threads / get_thread), so a straggler is
     # still absorbed on first touch without a startup pass over every owner.
     try:
+        # Layer 0 filesystem restructure: move the four in-source state files
+        # (grants/resource-grants/apps/store-policies.json) under the untracked
+        # runtime root, once, before anything reads them. Readers already resolve
+        # through wsplatform.paths with a fallback to the old location, so this is
+        # the physical move that makes the fallback unnecessary. Idempotent (a
+        # file already relocated is skipped) and logs a conservation line per
+        # move. See services/state_file_relocate.
+        from services import state_file_relocate
+        relocated = state_file_relocate.run_once()
+        if relocated:
+            log.info("state files relocated: %s", "; ".join(relocated))
+    except Exception as e:
+        log.error("state file relocation failed at startup: %s", e)
+    try:
         # The chat store's on-disk `run` vocabulary becomes `turn`, once. This
         # runs BEFORE anything reads a thread, because the keys and the code
         # that fences on them have to change together: a turn in flight under

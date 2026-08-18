@@ -119,7 +119,6 @@ def scope_dir(scope_key: str) -> Path:
     `.runtime/` because it is that instance's episodic record.
     """
     kind, slug = _parse_scope(scope_key)
-    root = _root()
     shared = _shared_knowledge_root()
     if kind == "workshop":
         d = shared
@@ -134,16 +133,16 @@ def scope_dir(scope_key: str) -> Path:
         # the repo. A non-operator reaching it is a separate refusal (see
         # get_provider / root_for_context), not a directory question.
         d = shared / "development"
-    elif kind == "project":
-        # Follows projects_root(), so a per-owner project's knowledge is
-        # per-owner without this needing to know about ownership at all.
-        d = paths.projects_root() / slug / "knowledge"
-    elif kind == "app":
-        d = root / "apps" / slug / "knowledge"
     elif kind == "role":
         d = shared / "roles" / slug.lower()
-    else:  # agent
-        d = _runtime() / "agents" / slug / "knowledge"
+    else:
+        # project / app / agent: each is a tree-owning scope, so its knowledge
+        # directory hangs off the ONE scope root rather than this module
+        # re-spelling `projects/`, `apps/` or `agents/`. `paths.scope_root`
+        # reproduces the exact former parents (projects_root()/<slug>,
+        # workshop_root()/apps/<name>, runtime_dir()/agents/<slug>); the path is
+        # byte-for-byte what it was, now derived from the single mapping.
+        d = paths.scope_root(scope_key) / "knowledge"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
