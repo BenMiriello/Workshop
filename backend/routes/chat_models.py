@@ -41,6 +41,17 @@ TWO PAYLOADS ARE DELIBERATELY LEFT OPEN, and both are the ADR's own reasoning:
   * `ContextDetail`'s CLI-derived block. `/context` is parsed out of another
     process's markdown; its section set is that CLI's, not ours.
 
+THE THREE THREAD-STATE MAPS ARE TYPED WITH AN OPEN FLOOR, NOT LEFT OPAQUE.
+`turn_marks`, `card_states` and `ticket_drafts` were `dict[str, Any]`, which
+satisfies `response_model=` and then generates `Record<string, never>` in the
+TypeScript client -- a type whose every property is `never`, so the frontend
+hand-writes the shape anyway and the drift this file exists to stop simply
+moves one level down, from the route to its fields. Each now has a model whose
+fields were read off the writers and confirmed against all 37 live threads
+carrying them (0 differences, both dump modes), with `extra="allow"` so a
+writer that adds a key still cannot have it dropped. That combination is the
+point: a floor the client can rely on, and no ceiling.
+
 RFC3339 AND `*_at` (ADR 0023 clause 4) ARE NOT APPLIED HERE. `ts`, `created`,
 `updated`, `checked_at` (epoch seconds) and `sent_at` are the names and encodings
 the live stores, the live frontend and the on-disk logs use. Renaming them is a
@@ -127,6 +138,71 @@ class ThreadSummary(BaseModel):
     last_message: str
 
 
+class StoredCardState(BaseModel):
+    """One in-chat ui-card's outcome, as it is STORED on the thread.
+
+    NOT the write body -- that is `routes.chat.CardState`, which carries the
+    `key` this is filed under and never carries `ts`, because
+    `chat_store.set_card_state` stamps that itself. The two shapes are
+    genuinely different and the generated client now says so.
+
+    Measured over every live thread on 2026-08-18: 12 entries across 6 threads,
+    all five fields present on all twelve. `extra="allow"` keeps the per-kind
+    openness the write path has always had -- a card kind owns the shape of its
+    own state, so a typed floor here must be unable to DROP anything a future
+    kind files. Verified: pydantic retains extras through `model_dump()` and
+    through `model_dump(exclude_unset=True)`, which is the mode these routes
+    serialise in.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    # "success" | "dismissed".
+    phase: str
+    note: str | None = None
+    slug: str | None = None
+    title: str | None = None
+    ts: str | None = None
+
+
+class TurnMarks(BaseModel):
+    """What this thread has already been TOLD, so a turn can avoid saying it
+    twice. These three are `chat_store.get_turn_marks`'s own documented set and
+    the only three any writer sets today (`routes/chat.py` writes
+    `contract_hash`, `live_hash` and `seen_scope_version`).
+
+    `set_turn_marks(thread_id, **fields)` takes arbitrary keywords by signature,
+    so this is a floor and not a closed set; `extra="allow"` is what makes
+    adding a fourth mark a one-line change rather than a silently dropped field.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    live_hash: str | None = None
+    seen_scope_version: int | None = None
+    contract_hash: str | None = None
+
+
+class TicketDraftScan(BaseModel):
+    """The SCAN state the ticket-draft pass leaves on a thread: when it last
+    ran and how much of the conversation it had read, which is how
+    `messages_since` is computed on the next read.
+
+    `services/ticket_drafts.py` writes exactly `generated_at` and
+    `message_count` -- deliberately NOT the drafts, because the filed tickets
+    ARE the drafts and a second copy here is what that refactor removed. Three
+    live threads still carry a `drafts` list written before it, so the field is
+    declared rather than dropped: a response model that omits it would delete
+    those from the wire.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    generated_at: str | None = None
+    message_count: int | None = None
+    drafts: list[dict[str, Any]] | None = None
+
+
 class ThreadSettings(BaseModel):
     """A thread as SETTINGS: everything `chat_store._document` returns except the
     transcript. Every route that answers with a thread is answering a settings
@@ -169,9 +245,9 @@ class ThreadSettings(BaseModel):
     # message index and is not one; recorded as it is rather than renamed, since
     # renaming it is a wire-shape change.
     context_cut: str | None = None
-    turn_marks: dict[str, Any] | None = None
-    card_states: dict[str, Any] | None = None
-    ticket_drafts: dict[str, Any] | None = None
+    turn_marks: TurnMarks | None = None
+    card_states: dict[str, StoredCardState] | None = None
+    ticket_drafts: TicketDraftScan | None = None
     # The resident voice worker's session id, a bare string -- one more copy of
     # "what this thread has already been told", which is why /clear drops it.
     voice_session: str | None = None
@@ -267,7 +343,7 @@ class CardStates(BaseModel):
     """Which in-chat cards have been acted on. Opaque per card kind: the client
     that renders a card owns the shape of its own state."""
 
-    card_states: dict[str, Any]
+    card_states: dict[str, StoredCardState]
 
 
 # --------------------------------------------------------------------- drafts
@@ -321,6 +397,24 @@ class ActiveTurn(BaseModel):
     accepts_input: bool | None = None
 
 
+class SyncBranch(BaseModel):
+    """Which branch the sync endpoint is serving. A THIRD branch shape, and
+    deliberately so: the client compares `id` to notice the branch changed under
+    it and re-read from zero, and renders `head` to grey out a branch action
+    that would be a no-op. It needs neither the fork previews a `Branch` list
+    entry computes nor the parent pointer `CurrentBranch` carries, and it is the
+    only one of the three that carries `head` at all.
+
+    Declaring this `str` is what took the whole chat surface down on 2026-08-17:
+    `/threads/{id}/events` is THE sync endpoint, so every thread with a
+    relational branch row 500d on load, on poll and on turn completion.
+    """
+
+    id: str
+    name: str | None = None
+    head: str | None = None
+
+
 class ThreadEvents(BaseModel):
     """THE sync endpoint. Everything needed to render a transcript is here, and a
     client merges it with nothing except the live SSE for the active turn.
@@ -337,7 +431,7 @@ class ThreadEvents(BaseModel):
 
     events: list[dict[str, Any]]
     last_seq: int
-    branch: str | None = None
+    branch: SyncBranch | None = None
     branch_count: int
     active_turn: ActiveTurn | None = None
     has_more: bool
