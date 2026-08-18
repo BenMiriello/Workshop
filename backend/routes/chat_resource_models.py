@@ -133,6 +133,11 @@ class AttachmentRow(BaseModel):
     thread_id: str
     created_at: str
     missing: bool
+    # A converted binary (docx/xlsx/pptx/archive): the stored text is a
+    # rendering, and the original bytes are downloadable. `source` is the human
+    # label of the original type ("Word document"), empty for a native file.
+    converted: bool = False
+    source: str = ""
 
 
 class AttachmentList(BaseModel):

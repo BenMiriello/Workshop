@@ -34,7 +34,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import ownership
+from . import attachment_convert, ownership
 
 log = logging.getLogger(__name__)
 
@@ -147,17 +147,8 @@ def kind_for(mime: str, name: str) -> str | None:
     return None
 
 
-def save(data: bytes, name: str, kind: str, *, scope: str = "",
-         thread_id: str = "", owner_id: int | None = None) -> dict:
-    """Store `data` and return its index record. Raises ValueError on a file we
-    would not be able to hand to a model."""
-    if kind not in KINDS:
-        raise ValueError(f"unsupported attachment kind: {kind}")
-    if not data:
-        raise ValueError("empty file")
-    if len(data) > MAX_BYTES:
-        raise ValueError(f"file is larger than {MAX_BYTES // (1024 * 1024)} MB")
-
+def _write_blob(owner_id: int | None, data: bytes) -> str:
+    """Content-address `data` and store it once. Returns the sha."""
     sha = hashlib.sha256(data).hexdigest()
     blob = _blob_path(owner_id, sha)
     if not blob.exists():
@@ -168,6 +159,51 @@ def save(data: bytes, name: str, kind: str, *, scope: str = "",
         tmp = blob.with_name(f".{sha}.{uuid.uuid4().hex}.part")
         tmp.write_bytes(data)
         os.replace(tmp, blob)
+    return sha
+
+
+def ingest(data: bytes, name: str, mime: str, *, scope: str = "",
+           thread_id: str = "", owner_id: int | None = None) -> dict:
+    """Store an uploaded file and return its index record.
+
+    A native image/pdf/text stores as-is. A convertible binary (Office file,
+    archive) is ALSO stored as-is, and a text rendering is derived and stored
+    beside it so the model has something to read. Raises ValueError on a file we
+    can neither read natively nor convert."""
+    kind = kind_for(mime, name)
+    if kind is not None:
+        return save(data, name, kind, scope=scope, thread_id=thread_id,
+                    owner_id=owner_id)
+    key = attachment_convert.convertible(mime, name)
+    if key is None:
+        raise ValueError(f"{safe_name(name)} is not a type a chat can read")
+    result = attachment_convert.convert(key, data, name)
+    return save(data, name, "text", scope=scope, thread_id=thread_id,
+                owner_id=owner_id, derived_text=result.text, converter=key,
+                converter_version=result.version, note=result.note,
+                media_type=attachment_convert.SOURCE_MEDIA.get(key))
+
+
+def save(data: bytes, name: str, kind: str, *, scope: str = "",
+         thread_id: str = "", owner_id: int | None = None,
+         derived_text: str | None = None, converter: str | None = None,
+         converter_version: int | None = None, note: str = "",
+         media_type: str | None = None) -> dict:
+    """Store `data` and return its index record. Raises ValueError on a file we
+    would not be able to hand to a model.
+
+    When `converter` is set the original bytes are a binary we cannot read, and
+    `derived_text` (if any) is stored as a SECOND content-addressed blob whose
+    sha is recorded as `derived_sha`. The model reads that derivation; the
+    original blob is kept so the operator can still download the real file."""
+    if kind not in KINDS:
+        raise ValueError(f"unsupported attachment kind: {kind}")
+    if not data:
+        raise ValueError("empty file")
+    if len(data) > MAX_BYTES:
+        raise ValueError(f"file is larger than {MAX_BYTES // (1024 * 1024)} MB")
+
+    sha = _write_blob(owner_id, data)
 
     rec = {
         "id": uuid.uuid4().hex,
@@ -183,6 +219,16 @@ def save(data: bytes, name: str, kind: str, *, scope: str = "",
         rec["media_type"] = _sniff_image_media(data, rec["name"])
     elif kind == "pdf":
         rec["media_type"] = "application/pdf"
+    if converter:
+        rec["converter"] = converter
+        if converter_version is not None:
+            rec["converter_version"] = converter_version
+        if media_type:
+            rec["media_type"] = media_type
+        if note:
+            rec["note"] = note
+        if derived_text:
+            rec["derived_sha"] = _write_blob(owner_id, derived_text.encode("utf-8"))
 
     idx = _index_path(owner_id)
     with idx.open("a", encoding="utf-8") as f:
@@ -240,17 +286,29 @@ def delete(att_id: str, owner_id: int | None = None) -> bool:
     tmp.write_text("".join(json.dumps(r) + "\n" for r in keep), encoding="utf-8")
     os.replace(tmp, idx)
 
-    sha = gone.get("sha256", "")
-    if sha and not any(r.get("sha256") == sha for r in keep):
-        try:
-            _blob_path(owner_id, sha).unlink(missing_ok=True)
-        except OSError as e:
-            log.warning("attachment %s: blob %s not removed: %s", att_id, sha, e)
+    # A converted file has two blobs (original bytes + derived text); either may
+    # be shared with another row, so each is GC'd independently.
+    referenced = {s for r in keep for s in (r.get("sha256"), r.get("derived_sha")) if s}
+    for sha in {gone.get("sha256"), gone.get("derived_sha")}:
+        if sha and sha not in referenced:
+            try:
+                _blob_path(owner_id, sha).unlink(missing_ok=True)
+            except OSError as e:
+                log.warning("attachment %s: blob %s not removed: %s", att_id, sha, e)
     return True
 
 
 def blob_for(rec: dict, owner_id: int | None = None) -> Path | None:
     p = _blob_path(owner_id, rec.get("sha256", ""))
+    return p if p.exists() else None
+
+
+def derived_path(rec: dict, owner_id: int | None = None) -> Path | None:
+    """The stored text rendering of a converted file, if there is one."""
+    sha = (rec or {}).get("derived_sha")
+    if not sha:
+        return None
+    p = _blob_path(owner_id, sha)
     return p if p.exists() else None
 
 
@@ -265,6 +323,28 @@ def _text_block(rec: dict, data: bytes) -> dict:
     return {
         "type": "text",
         "text": f"Attached file: {rec['name']}\n```\n{text}{truncated}\n```",
+    }
+
+
+def _converted_block(rec: dict, owner_id: int | None = None) -> dict:
+    """The text block for a converted binary. Reads the derived rendering, or, if
+    conversion produced none (corrupt/encrypted file), says so plainly so the
+    model does not answer about content it never received."""
+    label = attachment_convert.SOURCE_LABEL.get(rec.get("converter", ""), "file")
+    dpath = derived_path(rec, owner_id)
+    if dpath is None:
+        note = rec.get("note") or f"could not be read as {label}"
+        return {"type": "text",
+                "text": f"Attached {label} {rec['name']}: {note}. The original is stored."}
+    text = dpath.read_text(encoding="utf-8", errors="replace")
+    truncated = ""
+    if len(text) > MAX_TEXT_CHARS:
+        text = text[:MAX_TEXT_CHARS]
+        truncated = f"\n... (truncated at {MAX_TEXT_CHARS} characters)"
+    return {
+        "type": "text",
+        "text": (f"Attached {label} {rec['name']}, converted to text "
+                 f"(formatting may be lost):\n```\n{text}{truncated}\n```"),
     }
 
 
@@ -288,6 +368,14 @@ def content_blocks(refs: list[dict], owner_id: int | None = None) -> list[dict]:
             blocks.append({"type": "text",
                            "text": f"(Attachment {name} is no longer available.)"})
             continue
+
+        # A converted file: the model reads the derived text, never the original
+        # binary bytes. The block names the source so the model knows it is
+        # reading a rendering of a Word/Excel/archive, not a plain text file.
+        if rec.get("converter"):
+            blocks.append(_converted_block(rec, owner_id))
+            continue
+
         try:
             data = path.read_bytes()
         except OSError as e:

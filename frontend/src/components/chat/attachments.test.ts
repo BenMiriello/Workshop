@@ -40,10 +40,18 @@ describe("attachmentKind", () => {
     expect(attachmentKind("", "Makefile")).toBe("text");
   });
 
+  it("accepts a convertible binary as text: the server derives its rendering", () => {
+    expect(attachmentKind("application/zip", "bundle.zip")).toBe("text");
+    expect(attachmentKind("", "report.docx")).toBe("text");
+    expect(attachmentKind("", "book.xlsx")).toBe("text");
+    expect(attachmentKind("", "deck.pptx")).toBe("text");
+    expect(attachmentKind("", "arc.tar")).toBe("text");
+  });
+
   it("refuses what a model could not read, rather than attaching it and failing later", () => {
-    expect(attachmentKind("application/zip", "bundle.zip")).toBeNull();
     expect(attachmentKind("", "clip.mp4")).toBeNull();
     expect(attachmentKind("", "binary")).toBeNull();
+    expect(attachmentKind("", "app.exe")).toBeNull();
   });
 });
 
@@ -56,7 +64,7 @@ describe("admit", () => {
   });
 
   it("refuses an unsupported type with a reason, not silently", () => {
-    const { accepted, rejected } = admit([], [cand("x.zip", 5, "application/zip")]);
+    const { accepted, rejected } = admit([], [cand("clip.mp4", 5, "video/mp4")]);
     expect(accepted).toEqual([]);
     expect(rejected[0].reason).toBe("unsupported file type");
   });

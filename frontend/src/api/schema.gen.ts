@@ -2708,12 +2708,37 @@ export interface paths {
          *     Inline rather than an attachment disposition: this is a preview of something
          *     the operator just attached, not a download they asked for. The name is
          *     re-derived from the record, never from the URL.
+         *
+         *     For a CONVERTED file (docx/xlsx/archive) this serves the derived TEXT, not
+         *     the original binary, so the text viewer renders the readable rendering. The
+         *     raw original is reachable at `/original` for download.
          */
         get: operations["get_attachment_chat_attachments__att_id__get"];
         put?: never;
         post?: never;
         /** Delete Attachment */
         delete: operations["delete_attachment_chat_attachments__att_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/attachments/{att_id}/original": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Attachment Original
+         * @description The raw original bytes of a converted file, as a download. The derived
+         *     text is lossy, so the real docx/xlsx/archive stays reachable.
+         */
+        get: operations["get_attachment_original_chat_attachments__att_id__original_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -8220,6 +8245,11 @@ export interface components {
          *     you would go looking for it.
          */
         AttachmentRow: {
+            /**
+             * Converted
+             * @default false
+             */
+            converted: boolean;
             /** Created At */
             created_at: string;
             /** Id */
@@ -8234,6 +8264,11 @@ export interface components {
             scope: string;
             /** Size */
             size: number;
+            /**
+             * Source
+             * @default
+             */
+            source: string;
             /** Thread Id */
             thread_id: string;
         };
@@ -20139,6 +20174,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AttachmentDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_attachment_original_chat_attachments__att_id__original_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                att_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

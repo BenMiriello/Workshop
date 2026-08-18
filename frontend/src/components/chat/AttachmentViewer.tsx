@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, Download } from "lucide-react";
 import { Button, Modal, StateBlock } from "@workshop/ui";
 import { chatApi } from "../../lib/chat";
 
@@ -32,6 +32,10 @@ export type ViewableAttachment = {
   // of the three. The render chain below ends in a total `else`, so an
   // unrecognised kind is shown as text rather than crashing.
   kind: string;
+  // A converted binary (docx/xlsx/pptx/archive): what is shown is the derived
+  // text, so the viewer says so and offers the untouched original to download.
+  converted?: boolean;
+  source?: string;
 };
 
 export default function AttachmentViewer({
@@ -83,7 +87,16 @@ export default function AttachmentViewer({
   } else if (text === null) {
     body = <p className="ws-muted">Loading the file.</p>;
   } else {
-    body = <pre className="chat-att-view__text">{text}</pre>;
+    body = (
+      <>
+        {file.converted && (
+          <p className="ws-muted" style={{ marginBottom: "var(--space-3)" }}>
+            Converted{file.source ? ` from ${file.source}` : ""} to text. Formatting may be lost. Download the original below to open the real file.
+          </p>
+        )}
+        <pre className="chat-att-view__text">{text}</pre>
+      </>
+    );
   }
 
   // An EXPLICIT Close, because Modal itself ships neither. It closes on Esc and
@@ -103,6 +116,19 @@ export default function AttachmentViewer({
       size="lg"
       actions={
         <>
+          {file.converted && (
+            // The one place a real download belongs: the derived text is lossy,
+            // so the untouched original has to be reachable. `download` keeps it
+            // a save rather than a navigation, which is the mobile trap this
+            // viewer exists to avoid.
+            <a
+              className="ws-btn ws-btn--ghost ws-btn--sm"
+              href={`${url}/original`}
+              download={file.name}
+            >
+              <Download size={16} aria-hidden /> Download original
+            </a>
+          )}
           {!inMemory && (
             <Link
               className="ws-btn ws-btn--ghost ws-btn--sm"

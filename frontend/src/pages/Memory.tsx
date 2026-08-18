@@ -195,6 +195,11 @@ type StoredFile = {
   // The index has a row but the bytes are gone. Shown rather than hidden: a
   // file that cannot be opened should say so where you go looking for it.
   missing: boolean;
+  // A converted binary (docx/xlsx/pptx/archive): the row stores a text
+  // rendering AND the original bytes. `source` is its real type ("Excel
+  // spreadsheet"), shown instead of the bare "text" kind.
+  converted?: boolean;
+  source?: string;
 };
 type FilesResp = { files: StoredFile[]; count: number; scopes: string[] };
 
@@ -1591,7 +1596,7 @@ function Files() {
                   <td>
                     {f.missing
                       ? <StatusDot status="warn">Bytes missing</StatusDot>
-                      : <Tag hue={catFor(f.kind)}>{f.kind}</Tag>}
+                      : <Tag hue={catFor(f.source || f.kind)}>{f.converted && f.source ? f.source : f.kind}</Tag>}
                   </td>
                   <td>{formatBytes(f.size)}</td>
                   <td>
@@ -1630,7 +1635,8 @@ function Files() {
       {body}
       {viewing && (
         <AttachmentViewer
-          file={{ id: viewing.id, name: viewing.name, kind: viewing.kind }}
+          file={{ id: viewing.id, name: viewing.name, kind: viewing.kind,
+                  converted: viewing.converted, source: viewing.source }}
           onClose={() => setViewing(null)}
           inMemory
         />

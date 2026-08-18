@@ -31,3 +31,12 @@ numpy==2.5.1
 SQLAlchemy==2.0.52
 alembic==1.19.1
 psycopg[binary]==3.3.4
+
+# Attachment conversion. Binary uploads Claude cannot read natively (Office
+# files, archives) are converted server-side to a text/markdown rendering stored
+# beside the original blob. All three are pure-Python (no numpy/onnx), chosen
+# over markitdown to keep the venv light. Archives use the stdlib. See
+# services/attachment_convert.py.
+mammoth==1.12.1
+openpyxl==3.1.5
+python-pptx==1.0.2

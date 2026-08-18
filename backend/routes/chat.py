@@ -21,7 +21,7 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from routes import chat_models as cm
@@ -3044,14 +3044,14 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
 async def upload_attachment(file: UploadFile, scope: str = Form(""),
                             thread_id: str = Form("")):
     data = await file.read()
-    kind = chat_attachments.kind_for(file.content_type or "", file.filename or "")
-    if kind is None:
-        raise HTTPException(415, f"{file.filename or 'that file'} is not a type a chat can read")
     try:
-        rec = chat_attachments.save(data, file.filename or "file", kind,
-                                    scope=scope, thread_id=thread_id)
+        rec = chat_attachments.ingest(data, file.filename or "file",
+                                      file.content_type or "",
+                                      scope=scope, thread_id=thread_id)
     except ValueError as e:
-        raise HTTPException(413 if "larger than" in str(e) else 400, str(e))
+        msg = str(e)
+        code = 413 if "larger than" in msg else (415 if "not a type" in msg else 400)
+        raise HTTPException(code, msg)
     return {"id": rec["id"], "name": rec["name"], "kind": rec["kind"],
             "size": rec["size"], "created_at": rec["created_at"]}
 
@@ -3082,6 +3082,10 @@ async def list_attachments(scope: str = "", q: str = ""):
         "scope": r.get("scope") or "", "thread_id": r.get("thread_id") or "",
         "created_at": r.get("created_at") or "",
         "missing": chat_attachments.blob_for(r) is None,
+        # A converted binary (docx/xlsx/pptx/archive): the viewer shows its
+        # derived text and offers the original for download.
+        "converted": bool(r.get("converter")),
+        "source": chat_attachments.attachment_convert.SOURCE_LABEL.get(r.get("converter") or "", ""),
     } for r in recs]
     scopes = sorted({r["scope"] for r in out if r["scope"]})
     return {"files": out, "count": len(out), "scopes": scopes}
@@ -3100,10 +3104,24 @@ async def get_attachment(att_id: str):
 
     Inline rather than an attachment disposition: this is a preview of something
     the operator just attached, not a download they asked for. The name is
-    re-derived from the record, never from the URL."""
+    re-derived from the record, never from the URL.
+
+    For a CONVERTED file (docx/xlsx/archive) this serves the derived TEXT, not
+    the original binary, so the text viewer renders the readable rendering. The
+    raw original is reachable at `/original` for download."""
     rec = chat_attachments.get(att_id)
-    path = chat_attachments.blob_for(rec) if rec else None
-    if not rec or not path:
+    if not rec:
+        raise HTTPException(404, "attachment not found")
+    if rec.get("converter"):
+        dpath = chat_attachments.derived_path(rec)
+        if dpath is None:
+            note = rec.get("note") or "could not be converted"
+            return PlainTextResponse(f"This file {note}. Download the original to open it.")
+        return FileResponse(dpath, media_type="text/plain; charset=utf-8",
+                            headers={"Content-Disposition":
+                                     f'inline; filename="{rec["name"]}.txt"'})
+    path = chat_attachments.blob_for(rec)
+    if not path:
         raise HTTPException(404, "attachment not found")
     media = rec.get("media_type") or "application/octet-stream"
     if rec.get("kind") == "text":
@@ -3111,6 +3129,20 @@ async def get_attachment(att_id: str):
     return FileResponse(path, media_type=media,
                         headers={"Content-Disposition":
                                  f'inline; filename="{rec["name"]}"'})
+
+
+@router.get("/attachments/{att_id}/original")
+async def get_attachment_original(att_id: str):
+    """The raw original bytes of a converted file, as a download. The derived
+    text is lossy, so the real docx/xlsx/archive stays reachable."""
+    rec = chat_attachments.get(att_id)
+    path = chat_attachments.blob_for(rec) if rec else None
+    if not rec or not path:
+        raise HTTPException(404, "attachment not found")
+    media = rec.get("media_type") or "application/octet-stream"
+    return FileResponse(path, media_type=media,
+                        headers={"Content-Disposition":
+                                 f'attachment; filename="{rec["name"]}"'})
 
 
 @router.get("/threads/{thread_id}/mentionable", response_model=crm.MentionableAgents, response_model_exclude_unset=True)

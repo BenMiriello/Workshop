@@ -65,6 +65,16 @@ const TEXT_EXT = new Set([
   "diff", "patch", "gitignore", "dockerfile", "makefile", "lock",
 ]);
 
+// Binary types a chat cannot read as-is but the server CAN convert to text: it
+// stores the original and derives a text/markdown rendering (Office files) or a
+// manifest-plus-inlined-text (archives). To the composer these are just another
+// "text" attachment; the conversion is entirely server-side. Keep in sync with
+// attachment_convert._CONVERT_EXT in the backend.
+const CONVERT_EXT = new Set([
+  "docx", "xlsx", "xlsm", "pptx",
+  "zip", "tar", "tgz", "gz",
+]);
+
 function ext(name: string): string {
   const base = name.slice(name.lastIndexOf("/") + 1).toLowerCase();
   const dot = base.lastIndexOf(".");
@@ -87,6 +97,9 @@ export function attachmentKind(mime: string, name: string): AttachmentKind | nul
   if (IMAGE_EXT.has(e)) return "image";
   if (e === "pdf") return "pdf";
   if (TEXT_EXT.has(e)) return "text";
+  // A convertible binary is attached as "text": the server derives the text it
+  // will send to the model, so the turn carries it exactly like a text file.
+  if (CONVERT_EXT.has(e)) return "text";
 
   // A text MIME is trusted last: `text/html` on a drag from a browser is the
   // dragged markup, not a file, so an extension we recognise wins over it.
