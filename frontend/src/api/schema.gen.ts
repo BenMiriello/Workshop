@@ -11493,6 +11493,22 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * PushStatus
+         * @description The device-token registry is live and free; actual remote SENDING is the
+         *     deferred paid feature. `configured` is what separates the two, so a client
+         *     can register a device honestly while nothing can yet be delivered to it.
+         */
+        PushStatus: {
+            /** Configured */
+            configured: boolean;
+            /** Host */
+            host?: string | null;
+            /** Tokens */
+            tokens: number;
+            /** Topic */
+            topic?: string | null;
+        };
         /** PutDocIn */
         PutDocIn: {
             /** Content */
@@ -11703,6 +11719,17 @@ export interface components {
             count: number;
             /** Events */
             events: components["schemas"]["EventRecord"][];
+        };
+        /**
+         * Registered
+         * @description `count` is the registry size after the write, so a re-register of a token
+         *     already present reports the same number rather than an increment.
+         */
+        Registered: {
+            /** Count */
+            count: number;
+            /** Ok */
+            ok: boolean;
         };
         /** RegistryCatalog */
         RegistryCatalog: {
@@ -13366,6 +13393,17 @@ export interface components {
             ok: boolean;
             /** Status */
             status?: number | null;
+        };
+        /**
+         * Unregistered
+         * @description `removed` is 0 when the token was not present, which makes unregister
+         *     idempotent without an error.
+         */
+        Unregistered: {
+            /** Ok */
+            ok: boolean;
+            /** Removed */
+            removed: number;
         };
         /**
          * UsageStatus
@@ -24434,7 +24472,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["Registered"];
                 };
             };
             /** @description Validation Error */
@@ -24467,7 +24505,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["Unregistered"];
                 };
             };
             /** @description Validation Error */
@@ -24496,7 +24534,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["PushStatus"];
                 };
             };
         };
