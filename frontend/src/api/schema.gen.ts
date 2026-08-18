@@ -7800,7 +7800,7 @@ export interface components {
          *     which slug if not the template's own, and what to change about it.
          */
         AgentGroupMember: {
-            overrides?: components["schemas"]["AgentOverrides"] | null;
+            overrides?: components["schemas"]["AgentOverrides-Output"] | null;
             /** Slug */
             slug?: string | null;
             /** Template */
@@ -7840,7 +7840,21 @@ export interface components {
          *     use are declared as a floor and `extra="allow"` keeps the rest. The `tended`
          *     group overrides `triggers` on note-triager and nothing on memory-keeper.
          */
-        AgentOverrides: {
+        "AgentOverrides-Input": {
+            limits?: components["schemas"]["AgentLimits"] | null;
+            /** Triggers */
+            triggers?: components["schemas"]["AgentTrigger"][] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * AgentOverrides
+         * @description Per-member changes applied to a template when a group is adopted. An open
+         *     bag of any agent-definition field, so the two the shipped groups actually
+         *     use are declared as a floor and `extra="allow"` keeps the rest. The `tended`
+         *     group overrides `triggers` on note-triager and nothing on memory-keeper.
+         */
+        "AgentOverrides-Output": {
             limits?: components["schemas"]["AgentLimits"] | null;
             /** Triggers */
             triggers?: components["schemas"]["AgentTrigger"][] | null;
@@ -9055,6 +9069,30 @@ export interface components {
             platform_permission_mode: string;
         };
         /**
+         * CheckpointReport
+         * @description One repo's checkpoint-thinning description. REPORT ONLY: nothing here is
+         *     ever rewritten, because rewriting history is exactly what the git-guard hook
+         *     blocks for agents, and the producer says so in its own `note`.
+         */
+        CheckpointReport: {
+            /** Candidates */
+            candidates?: components["schemas"]["SquashableCheckpoint"][] | null;
+            /** Is Repo */
+            is_repo?: boolean | null;
+            /** Kept */
+            kept?: number | null;
+            /** Note */
+            note?: string | null;
+            /** Repo */
+            repo?: string | null;
+            /** Squashable */
+            squashable?: number | null;
+            /** Total Checkpoints */
+            total_checkpoints?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * CleanupResult
          * @description Branch slugs, not branch refs. A branch still ahead of the base is KEPT:
          *     cleanup is best-effort per branch and never discards unmerged work.
@@ -10048,8 +10086,7 @@ export interface components {
         };
         /** FromTemplateIn */
         FromTemplateIn: {
-            /** Overrides */
-            overrides?: Record<string, never>;
+            overrides?: components["schemas"]["AgentOverrides-Input"] | null;
             /** Project */
             project?: string | null;
             /** Slug */
@@ -10060,14 +10097,15 @@ export interface components {
         /**
          * GcReport
          * @description Checkpoint history is REPORTED, never rewritten here: rewriting history is
-         *     exactly what the git-guard hook blocks for agents. Each checkpoint entry is
-         *     `describe_checkpoint_thinning`'s report for one project and is left open.
+         *     exactly what the git-guard hook blocks for agents.
          */
         GcReport: {
             /** Checkpoints */
-            checkpoints: Record<string, never>[];
+            checkpoints: components["schemas"]["CheckpointReport"][];
             merged_worktrees: components["schemas"]["GcWorktrees"];
             stopped_runtimes: components["schemas"]["GcRuntimes"];
+        } & {
+            [key: string]: unknown;
         };
         /** GcRunIn */
         GcRunIn: {
@@ -10088,11 +10126,13 @@ export interface components {
             /** Available */
             available: boolean;
             /** Candidates */
-            candidates?: Record<string, never>[] | null;
+            candidates?: components["schemas"]["StoppedRuntime"][] | null;
             /** Cleared */
-            cleared?: Record<string, never>[] | null;
+            cleared?: components["schemas"]["StoppedRuntime"][] | null;
             /** Count */
             count: number;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * GcWorktrees
@@ -10103,13 +10143,15 @@ export interface components {
             /** Applied */
             applied: boolean;
             /** Candidates */
-            candidates?: Record<string, never>[] | null;
+            candidates?: components["schemas"]["MergedWorktree"][] | null;
             /** Count */
             count: number;
             /** Failed */
-            failed?: Record<string, never>[] | null;
+            failed?: components["schemas"]["MergedWorktree"][] | null;
             /** Reaped */
-            reaped?: Record<string, never>[] | null;
+            reaped?: components["schemas"]["MergedWorktree"][] | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * GpuSnapshot
@@ -10842,6 +10884,28 @@ export interface components {
             ok: boolean;
             /** Reason */
             reason?: string | null;
+        };
+        /**
+         * MergedWorktree
+         * @description A task worktree whose branch is already merged into the project's
+         *     canonical branch, so removing it loses nothing. `merged` is always true --
+         *     it is what qualified the entry -- and is carried so a row reads on its own.
+         */
+        MergedWorktree: {
+            /** Branch */
+            branch?: string | null;
+            /** Branch Slug */
+            branch_slug?: string | null;
+            /** Dir */
+            dir?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Merged */
+            merged?: boolean | null;
+            /** Project Slug */
+            project_slug?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * MessageAccepted
@@ -12725,6 +12789,19 @@ export interface components {
             thread_id: string;
         };
         /**
+         * SquashableCheckpoint
+         * @description One checkpoint commit old enough to squash and not pointed at by a tag.
+         *     `sha` is already shortened to 12 by the producer.
+         */
+        SquashableCheckpoint: {
+            /** Sha */
+            sha?: string | null;
+            /** Subject */
+            subject?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * StandaloneSurface
          * @description Where a project's standalone deployment is running, reflected into the
          *     registry by `local_runner._reflect_surface` so the Projects hub can show a
@@ -12780,6 +12857,22 @@ export interface components {
             permission_mode?: string | null;
             /** Sent At */
             sent_at?: string | null;
+        };
+        /**
+         * StoppedRuntime
+         * @description A dev-server entry whose process is gone. `pid` and `port` are what it
+         *     HELD, which is the useful part of the report: a port still registered to a
+         *     dead process is why the next start fails.
+         */
+        StoppedRuntime: {
+            /** Pid */
+            pid?: number | null;
+            /** Port */
+            port?: number | null;
+            /** Slug */
+            slug?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * StoreCatalog

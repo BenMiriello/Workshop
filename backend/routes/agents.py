@@ -473,7 +473,9 @@ class FromTemplateIn(BaseModel):
     template: str
     slug: str | None = None       # minted from the template's name when absent
     project: str | None = None    # project scope; absent = the user scope
-    overrides: dict = Field(default_factory=dict)
+    # The same open bag of agent-definition fields a group member carries, so it
+    # reuses that model rather than restating it as `dict`.
+    overrides: AgentOverrides | None = None
 
 
 class AdoptGroupIn(BaseModel):

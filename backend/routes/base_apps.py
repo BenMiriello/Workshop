@@ -17,6 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from services import app_overlay, app_registry, app_runner, gc, manifests, permissions, port_registry, registry
 
+from routes.gc_models import GcReport
+
 router = APIRouter()
 
 # Defaults to the tenant home. Configurable to scan a different root if needed.
@@ -180,38 +182,6 @@ class RegistryUpdateResult(BaseModel):
     reason: str | None = None
     current: str | None = None
     latest: str | None = None
-
-
-class GcWorktrees(BaseModel):
-    """`candidates` on a preview, `reaped`/`failed` after an apply. `count` means
-    candidates before and reaped after."""
-
-    applied: bool
-    count: int
-    candidates: list[dict[str, Any]] | None = None
-    reaped: list[dict[str, Any]] | None = None
-    failed: list[dict[str, Any]] | None = None
-
-
-class GcRuntimes(BaseModel):
-    """`available: false` means the dev-server module is not loadable, which is a
-    different answer from 'nothing to reap'."""
-
-    available: bool
-    applied: bool
-    count: int
-    candidates: list[dict[str, Any]] | None = None
-    cleared: list[dict[str, Any]] | None = None
-
-
-class GcReport(BaseModel):
-    """Checkpoint history is REPORTED, never rewritten here: rewriting history is
-    exactly what the git-guard hook blocks for agents. Each checkpoint entry is
-    `describe_checkpoint_thinning`'s report for one project and is left open."""
-
-    merged_worktrees: GcWorktrees
-    checkpoints: list[dict[str, Any]]
-    stopped_runtimes: GcRuntimes
 
 
 class ServiceSpec(BaseModel):
