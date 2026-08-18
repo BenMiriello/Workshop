@@ -336,7 +336,9 @@ const MessageBubble = memo(function MessageBubble({
  *  screenshot meant force-quitting the app to get back to the chat. It opens an
  *  overlay over the transcript now and the conversation keeps its place. */
 export function SentAttachments({ items }: {
-  items: NonNullable<NonNullable<ChatMsg["meta"]>["attachments"]>;
+  // Widened from the committed-message shape because this same row renders the
+  // thread's QUEUE, whose `kind` comes off the wire as a plain string.
+  items: { id: string; name: string; kind: string }[];
 }) {
   const [viewing, setViewing] = useState<ViewableAttachment | null>(null);
   return (

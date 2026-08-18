@@ -1,4 +1,4 @@
-import type { ActiveTurnPayload, ChatSegment, LogEvent } from "../../lib/chat";
+import type { ActiveTurnPayload, ChatSegment, LogEvent, QueuedMessagePayload } from "../../lib/chat";
 import { applyStreamEvent, sealTrailingText, type StreamEvent } from "./segments";
 
 // The wire shapes live with the rest of the API surface (lib/chat); re-exported
@@ -100,7 +100,7 @@ export type QueuedMessage = {
   text: string;
   /** When the operator hit enter. */
   ts: string;
-  attachments?: PendingSend["attachments"];
+  attachments?: QueuedMessagePayload["attachments"];
 };
 
 export type ThreadState = {
@@ -161,7 +161,10 @@ export type ThreadAction =
        *  which command put them there. Not derived from the boundary events —
        *  see `cut` in ThreadState. */
       clearedThrough?: number;
-      cutMode?: "clear" | "compact" | "";
+      // A bare string, because that is what the server serves. `nextCut` below
+      // is the one place that discriminates, and it already normalises anything
+      // that is not "compact" to "clear".
+      cutMode?: string;
       /** Epoch ms at which the REQUEST behind this response was issued. Several
        *  syncs are legitimately in flight at once (the 10s poll, focus and
        *  visibilitychange, finish()'s settle loop, useCompaction's un-awaited
@@ -359,7 +362,9 @@ function adoptTurn(
     startedMs: Number.isFinite(startedMs) ? startedMs : Date.now(),
     model: live.meta?.model,
     agent: live.meta?.agent,
-    acceptsInput: payload.accepts_input,
+    // The wire says `boolean | null`; absent and null both mean "not stated",
+    // which this store spells `undefined`.
+    acceptsInput: payload.accepts_input ?? undefined,
   };
 }
 

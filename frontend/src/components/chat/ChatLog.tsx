@@ -129,7 +129,11 @@ export default function ChatLog({
    *  the thread's own queue, the same on every device. */
   queued: {
     text: string; sentAt: string; clientId: string;
-    attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
+    // `kind` is a bare string because this queue came off the SERVER, which
+    // types it as one and defaults it to "". Only a send this client made can
+    // promise one of the three the composer produces. `AttachmentChips` already
+    // falls through to a generic icon for anything else.
+    attachments?: { id: string; name: string; kind: string }[];
   }[];
   /** A /compact or /clear in flight, or null. It is drawn at the foot of the
    *  log, where its divider lands, and nowhere else. */

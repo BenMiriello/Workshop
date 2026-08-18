@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { chatApi, newClientId, shortHttpError, type ThreadSummary } from "../../lib/chat";
+import { chatApi, newClientId, shortHttpError, type Thread, type ThreadSummary } from "../../lib/chat";
 import type { AttachmentRef } from "./attachments";
 import type { ChatModeId } from "./chatModes";
 import { isTransientSendFailure, sendFailureText } from "./sendFailure";
@@ -64,7 +64,7 @@ export function useSendPipeline({
   selectedPermissionMode: string;
   chatModeRef: React.MutableRefObject<ChatModeId>;
   activeIdRef: React.MutableRefObject<string | null>;
-  adoptThread: (t: ThreadSummary) => void;
+  adoptThread: (t: ThreadSummary | Thread) => void;
   stateRef: React.MutableRefObject<ThreadState>;
   dispatch: React.Dispatch<ThreadAction>;
   sync: () => Promise<void>;

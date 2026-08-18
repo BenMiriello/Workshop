@@ -62,7 +62,7 @@ export type ChatThread = {
   renameBusy: boolean;
   /** A thread was just created by this chat: put it in the picker, record the
    *  selection, and carry the blank chat's outbox onto it. */
-  adoptThread: (t: ThreadSummary) => void;
+  adoptThread: (t: ThreadSummary | Thread) => void;
   /** The voice session started a thread of its own and this chat is on the
    *  blank slot. Same move, minus a summary to insert (the refresh brings it). */
   adoptThreadId: (id: string) => void;
@@ -192,13 +192,17 @@ export function useChatThread({
   useEffect(() => {
     let live = true;
     void chatApi.getChatPrefs()
-      .then((p) => { if (live && !activeIdRef.current) setChatMode(p.default_mode); })
+      .then((p) => { if (live && !activeIdRef.current) setChatMode(chatModeDef(p.default_mode ?? undefined).id); })
       .catch(() => { /* the platform default stands */ });
     return () => { live = false; };
   }, []);
 
   // The thread's own settings. NOT its messages.
-  const adoptSettings = useCallback((t: Thread | ThreadSummary) => {
+  // Takes the thread DOCUMENT, not a list row. `card_states`, `effort` and
+  // `permission_mode` are settings and only the document carries them; the
+  // union this used to accept let a `ThreadSummary` in, where all three are
+  // silently `undefined` and every picker fell back to its default.
+  const adoptSettings = useCallback((t: Thread) => {
     outboxRef.current.bind(t.id);
     setCardStates(t.card_states ?? {});
     setChatMode(chatModeDef(t.mode).id);
@@ -309,12 +313,21 @@ export function useChatThread({
     outboxRef.current.carryToThread(id);
   }, [scope, outboxRef]);
 
-  const adoptThread = useCallback((t: ThreadSummary) => {
+  const adoptThread = useCallback((t: ThreadSummary | Thread) => {
+    // The caller has whichever shape it happens to hold: `createThread` answers
+    // with the thread DOCUMENT, the picker holds list rows, and the two are not
+    // the same type. The document has no `message_count` or `last_message`
+    // because the list is what computes those, so a created thread used to go
+    // into the picker with both `undefined` while the type said otherwise.
+    // A thread this client just created has no messages yet, so the two values
+    // are known here rather than needing a refetch.
+    const row: ThreadSummary =
+      "message_count" in t ? t : { ...t, message_count: 0, last_message: "" };
     // Put the new thread in the picker immediately. Without this a chat you had
     // just started was unreachable the moment you navigated away: it wasn't in
     // the local list, and nothing remembered you were in it.
-    setThreads((list) => (list.some((x) => x.id === t.id) ? list : [t, ...list]));
-    adoptThreadId(t.id);
+    setThreads((list) => (list.some((x) => x.id === row.id) ? list : [row, ...list]));
+    adoptThreadId(row.id);
   }, [adoptThreadId]);
 
   // ARCHIVING is what closing a chat from its own menu does. It is the same

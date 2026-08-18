@@ -1050,7 +1050,9 @@ export default function Chat({
   const queuedWaiting = useMemo(
     () => withoutCommitted(
       state.queued.map((q) => ({
-        clientId: q.client_id, text: q.text, sentAt: q.ts, attachments: q.attachments,
+        clientId: q.client_id, text: q.text, sentAt: q.ts,
+        // The wire says `list | null`; absent and null both mean "no files".
+        attachments: q.attachments ?? undefined,
       })),
       committedIds,
     ),

@@ -24,6 +24,23 @@ import type { ChatModeId } from "../components/chat/chatModes";
  *  index into it, snapped it to that delegation's end, and dropped the SECOND
  *  delegation below a message typed after it was launched. "After this segment"
  *  cannot move. See docs/decisions/0018. */
+// GENERATED, not hand-written. Every wire shape below is an alias into the
+// backend's own OpenAPI schema (`npm run gen:api-types`), which knows them
+// because `routes/chat.py` declares `response_model=` on each route and
+// `routes/chat_models.py` describes what those routes actually return.
+//
+// WHY THIS FILE IN PARTICULAR. The hand-written versions had drifted in BOTH
+// directions on the same type: `ThreadSummary` declared `card_states`,
+// `effort`, `permission_mode` and `cleared_through`, none of which the LIST
+// route returns (`chat_store._summary_row` emits twelve keys and not one of
+// those is among them), while `Thread` was `ThreadSummary & QueueState` and so
+// omitted most of what the DOCUMENT route does return. One name covered two
+// different server shapes, so a field read off a list row was `undefined` at
+// runtime while the compiler said it was there.
+//
+// The narrowings that remain below are deliberate and each says why. Anything
+// not narrowed is the schema verbatim; do not re-widen or re-declare one here.
+import type { components } from "../api/schema.gen";
 import { shortHttpError } from "./httpError";
 
 type CutAfter = { cut_after?: string[] };
@@ -234,51 +251,17 @@ export type ChatMsg = {
   };
 };
 
-export type ThreadSummary = {
-  id: string;
-  context_key: string;
-  // Entity-model 2026-07-18 §7 (C11 + P1). ALWAYS derived from `context_key`,
-  // server-side, by the one module that owns that mapping. Never stored, so it
-  // cannot go stale after a rescope. `scope_locked` sat beside it, was settable
-  // by no client and read by one migration helper, and is gone.
-  scope?: string;
-  mode?: ChatModeId;
-  // The agent this chat is with, when the chat's own scope is not one. See
-  // `threadAgent` below, which is the only thing that should read it: an
-  // `agent:<slug>` chat answers with `context_key`, and this covers the chats
-  // that were with an agent whose scope no longer exists.
-  //
-  // `participants` used to sit here: a list of `agent:<slug>` strings that no
-  // turn, prompt or route ever read. It is deleted.
-  agent_id?: string | null;
-  title: string;
-  updated_at: string;
-  // When this chat was archived. Absent on every live thread: the two lists are
-  // disjoint, so a summary carrying this came from the archive.
-  archived_at?: string | null;
-  message_count: number;
-  last_message: string;
-  model?: string | null;
-  // The effort level this chat runs at, persisted the same way `model` is.
-  // Absent/null = the model's own default (no --effort is sent at all).
-  effort?: string | null;
-  // How much this chat asks before acting. Absent/null = the platform default
-  // (bypassPermissions), which is what every chat ran at before the picker.
-  permission_mode?: string | null;
-  // How many leading messages /clear has taken out of the prompt. Raw messages
-  // are never deleted, so this is the only way a client can tell a cut thread
-  // from an uncut one, and the only way the divider survives a reload.
-  //
-  // There is only one kind of cut now. It used to also count messages folded
-  // into a running summary, and `context_cut` existed to say which of the two
-  // had happened; server-side folding was removed on 2026-08-12, so the
-  // question no longer has two answers.
-  cleared_through?: number;
-  // Which in-chat cards have already been acted on, keyed by a digest of the
-  // card block. Without this a card that was filed and run came back on the next
-  // load looking exactly like one that had never been touched.
-  card_states?: Record<string, CardState>;
-};
+/** One sidebar row, exactly as `GET /threads` serves it.
+ *
+ *  This is the LIST shape and nothing more. It carries no `card_states`, no
+ *  `effort`, no `permission_mode` and no `cleared_through`: those are settings,
+ *  they live on the thread DOCUMENT, and the list has never sent them. See
+ *  `Thread` below for the shape that does.
+ *
+ *  `scope` is derived server-side from `context_key` on every read and stored
+ *  by nobody, so it cannot go stale after a rescope. `last_user_at` is when the
+ *  OPERATOR last spoke, which is what the list orders by. */
+export type ThreadSummary = components["schemas"]["ThreadSummary"];
 
 /**
  * The agent this chat is with, or null.
@@ -300,20 +283,28 @@ export function threadAgent(t: Pick<ThreadSummary, "context_key" | "agent_id">):
   return t.agent_id || null;
 }
 
-export type CardState = {
-  phase: string;              // "success" | "dismissed"
-  note?: string | null;
-  slug?: string | null;
-  title?: string | null;
-  ts?: string;
-};
+/** One in-chat card's recorded outcome, as STORED on the thread.
+ *
+ *  Not the write body: that is `{ key, phase, ... }`, and the `key` never comes
+ *  back because it is what the state is filed under. `ts` is stamped by the
+ *  server. The trailing index signature is the backend's `extra="allow"`: a
+ *  card kind owns the shape of its own state, so the typed fields are a floor
+ *  and not a ceiling. */
+export type CardState = components["schemas"]["StoredCardState"];
 
-// Deliberately NOT `& { messages: ChatMsg[] }`: the server strips `messages`
-// from this route's response (backend/routes/chat.py, thread()). The
-// transcript comes from `threadEvents` only; see the comment on `getThread`
-// below. Adding `messages` back here would let the compiler believe a field
-// the server no longer sends.
-export type Thread = ThreadSummary & QueueState;
+/** A thread as SETTINGS, merged with its queue: what `GET /threads/{id}` and
+ *  `POST /threads` serve. This is the DOCUMENT shape, and it is a different
+ *  thing from `ThreadSummary` above -- it carries `effort`, `permission_mode`,
+ *  `card_states`, `cleared_through`, `turn_marks` and the rest, and it does NOT
+ *  carry the list's `message_count`, `last_message` or `last_user_at`.
+ *
+ *  Deliberately NOT `& { messages: ChatMsg[] }`: the server strips `messages`
+ *  from this route's response (backend/routes/chat.py, thread()). The
+ *  transcript comes from `threadEvents` only; see the comment on `getThread`
+ *  below. Adding `messages` back here would let the compiler believe a field
+ *  the server no longer sends. Measured 2026-08-14, the worst thread's
+ *  `messages` was 4.77 MB of a 4.79 MB response no client read. */
+export type Thread = components["schemas"]["ThreadWithQueue"];
 
 // ---- The event log (the wire shapes) ---------------------------------------
 // A thread IS an append-only, sequence-numbered event log; everything else about
@@ -356,30 +347,38 @@ export type LogEvent = {
 
 // The turn in flight. `live` is the server's throttled snapshot of what it has
 // produced so far — the fallback for a turn this browser is not streaming.
-export type ActiveTurnPayload = {
-  turn_id: string;
-  started_seq?: number | null;
-  // May a message be handed to this turn while it is going? False for a slash
-  // command (it folds or resets or reports and exits without reading a word) and
-  // for a voice turn (driven by the voice worker, not by this module's input
-  // channel). A message sent into either is a message nothing will ever answer,
-  // so the client queues instead of injecting. Absent from an older backend,
-  // which reads as "yes" and restores the old behaviour.
-  accepts_input?: boolean;
-  live?: {
+/** The draft reply as it is being written. The backend leaves `live` as an open
+ *  `dict` ON PURPOSE and says so in `routes/chat_models.py`: the renderer splits
+ *  replies on positional fields (`meta.cut_head`, `seg.cut_after`) that a closed
+ *  model would drop, and dropping exactly those is the 2026-08-14 regression
+ *  that put the operator's message above half an hour of work. So the CLIENT
+ *  narrows it here, since the client is what reads it, and the seam gets pinned
+ *  by the contract test that has its own open ticket. */
+export type LiveMessage = {
+  turn_id?: string;
+  content?: string;
+  ts?: string;
+  meta?: {
+    segments?: ChatSegment[];
+    model?: string;
+    agent?: string;
     turn_id?: string;
-    content?: string;
-    ts?: string;
-    meta?: {
-      segments?: ChatSegment[]; model?: string; agent?: string; turn_id?: string;
-      // Messages that beat this turn's first output. Carried on the live
-      // snapshot as well as on the commit, because a turn that has produced
-      // nothing is exactly when it matters and is exactly when there are no
-      // segments to carry it.
-      cut_head?: string[];
-    };
-  } | null;
-} | null;
+    // Messages that beat this turn's first output. Carried on the live snapshot
+    // as well as on the commit, because a turn that has produced nothing is
+    // exactly when it matters and is exactly when there are no segments to
+    // carry it.
+    cut_head?: string[];
+  };
+};
+
+/** The turn in flight, or `null` when none is. `accepts_input` is false for a
+ *  slash command (it folds or resets or reports and exits without reading a
+ *  word) and for a voice turn (driven by the voice worker, not by this module's
+ *  input channel): a message sent into either is a message nothing will ever
+ *  answer, so the client queues instead of injecting. */
+export type ActiveTurnPayload =
+  | (Omit<components["schemas"]["ActiveTurn"], "live"> & { live?: LiveMessage | null })
+  | null;
 
 /** One message the SERVER is holding to send next.
  *
@@ -389,74 +388,41 @@ export type ActiveTurnPayload = {
  *  the same queue, and the server sends it when the turn ends whether or not any
  *  browser is watching. See backend/services/chat_queue.py — this replaced a
  *  localStorage queue that lost two of the operator's messages on 2026-08-12. */
-export type QueuedMessagePayload = {
-  client_id: string;
-  text: string;
-  /** When the operator hit enter. */
-  ts: string;
-  attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
-};
+export type QueuedMessagePayload = components["schemas"]["QueuedMessage"];
 
 /** The context cut the server is APPLYING, and which command made it. */
-export type CutState = {
-  /** Messages no longer sent verbatim. 0 means no cut. */
-  cleared_through?: number;
-  /** `clear` dropped them; `compact` folded them into a summary. */
-  cut_mode?: "clear" | "compact" | "";
-};
+/** The context cut the server is APPLYING, and which command made it.
+ *  `cleared_through` is 0 when there is no cut. */
+export type CutState = Pick<
+  components["schemas"]["ThreadEvents"], "cleared_through" | "cut_mode">;
 
 /** The queue, as every read of a thread reports it. */
-export type QueueState = {
-  queued?: QueuedMessagePayload[];
-  /** Stop is holding it. The operator's next send releases it. */
-  queue_held?: boolean;
-  /** Why it is not moving, when it stopped for a reason worth showing. */
-  queue_error?: string;
-};
+export type QueueState = components["schemas"]["QueueState"];
 
 /** One line of the conversation this chat could be on (ADR 0020).
  *
  *  A branch is a named pointer to a message. Going back to an earlier point
  *  creates one; nothing is deleted to do it, which is why the branch you left
  *  is still in this list. */
-export type Branch = {
-  id: string;
-  name: string;
-  ordinal: number;
-  is_current: boolean;
-  is_root: boolean;
-  created_at: string;
-  fork_message_id: string | null;
-  /** A snippet of the message this branch carried on from. */
-  forked_from: string | null;
-  forked_from_role: string | null;
-  forked_at: string | null;
-  /** A snippet of the last thing said on it. */
-  preview: string | null;
-  last_at: string;
-};
+export type Branch = components["schemas"]["Branch"];
 
 /** Which branch the server is serving, so the client can tell that it changed.
  *  Rides on the sync endpoint rather than its own, for the same reason the cut
  *  and the queue do: things that must agree may not arrive separately. */
-export type BranchState = {
-  branch: { id: string; name: string; head: string | null } | null;
-  branch_count: number;
-};
+/** Which branch the server is serving, so the client can tell that it changed.
+ *  Rides on the sync endpoint rather than its own, for the same reason the cut
+ *  and the queue do: things that must agree may not arrive separately. */
+export type BranchState = Pick<
+  components["schemas"]["ThreadEvents"], "branch" | "branch_count">;
 
-export type ThreadEventsPage = {
-  events: LogEvent[];
-  last_seq: number;
-  active_turn: ActiveTurnPayload;
-  /** Whether more VISIBLE events exist further back than this page. Only
-   *  meaningful on a `tail`/`before` page (a plain `after=0` read returns the
-   *  whole log, so it is always `false` there); see backend/routes/chat.py
-   *  `_tail_page`. Never a guess — exact, and never under-reports. */
-  has_more: boolean;
-  /** The lowest seq in `events`, or `null` when `events` is empty. Feed this
-   *  straight back as `before` to page one window further into the past. */
-  first_seq: number | null;
-} & QueueState & CutState & BranchState;
+/** THE sync endpoint's payload. Generated except for the two payloads the
+ *  backend deliberately leaves open (`events`, and `live` inside `active_turn`)
+ *  -- see `ActiveTurnPayload` above for why, and do not narrow them there. */
+export type ThreadEventsPage =
+  Omit<components["schemas"]["ThreadEvents"], "events" | "active_turn"> & {
+    events: LogEvent[];
+    active_turn: ActiveTurnPayload;
+  };
 
 // This browser's id for one send, stamped before the request leaves and reused
 // verbatim on a retry.
@@ -489,43 +455,21 @@ export { shortHttpError };
 // renders the levels it is handed and never carries its own list, because the
 // ladder differs per model (Sonnet 4.6 has `max` but no `xhigh`) and per vendor.
 // An empty `levels` means no control at all, not a disabled one.
-export type ModelCaps = {
-  vendor: string;
-  efforts: { levels: string[]; default: string | null };
-};
+export type ModelCaps = components["schemas"]["ModelCaps"];
 
 // Operator-level chat settings (GET/POST /api/chat/prefs). `null` on either
 // default means "no preference": the model's own effort, and the platform's
 // permission mode (`platform_permission_mode`, shown so the settings screen can
 // name what "no preference" resolves to instead of leaving it blank).
-export type ChatPrefs = {
-  default_mode: ChatModeId;
-  modes: string[];
-  default_effort: string | null;
-  efforts: string[];
-  default_permission_mode: string | null;
-  permission_modes: string[];
-  platform_permission_mode: string;
-};
+export type ChatPrefs = components["schemas"]["ChatPrefsOut"];
 
 // Write shape: every field optional, `""` clears one to "no preference".
-export type ChatPrefsPatch = {
-  default_mode?: ChatModeId;
-  default_effort?: string;
-  default_permission_mode?: string;
-};
+// Write shape: every field optional, `""` clears one back to "no preference".
+// Named `ChatPrefs` on the backend -- the request model took the plain name and
+// the response model is the one that had to be suffixed.
+export type ChatPrefsPatch = components["schemas"]["ChatPrefs"];
 
-export type Provider = {
-  key: string;
-  label: string;
-  models?: string[];
-  default_model?: string;
-  tools_active?: boolean;
-  model_caps?: Record<string, ModelCaps>;
-  // Vendor-level: a permission mode is a property of the CLI running the turn,
-  // not of the model answering, so it is not repeated per model.
-  modes?: { options: string[]; default: string };
-};
+export type Provider = components["schemas"]["Provider"];
 
 export const chatApi = {
   // ONE FILE PER REQUEST, and the request happens on drop rather than on send.

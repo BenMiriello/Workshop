@@ -26,7 +26,12 @@ import { chatApi } from "../../lib/chat";
 export type ViewableAttachment = {
   id: string;
   name: string;
-  kind: "image" | "pdf" | "text";
+  // A bare string, not the composer's three-way union. A viewed attachment can
+  // arrive off the SERVER (the thread's queue types `kind` as a string and
+  // defaults it to ""), and only a file this client just picked can promise one
+  // of the three. The render chain below ends in a total `else`, so an
+  // unrecognised kind is shown as text rather than crashing.
+  kind: string;
 };
 
 export default function AttachmentViewer({
