@@ -2683,10 +2683,17 @@ p.chat-workpanel__note { margin: 0; }
    its 4a-outline.txt (the in-chat card: var(--card), 1px var(--border), ~10px,
    no shadow, ~10-11px padding). */
 .chat-card {
-  background: var(--card);
-  border: 1px solid var(--border);
+  /* The assistant bubble this sits on is itself var(--card), so a var(--card)
+     card vanished into it and the border was the only thing left, reading as a
+     hard outline on one flat colour. Step the fill UP to the raised card tone so
+     the card reads as its own surface: in dark, where there is no shadow, that
+     lift is what separates it; in light it is near-invisible and the shadow
+     below does the lifting, which is the design system's card rule (float on a
+     shadow in light, on a faint ring in dark). */
+  background: var(--card-hover);
+  border: 1px solid var(--card-ring);
   border-radius: var(--radius-md);
-  box-shadow: none;
+  box-shadow: var(--shadow-card);
   padding: var(--space-3);
 }
 .chat-ticket-card { display: flex; flex-direction: column; gap: var(--space-2); }
@@ -2700,7 +2707,9 @@ p.chat-workpanel__note { margin: 0; }
   color: inherit; font: inherit; font-size: var(--fs-sm);
   text-align: left; cursor: pointer;
 }
-.chat-ticket-card__head:hover { background: var(--card-hover); }
+/* The card fill is now var(--card-hover), so hovering the head to that same tone
+   showed nothing. Step to var(--card) (a shade down) so the hover still reads. */
+.chat-ticket-card__head:hover { background: var(--card); }
 /* Neutral at rest, both of them: a control is not content, and the glyph is a
    constant on every one of these cards, so it labels nothing by being coloured. */
 .chat-ticket-card__glyph { flex: 0 0 auto; color: var(--muted); }
