@@ -147,10 +147,10 @@ class VoiceTurn:
     completed_at: float | None = None
     done_event: asyncio.Event = field(default_factory=asyncio.Event)
     new_event: asyncio.Event = field(default_factory=asyncio.Event)
-    # This turn holds the thread's run claim, so the rest of the system can see
+    # This turn holds the thread's turn claim, so the rest of the system can see
     # that something is in flight. Set only when the claim succeeded — a turn
     # that lost the race to a text turn does not get to release someone else's.
-    holds_run: bool = False
+    holds_turn: bool = False
 
     def push(self, kind: str, payload: dict) -> None:
         self.events.append({"kind": kind, "payload": payload, "ts": time.time()})
@@ -403,9 +403,9 @@ def _finish_turn(turn: VoiceTurn, *, error: str | None) -> None:
         turn.push("error", {"detail": error})
     turn.push("done", {"text_len": len(turn.text), "error": bool(error)})
     # The single place a voice turn ends, so the single place the claim ends.
-    if turn.holds_run:
-        turn.holds_run = False
-        build_streaming.release_external_run(turn.thread_id, turn.id)
+    if turn.holds_turn:
+        turn.holds_turn = False
+        build_streaming.release_external_turn(turn.thread_id, turn.id)
     turn.done_event.set()
     turn.new_event.set()
 
@@ -512,16 +512,16 @@ async def start_turn(*, context_key: str, thread_id: str, text: str,
     TURNS[turn.id] = turn
     # CLAIM THE THREAD. A spoken turn is a turn: it holds the session, it spends
     # money, and it produces the next assistant message. Without this the thread
-    # reported no active run while voice was mid-sentence, so "a run in flight is
-    # always visible" was false for voice, the working indicator stayed dark, and
-    # a message typed during a spoken reply opened a SECOND turn on the same
-    # session. It is claimed as a run that takes no input: the way to add
+    # reported no active turn while voice was mid-sentence, so "a turn in flight
+    # is always visible" was false for voice, the working indicator stayed dark,
+    # and a message typed during a spoken reply opened a SECOND turn on the same
+    # session. It is claimed as a turn that takes no input: the way to add
     # something to a spoken turn is to say it, and the text path now queues
     # instead of injecting into a channel voice does not read.
-    joined = await build_streaming.claim_run(
+    joined = await build_streaming.claim_turn(
         thread_id, turn.id, model=worker.model, accepts_input=False)
     if joined is None:
-        turn.holds_run = True
+        turn.holds_turn = True
     else:
         log.info("voice turn %s: thread %s is already running %s; not claiming",
                  turn.id, thread_id, joined)

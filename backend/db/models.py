@@ -724,7 +724,7 @@ class TicketEvent(Base):
 # Here the reply is simply stored as several messages, one per stretch, threaded
 # through the message that interrupted it. The split is a fact, not a
 # computation, and `cut_id`, `cut_after`, `cut_head`, `at_unit`, `at_segment`,
-# `during_run` and `injected` all cease to exist. See ADR 0018 for the
+# `during_turn` and `injected` all cease to exist. See ADR 0018 for the
 # render-time version of the same principle.
 #
 # **What deliberately did NOT move.** The per-run scratch: `live.json` (the
@@ -943,7 +943,7 @@ class ChatTurn(Base, Timestamps):
     org_id: Mapped[uuid.UUID] = _org_fk()
     thread_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
     # The uuid the streaming layer already mints and puts on the wire.
-    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    turn_id: Mapped[str] = mapped_column(String(64), nullable=False)
 
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     model: Mapped[str | None] = mapped_column(String(64))
@@ -962,7 +962,7 @@ class ChatTurn(Base, Timestamps):
         ForeignKeyConstraint(
             ["thread_id", "org_id"], ["chat_thread.id", "chat_thread.org_id"],
             name="chat_turn_thread_fkey", ondelete="CASCADE"),
-        Index("uq_chat_turn_run", "run_id", unique=True),
+        Index("uq_chat_turn_turn_id", "turn_id", unique=True),
         Index("ix_chat_turn_thread", "org_id", "thread_id", "started_at"),
     )
 

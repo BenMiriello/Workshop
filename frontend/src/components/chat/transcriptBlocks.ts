@@ -74,7 +74,7 @@ export type TranscriptBlock =
   | { kind: "message"; key: string; id: string; seq: number; msg: ChatMsg; awaiting?: boolean }
   // The turn in flight. `working` marks the block the indicator belongs on —
   // the last one, because that is where the work is still happening.
-  | { kind: "live"; key: string; runId: string; segments: ChatSegment[]; working: boolean }
+  | { kind: "live"; key: string; turnId: string; segments: ChatSegment[]; working: boolean }
   // Sent by this browser, not in the log yet. `error` is set only on `failed`,
   // and it renders UNDER this bubble: the failure belongs to this message, not
   // to the chat's one error slot above the composer.
@@ -332,7 +332,7 @@ function workingPieceIndex(pieces: Piece[]): number {
  *  the turn emits its next segment the flag clears and the work renders below,
  *  which is the standard contract and needs no second surface to announce it. */
 function liveBlocks(
-  runId: string, segments: ChatSegment[], interrupts: LogEvent[],
+  turnId: string, segments: ChatSegment[], interrupts: LogEvent[],
   cutHead?: string[],
 ): TranscriptBlock[] {
   const pieces = cutPieces(segments, interrupts, cutHead);
@@ -355,8 +355,8 @@ function liveBlocks(
     if (piece.work.length || i === workingAt) {
       out.push({
         kind: "live",
-        key: `${runId}:${i}`,
-        runId,
+        key: `${turnId}:${i}`,
+        turnId,
         segments: piece.work,
         working: i === workingAt,
       });
@@ -371,10 +371,10 @@ function liveBlocks(
  *  see `selectCommitted`. */
 export type CommittedTranscript = {
   blocks: TranscriptBlock[];
-  heldForActiveRun: LogEvent[];
+  heldForActiveTurn: LogEvent[];
   /** The run that is GENUINELY still writing, which is not always the one the
    *  snapshot names. See `selectCommitted`. Null means render no live block. */
-  liveRunId: string | null;
+  liveTurnId: string | null;
 };
 
 /**
@@ -402,31 +402,31 @@ export type CommittedTranscript = {
  *  is the rule this module exists to hold. */
 export function selectCommitted(state: ThreadState): CommittedTranscript {
   const events = committedEvents(state);
-  const activeRunId = state.activeRun?.runId ?? null;
+  const activeTurnId = state.activeTurn?.turnId ?? null;
 
   // Which run each committed reply belongs to, and where it sits. A mid-run
   // message is held back only when the block it interrupted is still ahead of
   // it (or is the live run); otherwise it renders exactly where it is in the
   // log, which is what a message filed against an already-finished run wants.
-  const replySeqByRun = new Map<string, number>();
+  const replySeqByTurn = new Map<string, number>();
   for (const ev of events) {
     if (ev.kind !== "message" || ev.role !== "assistant") continue;
     const rid = ev.meta?.turn_id;
-    if (rid && !replySeqByRun.has(rid)) replySeqByRun.set(rid, ev.seq);
+    if (rid && !replySeqByTurn.has(rid)) replySeqByTurn.set(rid, ev.seq);
   }
 
   // A RUN WHOSE REPLY IS ALREADY IN THE LOG IS FINISHED, whatever the snapshot
   // says. The two facts arrive on the same page and the server does not write
   // them atomically: chat_log.read_thread reads `meta` before the events, while
-  // commit_run appends the reply first and clears `active_run_id` after. A read
-  // landing in that gap returns the committed reply AND `active_run` still
+  // commit_run appends the reply first and clears `active_turn_id` after. A read
+  // landing in that gap returns the committed reply AND `active_turn` still
   // naming the run that produced it, with its now-stale draft attached.
   //
   // Believing the snapshot there printed the previous reply twice: once
   // committed, and once again below the operator's new message as a block marked
   // `working`, which is why it looked like the answer was being written and then
   // "replaced" when the next sync cleared it. Reported 2026-08-12 in those words.
-  const liveRunId = activeRunId && !replySeqByRun.has(activeRunId) ? activeRunId : null;
+  const liveTurnId = activeTurnId && !replySeqByTurn.has(activeTurnId) ? activeTurnId : null;
 
   const held = new Map<string, LogEvent[]>();
   const hold = (rid: string, ev: LogEvent) => {
@@ -463,8 +463,8 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
     if (ev.kind !== "message") continue;
     messagesSoFar++;
     if (ev.role === "user") {
-      const rid = ev.meta?.during_run;
-      if (rid && (rid === liveRunId || (replySeqByRun.get(rid) ?? -1) > ev.seq)) {
+      const rid = ev.meta?.during_turn;
+      if (rid && (rid === liveTurnId || (replySeqByTurn.get(rid) ?? -1) > ev.seq)) {
         hold(rid, ev);
         continue;
       }
@@ -489,8 +489,8 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
 
   return {
     blocks: out,
-    heldForActiveRun: liveRunId ? held.get(liveRunId) || [] : [],
-    liveRunId,
+    heldForActiveTurn: liveTurnId ? held.get(liveTurnId) || [] : [],
+    liveTurnId,
   };
 }
 
@@ -549,12 +549,12 @@ export function composeTranscript(
   }
 
   // Only when the committed half agrees the run is still writing. See the
-  // liveRunId note in selectCommitted: the snapshot can name a run whose reply
+  // liveTurnId note in selectCommitted: the snapshot can name a run whose reply
   // is already committed above, and rendering its draft prints that reply twice.
-  if (state.activeRun && committed.liveRunId === state.activeRun.runId) {
+  if (state.activeTurn && committed.liveTurnId === state.activeTurn.turnId) {
     out.push(...liveBlocks(
-      state.activeRun.runId, state.activeRun.segments, committed.heldForActiveRun,
-      state.activeRun.cutHead,
+      state.activeTurn.turnId, state.activeTurn.segments, committed.heldForActiveTurn,
+      state.activeTurn.cutHead,
     ));
   }
   out.push(...atTail);

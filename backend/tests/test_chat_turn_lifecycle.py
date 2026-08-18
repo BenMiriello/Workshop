@@ -1,7 +1,7 @@
 """A run is not a message: the lifecycle, the sync endpoint, and the races.
 
 Pass B of docs/chat-rebuild-spec-2026-08-09.md. The run leaves the log — there
-is no assistant placeholder while a turn is in flight, only `meta.active_run_id`
+is no assistant placeholder while a turn is in flight, only `meta.active_turn_id`
 and a live snapshot — and the reply is appended when it finishes. Everything
 here pins a consequence of that, or one of the races it was supposed to close.
 
@@ -40,10 +40,10 @@ async def _run_guarded(turn, meta, coro) -> None:
     await task
 
 
-def _live(run_id: str, thread_id: str, *, spawned: bool = True) -> build_streaming.Turn:
-    t = build_streaming.Turn(id=run_id, thread_id=thread_id, agent_slug="a")
+def _live(turn_id: str, thread_id: str, *, spawned: bool = True) -> build_streaming.Turn:
+    t = build_streaming.Turn(id=turn_id, thread_id=thread_id, agent_slug="a")
     t.spawned = spawned
-    build_streaming.TURNS[run_id] = t
+    build_streaming.TURNS[turn_id] = t
     return t
 
 
@@ -56,22 +56,22 @@ class TestTheEventsEndpoint:
         import routes.chat as rc
         tid = thread["id"]
         chat_store.append_message(tid, "user", "one")
-        chat_store.begin_run(tid, "run-1")
-        chat_store.commit_run(tid, "run-1", [], "two")
+        chat_store.begin_turn(tid, "run-1")
+        chat_store.commit_turn(tid, "run-1", [], "two")
         chat_store.append_message(tid, "user", "three")
 
         got = asyncio.run(rc.thread_events(tid, after=0))
         kinds = [(e["kind"], e.get("role") or e.get("state")) for e in got["events"]]
         assert kinds == [
             ("message", "user"),
-            ("run", "started"),
+            ("turn", "started"),
             ("message", "assistant"),
-            ("run", "finished"),
+            ("turn", "finished"),
             ("message", "user"),
         ]
         assert [e["seq"] for e in got["events"]] == [1, 2, 3, 4, 5]
         assert got["last_seq"] == 5
-        assert got["active_run"] is None
+        assert got["active_turn"] is None
 
     def test_a_mid_cursor_returns_exactly_the_delta(self, thread):
         import routes.chat as rc
@@ -94,12 +94,12 @@ class TestTheEventsEndpoint:
         import routes.chat as rc
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.begin_run(tid, "run-1", model="m")
-        chat_store.update_run(tid, "run-1", [{"t": "text", "text": "half"}], "half")
+        chat_store.begin_turn(tid, "run-1", model="m")
+        chat_store.update_turn(tid, "run-1", [{"t": "text", "text": "half"}], "half")
 
         got = asyncio.run(rc.thread_events(tid, after=0))
-        run = got["active_run"]
-        assert run["run_id"] == "run-1"
+        run = got["active_turn"]
+        assert run["turn_id"] == "run-1"
         assert run["started_seq"] == 2
         assert run["live"]["content"] == "half"
         assert run["live"]["meta"]["model"] == "m"
@@ -247,15 +247,15 @@ class TestPersistBeforeDeliver:
         import routes.chat as rc
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         _live("run-1", tid, spawned=True)   # spawned, and no FIFO: it is ending
 
         monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: False)
         started = []
 
-        async def fake_start(*, thread_id, t, provider, content, model, run_id, **kw):
-            started.append(run_id)
-            turn = build_streaming.TURNS[run_id]
+        async def fake_start(*, thread_id, t, provider, content, model, turn_id, **kw):
+            started.append(turn_id)
+            turn = build_streaming.TURNS[turn_id]
             turn.spawned = True
             return turn
         monkeypatch.setattr(rc, "_start_assistant_turn", fake_start)
@@ -274,7 +274,7 @@ class TestPersistBeforeDeliver:
         window, which is the rival-turn bug wearing a different hat."""
         import routes.chat as rc
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         _live("run-1", tid, spawned=False)
         monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: False)
 
@@ -284,7 +284,7 @@ class TestPersistBeforeDeliver:
 
         out = asyncio.run(rc._send(tid, "hold on"))
         assert out == {"turn_id": "run-1", "injected": False, "at_segment": 0}
-        assert chat_store.active_run_id(tid) == "run-1"
+        assert chat_store.active_turn_id(tid) == "run-1"
         bodies = [m["content"] for m in chat_store.get_thread(tid)["messages"]]
         assert bodies.count("hold on") == 1
 
@@ -293,11 +293,11 @@ class TestPersistBeforeDeliver:
         run, the transcript already has it."""
         import routes.chat as rc
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         _live("run-1", tid)
         seen: list[list[str]] = []
 
-        def spy(run_id, text, *a, **k):
+        def spy(turn_id, text, *a, **k):
             seen.append([m["content"] for m in chat_store.get_thread(tid)["messages"]])
             return True
         monkeypatch.setattr(build_streaming, "inject", spy)
@@ -317,9 +317,9 @@ class TestSameTickRivals:
         started: list[str] = []
         delivered: list[str] = []
 
-        async def fake_start(*, thread_id, t, provider, content, model, run_id, **kw):
-            started.append(run_id)
-            turn = build_streaming.TURNS[run_id]
+        async def fake_start(*, thread_id, t, provider, content, model, turn_id, **kw):
+            started.append(turn_id)
+            turn = build_streaming.TURNS[turn_id]
             turn.spawned = True
             await asyncio.sleep(0)      # a real spawn awaits
             return turn
@@ -356,38 +356,38 @@ class TestSameTickRivals:
 
         with pytest.raises(RuntimeError):
             asyncio.run(rc._send(tid, "hello"))
-        assert chat_store.active_run_id(tid) is None
+        assert chat_store.active_turn_id(tid) is None
 
 
 class TestStartupReconcile:
-    """A run that did not survive a restart leaves `active_run_id` pointing at a
+    """A run that did not survive a restart leaves `active_turn_id` pointing at a
     journal that is dead or gone. One pass at startup closes it out; there is no
     per-read self-heal any more because there is no flag to orphan."""
 
     def test_a_crashed_run_becomes_a_lost_run_and_a_message(self, thread):
         tid = thread["id"]
         chat_store.append_message(tid, "user", "build the thing")
-        chat_store.begin_run(tid, "run-gone")
-        chat_store.update_run(tid, "run-gone", [{"t": "text", "text": "partial"}], "partial")
+        chat_store.begin_turn(tid, "run-gone")
+        chat_store.update_turn(tid, "run-gone", [{"t": "text", "text": "partial"}], "partial")
 
         build_streaming.reconcile_threads()
 
-        assert chat_store.active_run_id(tid) is None
+        assert chat_store.active_turn_id(tid) is None
         events = chat_log.read_events(tid)
-        assert [e["state"] for e in events if e["kind"] == "run"] == ["started", "lost"]
+        assert [e["state"] for e in events if e["kind"] == "turn"] == ["started", "lost"]
         last = chat_store.get_thread(tid)["messages"][-1]
         assert last["role"] == "assistant"
-        assert last["content"] == chat_store.LOST_RUN_TEXT
-        assert "restarted mid-run" in last["content"]
+        assert last["content"] == chat_store.LOST_TURN_TEXT
+        assert "restarted mid-turn" in last["content"]
 
     def test_a_run_this_process_is_driving_is_left_alone(self, thread):
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-live")
+        chat_store.begin_turn(tid, "run-live")
         _live("run-live", tid)
         build_streaming.reconcile_threads()
-        assert chat_store.active_run_id(tid) == "run-live"
+        assert chat_store.active_turn_id(tid) == "run-live"
         assert not [m for m in chat_store.get_thread(tid)["messages"]
-                    if m["content"] == chat_store.LOST_RUN_TEXT]
+                    if m["content"] == chat_store.LOST_TURN_TEXT]
 
     def test_an_idle_thread_is_untouched(self, thread):
         tid = thread["id"]
@@ -398,78 +398,78 @@ class TestStartupReconcile:
 
     def test_it_runs_twice_without_saying_it_twice(self, thread):
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-gone")
+        chat_store.begin_turn(tid, "run-gone")
         build_streaming.reconcile_threads()
         build_streaming.reconcile_threads()
         lost = [m for m in chat_store.get_thread(tid)["messages"]
-                if m["content"] == chat_store.LOST_RUN_TEXT]
+                if m["content"] == chat_store.LOST_TURN_TEXT]
         assert len(lost) == 1
 
 
 class TestArrivalNoticeFollowsTheMark:
-    """Which messages waited is a LOOKUP on `meta.during_run`, not a guess from
+    """Which messages waited is a LOOKUP on `meta.during_turn`, not a guess from
     where they sit. Reading the tail after the last assistant message stopped
     working the moment the reply started being appended when it FINISHED."""
 
     def test_it_names_exactly_the_messages_that_waited(self, thread):
         tid = thread["id"]
         chat_store.append_message(tid, "user", "start")
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         chat_store.append_message_during_turn(
             tid, "user", "also this", ts="2026-08-09T05:41:00+00:00",
-            meta={"during_run": "run-1"})
+            meta={"during_turn": "run-1"})
         chat_store.append_message_during_turn(
             tid, "user", "and this", ts="2026-08-09T05:42:00+00:00",
-            meta={"during_run": "run-1"})
-        chat_store.commit_run(tid, "run-1", [], "answered")
+            meta={"during_turn": "run-1"})
+        chat_store.commit_turn(tid, "run-1", [], "answered")
         chat_store.append_message(tid, "user", "next turn")
 
         msgs = chat_store.get_thread(tid)["messages"]
-        out = chat_context.arrival_notice(msgs, run_id=chat_store.previous_run_id(tid))
+        out = chat_context.arrival_notice(msgs, turn_id=chat_store.previous_turn_id(tid))
         assert "2 of the messages" in out
         assert "05:41Z, 05:42Z" in out
 
     def test_the_mark_finds_them_although_they_sit_above_the_reply(self, thread):
-        """The regression this rework exists for. The mid-run messages are ABOVE
+        """The regression this rework exists for. The mid-turn messages are ABOVE
         the reply now (that is the fix), so a tail scan finds nothing at all."""
         tid = thread["id"]
         chat_store.append_message(tid, "user", "start")
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         chat_store.append_message_during_turn(
             tid, "user", "wait", ts="2026-08-09T05:41:00+00:00",
-            meta={"during_run": "run-1"})
-        chat_store.commit_run(tid, "run-1", [], "answered")
+            meta={"during_turn": "run-1"})
+        chat_store.commit_turn(tid, "run-1", [], "answered")
         chat_store.append_message(tid, "user", "next")
         msgs = chat_store.get_thread(tid)["messages"]
 
         assert chat_context.arrival_notice(msgs) == ""          # tail scan: blind
-        assert "One message" in chat_context.arrival_notice(msgs, run_id="run-1")
+        assert "One message" in chat_context.arrival_notice(msgs, turn_id="run-1")
 
     def test_an_older_run_is_not_re_announced(self, thread):
         """A notice that fires on every turn forever says nothing."""
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         chat_store.append_message_during_turn(
-            tid, "user", "old", meta={"during_run": "run-1"})
-        chat_store.commit_run(tid, "run-1", [], "a")
+            tid, "user", "old", meta={"during_turn": "run-1"})
+        chat_store.commit_turn(tid, "run-1", [], "a")
         chat_store.append_message(tid, "user", "next")
-        chat_store.begin_run(tid, "run-2")
-        chat_store.commit_run(tid, "run-2", [], "b")
+        chat_store.begin_turn(tid, "run-2")
+        chat_store.commit_turn(tid, "run-2", [], "b")
 
         msgs = chat_store.get_thread(tid)["messages"]
-        assert chat_store.previous_run_id(tid) == "run-2"
-        assert chat_context.arrival_notice(msgs, run_id="run-2") == ""
+        assert chat_store.previous_turn_id(tid) == "run-2"
+        assert chat_context.arrival_notice(msgs, turn_id="run-2") == ""
 
     def test_the_resumed_prompt_carries_the_notice(self, thread, monkeypatch):
         """End to end through the path that actually builds the turn's message."""
         import routes.chat as rc
         tid = thread["id"]
         chat_store.append_message(tid, "user", "start")
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         chat_store.append_message_during_turn(
             tid, "user", "wait", ts="2026-08-09T05:41:00+00:00",
-            meta={"during_run": "run-1"})
-        chat_store.commit_run(tid, "run-1", [], "answered")
+            meta={"during_turn": "run-1"})
+        chat_store.commit_turn(tid, "run-1", [], "answered")
 
         provider = chat_context.get_provider("general")
 
@@ -492,14 +492,14 @@ class TestTheBlockingPathIsTheSamePipeline:
         import routes.chat as rc
         tid = thread["id"]
 
-        async def fake_start(*, thread_id, t, provider, content, model, run_id, **kw):
-            turn = build_streaming.TURNS[run_id]
+        async def fake_start(*, thread_id, t, provider, content, model, turn_id, **kw):
+            turn = build_streaming.TURNS[turn_id]
             turn.spawned = True
 
             async def finish():
                 await asyncio.sleep(0.02)
-                turn.committed = chat_store.commit_run(
-                    thread_id, run_id, [], "the spoken reply")
+                turn.committed = chat_store.commit_turn(
+                    thread_id, turn_id, [], "the spoken reply")
                 turn.notes = ["Updated the plan"]
                 turn.complete = True
                 turn.finished.set()
@@ -529,29 +529,29 @@ class TestTheDriveLoopAlwaysEndsTheRun:
     `_spawn_and_drive` was a bare `asyncio.create_task` with no exception
     handler and `_drive_turn` had no try/finally, so ANY raise skipped
     `_finalize_turn`: `turn.complete` and `turn.finished` never set,
-    `active_run_id` never cleared, journal left `status: running`. There is no
+    `active_turn_id` never cleared, journal left `status: running`. There is no
     wall clock on a chat turn (CHAT_TIMEOUT_S = 0), so nothing would ever end it
     and the chat showed "Still running" with a ticking clock indefinitely. The
     traceback surfaced only as a GC-time "Task exception was never retrieved".
     """
 
     @staticmethod
-    def _meta(tid: str, run_id: str) -> dict:
-        return {"turn_id": run_id, "thread_id": tid, "agent_slug": "a",
+    def _meta(tid: str, turn_id: str) -> dict:
+        return {"turn_id": turn_id, "thread_id": tid, "agent_slug": "a",
                 "cwd": "", "model": "m", "prompt": "hi", "timeout_s": 0,
                 "pid": None, "status": "running"}
 
     def test_a_raise_finalizes_the_run_instead_of_wedging_it(self, thread):
         tid = thread["id"]
-        run_id = "run-crash"
-        chat_store.begin_run(tid, run_id)
-        turn = _live(run_id, tid)
+        turn_id = "run-crash"
+        chat_store.begin_turn(tid, turn_id)
+        turn = _live(turn_id, tid)
 
         async def boom():
             raise TypeError("unexpected payload shape")
 
         async def go():
-            task = build_streaming._drive_task(turn, self._meta(tid, run_id), boom())
+            task = build_streaming._drive_task(turn, self._meta(tid, turn_id), boom())
             await asyncio.wait_for(turn.finished.wait(), timeout=2)
             await task
         asyncio.run(go())
@@ -560,18 +560,18 @@ class TestTheDriveLoopAlwaysEndsTheRun:
         assert turn.finished.is_set()
         # The thread is free: the next message opens a run instead of joining a
         # dead one, which is what "only a restart recovers it" meant.
-        assert chat_store.active_run_id(tid) is None
+        assert chat_store.active_turn_id(tid) is None
 
     def test_the_operator_is_told_what_happened(self, thread):
         tid = thread["id"]
-        run_id = "run-crash-2"
-        chat_store.begin_run(tid, run_id)
-        turn = _live(run_id, tid)
+        turn_id = "run-crash-2"
+        chat_store.begin_turn(tid, turn_id)
+        turn = _live(turn_id, tid)
 
         async def boom():
             raise OSError("journal went away")
 
-        asyncio.run(_run_guarded(turn, self._meta(tid, run_id), boom()))
+        asyncio.run(_run_guarded(turn, self._meta(tid, turn_id), boom()))
         reply = chat_store.get_thread(tid)["messages"][-1]
         assert reply["role"] == "assistant"
         assert "OSError" in reply["content"] or "OSError" in (turn.error or "")
@@ -579,45 +579,45 @@ class TestTheDriveLoopAlwaysEndsTheRun:
 
     def test_the_reply_keeps_whatever_the_turn_had_produced(self, thread):
         tid = thread["id"]
-        run_id = "run-crash-3"
-        chat_store.begin_run(tid, run_id)
-        turn = _live(run_id, tid)
+        turn_id = "run-crash-3"
+        chat_store.begin_turn(tid, turn_id)
+        turn = _live(turn_id, tid)
         turn.segments = [{"t": "text", "text": "Here is half an answer."}]
 
         async def boom():
             raise RuntimeError("mid-stream")
 
-        asyncio.run(_run_guarded(turn, self._meta(tid, run_id), boom()))
+        asyncio.run(_run_guarded(turn, self._meta(tid, turn_id), boom()))
         reply = chat_store.get_thread(tid)["messages"][-1]
         assert "Here is half an answer." in reply["content"]
         assert "ended early" in reply["content"]
 
     def test_a_cancellation_ends_the_run_and_is_not_swallowed(self, thread):
         tid = thread["id"]
-        run_id = "run-cancel"
-        chat_store.begin_run(tid, run_id)
-        turn = _live(run_id, tid)
+        turn_id = "run-cancel"
+        chat_store.begin_turn(tid, turn_id)
+        turn = _live(turn_id, tid)
 
         async def forever():
             await asyncio.sleep(60)
 
         async def go():
-            task = build_streaming._drive_task(turn, self._meta(tid, run_id), forever())
+            task = build_streaming._drive_task(turn, self._meta(tid, turn_id), forever())
             await asyncio.sleep(0.05)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
         asyncio.run(go())
         assert turn.finished.is_set()
-        assert chat_store.active_run_id(tid) is None
+        assert chat_store.active_turn_id(tid) is None
 
     def test_a_clean_run_is_finalized_exactly_once(self, thread):
         """The guard must not double-commit a turn that ended normally."""
         tid = thread["id"]
-        run_id = "run-clean"
-        chat_store.begin_run(tid, run_id)
-        turn = _live(run_id, tid)
-        meta = self._meta(tid, run_id)
+        turn_id = "run-clean"
+        chat_store.begin_turn(tid, turn_id)
+        turn = _live(turn_id, tid)
+        meta = self._meta(tid, turn_id)
 
         async def body():
             turn.final_text = "all done"
@@ -638,12 +638,12 @@ class TestAPromptThatCannotBeDeliveredEndsTheRun:
 
     def test_the_run_ends_rather_than_idling_forever(self, thread, monkeypatch):
         tid = thread["id"]
-        run_id = "run-nowrite"
-        chat_store.begin_run(tid, run_id)
-        turn = _live(run_id, tid)
+        turn_id = "run-nowrite"
+        chat_store.begin_turn(tid, turn_id)
+        turn = _live(turn_id, tid)
         turn.pid = None
 
-        meta = {"turn_id": run_id, "thread_id": tid, "agent_slug": "a", "cwd": "",
+        meta = {"turn_id": turn_id, "thread_id": tid, "agent_slug": "a", "cwd": "",
                 "model": "m", "prompt": "hi", "timeout_s": 0, "pid": None,
                 "status": "running", "session_id": None, "resume": False}
 
@@ -670,7 +670,7 @@ class TestAPromptThatCannotBeDeliveredEndsTheRun:
 
         assert not drove, "the drive loop must not be entered for a prompt that never landed"
         assert turn.finished.is_set()
-        assert chat_store.active_run_id(tid) is None
+        assert chat_store.active_turn_id(tid) is None
         reply = chat_store.get_thread(tid)["messages"][-1]
         assert reply["meta"].get("error") is True
         assert "input channel" in reply["content"]
@@ -713,7 +713,7 @@ class TestTheTurnRegistryIsBounded:
 
     def test_finalizing_stamps_the_time(self, thread):
         tid = thread["id"]
-        chat_store.begin_run(tid, "stamped")
+        chat_store.begin_turn(tid, "stamped")
         turn = _live("stamped", tid)
         turn.final_text = "done"
         asyncio.run(build_streaming._finalize_turn(
@@ -760,51 +760,51 @@ class TestTheSyncEndpointDoesNotReparseTheLog:
         import routes.chat as rc
         tid = thread["id"]
         chat_store.append_message(tid, "user", "one")
-        chat_store.begin_run(tid, "r9")
+        chat_store.begin_turn(tid, "r9")
         head = asyncio.run(rc.thread_events(tid, after=0))
-        assert head["active_run"]["run_id"] == "r9"
-        started = head["active_run"]["started_seq"]
+        assert head["active_turn"]["turn_id"] == "r9"
+        started = head["active_turn"]["started_seq"]
         assert started is not None
 
         monkeypatch.setattr(chat_log, "read_events",
                             lambda *a, **k: pytest.fail("no log read is needed here"))
         got = asyncio.run(rc.thread_events(tid, after=head["last_seq"]))
-        assert got["active_run"]["run_id"] == "r9"
-        assert got["active_run"]["started_seq"] == started
+        assert got["active_turn"]["turn_id"] == "r9"
+        assert got["active_turn"]["started_seq"] == started
 
     def test_a_run_opened_before_the_seq_was_recorded_still_resolves(self, thread):
-        """Threads written by the older build carry no `active_run_seq`; the
+        """Threads written by the older build carry no `active_turn_seq`; the
         scan is still there for them, so nothing needs migrating."""
         tid = thread["id"]
-        chat_store.begin_run(tid, "legacy")
-        chat_log.patch_meta_sync(tid, active_run_seq=None)
-        run = chat_log.active_run(tid)
-        assert run["run_id"] == "legacy"
+        chat_store.begin_turn(tid, "legacy")
+        chat_log.patch_meta_sync(tid, active_turn_seq=None)
+        run = chat_log.active_turn(tid)
+        assert run["turn_id"] == "legacy"
         assert run["started_seq"] is not None
 
 
 class TestTheRunMarkerIsFenced:
-    """R2: mark_run_started runs after the claim lock is released, so a stop
+    """R2: mark_turn_started runs after the claim lock is released, so a stop
     that finalized this very run can interleave before it. The marker write
-    must lose that race, not resurrect `active_run_seq` for a dead run."""
+    must lose that race, not resurrect `active_turn_seq` for a dead run."""
 
     def test_a_marker_for_a_run_no_longer_owning_the_thread_is_dropped(self, thread):
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-1", announce=False)
+        chat_store.begin_turn(tid, "run-1", announce=False)
         # The run ends (a stop, a crash finalize) before the marker lands.
-        chat_store.commit_run(tid, "run-1", [], "done")
+        chat_store.commit_turn(tid, "run-1", [], "done")
         before = len(chat_log.read_events(tid))
-        chat_store.mark_run_started(tid, "run-1")
+        chat_store.mark_turn_started(tid, "run-1")
         assert len(chat_log.read_events(tid)) == before
         meta = chat_log.read_meta(tid)
-        assert not meta.get("active_run_seq")
+        assert not meta.get("active_turn_seq")
 
     def test_the_owning_run_still_writes_its_marker(self, thread):
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-1", announce=False)
-        chat_store.mark_run_started(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1", announce=False)
+        chat_store.mark_turn_started(tid, "run-1")
         kinds = [(e.get("kind"), e.get("state")) for e in chat_log.read_events(tid)]
-        assert ("run", "started") in kinds
+        assert ("turn", "started") in kinds
 
 
 class TestThePickersSurviveAJoin:
@@ -815,7 +815,7 @@ class TestThePickersSurviveAJoin:
     disagree the moment the run ends.
 
     Model was the odd one out and the only one that lost data: it was persisted
-    only by `_run_for_message`, which runs only when a message starts a fresh
+    only by `_turn_for_message`, which runs only when a message starts a fresh
     turn. Picked mid-turn it was dropped outright, so the composer silently
     snapped back to the old model on the next load.
     """
@@ -823,7 +823,7 @@ class TestThePickersSurviveAJoin:
     def test_a_model_picked_mid_turn_is_recorded_on_the_thread(self, thread, monkeypatch):
         import routes.chat as rc
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         _live("run-1", tid)
         monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: True)
 
@@ -850,7 +850,7 @@ class TestThePickersSurviveAJoin:
         None rather than riding along invisibly."""
         import routes.chat as rc
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         _live("run-1", tid)
         monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: True)
 
@@ -867,7 +867,7 @@ class TestThePickersSurviveAJoin:
         stored as a level the picker could never show."""
         import routes.chat as rc
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         _live("run-1", tid)
         monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: True)
 

@@ -165,18 +165,18 @@ class TestAVoiceTurnIsAVisibleRun:
         tid = thread["id"]
 
         async def go():
-            await build_streaming.claim_run(tid, "vt-1", model="m", accepts_input=False)
+            await build_streaming.claim_turn(tid, "vt-1", model="m", accepts_input=False)
 
         asyncio.run(go())
         # Visible: something is running on this chat.
-        assert chat_store.active_run_id(tid) == "vt-1"
-        assert build_streaming.run_is_live("vt-1") is True
+        assert chat_store.active_turn_id(tid) == "vt-1"
+        assert build_streaming.turn_is_live("vt-1") is True
         # And it is not a channel typed text can be pushed into.
-        assert build_streaming.run_accepts_input("vt-1") is False
+        assert build_streaming.turn_accepts_input("vt-1") is False
 
     def test_it_gives_the_thread_back_when_it_ends(self, thread):
         tid = thread["id"]
-        asyncio.run(build_streaming.claim_run(tid, "vt-1", model="m", accepts_input=False))
-        build_streaming.release_external_run(tid, "vt-1")
-        assert chat_store.active_run_id(tid) != "vt-1"
-        assert build_streaming.run_is_live("vt-1") is False
+        asyncio.run(build_streaming.claim_turn(tid, "vt-1", model="m", accepts_input=False))
+        build_streaming.release_external_turn(tid, "vt-1")
+        assert chat_store.active_turn_id(tid) != "vt-1"
+        assert build_streaming.turn_is_live("vt-1") is False

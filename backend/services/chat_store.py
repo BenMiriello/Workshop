@@ -226,7 +226,7 @@ _PRESERVED_ON_SAVE = ("claude_session", "agent_sessions", "summary",
                       "_seed_title", "_name_attempts", "cut_through",
                       "cut_mode", "voice_session", "live_message")
 
-_INTERNAL_META = ("last_seq", "boundary_seq", "active_run_id", "active_run_seq",
+_INTERNAL_META = ("last_seq", "boundary_seq", "active_turn_id", "active_turn_seq",
                   "live_message", "cut_through")
 
 
@@ -304,7 +304,7 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
     was never branched (almost all of them) and any failure to ask. Both mean the
     file's own order is the whole truth, which is what this did before.
 
-    Committed messages only. A run in flight has nothing here — see `_live_view`,
+    Committed messages only. A turn in flight has nothing here — see `_live_view`,
     which `_document` appends as a trailing view. Keeping it out of the fold is
     what keeps `seqs` a list of real seqs, so the context boundary still lands on
     a message that actually exists.
@@ -317,7 +317,7 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
     # moved out of meta.json into live.json (chat_log.write_live_sync explains
     # why); this is the one seam that has to know, and `_live_view`, `_document`
     # and every caller of `get_thread` are unchanged because of it.
-    if meta.get("active_run_id"):
+    if meta.get("active_turn_id"):
         merged = chat_log.merge_live(meta.get("live_message"), chat_log.read_live(thread_id))
         if merged is not None:
             meta = {**meta, "live_message": merged}
@@ -357,7 +357,7 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
     cut_summary = ""
     has_summary = bool((meta.get("summary") or "").strip())
     # Which events belong to a line this conversation is no longer on. See the
-    # docstring. `run` and `title` events never become rows, and are not read
+    # docstring. `turn` and `title` events never become rows, and are not read
     # here anyway; `message` and `boundary` both do, so both are filtered, which
     # is what makes a `clear` performed only on an abandoned line stop cutting
     # the line the operator went back to.
@@ -431,9 +431,9 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
 
 
 def _live_view(meta: dict) -> dict | None:
-    """The in-flight run rendered as a trailing assistant message, or None.
+    """The in-flight turn rendered as a trailing assistant message, or None.
 
-    THE RUN IS NOT IN THE LOG. While a turn is in flight the thread holds no
+    THE TURN IS NOT IN THE LOG. While a turn is in flight the thread holds no
     assistant message for it; `meta.live_message` carries the throttled snapshot
     of what it has produced so far, and this is that snapshot shaped as a
     message so a reload still renders the turn in progress. Built fresh on every
@@ -444,19 +444,19 @@ def _live_view(meta: dict) -> dict | None:
     below the slot and the finished reply landed ABOVE it — reading as if the
     operator had been ignored. Now the snapshot is always last while the turn
     runs, and the committed reply is appended at the tail when it finishes: a
-    message the run was handed sits above the reply that answered it, and one
+    message the turn was handed sits above the reply that answered it, and one
     that arrived too late to be delivered sits below.
 
     `meta.streaming` and `meta.turn_id` are on it because that is how a client
-    knows to attach to the SSE stream for this run."""
-    if not meta.get("active_run_id"):
+    knows to attach to the SSE stream for this turn."""
+    if not meta.get("active_turn_id"):
         return None
     live = meta.get("live_message")
     if not isinstance(live, dict):
         return None
     m = dict(live.get("meta") or {})
     m["streaming"] = True
-    m["turn_id"] = meta["active_run_id"]
+    m["turn_id"] = meta["active_turn_id"]
     m.setdefault("segments", [])
     return {
         "role": "assistant",
@@ -1094,15 +1094,15 @@ def append_message_during_turn(thread_id: str, role: str, content: str,
     transcript has to pick one. The log picks by simply appending, and that is
     now the right answer: the reply does not exist in the log yet, so this
     message lands above it, and the reply lands above nothing when it commits.
-    Delivered means "the run read it", and the transcript says so by position.
+    Delivered means "the turn read it", and the transcript says so by position.
 
     What position does not carry is recorded on the message:
 
-      during_run — the run that was in flight when this arrived
+      during_turn — the turn that was in flight when this arrived
       at_segment — how much of that reply had streamed by then
 
-    `during_run` is what `chat_context.arrival_notice` queries, so "which
-    messages arrived while that run was going" is a lookup rather than an
+    `during_turn` is what `chat_context.arrival_notice` queries, so "which
+    messages arrived while that turn was going" is a lookup rather than an
     inference from where things sit. `at_segment` is what lets the transcript
     show it inline at the point it landed.
 
@@ -1174,9 +1174,9 @@ def save_thread(thread: dict) -> dict:
         raise KeyError(tid)
     meta, stored_msgs, _seqs, _cut = folded
 
-    # The live view is a rendering of the run in flight, not a record. A caller
+    # The live view is a rendering of the turn in flight, not a record. A caller
     # that read the thread mid-turn is holding one; appending it would commit a
-    # half-written reply that the run is about to commit properly.
+    # half-written reply that the turn is about to commit properly.
     incoming = [m for m in (thread.get("messages") or [])
                 if not (m.get("meta") or {}).get("streaming")]
     i = 0
@@ -1328,111 +1328,111 @@ def set_summary(thread_id: str, summary: str, *, folded_through: int) -> dict | 
     return get_thread(thread_id)
 
 
-# ---- Runs ------------------------------------------------------------------
+# ---- Turns -----------------------------------------------------------------
 #
-# A RUN IS NOT A MESSAGE. While a turn is in flight the log holds one
-# `run: started` marker and `meta.active_run_id` points at it; the reply itself
+# A TURN IS NOT A MESSAGE. While a turn is in flight the log holds one
+# `turn: started` marker and `meta.active_turn_id` points at it; the reply itself
 # does not exist yet. What the turn has produced so far lives in
 # `meta.live_message`, rewritten on a throttle (a turn writes it a few hundred
 # times) and rendered by `_live_view` as a trailing assistant message.
 #
 # On finalize the reply is APPENDED at the tail, so it lands after every message
-# the run was handed and before nothing. That is the whole ordering fix: the old
+# the turn was handed and before nothing. That is the whole ordering fix: the old
 # arrangement claimed the reply's slot when the turn STARTED, so five messages
 # sent during a twenty-minute turn were filed below the slot and the finished
 # reply rendered above all five, reading as if the operator had been ignored.
 
 
-def active_run_id(thread_id: str) -> str | None:
-    """The id of the run in flight on this thread, or None. One field read.
+def active_turn_id(thread_id: str) -> str | None:
+    """The id of the turn in flight on this thread, or None. One field read.
 
-    Distinct from `chat_log.active_run`, which returns the whole `{run_id,
+    Distinct from `chat_log.active_turn`, which returns the whole `{turn_id,
     started_seq, live}` record the events endpoint hands a client. This is the
     one field every server-side caller actually wants."""
     meta = chat_log.read_meta(thread_id)
-    return (meta or {}).get("active_run_id") or None
+    return (meta or {}).get("active_turn_id") or None
 
 
-def mark_run_started(thread_id: str, run_id: str) -> None:
-    """Append this run's `started` marker, AFTER the message that caused it.
+def mark_turn_started(thread_id: str, turn_id: str) -> None:
+    """Append this turn's `started` marker, AFTER the message that caused it.
 
-    THE MARKER IS A RECORD; THE CLAIM IS `active_run_id`. They were one call, so
+    THE MARKER IS A RECORD; THE CLAIM IS `active_turn_id`. They were one call, so
     the marker was appended while the thread was being claimed, which is BEFORE
-    the send path records the message that started the run. The log therefore
-    said a run began before the message that began it. Nothing renders run
+    the send path records the message that started the turn. The log therefore
+    said a turn began before the message that began it. Nothing renders turn
     events positionally, so it was invisible, but a log whose order is not what
     happened is the same defect the transcript spent a week on. Operator,
     2026-08-12. See docs/decisions/0018.
 
-    Split rather than reordered on purpose: `begin_run` still takes the claim
+    Split rather than reordered on purpose: `begin_turn` still takes the claim
     first, under the caller's write lock, with no await between claiming and
     spawning. That ordering is what stops two POSTs opening rival turns on one
     thread, and it is not what was wrong.
 
-    A run whose marker never lands degrades softly: `active_run` falls back to
+    A turn whose marker never lands degrades softly: `active_turn` falls back to
     scanning for it, finds none, and reports `started_seq: None`, which no
     reader uses for anything.
 
     FENCED ON STILL OWNING THE THREAD (I6). This runs after the claim lock has
-    been released, so a stop-and-finalize of this very run can interleave
-    before it: the finalize clears `active_run_seq`, and an unconditional write
-    here would set it back, pointing at a run `active_run_id` no longer names,
-    which the rotation floor and `active_run` then trust."""
+    been released, so a stop-and-finalize of this very turn can interleave
+    before it: the finalize clears `active_turn_seq`, and an unconditional write
+    here would set it back, pointing at a turn `active_turn_id` no longer names,
+    which the rotation floor and `active_turn` then trust."""
     m = chat_log.read_meta(thread_id) or {}
-    if m.get("active_run_id") != run_id:
+    if m.get("active_turn_id") != turn_id:
         return
     started = chat_log.append_sync(
-        thread_id, {"kind": "run", "run_id": run_id, "state": "started"})
-    chat_log.patch_meta_sync(thread_id, active_run_seq=started.get("seq"))
+        thread_id, {"kind": "turn", "turn_id": turn_id, "state": "started"})
+    chat_log.patch_meta_sync(thread_id, active_turn_seq=started.get("seq"))
 
 
-def begin_run(thread_id: str, run_id: str, model: str | None = None,
-              agent: str | None = None, announce: bool = True) -> None:
-    """Open a run on this thread: a `run: started` marker and `active_run_id`.
+def begin_turn(thread_id: str, turn_id: str, model: str | None = None,
+               agent: str | None = None, announce: bool = True) -> None:
+    """Open a turn on this thread: a `turn: started` marker and `active_turn_id`.
 
-    `announce=False` takes the claim and leaves the marker to `mark_run_started`,
+    `announce=False` takes the claim and leaves the marker to `mark_turn_started`,
     so the send path can record the operator's message first and the log reads in
     the order things happened.
 
     Nothing is written to the transcript. The caller MUST hold this thread's
     write lock (`chat_log.lock_for`) across its own check-and-act, which is what
-    makes two sends in the same event-loop tick unable to both open a run.
+    makes two sends in the same event-loop tick unable to both open a turn.
 
     `agent` names the agent answering when the turn came from an @mention, and
     rides on the live view so the reply is attributed while it streams, not only
     once it lands."""
     if chat_log.read_meta(thread_id) is None:
         raise KeyError(thread_id)
-    # Any draft still on disk belongs to a run that never committed (a backend
-    # killed mid-turn). It is not this run's, so it goes before this one claims
-    # the thread. `active_run` also refuses a draft naming another run, so this
+    # Any draft still on disk belongs to a turn that never committed (a backend
+    # killed mid-turn). It is not this turn's, so it goes before this one claims
+    # the thread. `active_turn` also refuses a draft naming another turn, so this
     # is tidiness rather than the guarantee.
     chat_log.clear_live(thread_id)
-    meta: dict = {"turn_id": run_id, "segments": []}
+    meta: dict = {"turn_id": turn_id, "segments": []}
     if model:
         meta["model"] = model
     if agent:
         meta["agent"] = agent
     started = chat_log.append_sync(
-        thread_id, {"kind": "run", "run_id": run_id, "state": "started"}) if announce else None
+        thread_id, {"kind": "turn", "turn_id": turn_id, "state": "started"}) if announce else None
     chat_log.patch_meta_sync(
-        thread_id, active_run_id=run_id,
-        # WHERE THE RUN STARTED, recorded rather than searched for. It is the one
-        # thing `active_run` needed the whole log for: it scanned every event
+        thread_id, active_turn_id=turn_id,
+        # WHERE THE TURN STARTED, recorded rather than searched for. It is the one
+        # thing `active_turn` needed the whole log for: it scanned every event
         # backwards looking for this marker, on every 10s poll from every open
         # tab. The writer knows the answer for free. Threads written before this
-        # existed have no such field, and `active_run` still falls back to the
+        # existed have no such field, and `active_turn` still falls back to the
         # scan for them, so nothing has to be migrated.
-        active_run_seq=(started.get("seq") if started else None),
-        live_message={"run_id": run_id, "content": "", "meta": meta, "ts": _now_iso()},
+        active_turn_seq=(started.get("seq") if started else None),
+        live_message={"turn_id": turn_id, "content": "", "meta": meta, "ts": _now_iso()},
     )
 
 
-def update_run(thread_id: str, run_id: str, segments: list[dict], content: str,
-               cut_head: list[str] | None = None,
-               journal_offset: int | None = None) -> None:
+def update_turn(thread_id: str, turn_id: str, segments: list[dict], content: str,
+                cut_head: list[str] | None = None,
+                journal_offset: int | None = None) -> None:
     """Overwrite the running turn's live snapshot. No-op if it is not the active
-    run any more (it finished, or something took the thread over).
+    turn any more (it finished, or something took the thread over).
 
     Writes the DRAFT FILE, never meta.json and never the log. This fires every
     ~0.4s and on every tool event for the whole length of a turn, so what it
@@ -1442,17 +1442,17 @@ def update_run(thread_id: str, run_id: str, segments: list[dict], content: str,
     the draft is allowed to skip the fsync.
 
     What is left is one small read (the ownership guard, which has to be exact:
-    a run that lost the thread must not keep writing over its successor's
+    a turn that lost the thread must not keep writing over its successor's
     draft) and one atomic, unsynced write.
     """
-    # `_read_meta_raw`, not `read_meta`: the guard needs `active_run_id`, which
+    # `_read_meta_raw`, not `read_meta`: the guard needs `active_turn_id`, which
     # does not depend on the `last_seq` reconciliation that `read_meta` pays a
     # log-tail read for.
     stored = chat_log._read_meta_raw(thread_id)
-    if stored is None or stored.get("active_run_id") != run_id:
+    if stored is None or stored.get("active_turn_id") != turn_id:
         return
     chat_log.write_live_sync(thread_id, {
-        "run_id": run_id,
+        "turn_id": turn_id,
         "content": content,
         # WHERE THESE SEGMENTS STOP in the turn's journal, so a backend that
         # restarts mid-reply resumes the tail instead of replaying it from byte
@@ -1466,14 +1466,14 @@ def update_run(thread_id: str, run_id: str, segments: list[dict], content: str,
         # emitted anything. It rides in `meta` beside the segments because the
         # two are read together and a reader that has one without the other
         # cannot place those messages. See docs/decisions/0018.
-        "meta": {"segments": segments, "turn_id": run_id,
+        "meta": {"segments": segments, "turn_id": turn_id,
                  **({"cut_head": list(cut_head)} if cut_head else {})},
     })
 
 
-def commit_run(
+def commit_turn(
     thread_id: str,
-    run_id: str,
+    turn_id: str,
     segments: list[dict],
     content: str,
     error: bool = False,
@@ -1485,7 +1485,7 @@ def commit_run(
     state: str = "finished",
     cut_head: list[str] | None = None,
 ) -> dict | None:
-    """Commit a run: one assistant message at the TAIL, one `run` marker, done.
+    """Commit a turn: one assistant message at the TAIL, one `turn` marker, done.
 
     Appending at the tail is the point. A message the operator sent during this
     run is already in the log ABOVE this reply, because it was persisted when it
@@ -1495,8 +1495,8 @@ def commit_run(
     to annotate it.
 
     Committed whether or not a client is watching, and idempotent on the thread's
-    view of the world: it clears `active_run_id` only when it still names this
-    run, so a run that was taken over cannot un-claim its successor.
+    view of the world: it clears `active_turn_id` only when it still names this
+    run, so a turn that was taken over cannot un-claim its successor.
 
     `timed_out` flags a turn that hit its wall-clock limit (vs a hard error) so
     the UI can render a calm "stopped, continue" note instead of a red error.
@@ -1512,7 +1512,7 @@ def commit_run(
     stored = chat_log.read_meta(thread_id)
     if stored is None:
         return None
-    meta: dict = {"turn_id": run_id, "streaming": False, "ended_at": _now_iso()}
+    meta: dict = {"turn_id": turn_id, "streaming": False, "ended_at": _now_iso()}
     if segments:
         meta["segments"] = segments
     # Where messages that beat this turn's first output belong. Stored even when
@@ -1563,43 +1563,43 @@ def commit_run(
             backlinks.set_source(refs.chat_ref(thread_id, ev["id"]), targets)
         except Exception:
             log.debug("backlink index update skipped for chat %s", thread_id, exc_info=True)
-    chat_log.append_sync(thread_id, {"kind": "run", "run_id": run_id, "state": state})
+    chat_log.append_sync(thread_id, {"kind": "turn", "turn_id": turn_id, "state": state})
     clear: dict = {}
-    if stored.get("active_run_id") == run_id:
-        clear["active_run_id"] = None
-        clear["active_run_seq"] = None
-        # The legacy field, cleared for a thread whose run began before the
+    if stored.get("active_turn_id") == turn_id:
+        clear["active_turn_id"] = None
+        clear["active_turn_seq"] = None
+        # The legacy field, cleared for a thread whose turn began before the
         # draft moved to its own file.
         clear["live_message"] = None
     if clear:
         chat_log.patch_meta_sync(thread_id, **clear)
         # The reply is in the log now, so the draft of it is finished business.
-        # Left behind, `active_run` would merge a dead turn's text into the next
+        # Left behind, `active_turn` would merge a dead turn's text into the next
         # one that claims this thread.
         chat_log.clear_live(thread_id)
     return _msg_from_event(ev)
 
 
-# The two ways a run ends without finishing, as `meta.stopped` on the committed
+# The two ways a turn ends without finishing, as `meta.stopped` on the committed
 # message. They are different events and the transcript says which: the operator
-# pressed Stop, or the backend went down under a run and nothing was left to
+# pressed Stop, or the backend went down under a turn and nothing was left to
 # answer for it. One value each, so the client has one thing to switch on and no
 # reason to infer it from anything else.
 STOPPED_BY_OPERATOR = "operator"
 STOPPED_INTERRUPTED = "interrupted"
 
 
-# The one wording for a run this backend can no longer account for. Used by the
+# The one wording for a turn this backend can no longer account for. Used by the
 # startup reconcile and by the re-attach path, so the operator reads the same
-# sentence however the run was lost.
-LOST_RUN_TEXT = (
-    "Lost when the backend restarted mid-run. Anything already written to "
+# sentence however the turn was lost.
+LOST_TURN_TEXT = (
+    "Lost when the backend restarted mid-turn. Anything already written to "
     "disk is intact. Send \"continue\" to pick it back up."
 )
 
 
-def lose_run(thread_id: str, run_id: str) -> dict | None:
-    """Close out a run whose process is dead or gone: a `run: lost` marker and a
+def lose_turn(thread_id: str, turn_id: str) -> dict | None:
+    """Close out a turn whose process is dead or gone: a `turn: lost` marker and a
     message saying so, so the chat is never left waiting on something that will
     never answer.
 
@@ -1607,12 +1607,12 @@ def lose_run(thread_id: str, run_id: str) -> dict | None:
     been written for and which nothing had set since the per-read self-heal was
     deleted. Without it this renders as an ordinary reply that happens to be
     about a restart; with it, it reads as what it is."""
-    return commit_run(thread_id, run_id, [], LOST_RUN_TEXT, state="lost",
-                      stopped=STOPPED_INTERRUPTED)
+    return commit_turn(thread_id, turn_id, [], LOST_TURN_TEXT, state="lost",
+                       stopped=STOPPED_INTERRUPTED)
 
 
-def release_run(thread_id: str, run_id: str) -> None:
-    """Close a run that never got off the ground, writing no message.
+def release_turn(thread_id: str, turn_id: str) -> None:
+    """Close a turn that never got off the ground, writing no message.
 
     A claim is taken before the prompt is assembled, because assembly awaits and
     an await is where a rival turn used to slip in. If assembly then fails, the
@@ -1620,25 +1620,25 @@ def release_run(thread_id: str, run_id: str) -> None:
     is nothing to say in the transcript that the failed request does not already
     say to the person who made it."""
     stored = chat_log.read_meta(thread_id)
-    if stored is None or stored.get("active_run_id") != run_id:
+    if stored is None or stored.get("active_turn_id") != turn_id:
         return
-    chat_log.append_sync(thread_id, {"kind": "run", "run_id": run_id, "state": "finished"})
-    chat_log.patch_meta_sync(thread_id, active_run_id=None, active_run_seq=None,
+    chat_log.append_sync(thread_id, {"kind": "turn", "turn_id": turn_id, "state": "finished"})
+    chat_log.patch_meta_sync(thread_id, active_turn_id=None, active_turn_seq=None,
                              live_message=None)
     chat_log.clear_live(thread_id)
 
 
-def previous_run_id(thread_id: str) -> str | None:
-    """The last run this thread finished (or lost). Not the active one.
+def previous_turn_id(thread_id: str) -> str | None:
+    """The last turn this thread finished (or lost). Not the active one.
 
     This is what `chat_context.arrival_notice` asks for: "which messages arrived
-    while the last run was going" is then a lookup on `meta.during_run`, not an
+    while the last turn was going" is then a lookup on `meta.during_turn`, not an
     inference from where a message sits relative to the last assistant reply.
     That inference is what broke the moment the reply started being appended at
     the tail."""
     for ev in reversed(chat_log.read_events(thread_id)):
-        if ev.get("kind") == "run" and ev.get("state") in ("finished", "lost"):
-            return ev.get("run_id")
+        if ev.get("kind") == "turn" and ev.get("state") in ("finished", "lost"):
+            return ev.get("turn_id")
     return None
 
 

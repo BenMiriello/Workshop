@@ -5658,6 +5658,11 @@ export interface paths {
         /**
          * List Templates
          * @description List available templates ({slug,label,hint}). See load_templates.
+         *
+         *     A bare array, which ADR 0023 clause 1 bans in favour of the `items`/`page`
+         *     envelope. Left as an array here for the reason the ADR's migration posture
+         *     gives: this is a wire-shape change to a route the new-project dialog reads,
+         *     and it is not complete until that reader changes in the same commit.
          */
         get: operations["list_templates_projects_templates_get"];
         put?: never;
@@ -6499,12 +6504,13 @@ export interface paths {
          *                 that can disagree with what it describes.
          *       sort   -> DELETED. It echoed back what the caller sent.
          *       scopes -> MOVED to `GET /tasks/scopes`, which already existed. It was a
-         *                 count of the scopes swept, which is not a member of this
-         *                 collection, and anything that is not a member of the collection
-         *                 is a different resource with its own endpoint. That route
-         *                 returns the scope KEYS, which is strictly more than the count
-         *                 this key carried: `len(scopes)` reproduces the old number and
-         *                 names them besides.
+         *                 count of the scopes this request swept, which is not a member of
+         *                 this collection, and anything that is not a member of the
+         *                 collection is a different resource with its own endpoint. That
+         *                 route NAMES the scopes rather than counting them, which is
+         *                 strictly more information; the one thing it does not reproduce
+         *                 is the narrowing a `?scope=` query applied here, and that is a
+         *                 number the caller already knows, because it sent it.
          */
         get: operations["list_all_tasks_get"];
         put?: never;
@@ -7422,12 +7428,165 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Activation */
+        Activation: {
+            /** Blocked By */
+            blocked_by?: string | null;
+            /** Ever Ran */
+            ever_ran: boolean;
+            /** Last Active */
+            last_active?: string | null;
+            /** Links */
+            links: components["schemas"]["ActivationLink"][];
+            /** Runs Unattended */
+            runs_unattended: boolean;
+        };
+        /**
+         * ActivationLink
+         * @description One condition in the chain that decides whether an agent runs.
+         */
+        ActivationLink: {
+            /** Detail */
+            detail: string;
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Ok */
+            ok: boolean;
+        };
         /** AdoptGroupIn */
         AdoptGroupIn: {
             /** Group */
             group: string;
             /** Project */
             project?: string | null;
+        };
+        /** AdoptGroupOut */
+        AdoptGroupOut: {
+            /**
+             * Adopted
+             * @default []
+             */
+            adopted: components["schemas"]["Agent"][];
+            /** Group */
+            group?: string | null;
+            /**
+             * Scope Applied
+             * @default false
+             */
+            scope_applied: boolean;
+            /**
+             * Scope Defaults
+             * @default {}
+             */
+            scope_defaults: Record<string, never>;
+            /**
+             * Skipped
+             * @default []
+             */
+            skipped: components["schemas"]["SkippedMember"][];
+        };
+        /**
+         * Agent
+         * @description An agent as the registry holds it: `agents_registry._record_from_def`,
+         *     plus the execution state `_merge_build_state` folds in for a maker.
+         *
+         *     `memory`, `limits` and a trigger stay loosely typed on purpose -- they are
+         *     whatever the definition's YAML frontmatter carries, and narrowing them here
+         *     would drop keys the definition author wrote.
+         */
+        Agent: {
+            /**
+             * Autonomy
+             * @default reactive
+             * @enum {string}
+             */
+            autonomy: "reactive" | "supervised" | "autonomous";
+            /** Branch Slug */
+            branch_slug?: string | null;
+            /**
+             * Capabilities
+             * @default []
+             */
+            capabilities: string[];
+            /** Claude Session */
+            claude_session?: string | null;
+            /** Created */
+            created?: string | null;
+            /** Cwd */
+            cwd?: string | null;
+            /**
+             * Definition
+             * @default
+             */
+            definition: string;
+            /** Definition Path */
+            definition_path?: string | null;
+            /**
+             * Delegatable
+             * @default false
+             */
+            delegatable: boolean;
+            /** Effort */
+            effort?: string | null;
+            /** Id */
+            id: string;
+            /** Last Active */
+            last_active?: string | null;
+            /** Latitude */
+            latitude?: string | null;
+            /** Letta Agent Id */
+            letta_agent_id?: string | null;
+            /**
+             * Limits
+             * @default {}
+             */
+            limits: Record<string, never>;
+            /** Memory */
+            memory?: unknown;
+            /**
+             * Mentionable
+             * @default false
+             */
+            mentionable: boolean;
+            /** Model */
+            model?: string | null;
+            /** Name */
+            name: string;
+            /** Permission Mode */
+            permission_mode?: string | null;
+            /** Project Slug */
+            project_slug?: string | null;
+            /**
+             * Purpose
+             * @default
+             */
+            purpose: string;
+            /**
+             * Retired
+             * @default false
+             */
+            retired: boolean;
+            /** Role */
+            role?: string | null;
+            /** Scope */
+            scope?: string | null;
+            /** Slug */
+            slug: string;
+            /** Source */
+            source?: string | null;
+            /** State */
+            state?: string | null;
+            /** Template */
+            template?: string | null;
+            /** Tools */
+            tools?: string[] | null;
+            /**
+             * Triggers
+             * @default []
+             */
+            triggers: Record<string, never>[];
         };
         /** AgentCreate */
         AgentCreate: {
@@ -7477,6 +7636,239 @@ export interface components {
             /** Triggers */
             triggers?: Record<string, never>[] | null;
         };
+        /**
+         * AgentDetail
+         * @description `GET /agents/{id}`: the registry record, enriched.
+         *
+         *     Inherits every `Agent` field and then REDECLARES `autonomy` as the preset,
+         *     because that is what the handler puts there. That override is the collision
+         *     documented in the block comment above, made visible in the schema instead of
+         *     hidden in a dict spread.
+         */
+        AgentDetail: {
+            activation: components["schemas"]["Activation"];
+            authority: components["schemas"]["Authority"];
+            /**
+             * Autonomy
+             * @enum {string}
+             */
+            autonomy: "off" | "on-demand" | "scheduled" | "continuous";
+            /**
+             * Autonomy Mode
+             * @enum {string}
+             */
+            autonomy_mode: "reactive" | "supervised" | "autonomous";
+            /**
+             * Awaiting
+             * @default []
+             */
+            awaiting: components["schemas"]["AwaitingRow"][];
+            /** Branch Slug */
+            branch_slug?: string | null;
+            /**
+             * Capabilities
+             * @default []
+             */
+            capabilities: string[];
+            /** Claude Session */
+            claude_session?: string | null;
+            /** Created */
+            created?: string | null;
+            /** Cwd */
+            cwd?: string | null;
+            /**
+             * Definition
+             * @default
+             */
+            definition: string;
+            /** Definition Path */
+            definition_path?: string | null;
+            /**
+             * Delegatable
+             * @default false
+             */
+            delegatable: boolean;
+            /** Effort */
+            effort?: string | null;
+            /** Id */
+            id: string;
+            /** Last Active */
+            last_active?: string | null;
+            /** Latitude */
+            latitude?: string | null;
+            /** Letta Agent Id */
+            letta_agent_id?: string | null;
+            /**
+             * Limits
+             * @default {}
+             */
+            limits: Record<string, never>;
+            /**
+             * Linked Chat Ids
+             * @default []
+             */
+            linked_chat_ids: string[];
+            /**
+             * Linked Run Ids
+             * @default []
+             */
+            linked_run_ids: string[];
+            /**
+             * Linked Ticket Ids
+             * @default []
+             */
+            linked_ticket_ids: string[];
+            /** Linked Ticket Scope */
+            linked_ticket_scope?: string | null;
+            /** Memory */
+            memory?: unknown;
+            /**
+             * Mentionable
+             * @default false
+             */
+            mentionable: boolean;
+            /** Model */
+            model?: string | null;
+            /** Name */
+            name: string;
+            /** Permission Mode */
+            permission_mode?: string | null;
+            /** Project Slug */
+            project_slug?: string | null;
+            /**
+             * Purpose
+             * @default
+             */
+            purpose: string;
+            queue: components["schemas"]["QueueCounts"];
+            /**
+             * Retired
+             * @default false
+             */
+            retired: boolean;
+            /** Role */
+            role?: string | null;
+            /** Scope */
+            scope?: string | null;
+            /** Slug */
+            slug: string;
+            /** Source */
+            source?: string | null;
+            /** State */
+            state?: string | null;
+            /** Template */
+            template?: string | null;
+            /** Tools */
+            tools?: string[] | null;
+            /**
+             * Triggers
+             * @default []
+             */
+            triggers: Record<string, never>[];
+        };
+        /**
+         * AgentGroup
+         * @description A template GROUP: a member list WITH per-member overrides plus the
+         *     `scope_defaults` the adopting scope takes on. Members are typed `dict`
+         *     because a member is `{template, slug?, overrides?}` where `overrides` is an
+         *     open bag of any Agent field.
+         */
+        AgentGroup: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Members
+             * @default []
+             */
+            members: Record<string, never>[];
+            /** Name */
+            name: string;
+            /**
+             * Scope Defaults
+             * @default {}
+             */
+            scope_defaults: Record<string, never>;
+        };
+        /**
+         * AgentJobsOut
+         * @description Not the ADR 0023 envelope; see `BuildTasksOut`.
+         */
+        AgentJobsOut: {
+            /** Agent Id */
+            agent_id: string;
+            /** Count */
+            count: number;
+            /** Jobs */
+            jobs: components["schemas"]["Job"][];
+        };
+        /**
+         * AgentRunsOut
+         * @description The per-agent activity feed: the run history plus heartbeat freshness.
+         *
+         *     `heartbeat` is whatever the heartbeat writer put in `.runtime/heartbeats/
+         *     <id>.json`, so it stays an open dict. `heartbeat_age_s` is a float of
+         *     seconds, which ADR 0023 clause 4 says should be `<thing>_ms` as an integer;
+         *     unchanged for the same reason as every other rename here.
+         */
+        AgentRunsOut: {
+            /** Agent Id */
+            agent_id: string;
+            /** Heartbeat */
+            heartbeat?: Record<string, never> | null;
+            /** Heartbeat Age S */
+            heartbeat_age_s?: number | null;
+            /** Liveness */
+            liveness: string;
+            /** Runs */
+            runs: components["schemas"]["Job"][];
+            /** Runs Count */
+            runs_count: number;
+        };
+        /**
+         * AgentTemplate
+         * @description A shipped template. A file, not a registry member: nothing here is
+         *     registered or dispatched until it is forked.
+         */
+        AgentTemplate: {
+            /**
+             * Definition
+             * @default
+             */
+            definition: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Name */
+            name: string;
+            /**
+             * Purpose
+             * @default
+             */
+            purpose: string;
+            /** Role */
+            role?: string | null;
+            /** Template */
+            template: string;
+            /** Template Version */
+            template_version: number;
+            /**
+             * Triggers
+             * @default []
+             */
+            triggers: Record<string, never>[];
+        };
+        /** AgentTemplatesOut */
+        AgentTemplatesOut: {
+            /** Groups */
+            groups: components["schemas"]["AgentGroup"][];
+            /** Templates */
+            templates: components["schemas"]["AgentTemplate"][];
+        };
         /** AppUiIn */
         AppUiIn: {
             /** Agent Button */
@@ -7507,6 +7899,47 @@ export interface components {
              * @default
              */
             name: string;
+        };
+        /**
+         * Authority
+         * @description What this role may write and the tools that follow from it. A declaration
+         *     rendered on the page, never a guarantee.
+         */
+        Authority: {
+            /** Describes */
+            describes: string;
+            /** Tools */
+            tools: string[];
+            /** Writes */
+            writes: string[];
+        };
+        /**
+         * AutonomyLogOut
+         * @description The sweep history. Not the ADR 0023 envelope, for the same reason as
+         *     `TaskJobsOut`: ProjectDetail reads these keys and cannot be edited in this
+         *     commit.
+         */
+        AutonomyLogOut: {
+            /** Count */
+            count: number;
+            /** Jobs */
+            jobs: components["schemas"]["Job"][];
+            /** Running */
+            running: boolean;
+        };
+        /**
+         * AutonomyRunOut
+         * @description The sweep that was launched: the Job it adopts and the process running it.
+         */
+        AutonomyRunOut: {
+            /** Job Id */
+            job_id: string;
+            /** Pid */
+            pid: number;
+            /** Slug */
+            slug: string;
+            /** Started */
+            started: boolean;
         };
         /**
          * Awaiting
@@ -7552,6 +7985,25 @@ export interface components {
             uri: string;
             /** Verb */
             verb: string;
+        };
+        /**
+         * AwaitingRow
+         * @description A pending operator prompt, flattened for a queue readout.
+         */
+        AwaitingRow: {
+            /** Id */
+            id?: string | null;
+            /** Question */
+            question?: string | null;
+            /** Since */
+            since?: string | null;
+            /** Status */
+            status?: string | null;
+            /**
+             * Text
+             * @default
+             */
+            text: string;
         };
         /** Body_analyze_birds_analyze_post */
         Body_analyze_birds_analyze_post: {
@@ -7870,6 +8322,41 @@ export interface components {
             /** Autonomy Budget Fraction */
             autonomy_budget_fraction?: number | null;
         };
+        /**
+         * BuildAgent
+         * @description A maker's execution state, out of `.runtime/build_agents.json`. Distinct
+         *     from `Agent`, which is what a DEFINITION FILE declares: running is not a way
+         *     to become an agent.
+         */
+        BuildAgent: {
+            /** Branch Slug */
+            branch_slug?: string | null;
+            /** Claude Session */
+            claude_session?: string | null;
+            /** Created */
+            created?: string | null;
+            /** Cwd */
+            cwd?: string | null;
+            /** Kind */
+            kind?: string | null;
+            /** Last Active */
+            last_active?: string | null;
+            /** Name */
+            name: string;
+            /** Owner Id */
+            owner_id?: number | null;
+            /** Project Slug */
+            project_slug?: string | null;
+            /**
+             * Purpose
+             * @default
+             */
+            purpose: string;
+            /** Slug */
+            slug: string;
+            /** State */
+            state?: string | null;
+        };
         /** BuildAgentCreate */
         BuildAgentCreate: {
             /** Branch Slug */
@@ -7886,12 +8373,59 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /**
+         * BuildAgentDetail
+         * @description `session_alive` is a REAL check that the CLI session file still exists,
+         *     not merely "a session id string is stored" -- which stayed true after the
+         *     session was pruned, so the pill lied.
+         */
+        BuildAgentDetail: {
+            /** Branch Slug */
+            branch_slug?: string | null;
+            /** Claude Session */
+            claude_session?: string | null;
+            /** Created */
+            created?: string | null;
+            /** Cwd */
+            cwd?: string | null;
+            /** Kind */
+            kind?: string | null;
+            /** Last Active */
+            last_active?: string | null;
+            /** Name */
+            name: string;
+            /** Owner Id */
+            owner_id?: number | null;
+            /** Project Slug */
+            project_slug?: string | null;
+            /**
+             * Purpose
+             * @default
+             */
+            purpose: string;
+            /** Session Alive */
+            session_alive: boolean;
+            /** Slug */
+            slug: string;
+            /** State */
+            state?: string | null;
+        };
         /** BuildAgentRename */
         BuildAgentRename: {
             /** Name */
             name?: string | null;
             /** Purpose */
             purpose?: string | null;
+        };
+        /**
+         * BuildTasksOut
+         * @description Not the ADR 0023 collection envelope: changing this key is a wire change
+         *     to a route the build-agent Tasks tab reads, and the ADR's one non-optional
+         *     migration rule is that such a change lands with its frontend edit.
+         */
+        BuildTasksOut: {
+            /** Tasks */
+            tasks: components["schemas"]["Task"][];
         };
         /**
          * CardState
@@ -7935,6 +8469,21 @@ export interface components {
             /** Default Permission Mode */
             default_permission_mode?: string | null;
         };
+        /**
+         * CommitOut
+         * @description `ok: false` with a `reason` at HTTP 200 is an ADR 0023 clause 3 violation
+         *     (failure never arrives at 200). Declared rather than fixed: "nothing to
+         *     commit" is reported, not raised, by the caller today, and turning it into a
+         *     4xx is a behaviour change to a route the Diff tab reads.
+         */
+        CommitOut: {
+            /** Commit */
+            commit?: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
         /** ConcurrencyPatch */
         ConcurrencyPatch: {
             /** Max Helpers */
@@ -7977,6 +8526,15 @@ export interface components {
             scope: string;
             /** Target */
             target: string;
+        };
+        /**
+         * ContentOut
+         * @description A whole text file's contents. Used by every brief / todo /
+         *     interventions read.
+         */
+        ContentOut: {
+            /** Content */
+            content: string;
         };
         /** CreateProjectIn */
         CreateProjectIn: {
@@ -8052,6 +8610,11 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** DelegatesOut */
+        DelegatesOut: {
+            /** Delegates */
+            delegates: components["schemas"]["NativeSubagent"][];
+        };
         /** DeletedOut */
         DeletedOut: {
             /** Deleted */
@@ -8099,6 +8662,26 @@ export interface components {
         DeviceTokenBody: {
             /** Label */
             label?: string | null;
+        };
+        /**
+         * DiffFile
+         * @description One changed file. `status` is git's two-character XY porcelain code;
+         *     `??` means untracked, whose `diff` is the whole file rendered as additions.
+         */
+        DiffFile: {
+            /** Diff */
+            diff: string;
+            /** Path */
+            path: string;
+            /** Status */
+            status: string;
+        };
+        /** DiffOut */
+        DiffOut: {
+            /** Files */
+            files: components["schemas"]["DiffFile"][];
+            /** Summary */
+            summary: string;
         };
         /** DisconnectIn */
         DisconnectIn: {
@@ -8172,6 +8755,13 @@ export interface components {
             task: string;
             /** Word Count */
             word_count: number;
+        };
+        /** FileOut */
+        FileOut: {
+            /** Content */
+            content: string;
+            /** Path */
+            path: string;
         };
         /** FileWriteIn */
         FileWriteIn: {
@@ -8294,6 +8884,17 @@ export interface components {
         InstallIn: {
             /** Target Slug */
             target_slug?: string | null;
+        };
+        /**
+         * InterventionAppendOut
+         * @description `ts` is ADR 0023 clause 4 debt: an instant field should be `<verb>_at`.
+         *     Left as-is because it is the key the caller reads today.
+         */
+        InterventionAppendOut: {
+            /** Ok */
+            ok: boolean;
+            /** Ts */
+            ts: string;
         };
         /** InterventionIn */
         InterventionIn: {
@@ -8607,6 +9208,67 @@ export interface components {
             /** Mode */
             mode: string;
         };
+        /**
+         * NativeSubagent
+         * @description A Claude Code subagent this instance can DELEGATE to. Same markdown and
+         *     same parser as a roster agent; the difference is lifecycle, not schema.
+         */
+        NativeSubagent: {
+            /**
+             * Definition
+             * @default
+             */
+            definition: string;
+            /** Definition Path */
+            definition_path?: string | null;
+            /**
+             * Delegatable
+             * @default false
+             */
+            delegatable: boolean;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Dispatch */
+            dispatch: string;
+            /** Foreign */
+            foreign?: string | null;
+            /**
+             * Mentionable
+             * @default false
+             */
+            mentionable: boolean;
+            /** Name */
+            name: string;
+            /**
+             * Purpose
+             * @default
+             */
+            purpose: string;
+            /** Role */
+            role?: string | null;
+            /**
+             * Scope
+             * @default
+             */
+            scope: string;
+            /** Slug */
+            slug: string;
+            /** Source */
+            source: string;
+            /**
+             * Tools
+             * @default []
+             */
+            tools: string[];
+            /**
+             * Unrestricted Tools
+             * @default false
+             */
+            unrestricted_tools: boolean;
+        };
         /** NoteCreate */
         NoteCreate: {
             /**
@@ -8626,6 +9288,19 @@ export interface components {
         NoteUpdate: {
             /** Content */
             content: string;
+        };
+        /**
+         * OkOut
+         * @description ADR 0023 clause 7 bans `{"ok": true}` as a mutation body and this model
+         *     is that body. It is declared rather than fixed because replacing it means
+         *     returning the resource in its new state, which is a wire-shape change on
+         *     routes the frontend reads -- and the ADR's one non-optional migration rule
+         *     is that such a change lands with its frontend edit in the same commit.
+         *     Typed here so the debt is countable in the schema instead of invisible.
+         */
+        OkOut: {
+            /** Ok */
+            ok: boolean;
         };
         /**
          * PageMeta
@@ -8734,6 +9409,78 @@ export interface components {
             /** Voice */
             voice?: string | null;
         };
+        /** PreviewLogOut */
+        PreviewLogOut: {
+            /** Log */
+            log: string;
+        };
+        /**
+         * PreviewServerStatus
+         * @description `dev_servers.status`. `started_at` is a RAW EPOCH FLOAT, which ADR 0023
+         *     clause 4 bans (every instant on the wire is an RFC3339 UTC string). Typed as
+         *     what it is rather than silently coerced: converting it is a wire change to
+         *     the reader that formats it, and this pass does not touch the frontend.
+         */
+        PreviewServerStatus: {
+            /** Command */
+            command?: string | null;
+            /** Log Path */
+            log_path?: string | null;
+            /** Pid */
+            pid?: number | null;
+            /** Port */
+            port?: number | null;
+            /** Running */
+            running: boolean;
+            /** Stale Pid */
+            stale_pid?: number | null;
+            /** Started At */
+            started_at?: number | null;
+        };
+        /** PreviewStartOut */
+        PreviewStartOut: {
+            /** Ok */
+            ok: boolean;
+            /** Reason */
+            reason?: string | null;
+            status?: components["schemas"]["PreviewServerStatus"] | null;
+        };
+        /**
+         * PreviewStatusOut
+         * @description Status plus the two boot-time helpers: what to run, and (when stopped)
+         *     which port to default the picker to. `public_url` is derived from the
+         *     request host so the link works over the LAN, not just localhost.
+         */
+        PreviewStatusOut: {
+            /** Command */
+            command?: string | null;
+            /** Log Path */
+            log_path?: string | null;
+            /** Pid */
+            pid?: number | null;
+            /** Port */
+            port?: number | null;
+            /** Public Url */
+            public_url?: string | null;
+            /** Running */
+            running: boolean;
+            /** Stale Pid */
+            stale_pid?: number | null;
+            /** Started At */
+            started_at?: number | null;
+            suggested: components["schemas"]["SuggestedCommand"];
+            /** Suggested Port */
+            suggested_port?: number | null;
+        };
+        /** PreviewStopOut */
+        PreviewStopOut: {
+            /** Force Killed */
+            force_killed?: boolean | null;
+            /** Ok */
+            ok: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
         /** Project */
         Project: {
             /**
@@ -8787,10 +9534,90 @@ export interface components {
             /** Title */
             title: string;
         };
+        /**
+         * ProjectAutonomyOut
+         * @description The scope's autonomy config plus the state a reader needs to act on it.
+         *
+         *     `autonomy` is the PRESET vocabulary (`off | on-demand | scheduled |
+         *     continuous`, `services/triggers.py::PRESETS`) -- the trigger cadence for a
+         *     project scope. It is a different axis from an AGENT's `autonomy_mode`
+         *     (`reactive | supervised | autonomous`); see the note on
+         *     `routes/agents.py::RosterAgent`.
+         *
+         *     `latitude` stays null when unset: this scope is one level of the latitude
+         *     cascade, not the bottom of it, so a defaulted value here would read as a
+         *     choice nobody made.
+         */
+        ProjectAutonomyOut: {
+            /** Autonomy */
+            autonomy: string;
+            /**
+             * Awaiting
+             * @default []
+             */
+            awaiting: components["schemas"]["AwaitingRow"][];
+            last_run?: components["schemas"]["Job"] | null;
+            /** Latitude */
+            latitude?: string | null;
+            /**
+             * Limits
+             * @default {}
+             */
+            limits: Record<string, never>;
+            queue: components["schemas"]["QueueCounts"];
+            /** Running */
+            running: boolean;
+            /**
+             * Triggers
+             * @default []
+             */
+            triggers: Record<string, never>[];
+            /** Updated */
+            updated?: string | null;
+        };
+        /**
+         * ProjectAutonomyPutOut
+         * @description What was stored. Deliberately narrower than the GET: a write echoes the
+         *     config it just persisted plus whether a sweep is in flight, and does not
+         *     re-derive the queue snapshot the caller did not ask for.
+         */
+        ProjectAutonomyPutOut: {
+            /** Autonomy */
+            autonomy: string;
+            /** Latitude */
+            latitude?: string | null;
+            /**
+             * Limits
+             * @default {}
+             */
+            limits: Record<string, never>;
+            /** Running */
+            running: boolean;
+            /**
+             * Triggers
+             * @default []
+             */
+            triggers: Record<string, never>[];
+            /** Updated */
+            updated: string;
+        };
         /** ProjectPatchIn */
         ProjectPatchIn: {
             /** Concurrent Worktrees */
             concurrent_worktrees?: boolean | null;
+        };
+        /**
+         * ProjectTemplate
+         * @description One entry in the scaffold catalog. `blank` is always first and is a
+         *     programmatic scaffold with no on-disk directory.
+         */
+        ProjectTemplate: {
+            /** Hint */
+            hint: string;
+            /** Label */
+            label: string;
+            /** Slug */
+            slug: string;
         };
         /** PublishIn */
         PublishIn: {
@@ -8842,6 +9669,26 @@ export interface components {
              * @default
              */
             title: string;
+        };
+        /**
+         * QueueCounts
+         * @description A scope's task tally. `ready` is the count of `todo` rows whose
+         *     dependencies are all terminal (the predicate `next_ready` uses), not a
+         *     status.
+         */
+        QueueCounts: {
+            /** Blocked */
+            blocked: number;
+            /** Doing */
+            doing: number;
+            /** In Review */
+            in_review: number;
+            /** Parked */
+            parked: number;
+            /** Ready */
+            ready: number;
+            /** Todo */
+            todo: number;
         };
         /** ReadIn */
         ReadIn: {
@@ -8940,6 +9787,13 @@ export interface components {
             /** Context Key */
             context_key: string;
         };
+        /** RetireAgentOut */
+        RetireAgentOut: {
+            /** Ok */
+            ok: boolean;
+            /** Retired */
+            retired: string;
+        };
         /** RevokeIn */
         RevokeIn: {
             /** Id */
@@ -8951,6 +9805,86 @@ export interface components {
         RollbackIn: {
             /** To Run Id */
             to_run_id: string;
+        };
+        /**
+         * RosterAgent
+         * @description The roster projection. Deliberately NOT `Agent`: the list route hand-picks
+         *     a narrower set (no `definition` body, no `definition_path`) because the
+         *     roster renders cards, and shipping every agent's full markdown to draw a
+         *     list is the kind of payload ADR 0023 exists to make visible.
+         *
+         *     `autonomy` here is the PRESET; `autonomy_mode` is the MODE. See the block
+         *     comment above.
+         */
+        RosterAgent: {
+            /**
+             * Autonomy
+             * @enum {string}
+             */
+            autonomy: "off" | "on-demand" | "scheduled" | "continuous";
+            /**
+             * Autonomy Mode
+             * @enum {string}
+             */
+            autonomy_mode: "reactive" | "supervised" | "autonomous";
+            /**
+             * Capabilities
+             * @default []
+             */
+            capabilities: string[];
+            /** Claude Session */
+            claude_session?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /**
+             * Delegatable
+             * @default false
+             */
+            delegatable: boolean;
+            /** Id */
+            id?: string | null;
+            /** Last Active */
+            last_active?: string | null;
+            /** Latitude */
+            latitude?: string | null;
+            /**
+             * Limits
+             * @default {}
+             */
+            limits: Record<string, never>;
+            /** Memory */
+            memory?: unknown;
+            /**
+             * Memory Blocks
+             * @default []
+             */
+            memory_blocks: Record<string, never>[];
+            /**
+             * Mentionable
+             * @default false
+             */
+            mentionable: boolean;
+            /** Name */
+            name?: string | null;
+            /** Project Slug */
+            project_slug?: string | null;
+            /** Purpose */
+            purpose?: string | null;
+            /** Role */
+            role?: string | null;
+            /** Scope */
+            scope?: string | null;
+            /** Slug */
+            slug?: string | null;
+            /** Source */
+            source?: string | null;
+            /** State */
+            state?: string | null;
+            /**
+             * Triggers
+             * @default []
+             */
+            triggers: Record<string, never>[];
         };
         /** RouteDecision */
         RouteDecision: {
@@ -9014,10 +9948,10 @@ export interface components {
          * @description The scope keys with a task store, plus their pickup facts.
          *
          *     This route is also where `GET /tasks`'s retired `scopes` key went: that was
-         *     a COUNT of the scopes swept, and `len(scopes)` here reproduces it while
-         *     naming them. ADR 0023 clause 1: anything that is not a member of the
-         *     collection is a different resource with its own endpoint, and this endpoint
-         *     already existed, which is what made the split cheap.
+         *     a COUNT of the scopes a list request swept, and this names them instead.
+         *     ADR 0023 clause 1: anything that is not a member of the collection is a
+         *     different resource with its own endpoint, and this endpoint already existed,
+         *     which is what made the split cheap.
          */
         ScopesOut: {
             /** Pickup */
@@ -9053,6 +9987,17 @@ export interface components {
         SetChatMode: {
             /** Mode */
             mode: string;
+        };
+        /**
+         * SkippedMember
+         * @description A group member that was not forked, with the incumbent named. Adopting a
+         *     group twice is a no-op for a singleton role, and this is how it says so.
+         */
+        SkippedMember: {
+            /** Reason */
+            reason: string;
+            /** Template */
+            template: string;
         };
         /** SpawnTask */
         SpawnTask: {
@@ -9097,6 +10042,13 @@ export interface components {
             permission_mode?: string | null;
             /** Sent At */
             sent_at?: string | null;
+        };
+        /** SuggestedCommand */
+        SuggestedCommand: {
+            /** Command */
+            command: string;
+            /** Kind */
+            kind: string;
         };
         /** Surfaces */
         Surfaces: {
@@ -9508,6 +10460,35 @@ export interface components {
              */
             kwargs: Record<string, never>;
         };
+        /** ToolsOut */
+        ToolsOut: {
+            /** Tools */
+            tools: string[];
+        };
+        /**
+         * TreeNode
+         * @description One entry in a working-tree listing. Recursive: `children` is present on
+         *     a directory and absent on a file, `size` the other way round.
+         */
+        TreeNode: {
+            /** Children */
+            children?: components["schemas"]["TreeNode"][] | null;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Size */
+            size?: number | null;
+        };
+        /** TreeOut */
+        TreeOut: {
+            /** Root */
+            root: string;
+            /** Tree */
+            tree: components["schemas"]["TreeNode"][];
+        };
         /** TriggersIn */
         TriggersIn: {
             /** Cron */
@@ -9754,7 +10735,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RosterAgent"][];
                 };
             };
         };
@@ -9778,7 +10759,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Agent"];
                 };
             };
             /** @description Validation Error */
@@ -9811,7 +10792,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AdoptGroupOut"];
                 };
             };
             /** @description Validation Error */
@@ -9973,7 +10954,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BuildAgent"][];
                 };
             };
         };
@@ -9997,7 +10978,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BuildAgent"];
                 };
             };
             /** @description Validation Error */
@@ -10028,7 +11009,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BuildAgentDetail"];
                 };
             };
             /** @description Validation Error */
@@ -10063,7 +11044,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BuildAgent"];
                 };
             };
             /** @description Validation Error */
@@ -10094,7 +11075,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContentOut"];
                 };
             };
             /** @description Validation Error */
@@ -10129,7 +11110,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OkOut"];
                 };
             };
             /** @description Validation Error */
@@ -10164,7 +11145,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CommitOut"];
                 };
             };
             /** @description Validation Error */
@@ -10195,7 +11176,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DiffOut"];
                 };
             };
             /** @description Validation Error */
@@ -10230,7 +11211,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OkOut"];
                 };
             };
             /** @description Validation Error */
@@ -10263,7 +11244,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FileOut"];
                 };
             };
             /** @description Validation Error */
@@ -10300,7 +11281,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OkOut"];
                 };
             };
             /** @description Validation Error */
@@ -10331,7 +11312,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContentOut"];
                 };
             };
             /** @description Validation Error */
@@ -10366,7 +11347,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["InterventionAppendOut"];
                 };
             };
             /** @description Validation Error */
@@ -10397,7 +11378,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PreviewLogOut"];
                 };
             };
             /** @description Validation Error */
@@ -10432,7 +11413,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PreviewStartOut"];
                 };
             };
             /** @description Validation Error */
@@ -10463,7 +11444,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PreviewStatusOut"];
                 };
             };
             /** @description Validation Error */
@@ -10494,7 +11475,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PreviewStopOut"];
                 };
             };
             /** @description Validation Error */
@@ -10525,7 +11506,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OkOut"];
                 };
             };
             /** @description Validation Error */
@@ -10556,7 +11537,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OkOut"];
                 };
             };
             /** @description Validation Error */
@@ -10589,7 +11570,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BuildTasksOut"];
                 };
             };
             /** @description Validation Error */
@@ -10624,7 +11605,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Task"];
                 };
             };
             /** @description Validation Error */
@@ -10656,7 +11637,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DeletedOut"];
                 };
             };
             /** @description Validation Error */
@@ -10692,7 +11673,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Task"];
                 };
             };
             /** @description Validation Error */
@@ -10723,7 +11704,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ContentOut"];
                 };
             };
             /** @description Validation Error */
@@ -10758,7 +11739,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OkOut"];
                 };
             };
             /** @description Validation Error */
@@ -10789,7 +11770,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["TreeOut"];
                 };
             };
             /** @description Validation Error */
@@ -10818,7 +11799,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["DelegatesOut"];
                 };
             };
         };
@@ -10842,7 +11823,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Agent"];
                 };
             };
             /** @description Validation Error */
@@ -10871,7 +11852,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AgentTemplatesOut"];
                 };
             };
         };
@@ -10891,7 +11872,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ToolsOut"];
                 };
             };
         };
@@ -10913,7 +11894,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AgentDetail"];
                 };
             };
             /** @description Validation Error */
@@ -10948,7 +11929,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["Agent"];
                 };
             };
             /** @description Validation Error */
@@ -10979,7 +11960,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RetireAgentOut"];
                 };
             };
             /** @description Validation Error */
@@ -11012,7 +11993,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AgentJobsOut"];
                 };
             };
             /** @description Validation Error */
@@ -11045,7 +12026,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["AgentRunsOut"];
                 };
             };
             /** @description Validation Error */
@@ -19334,7 +20315,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>[];
+                    "application/json": components["schemas"]["ProjectTemplate"][];
                 };
             };
         };
@@ -19422,7 +20403,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ProjectAutonomyOut"];
                 };
             };
             /** @description Validation Error */
@@ -19457,7 +20438,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ProjectAutonomyPutOut"];
                 };
             };
             /** @description Validation Error */
@@ -19490,7 +20471,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["AutonomyLogOut"];
                 };
             };
             /** @description Validation Error */
@@ -19521,7 +20502,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["AutonomyRunOut"];
                 };
             };
             /** @description Validation Error */
@@ -19552,7 +20533,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ContentOut"];
                 };
             };
             /** @description Validation Error */
@@ -19587,7 +20568,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["OkOut"];
                 };
             };
             /** @description Validation Error */
@@ -19959,7 +20940,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["FileOut"];
                 };
             };
             /** @description Validation Error */
@@ -19996,7 +20977,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["OkOut"];
                 };
             };
             /** @description Validation Error */
@@ -20027,7 +21008,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ContentOut"];
                 };
             };
             /** @description Validation Error */
@@ -20062,7 +21043,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ContentOut"];
                 };
             };
             /** @description Validation Error */
@@ -20093,7 +21074,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["OkOut"];
                 };
             };
             /** @description Validation Error */
@@ -20124,7 +21105,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["ContentOut"];
                 };
             };
             /** @description Validation Error */
@@ -20155,7 +21136,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": Record<string, never>;
+                    "application/json": components["schemas"]["TreeOut"];
                 };
             };
             /** @description Validation Error */

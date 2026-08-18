@@ -89,7 +89,7 @@ export type ThreadLog = {
    *  times; call it after every write. */
   sync: () => Promise<void>;
   /** Is a run in flight on this thread, per the server. */
-  runActive: boolean;
+  turnActive: boolean;
   /** Has THIS thread's first page landed? False from the render in which the
    *  thread changes until `events?after=0` resolves (or fails).
    *
@@ -267,7 +267,7 @@ export function useThreadLog({
         type: "eventsReceived",
         events: page.events || [],
         lastSeq: page.last_seq || 0,
-        activeRun: page.active_run ?? null,
+        activeTurn: page.active_turn ?? null,
         queued: page.queued,
         queueHeld: page.queue_held,
         queueError: page.queue_error,
@@ -371,7 +371,7 @@ export function useThreadLog({
           type: "eventsReceived",
           events: page.events || [],
           lastSeq: page.last_seq || 0,
-          activeRun: page.active_run ?? null,
+          activeTurn: page.active_turn ?? null,
           queued: page.queued,
           queueHeld: page.queue_held,
           queueError: page.queue_error,
@@ -494,7 +494,7 @@ export function useThreadLog({
   // the run and the pending sends, and is cheap.
   //
   // Before this, one memo on `[state]` rebuilt everything on every SSE frame:
-  // `runDelta` produces a new state per token, so appending one token re-derived
+  // `turnDelta` produces a new state per token, so appending one token re-derived
   // every message in the thread, dozens of times a second, for the whole turn.
   const committed = useMemo(
     () => selectCommitted(state),
@@ -503,14 +503,14 @@ export function useThreadLog({
     // the count changes), and without this dep the divider kept its old count
     // until the next unrelated event redrew it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.byId, state.order, state.idBySeq, state.activeRun?.runId, state.cut],
+    [state.byId, state.order, state.idBySeq, state.activeTurn?.turnId, state.cut],
   );
   const transcript = useMemo(
     () => composeTranscript(committed, state),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [committed, state.activeRun, state.pending],
+    [committed, state.activeTurn, state.pending],
   );
 
-  return { state, stateRef, dispatch, transcript, sync, runActive: !!state.activeRun,
+  return { state, stateRef, dispatch, transcript, sync, turnActive: !!state.activeTurn,
            hydrated, stale, branch, loadOlder, loadingOlder, olderError };
 }

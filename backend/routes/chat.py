@@ -472,11 +472,11 @@ def _without_messages(t: dict) -> dict:
 async def thread(thread_id: str):
     """The thread as a document: meta plus a `messages` list.
 
-    A run in flight appears as a trailing assistant message carrying
+    A turn in flight appears as a trailing assistant message carrying
     `streaming: true` and its `turn_id`, built as a VIEW of `meta.live_message`
     (chat_store._live_view) rather than stored. There is nothing to self-heal
-    here any more: the flag is derived from `active_run_id`, so it cannot be
-    orphaned, and a run that did not survive a restart is closed out once at
+    here any more: the flag is derived from `active_turn_id`, so it cannot be
+    orphaned, and a turn that did not survive a restart is closed out once at
     startup (build_streaming.reconcile_threads) instead of on every read."""
     t = chat_store.get_thread(thread_id)
     if t is None:
@@ -501,7 +501,7 @@ async def stream_thread(thread_id: str, request: Request, since: int = 0):
     started on another device, a message sent from a phone, a queued message the
     server delivered, a compaction — arrived up to ten seconds late, on every
     client but the one that caused it. There was already a stream, but it
-    carried ONE RUN's output to whoever knew that run's id, so a client that had
+    carried ONE TURN's output to whoever knew that turn's id, so a client that had
     not started a turn had nothing to subscribe to and could only ask again.
 
     IT CARRIES NO CONTENT, deliberately. `changed` and a version, nothing else;
@@ -568,10 +568,10 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
     """The thread's event log from a cursor. THE sync endpoint.
 
     Everything needed to render a transcript is here: `events` in seq order,
-    `last_seq` to poll from next, and `active_run` with the live snapshot of a
+    `last_seq` to poll from next, and `active_turn` with the live snapshot of a
     turn in progress. A client calls this on mount, on focus, on reconnect and
     after any write, and merges it with nothing except the live SSE for the
-    active run.
+    active turn.
 
     That is the point. A transcript assembled by merging several endpoints with
     local state is the anti-pattern behind every reorder and eaten-message bug in
@@ -592,7 +592,7 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
 
       * `read_meta` is a small fixed-size read (meta.json plus the log's last
         64KB, to reconcile `last_seq`), and it answers `last_seq` on its own;
-      * `active_run` reads the run's start seq straight out of meta now, so it
+      * `active_turn` reads the turn's start seq straight out of meta now, so it
         no longer needs the events at all.
 
     That leaves `read_events`, and a poll with nothing new to fetch does not need
@@ -627,7 +627,7 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
     STRUCTURE and the log for CONTENT, which is a seam that must be closed rather
     than left." Checked against a live thread before writing this (65341b40...):
     the Postgres mirror has 98 rows against the log's 175 events, because it
-    never mirrors `run` or `title` kind events at all, and its `seq` is a
+    never mirrors `turn` or `title` kind events at all, and its `seq` is a
     SEPARATE counter from the log's -- Postgres seq 1 is the log's seq 2 for the
     same message. A page built from Postgres could not be spliced against an
     `after` cursor from this same endpoint without silently dropping events and
@@ -676,7 +676,7 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
         "last_seq": last_seq,
         "branch": branch["branch"],
         "branch_count": branch["count"],
-        "active_run": _active_run_payload(thread_id, meta),
+        "active_turn": _active_turn_payload(thread_id, meta),
         # ADDITIVE. `after=0` with no `tail` always has `has_more=False` and
         # `first_seq` set from whatever `events` came back (or None if empty):
         # that call already returns the whole log, so nothing is being withheld.
@@ -752,21 +752,21 @@ def _cut_payload(thread_id: str) -> dict:
     Meta only. This runs on every poll from every open tab, and reading it
     through `get_thread` parsed the entire log to answer it — the exact cost
     this endpoint was rebuilt to remove, and pinned by
-    test_chat_run_lifecycle.TestTheSyncEndpointDoesNotReparseTheLog."""
+    test_chat_turn_lifecycle.TestTheSyncEndpointDoesNotReparseTheLog."""
     return chat_store.cut_state(thread_id)
 
 
-def _active_run_payload(thread_id: str, meta: dict) -> dict | None:
-    """The live run, plus whether it can be spoken to.
+def _active_turn_payload(thread_id: str, meta: dict) -> dict | None:
+    """The live turn, plus whether it can be spoken to.
 
     `command` is added HERE rather than in chat_log because only this layer can
     see the turn registry. The client needs it to decide between injecting a
     message and queueing it: a command turn takes no input, and a client that
     does not know that sends into a void."""
-    run = chat_log.active_run(thread_id, meta=meta)
-    if run and not build_streaming.run_accepts_input(run.get("run_id")):
-        return {**run, "accepts_input": False}
-    return run
+    turn = chat_log.active_turn(thread_id, meta=meta)
+    if turn and not build_streaming.turn_accepts_input(turn.get("turn_id")):
+        return {**turn, "accepts_input": False}
+    return turn
 
 
 @router.patch("/threads/{thread_id}")
@@ -832,8 +832,8 @@ def _require_quiet_for_branching(thread_id: str, verb: str) -> None:
         raise HTTPException(
             409, f"this chat is busy ({thread_ops.pending(thread_id)}). "
                  f"Try {verb} again in a moment.")
-    rid = chat_store.active_run_id(thread_id)
-    if rid and build_streaming.run_is_live(rid):
+    rid = chat_store.active_turn_id(thread_id)
+    if rid and build_streaming.turn_is_live(rid):
         raise HTTPException(
             409, "a turn is running on this chat. Wait for it to finish, or "
                  "stop it first.")
@@ -853,7 +853,7 @@ async def fork_thread(thread_id: str, body: ForkThread):
     # can tell the two apart. So it is REPORTED rather than guessed at: cancelling
     # for him would destroy work he never asked to destroy, and staying silent is
     # how it became a surprise. Requiring a quiet thread above already makes this
-    # the narrow case it looks like — the queue only fills behind a run or an
+    # the narrow case it looks like — the queue only fills behind a turn or an
     # operation, and neither is allowed to be in flight here.
     held = len(chat_queue.read(thread_id) or [])
     try:
@@ -977,7 +977,7 @@ _DISTILL_PROMPT = (
     "objective, output and boundaries are REQUIRED. Never return one of them "
     "empty. The worker reads the title and the body and NOTHING ELSE: not this "
     "conversation, not the operator, not you. Anything the ticket does not say is "
-    "guessed at or asked about, and both cost a run.\n"
+    "guessed at or asked about, and both cost a turn.\n"
     "  - output is the finish line. Write the observable thing ('the endpoint "
     "returns the new field and a test covers it'), never 'it works'. Without it "
     "the worker picks its own finish line and is judged against a different one.\n"
@@ -1108,7 +1108,7 @@ async def make_ticket_drafts(thread_id: str):
 
     Zero is a normal answer. A conversation is not one ticket, and most of what
     is said in one is discussion, reversal, or work already done. Filing them as
-    drafts is safe: `next_ready` never picks a draft and the run endpoint refuses
+    drafts is safe: `next_ready` never picks a draft and the turn endpoint refuses
     one, so proposing can never start work."""
     scope_key, root = _drafts_scope(thread_id)
     try:
@@ -1190,7 +1190,7 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         raise HTTPException(404, "thread not found")
 
     # Resolve a canonical scope KEY (workshop / project:<slug> / agent:<slug>)
-    # so the same key both files the task AND drives the run
+    # so the same key both files the task AND drives the turn
     # launcher. An explicit project wins; else the chat's own binding when it has
     # a task scope; else the workshop root queue (a general chat has none of its
     # own to file to yet).
@@ -1286,7 +1286,7 @@ async def spawn_task(thread_id: str, body: SpawnTask):
     # File AND run: launch a worker now for a freshly filed task. Never run a
     # merge/exact (it folded into an existing task; running that would be a
     # surprise re-run of unrelated work). C12 (2026-07-18): the server used
-    # to append a second `job-status` ui-card message after the run started,
+    # to append a second `job-status` ui-card message after the turn started,
     # so the operator saw two cards for one spawn (the task-proposal card's
     # own success state + the separate job-status card). We now return the
     # job_id in the response and let the source card render it; Work and the
@@ -1297,8 +1297,8 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         if task_id and scope_key:
             from routes.tasks_all import launch_task_run
             try:
-                # The thread is the run's origin. Recording it here is what
-                # makes the run navigable back to the conversation that asked
+                # The thread is the turn's origin. Recording it here is what
+                # makes the turn navigable back to the conversation that asked
                 # for it; it was the only linkage field never written.
                 run_res = launch_task_run(scope_key, task_id, chat_id=thread_id)
             except HTTPException as e:
@@ -1837,8 +1837,8 @@ async def compact_thread(thread_id: str):
             session_reset = _detach_live_session(thread_id, t, provider)
             return {"folded": 0, "session_reset": session_reset,
                     "error": error or "", "summary_chars": 0}
-        rid = chat_store.active_run_id(thread_id)
-        if rid and build_streaming.run_is_live(rid):
+        rid = chat_store.active_turn_id(thread_id)
+        if rid and build_streaming.turn_is_live(rid):
             # A reply is being written. The fold's WRITES wait for it: landing
             # a boundary mid-turn is how a reply ends up on the far side of the
             # divider from the messages it answers. The summary is computed
@@ -1955,7 +1955,7 @@ def _land_fold(thread_id: str, summary: str, folded_through: int) -> bool:
 
 
 async def _land_fold_when_quiet(thread_id: str, summary: str, folded_through: int) -> None:
-    """Background landing for a fold computed while a run was live. Owns the
+    """Background landing for a fold computed while a turn was live. Owns the
     thread_ops registration it inherited; messages queued behind the operation
     drain when `end` fires."""
     try:
@@ -1991,8 +1991,8 @@ async def clear_thread_context(thread_id: str):
                 "session_reset": False, "busy": True}
     handed_off = False
     try:
-        rid = chat_store.active_run_id(thread_id)
-        if rid and build_streaming.run_is_live(rid):
+        rid = chat_store.active_turn_id(thread_id)
+        if rid and build_streaming.turn_is_live(rid):
             thread_ops.land_in_background(thread_id, _land_clear_when_quiet(thread_id))
             handed_off = True
             return {"cleared": True, "cleared_through": 0,
@@ -2179,8 +2179,8 @@ def _side_query_cwd(provider) -> str:
 async def thread_context_detail(thread_id: str, refresh: bool = False):
     """What is actually filling this chat's window, broken down.
 
-    Powers the context modal. A SIDE QUERY, not a turn: it claims no run, writes
-    no run event, and appends no message, because opening a panel is not
+    Powers the context modal. A SIDE QUERY, not a turn: it claims no turn, writes
+    no turn event, and appends no message, because opening a panel is not
     something that belongs in the transcript.
 
     Free to serve. The CLI computes `/context` locally — measured 2026-08-10 at
@@ -2234,7 +2234,7 @@ async def thread_mcp_health(thread_id: str, refresh: bool = False):
     they connect.
 
     The same SIDE QUERY contract as `/context/detail` and for the same reasons:
-    it claims no run, emits no run event, and appends no message. It runs
+    it claims no turn, emits no turn event, and appends no message. It runs
     `claude mcp list`, which reads configuration and pings each server; it never
     resumes a session and never reaches a model.
 
@@ -2282,7 +2282,7 @@ async def set_thread_mcp_servers(thread_id: str, body: McpSelectionIn):
 
     The selection is stored against the thread exactly as the model, effort and
     permission mode are, and is read at spawn time — so it applies from the next
-    turn, not to a run already in flight, whose argv was fixed when its process
+    turn, not to a turn already in flight, whose argv was fixed when its process
     started.
 
     Sending every server the machine currently has is stored as "all" rather
@@ -2351,9 +2351,9 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     nothing at all, which is exactly why a contract change could never reach a
     session already running.
 
-    Capability facts come from the SAME branch that decides the run config
+    Capability facts come from the SAME branch that decides the turn config
     (capability_for mirrors the build/narrow/tools-off ladder), so the role
-    preamble can never claim tools the run does not actually have."""
+    preamble can never claim tools the turn does not actually have."""
     tools_active, tool_summary = chat_context.capability_for(
         provider, enable_chat_tools=ENABLE_CHAT_TOOLS
     )
@@ -2591,13 +2591,13 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
     tid = t.get("id") or ""
     fresh = chat_store.get_thread(tid) or t
     # Which messages waited is a LOOKUP, not a guess about position: a message
-    # handed to run R carries `during_run = R`, and the run that just ended is
+    # handed to run R carries `during_turn = R`, and the turn that just ended is
     # the one whose arrivals this turn has not answered. Reading the tail after
     # the last assistant message (what this used to do) stopped working the
     # moment the reply started being appended when it FINISHED, because a
     # delivered message then sits above the reply rather than below it.
     arrivals = chat_context.arrival_notice(
-        fresh.get("messages") or [], run_id=chat_store.previous_run_id(tid))
+        fresh.get("messages") or [], turn_id=chat_store.previous_turn_id(tid))
     if arrivals:
         parts.append(arrivals)
     # Record what this thread has now been told, AFTER the prompt is built: a
@@ -2612,8 +2612,8 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
 async def send_message(thread_id: str, body: PostMessage):
     """Send a message and BLOCK until the reply is committed. Voice and scripts.
 
-    A thin wrapper over the same run pipeline the streaming path uses: start a
-    run (or join the one in flight), await its finalize, return the committed
+    A thin wrapper over the same turn pipeline the streaming path uses: start
+    a turn (or join the one in flight), await its finalize, return the committed
     message. There is no second completion path any more.
 
     That mattered because the two had separate finalize pipelines. Provider
@@ -2631,7 +2631,7 @@ async def send_message(thread_id: str, body: PostMessage):
     out = await _send(thread_id, content, body.model, client_id=body.client_id)
     turn = build_streaming.get_turn(out["turn_id"])
     if turn is None:
-        # The run finished and was reaped between starting it and looking it up.
+        # The turn finished and was reaped between starting it and looking it up.
         # Its message is committed; hand back the tail of the thread.
         t = chat_store.get_thread(thread_id) or {}
         msgs = [m for m in (t.get("messages") or []) if m.get("role") == "assistant"]
@@ -2829,7 +2829,7 @@ def _agent_effort(rec: dict, slug: str, model: str, chat_effort: str | None) -> 
 
 
 async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict,
-                                    content: str, model: str, run_id: str,
+                                    content: str, model: str, turn_id: str,
                                     effort: str | None = None,
                                     permission_mode: str | None = None,
                                     attachments: list[dict] | None = None,
@@ -2909,7 +2909,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     agent_mcp = agent_authority.mcp_servers_for(agent_tools)
     # Reversibility gate. A mention is a manual invocation — the operator is
     # right there — so nothing is denied here; the list is non-empty only for a
-    # run nobody is watching. Passed explicitly rather than defaulted so the
+    # turn nobody is watching. Passed explicitly rather than defaulted so the
     # unattended path cannot forget it.
     agent_denied = agent_authority.disallowed_for(
         unattended=agent_authority.is_unattended(rec.get("autonomy")))
@@ -2972,7 +2972,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
             cwd=cwd, session_id=sid, resume=True, timeout_s=CHAT_TIMEOUT_S,
             allowed_tools=agent_tools, disallowed_tools=agent_denied,
             mcp_servers=agent_mcp, tools_disabled=not tools_active,
-            speaker=slug, run_id=run_id, effort=effort,
+            speaker=slug, turn_id=turn_id, effort=effort,
             permission_mode=permission_mode, origin=sends,
         )
         _ = kscope  # the CHAT's scope; the agent read its own layers on turn one
@@ -3024,7 +3024,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         cwd=cwd, session_id=sid, resume=False, timeout_s=CHAT_TIMEOUT_S,
         allowed_tools=agent_tools, disallowed_tools=agent_denied,
         mcp_servers=agent_mcp, tools_disabled=not tools_active,
-        speaker=slug, run_id=run_id, effort=effort,
+        speaker=slug, turn_id=turn_id, effort=effort,
         permission_mode=permission_mode, attachments=attachments, origin=sends,
     )
     _ = kscope  # the CHAT's scope; the agent reads its own layers above
@@ -3141,15 +3141,15 @@ def _without_trailing_copy(t: dict, content: str) -> dict:
     return t
 
 
-async def _run_for_message(thread_id: str, t: dict, content: str,
-                           model: str | None, parts: list[TurnPart] | None,
-                           *, take_over: str | None = None,
-                           already_recorded: bool = False,
-                           client_id: str | None = None,
-                           effort_in: str | None = None,
-                           mode_in: str | None = None,
-                           attachments: list[dict] | None = None) -> "build_streaming.Turn":
-    """Claim a run for this message and start it. THE send path.
+async def _turn_for_message(thread_id: str, t: dict, content: str,
+                            model: str | None, parts: list[TurnPart] | None,
+                            *, take_over: str | None = None,
+                            already_recorded: bool = False,
+                            client_id: str | None = None,
+                            effort_in: str | None = None,
+                            mode_in: str | None = None,
+                            attachments: list[dict] | None = None) -> "build_streaming.Turn":
+    """Claim a turn for this message and start it. THE send path.
 
     The claim is taken FIRST, before a single await, and held until the
     subprocess is spawned. Prompt assembly awaits (knowledge search, note
@@ -3157,7 +3157,7 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
     a second POST could start a rival turn through — observed live: one thread
     with two turns streaming at once and the operator's message reaching
     neither. Now the second POST takes the thread's write lock, sees
-    `active_run_id`, and joins.
+    `active_turn_id`, and joins.
 
     `already_recorded` means the message is in the log because a delivery was
     attempted and refused; recording it again would show it twice."""
@@ -3178,23 +3178,23 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
     _mentioned = _mentions.resolve(content, _chat_scope)
     speaker = _mentioned["slug"] if _mentioned is not None else None
 
-    run_id = build_streaming.new_run_id()
-    joined = await build_streaming.claim_run(
-        thread_id, run_id, model=model, agent=speaker, force=bool(take_over),
+    turn_id = build_streaming.new_turn_id()
+    joined = await build_streaming.claim_turn(
+        thread_id, turn_id, model=model, agent=speaker, force=bool(take_over),
         accepts_input=not _is_raw_command(content),
         # The claim is taken now; the LOG MARKER waits until the message that
-        # caused this run is recorded, just below. Otherwise the log says a run
-        # began before the message that began it. See chat_store.mark_run_started.
+        # caused this turn is recorded, just below. Otherwise the log says a turn
+        # began before the message that began it. See chat_store.mark_turn_started.
         announce=False)
     if joined is not None:
-        raise build_streaming.RunInFlight(joined)
+        raise build_streaming.TurnInFlight(joined)
 
     try:
         # THE PROMPT'S SNAPSHOT AND ITS FLOOR, one synchronous stretch. The
         # thread is re-read HERE, after the claim, so the prompt is assembled
         # from everything filed up to this instant instead of from the caller's
         # snapshot (taken before its own awaits; a message filed against this
-        # claimed run in that gap used to be in the log, absent from the
+        # claimed turn in that gap used to be in the log, absent from the
         # prompt, undeliverable, and unqueued: silently never answered). The
         # floor is then stamped on the Turn: on one event loop nothing can
         # interleave between the read and the stamp, so "seq <= floor" is
@@ -3209,7 +3209,7 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
             t = _without_trailing_copy(t, content)
         elif parts:
             # A queued batch (or a retried send) can carry entries that are
-            # ALREADY in the log: a delivery that was refused mid-run
+            # ALREADY in the log: a delivery that was refused mid-turn
             # (queue-entry recorded=True), or a resend of an accepted message.
             # Their append below no-ops on client_id; their stored copies come
             # out of history for the same reason as above.
@@ -3220,8 +3220,8 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
         if not already_recorded:
             _record_user_turn(thread_id, content, parts, client_id=client_id,
                               attachments=attachments)
-        chat_store.mark_run_started(thread_id, run_id)
-        _turn_obj = build_streaming.get_turn(run_id)
+        chat_store.mark_turn_started(thread_id, turn_id)
+        _turn_obj = build_streaming.get_turn(turn_id)
         if _turn_obj is not None:
             _m = chat_log.read_meta(thread_id) or {}
             _turn_obj.prompt_through_seq = int(_m.get("last_seq") or 0)
@@ -3234,23 +3234,23 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
         if _mentioned is not None:
             return await _start_agent_mention_turn(
                 thread_id=thread_id, thread=t, agent=_mentioned, content=content,
-                model=model, run_id=run_id, effort=effort,
+                model=model, turn_id=turn_id, effort=effort,
                 permission_mode=permission_mode, attachments=attachments,
                 sends=sends)
         return await _start_assistant_turn(
             thread_id=thread_id, t=t, provider=provider, content=content,
-            model=model, run_id=run_id, effort=effort,
+            model=model, turn_id=turn_id, effort=effort,
             permission_mode=permission_mode, attachments=attachments,
             sends=sends)
     except Exception:
         # The claim outlives nothing. Give the thread back so the next message is
-        # not told a run is in flight that never spawned.
-        chat_store.release_run(thread_id, run_id)
+        # not told a turn is in flight that never spawned.
+        chat_store.release_turn(thread_id, turn_id)
         raise
 
 
 async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: str,
-                                model: str, run_id: str, effort: str | None = None,
+                                model: str, turn_id: str, effort: str | None = None,
                                 permission_mode: str | None = None,
                                 attachments: list[dict] | None = None,
                                 sends: list[dict] | None = None):
@@ -3339,7 +3339,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         return await build_streaming.start_turn(
             thread_id=thread_id, agent_slug=provider.slug, prompt=prompt, model=model,
             cwd=str(provider.dir), session_id=sid, resume=resume_flag,
-            timeout_s=CHAT_TIMEOUT_S, run_id=run_id, effort=effort,
+            timeout_s=CHAT_TIMEOUT_S, turn_id=turn_id, effort=effort,
             permission_mode=permission_mode, mcp_selection=mcp_selection,
             origin=sends,
         )
@@ -3376,7 +3376,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         thread_id=thread_id, agent_slug=getattr(provider, "slug", provider.key),
         prompt=prompt, model=model, cwd=cwd,
         session_id=sid, resume=resume_flag,
-        timeout_s=CHAT_TIMEOUT_S, run_id=run_id, effort=effort,
+        timeout_s=CHAT_TIMEOUT_S, turn_id=turn_id, effort=effort,
         permission_mode=permission_mode, attachments=attachments,
         allowed_tools=allowed_tools, mcp_servers=mcp_servers, tools_disabled=tools_disabled,
         # Redundant on the narrow branch above (which already filtered
@@ -3395,11 +3395,11 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
                 mode_in: str | None = None,
                 attachments: list[dict] | None = None,
                 sent_at: str | None = None) -> dict:
-    """Send one message into a chat: deliver it to the run in flight, or start
+    """Send one message into a chat: deliver it to the turn in flight, or start
     one for it. Returns `{turn_id, injected, at_segment}`.
 
-    ---- ONE RUN PER THREAD -------------------------------------------------
-    If a run is already going here, this message JOINS it instead of starting a
+    ---- ONE TURN PER THREAD -------------------------------------------------
+    If a turn is already going here, this message JOINS it instead of starting a
     rival. The decision belongs on the server: a browser only knows whether ITS
     OWN stream is open, so a second tab, a dropped SSE, or a reload each believe
     the chat is idle and cheerfully start another turn.
@@ -3409,9 +3409,9 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     queued behind everything it is doing.
 
     ---- PERSIST, THEN DELIVER ----------------------------------------------
-    The message is written to the log before anything is written to the run's
+    The message is written to the log before anything is written to the turn's
     input channel, so the transcript can never be behind what the model read. If
-    delivery then fails, the message is already recorded and a fresh run is
+    delivery then fails, the message is already recorded and a fresh turn is
     started for it; it is not written twice.
     """
     t = chat_store.get_thread(thread_id)
@@ -3440,14 +3440,14 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
 
     # THE THREE PICKERS COMMIT ON CHANGE AND APPLY TO THE NEXT TURN. Model,
     # effort and permission mode are all per-thread preferences, so all three are
-    # recorded HERE, before the join-or-start fork. A message that joins a run in
-    # flight cannot change that run's settings (the process is spawned and its
+    # recorded HERE, before the join-or-start fork. A message that joins a turn in
+    # flight cannot change that turn's settings (the process is spawned and its
     # argv is fixed at spawn), but what the operator just picked still has to
     # survive to the next turn, or the picker and the thread disagree the moment
-    # the run ends.
+    # the turn ends.
     #
     # MODEL USED TO BE THE ODD ONE OUT, and it was the only one that lost data.
-    # It was persisted only by `_run_for_message`, which runs ONLY when this
+    # It was persisted only by `_turn_for_message`, which runs ONLY when this
     # message starts a fresh turn. A model picked while a turn was streaming was
     # therefore dropped outright whenever the message joined that turn instead:
     # never written, so the picker silently snapped back to the old model on the
@@ -3469,7 +3469,7 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
 
     take_over: str | None = None
     already_recorded = False
-    run_id = _live_run_id(thread_id)
+    turn_id = _live_turn_id(thread_id)
     # NOTHING OVERTAKES SOMETHING ALREADY WAITING. A queue means earlier
     # messages are owed a turn, so this one joins the back of it rather than
     # starting a turn of its own — otherwise the window between a command turn
@@ -3482,7 +3482,7 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     # would run on the pre-operation prompt and race the operation's writes:
     # exactly the 2026-08-14 compact incident. The message is accepted and
     # durable; the drain sends it the moment the operation lands.
-    if not run_id and (chat_queue.read(thread_id) or thread_ops.pending(thread_id)):
+    if not turn_id and (chat_queue.read(thread_id) or thread_ops.pending(thread_id)):
         st = chat_queue.enqueue(
             thread_id, text=content, client_id=client_id or chat_log.new_ulid(),
             ts=_first_part_ts(parts) or sent_at, attachments=attachments,
@@ -3490,8 +3490,8 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         chat_drain.drain_soon(thread_id, reason="joined the waiting queue")
         return {"turn_id": None, "injected": False, "queued": True,
                 "at_segment": None, "queue": st}
-    if run_id and (not build_streaming.run_accepts_input(run_id)
-                   or chat_queue.is_command(content)):
+    if turn_id and (not build_streaming.turn_accepts_input(turn_id)
+                    or chat_queue.is_command(content)):
         # A COMMAND TURN CANNOT BE SPOKEN TO. `/compact` folds the session and
         # exits; it never reads a word of its input. Filing this message against
         # it is what made one disappear on 2026-08-10 — recorded in the log,
@@ -3509,19 +3509,19 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         # in the browser's localStorage. It is owed: the operator hit enter. Two
         # of them were lost that way on 2026-08-12 when the tab moved to another
         # chat before the command finished. The server takes it now, it is
-        # visible from every device, and `chat_drain` sends it when this run
+        # visible from every device, and `chat_drain` sends it when this turn
         # ends whether or not anything is watching. See services/chat_queue.
         st = chat_queue.enqueue(
             thread_id, text=content, client_id=client_id or chat_log.new_ulid(),
             ts=_first_part_ts(parts) or sent_at, attachments=attachments,
             model=model_in, effort=effort_in, permission_mode=mode_in)
-        # The run may have finished between the check above and the write. The
-        # drain is idempotent and refuses when a run is live, so asking costs
+        # The turn may have finished between the check above and the write. The
+        # drain is idempotent and refuses when a turn is live, so asking costs
         # nothing and not asking would strand the message until the next turn.
         chat_drain.drain_soon(thread_id, reason="enqueued behind a command turn")
-        return {"turn_id": run_id, "injected": False, "queued": True,
+        return {"turn_id": turn_id, "injected": False, "queued": True,
                 "at_segment": None, "queue": st}
-    if run_id:
+    if turn_id:
         # ONE IDENTITY BEFORE ANYTHING IS WRITTEN. The paths below may file the
         # message in the log AND enqueue it (a refused delivery); the log
         # dedupes and the drain strips by client_id, so the two copies must
@@ -3529,36 +3529,36 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         # none produced a log row with no id and a queue entry with a fresh
         # one, and the drain re-recorded the message as a duplicate.
         client_id = client_id or chat_log.new_ulid()
-        at_segment, msg_seq = _file_during_run(thread_id, run_id, content,
-                                               client_id=client_id,
-                                               attachments=attachments)
-        if build_streaming.inject(run_id, content, attachments,
+        at_segment, msg_seq = _file_during_turn(thread_id, turn_id, content,
+                                                client_id=client_id,
+                                                attachments=attachments)
+        if build_streaming.inject(turn_id, content, attachments,
                                   client_id=client_id, sent_at=sent_at):
-            return {"turn_id": run_id, "injected": True, "at_segment": at_segment}
-        if not build_streaming.run_is_ending(run_id):
+            return {"turn_id": turn_id, "injected": True, "at_segment": at_segment}
+        if not build_streaming.turn_is_ending(turn_id):
             # Claimed but not spawned yet. Whether its prompt will carry this
             # message is a COMPARISON, not a hope: the prompt's history floor is
             # stamped in the same synchronous stretch that assembles it
-            # (_run_for_message), so a floor at or above this seq means the
+            # (_turn_for_message), so a floor at or above this seq means the
             # message is in the prompt, and an older floor means it provably is
             # not. The unstamped case means the floor stretch has not run yet,
             # and the fresh read it starts with will include this message.
-            _t_obj = build_streaming.get_turn(run_id)
+            _t_obj = build_streaming.get_turn(turn_id)
             _floor = _t_obj.prompt_through_seq if _t_obj is not None else None
             if _floor is not None and msg_seq > _floor:
                 # In the log, not in the prompt, and the input channel is not
                 # up: nothing would ever deliver it. Queue it (marked recorded,
                 # so the drain does not mistake log-presence for answered) and
-                # it goes out when this run ends.
+                # it goes out when this turn ends.
                 st = chat_queue.enqueue(
                     thread_id, text=content, client_id=client_id or chat_log.new_ulid(),
                     ts=_first_part_ts(parts) or sent_at, attachments=attachments,
                     model=model_in, effort=effort_in, permission_mode=mode_in,
                     recorded=True)
-                chat_drain.drain_soon(thread_id, reason="missed a spawning run's prompt")
-                return {"turn_id": run_id, "injected": False, "queued": True,
+                chat_drain.drain_soon(thread_id, reason="missed a spawning turn's prompt")
+                return {"turn_id": turn_id, "injected": False, "queued": True,
                         "at_segment": at_segment, "queue": st}
-            return {"turn_id": run_id, "injected": False, "at_segment": at_segment}
+            return {"turn_id": turn_id, "injected": False, "at_segment": at_segment}
         # It has spawned and its input channel is gone: it is finishing and will
         # never read this. The message is already in the log. If messages are
         # ALREADY WAITING (the finalize window requeues undelivered ones),
@@ -3566,7 +3566,7 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         # bake that order into the transcript; join the back of the queue
         # instead. A PENDING OPERATION queues it for the same reason as the
         # idle branch above: without this check, a send landing in the finalize
-        # window of the run a fold is waiting out started a fresh turn on the
+        # window of the turn a fold is waiting out started a fresh turn on the
         # pre-fold prompt, which is the incident itself through a side door.
         # Only an empty queue with no pending operation takes the thread over.
         if chat_queue.read(thread_id) or thread_ops.pending(thread_id):
@@ -3576,29 +3576,29 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
                 model=model_in, effort=effort_in, permission_mode=mode_in,
                 recorded=True)
             chat_drain.drain_soon(thread_id, reason="joined behind requeued messages")
-            return {"turn_id": run_id, "injected": False, "queued": True,
+            return {"turn_id": turn_id, "injected": False, "queued": True,
                     "at_segment": at_segment, "queue": st}
-        log.info("thread %s: run %s is finishing; starting a fresh run for this message",
-                 thread_id, run_id)
-        take_over, already_recorded = run_id, True
+        log.info("thread %s: turn %s is finishing; starting a fresh turn for this message",
+                 thread_id, turn_id)
+        take_over, already_recorded = turn_id, True
 
     try:
-        turn = await _run_for_message(thread_id, t, content, model, parts,
-                                      take_over=take_over,
-                                      already_recorded=already_recorded,
-                                      client_id=client_id,
-                                      effort_in=effort_in,
-                                      mode_in=mode_in,
-                                      attachments=attachments)
-    except build_streaming.RunInFlight as e:
-        # Another POST won the same event-loop tick. Join its run rather than
+        turn = await _turn_for_message(thread_id, t, content, model, parts,
+                                       take_over=take_over,
+                                       already_recorded=already_recorded,
+                                       client_id=client_id,
+                                       effort_in=effort_in,
+                                       mode_in=mode_in,
+                                       attachments=attachments)
+    except build_streaming.TurnInFlight as e:
+        # Another POST won the same event-loop tick. Join its turn rather than
         # starting a rival, which is the whole reason the claim is atomic.
-        at_segment = (_file_during_run(thread_id, e.run_id, content, client_id=client_id,
-                                       attachments=attachments)[0]
-                      if not already_recorded else _at_segment(e.run_id, thread_id))
-        build_streaming.inject(e.run_id, content, attachments,
+        at_segment = (_file_during_turn(thread_id, e.turn_id, content, client_id=client_id,
+                                        attachments=attachments)[0]
+                      if not already_recorded else _at_segment(e.turn_id, thread_id))
+        build_streaming.inject(e.turn_id, content, attachments,
                                client_id=client_id, sent_at=sent_at)
-        return {"turn_id": e.run_id, "injected": True, "at_segment": at_segment}
+        return {"turn_id": e.turn_id, "injected": True, "at_segment": at_segment}
     return {"turn_id": turn.id, "injected": False, "at_segment": None}
 
 
@@ -3612,7 +3612,7 @@ async def _start_queued_batch(thread_id: str, batch: list[dict]) -> bool:
     lets the browser reconcile the bubble it has been showing all along instead
     of drawing a second one.
 
-    Returns False rather than raising when the thread is busy: a run claimed
+    Returns False rather than raising when the thread is busy: a turn claimed
     between the drain's check and this call is not an error, it is the reason
     the queue exists.
     """
@@ -3661,7 +3661,7 @@ async def _start_queued_batch(thread_id: str, batch: list[dict]) -> bool:
         return False
     atts = chat_queue.attachments_of(batch)
     try:
-        await _run_for_message(
+        await _turn_for_message(
             thread_id, t, content, chat_queue.setting_of(batch, "model"),
             # ALWAYS the parts, even for one: each queued message is recorded at
             # the moment it was typed, under the id the browser has been showing
@@ -3672,9 +3672,9 @@ async def _start_queued_batch(thread_id: str, batch: list[dict]) -> bool:
             mode_in=chat_queue.setting_of(batch, "permission_mode"),
             attachments=atts or None,
         )
-    except build_streaming.RunInFlight:
+    except build_streaming.TurnInFlight:
         # Something claimed the thread first. The batch stays queued and the
-        # drain runs again when that run ends.
+        # drain runs again when that turn ends.
         return False
     return True
 
@@ -3723,7 +3723,7 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
                       mode_in=body.permission_mode, attachments=atts,
                       sent_at=body.sent_at)
     # ACCEPTED IS ACCEPTED, and the composer it came out of is empty from here
-    # on. Every branch below is an acceptance — running now, handed to the run in
+    # on. Every branch below is an acceptance — running now, handed to the turn in
     # flight, or queued — so the clear is unconditional and happens once, on the
     # server, under the key the operator was actually typing in.
     if body.draft_key:
@@ -3731,7 +3731,7 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     if out.get("queued"):
         # Taken and durable, just not running yet: the thread is busy with
         # something that cannot be spoken to. It is on the thread, every device
-        # can see it, and the server sends it when this run ends.
+        # can see it, and the server sends it when this turn ends.
         return {"turn_id": out["turn_id"], "injected": False, "queued": True,
                 "queue": out.get("queue") or {}}
     if out["injected"]:
@@ -3870,11 +3870,11 @@ class InjectMessage(BaseModel):
     draft_key: str | None = None
 
 
-def _live_run_id(thread_id: str) -> str | None:
-    """The run currently going on this thread, or None. One field read.
+def _live_turn_id(thread_id: str) -> str | None:
+    """The turn currently going on this thread, or None. One field read.
 
-    Server-derived, and now trivially so: `meta.active_run_id` names it and
-    `build_streaming.run_is_live` says whether this process is still driving it.
+    Server-derived, and now trivially so: `meta.active_turn_id` names it and
+    `build_streaming.turn_is_live` says whether this process is still driving it.
 
     This used to scan the transcript backwards for an assistant message flagged
     `streaming`, which was fragile in exactly the way the rebuild removes. It
@@ -3883,32 +3883,32 @@ def _live_run_id(thread_id: str) -> str | None:
     running — two turns ended up streaming into one thread at once. Scanning
     backwards fixed that symptom and left the flag itself orphanable by a
     restart. There is no flag any more, and nothing to orphan."""
-    run_id = chat_store.active_run_id(thread_id)
-    return run_id if build_streaming.run_is_live(run_id) else None
+    turn_id = chat_store.active_turn_id(thread_id)
+    return turn_id if build_streaming.turn_is_live(turn_id) else None
 
 
-def _at_segment(run_id: str, thread_id: str) -> int:
+def _at_segment(turn_id: str, thread_id: str) -> int:
     """How much of the running reply had streamed when a message landed.
 
-    Ask the LIVE run, not the stored snapshot: the snapshot is written on a
+    Ask the LIVE turn, not the stored snapshot: the snapshot is written on a
     throttle, so it lags what is on screen, and the error is one-directional. A
     low `at_segment` renders the message EARLIER than it arrived, above output it
     never saw, which is what makes a reply look like an answer to a message it
-    had not read. The snapshot remains the fallback for a run this process no
+    had not read. The snapshot remains the fallback for a turn this process no
     longer holds."""
-    live = build_streaming.get_turn(run_id)
+    live = build_streaming.get_turn(turn_id)
     if live is not None:
         return len(live.segments)
-    return len(_snapshot_segments(run_id, thread_id))
+    return len(_snapshot_segments(turn_id, thread_id))
 
 
-def _snapshot_segments(run_id: str, thread_id: str) -> list[dict]:
-    run = chat_log.active_run(thread_id)
-    snap = (run or {}).get("live") or {}
+def _snapshot_segments(turn_id: str, thread_id: str) -> list[dict]:
+    turn = chat_log.active_turn(thread_id)
+    snap = (turn or {}).get("live") or {}
     return ((snap.get("meta") or {}).get("segments")) or []
 
 
-def _cut_point(run_id: str, thread_id: str) -> tuple[int, int, str]:
+def _cut_point(turn_id: str, thread_id: str) -> tuple[int, int, str]:
     """Where a message landed in the running reply: (segment, unit, cut token).
 
     THE TOKEN IS THE ANSWER; the two numbers are kept for what is already on
@@ -3928,21 +3928,21 @@ def _cut_point(run_id: str, thread_id: str) -> tuple[int, int, str]:
     text written afterwards cannot merge back above it, and it must not be
     possible for the anchor to move between the two.
 
-    The snapshot branch is the degraded path, for a run this process does not
+    The snapshot branch is the degraded path, for a turn this process does not
     hold. It cannot record a position (there is no live buffer to record it on),
     so it returns an empty token and the client falls back to the index."""
-    live = build_streaming.get_turn(run_id)
+    live = build_streaming.get_turn(turn_id)
     if live is not None:
         ref = chat_log.new_ulid()
         return len(live.segments), build_streaming.cut_here(live, ref), ref
-    segs = _snapshot_segments(run_id, thread_id)
+    segs = _snapshot_segments(turn_id, thread_id)
     return len(segs), build_streaming.unit_count(segs), ""
 
 
-def _file_during_run(thread_id: str, run_id: str, content: str,
-                     client_id: str | None = None,
-                     attachments: list[dict] | None = None) -> int:
-    """Persist a message arriving mid-run, BEFORE anyone tries to deliver it.
+def _file_during_turn(thread_id: str, turn_id: str, content: str,
+                      client_id: str | None = None,
+                      attachments: list[dict] | None = None) -> int:
+    """Persist a message arriving mid-turn, BEFORE anyone tries to deliver it.
 
     Order matters and it used to be the other way round: the bytes went to the
     turn's stdin FIFO first and the store write happened after, inside a
@@ -3953,9 +3953,9 @@ def _file_during_run(thread_id: str, run_id: str, content: str,
     Persist first and the transcript can only ever be AHEAD of what the model
     saw, which is the recoverable direction. Returns `(at_segment, seq)`:
     `at_segment` is reported to the client, `seq` is what the caller compares
-    against the run's prompt floor when delivery fails."""
-    at_segment, at_unit, cut_id = _cut_point(run_id, thread_id)
-    meta = {"injected": True, "during_run": run_id,
+    against the turn's prompt floor when delivery fails."""
+    at_segment, at_unit, cut_id = _cut_point(turn_id, thread_id)
+    meta = {"injected": True, "during_turn": turn_id,
             "at_segment": at_segment, "at_unit": at_unit}
     if cut_id:
         meta["cut_id"] = cut_id
@@ -3967,7 +3967,7 @@ def _file_during_run(thread_id: str, run_id: str, content: str,
         #
         # Queued on the thread's mirror chain, so it lands BEFORE the message's
         # own tree write however slow the database is; the two must not race for
-        # the branch head. Nothing is awaited here: a mid-run message must not
+        # the branch head. Nothing is awaited here: a mid-turn message must not
         # wait on Postgres to reach the model.
         #
         # `at_segment == 0` is the `cut_head` case — nothing had been emitted
@@ -3976,7 +3976,7 @@ def _file_during_run(thread_id: str, run_id: str, content: str,
         if at_segment:
             chat_log.mirror_next(
                 thread_id,
-                lambda: chat_branches.open_stretch(thread_id, run_id))
+                lambda: chat_branches.open_stretch(thread_id, turn_id))
     if attachments:
         meta["attachments"] = attachments
     msg = chat_store.append_message_during_turn(
@@ -3987,13 +3987,13 @@ def _file_during_run(thread_id: str, run_id: str, content: str,
 
 @router.post("/threads/{thread_id}/inject")
 async def inject_into_thread(thread_id: str, body: InjectMessage):
-    """Hand a message to whatever run is going on this thread.
+    """Hand a message to whatever turn is going on this thread.
 
-    The client should not have to know a run id to talk to its own chat. It knows
+    The client should not have to know a turn id to talk to its own chat. It knows
     which conversation it is in; the server resolves the rest.
 
     The message is PERSISTED before delivery is attempted, so `delivered: false`
-    means "it is in the transcript and no run has it", never "it is gone"."""
+    means "it is in the transcript and no turn has it", never "it is gone"."""
     content = (body.content or "").strip()
     atts = [a.model_dump() for a in (body.attachments or [])]
     if not content and atts:
@@ -4002,7 +4002,7 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
         raise HTTPException(400, "empty message")
     if not chat_log.exists(thread_id):
         raise HTTPException(404, "thread not found")
-    if _live_run_id(thread_id) is None:
+    if _live_turn_id(thread_id) is None:
         # Nothing is running and nothing has been written. The client sends it as
         # an ordinary turn instead, which is the only case where re-sending is
         # correct: this endpoint has not taken the message.
@@ -4024,7 +4024,7 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
                 "queue": out.get("queue") or {},
                 "reason": "a command is running on this chat; this goes out next"}
     delivered = bool(out["injected"])
-    run_id = out["turn_id"]
+    turn_id = out["turn_id"]
     at_segment = out["at_segment"]
     return {
         # NOT "the agent read it". This means the bytes reached the running
@@ -4036,11 +4036,11 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
         # THE CHAT HAS THE MESSAGE either way, which is what the client needs to
         # know: it is in the log before any delivery is attempted, so re-sending
         # it would show it twice. `delivered` says whether the RUNNING turn took
-        # it; false here means a fresh run was started for it instead.
+        # it; false here means a fresh turn was started for it instead.
         "delivered": True,
         "injected": delivered,
         "queued_for_turn": delivered,
-        "turn_id": run_id,
+        "turn_id": turn_id,
         "at_segment": at_segment,
         "reason": "" if delivered else "the running turn refused input; started a new turn",
     }
@@ -4053,16 +4053,16 @@ async def stop_turn(turn_id: str):
     STOP MEANS STOP. It used to mean "close this tab's socket": the turn kept
     running and kept spending, and the operator's only signal that it had worked
     was the indicator going quiet, which it did by lying. The indicator now reads
-    the server's `active_run`, so the honest version of the old behaviour was the
+    the server's `active_turn`, so the honest version of the old behaviour was the
     chat still saying "Still running" after Stop — which is what was reported.
 
-    The run's process group is signalled and whatever it produced is committed as
-    the reply, marked `meta.stopped`. Never an error: stopping a run that has
+    The turn's process group is signalled and whatever it produced is committed as
+    the reply, marked `meta.stopped`. Never an error: stopping a turn that has
     already finished is a no-op that returns `stopped: false`, because "it is
     already stopped" is the outcome the caller wanted.
 
-    STOP ALSO HOLDS THE QUEUE. Stopping ends the run, and the drain fires on
-    every run ending — so without this, pressing Stop would immediately send
+    STOP ALSO HOLDS THE QUEUE. Stopping ends the turn, and the drain fires on
+    every turn ending — so without this, pressing Stop would immediately send
     everything typed ahead as a new unattended turn, which is the opposite of
     what Stop means. The hold is recorded on the thread (not in a browser: it
     used to live in component state beside a localStorage queue, so a reload

@@ -38,7 +38,7 @@ function stateOf(
   cut?: { clearedThrough: number; cutMode?: "clear" | "compact" },
 ): ThreadState {
   return threadReducer(initialThreadState("t"), {
-    type: "eventsReceived", events, lastSeq: events.length, activeRun: null,
+    type: "eventsReceived", events, lastSeq: events.length, activeTurn: null,
     ...(cut ? { clearedThrough: cut.clearedThrough, cutMode: cut.cutMode ?? "clear" } : {}),
   });
 }
@@ -88,7 +88,7 @@ describe("a message sent mid-turn closes the assistant's block", () => {
     const segments = [text("one"), tool("Read"), text("two"), tool("Edit"), text("three")];
     const s = stateOf([
       user("go"),
-      user("wait", { during_run: "r1", at_segment: 2 }),
+      user("wait", { during_turn: "r1", at_segment: 2 }),
       reply("", { turn_id: "r1", segments }),
     ]);
     expect(shape(selectTranscript(s))).toEqual([
@@ -103,10 +103,10 @@ describe("a message sent mid-turn closes the assistant's block", () => {
     const segments = [text("a"), text("b"), text("c"), text("d"), text("e")];
     const s = stateOf([
       user("go"),
-      user("1", { during_run: "r1", at_segment: 1 }),
-      user("2", { during_run: "r1", at_segment: 2 }),
-      user("3", { during_run: "r1", at_segment: 3 }),
-      user("4", { during_run: "r1", at_segment: 4 }),
+      user("1", { during_turn: "r1", at_segment: 1 }),
+      user("2", { during_turn: "r1", at_segment: 2 }),
+      user("3", { during_turn: "r1", at_segment: 3 }),
+      user("4", { during_turn: "r1", at_segment: 4 }),
       reply("", { turn_id: "r1", segments }),
     ]);
     expect(shape(selectTranscript(s))).toEqual([
@@ -125,7 +125,7 @@ describe("a message sent mid-turn closes the assistant's block", () => {
     // backwards, rendering the operator's words above the working indicator.
     const s = stateOf([
       user("go"),
-      user("wait", { during_run: "r1", at_segment: 0 }),
+      user("wait", { during_turn: "r1", at_segment: 0 }),
       reply("ok", { turn_id: "r1", segments: [text("ok")] }),
     ]);
     expect(shape(selectTranscript(s))).toEqual(["user:go", "user:wait", "assistant:ok"]);
@@ -134,7 +134,7 @@ describe("a message sent mid-turn closes the assistant's block", () => {
   it("keeps a reply with no segments at all below the messages it answered", () => {
     const s = stateOf([
       user("go"),
-      user("wait", { during_run: "r1", at_segment: 0 }),
+      user("wait", { during_turn: "r1", at_segment: 0 }),
       reply("plain text reply", { turn_id: "r1" }),
     ]);
     expect(shape(selectTranscript(s))).toEqual(["user:go", "user:wait", "assistant:plain text reply"]);
@@ -143,7 +143,7 @@ describe("a message sent mid-turn closes the assistant's block", () => {
   it("puts a message with no at_segment below the whole reply", () => {
     const s = stateOf([
       user("go"),
-      user("wait", { during_run: "r1" }),
+      user("wait", { during_turn: "r1" }),
       reply("", { turn_id: "r1", segments: [text("a"), text("b")] }),
     ]);
     expect(shape(selectTranscript(s))).toEqual(["user:go", "assistant:ab", "user:wait"]);
@@ -151,7 +151,7 @@ describe("a message sent mid-turn closes the assistant's block", () => {
 
   it("carries how the turn ENDED only on the final block", () => {
     const s = stateOf([
-      user("wait", { during_run: "r1", at_segment: 1 }),
+      user("wait", { during_turn: "r1", at_segment: 1 }),
       reply("", { turn_id: "r1", segments: [text("a"), text("b")], timeout: true, notes: ["did a thing"] }),
     ]);
     const blocks = selectTranscript(s).filter((b) => b.kind === "message" && b.msg.role === "assistant");
@@ -166,7 +166,7 @@ describe("a message sent mid-turn closes the assistant's block", () => {
     type R = { kind: string; label: string }[];
     const receipts: R = [{ kind: "note", label: "Wrote 1 note" }];
     const s = stateOf([
-      user("wait", { during_run: "r1", at_unit: 1 }),
+      user("wait", { during_turn: "r1", at_unit: 1 }),
       reply("", { turn_id: "r1", segments: [text("a"), text("b")], receipts }),
     ]);
     const blocks = selectTranscript(s).filter((b) => b.kind === "message" && b.msg.role === "assistant");
@@ -181,7 +181,7 @@ describe("a message sent mid-turn closes the assistant's block", () => {
     // last SLICE dropped it, so "Stopped by operator" never rendered and an
     // errored reply rendered as an ordinary one.
     const s = stateOf([
-      user("stop", { during_run: "r1", at_unit: 2 }),
+      user("stop", { during_turn: "r1", at_unit: 2 }),
       reply("", { turn_id: "r1", segments: [text("a"), text("b")], stopped: true, error: "boom" }),
     ]);
     const blocks = selectTranscript(s).filter((b) => b.kind === "message" && b.msg.role === "assistant");
@@ -196,7 +196,7 @@ describe("a message sent mid-turn closes the assistant's block", () => {
     // ended_at, so a total paired with a per-block step count read "2 steps ·
     // 3h 41m". Both ends are needed to compute one, so the start is dropped.
     const s = stateOf([
-      user("wait", { during_run: "r1", at_unit: 1 }),
+      user("wait", { during_turn: "r1", at_unit: 1 }),
       reply("", { turn_id: "r1", segments: [text("a"), text("b")], started_at: 1000, ended_at: 2000 }),
     ]);
     const blocks = selectTranscript(s).filter((b) => b.kind === "message" && b.msg.role === "assistant");
@@ -211,16 +211,16 @@ describe("a message sent mid-turn closes the assistant's block", () => {
     // reply in the log and that is where it belongs.
     const s = stateOf([
       reply("done", { turn_id: "r1", segments: [text("done")] }),
-      user("late", { during_run: "r1", at_segment: 1 }),
+      user("late", { during_turn: "r1", at_segment: 1 }),
     ]);
     expect(shape(selectTranscript(s))).toEqual(["assistant:done", "user:late"]);
   });
 
-  it("ignores an active_run whose reply the log already carries", () => {
+  it("ignores an active_turn whose reply the log already carries", () => {
     // The server does not write these two facts atomically: commit_run appends
-    // the reply and clears active_run_id afterwards, while read_thread reads the
+    // the reply and clears active_turn_id afterwards, while read_thread reads the
     // meta BEFORE the events. A page landing in that gap carries the committed
-    // reply AND active_run still naming the run that produced it, with its stale
+    // reply AND active_turn still naming the run that produced it, with its stale
     // draft attached.
     //
     // Believing it printed that reply twice — once committed, and again below
@@ -231,25 +231,25 @@ describe("a message sent mid-turn closes the assistant's block", () => {
     const events = [
       user("first"),
       reply("done", { turn_id: "r1", segments: [text("done")] }),
-      user("next", { during_run: "r1", at_unit: 0 }),
+      user("next", { during_turn: "r1", at_unit: 0 }),
     ];
     const s = threadReducer(initialThreadState("t"), {
       type: "eventsReceived",
       events,
       lastSeq: events.length,
-      activeRun: { run_id: "r1", live: { meta: { segments: [text("done")] } } },
+      activeTurn: { turn_id: "r1", live: { meta: { segments: [text("done")] } } },
     });
-    expect(s.activeRun?.runId).toBe("r1");   // the stale snapshot really is adopted
+    expect(s.activeTurn?.turnId).toBe("r1");   // the stale snapshot really is adopted
     expect(shape(selectTranscript(s))).toEqual(["user:first", "assistant:done", "user:next"]);
   });
 
   it("still renders the live block for a run that has NOT committed a reply", () => {
     // The guard must not cost the ordinary case: a genuinely running turn has no
     // committed reply yet, so its draft is the only copy there is.
-    let s = stateOf([user("go"), user("wait", { during_run: "r2", at_unit: 1 })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r2" });
-    s = threadReducer(s, { type: "runDelta", runId: "r2", event: { kind: "text", content: "a" } });
-    s = threadReducer(s, { type: "runDelta", runId: "r2", event: { kind: "tool", name: "Read" } });
+    let s = stateOf([user("go"), user("wait", { during_turn: "r2", at_unit: 1 })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r2" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r2", event: { kind: "text", content: "a" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r2", event: { kind: "tool", name: "Read" } });
     expect(shape(selectTranscript(s))).toEqual(["user:go", "live:a", "user:wait", "live:[tool]*"]);
   });
 });
@@ -262,11 +262,11 @@ describe("the live turn", () => {
   // listener existed, so the streaming tab could only ever resolve an index.
   // See streamWire.ts and useTurnStream's handler table.
   it("splits the same way while it is still running", () => {
-    let s = stateOf([user("go"), user("wait", { during_run: "r1", cut_id: "c1" })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "first" } });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "tool", name: "Read" } });
+    let s = stateOf([user("go"), user("wait", { during_turn: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "first" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "tool", name: "Read" } });
     // The message landed after "first" and before the tool call, so it closes
     // that block and the work that followed starts a new one.
     expect(shape(selectTranscript(s))).toEqual([
@@ -283,11 +283,11 @@ describe("the live turn", () => {
   // work that had already happened when it was sent. The frame is subscribed
   // now, and this pins the placement it produces.
   it("puts the message where the marker says once the frame arrives", () => {
-    let s = stateOf([user("go"), user("and also", { during_run: "r1", cut_id: "c1", at_unit: 0 })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "first" } });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "tool", name: "Read" } });
+    let s = stateOf([user("go"), user("and also", { during_turn: "r1", cut_id: "c1", at_unit: 0 })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "first" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "tool", name: "Read" } });
     expect(shape(selectTranscript(s))).toEqual([
       "user:go", "live:first", "user:and also", "live:[tool]*",
     ]);
@@ -295,15 +295,15 @@ describe("the live turn", () => {
 
   it("shows a running turn that has produced nothing, so the log is never silent", () => {
     let s = stateOf([user("go")]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
     expect(shape(selectTranscript(s))).toEqual(["user:go", "live:*"]);
   });
 
   it("marks only the last block as the one still working", () => {
-    let s = stateOf([user("wait", { during_run: "r1", cut_id: "c1" })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "a" } });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
+    let s = stateOf([user("wait", { during_turn: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "a" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" } });
     const live = selectTranscript(s).filter((b) => b.kind === "live");
     expect(live.map((b) => (b as { working: boolean }).working)).toEqual([false, true]);
   });
@@ -312,18 +312,18 @@ describe("the live turn", () => {
   // has announced itself and produced nothing is still a turn that started
   // BEFORE the message, so the message can never be the first thing in the run.
   it("keeps the working indicator above a message sent before anything streamed", () => {
-    let s = stateOf([user("go"), user("and also", { during_run: "r1", at_unit: 0 })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    let s = stateOf([user("go"), user("and also", { during_turn: "r1", at_unit: 0 })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
     expect(shape(selectTranscript(s))).toEqual(["user:go", "live:*", "user:and also"]);
   });
 
   it("keeps it above every message when several land before anything streams", () => {
     let s = stateOf([
       user("go"),
-      user("one more", { during_run: "r1", at_unit: 0 }),
-      user("and another", { during_run: "r1", at_unit: 0 }),
+      user("one more", { during_turn: "r1", at_unit: 0 }),
+      user("and another", { during_turn: "r1", at_unit: 0 }),
     ]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
     expect(shape(selectTranscript(s)))
       .toEqual(["user:go", "live:*", "user:one more", "user:and another"]);
   });
@@ -331,19 +331,19 @@ describe("the live turn", () => {
   // ...and it hands the indicator back to the bottom as soon as there is work
   // to sit under, because that is where the turn is writing now.
   it("moves the indicator below the message once work arrives after it", () => {
-    let s = stateOf([user("go"), user("and also", { during_run: "r1", at_unit: 0 })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "ok" } });
+    let s = stateOf([user("go"), user("and also", { during_turn: "r1", at_unit: 0 })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "ok" } });
     expect(shape(selectTranscript(s))).toEqual(["user:go", "user:and also", "live:ok*"]);
   });
 
   // The common case must not move: work emitted before the message stays above
   // it, and the still-running edge stays below it.
   it("leaves work emitted before the message above it", () => {
-    let s = stateOf([user("go"), user("and also", { during_run: "r1", cut_id: "c1" })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "ok" } });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
+    let s = stateOf([user("go"), user("and also", { during_turn: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "ok" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" } });
     expect(shape(selectTranscript(s))).toEqual(["user:go", "live:ok", "user:and also", "live:*"]);
   });
 });
@@ -363,7 +363,7 @@ describe("a cut the server recorded", () => {
   it("splits the reply where the token says, not where an index says", () => {
     const s = stateOf([
       user("go"),
-      user("wait", { during_run: "r1", cut_id: "c1", at_unit: 999 }),
+      user("wait", { during_turn: "r1", cut_id: "c1", at_unit: 999 }),
       reply("done", {
         turn_id: "r1",
         segments: [{ ...text("before"), cut_after: ["c1"] }, text("after")],
@@ -377,7 +377,7 @@ describe("a cut the server recorded", () => {
   it("puts a message that beat the first output above the whole reply", () => {
     const s = stateOf([
       user("go"),
-      user("wait", { during_run: "r1", cut_id: "c1" }),
+      user("wait", { during_turn: "r1", cut_id: "c1" }),
       reply("done", { turn_id: "r1", cut_head: ["c1"], segments: [text("all of it")] }),
     ]);
     expect(shape(selectTranscript(s)))
@@ -391,7 +391,7 @@ describe("a cut the server recorded", () => {
   it("holds its place while an earlier delegation keeps growing", () => {
     const withA = (steps: number) => stateOf([
       user("go"),
-      user("wait", { during_run: "r1", cut_id: "c1", at_unit: 5 }),
+      user("wait", { during_turn: "r1", cut_id: "c1", at_unit: 5 }),
       reply("done", {
         turn_id: "r1",
         segments: [agentSeg("A", steps), agentSeg("B", 1, "c1"), text("after")],
@@ -406,7 +406,7 @@ describe("a cut the server recorded", () => {
   it("puts a message whose token is nowhere at the end, rather than guessing", () => {
     const s = stateOf([
       user("go"),
-      user("wait", { during_run: "r1", cut_id: "gone" }),
+      user("wait", { during_turn: "r1", cut_id: "gone" }),
       reply("done", {
         turn_id: "r1",
         segments: [{ ...text("work"), cut_after: ["other"] }],
@@ -417,38 +417,38 @@ describe("a cut the server recorded", () => {
   });
 
   it("keeps the working indicator above a message that beat the first output", () => {
-    let s = stateOf([user("go"), user("wait", { during_run: "r1", cut_id: "c1" })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
+    let s = stateOf([user("go"), user("wait", { during_turn: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" } });
     expect(shape(selectTranscript(s))).toEqual(["user:go", "live:*", "user:wait"]);
   });
 
   it("hands the indicator back to the bottom once work arrives after it", () => {
-    let s = stateOf([user("go"), user("wait", { during_run: "r1", cut_id: "c1" })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "ok" } });
+    let s = stateOf([user("go"), user("wait", { during_turn: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "ok" } });
     expect(shape(selectTranscript(s))).toEqual(["user:go", "user:wait", "live:ok*"]);
   });
 
   it("records a live cut against the segment it arrived after", () => {
-    let s = stateOf([user("go"), user("wait", { during_run: "r1", cut_id: "c1" })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "A" } });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "B" } });
+    let s = stateOf([user("go"), user("wait", { during_turn: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "A" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "B" } });
     expect(shape(selectTranscript(s))).toEqual(["user:go", "live:A", "user:wait", "live:B*"]);
   });
 
   // The stream is replayed from offset 0 on every re-attach, so every cut
   // arrives again. Recording it twice would put the message in two places.
   it("is idempotent across the replay a re-attach causes", () => {
-    let s = stateOf([user("go"), user("wait", { during_run: "r1", cut_id: "c1" })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "text", content: "A" } });
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
+    let s = stateOf([user("go"), user("wait", { during_turn: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "A" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" } });
     const once = shape(selectTranscript(s));
-    s = threadReducer(s, { type: "runDelta", runId: "r1", event: { kind: "cut", ref: "c1" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" } });
     expect(shape(selectTranscript(s))).toEqual(once);
   });
 });
@@ -470,7 +470,7 @@ describe("a tail window straddling a turn", () => {
   it("splits normally once the interrupting message is loaded", () => {
     const full = stateOf([
       user("go"),
-      user("wait", { during_run: "r1", cut_id: "c1" }),
+      user("wait", { during_turn: "r1", cut_id: "c1" }),
       reply("done", { turn_id: "r1", segments }),
     ]);
     expect(shape(selectTranscript(full)))
@@ -490,7 +490,7 @@ describe("pending sends and the context cut", () => {
 
   it("renders pending sends last, below even the live turn", () => {
     let s = stateOf([user("go")]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
     s = threadReducer(s, { type: "sendStarted", clientId: "c1", text: "typed ahead", ts: "t" });
     expect(shape(selectTranscript(s))).toEqual(["user:go", "live:*", "pending:typed ahead"]);
   });
@@ -560,7 +560,7 @@ describe("nothing is lost or duplicated by a cut", () => {
     const cuts = [0, 1, 7, 40, 100, 156, 157, 900];
     const s = stateOf([
       user("go"),
-      ...cuts.map((at, i) => user(`interject ${i}`, { during_run: "r1", at_segment: at })),
+      ...cuts.map((at, i) => user(`interject ${i}`, { during_turn: "r1", at_segment: at })),
       reply("", { turn_id: "r1", segments: many }),
     ]);
     const blocks = selectTranscript(s);
@@ -578,13 +578,13 @@ describe("nothing is lost or duplicated by a cut", () => {
 
   it("holds for the live turn too", () => {
     let s = stateOf([
-      user("1", { during_run: "r1", at_segment: 2 }),
-      user("2", { during_run: "r1", at_segment: 9 }),
+      user("1", { during_turn: "r1", at_segment: 2 }),
+      user("2", { during_turn: "r1", at_segment: 9 }),
     ]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
     s = threadReducer(s, {
       type: "eventsReceived", events: [], lastSeq: 0,
-      activeRun: { run_id: "r1", live: { meta: { segments: many } } },
+      activeTurn: { turn_id: "r1", live: { meta: { segments: many } } },
     });
     const rebuilt: ChatSegment[] = [];
     for (const b of selectTranscript(s)) if (b.kind === "live") rebuilt.push(...b.segments);
@@ -598,11 +598,11 @@ describe("a message the running turn has not taken up yet", () => {
 
   /** A live run holding one mid-turn message, with `segments` emitted so far. */
   const midRun = (segments: ChatSegment[], live?: Record<string, unknown>): ThreadState => {
-    let s = stateOf([user("are you reading this", { during_run: "r1", cut_id: "c1" })]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    let s = stateOf([user("are you reading this", { during_turn: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
     return threadReducer(s, {
       type: "eventsReceived", events: [], lastSeq: 0,
-      activeRun: { run_id: "r1", live: { meta: { segments, ...(live || {}) } } },
+      activeTurn: { turn_id: "r1", live: { meta: { segments, ...(live || {}) } } },
     });
   };
 
@@ -640,13 +640,13 @@ describe("a message the running turn has not taken up yet", () => {
 
   it("does not mark a message the turn has already written past", () => {
     let s = stateOf([
-      user("first", { during_run: "r1", cut_id: "c1" }),
-      user("second", { during_run: "r1", cut_id: "c2" }),
+      user("first", { during_turn: "r1", cut_id: "c1" }),
+      user("second", { during_turn: "r1", cut_id: "c2" }),
     ]);
-    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
     s = threadReducer(s, {
       type: "eventsReceived", events: [], lastSeq: 0,
-      activeRun: { run_id: "r1", live: { meta: { segments: [
+      activeTurn: { turn_id: "r1", live: { meta: { segments: [
         cut(text("a"), "c1"), cut(text("b"), "c2"),
       ] } } },
     });
@@ -656,7 +656,7 @@ describe("a message the running turn has not taken up yet", () => {
 
   it("never marks a committed reply's messages: the turn is over, nothing is pending", () => {
     const s = stateOf([
-      user("mid", { during_run: "r1", cut_id: "c1" }),
+      user("mid", { during_turn: "r1", cut_id: "c1" }),
       reply("", { turn_id: "r1", segments: [cut(text("a"), "c1")] }),
     ]);
     expect(awaitingFlags(s)).toEqual([false]);
@@ -683,7 +683,7 @@ describe("a pending send's place in the log", () => {
     const later = threadReducer(withFailure, {
       type: "eventsReceived",
       events: [user("b"), reply("c", { turn_id: "r9", segments: [text("c")] })],
-      lastSeq: 99, activeRun: null,
+      lastSeq: 99, activeTurn: null,
     });
     expect(shape(selectTranscript(later)))
       .toEqual(["user:a", "pending:lost", "user:b", "assistant:c"]);
@@ -693,9 +693,9 @@ describe("a pending send's place in the log", () => {
     const s0 = stateOf([user("a")]);
     const withFailure = failed(s0, "c1", "lost");
     const later = threadReducer(withFailure, {
-      type: "eventsReceived", events: [user("b")], lastSeq: 99, activeRun: null,
+      type: "eventsReceived", events: [user("b")], lastSeq: 99, activeTurn: null,
     });
-    const live = threadReducer(later, { type: "runStarted", runId: "r1" });
+    const live = threadReducer(later, { type: "turnStarted", turnId: "r1" });
     expect(shape(selectTranscript(live)))
       .toEqual(["user:a", "pending:lost", "user:b", "live:*"]);
   });
@@ -703,11 +703,11 @@ describe("a pending send's place in the log", () => {
   it("keeps two failures in the order they were made", () => {
     let s = failed(stateOf([user("a")]), "c1", "first");
     s = threadReducer(s, {
-      type: "eventsReceived", events: [user("b")], lastSeq: 98, activeRun: null,
+      type: "eventsReceived", events: [user("b")], lastSeq: 98, activeTurn: null,
     });
     s = failed(s, "c2", "second");
     s = threadReducer(s, {
-      type: "eventsReceived", events: [user("c")], lastSeq: 99, activeRun: null,
+      type: "eventsReceived", events: [user("c")], lastSeq: 99, activeTurn: null,
     });
     expect(shape(selectTranscript(s)))
       .toEqual(["user:a", "pending:first", "user:b", "pending:second", "user:c"]);
@@ -717,7 +717,7 @@ describe("a pending send's place in the log", () => {
     const empty = initialThreadState("t");
     const withFailure = failed(empty, "c1", "lost");
     const later = threadReducer(withFailure, {
-      type: "eventsReceived", events: [user("b")], lastSeq: 99, activeRun: null,
+      type: "eventsReceived", events: [user("b")], lastSeq: 99, activeTurn: null,
     });
     expect(shape(selectTranscript(later))).toEqual(["pending:lost", "user:b"]);
   });
@@ -728,29 +728,29 @@ describe("a pending send's place in the log", () => {
 // message in the thread dozens of times a second, which is what made typing on
 // a phone unusable. See selectCommitted's comment.
 describe("selectCommitted / composeTranscript", () => {
-  const withRun = (events: LogEvent[]): ThreadState =>
+  const withTurn = (events: LogEvent[]): ThreadState =>
     threadReducer(initialThreadState("t"), {
       type: "eventsReceived",
       events,
       lastSeq: events.length,
-      activeRun: { run_id: "r-live" },
+      activeTurn: { turn_id: "r-live" },
     });
 
   it("composes to exactly what selectTranscript produces", () => {
-    const s = withRun([user("hello"), reply("hi", { turn_id: "r-old" })]);
+    const s = withTurn([user("hello"), reply("hi", { turn_id: "r-old" })]);
     expect(shape(composeTranscript(selectCommitted(s), s))).toEqual(shape(selectTranscript(s)));
   });
 
   it("keeps the committed half IDENTICAL across a streamed frame", () => {
-    const s0 = withRun([user("hello"), reply("hi", { turn_id: "r-old" })]);
+    const s0 = withTurn([user("hello"), reply("hi", { turn_id: "r-old" })]);
     const before = selectCommitted(s0);
 
-    // One token arrives on the live run, the way runDelta delivers it.
+    // One token arrives on the live run, the way turnDelta delivers it.
     const s1 = threadReducer(s0, {
-      type: "runDelta", runId: "r-live", event: { kind: "text", content: "wor" },
+      type: "turnDelta", turnId: "r-live", event: { kind: "text", content: "wor" },
     });
     const s2 = threadReducer(s1, {
-      type: "runDelta", runId: "r-live", event: { kind: "text", content: "king" },
+      type: "turnDelta", turnId: "r-live", event: { kind: "text", content: "king" },
     });
 
     // The store must not have touched the committed log at all: these identity
@@ -759,7 +759,7 @@ describe("selectCommitted / composeTranscript", () => {
     expect(s2.byId).toBe(s0.byId);
     expect(s2.order).toBe(s0.order);
     expect(s2.idBySeq).toBe(s0.idBySeq);
-    expect(s2.activeRun?.runId).toBe(s0.activeRun?.runId);
+    expect(s2.activeTurn?.turnId).toBe(s0.activeTurn?.turnId);
 
     // And the derivation over them is stable, so re-running it is pure waste.
     expect(shape(selectCommitted(s2).blocks)).toEqual(shape(before.blocks));
@@ -769,12 +769,12 @@ describe("selectCommitted / composeTranscript", () => {
   });
 
   it("still hands the live run the messages held back for it", () => {
-    const s = withRun([user("first"), user("mid-run", { during_run: "r-live" })]);
+    const s = withTurn([user("first"), user("mid-run", { during_turn: "r-live" })]);
     const committed = selectCommitted(s);
     // The mid-run message is NOT in the committed blocks; it belongs inside the
     // live block, which is where composing puts it.
     expect(shape(committed.blocks)).toEqual(["user:first"]);
-    expect(committed.heldForActiveRun).toHaveLength(1);
+    expect(committed.heldForActiveTurn).toHaveLength(1);
     expect(shape(composeTranscript(committed, s))).toContain("user:mid-run");
   });
 });
@@ -853,7 +853,7 @@ describe("everything in the transcript comes from the transcript", () => {
         { seq: 2, id: "e2", ts: "", kind: "scope", from: "general", to: "development" },
       ] as LogEvent[],
       lastSeq: 2,
-      activeRun: null,
+      activeTurn: null,
     });
     const blocks = selectTranscript(state);
     expect(blocks.map((b) => b.kind)).toEqual(["message", "scope"]);
@@ -866,7 +866,7 @@ describe("everything in the transcript comes from the transcript", () => {
       type: "eventsReceived",
       events: [],
       lastSeq: 0,
-      activeRun: null,
+      activeTurn: null,
       queued: [{ client_id: "c1", text: "typed during the command", ts: "2026-08-12T17:44:00Z" }],
     });
     expect(state.queued.map((q) => q.text)).toEqual(["typed during the command"]);
@@ -885,7 +885,7 @@ describe("everything in the transcript comes from the transcript", () => {
       type: "eventsReceived",
       events: [],
       lastSeq: 0,
-      activeRun: null,
+      activeTurn: null,
       queued: [{ client_id: "c1", text: "hello", ts: "2026-08-12T17:44:00Z" }],
     });
     expect(state.pending).toEqual({});

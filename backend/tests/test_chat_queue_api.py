@@ -48,12 +48,12 @@ def thread(client):
 def _command_turn(thread_id: str) -> str:
     """Claim the thread with a run that reads no input, as `/compact` does."""
     from services import chat_log
-    chat_store.begin_run(thread_id, "run-cmd")
+    chat_store.begin_turn(thread_id, "run-cmd")
     turn = build_streaming.Turn(id="run-cmd", thread_id=thread_id, agent_slug="a")
     turn.accepts_input = False
     turn.spawned = True
     build_streaming.TURNS["run-cmd"] = turn
-    assert chat_log.read_meta(thread_id).get("active_run_id") == "run-cmd"
+    assert chat_log.read_meta(thread_id).get("active_turn_id") == "run-cmd"
     return "run-cmd"
 
 

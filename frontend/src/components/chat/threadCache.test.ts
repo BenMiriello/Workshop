@@ -15,7 +15,7 @@ function snapshotFor(threadId: string, seqs: number[]) {
     type: "eventsReceived",
     events: seqs.map((s) => ev(s)),
     lastSeq: seqs[seqs.length - 1] ?? 0,
-    activeRun: null,
+    activeTurn: null,
   });
   return snapshotThread(state);
 }

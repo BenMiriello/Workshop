@@ -84,7 +84,7 @@ async def drain(thread_id: str, *, reason: str = "") -> bool:
         # here (another device sending, an autonomous turn), and starting a
         # rival is the one outcome worse than waiting.
         from services import chat_store
-        if chat_store.active_run_id(thread_id):
+        if chat_store.active_turn_id(thread_id):
             return False
         # A pending fold/clear holds the queue the same way a live run does: a
         # turn started now would read the pre-operation prompt and race the

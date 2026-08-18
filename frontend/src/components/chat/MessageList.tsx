@@ -251,7 +251,7 @@ const MessageBubble = memo(function MessageBubble({
     // THE ENTER ANIMATION GOES ON THE ROW, and it is gated on the same `arrived`
     // flag as the flash, never on mount. A mount gate would replay on every
     // re-attach (the stream replays a turn from offset 0) and, worse, every time
-    // a streaming turn seals: the live block is keyed `${runId}:${i}` and
+    // a streaming turn seals: the live block is keyed `${turnId}:${i}` and
     // becomes `ev.id` on commit, so React unmounts the live node and mounts a
     // fresh one at exactly the moment the reader is reading it.
     <div className={`chat-msg ${msg.role}${autonomous ? " autonomous" : ""}${arrived ? " chat-msg--enter" : ""}`}

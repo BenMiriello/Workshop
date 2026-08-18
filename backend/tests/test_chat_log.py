@@ -76,12 +76,12 @@ class TestSeq:
 
     def test_every_kind_draws_from_the_same_sequence(self, tid):
         chat_log.append_message_sync(tid, "user", "hi")
-        chat_log.append_sync(tid, {"kind": "run", "run_id": "r1", "state": "started"})
+        chat_log.append_sync(tid, {"kind": "turn", "turn_id": "r1", "state": "started"})
         chat_log.append_sync(tid, {"kind": "boundary", "mode": "compact"})
         chat_log.append_sync(tid, {"kind": "title", "title": "T", "source": "auto"})
         events = chat_log.read_events(tid)
         assert [e["seq"] for e in events] == [1, 2, 3, 4]
-        assert [e["kind"] for e in events] == ["message", "run", "boundary", "title"]
+        assert [e["kind"] for e in events] == ["message", "turn", "boundary", "title"]
 
     def test_meta_last_seq_tracks_the_log(self, tid):
         for i in range(3):
@@ -240,11 +240,11 @@ class TestReadEventsCursor:
 
     def test_read_thread_reports_the_cursor_and_the_active_run(self, tid):
         chat_log.append_message_sync(tid, "user", "go")
-        chat_log.append_sync(tid, {"kind": "run", "run_id": "r1", "state": "started"})
-        chat_log.patch_meta_sync(tid, active_run_id="r1")
+        chat_log.append_sync(tid, {"kind": "turn", "turn_id": "r1", "state": "started"})
+        chat_log.patch_meta_sync(tid, active_turn_id="r1")
         got = chat_log.read_thread(tid)
         assert got["last_seq"] == 2
-        assert got["active_run"] == {"run_id": "r1", "started_seq": 2, "live": None}
+        assert got["active_turn"] == {"turn_id": "r1", "started_seq": 2, "live": None}
 
     def test_read_thread_bounds_the_tail(self, tid):
         for i in range(10):
@@ -396,26 +396,26 @@ class TestRotationLeavesTheHotEventsAlone:
     def test_a_run_in_flight_keeps_its_marker_live(self, tid, small_rotation):
         _fill(tid, 10)
         started = chat_log.append_sync(
-            tid, {"kind": "run", "run_id": "r1", "state": "started"})
-        chat_log.patch_meta_sync(tid, active_run_id="r1", active_run_seq=started["seq"])
+            tid, {"kind": "turn", "turn_id": "r1", "state": "started"})
+        chat_log.patch_meta_sync(tid, active_turn_id="r1", active_turn_seq=started["seq"])
         _fill(tid, 50, prefix="during")
 
-        assert chat_log.active_run(tid) == {
-            "run_id": "r1", "started_seq": started["seq"], "live": None}
+        assert chat_log.active_turn(tid) == {
+            "turn_id": "r1", "started_seq": started["seq"], "live": None}
         assert started["seq"] in _file_seqs(chat_log.log_path(tid))
         assert _seqs(tid) == list(range(1, 62))
 
     def test_an_older_run_marker_is_still_found_after_it_is_archived(
             self, tid, small_rotation):
-        """A run opened by a build that did not record `active_run_seq` falls back
+        """A run opened by a build that did not record `active_turn_seq` falls back
         to scanning the events. The scan spans the archive, so the fallback keeps
         working on a thread that has rotated."""
         started = chat_log.append_sync(
-            tid, {"kind": "run", "run_id": "r1", "state": "started"})
-        chat_log.patch_meta_sync(tid, active_run_id="r1")
+            tid, {"kind": "turn", "turn_id": "r1", "state": "started"})
+        chat_log.patch_meta_sync(tid, active_turn_id="r1")
         _fill(tid, 60, prefix="during")
         assert started["seq"] not in _file_seqs(chat_log.log_path(tid))
-        assert chat_log.active_run(tid)["started_seq"] == started["seq"]
+        assert chat_log.active_turn(tid)["started_seq"] == started["seq"]
 
 
 class TestClientIdAcrossTheBoundary:

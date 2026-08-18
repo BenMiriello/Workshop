@@ -90,12 +90,12 @@ def _journal(turn_id: str, lines: list[str], thread_id: str) -> dict:
 
 
 async def _run(thread_id: str, lines: list[str]) -> None:
-    run_id = "run-ctx"
-    chat_store.begin_run(thread_id, run_id, model="m")
-    turn = build_streaming.Turn(id=run_id, thread_id=thread_id, agent_slug="a")
+    turn_id = "run-ctx"
+    chat_store.begin_turn(thread_id, turn_id, model="m")
+    turn = build_streaming.Turn(id=turn_id, thread_id=thread_id, agent_slug="a")
     turn.spawned = True
-    build_streaming.TURNS[run_id] = turn
-    meta = _journal(run_id, lines, thread_id)
+    build_streaming.TURNS[turn_id] = turn
+    meta = _journal(turn_id, lines, thread_id)
     proc = FakeProc()
     turn.proc, turn.pid = proc, proc.pid
     driving = asyncio.create_task(build_streaming._drive_turn(turn, meta, proc=proc))

@@ -118,7 +118,7 @@ export type ChatMsg = {
     // a preference captured. Not a step (steps fold away with the rest of a
     // turn's work) and not a status (that is how the turn ended). All three
     // used to render as the same anonymous `.chat-note` div, which is why a
-    // note and a stopped run were indistinguishable. `kind` is one of
+    // note and a stopped turn were indistinguishable. `kind` is one of
     // note / ticket / learning / action / warn.
     // `ref` is what the write PRODUCED, so the receipt can be opened rather
     // than only read. Absent on a warning: a refusal or a parse failure made
@@ -139,9 +139,9 @@ export type ChatMsg = {
     timeout?: boolean;
     // Any OTHER non-completion ending, and WHICH one. Two values, because they
     // are two different events and must not read alike:
-    //   "operator"    — the operator pressed Stop. The run's process group was
+    //   "operator"    — the operator pressed Stop. The turn's process group was
     //                   signalled and whatever it had produced was committed.
-    //   "interrupted" — a restart orphaned the run; the startup reconcile closed
+    //   "interrupted" — a restart orphaned the turn; the startup reconcile closed
     //                   it out so a reply that will never come doesn't render as
     //                   either answered or a wordless bubble.
     // The wording for each lives in components/chat/stopReason.ts.
@@ -158,13 +158,10 @@ export type ChatMsg = {
     // Sent while a turn was already running, and handed to that turn rather
     // than queued behind it.
     injected?: boolean;
-    // Which RUN was in flight when this message arrived. The log files it above
-    // that run's reply (the reply does not exist yet when the message lands),
-    // and the transcript selector uses this to find the block it interrupted.
-    during_run?: string;
-    // The same fact under its old name, on messages recorded before the run
-    // rebuild. Read nowhere in the client; kept so the type describes what is
-    // actually on disk.
+    // Which TURN was in flight when this message arrived. The log files it
+    // above that turn's reply (the reply does not exist yet when the message
+    // lands), and the transcript selector uses this to find the block it
+    // interrupted.
     during_turn?: string;
     // How much of the reply had streamed when the message arrived: the index
     // into the reply's segment stream at which it landed. THE CUT POINT. The
@@ -193,7 +190,7 @@ export type ChatMsg = {
     // The browser's own id for this send. Present on messages this client sent;
     // it is what an optimistic bubble is reconciled against, never the text.
     client_id?: string;
-    // When the run that produced this reply began. `ts` is when it was
+    // When the turn that produced this reply began. `ts` is when it was
     // committed.
     started_at?: string;
     // Typed while a turn was running and sent as part of the NEXT turn, keeping
@@ -324,7 +321,7 @@ export type Thread = ThreadSummary & QueueState;
 // client's model of a thread is built from nothing else — see
 // components/chat/threadStore.
 
-export type EventKind = "message" | "run" | "boundary" | "title" | "scope";
+export type EventKind = "message" | "turn" | "boundary" | "title" | "scope";
 
 export type LogEvent = {
   // 1-based, assigned by the server, monotonic per thread, never reused. A
@@ -338,9 +335,9 @@ export type LogEvent = {
   content?: string;
   client_id?: string;
   meta?: ChatMsg["meta"];
-  // kind === "run" — a turn's lifecycle marker. The turn itself is not in the
+  // kind === "turn" — a turn's lifecycle marker. The turn itself is not in the
   // log until it finishes.
-  run_id?: string;
+  turn_id?: string;
   state?: "started" | "finished" | "lost";
   // kind === "scope" — this chat was re-bound to another scope. In the log
   // because it is a thing that HAPPENED to the conversation, at a point in its
@@ -357,12 +354,12 @@ export type LogEvent = {
   title?: string;
 };
 
-// The run in flight. `live` is the server's throttled snapshot of what it has
-// produced so far — the fallback for a run this browser is not streaming.
-export type ActiveRunPayload = {
-  run_id: string;
+// The turn in flight. `live` is the server's throttled snapshot of what it has
+// produced so far — the fallback for a turn this browser is not streaming.
+export type ActiveTurnPayload = {
+  turn_id: string;
   started_seq?: number | null;
-  // May a message be handed to this run while it is going? False for a slash
+  // May a message be handed to this turn while it is going? False for a slash
   // command (it folds or resets or reports and exits without reading a word) and
   // for a voice turn (driven by the voice worker, not by this module's input
   // channel). A message sent into either is a message nothing will ever answer,
@@ -370,13 +367,13 @@ export type ActiveRunPayload = {
   // which reads as "yes" and restores the old behaviour.
   accepts_input?: boolean;
   live?: {
-    run_id?: string;
+    turn_id?: string;
     content?: string;
     ts?: string;
     meta?: {
       segments?: ChatSegment[]; model?: string; agent?: string; turn_id?: string;
-      // Messages that beat this run's first output. Carried on the live
-      // snapshot as well as on the commit, because a run that has produced
+      // Messages that beat this turn's first output. Carried on the live
+      // snapshot as well as on the commit, because a turn that has produced
       // nothing is exactly when it matters and is exactly when there are no
       // segments to carry it.
       cut_head?: string[];
@@ -389,7 +386,7 @@ export type ActiveRunPayload = {
  *  A chat runs one turn at a time and some turns read nothing at all (a slash
  *  command, a voice turn), so a message sent during one has to wait. It waits
  *  ON THE THREAD, not in this browser: the server records it, every device sees
- *  the same queue, and the server sends it when the run ends whether or not any
+ *  the same queue, and the server sends it when the turn ends whether or not any
  *  browser is watching. See backend/services/chat_queue.py — this replaced a
  *  localStorage queue that lost two of the operator's messages on 2026-08-12. */
 export type QueuedMessagePayload = {
@@ -450,7 +447,7 @@ export type BranchState = {
 export type ThreadEventsPage = {
   events: LogEvent[];
   last_seq: number;
-  active_run: ActiveRunPayload;
+  active_turn: ActiveTurnPayload;
   /** Whether more VISIBLE events exist further back than this page. Only
    *  meaningful on a `tail`/`before` page (a plain `after=0` read returns the
    *  whole log, so it is always `false` there); see backend/routes/chat.py
@@ -614,9 +611,9 @@ export const chatApi = {
   // bug this chat has had.
   getThread: (id: string) => fetch(`/api/chat/threads/${id}`).then(j<Thread>),
 
-  // THE SYNC ENDPOINT. The thread's event log from a cursor, plus the run in
+  // THE SYNC ENDPOINT. The thread's event log from a cursor, plus the turn in
   // flight. Called on mount, on focus, on reconnect, and after any write; the
-  // client merges it with nothing except the live SSE for the active run.
+  // client merges it with nothing except the live SSE for the active turn.
   //
   // `opts.tail`/`opts.before` page BACKWARD from the newest events instead of
   // reading from a cursor — see backend/routes/chat.py `thread_events`. They
@@ -771,16 +768,17 @@ export const chatApi = {
       body: JSON.stringify({ key, ...state }),
     }).then(j<{ card_states: Record<string, CardState> }>),
 
-  // Hand a message to the run already going on this chat. Addressed by CHAT,
-  // not by run id: the client knows which conversation it is in, and the server
-  // resolves which run is live on it. Routing by run id meant injection only
-  // worked in the component mount that started the run — a second tab, another
-  // device, or a re-attached run had no id to send and silently fell back to
-  // queueing, which is the whole thing this was supposed to end.
+  // Hand a message to the turn already going on this chat. Addressed by CHAT,
+  // not by turn id: the client knows which conversation it is in, and the
+  // server resolves which turn is live on it. Routing by turn id meant
+  // injection only worked in the component mount that started the turn — a
+  // second tab, another device, or a re-attached turn had no id to send and
+  // silently fell back to queueing, which is the whole thing this was supposed
+  // to end.
   //
   // The message is PERSISTED BEFORE DELIVERY is attempted, so `delivered: true`
   // means the chat has it whether or not the running turn took it. Only
-  // `delivered: false` (no run was going) means the endpoint did not take the
+  // `delivered: false` (no turn was going) means the endpoint did not take the
   // message and the caller must send it as a turn.
   injectIntoThread: (threadId: string, content: string, clientId?: string,
                      opts?: {
@@ -807,8 +805,8 @@ export const chatApi = {
       delivered: boolean; injected?: boolean; queued_for_turn?: boolean;
       // The chat is running something that reads no input (a slash command, a
       // voice turn). TAKEN AND DURABLE: the server recorded it on the thread's
-      // queue and sends it when that run ends. The caller must NOT re-send it —
-      // that is the difference from `delivered: false`, which means no run was
+      // queue and sends it when that turn ends. The caller must NOT re-send it —
+      // that is the difference from `delivered: false`, which means no turn was
       // going and this message should become a turn right now.
       queued?: boolean;
       queue?: QueueState;
@@ -836,7 +834,7 @@ export const chatApi = {
 
   // Stop a running turn. Not "stop watching it": the run's process group is
   // signalled, whatever it produced is committed as the reply, and the thread
-  // stops reporting a run in flight. Idempotent — stopping a turn that already
+  // stops reporting a turn in flight. Idempotent — stopping a turn that already
   // finished answers `stopped: false` and is not an error, so a double-click and
   // a race with the turn's own ending both land somewhere sane.
   stopTurn: (turnId: string) =>

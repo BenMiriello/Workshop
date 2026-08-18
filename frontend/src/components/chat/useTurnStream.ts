@@ -13,7 +13,7 @@ import { CONSUMED_WIRE_KINDS, type ConsumedWireKind } from "./streamWire";
 // WHAT THIS HOOK NO LONGER OWNS. It used to hold the turn's segments, the
 // server's copy of the transcript, and the rule for when a turn stops owning the
 // tail of the log. All three now live in the store: the socket folds events in
-// with `runDelta`, and "is a run in flight" is `state.activeRun`, which is
+// with `turnDelta`, and "is a run in flight" is `state.activeTurn`, which is
 // SERVER state. That deletes `pendingSegments` (a client-only cache of a turn's
 // output, with a written invariant about when it could be cleared), the
 // `logBusy`/`streaming` split (two questions whose answers diverged for one
@@ -45,7 +45,7 @@ const COMMIT_SETTLE_MS = 300;
 export type TurnStream = {
   /** A socket for the current run is open (or being retried) here. Chooses the
    *  indicator's wording; it is NOT the question "is a turn running", which is
-   *  the store's `activeRun`. */
+   *  the store's `activeTurn`. */
   attached: boolean;
   reconnecting: boolean;
   attach: (turnId: string) => void;
@@ -66,7 +66,7 @@ export type TurnStream = {
   hasOpenStream: () => boolean;
   /** Runs this tab has deliberately stopped watching, so the re-attach effect
    *  leaves them alone. */
-  isDetached: (runId: string) => boolean;
+  isDetached: (turnId: string) => boolean;
 };
 
 export function useTurnStream({
@@ -114,7 +114,7 @@ export function useTurnStream({
   }, []);
 
   const hasOpenStream = useCallback(() => sseRef.current !== null, []);
-  const isDetached = useCallback((runId: string) => detachedRef.current.has(runId), []);
+  const isDetached = useCallback((turnId: string) => detachedRef.current.has(turnId), []);
 
   const attach = useCallback((turnId: string) => {
     // A reconnect that is already scheduled would open a SECOND socket behind
@@ -133,7 +133,7 @@ export function useTurnStream({
     // restored the server's snapshot, so folding a replay into what is already
     // there rendered the entire turn a second time. Rewinding costs nothing:
     // the replay is the same events that built the view being dropped.
-    cb.current.dispatch({ type: "runReattached", runId: turnId });
+    cb.current.dispatch({ type: "turnReattached", turnId });
 
     const es = new EventSource(`/api/chat/turns/${turnId}/stream`);
     sseRef.current = es;
@@ -164,7 +164,7 @@ export function useTurnStream({
         markAlive();
         const p = parse(e);
         cb.current.dispatch({
-          type: "runDelta", runId: turnId,
+          type: "turnDelta", turnId,
           event: { kind: "text", content: String(p.content || ""), parent: p.parent as string | null },
         });
       },
@@ -172,7 +172,7 @@ export function useTurnStream({
         markAlive();
         const p = parse(e);
         cb.current.dispatch({
-          type: "runDelta", runId: turnId,
+          type: "turnDelta", turnId,
           event: {
             kind: "tool",
             name: p.name as string, input: p.input as string, detail: p.detail as string | null,
@@ -187,7 +187,7 @@ export function useTurnStream({
         markAlive();
         const p = parse(e);
         cb.current.dispatch({
-          type: "runDelta", runId: turnId,
+          type: "turnDelta", turnId,
           event: {
             kind: "tool_result", tool_use_id: p.tool_use_id as string, text: p.text as string,
             // The server's own reading of whether this result is an outcome or
@@ -211,7 +211,7 @@ export function useTurnStream({
         markAlive();
         const p = parse(e);
         cb.current.dispatch({
-          type: "runDelta", runId: turnId,
+          type: "turnDelta", turnId,
           event: {
             kind: "permission",
             id: p.id as string, tool: p.tool as string, label: p.label as string,
@@ -225,7 +225,7 @@ export function useTurnStream({
         markAlive();
         const p = parse(e);
         cb.current.dispatch({
-          type: "runDelta", runId: turnId,
+          type: "turnDelta", turnId,
           event: {
             kind: "permission_resolved",
             id: p.id as string, state: p.state as string, stale: Boolean(p.stale),
@@ -247,7 +247,7 @@ export function useTurnStream({
         markAlive();
         const p = parse(e);
         const ref = String(p.ref || "");
-        if (ref) cb.current.dispatch({ type: "runDelta", runId: turnId, event: { kind: "cut", ref } });
+        if (ref) cb.current.dispatch({ type: "turnDelta", turnId, event: { kind: "cut", ref } });
       },
       // The model's own report of how full its window is, sent whenever the
       // number changes. This is the ONLY live source: the thread's stored
@@ -258,7 +258,7 @@ export function useTurnStream({
         const p = parse(e);
         const tokens = Number(p.tokens);
         if (Number.isFinite(tokens) && tokens > 0) {
-          cb.current.dispatch({ type: "runContext", runId: turnId, tokens });
+          cb.current.dispatch({ type: "turnContext", turnId, tokens });
         }
       },
       ping: markAlive, // server heartbeat (~1s) keeps this warm
@@ -294,7 +294,7 @@ export function useTurnStream({
       // rendered as the live band below the messages, and anything sent in that
       // window appended above a turn that had already finished.
       //
-      // The sync brings the committed reply AND clears `active_run` in a single
+      // The sync brings the committed reply AND clears `active_turn` in a single
       // dispatch, so the live block becomes its persisted message in one React
       // commit with no gap to fall into.
       //
@@ -307,12 +307,12 @@ export function useTurnStream({
       // meanwhile — it is still true.
       for (let i = 0; i < COMMIT_SETTLE_TRIES; i++) {
         await cb.current.sync();
-        if (stateRef.current.activeRun?.runId !== turnId) break;
+        if (stateRef.current.activeTurn?.turnId !== turnId) break;
         await new Promise((r) => window.setTimeout(r, COMMIT_SETTLE_MS));
       }
       // A floor, not the expected path: if the commit never showed up, stop
       // claiming a run is in flight and let the poll correct the transcript.
-      cb.current.dispatch({ type: "runCommitted", runId: turnId });
+      cb.current.dispatch({ type: "turnCommitted", turnId });
       setAttached(false);
       setReconnecting(false);
       cb.current.onTurnEnd();
@@ -336,7 +336,7 @@ export function useTurnStream({
       // Did the turn really end, or did the socket? Only the server knows.
       await cb.current.sync();
       if (finishingRef.current) return;
-      if (stateRef.current.activeRun?.runId !== turnId) { void finish(); return; }
+      if (stateRef.current.activeTurn?.turnId !== turnId) { void finish(); return; }
       if (reconnectsRef.current >= MAX_RECONNECTS) {
         // OUT OF BUDGET IS NOT THE END OF THE TURN. Stop the fast retry loop and
         // stop claiming a socket, but leave the run in the store: it is still in
@@ -372,9 +372,9 @@ export function useTurnStream({
   attachRef.current = attach;
 
   const beginStop = useCallback(() => {
-    const runId = stateRef.current.activeRun?.runId;
+    const turnId = stateRef.current.activeTurn?.turnId;
     finishingRef.current = true;
-    if (runId) detachedRef.current.add(runId);
+    if (turnId) detachedRef.current.add(turnId);
   }, [stateRef]);
 
   const stopWatching = useCallback(() => {

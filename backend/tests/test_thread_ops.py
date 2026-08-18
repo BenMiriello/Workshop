@@ -96,7 +96,7 @@ class TestWaitQuiet:
 
     def test_waits_for_the_live_run_to_finish(self, thread):
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         turn = build_streaming.Turn(id="run-1", thread_id=tid, agent_slug="a")
         turn.spawned = True
         build_streaming.TURNS["run-1"] = turn
@@ -106,7 +106,7 @@ class TestWaitQuiet:
             await asyncio.sleep(0.05)
             assert not waiter.done()
             # The turn ends: the store clears the run and the event fires.
-            chat_store.commit_run(tid, "run-1", [], "done")
+            chat_store.commit_turn(tid, "run-1", [], "done")
             turn.finished.set()
             await asyncio.wait_for(waiter, timeout=1)
         asyncio.run(scenario())
@@ -117,7 +117,7 @@ class TestCompactDefersMidRun:
         import routes.chat as rc
         tid = chatty
         monkeypatch.setattr(rc, "_summarize_sync", lambda prev, msgs: "S")
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         turn = build_streaming.Turn(id="run-1", thread_id=tid, agent_slug="a")
         turn.spawned = True
         build_streaming.TURNS["run-1"] = turn
@@ -136,7 +136,7 @@ class TestCompactDefersMidRun:
             assert r2["busy"] is True and r2["folded"] == 0
             assert "deferred" not in r2
             # The run ends; the landing task fires.
-            chat_store.commit_run(tid, "run-1", [], "done")
+            chat_store.commit_turn(tid, "run-1", [], "done")
             turn.finished.set()
             for _ in range(50):
                 if thread_ops.pending(tid) is None:
@@ -167,7 +167,7 @@ class TestClearDefersMidRun:
         to a quiet thread makes the count include everything the turn added."""
         import routes.chat as rc
         tid = chatty
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         turn = build_streaming.Turn(id="run-1", thread_id=tid, agent_slug="a")
         turn.spawned = True
         build_streaming.TURNS["run-1"] = turn
@@ -178,7 +178,7 @@ class TestClearDefersMidRun:
             assert not chat_store.get_thread(tid).get("cleared_through")
             # The turn appends more conversation, then ends.
             chat_store.append_message(tid, "user", "LATE-ARRIVAL")
-            chat_store.commit_run(tid, "run-1", [], "the reply")
+            chat_store.commit_turn(tid, "run-1", [], "the reply")
             turn.finished.set()
             for _ in range(50):
                 if thread_ops.pending(tid) is None:
@@ -196,7 +196,7 @@ class TestTheSpawnGapCannotEatAMessage:
     channel is not up. It used to be silently unanswered; now it queues."""
 
     def _claimed_run(self, tid, floor):
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         turn = build_streaming.Turn(id="run-1", thread_id=tid, agent_slug="a")
         turn.spawned = False
         turn.prompt_through_seq = floor
@@ -248,7 +248,7 @@ class TestTheSpawnGapCannotEatAMessage:
             turn = build_streaming.Turn(id="r-x", thread_id=thread_id, agent_slug="a")
             build_streaming.TURNS["r-x"] = turn
             return turn
-        monkeypatch.setattr(rc, "_run_for_message", fake_run)
+        monkeypatch.setattr(rc, "_turn_for_message", fake_run)
 
         started = asyncio.run(rc._start_queued_batch(tid, chat_queue.next_batch(tid)))
         assert started is True
@@ -260,7 +260,7 @@ class TestFinalizeWindowRespectsOrderAndOps:
     overtake waiting messages or a pending operation by taking the thread over."""
 
     def _ending_run(self, tid):
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         turn = build_streaming.Turn(id="run-1", thread_id=tid, agent_slug="a")
         turn.spawned = True   # spawned with no FIFO: it is ending
         build_streaming.TURNS["run-1"] = turn
@@ -309,7 +309,7 @@ class TestOneIdentityAcrossLogAndQueue:
         tid = thread["id"]
         chat_store.append_message(tid, "user", "the trigger")
         floor = int((build_streaming.chat_log.read_meta(tid) or {}).get("last_seq") or 0)
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         turn = build_streaming.Turn(id="run-1", thread_id=tid, agent_slug="a")
         turn.spawned = False
         turn.prompt_through_seq = floor

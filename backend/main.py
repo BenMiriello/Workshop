@@ -77,6 +77,18 @@ async def lifespan(app: FastAPI):
     # still matter (chat_store.list_threads / get_thread), so a straggler is
     # still absorbed on first touch without a startup pass over every owner.
     try:
+        # The chat store's on-disk `run` vocabulary becomes `turn`, once. This
+        # runs BEFORE anything reads a thread, because the keys and the code
+        # that fences on them have to change together: a turn in flight under
+        # the previous build would stop recognising its own claim. Guarded by a
+        # marker file, so later boots cost one stat. See services/chat_log_turn_rename.
+        from services import chat_log_turn_rename
+        renamed = chat_log_turn_rename.run_once()
+        if renamed:
+            log.info("chat turn rename: %s", renamed)
+    except Exception as e:
+        log.error("chat turn rename failed at startup: %s", e)
+    try:
         from services import build_streaming
         build_streaming.reattach_running_turns()
         # Second pass, after the live journals are re-registered: any thread

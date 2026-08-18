@@ -16,7 +16,7 @@
 //     never had a socket to begin with.
 //
 // The question the indicator answers is "is a run in flight on this thread",
-// which is server state (`meta.active_run_id`), not socket state. `attached`
+// which is server state (`meta.active_turn_id`), not socket state. `attached`
 // only chooses the WORDING.
 
 // A FOLD IS NOT A PHASE OF A TURN, and it used to be listed here as one. When

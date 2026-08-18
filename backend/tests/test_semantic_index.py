@@ -420,7 +420,7 @@ class TestMarkStaleCallSites:
         every event -- several times per turn -- would be pure waste."""
         from services import chat_log, chat_store
         tid = chat_store.create_thread("general")["id"]
-        chat_log.append_sync(tid, {"kind": "run", "run_id": "r1", "state": "started"})
+        chat_log.append_sync(tid, {"kind": "turn", "turn_id": "r1", "state": "started"})
         assert not si.is_stale()
 
     def test_a_chat_write_survives_a_broken_mark_stale(self, owned, monkeypatch):

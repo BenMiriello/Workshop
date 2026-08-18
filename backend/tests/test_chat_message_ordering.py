@@ -114,12 +114,12 @@ class TestTheOperatorsMessagesRenderAboveTheReplyThatReadThem:
     def test_a_message_delivered_mid_run_lands_ABOVE_the_finalized_reply(self, thread):
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go build it")
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         for text in ("also the header", "and the footer", "wait, dark mode too"):
             chat_store.append_message_during_turn(
                 tid, "user", text,
-                meta={"injected": True, "during_run": "run-1", "at_segment": 4})
-        chat_store.commit_run(tid, "run-1", [], "Done, all of it.")
+                meta={"injected": True, "during_turn": "run-1", "at_segment": 4})
+        chat_store.commit_turn(tid, "run-1", [], "Done, all of it.")
 
         msgs = chat_store.get_thread(tid)["messages"]
         assert [m["role"] for m in msgs] == ["user", "user", "user", "user", "assistant"]
@@ -127,7 +127,7 @@ class TestTheOperatorsMessagesRenderAboveTheReplyThatReadThem:
         # Every message the run was handed is above the reply that read it.
         reply_at = len(msgs) - 1
         for i, m in enumerate(msgs):
-            if (m.get("meta") or {}).get("during_run") == "run-1":
+            if (m.get("meta") or {}).get("during_turn") == "run-1":
                 assert i < reply_at
 
     def test_a_message_that_never_reached_the_run_lands_BELOW_the_reply(self, thread):
@@ -136,8 +136,8 @@ class TestTheOperatorsMessagesRenderAboveTheReplyThatReadThem:
         it — that is the same lie in the other direction."""
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go build it")
-        chat_store.begin_run(tid, "run-1")
-        chat_store.commit_run(tid, "run-1", [], "Done.")
+        chat_store.begin_turn(tid, "run-1")
+        chat_store.commit_turn(tid, "run-1", [], "Done.")
         chat_store.append_message(tid, "user", "one more thing")
 
         msgs = chat_store.get_thread(tid)["messages"]
@@ -149,16 +149,16 @@ class TestTheOperatorsMessagesRenderAboveTheReplyThatReadThem:
         commits, the reply is still last — the bubble never moves."""
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.begin_run(tid, "run-1")
-        chat_store.update_run(tid, "run-1", [{"t": "text", "text": "working"}], "working")
+        chat_store.begin_turn(tid, "run-1")
+        chat_store.update_turn(tid, "run-1", [{"t": "text", "text": "working"}], "working")
         assert [m["role"] for m in chat_store.get_thread(tid)["messages"]] == \
             ["user", "assistant"]
         chat_store.append_message_during_turn(
-            tid, "user", "wait", meta={"during_run": "run-1"})
+            tid, "user", "wait", meta={"during_turn": "run-1"})
         during = chat_store.get_thread(tid)["messages"]
         assert [m["role"] for m in during] == ["user", "user", "assistant"]
         assert during[-1]["meta"]["streaming"] is True
-        chat_store.commit_run(tid, "run-1", [], "final")
+        chat_store.commit_turn(tid, "run-1", [], "final")
         after = chat_store.get_thread(tid)["messages"]
         assert [m["role"] for m in after] == ["user", "user", "assistant"]
         assert after[-1]["content"] == "final"
@@ -168,14 +168,14 @@ class TestStoreOrdering:
     def test_mid_run_message_is_filed_with_the_run_it_arrived_in(self, thread):
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         chat_store.append_message_during_turn(
             tid, "user", "actually wait",
-            meta={"injected": True, "during_run": "run-1", "at_segment": 3})
+            meta={"injected": True, "during_turn": "run-1", "at_segment": 3})
         # [-1] is the run's live view; the committed tail is the message.
         msgs = chat_store.get_thread(tid)["messages"]
         assert msgs[-2]["role"] == "user"
-        assert msgs[-2]["meta"]["during_run"] == "run-1"
+        assert msgs[-2]["meta"]["during_turn"] == "run-1"
         assert msgs[-2]["meta"]["at_segment"] == 3
 
     def test_with_no_live_turn_it_is_an_ordinary_append(self, thread):
@@ -189,8 +189,8 @@ class TestStoreOrdering:
         honest answer to "when did this enter the conversation"; the start is
         recorded alongside it so the interval is still answerable."""
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-2")
-        chat_store.commit_run(tid, "run-2", [], "done")
+        chat_store.begin_turn(tid, "run-2")
+        chat_store.commit_turn(tid, "run-2", [], "done")
         m = chat_store.get_thread(tid)["messages"][-1]
         assert m["meta"]["ended_at"]
         assert m["meta"]["started_at"] <= m["meta"]["ended_at"]
@@ -198,11 +198,11 @@ class TestStoreOrdering:
 
     def test_committing_clears_the_active_run(self, thread):
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-3")
-        assert chat_store.active_run_id(tid) == "run-3"
-        chat_store.commit_run(tid, "run-3", [], "done")
-        assert chat_store.active_run_id(tid) is None
-        assert chat_store.previous_run_id(tid) == "run-3"
+        chat_store.begin_turn(tid, "run-3")
+        assert chat_store.active_turn_id(tid) == "run-3"
+        chat_store.commit_turn(tid, "run-3", [], "done")
+        assert chat_store.active_turn_id(tid) is None
+        assert chat_store.previous_turn_id(tid) == "run-3"
 
 
 class TestQueuedPartsKeepTheirSendTimes:
@@ -285,7 +285,7 @@ class TestRecordUserTurn:
 
 
 class TestAtSegmentIsMeasuredLive:
-    """`at_segment` decides where the transcript shows a mid-run message.
+    """`at_segment` decides where the transcript shows a mid-turn message.
 
     It used to be read from the STORED reply, whose segments are written on a
     throttle — so it lagged what was on screen. The error is one-directional: a
@@ -300,14 +300,14 @@ class TestAtSegmentIsMeasuredLive:
 
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.begin_run(tid, "run-live")
+        chat_store.begin_turn(tid, "run-live")
         # On disk: 2 segments (the last throttled write). In flight: 7.
-        chat_store.update_run(tid, "run-live", [{"t": "text", "text": "x"}] * 2, "x")
+        chat_store.update_turn(tid, "run-live", [{"t": "text", "text": "x"}] * 2, "x")
         turn = build_streaming.Turn(id="run-live", thread_id=tid, agent_slug="a")
         turn.segments = [{"t": "text", "text": "x"}] * 7
         build_streaming.TURNS["run-live"] = turn
         try:
-            rc._file_during_run(tid, "run-live", "wait")
+            rc._file_during_turn(tid, "run-live", "wait")
         finally:
             build_streaming.TURNS.pop("run-live", None)
 
@@ -323,9 +323,9 @@ class TestAtSegmentIsMeasuredLive:
 
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.begin_run(tid, "run-gone")
-        chat_store.update_run(tid, "run-gone", [{"t": "text", "text": "x"}] * 3, "x")
-        rc._file_during_run(tid, "run-gone", "wait")
+        chat_store.begin_turn(tid, "run-gone")
+        chat_store.update_turn(tid, "run-gone", [{"t": "text", "text": "x"}] * 3, "x")
+        rc._file_during_turn(tid, "run-gone", "wait")
         assert chat_store.get_thread(tid)["messages"][-2]["meta"]["at_segment"] == 3
 
 
@@ -338,11 +338,11 @@ class TestOneRunPerThread:
     both streaming at once, and the operator's message reached neither.
     """
 
-    def _live(self, run_id, thread_id, spawned=True):
+    def _live(self, turn_id, thread_id, spawned=True):
         from services import build_streaming
-        t = build_streaming.Turn(id=run_id, thread_id=thread_id, agent_slug="a")
+        t = build_streaming.Turn(id=turn_id, thread_id=thread_id, agent_slug="a")
         t.spawned = spawned
-        build_streaming.TURNS[run_id] = t
+        build_streaming.TURNS[turn_id] = t
         return t
 
     def test_the_second_mid_run_message_still_finds_the_run(self, thread):
@@ -354,16 +354,16 @@ class TestOneRunPerThread:
 
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         self._live("run-1", tid)
         try:
-            assert rc._live_run_id(tid) == "run-1"
+            assert rc._live_turn_id(tid) == "run-1"
             chat_store.append_message_during_turn(
-                tid, "user", "first", meta={"during_run": "run-1"})
-            assert rc._live_run_id(tid) == "run-1"
+                tid, "user", "first", meta={"during_turn": "run-1"})
+            assert rc._live_turn_id(tid) == "run-1"
             chat_store.append_message_during_turn(
-                tid, "user", "second", meta={"during_run": "run-1"})
-            assert rc._live_run_id(tid) == "run-1"
+                tid, "user", "second", meta={"during_turn": "run-1"})
+            assert rc._live_turn_id(tid) == "run-1"
         finally:
             build_streaming.TURNS.pop("run-1", None)
 
@@ -372,28 +372,28 @@ class TestOneRunPerThread:
         from services import build_streaming
 
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-done")
+        chat_store.begin_turn(tid, "run-done")
         t = self._live("run-done", tid)
         t.complete = True
         try:
-            assert rc._live_run_id(tid) is None
+            assert rc._live_turn_id(tid) is None
         finally:
             build_streaming.TURNS.pop("run-done", None)
 
     def test_a_run_this_process_never_had_is_not_live(self, thread):
-        """A run lost to a restart leaves `active_run_id` behind. If that counted
+        """A run lost to a restart leaves `active_turn_id` behind. If that counted
         as live, every later message would be delivered to a process that no
         longer exists and the thread would take no new turns at all."""
         import routes.chat as rc
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-vanished")
-        assert rc._live_run_id(tid) is None
+        chat_store.begin_turn(tid, "run-vanished")
+        assert rc._live_turn_id(tid) is None
 
     def test_an_idle_thread_has_no_live_run(self, thread):
         import routes.chat as rc
         tid = thread["id"]
         chat_store.append_message(tid, "user", "hi")
-        assert rc._live_run_id(tid) is None
+        assert rc._live_turn_id(tid) is None
 
     def test_the_turn_route_joins_instead_of_starting_a_rival(self, thread, monkeypatch):
         import asyncio
@@ -402,7 +402,7 @@ class TestOneRunPerThread:
 
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.begin_run(tid, "run-1")
+        chat_store.begin_turn(tid, "run-1")
         live = self._live("run-1", tid)
         live.segments = [{"t": "text", "text": "x"}] * 5
 
@@ -423,7 +423,7 @@ class TestOneRunPerThread:
         assert not started
         last = chat_store.get_thread(tid)["messages"][-2]
         assert last["content"] == "joining"
-        assert last["meta"]["during_run"] == "run-1"
+        assert last["meta"]["during_turn"] == "run-1"
 
 
 class TestClientIdSurvivesTheApi:
@@ -476,18 +476,18 @@ class TestClientIdSurvivesTheApi:
 
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.begin_run(tid, "run-1")
-        rc._file_during_run(tid, "run-1", "wait", client_id="c-mid")
+        chat_store.begin_turn(tid, "run-1")
+        rc._file_during_turn(tid, "run-1", "wait", client_id="c-mid")
         from services import chat_log
         ev = chat_log.find_message_by_client_id(tid, "c-mid")
         assert ev is not None
-        assert ev["meta"]["during_run"] == "run-1"
+        assert ev["meta"]["during_turn"] == "run-1"
 
 
 class TestARunIsRecordedAfterTheMessageThatStartedIt:
     """THE LOG'S ORDER MUST BE WHAT HAPPENED.
 
-    `begin_run` used to append the `run: started` marker while it took the
+    `begin_turn` used to append the `run: started` marker while it took the
     claim, and the claim is taken before the send path records the operator's
     message. So the log said seq N `run started`, seq N+1 `the message that
     started it`. Nothing renders run events positionally, so it never showed;
@@ -501,27 +501,27 @@ class TestARunIsRecordedAfterTheMessageThatStartedIt:
     def test_the_claim_alone_writes_no_marker(self, thread):
         from services import chat_log
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-1", announce=False)
+        chat_store.begin_turn(tid, "run-1", announce=False)
         assert [e["kind"] for e in chat_log.read_events(tid)] == []
         # The claim is real even without the marker: a second send joins.
-        assert chat_store.active_run_id(tid) == "run-1"
-        # And `active_run` copes with the marker not being there yet.
-        assert chat_log.active_run(tid)["started_seq"] is None
+        assert chat_store.active_turn_id(tid) == "run-1"
+        # And `active_turn` copes with the marker not being there yet.
+        assert chat_log.active_turn(tid)["started_seq"] is None
 
     def test_the_marker_lands_where_it_is_asked_to(self, thread):
         from services import chat_log
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-1", announce=False)
+        chat_store.begin_turn(tid, "run-1", announce=False)
         chat_store.append_message(tid, "user", "go")
-        chat_store.mark_run_started(tid, "run-1")
+        chat_store.mark_turn_started(tid, "run-1")
         evs = chat_log.read_events(tid)
         assert [(e["kind"], e.get("role")) for e in evs] == [
-            ("message", "user"), ("run", None),
+            ("message", "user"), ("turn", None),
         ]
-        assert chat_log.active_run(tid)["started_seq"] == evs[-1]["seq"]
+        assert chat_log.active_turn(tid)["started_seq"] == evs[-1]["seq"]
 
     def test_the_real_send_path_records_the_message_first(self, thread, monkeypatch):
-        """Not the mechanism: the actual `_run_for_message`, with only the
+        """Not the mechanism: the actual `_turn_for_message`, with only the
         subprocess spawn stubbed out."""
         import routes.chat as rc
         from services import chat_log
@@ -532,10 +532,10 @@ class TestARunIsRecordedAfterTheMessageThatStartedIt:
         monkeypatch.setattr(rc, "_start_assistant_turn", _no_spawn)
         tid = thread["id"]
         t = chat_store.get_thread(tid)
-        asyncio.run(rc._run_for_message(tid, t, "hello", None, None))
+        asyncio.run(rc._turn_for_message(tid, t, "hello", None, None))
 
         evs = chat_log.read_events(tid)
         msg = next(e for e in evs if e["kind"] == "message")
-        run = next(e for e in evs if e["kind"] == "run" and e.get("state") == "started")
+        run = next(e for e in evs if e["kind"] == "turn" and e.get("state") == "started")
         assert msg["content"] == "hello"
         assert run["seq"] > msg["seq"], "the run was recorded as starting before its own message"

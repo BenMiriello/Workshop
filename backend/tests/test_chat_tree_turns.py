@@ -135,16 +135,16 @@ def tree_thread(tmp_path, monkeypatch):
                 state["tid"] = tid
                 chat_store.append_message(tid, "user", "start")
 
-                run_id = f"run-{tag}"
-                state["run"] = run_id
-                turn = build_streaming.Turn(id=run_id, thread_id=tid, agent_slug="a")
-                build_streaming.TURNS[run_id] = turn
-                await build_streaming.claim_run(tid, run_id, model="m",
+                turn_id = f"run-{tag}"
+                state["run"] = turn_id
+                turn = build_streaming.Turn(id=turn_id, thread_id=tid, agent_slug="a")
+                build_streaming.TURNS[turn_id] = turn
+                await build_streaming.claim_turn(tid, turn_id, model="m",
                                                 accepts_input=True)
 
                 # Dropping a stretch write has to be decided when the write
                 # RUNS, not when it is queued: it goes on the mirror chain and
-                # lands well after `_file_during_run` returns. Counting calls
+                # lands well after `_file_during_turn` returns. Counting calls
                 # inside the wrapper is the only window that exists.
                 real_open = chat_branches.open_stretch
                 calls = {"n": 0}
@@ -164,7 +164,7 @@ def tree_thread(tmp_path, monkeypatch):
                 for i in range(interrupts):
                     # The real path: seals the open text, records the cut, opens
                     # the stretch row, then persists the message.
-                    chat_routes._file_during_run(tid, run_id, sends[i])
+                    chat_routes._file_during_turn(tid, turn_id, sends[i])
                     build_streaming._seg_text(turn, says[i + 1])
 
                 segments = turn.segments
@@ -175,8 +175,8 @@ def tree_thread(tmp_path, monkeypatch):
                     for seg in segments:
                         cut_head.extend(seg.pop("cut_after", []) or [])
 
-                chat_store.commit_run(
-                    tid, run_id, segments, "".join(says[:interrupts + 1]),
+                chat_store.commit_turn(
+                    tid, turn_id, segments, "".join(says[:interrupts + 1]),
                     cut_head=cut_head)
                 await chat_log.drain_mirror_writes()
 
@@ -190,7 +190,7 @@ def tree_thread(tmp_path, monkeypatch):
         def turn_status():
             from sqlalchemy import text as sql
             with tenant_session(oid) as s:
-                return s.scalar(sql("SELECT status FROM chat_turn WHERE run_id = :r"),
+                return s.scalar(sql("SELECT status FROM chat_turn WHERE turn_id = :r"),
                                 {"r": state["run"]})
 
         def stretch_count():
@@ -198,7 +198,7 @@ def tree_thread(tmp_path, monkeypatch):
             with tenant_session(oid) as s:
                 return s.scalar(sql(
                     "SELECT count(*) FROM chat_message m JOIN chat_turn t "
-                    "ON t.id = m.turn_id WHERE t.run_id = :r"), {"r": state["run"]})
+                    "ON t.id = m.turn_id WHERE t.turn_id = :r"), {"r": state["run"]})
 
         drive.turn_status = turn_status
         drive.stretch_count = stretch_count

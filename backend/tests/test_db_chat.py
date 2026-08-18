@@ -461,7 +461,7 @@ def test_the_backfill_splits_an_interrupted_reply_into_rows(chat, tmp_path):
          "kind": "message", "role": "user", "content": "go"},
         {"seq": 2, "id": "S2", "ts": "2026-08-13T00:00:01+00:00",
          "kind": "message", "role": "user", "content": "wait",
-         "meta": {"during_run": "RUN1", "cut_id": "TOK1"}},
+         "meta": {"during_turn": "RUN1", "cut_id": "TOK1"}},
         {"seq": 3, "id": "S3", "ts": "2026-08-13T00:00:02+00:00",
          "kind": "message", "role": "assistant", "content": "beforeafter",
          "meta": {"turn_id": "RUN1", "segments": [
@@ -545,9 +545,9 @@ def test_an_event_with_no_row_is_kept(chat):
     state = chat_branches._sync_state(chat["org"], chat["thread"])
     events = [{"id": "EV1", "kind": "message"}, {"id": "EV2", "kind": "message"},
               {"id": "EV-UNMIRRORED", "kind": "message"},
-              {"id": "EV-RUN", "kind": "run"}]
+              {"id": "EV-TURN", "kind": "turn"}]
     kept = [e["id"] for e in chat_branches.keep_visible(events, state["hidden"])]
-    assert kept == ["EV1", "EV-UNMIRRORED", "EV-RUN"]
+    assert kept == ["EV1", "EV-UNMIRRORED", "EV-TURN"]
 
 
 def test_an_anchor_resolves_from_a_file_event_id(chat):

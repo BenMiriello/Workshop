@@ -37,7 +37,7 @@ def _stdin_fifo(turn_id: str) -> Path:
     """The turn's realtime input channel.
 
     A turn runs `--input-format stream-json`, so its stdin stays open for the
-    life of the run and a message sent while the agent is working reaches the
+    life of the turn and a message sent while the agent is working reaches the
     process immediately instead of waiting out the whole turn. (Reaching it is
     not the same as being acted on — see write_to_turn.)
 
@@ -310,24 +310,24 @@ class Turn:
     # the journal from offset 0 and would otherwise rebuild every answered
     # approval as pending — showing live buttons on a decision already made.
     answers: dict[str, str] = field(default_factory=dict)
-    # Set once this run's message has been committed to the thread, with the
+    # Set once this turn's message has been committed to the thread, with the
     # committed message in `committed`. This is what the blocking POST /messages
     # path awaits, so there is ONE finalize pipeline instead of a streaming one
     # and a blocking one that drift apart.
     finished: asyncio.Event = field(default_factory=asyncio.Event)
     committed: dict | None = None
     notes: list[str] | None = None
-    # True once the subprocess exists and its input channel is open. A run is
+    # True once the subprocess exists and its input channel is open. A turn is
     # CLAIMED before its prompt is assembled, so there is a window where it owns
     # the thread but cannot be delivered to yet; that is not the same thing as a
-    # run whose channel has been cleaned up because it is finishing, and the
+    # turn whose channel has been cleaned up because it is finishing, and the
     # injection path has to tell them apart.
     spawned: bool = False
     # The log seq through which this turn's prompt includes the thread, stamped
     # in the same synchronous stretch that records the trigger message and the
-    # run marker (routes/chat._run_for_message). None until that stretch runs.
+    # turn marker (routes/chat._turn_for_message). None until that stretch runs.
     # This is what makes "did the prompt see this message" a comparison instead
-    # of a guess: a message filed with a higher seq while the run was claimed
+    # of a guess: a message filed with a higher seq while the turn was claimed
     # but not yet deliverable is provably NOT in the prompt, and the send path
     # queues it rather than dropping it into the gap.
     prompt_through_seq: int | None = None
@@ -399,7 +399,7 @@ def _prune_turns(now: float | None = None) -> int:
 
     Safe by construction: a live SSE reader holds its own reference to the Turn
     object, so removing the dict entry never interrupts one in flight, and only
-    a turn that finished more than the TTL ago qualifies. `run_is_live` already
+    a turn that finished more than the TTL ago qualifies. `turn_is_live` already
     answers False for anything complete, so no caller's answer changes."""
     cutoff = (now or time.time()) - FINISHED_TURN_TTL_S
     stale = [tid for tid, t in TURNS.items()
@@ -411,28 +411,28 @@ def _prune_turns(now: float | None = None) -> int:
     return len(stale)
 
 
-class RunInFlight(RuntimeError):
-    """A run is already open on this thread; join it instead of starting a rival.
+class TurnInFlight(RuntimeError):
+    """A turn is already open on this thread; join it instead of starting a rival.
 
-    Carries the id of the run that owns the thread. Raised by `start_turn` when
+    Carries the id of the turn that owns the thread. Raised by `start_turn` when
     it claims for itself and loses the race, which is the backstop for two POSTs
     landing in the same event-loop tick."""
 
-    def __init__(self, run_id: str):
-        super().__init__(f"a run is already in flight on this thread: {run_id}")
-        self.run_id = run_id
+    def __init__(self, turn_id: str):
+        super().__init__(f"a turn is already in flight on this thread: {turn_id}")
+        self.turn_id = turn_id
 
 
 def _make_turn(thread_id: str, agent_slug: str, turn_id: str | None = None,
                accepts_input: bool = True) -> Turn:
     # The registry only grows here, so this is the only place it has to shrink.
     _prune_turns()
-    # A claimed run is already registered (see claim_run); adopt it rather than
+    # A claimed turn is already registered (see claim_turn); adopt it rather than
     # replacing it, so nothing that looked it up between the claim and the spawn
     # is holding an object this one has orphaned.
     t = TURNS.get(turn_id or "")
     if t is None:
-        t = Turn(id=turn_id or new_run_id(), thread_id=thread_id, agent_slug=agent_slug)
+        t = Turn(id=turn_id or new_turn_id(), thread_id=thread_id, agent_slug=agent_slug)
         TURNS[t.id] = t
     else:
         t.agent_slug = agent_slug
@@ -444,104 +444,104 @@ def _make_turn(thread_id: str, agent_slug: str, turn_id: str | None = None,
     return t
 
 
-def new_run_id() -> str:
+def new_turn_id() -> str:
     return str(uuid.uuid4())
 
 
-def run_is_live(run_id: str | None) -> bool:
-    """Is this process driving this run right now?
+def turn_is_live(turn_id: str | None) -> bool:
+    """Is this process driving this turn right now?
 
-    A run this process does not hold is not live however the thread's meta reads:
+    A turn this process does not hold is not live however the thread's meta reads:
     it belongs to a previous boot, and the startup reconcile owns it. A complete
-    one is not live either. Both are cases where `active_run_id` outlives the
+    one is not live either. Both are cases where `active_turn_id` outlives the
     thing it names, and the point of one predicate is that every caller agrees
     about them."""
-    if not run_id:
+    if not turn_id:
         return False
-    t = TURNS.get(run_id)
+    t = TURNS.get(turn_id)
     return t is not None and not t.complete
 
 
-def run_accepts_input(run_id: str | None) -> bool:
-    """May a message be delivered into the run holding this thread?
+def turn_accepts_input(turn_id: str | None) -> bool:
+    """May a message be delivered into the turn holding this thread?
 
-    True for a run this process is not driving at all: nothing is known against
+    True for a turn this process is not driving at all: nothing is known against
     it, and the injection path has its own answer for that case. See
     Turn.accepts_input for the two kinds that say no."""
-    t = TURNS.get(run_id or "")
+    t = TURNS.get(turn_id or "")
     if t is None or t.complete:
         return True
     return t.accepts_input
 
 
-def run_is_ending(run_id: str | None) -> bool:
-    """Has this run spawned and lost its input channel?
+def turn_is_ending(turn_id: str | None) -> bool:
+    """Has this turn spawned and lost its input channel?
 
     That is the one state where a message cannot be delivered and never will be:
-    the drive loop has ended and the finalize is running. A run that has been
+    the drive loop has ended and the finalize is running. A turn that has been
     claimed but not yet spawned looks the same to `write_to_turn` (no FIFO) and
     is the opposite situation — it is about to start — so the two must not be
-    treated alike, or a message sent in the startup window would kill the run it
+    treated alike, or a message sent in the startup window would kill the turn it
     was meant for."""
-    t = TURNS.get(run_id or "")
-    return t is not None and t.spawned and not _stdin_fifo(run_id or "").exists()
+    t = TURNS.get(turn_id or "")
+    return t is not None and t.spawned and not _stdin_fifo(turn_id or "").exists()
 
 
-async def claim_run(thread_id: str, run_id: str, *, model: str | None = None,
-                    agent: str | None = None, force: bool = False,
-                    accepts_input: bool = True, announce: bool = True) -> str | None:
-    """Take this thread for `run_id`. Returns the run that already owns it (join
+async def claim_turn(thread_id: str, turn_id: str, *, model: str | None = None,
+                     agent: str | None = None, force: bool = False,
+                     accepts_input: bool = True, announce: bool = True) -> str | None:
+    """Take this thread for `turn_id`. Returns the turn that already owns it (join
     that one), or None when the claim succeeded.
 
     Held under the thread's WRITE LOCK across the whole check-and-act, so two
-    POSTs in the same event-loop tick cannot both open a run: the second takes
-    the lock, sees `active_run_id`, and is told to join. That is structural, not
+    POSTs in the same event-loop tick cannot both open a turn: the second takes
+    the lock, sees `active_turn_id`, and is told to join. That is structural, not
     a timing accident — there is no await between the read and the write for the
     other coroutine to slip into.
 
-    `force` takes over a thread whose active run has just refused a delivery.
-    Only the injection path uses it, and only after a write to that run's input
+    `force` takes over a thread whose active turn has just refused a delivery.
+    Only the injection path uses it, and only after a write to that turn's input
     channel has actually failed.
 
-    A run this process is not driving gets a `lost` message on the way out:
+    A turn this process is not driving gets a `lost` message on the way out:
     nothing else is ever going to answer for it, and leaving the chat waiting on
     it is the "chats keep stalling" report."""
     async with chat_log.lock_for(thread_id):
-        active = chat_store.active_run_id(thread_id)
-        if active and active != run_id:
-            if run_is_live(active) and not force:
+        active = chat_store.active_turn_id(thread_id)
+        if active and active != turn_id:
+            if turn_is_live(active) and not force:
                 return active
             if active not in TURNS:
-                chat_store.lose_run(thread_id, active)
-        chat_store.begin_run(thread_id, run_id, model=model, agent=agent,
-                             announce=announce)
-        # Register the run BEFORE returning. Prompt assembly awaits, and until
-        # the run is in TURNS a message arriving during that window would see an
-        # `active_run_id` naming a run nothing is driving and take the thread
+                chat_store.lose_turn(thread_id, active)
+        chat_store.begin_turn(thread_id, turn_id, model=model, agent=agent,
+                              announce=announce)
+        # Register the turn BEFORE returning. Prompt assembly awaits, and until
+        # the turn is in TURNS a message arriving during that window would see an
+        # `active_turn_id` naming a turn nothing is driving and take the thread
         # over — starting the rival turn the claim exists to prevent.
-        _make_turn(thread_id, "", turn_id=run_id, accepts_input=accepts_input)
+        _make_turn(thread_id, "", turn_id=turn_id, accepts_input=accepts_input)
         return None
 
 
-def release_external_run(thread_id: str, run_id: str) -> None:
-    """Give the thread back after a run this module did not drive.
+def release_external_turn(thread_id: str, turn_id: str) -> None:
+    """Give the thread back after a turn this module did not drive.
 
-    Voice turns claim a thread so the rest of the system can see them — "a run in
+    Voice turns claim a thread so the rest of the system can see them — "a turn in
     flight is always visible" was simply false for voice, and a message typed
     during a spoken turn used to open a second, rival turn on the same session.
     They persist their own reply, so there is nothing here to commit; the claim
     just has to end, and the registry entry has to become prunable."""
-    t = TURNS.get(run_id)
+    t = TURNS.get(turn_id)
     if t is not None:
         t.complete = True
         t.finished_at = time.time()
     try:
-        chat_store.release_run(thread_id, run_id)
+        chat_store.release_turn(thread_id, turn_id)
     except Exception:  # pragma: no cover — the reconcile owns whatever is left
-        log.debug("could not release external run %s on %s", run_id, thread_id)
+        log.debug("could not release external turn %s on %s", turn_id, thread_id)
     # A voice turn ending leaves the thread idle exactly as a text turn does, and
     # a message typed during one is queued behind it in the same way.
-    chat_drain.drain_soon(thread_id, reason="external run released")
+    chat_drain.drain_soon(thread_id, reason="external turn released")
 
 
 def _push(turn: Turn, kind: str, payload: dict) -> None:
@@ -1453,7 +1453,7 @@ def _drop_text_segments(segments: list[dict],
     than the dump this removes.
 
     `cut_head` is threaded through because a dropped text segment may have been
-    the anchor for a mid-run message. A command turn refuses input, so it should
+    the anchor for a mid-turn message. A command turn refuses input, so it should
     never have one, but "should never" is what the invariant in carry_cuts
     exists to stop relying on."""
     kept = [s for s in segments or []
@@ -1649,7 +1649,7 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      mcp_selection: list[str] | None = None,
                      tools_disabled: bool = False,
                      speaker: str | None = None,
-                     run_id: str | None = None,
+                     turn_id: str | None = None,
                      effort: str | None = None,
                      permission_mode: str | None = None,
                      attachments: list[dict] | None = None,
@@ -1672,10 +1672,10 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
     transcript can attribute the reply. Absent (the normal case) the reply is
     the assistant's and needs no attribution.
 
-    `run_id` is a run the caller already claimed (`claim_run`). Passing one is
+    `turn_id` is a turn the caller already claimed (`claim_turn`). Passing one is
     how the route holds the thread from before it starts assembling a prompt —
     which takes awaits, and therefore ticks — through to the spawn. Omit it and
-    this claims one itself, raising RunInFlight if the thread is busy.
+    this claims one itself, raising TurnInFlight if the thread is busy.
 
     CHOKEPOINT 3 of the developer-mode gate (ADR 0014). This is the one funnel
     every chat and build turn passes through before the spawn, and the spawn
@@ -1701,12 +1701,12 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         # just move with it.
         from fastapi import HTTPException
         raise HTTPException(e.status, e.message)
-    turn = _make_turn(thread_id, agent_slug, turn_id=run_id)
-    if run_id is None:
-        joined = await claim_run(thread_id, turn.id, model=model, agent=speaker)
+    turn = _make_turn(thread_id, agent_slug, turn_id=turn_id)
+    if turn_id is None:
+        joined = await claim_turn(thread_id, turn.id, model=model, agent=speaker)
         if joined is not None:
             TURNS.pop(turn.id, None)
-            raise RunInFlight(joined)
+            raise TurnInFlight(joined)
     try:
         owner_id = ownership.current_owner()
     except Exception:
@@ -1896,13 +1896,13 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
 
 
 async def _end_wedged(turn: Turn, meta: dict, detail: str) -> None:
-    """End a run whose drive loop raised, instead of leaving it running forever.
+    """End a turn whose drive loop raised, instead of leaving it running forever.
 
     Nothing else was going to end it. `_drive_turn` had no try/finally and its
     task had no exception handler, so ANY raise inside it — an OSError from
     `_drain` when the journal goes away, a TypeError in `_segment_ingest` on a
     payload shape the CLI has not sent before — skipped `_finalize_turn`
-    entirely. `turn.complete` and `turn.finished` were never set, `active_run_id`
+    entirely. `turn.complete` and `turn.finished` were never set, `active_turn_id`
     was never cleared, and the journal stayed `status: running`. There is no wall
     clock on a chat turn (CHAT_TIMEOUT_S = 0, deliberately), so nothing would
     ever time it out: the chat showed "Still running" with a ticking elapsed
@@ -1917,7 +1917,7 @@ async def _end_wedged(turn: Turn, meta: dict, detail: str) -> None:
     which is the honest rendering of that case."""
     if turn.finished.is_set():
         # `_finalize_turn` already ran; its own `finally` guarantees that. The
-        # raise happened after the run ended and there is nothing left to close.
+        # raise happened after the turn ended and there is nothing left to close.
         return
     turn.error = turn.error or detail
     _push(turn, "error", {"detail": turn.error})
@@ -1929,7 +1929,7 @@ async def _end_wedged(turn: Turn, meta: dict, detail: str) -> None:
         )})
         turn.final_text = _turn_content(turn)
     # Only when there IS a process. `_retire_turn_proc` polls for up to 2s
-    # waiting for one to die, and a run that crashed before it spawned would pay
+    # waiting for one to die, and a turn that crashed before it spawned would pay
     # that wait for nothing while the operator watches the turn hang.
     if meta.get("pid") or turn.proc is not None:
         try:
@@ -1946,7 +1946,7 @@ def _drive_task(turn: Turn, meta: dict, coro) -> "asyncio.Task":
     Two layers, because they fail differently:
 
       * the coroutine catches its own exceptions and routes them through
-        `_end_wedged`, which is what lets the run commit what it had; and
+        `_end_wedged`, which is what lets the turn commit what it had; and
       * a done-callback backstop releases anyone waiting even if that handling
         itself could not run — a cancellation landing inside `_end_wedged`, or a
         BaseException the `except` above does not cover. It cannot commit
@@ -1992,7 +1992,7 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
     """Spawn the turn's CLI process and drive it to completion.
 
     The whole body holds a slot from the turn pool (services/agent_slots), taken
-    before the spawn and released when the run finishes, so a fan-out cannot put
+    before the spawn and released when the turn finishes, so a fan-out cannot put
     an unbounded number of CLI processes on the host. The limit is set well above
     normal interactive use; reaching it means something is looping, not that the
     operator is busy.
@@ -2003,14 +2003,14 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
 
 async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     # The prompt goes in over stdin as a stream-json message rather than as an
-    # argv positional, because stdin then STAYS open for the rest of the run and
+    # argv positional, because stdin then STAYS open for the rest of the turn and
     # anything else the operator sends lands at the next step boundary. (It also
     # takes the assembled prompt off the argv length limit.)
     cmd, tool_env = _build_cmd(meta)
 
     _push(turn, "started", {"cwd": meta["cwd"], "model": meta["model"],
                             "resume": meta["resume"], "effort": meta.get("effort")})
-    # NO PLACEHOLDER. The run is already claimed on the thread (`claim_run`) and
+    # NO PLACEHOLDER. The turn is already claimed on the thread (`claim_turn`) and
     # its output goes to the journal below plus `meta.live_message`; the reply
     # enters the log once, at finalize. Seeding an empty assistant message here
     # is what used to file the operator's mid-turn messages below a reply that
@@ -2037,7 +2037,7 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     # The realtime input channel. Opened O_RDWR rather than O_RDONLY on purpose:
     # an fd that is its own writer never reports EOF, so the child keeps reading
     # after an injector closes its write handle. Opened O_RDONLY the CLI would
-    # see EOF the moment the first injection closed and would end the run.
+    # see EOF the moment the first injection closed and would end the turn.
     fifo = _stdin_fifo(turn.id)
     try:
         if fifo.exists():
@@ -2067,7 +2067,7 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     # is what keeps the channel from hitting EOF.
     os.close(in_fd)
     turn.spawned = True
-    # Hand the process to the Turn as well as to the journal: Stop has a run id
+    # Hand the process to the Turn as well as to the journal: Stop has a turn id
     # and nothing else, and reading the pid back off disk to signal it would be a
     # second source of truth for something this process is holding.
     turn.proc, turn.pid = proc, proc.pid
@@ -2077,9 +2077,9 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
         if not _write_line(turn.id, _initialize_line()):
             log.warning("turn %s: could not open the approval channel; "
                         "gated tool calls will be auto-denied", turn.id)
-    # Deliver the prompt as the run's first message.
+    # Deliver the prompt as the turn's first message.
     #
-    # A FAILED DELIVERY ENDS THE RUN. This warned and carried on, which produced
+    # A FAILED DELIVERY ENDS THE TURN. This warned and carried on, which produced
     # the worst available outcome: the CLI was spawned, sat on an open stdin with
     # nothing to answer, and idled. It emits no result line, so the drive loop
     # never breaks; the process stays alive, so the liveness check never fires;
@@ -2172,7 +2172,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         # writes would let a restart land between them and resume at a position
         # the segments do not reach (dropping output) or overshoot (duplicating).
         try:
-            chat_store.update_run(
+            chat_store.update_turn(
                 turn.thread_id, turn.id, turn.segments, _turn_content(turn),
                 turn.cut_head, journal_offset=offset)
         except Exception as e:  # pragma: no cover — defensive
@@ -2365,8 +2365,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             await _retire_turn_proc(meta.get("pid"), proc)
             break
         if turn.stop_requested and not turn.stop_signalled:
-            # The operator stopped a run whose process did not exist yet when
-            # they pressed it (the claim window: a run owns the thread from
+            # The operator stopped a turn whose process did not exist yet when
+            # they pressed it (the claim window: a turn owns the thread from
             # before its prompt is assembled). stop_turn had nothing to signal
             # then, so the loop signals it now — same helper, same interlock, so
             # the group is signalled exactly once either way.
@@ -2388,7 +2388,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     turn.final_text = _turn_content(turn)
     # THE STOP IS READ AFTER THE FINAL DRAIN, never before it. Everything the
     # process wrote before the signal reached it is on disk, and the drain above
-    # is what turns those bytes into the segments this run commits.
+    # is what turns those bytes into the segments this turn commits.
     stopped = turn.stop_requested
     lost = False
     if state["saw_result"]:
@@ -2402,8 +2402,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     else:
         # Re-attach path (this backend did not spawn the process — it adopted the
         # turn's journal after a restart). No result line and no live pid means
-        # the run is simply gone, which is a different thing from a crash and
-        # deserves to be named as one. Unless we ended it ourselves: a run the
+        # the turn is simply gone, which is a different thing from a crash and
+        # deserves to be named as one. Unless we ended it ourselves: a turn the
         # operator stopped is accounted for, and calling it lost would tell them
         # the backend dropped something they were holding the button on.
         rc = -1
@@ -2492,7 +2492,7 @@ def _close_open_agents(turn: Turn, *, stopped: bool, lost: bool) -> None:
 
     A subagent segment is closed by the Agent tool's own `tool_result`. When the
     turn ends before that arrives — the operator pressed Stop, or the backend was
-    restarted under a detached run — the result never comes, so `done` stayed
+    restarted under a detached turn — the result never comes, so `done` stayed
     False and the chip read "working" for the rest of the thread's life. The
     delegation was over; only the row was still claiming otherwise.
 
@@ -2559,8 +2559,8 @@ def resolve_permission(turn_id: str, request_id: str, allow: bool,
         seg["state"] = state
         _push(turn, "permission_resolved", {"id": request_id, "state": state})
         try:
-            chat_store.update_run(turn.thread_id, turn.id, turn.segments,
-                                  _turn_content(turn), turn.cut_head)
+            chat_store.update_turn(turn.thread_id, turn.id, turn.segments,
+                                   _turn_content(turn), turn.cut_head)
         except Exception as e:  # pragma: no cover — defensive
             log.debug("turn %s: approval persist failed: %s", turn_id, e)
     return True, state
@@ -2621,7 +2621,7 @@ def _requeue_unread(turn: Turn, *, stopped: bool) -> int:
 
 
 async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
-    """Commit the run and wake whoever is waiting on it.
+    """Commit the turn and wake whoever is waiting on it.
 
     Always wakes, even if the commit raised. The blocking POST /messages path
     awaits `turn.finished`, and a finalize that fails silently would leave that
@@ -2750,8 +2750,8 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     elif lost:
         # The operator saw "ended unexpectedly (exit -1)" over and over without
         # ever being told what it meant. This is that case, named: the backend
-        # was restarted while the turn was in flight and the run did not survive.
-        text = chat_store.LOST_RUN_TEXT
+        # was restarted while the turn was in flight and the turn did not survive.
+        text = chat_store.LOST_TURN_TEXT
         is_error = False
     else:
         # The CLI's own stderr, which until now was captured and never read: a
@@ -2928,16 +2928,16 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         except Exception as e:
             log.warning("turn %s: provider apply_actions failed: %s", turn.id, e)
     # THE COMMIT. One message, appended at the tail, whether or not a client is
-    # watching — so it lands below every message this run was handed and above
+    # watching — so it lands below every message this turn was handed and above
     # nothing. `lost` is recorded as such rather than as a normal finish.
     turn.notes = notes
     try:
-        turn.committed = chat_store.commit_run(
+        turn.committed = chat_store.commit_turn(
             turn.thread_id, turn.id, turn.segments, text,
             error=is_error, timed_out=timed_out, notes=notes, receipts=turn_receipts,
             cut_head=turn.cut_head,
             agent=meta.get("speaker"), state=("lost" if lost else "finished"),
-            # A stopped run is FINISHED, not lost: it produced what it produced
+            # A stopped turn is FINISHED, not lost: it produced what it produced
             # and nothing is coming later. `stopped` is what tells the operator
             # apart from a restart in the transcript.
             stopped=(chat_store.STOPPED_BY_OPERATOR if stopped else None),
@@ -3121,7 +3121,7 @@ def _resume_from(turn: "Turn") -> int:
         live = chat_log.read_live(turn.thread_id)
     except Exception:
         return 0
-    if not live or live.get("run_id") != turn.id:
+    if not live or live.get("turn_id") != turn.id:
         return 0
     off = live.get("journal_offset")
     segs = (live.get("meta") or {}).get("segments")
@@ -3190,22 +3190,22 @@ def _written_paths(turn_id: str, cwd: str) -> list[str]:
 
 
 def _already_committed(meta: dict) -> bool:
-    """Did this run's reply already land on its thread before we went down?
+    """Did this turn's reply already land on its thread before we went down?
 
-    One field, read from disk: a thread holds `active_run_id` from the moment a
-    run is claimed until `commit_run` appends the reply and clears it. So the
-    field still naming this run means the commit had NOT happened; anything else
-    means it had (or the run was explicitly released), and re-driving would
+    One field, read from disk: a thread holds `active_turn_id` from the moment a
+    turn is claimed until `commit_turn` appends the reply and clears it. So the
+    field still naming this turn means the commit had NOT happened; anything else
+    means it had (or the turn was explicitly released), and re-driving would
     duplicate it. Falls back to False -- re-drive, which is recoverable -- when
     the answer cannot be read, because the alternative is silently dropping a
     reply that never committed.
     """
     thread_id = meta.get("thread_id") or ""
-    run_id = meta.get("turn_id") or ""
-    if not thread_id or not run_id:
+    turn_id = meta.get("turn_id") or ""
+    if not thread_id or not turn_id:
         return False
     try:
-        return chat_store.active_run_id(thread_id) != run_id
+        return chat_store.active_turn_id(thread_id) != turn_id
     except Exception:
         return False
 
@@ -3230,7 +3230,7 @@ def reattach_running_turns() -> None:
             owner_id = meta.get("owner_id")
             if owner_id is None:
                 # Can't safely persist without an owner — drop the orphan. The
-                # thread still points at this run; reconcile_threads() closes it
+                # thread still points at this turn; reconcile_threads() closes it
                 # out with a `lost` message right after this pass.
                 shutil.rmtree(d, ignore_errors=True)
                 continue
@@ -3239,11 +3239,11 @@ def reattach_running_turns() -> None:
                 if not chat_store.get_thread(meta.get("thread_id") or ""):
                     shutil.rmtree(d, ignore_errors=True)
                     continue
-                # THE REPLY MAY ALREADY BE ON THE THREAD. commit_run appends the
-                # reply AND clears active_run_id, but the journal is only marked
+                # THE REPLY MAY ALREADY BE ON THE THREAD. commit_turn appends the
+                # reply AND clears active_turn_id, but the journal is only marked
                 # done afterwards -- and the git checkpoint that runs in between
                 # takes seconds. A restart inside that window leaves a journal
-                # still reading "running" for a run whose reply is committed.
+                # still reading "running" for a turn whose reply is committed.
                 #
                 # This pass used to check only status and thread existence, so it
                 # re-drove that turn, replayed the journal, and committed AGAIN:
@@ -3252,8 +3252,8 @@ def reattach_running_turns() -> None:
                 # That is the one restart outcome that is not recoverable by
                 # waiting, so it is checked before anything else is done.
                 #
-                # The thread no longer naming this run is the durable record that
-                # the commit won. A genuinely interrupted run (window A) still
+                # The thread no longer naming this turn is the durable record that
+                # the commit won. A genuinely interrupted turn (window A) still
                 # holds the field and is still adopted below.
                 if _already_committed(meta):
                     log.info(
@@ -3267,13 +3267,13 @@ def reattach_running_turns() -> None:
                 continue
             turn = Turn(id=tid, thread_id=meta["thread_id"], agent_slug=meta.get("agent_slug", ""))
             turn.started = meta.get("started", time.time())
-            # Re-derived from the journal, not carried in memory: a run adopted
+            # Re-derived from the journal, not carried in memory: a turn adopted
             # after a restart must still refuse messages it will never read.
             turn.accepts_input = not (meta.get("prompt") or "").strip().startswith("/")
             # This process did not spawn it, but the process it belongs to did:
             # its input channel is either on disk or gone for good, which is the
-            # distinction `run_is_ending` needs to make. The pid comes off the
-            # journal for the same reason — an adopted run must still be
+            # distinction `turn_is_ending` needs to make. The pid comes off the
+            # journal for the same reason — an adopted turn must still be
             # stoppable, and it is a process group like any other.
             turn.spawned = True
             # No pid recorded, but the agent may well be running: the backend can
@@ -3299,12 +3299,12 @@ def reattach_running_turns() -> None:
 
 
 def reconcile_threads() -> None:
-    """Startup hook, second pass: close out any thread still pointing at a run.
+    """Startup hook, second pass: close out any thread still pointing at a turn.
 
-    `meta.active_run_id` is the whole reattachment story now — one field, not a
+    `meta.active_turn_id` is the whole reattachment story now — one field, not a
     backward scan for a streaming flag. So a thread is stuck if and only if that
-    field names a run this process is not driving, and the fix is to say so in
-    the transcript: a `run: lost` marker and a message in the same plain wording
+    field names a turn this process is not driving, and the fix is to say so in
+    the transcript: a `turn: lost` marker and a message in the same plain wording
     the re-attach path uses.
 
     Runs AFTER reattach_running_turns(), which registers every journal that is
@@ -3320,12 +3320,12 @@ def reconcile_threads() -> None:
                     continue
                 ownership.set_current_owner(int(user_dir.name))
                 for thread_id in chat_log.list_thread_ids():
-                    run_id = chat_store.active_run_id(thread_id)
-                    if not run_id or run_is_live(run_id):
+                    turn_id = chat_store.active_turn_id(thread_id)
+                    if not turn_id or turn_is_live(turn_id):
                         continue
-                    log.info("thread %s: run %s did not survive; recording it as lost",
-                             thread_id, run_id)
-                    chat_store.lose_run(thread_id, run_id)
+                    log.info("thread %s: turn %s did not survive; recording it as lost",
+                             thread_id, turn_id)
+                    chat_store.lose_turn(thread_id, turn_id)
         finally:
             if prior is None:
                 ownership.clear_current_owner()
@@ -3339,30 +3339,30 @@ def get_turn(turn_id: str) -> Turn | None:
     return TURNS.get(turn_id)
 
 
-# How long a stop waits for the run to commit before answering anyway. The kill
+# How long a stop waits for the turn to commit before answering anyway. The kill
 # itself is bounded (_retire_turn_proc: ~2s of SIGTERM, then SIGKILL) and the
 # drive loop polls at 0.15s, so this is slack, not a budget. Answering late is
-# fine; answering before the commit would tell the client the run is over while
+# fine; answering before the commit would tell the client the turn is over while
 # the events endpoint still reports it active.
 STOP_WAIT_S = 20.0
 
 
 async def stop_turn(turn_id: str) -> dict:
-    """END a run: signal its process group, commit what it produced, release the
+    """END a turn: signal its process group, commit what it produced, release the
     thread. What the Stop button does, and the only thing that does it.
 
     ONE PIPELINE. This does not write a message. It kills the process and lets
     the drive loop finish the turn the way every other ending finishes it — final
-    drain, segments folded, `chat_store.commit_run` once at the tail — with
+    drain, segments folded, `chat_store.commit_turn` once at the tail — with
     `meta.stopped` naming the operator. A second finalize path here is exactly
     what the rebuild collapsed, and it would lose the partial output on the way.
 
-    IDEMPOTENT. A run that already finished, one this process never held (a
+    IDEMPOTENT. A turn that already finished, one this process never held (a
     restart orphan, which the startup reconcile owns), and one another request is
     already stopping all return without raising: `stopped` says whether this call
-    found a run to end, and neither answer is an error.
+    found a turn to end, and neither answer is an error.
 
-    The check-and-claim is under the thread's WRITE LOCK, like every other run
+    The check-and-claim is under the thread's WRITE LOCK, like every other turn
     transition, and holds no await — so two Stops cannot both claim the kill, and
     a Stop cannot land between a rival send's check and its claim. The kill and
     the wait happen outside the lock: they take seconds, and nothing else on the
@@ -3370,7 +3370,7 @@ async def stop_turn(turn_id: str) -> dict:
     turn = TURNS.get(turn_id)
     if turn is None:
         return {"turn_id": turn_id, "stopped": False,
-                "reason": "no run by that id is going here"}
+                "reason": "no turn by that id is going here"}
     if turn.complete:
         return {"turn_id": turn_id, "stopped": False, "reason": "the turn already finished"}
     async with chat_log.lock_for(turn.thread_id):

@@ -62,7 +62,7 @@ def test_the_queue_drains_with_no_client_anywhere(tid, starter):
 
 def test_nothing_drains_while_a_run_is_in_flight(tid, starter):
     chat_queue.enqueue(tid, text="typed during the command", client_id="c1")
-    chat_store.begin_run(tid, "run-1")
+    chat_store.begin_turn(tid, "run-1")
     assert asyncio.run(chat_drain.drain(tid, reason="test")) is False
     assert starter == []
     # Still queued, still on disk, still visible to every device.
@@ -71,9 +71,9 @@ def test_nothing_drains_while_a_run_is_in_flight(tid, starter):
 
 def test_it_drains_once_that_run_ends(tid, starter):
     chat_queue.enqueue(tid, text="typed during the command", client_id="c1")
-    chat_store.begin_run(tid, "run-1")
+    chat_store.begin_turn(tid, "run-1")
     assert asyncio.run(chat_drain.drain(tid, reason="test")) is False
-    chat_store.release_run(tid, "run-1")
+    chat_store.release_turn(tid, "run-1")
     assert asyncio.run(chat_drain.drain(tid, reason="test")) is True
     assert [e["text"] for e in starter[0]] == ["typed during the command"]
 
@@ -164,7 +164,7 @@ def test_a_drained_message_keeps_the_time_it_was_typed(tid, monkeypatch):
         started.append(content)
         return None
 
-    monkeypatch.setattr(chat_routes, "_run_for_message", fake_run)
+    monkeypatch.setattr(chat_routes, "_turn_for_message", fake_run)
     chat_queue.enqueue(tid, text="typed while it compacted", client_id="c1",
                        ts="2026-08-12T17:44:20+00:00")
     assert asyncio.run(chat_routes._start_queued_batch(tid, chat_queue.read(tid))) is True

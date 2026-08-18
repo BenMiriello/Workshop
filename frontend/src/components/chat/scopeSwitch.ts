@@ -32,15 +32,15 @@ export function scopeSwitch(input: {
   /** Does the open thread exist and have any committed events? */
   hasHistory: boolean;
   /** Is a turn in flight on it? */
-  runActive: boolean;
+  turnActive: boolean;
 }): ScopeSwitch {
-  const { target, current, hasHistory, runActive } = input;
+  const { target, current, hasHistory, turnActive } = input;
   if (!target || target === current) return { action: "noop" };
   // Order matters: an EMPTY chat mid-run is still just an empty chat to move,
   // but there is nothing to move, so switching is both safe and correct. Only a
   // real conversation is worth refusing over.
   if (!hasHistory) return { action: "switch" };
-  if (runActive) {
+  if (turnActive) {
     // Rescope clears the live session the run is speaking through. Doing that
     // underneath a turn breaks it, so this refuses rather than corrupting the
     // run or silently ignoring the click.

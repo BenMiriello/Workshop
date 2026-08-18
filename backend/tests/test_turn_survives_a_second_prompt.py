@@ -73,17 +73,17 @@ class Driver:
 
     def __init__(self, thread_id: str, monkeypatch, delivered: int = 1):
         self.retired = False
-        run_id = "run-second-prompt"
-        chat_store.begin_run(thread_id, run_id, model="m")
-        self.turn = build_streaming.Turn(id=run_id, thread_id=thread_id, agent_slug="a")
+        turn_id = "run-second-prompt"
+        chat_store.begin_turn(thread_id, turn_id, model="m")
+        self.turn = build_streaming.Turn(id=turn_id, thread_id=thread_id, agent_slug="a")
         self.turn.spawned = True
         self.turn.delivered = delivered
-        build_streaming.TURNS[run_id] = self.turn
-        d = build_streaming._journal_dir(run_id)
+        build_streaming.TURNS[turn_id] = self.turn
+        d = build_streaming._journal_dir(turn_id)
         d.mkdir(parents=True, exist_ok=True)
         self.path = d / "stream.jsonl"
         self.path.write_text("")
-        self.meta = {"turn_id": run_id, "thread_id": thread_id, "agent_slug": "a",
+        self.meta = {"turn_id": turn_id, "thread_id": thread_id, "agent_slug": "a",
                      "cwd": "", "model": "m", "session_id": None, "resume": False,
                      "speaker": None, "owner_id": 1, "prompt": "do the thing",
                      "timeout_s": 0, "pid": 4243, "status": "running", "started": 0.0,
@@ -93,7 +93,7 @@ class Driver:
         # the fd is its own reader and a write never sees ENXIO). `inject` goes
         # through the actual write path in these tests, because the bookkeeping
         # under test lives in `write_to_turn`.
-        self.fifo = build_streaming._stdin_fifo(run_id)
+        self.fifo = build_streaming._stdin_fifo(turn_id)
         os.mkfifo(self.fifo, 0o600)
         self.in_fd = os.open(self.fifo, os.O_RDWR | os.O_NONBLOCK)
         self.proc = FakeProc()
@@ -366,11 +366,11 @@ class TestAPromptThatCouldNotBeDeliveredAtAll:
             return None
         monkeypatch.setattr(build_streaming, "_retire_turn_proc", _retire)
 
-        run_id = "run-undelivered"
-        chat_store.begin_run(thread["id"], run_id, model="m")
-        turn = build_streaming.Turn(id=run_id, thread_id=thread["id"], agent_slug="a")
-        build_streaming.TURNS[run_id] = turn
-        meta = {"turn_id": run_id, "thread_id": thread["id"], "agent_slug": "a",
+        turn_id = "run-undelivered"
+        chat_store.begin_turn(thread["id"], turn_id, model="m")
+        turn = build_streaming.Turn(id=turn_id, thread_id=thread["id"], agent_slug="a")
+        build_streaming.TURNS[turn_id] = turn
+        meta = {"turn_id": turn_id, "thread_id": thread["id"], "agent_slug": "a",
                 "cwd": ".", "model": "m", "session_id": None, "resume": False,
                 "speaker": None, "owner_id": 1, "prompt": "the message",
                 "attachments": [], "timeout_s": 0, "pid": None, "status": "running",
@@ -379,7 +379,7 @@ class TestAPromptThatCouldNotBeDeliveredAtAll:
                 "effort": None, "permission_mode": None,
                 "origin": [{"text": "the message", "client_id": "cid-7",
                             "ts": "2026-08-12T21:00:00+00:00", "attachments": []}]}
-        build_streaming._journal_dir(run_id).mkdir(parents=True, exist_ok=True)
+        build_streaming._journal_dir(turn_id).mkdir(parents=True, exist_ok=True)
         asyncio.run(build_streaming._spawn_and_drive_inner(turn, meta))
 
         q = chat_queue.read(thread["id"])

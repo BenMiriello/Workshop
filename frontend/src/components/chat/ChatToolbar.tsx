@@ -70,7 +70,7 @@ import ScopeIcon from "./ScopeIcon";
 export default function ChatToolbar({
   variant, mode, slug, hideExpand,
   activeId, activeThreadTitle, branchPicker,
-  showProviderPicker, providers, activeProvider, onChooseProvider, runActive,
+  showProviderPicker, providers, activeProvider, onChooseProvider, turnActive,
   drawer, needsYouCount, workAnchor,
   onBack, onOpenWorkbench, onEditTitle, onOpenThread,
   onNewChat, onArchive, onPopOut, onNavigate,
@@ -92,7 +92,7 @@ export default function ChatToolbar({
   // A turn is live. Rescope drops the session it's speaking through, so every
   // OTHER row is disabled (not hidden — the picker still shows where you'd go)
   // rather than left selectable and refused after the fact.
-  runActive: boolean;
+  turnActive: boolean;
   /** Which drawer is open. Read for the button's `is-active` tone only: the
    *  panel owns opening and closing itself, through `workAnchor`. */
   drawer: ChatDrawer;
@@ -171,7 +171,7 @@ export default function ChatToolbar({
               label ? <MenuLabel key={`h:${kind}`}>{label}</MenuLabel> : null,
               ...inGroup.map((p) => {
                 const isCurrent = p.key === activeProvider;
-                const locked = runActive && !isCurrent;
+                const locked = turnActive && !isCurrent;
                 return (
                   <MenuItem
                     key={p.key}

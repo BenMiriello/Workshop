@@ -209,7 +209,7 @@ export function useSendPipeline({
       dispatch({ type: "sendAcked", clientId });
       // Show the run as in flight in the same commit that stops "starting".
       // The re-attach effect opens the socket; nothing here needs to know how.
-      if (res.turn_id) dispatch({ type: "runStarted", runId: res.turn_id });
+      if (res.turn_id) dispatch({ type: "turnStarted", turnId: res.turn_id });
       void sync();
       return { ok: true };
     } catch (e) {
@@ -319,7 +319,7 @@ export function useSendPipeline({
     const plan = planSend(text, {
       compacting: compactingRef.current,
       starting: startingRef.current,
-      runActive: !!stateRef.current.activeRun,
+      turnActive: !!stateRef.current.activeTurn,
       hasThread: !!activeIdRef.current,
     });
     if (plan === "awaitThread") {

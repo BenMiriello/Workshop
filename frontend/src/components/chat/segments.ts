@@ -189,7 +189,7 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
   // here. The reducer records it, because the one position with no segment to
   // sit on (the turn has emitted nothing yet) lives on the run rather than in
   // this list. Returning `segs` unchanged is what tells the reducer's identity
-  // check that nothing was folded. See threadStore's runDelta.
+  // check that nothing was folded. See threadStore's turnDelta.
   if (ev.kind === "cut") return segs;
   // tool_result: a subagent's result is RENDERED (it is the report the chip
   // opens onto). Every other result closes its own step without being shown —

@@ -29,7 +29,7 @@ anything, because there is no operation that writes the transcript as a whole.
 
     kind        payload                                  meaning
     message     role, content, client_id?, meta          a user or assistant message
-    run         run_id, state (started/finished/lost)    a turn's lifecycle marker
+    turn        turn_id, state (started/finished/lost)    a turn's lifecycle marker
     boundary    mode ("clear"), at_seq                   context cut at this point
     title       title, source (auto/manual)              the thread was named
     scope       from, to                                 the chat was re-bound to
@@ -69,7 +69,7 @@ facade in `chat_store` is all of them. A sync critical section holds no `await`,
 so the loop cannot interleave anything with it and it is atomic with respect to
 a lock-holding coroutine whose own critical section is likewise await-free. What
 the lock buys is pass B: a coroutine that must check-and-act across an await
-(start a run only if none is active) can hold it.
+(start a turn only if none is active) can hold it.
 
 Every writer asserts it is on the loop's thread. A write from a worker thread
 would race the loop with no lock between them, so it raises instead of
@@ -105,7 +105,7 @@ LIVE_NAME = "live.json"
 # thread ids.
 NON_THREAD_FILES = ("drafts.json", "prefs.json")
 
-KINDS = ("message", "run", "boundary", "title", "scope")
+KINDS = ("message", "turn", "boundary", "title", "scope")
 
 # ---- rotation thresholds ---------------------------------------------------
 #
@@ -523,63 +523,63 @@ def read_thread(thread_id: str, tail: int | None = None) -> dict | None:
         "meta": m,
         "events": events,
         "last_seq": int(m.get("last_seq") or 0),
-        "active_run": active_run(thread_id, events=all_events, meta=m),
+        "active_turn": active_turn(thread_id, events=all_events, meta=m),
     }
 
 
-def active_run(thread_id: str, events: list[dict] | None = None,
-               meta: dict | None = None) -> dict | None:
-    """The run in flight on this thread, or None.
+def active_turn(thread_id: str, events: list[dict] | None = None,
+                meta: dict | None = None) -> dict | None:
+    """The turn in flight on this thread, or None.
 
-    `{run_id, started_seq, live}` where `live` is the throttled snapshot of what
-    the run has produced so far. The snapshot lives in meta, NOT in the log: a
+    `{turn_id, started_seq, live}` where `live` is the throttled snapshot of what
+    the turn has produced so far. The snapshot lives in meta, NOT in the log: a
     turn writes it a few hundred times and the record should carry the reply, not
     every draft of it. A client renders `live` under the last log event and needs
     nothing else to show a turn in progress."""
     m = meta if meta is not None else read_meta(thread_id)
     if m is None:
         return None
-    run_id = m.get("active_run_id")
-    if not run_id:
+    turn_id = m.get("active_turn_id")
+    if not turn_id:
         return None
-    # THE RECORDED ANSWER FIRST. `begin_run` writes the marker's seq into meta,
+    # THE RECORDED ANSWER FIRST. `begin_turn` writes the marker's seq into meta,
     # so the common case costs nothing. This used to read and parse the entire
     # log to find one event, on every 10s poll from every open tab, for the whole
-    # length of a turn. `active_run_seq` is only ever meaningful alongside the
-    # `active_run_id` written in the same patch, so a mismatch is impossible: the
+    # length of a turn. `active_turn_seq` is only ever meaningful alongside the
+    # `active_turn_id` written in the same patch, so a mismatch is impossible: the
     # two move together or neither does.
-    started = m.get("active_run_seq")
+    started = m.get("active_turn_seq")
     if not isinstance(started, int):
-        # A thread whose run was opened by an older build. Fall back to the scan
-        # rather than migrating anything; it resolves itself on the next run.
+        # A thread whose turn was opened by an older build. Fall back to the
+        # scan rather than migrating anything; it resolves itself next turn.
         evs = events if events is not None else read_events(thread_id)
         started = next(
             (e["seq"] for e in reversed(evs)
-             if e.get("kind") == "run" and e.get("run_id") == run_id
+             if e.get("kind") == "turn" and e.get("turn_id") == turn_id
              and e.get("state") == "started"),
             None,
         )
     # The draft: live.json when the running turn has written one, else the copy
     # in meta.json. The fallback is not dead code — it covers a turn that was
-    # already in flight when this build deployed, and any thread whose run began
-    # before live.json existed. Both resolve themselves when that run commits.
+    # already in flight when this build deployed, and any thread whose turn began
+    # before live.json existed. Both resolve themselves when that turn commits.
     #
-    # meta.json still holds the run's IMMUTABLE facts (model, agent, the start
+    # meta.json still holds the turn's IMMUTABLE facts (model, agent, the start
     # timestamp), written once at claim time, so the draft file carries only
     # what actually changes and the two are merged here.
     base = m.get("live_message")
     base = dict(base) if isinstance(base, dict) else None
-    # THE DRAFT MUST NAME THIS RUN. A backend killed mid-turn leaves live.json
-    # behind with no commit to clear it; without this check the next run to
+    # THE DRAFT MUST NAME THIS TURN. A backend killed mid-turn leaves live.json
+    # behind with no commit to clear it; without this check the next turn to
     # claim the thread would show the dead turn's text as its own. The claim
     # clears the file too, but the guard is what makes that cleanup an
     # optimization rather than the thing correctness rests on.
     draft = read_live(thread_id)
-    if draft is not None and draft.get("run_id") != run_id:
+    if draft is not None and draft.get("turn_id") != turn_id:
         draft = None
     live = merge_live(base, draft)
     return {
-        "run_id": run_id,
+        "turn_id": turn_id,
         "started_seq": started,
         "live": live,
     }
@@ -630,7 +630,7 @@ def create_thread(thread_id: str, meta: dict) -> dict:
     m.setdefault("created_at", now_iso())
     m.setdefault("updated_at", m["created_at"])
     m["last_seq"] = 0
-    m.setdefault("active_run_id", None)
+    m.setdefault("active_turn_id", None)
     m.setdefault("boundary_seq", 0)
     _write_json_atomic(meta_path(thread_id), m)
     return m
@@ -661,15 +661,15 @@ def _rotation_floor(meta: dict) -> int | None:
 
     Two things pin the tail down. `boundary_seq` is where the context was last
     cut, so everything from there on is the conversation the model is still
-    being handed — that stays hot. `active_run_seq` is the marker of a turn in
-    flight, and a run being reconciled mid-flight should not have to reach for
+    being handed — that stays hot. `active_turn_seq` is the marker of a turn in
+    flight, and a turn being reconciled mid-flight should not have to reach for
     the archive to find its own start. Both are seqs, so neither moves.
     """
     floors = []
     b = meta.get("boundary_seq")
     if isinstance(b, int) and b > 0:
         floors.append(b)
-    r = meta.get("active_run_seq")
+    r = meta.get("active_turn_seq")
     if isinstance(r, int) and r > 0:
         floors.append(r)
     return min(floors) if floors else None
@@ -945,7 +945,7 @@ def _mirror(thread_id: str, ev: dict, meta: dict) -> None:
 # Meta keys whose change is worth a Postgres round trip. The thread list
 # (services.chat_list_pg) reads chat_thread's mutable columns, all traceable to
 # one of these; the fields NOT in this
-# set (active_run_id, live_message, turn_marks, card_states, context_tokens,
+# set (active_turn_id, live_message, turn_marks, card_states, context_tokens,
 # boundary_seq/cut_through/cut_mode, claude_session, agent_sessions, ...) are
 # per-turn bookkeeping that `patch_meta_sync` rewrites constantly WHILE A
 # TURN RUNS and that no PG reader consults, so mirroring every one of those
@@ -1080,7 +1080,7 @@ def patch_meta_sync(thread_id: str, **fields: object) -> dict | None:
 #
 # Why no fsync is correct here and nowhere else: this file is DERIVED. The
 # journal at .runtime/turns/<id>/stream.jsonl is the buffer of record while a
-# turn runs, and `commit_run` appends the real message to the log at the end. A
+# turn runs, and `commit_turn` appends the real message to the log at the end. A
 # power cut loses the process that was writing the turn, so a durably-synced
 # copy of its half-finished draft buys nothing: there is nothing to resume. The
 # atomic rename is still required, because a reader must never see half a file.
@@ -1098,7 +1098,7 @@ def read_live(thread_id: str) -> dict | None:
     """The running turn's draft, or None when there is no live.json.
 
     None is normal and not an error: no turn is running, the turn predates this
-    file (see `active_run`, which falls back to the copy in meta.json), or the
+    file (see `active_turn`, which falls back to the copy in meta.json), or the
     draft was cleared at commit.
     """
     try:
@@ -1109,7 +1109,7 @@ def read_live(thread_id: str) -> dict | None:
 
 
 def clear_live(thread_id: str) -> None:
-    """Drop the draft. Called when a run ends, however it ends."""
+    """Drop the draft. Called when a turn ends, however it ends."""
     try:
         live_path(thread_id).unlink()
     except OSError:
@@ -1117,7 +1117,7 @@ def clear_live(thread_id: str) -> None:
 
 
 def merge_live(base: dict | None, draft: dict | None) -> dict | None:
-    """The run's immutable facts, overlaid with the draft.
+    """The turn's immutable facts, overlaid with the draft.
 
     `base` is what the claim wrote into meta.json once (model, agent, the start
     `ts`); `draft` is what the turn rewrites constantly (content, segments).
@@ -1192,7 +1192,7 @@ def _migrate_one(path: Path) -> str:
     meta["id"] = thread_id
     meta.setdefault("created_at", now_iso())
     meta.setdefault("updated_at", meta["created_at"])
-    meta["active_run_id"] = None
+    meta["active_turn_id"] = None
 
     # Build the log first, in a staging dir, so a failure never leaves a
     # half-written thread where the real one should be.

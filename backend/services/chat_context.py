@@ -130,7 +130,7 @@ UI_CARD_PROTOCOL = (
 # The `task-proposal` ui-card: how a chat scopes work into a TRACKED ticket
 # instead of doing it inline. Described to the general + build/project personas so
 # those models may emit it (the ui-card protocol requires a kind be described
-# before use). The SERVER emits the companion `job-status` card after a run, so
+# before use). The SERVER emits the companion `job-status` card after a turn, so
 # that one is deliberately NOT described to the model.
 TASK_PROPOSAL_CARD = (
     "=== TASK PROPOSAL CARD (task-proposal) ===\n"
@@ -184,7 +184,7 @@ TASK_PROPOSAL_BUILD_RULE = (
     "Objective, Output, Start from, Boundaries. A worker reads the ticket's "
     "title and body and NOTHING ELSE: not "
     "this conversation, not the operator, not you. Anything the ticket does not "
-    "say is guessed at or asked about, and both cost a run.\n"
+    "say is guessed at or asked about, and both cost a turn.\n"
     "  - output is REQUIRED. It is how anyone tells the work is finished. Write "
     "the observable thing ('the endpoint returns the new field and a test covers "
     "it'), never 'it works'. Leave it out and the worker picks its own finish "
@@ -192,7 +192,7 @@ TASK_PROPOSAL_BUILD_RULE = (
     "  - boundaries is REQUIRED. It is what to leave alone: the files, "
     "directories or systems that are off limits, and what NOT to build. Leave it "
     "out and a one-file change becomes a refactor nobody asked for, which is the "
-    "most expensive way a run goes wrong. If the work genuinely has no boundary, "
+    "most expensive way a turn goes wrong. If the work genuinely has no boundary, "
     "say so on the line ('none: may touch anything the objective requires') "
     "rather than leaving it out. A stated none is a decision; a missing line is "
     "an omission.\n"
@@ -530,7 +530,7 @@ def agent_self_preamble(
     "Each agent should know what it's doing, where it is, what it has access to."
     That is a prompt-assembly problem, not a memory one, and this is the same
     discipline `role_preamble` above uses: every line is DERIVED from the record
-    and from the run config the caller is about to pass to start_turn, so the
+    and from the turn config the caller is about to pass to start_turn, so the
     block cannot drift from the enforced values the way a hand-written per-agent
     paragraph does. Nothing here is written per agent, and adding a sentence to
     an agent's definition cannot make this claim something untrue.
@@ -872,7 +872,7 @@ REALTIME_CHANNEL = (
 )
 
 
-def arrival_notice(messages: list[dict], run_id: str | None = None) -> str:
+def arrival_notice(messages: list[dict], turn_id: str | None = None) -> str:
     """States which of the messages now being read arrived DURING an earlier run.
 
     The operator's report, and the reason this exists: "this and the last two
@@ -886,21 +886,21 @@ def arrival_notice(messages: list[dict], run_id: str | None = None) -> str:
     Two ways a message can have waited, and they mean the same thing to whoever
     reads it now:
 
-      during_run — delivered into a run that was already going
-                   (routes/chat._file_during_run)
-      queued     — typed while a run went, delivered as this one
-                   (routes/chat._record_user_turn)
+      during_turn — delivered into a turn that was already going
+                    (routes/chat._file_during_turn)
+      queued      — typed while a turn went, delivered as this one
+                    (routes/chat._record_user_turn)
 
-    FOUND BY THE MARK, NOT BY POSITION. This used to read the trailing run of
+    FOUND BY THE MARK, NOT BY POSITION. This used to read the trailing stretch of
     user messages, which worked only while the assistant reply sat ABOVE the
     messages it had not answered — the arrangement that made the operator's five
     messages render as if he had been ignored. Now the reply is appended when it
     finishes, so a delivered message sits above it and would never be in the
-    tail. `run_id` names the run that just ended, and its arrivals are a lookup
-    on `meta.during_run` wherever they are in the transcript.
+    tail. `turn_id` names the turn that just ended, and its arrivals are a lookup
+    on `meta.during_turn` wherever they are in the transcript.
 
-    Queued messages have no run to name (they were never delivered to one), so
-    they are still found in the trailing run of user messages, which is exactly
+    Queued messages have no turn to name (they were never delivered to one), so
+    they are still found in the trailing stretch of user messages, which is exactly
     the turn being sent now.
 
     Empty string when nothing waited, which is the common case. Scoped so it
@@ -914,10 +914,10 @@ def arrival_notice(messages: list[dict], run_id: str | None = None) -> str:
             seen.add(id(m))
             picked.append(m)
 
-    if run_id:
+    if turn_id:
         for m in messages:
             meta = m.get("meta") or {}
-            if meta.get("during_run") == run_id or meta.get("during_turn") == run_id:
+            if meta.get("during_turn") == turn_id:
                 _take(m)
     tail: list[dict] = []
     for m in reversed(messages):
@@ -927,7 +927,7 @@ def arrival_notice(messages: list[dict], run_id: str | None = None) -> str:
     tail.reverse()
     for m in tail:
         meta = m.get("meta") or {}
-        if meta.get("queued") or (not run_id and (meta.get("during_run") or meta.get("during_turn"))):
+        if meta.get("queued") or (not turn_id and meta.get("during_turn")):
             _take(m)
     if not picked:
         return ""
@@ -1296,12 +1296,12 @@ def interleave_history(history: list[dict]) -> list[dict]:
     back where they landed. A reply nobody interrupted, and any reply that cannot
     be split faithfully, are returned untouched.
     """
-    by_run: dict[str, list[int]] = {}
+    by_turn: dict[str, list[int]] = {}
     for i, m in enumerate(history):
         meta = m.get("meta") or {}
-        if m.get("role") == "user" and meta.get("during_run"):
-            by_run.setdefault(meta["during_run"], []).append(i)
-    if not by_run:
+        if m.get("role") == "user" and meta.get("during_turn"):
+            by_turn.setdefault(meta["during_turn"], []).append(i)
+    if not by_turn:
         return history
 
     # TWO PASSES, because a message is consumed by a reply that comes AFTER it.
@@ -1312,13 +1312,13 @@ def interleave_history(history: list[dict]) -> list[dict]:
     for i, m in enumerate(history):
         if m.get("role") != "assistant":
             continue
-        run_id = (m.get("meta") or {}).get("turn_id")
-        if not run_id:
+        turn_id = (m.get("meta") or {}).get("turn_id")
+        if not turn_id:
             continue
         # Only the messages that arrived BEFORE this reply was committed, which
-        # is what `j < i` says: one filed against a run whose reply is already in
+        # is what `j < i` says: one filed against a turn whose reply is already in
         # the log belongs where it is.
-        idxs = [j for j in by_run.get(run_id, ()) if j < i and j not in placed]
+        idxs = [j for j in by_turn.get(turn_id, ()) if j < i and j not in placed]
         if not idxs:
             continue
         pieces = _split_reply(m, [history[j] for j in idxs])

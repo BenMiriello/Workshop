@@ -74,10 +74,10 @@ WITH RECURSIVE walk AS (
 """
 
 _TRANSCRIPT = _PATH + """
-SELECT m.id, m.parent_id, m.turn_id, m.role, m.kind, m.content, m.segments,
+SELECT m.id, m.parent_id, m.role, m.kind, m.content, m.segments,
        m.meta, m.boundary_mode, m.scope_from, m.scope_to, m.seq, m.client_id,
        m.external_id, m.created_at,
-       t.run_id, t.model AS turn_model, t.status AS turn_status,
+       t.turn_id, t.model AS turn_model, t.status AS turn_status,
        t.started_at AS turn_started_at, t.ended_at AS turn_ended_at,
        t.error AS turn_error, t.timeout AS turn_timeout,
        t.stopped AS turn_stopped, t.agent_slug AS turn_agent,
@@ -111,17 +111,15 @@ def _row(r: Any, is_turn_tail: bool = True) -> dict:
         meta["segments"] = segments
 
     turn_id = m.pop("turn_id")
-    run_id = m.pop("run_id")
     if turn_id is not None and not is_turn_tail:
         # Every stretch still says which turn it belongs to, so the UI can group
         # them; it just does not claim the turn's ending.
-        meta["turn_id"] = run_id
+        meta["turn_id"] = turn_id
         meta["streaming"] = False
         if m.get("turn_model") is not None:
             meta["model"] = m["turn_model"]
     elif turn_id is not None:
-        # `turn_id` on the wire has always been the RUN uuid, not a row id.
-        meta["turn_id"] = run_id
+        meta["turn_id"] = turn_id
         meta["streaming"] = False
         for src, dst in (("turn_model", "model"), ("turn_agent", "agent"),
                          ("turn_stopped", "stopped")):
@@ -524,11 +522,11 @@ _TURN_FIELDS = ("status", "model", "agent_slug", "started_at", "ended_at",
                 "error", "timeout", "stopped")
 
 
-def upsert_turn(s: Session, thread_id: str | UUID, run_id: str, **fields) -> UUID:
-    """The `chat_turn` row for this run, created if it is new, updated if it is
-    not. Returns its id.
+def upsert_turn(s: Session, thread_id: str | UUID, turn_id: str, **fields) -> UUID:
+    """The `chat_turn` row for this turn, created if it is new, updated if it
+    is not. Returns its id.
 
-    `run_id` is globally unique, so it is an exact "have I seen this run" test
+    `turn_id` is globally unique, so it is an exact "have I seen this turn" test
     and the insert can be conflict-tolerant without a prior read. That matters
     here more than it did in the backfill: a turn is written TWICE on the live
     path, once when it starts producing structure and once when it ends, and the
@@ -544,14 +542,15 @@ def upsert_turn(s: Session, thread_id: str | UUID, run_id: str, **fields) -> UUI
         raise BranchError(f"no such thread: {thread_id}")
     given = {k: v for k, v in fields.items() if k in _TURN_FIELDS and v is not None}
     given.setdefault("status", "running")
-    cols = {"id": uuid7(), "org": str(org), "t": str(thread_id), "run": run_id, **given}
-    names = ", ".join(["id", "org_id", "thread_id", "run_id", *given])
-    binds = ", ".join([":id", ":org", ":t", ":run", *(f":{k}" for k in given)])
+    cols = {"id": uuid7(), "org": str(org), "t": str(thread_id), "turn": turn_id, **given}
+    names = ", ".join(["id", "org_id", "thread_id", "turn_id", *given])
+    binds = ", ".join([":id", ":org", ":t", ":turn", *(f":{k}" for k in given)])
     updates = ", ".join(f"{k} = EXCLUDED.{k}" for k in given)
     s.execute(text(
         f"INSERT INTO chat_turn ({names}) VALUES ({binds}) "
-        f"ON CONFLICT (run_id) DO UPDATE SET {updates}"), cols)
-    return s.scalar(text("SELECT id FROM chat_turn WHERE run_id = :r"), {"r": run_id})
+        f"ON CONFLICT (turn_id) DO UPDATE SET {updates}"), cols)
+    return s.scalar(text("SELECT id FROM chat_turn WHERE turn_id = :turn"),
+                    {"turn": turn_id})
 
 
 def turn_stretches(s: Session, turn_id: str | UUID) -> list[UUID]:

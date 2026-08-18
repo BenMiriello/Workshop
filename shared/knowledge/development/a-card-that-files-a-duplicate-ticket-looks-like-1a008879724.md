@@ -1,0 +1,6 @@
+<!-- author: self -->
+Filing a task-proposal card whose composed body is near-identical to an open ticket does NOT create a ticket. `backend/services/task_dedup.py:add_from_chat` merges at cosine >= 0.90 (LLM-confirmed same-work) into the matched task, appending an evidence line `also filed from <src_ref>: <text>` and returning the EXISTING task. No new id is minted, so the card reports success and nothing new appears in any list.
+
+Measured 2026-08-16: ticket 6fff3fd9 ('Testing tickets in chat UI card-state repro', status todo) carries six such merge lines from six separate filings between 22:24Z and 02:19Z, including one titled 'diag2'. The `<src_ref>` in those lines is the source chat/message ref, not a task id, so there is nothing to navigate to.
+
+Consequence when testing the card surface: repeated test filings all collapse into the first one and the test looks broken. Vary the body meaningfully, or file through `scripts/project_tasks.py` to bypass the chat dedup path. Thresholds: MERGE_AT 0.90, RELATED_AT 0.80 (task_dedup.py:58).

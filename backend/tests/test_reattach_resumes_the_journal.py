@@ -52,7 +52,7 @@ SEGS = [{"t": "text", "text": "already rendered"}]
 
 
 def test_resumes_from_the_recorded_offset(journal, monkeypatch):
-    _live(monkeypatch, {"run_id": "run-1", "journal_offset": 120,
+    _live(monkeypatch, {"turn_id": "run-1", "journal_offset": 120,
                         "meta": {"segments": SEGS, "cut_head": ["m-7"]}})
     t = _turn()
     assert bs._resume_from(t) == 120
@@ -63,7 +63,7 @@ def test_resumes_from_the_recorded_offset(journal, monkeypatch):
 
 def test_a_draft_for_a_different_run_is_ignored(journal, monkeypatch):
     """Another run has taken the thread over; its offset means nothing here."""
-    _live(monkeypatch, {"run_id": "run-2", "journal_offset": 120,
+    _live(monkeypatch, {"turn_id": "run-2", "journal_offset": 120,
                         "meta": {"segments": SEGS}})
     t = _turn()
     assert bs._resume_from(t) == 0
@@ -73,7 +73,7 @@ def test_a_draft_for_a_different_run_is_ignored(journal, monkeypatch):
 def test_an_offset_past_the_end_of_the_journal_replays(journal, monkeypatch):
     """Not the file we indexed (truncated, or a recycled turn id). Start over
     rather than seek past the content."""
-    _live(monkeypatch, {"run_id": "run-1", "journal_offset": 99_999,
+    _live(monkeypatch, {"turn_id": "run-1", "journal_offset": 99_999,
                         "meta": {"segments": SEGS}})
     assert bs._resume_from(_turn()) == 0
 
@@ -81,13 +81,13 @@ def test_an_offset_past_the_end_of_the_journal_replays(journal, monkeypatch):
 def test_an_older_draft_without_an_offset_replays(journal, monkeypatch):
     """Written before offsets were recorded: the segments are real but we do not
     know where they stop, which is exactly the case that must not guess."""
-    _live(monkeypatch, {"run_id": "run-1", "meta": {"segments": SEGS}})
+    _live(monkeypatch, {"turn_id": "run-1", "meta": {"segments": SEGS}})
     assert bs._resume_from(_turn()) == 0
 
 
 def test_an_offset_with_no_segments_replays(journal, monkeypatch):
     """Resuming here would skip 120 bytes of reply that nothing had rendered."""
-    _live(monkeypatch, {"run_id": "run-1", "journal_offset": 120,
+    _live(monkeypatch, {"turn_id": "run-1", "journal_offset": 120,
                         "meta": {"segments": []}})
     assert bs._resume_from(_turn()) == 0
 
@@ -109,6 +109,6 @@ def test_an_unreadable_draft_replays(journal, monkeypatch):
 
 def test_a_missing_journal_replays(tmp_path, monkeypatch):
     monkeypatch.setattr(bs, "_journal_dir", lambda tid: tmp_path / "gone")
-    _live(monkeypatch, {"run_id": "run-1", "journal_offset": 120,
+    _live(monkeypatch, {"turn_id": "run-1", "journal_offset": 120,
                         "meta": {"segments": SEGS}})
     assert bs._resume_from(_turn()) == 0

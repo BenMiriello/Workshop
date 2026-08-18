@@ -6,7 +6,7 @@ const at = (over: Partial<Parameters<typeof scopeSwitch>[0]> = {}) =>
     target: "development",
     current: "general",
     hasHistory: true,
-    runActive: false,
+    turnActive: false,
     ...over,
   });
 
@@ -31,23 +31,23 @@ describe("changing scope moves the conversation", () => {
 
   it("switches an empty chat even mid-run", () => {
     // Nothing to corrupt: there is no transcript to carry across.
-    expect(at({ hasHistory: false, runActive: true }).action).toBe("switch");
+    expect(at({ hasHistory: false, turnActive: true }).action).toBe("switch");
   });
 
   it("refuses to move a conversation with a turn in flight", () => {
     // Rescope drops the live session the run is speaking through.
-    const r = at({ runActive: true });
+    const r = at({ turnActive: true });
     expect(r.action).toBe("refuse");
     expect(r.action === "refuse" && r.reason).toContain("mid-turn");
   });
 
   it("says why it refused, rather than ignoring the click", () => {
-    const r = at({ runActive: true });
+    const r = at({ turnActive: true });
     expect(r.action === "refuse" && r.reason.length).toBeGreaterThan(0);
   });
 
   it("has no em-dash in the refusal copy", () => {
-    const r = at({ runActive: true });
+    const r = at({ turnActive: true });
     expect(r.action === "refuse" && r.reason).not.toContain("—");
   });
 });

@@ -125,18 +125,18 @@ async def wait_quiet(thread_id: str) -> None:
     `finished` event never fires, which is real, not defensive. A VOICE turn
     claims the thread through the same registry but is driven by voice_worker,
     which releases the claim without touching the shell Turn's event; the
-    re-check sees `active_run_id` cleared and returns. Worst case a landing
+    re-check sees `active_turn_id` cleared and returns. Worst case a landing
     lags a voice turn's end by one re-check interval.
     """
     from services import build_streaming, chat_store
 
     while True:
-        rid = chat_store.active_run_id(thread_id)
-        if not rid or not build_streaming.run_is_live(rid):
+        rid = chat_store.active_turn_id(thread_id)
+        if not rid or not build_streaming.turn_is_live(rid):
             return
         turn = build_streaming.get_turn(rid)
         if turn is None:
-            # run_is_live and get_turn read the same registry in the same
+            # turn_is_live and get_turn read the same registry in the same
             # tick; only a prune racing between the two calls lands here.
             await asyncio.sleep(0.5)
             continue

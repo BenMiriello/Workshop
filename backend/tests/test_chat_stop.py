@@ -2,14 +2,14 @@
 
 The button used to close this tab's SSE socket and nothing else. The turn kept
 running and kept spending; the UI looked idle because a local flag said so. When
-the rebuild made the indicator read liveness from the server's `active_run`, the
+the rebuild made the indicator read liveness from the server's `active_turn`, the
 lie stopped working and the chat correctly said "Still running" after Stop, which
 is how it was reported.
 
 So `POST /chat/turns/{id}/stop` ends the run for real: it signals the process
 GROUP (the CLI owns MCP servers and tool subprocesses), and then lets the drive
 loop finish the turn through the ONE finalize pipeline — final drain, segments
-folded, `chat_store.commit_run` once at the tail — so the partial output is the
+folded, `chat_store.commit_turn` once at the tail — so the partial output is the
 reply rather than something thrown away. Everything here pins one half of that.
 """
 import asyncio
@@ -75,12 +75,12 @@ def _tool_line(name: str) -> str:
 
 
 def _running_turn(thread_id: str, lines: list[str]) -> tuple[build_streaming.Turn, dict, FakeProc]:
-    run_id = "run-stop"
-    chat_store.begin_run(thread_id, run_id, model="m")
-    turn = build_streaming.Turn(id=run_id, thread_id=thread_id, agent_slug="a")
+    turn_id = "run-stop"
+    chat_store.begin_turn(thread_id, turn_id, model="m")
+    turn = build_streaming.Turn(id=turn_id, thread_id=thread_id, agent_slug="a")
     turn.spawned = True
-    build_streaming.TURNS[run_id] = turn
-    meta = _journal(run_id, lines)
+    build_streaming.TURNS[turn_id] = turn
+    meta = _journal(turn_id, lines)
     meta["thread_id"] = thread_id
     proc = FakeProc()
     turn.proc, turn.pid = proc, proc.pid
@@ -234,13 +234,13 @@ class TestStoppingIsIdempotent:
         """A restart orphan. The startup reconcile owns it; a Stop must not
         invent a second way to close it out, and must not 500."""
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-from-a-previous-boot")
+        chat_store.begin_turn(tid, "run-from-a-previous-boot")
         before = chat_log.read_events(tid)
 
         out = asyncio.run(build_streaming.stop_turn("run-from-a-previous-boot"))
 
         assert out == {"turn_id": "run-from-a-previous-boot", "stopped": False,
-                       "reason": "no run by that id is going here"}
+                       "reason": "no turn by that id is going here"}
         assert chat_log.read_events(tid) == before
 
     def test_the_endpoint_answers_an_unknown_turn_without_raising(self, thread):
@@ -250,20 +250,20 @@ class TestStoppingIsIdempotent:
 
 
 class TestTheThreadIsLeftConsistent:
-    """A stop that left `active_run_id` set would keep the indicator saying
+    """A stop that left `active_turn_id` set would keep the indicator saying
     "Still running" — the exact complaint — and would make the next startup
     re-finalize the run as lost on top of the reply it already has."""
 
     def test_the_active_run_is_cleared(self, thread):
         tid = thread["id"]
         turn, meta, proc = _running_turn(tid, [_text_line("partial")])
-        assert chat_store.active_run_id(tid) == turn.id
+        assert chat_store.active_turn_id(tid) == turn.id
 
         asyncio.run(_drive_and_stop(turn, meta, proc))
 
-        assert chat_store.active_run_id(tid) is None
-        assert chat_log.active_run(tid) is None
-        assert build_streaming.run_is_live(turn.id) is False
+        assert chat_store.active_turn_id(tid) is None
+        assert chat_log.active_turn(tid) is None
+        assert build_streaming.turn_is_live(turn.id) is False
 
     def test_the_run_marker_says_finished_not_lost(self, thread):
         tid = thread["id"]
@@ -271,7 +271,7 @@ class TestTheThreadIsLeftConsistent:
 
         asyncio.run(_drive_and_stop(turn, meta, proc))
 
-        states = [e["state"] for e in chat_log.read_events(tid) if e["kind"] == "run"]
+        states = [e["state"] for e in chat_log.read_events(tid) if e["kind"] == "turn"]
         assert states == ["started", "finished"]
 
     def test_reconcile_does_not_re_finalize_a_stopped_run(self, thread):
@@ -285,7 +285,7 @@ class TestTheThreadIsLeftConsistent:
 
         assert chat_log.read_events(tid) == before
         assert not [m for m in chat_store.get_thread(tid)["messages"]
-                    if m["content"] == chat_store.LOST_RUN_TEXT]
+                    if m["content"] == chat_store.LOST_TURN_TEXT]
 
     def test_the_journal_is_cleaned_up(self, thread):
         tid = thread["id"]
@@ -300,13 +300,13 @@ class TestALostRunIsWordedDifferently:
 
     def test_a_restart_orphan_is_marked_interrupted(self, thread):
         tid = thread["id"]
-        chat_store.begin_run(tid, "run-gone")
+        chat_store.begin_turn(tid, "run-gone")
 
         build_streaming.reconcile_threads()
 
         last = chat_store.get_thread(tid)["messages"][-1]
         assert last["meta"]["stopped"] == chat_store.STOPPED_INTERRUPTED
-        assert last["content"] == chat_store.LOST_RUN_TEXT
+        assert last["content"] == chat_store.LOST_TURN_TEXT
 
     def test_the_two_values_are_distinct(self):
         assert chat_store.STOPPED_BY_OPERATOR != chat_store.STOPPED_INTERRUPTED
@@ -338,7 +338,7 @@ def test_a_stop_before_the_process_exists_still_ends_the_run(thread):
     out = asyncio.run(go())
     assert out["stopped"] is True
     assert seen == [meta["pid"]], "the loop signals what stop_turn could not"
-    assert chat_store.active_run_id(tid) is None
+    assert chat_store.active_turn_id(tid) is None
     assert chat_store.get_thread(tid)["messages"][-1]["content"] == "late"
 
 

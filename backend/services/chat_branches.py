@@ -47,7 +47,7 @@ def keep_visible(events: list[dict], hidden: set[str] | None) -> list[dict]:
     if not hidden:
         return events
     return [ev for ev in events
-            if ev.get("id") not in hidden or ev.get("kind") in ("run", "title")]
+            if ev.get("id") not in hidden or ev.get("kind") in ("turn", "title")]
 
 
 def _sync_list(org_id, thread_ref: str) -> list[dict]:
@@ -275,7 +275,7 @@ async def hidden_event_ids(thread_ref: str) -> set[str] | None:
 # Keys that say WHERE a message landed inside a reply. Structure replaces them,
 # so they are not carried into a row's `meta`. Shared with the backfill so the
 # live path and the reconstruction cannot drift apart.
-_POSITIONAL = ("cut_id", "cut_head", "at_unit", "at_segment", "during_run",
+_POSITIONAL = ("cut_id", "cut_head", "at_unit", "at_segment", "during_turn",
                "during_turn", "injected", "streaming", "segments")
 # Keys that live on `chat_turn`, not on a message.
 _TURN_LEVEL = ("turn_id", "model", "agent", "started_at", "ended_at", "error",
@@ -300,8 +300,8 @@ def stretches(segments: list[dict]) -> list[list[dict]]:
 
     `cut_head` refs are deliberately NOT counted. They mark messages that beat
     the reply's first word, so there is no stretch before them to open a row
-    for; those messages parent to the point the run started from, which is the
-    "the run's own start is the floor" rule from docs/decisions/0018.
+    for; those messages parent to the point the turn started from, which is the
+    "the turn's own start is the floor" rule from docs/decisions/0018.
 
     Two refs on one segment is two messages sent with no output between them,
     which yields an empty stretch between them. That is correct and it is why
@@ -335,9 +335,9 @@ def _close_turn(s, thread_uuid, ev: dict, ev_meta: dict) -> None:
     """
     from db import chat_repo
 
-    run_id = ev_meta.get("turn_id")
+    turn_id = ev_meta.get("turn_id")
     turn_uuid = chat_repo.upsert_turn(
-        s, thread_uuid, run_id,
+        s, thread_uuid, turn_id,
         status=("error" if ev_meta.get("error") else
                 "stopped" if ev_meta.get("stopped") else "finished"),
         model=ev_meta.get("model"), agent_slug=ev_meta.get("agent"),
@@ -369,7 +369,7 @@ def _close_turn(s, thread_uuid, ev: dict, ev_meta: dict) -> None:
     tail = [seg for piece in rest for seg in piece]
     if len(opened) > len(pieces) - 1:
         log.warning("turn %s: %d stretch rows for %d stretches; last one holds "
-                    "the remainder", run_id, len(opened), len(pieces))
+                    "the remainder", turn_id, len(opened), len(pieces))
 
     # A REPLY NOBODY INTERRUPTED KEEPS ITS OWN `content`, byte for byte. The
     # stored text and the join of the segments disagree on a handful of replies
@@ -394,7 +394,7 @@ def _dt(value):
         return None
 
 
-def _sync_open_stretch(org_id, thread_ref: str, run_id: str) -> None:
+def _sync_open_stretch(org_id, thread_ref: str, turn_id: str) -> None:
     """Open a row for the stretch of a reply that just ended, so the message
     that ended it has something true to hang from.
 
@@ -416,17 +416,17 @@ def _sync_open_stretch(org_id, thread_ref: str, run_id: str) -> None:
         t = chat_repo.thread_by_ref(s, thread_ref)
         if t is None:
             return
-        turn_uuid = chat_repo.upsert_turn(s, t["id"], run_id, status="running")
+        turn_uuid = chat_repo.upsert_turn(s, t["id"], turn_id, status="running")
         chat_repo.append_message(s, t["id"], role="assistant", content="",
                                  turn_id=turn_uuid)
 
 
-async def open_stretch(thread_ref: str, run_id: str) -> None:
+async def open_stretch(thread_ref: str, turn_id: str) -> None:
     if not tenancy.available():
         return
     try:
         org_id, _ = tenancy.org_and_user()
-        await run_in_threadpool(_sync_open_stretch, org_id, thread_ref, run_id)
+        await run_in_threadpool(_sync_open_stretch, org_id, thread_ref, turn_id)
     except Exception:
         log.warning("stretch-open failed for %s", thread_ref, exc_info=True)
 
@@ -468,7 +468,7 @@ def _sync_record(org_id, user_id, thread_ref: str, ev: dict, meta: dict) -> None
             ev_meta = ev.get("meta") or {}
             # A REPLY IS A TURN, and a turn that was interrupted is several rows
             # whose places were already fixed while it ran. Recognised by
-            # `meta.turn_id`, which only a committed run carries, so an ordinary
+            # `meta.turn_id`, which only a committed turn carries, so an ordinary
             # message still takes the plain path below and the common case (a
             # turn nobody interrupted) still writes exactly one row.
             if ev.get("role") == "assistant" and ev_meta.get("turn_id"):
@@ -532,7 +532,7 @@ async def record_meta(thread_ref: str, meta: dict) -> None:
     `services.chat_log.patch_meta_sync` calls this ONLY when the patch
     touches a field the thread list (or a future reader) actually cares
     about -- see `_LIST_RELEVANT_META_FIELDS` there -- so the high-frequency
-    bookkeeping patches a live turn makes (active_run_id, live_message,
+    bookkeeping patches a live turn makes (active_turn_id, live_message,
     turn_marks, context_tokens) never reach here at all.
     """
     if not tenancy.available():

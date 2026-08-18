@@ -229,14 +229,14 @@ class TestACommandTurnCannotBeSpokenTo:
         turn.accepts_input = False
         turn.complete = True
         build_streaming.TURNS[turn.id] = turn
-        assert build_streaming.run_accepts_input(turn.id) is True
+        assert build_streaming.turn_accepts_input(turn.id) is True
 
     def test_the_claim_marks_a_command_run(self, thread):
         async def go():
-            return await build_streaming.claim_run(
+            return await build_streaming.claim_turn(
                 thread["id"], "run-cmd", model="m", accepts_input=False)
         assert asyncio.run(go()) is None
-        assert build_streaming.run_accepts_input("run-cmd") is False
+        assert build_streaming.turn_accepts_input("run-cmd") is False
 
 
 class TestSendDuringACommandTurn:
@@ -256,7 +256,7 @@ class TestSendDuringACommandTurn:
         tid = thread["id"]
 
         async def go():
-            await build_streaming.claim_run(tid, "run-cmd", model="m", accepts_input=False)
+            await build_streaming.claim_turn(tid, "run-cmd", model="m", accepts_input=False)
             return await chat_routes._send(tid, "and now do the other thing")
 
         out = asyncio.run(go())
@@ -280,7 +280,7 @@ class TestSendDuringACommandTurn:
         tid = thread["id"]
 
         async def go():
-            await build_streaming.claim_run(tid, "run-1", model="m", accepts_input=True)
+            await build_streaming.claim_turn(tid, "run-1", model="m", accepts_input=True)
             return await chat_routes._send(tid, "/compact")
 
         out = asyncio.run(go())

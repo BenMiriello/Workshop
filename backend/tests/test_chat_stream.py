@@ -59,7 +59,7 @@ def test_a_meta_write_bumps_it(tid):
     """The run in flight, the title, the cut and the summary all live in meta,
     and all of them change what a client renders."""
     before = chat_events.version(tid)
-    chat_store.begin_run(tid, "run-1")
+    chat_store.begin_turn(tid, "run-1")
     assert chat_events.version(tid) > before
 
 
@@ -99,9 +99,9 @@ def test_a_live_draft_does_NOT_bump_it(tid):
     """A running turn rewrites its draft hundreds of times and has its own
     stream. Bumping on it would wake every idle client on every token to tell it
     something it is already being told."""
-    chat_store.begin_run(tid, "run-1")
+    chat_store.begin_turn(tid, "run-1")
     before = chat_events.version(tid)
-    chat_log.write_live_sync(tid, {"run_id": "run-1", "content": "partial"})
+    chat_log.write_live_sync(tid, {"turn_id": "run-1", "content": "partial"})
     assert chat_events.version(tid) == before
 
 

@@ -1,9 +1,9 @@
-import type { ActiveRunPayload, ChatSegment, LogEvent } from "../../lib/chat";
+import type { ActiveTurnPayload, ChatSegment, LogEvent } from "../../lib/chat";
 import { applyStreamEvent, sealTrailingText, type StreamEvent } from "./segments";
 
 // The wire shapes live with the rest of the API surface (lib/chat); re-exported
 // here because this module is where they are reasoned about.
-export type { ActiveRunPayload, EventKind, LogEvent } from "../../lib/chat";
+export type { ActiveTurnPayload, EventKind, LogEvent } from "../../lib/chat";
 
 // ONE store per thread. The client's whole model of a conversation lives here,
 // and nothing else owns any part of it.
@@ -18,13 +18,13 @@ export type { ActiveRunPayload, EventKind, LogEvent } from "../../lib/chat";
 //
 //   byId + order   the committed log, keyed by event id, ordered by seq
 //   cursor         the seq we have read up to; the events endpoint takes it
-//   activeRun      the turn in flight, which is NOT in the log until it ends
+//   activeTurn      the turn in flight, which is NOT in the log until it ends
 //   pending        sends this browser has made that are not committed yet
 //
 // The transcript is not in here. It is derived — see transcriptBlocks.ts.
 
-export type ActiveRun = {
-  runId: string;
+export type ActiveTurn = {
+  turnId: string;
   startedSeq: number | null;
   segments: ChatSegment[];
   // Epoch ms the turn began, for the elapsed clock. Anchored to the server's
@@ -39,7 +39,7 @@ export type ActiveRun = {
   // Messages that arrived before this run emitted ANYTHING, by cut token. The
   // one recorded cut position with no segment to sit on. See docs/decisions/0018.
   cutHead?: string[];
-  // Epoch ms at which THIS TAB dispatched `runStarted`, if it did. Not a display
+  // Epoch ms at which THIS TAB dispatched `turnStarted`, if it did. Not a display
   // value: it is what lets a sync response be dated against the run, so an
   // answer computed before the run existed cannot erase it. Absent on a run
   // this tab learned about from the server.
@@ -132,7 +132,7 @@ export type ThreadState = {
    *  describing something that is not happening, which is the whole class of
    *  bug this chat is being rebuilt to remove. */
   cut: { count: number; mode: "clear" | "compact" } | null;
-  activeRun: ActiveRun | null;
+  activeTurn: ActiveTurn | null;
   /** Bumped on every pending write, so `at` is strictly increasing. */
   clock: number;
   /** Is there more history older than `order[0]`? Set from the server's
@@ -151,7 +151,7 @@ export type ThreadAction =
       type: "eventsReceived";
       events: LogEvent[];
       lastSeq: number;
-      activeRun: ActiveRunPayload;
+      activeTurn: ActiveTurnPayload;
       /** The server's queue, as of this response. Absent (an older backend, or
        *  a caller that has none to report) leaves what is held. */
       queued?: QueuedMessage[];
@@ -204,10 +204,10 @@ export type ThreadAction =
   | { type: "pendingRestored"; sends: PendingSend[] }
   // A turn is starting: show it as running from the moment the operator hits
   // send, not from when the POST resolves. (Not in the spec's action list; the
-  // spec's `runDelta` cannot express "running, nothing produced yet", and that
+  // spec's `turnDelta` cannot express "running, nothing produced yet", and that
   // gap is exactly the window a send used to fall through.)
-  | { type: "runStarted"; runId: string; startedMs?: number; model?: string }
-  | { type: "runDelta"; runId: string; event: StreamEvent }
+  | { type: "turnStarted"; turnId: string; startedMs?: number; model?: string }
+  | { type: "turnDelta"; turnId: string; event: StreamEvent }
   // This tab is opening a FRESH socket for a run it is already showing. The
   // stream is not resumable from a new EventSource — it carries no
   // Last-Event-ID, so the server replays the turn from offset 0 — and
@@ -215,9 +215,9 @@ export type ThreadAction =
   // already holds renders the whole turn twice. Rewind first; the replay puts it
   // back. Triggers: a backend restart, an edge 502 mid-turn, and the 5s liveness
   // re-attach, so this fires on the ordinary long turn, not an exotic one.
-  | { type: "runReattached"; runId: string }
-  | { type: "runContext"; runId: string; tokens: number }
-  | { type: "runCommitted"; runId: string }
+  | { type: "turnReattached"; turnId: string }
+  | { type: "turnContext"; turnId: string; tokens: number }
+  | { type: "turnCommitted"; turnId: string }
   // Adopt a PREVIOUSLY-HELD snapshot of this same thread in one commit, so a
   // revisited thread paints instantly instead of blank-then-loaded. See
   // threadCache.ts for what holds the snapshot between visits and why.
@@ -235,7 +235,7 @@ export type ThreadAction =
  *  context cut. NOT `pending` or `clock` — see `seedThread` above. */
 export type ThreadSnapshot = Pick<
   ThreadState,
-  "threadId" | "byId" | "order" | "idBySeq" | "cursor" | "cut" | "activeRun"
+  "threadId" | "byId" | "order" | "idBySeq" | "cursor" | "cut" | "activeTurn"
   | "queued" | "queueHeld" | "queueError" | "hasMoreOlder"
 >;
 
@@ -251,7 +251,7 @@ export function snapshotThread(state: ThreadState): ThreadSnapshot {
     idBySeq: state.idBySeq,
     cursor: state.cursor,
     cut: state.cut,
-    activeRun: state.activeRun,
+    activeTurn: state.activeTurn,
     queued: state.queued,
     queueHeld: state.queueHeld,
     queueError: state.queueError,
@@ -271,7 +271,7 @@ export function initialThreadState(threadId: string | null = null): ThreadState 
     queueHeld: false,
     queueError: "",
     cut: null,
-    activeRun: null,
+    activeTurn: null,
     clock: 0,
     hasMoreOlder: false,
   };
@@ -307,12 +307,12 @@ function snapshotAhead(next: ChatSegment[], prev: ChatSegment[]): boolean {
   return segWeight(next[next.length - 1]) > segWeight(prev[prev.length - 1]);
 }
 
-function adoptRun(
-  payload: ActiveRunPayload, prev: ActiveRun | null, requestedAt: number,
-): ActiveRun | null {
+function adoptTurn(
+  payload: ActiveTurnPayload, prev: ActiveTurn | null, requestedAt: number,
+): ActiveTurn | null {
   // A RESPONSE CANNOT SPEAK ABOUT A RUN THAT DID NOT EXIST WHEN IT WAS ASKED
   // FOR. Syncs overlap by design and resolve out of order, so an older snapshot
-  // arriving after a locally-dispatched `runStarted` used to clear the live
+  // arriving after a locally-dispatched `turnStarted` used to clear the live
   // block outright — after which the reducer's own guard dropped that run's
   // streamed deltas as "not ours", the turn went invisible until the next 10s
   // poll re-adopted it, and in that window canDrainQueue was true, so a queued
@@ -320,13 +320,13 @@ function adoptRun(
   // useCompaction fires an un-awaited sync() immediately before sending
   // /compact.
   const stale = !!prev?.localStartedAt && requestedAt < prev.localStartedAt;
-  if (!payload || !payload.run_id) return stale ? prev : null;
+  if (!payload || !payload.turn_id) return stale ? prev : null;
   // Same reasoning for a snapshot that names a DIFFERENT, older run.
-  if (stale && prev && payload.run_id !== prev.runId) return prev;
+  if (stale && prev && payload.turn_id !== prev.turnId) return prev;
   const live = payload.live || {};
   const serverSegs = live.meta?.segments || [];
   const startedMs = live.ts ? Date.parse(live.ts) : NaN;
-  if (prev && prev.runId === payload.run_id) {
+  if (prev && prev.turnId === payload.turn_id) {
     // An answer to a question asked before this tab's own last move — the run
     // starting, or a re-attach rewinding the live view — cannot speak about the
     // state that move produced. Keep what we have and wait for a current one.
@@ -352,7 +352,7 @@ function adoptRun(
     };
   }
   return {
-    runId: payload.run_id,
+    turnId: payload.turn_id,
     startedSeq: payload.started_seq ?? null,
     segments: serverSegs,
     cutHead: live.meta?.cut_head,
@@ -472,21 +472,21 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         idBySeq[ev.seq] = ev.id;
         if (order.length && ev.seq < order[order.length - 1]) outOfOrder = true;
         order.push(ev.seq);
-        if (ev.kind === "message" && ev.role === "user" && ev.meta?.during_run) {
-          interrupted.push(ev.meta.during_run);
+        if (ev.kind === "message" && ev.role === "user" && ev.meta?.during_turn) {
+          interrupted.push(ev.meta.during_turn);
         }
       }
       if (outOfOrder) order.sort((a, b) => a - b);
       // No `requestedAt` means the caller cannot date its response, so it is
       // treated as current — the guard only ever suppresses a demonstrably
       // older answer.
-      let activeRun = adoptRun(
-        action.activeRun, state.activeRun, action.requestedAt ?? Date.now());
+      let activeTurn = adoptTurn(
+        action.activeTurn, state.activeTurn, action.requestedAt ?? Date.now());
       // The live half of the cut. The server seals the turn it is driving; this
       // seals what THIS tab is rendering, on the same trigger, so a message
       // typed in another tab still closes the block here.
-      if (activeRun && interrupted.includes(activeRun.runId)) {
-        activeRun = { ...activeRun, segments: sealTrailingText(activeRun.segments) };
+      if (activeTurn && interrupted.includes(activeTurn.turnId)) {
+        activeTurn = { ...activeTurn, segments: sealTrailingText(activeTurn.segments) };
       }
       return {
         ...state,
@@ -507,7 +507,7 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         // A message that made it out of the queue and into the log is no longer
         // pending here either: it was OUR send, arriving late.
         pending: reconcilePending(state.pending, action.events, action.queued),
-        activeRun,
+        activeTurn,
         hasMoreOlder: action.hasMore !== undefined ? action.hasMore : state.hasMoreOlder,
       };
     }
@@ -604,12 +604,12 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       return { ...state, pending };
     }
 
-    case "runStarted": {
-      if (state.activeRun?.runId === action.runId) return state;
+    case "turnStarted": {
+      if (state.activeTurn?.turnId === action.turnId) return state;
       return {
         ...state,
-        activeRun: {
-          runId: action.runId,
+        activeTurn: {
+          turnId: action.turnId,
           startedSeq: null,
           segments: [],
           startedMs: action.startedMs ?? Date.now(),
@@ -619,11 +619,11 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       };
     }
 
-    case "runDelta": {
-      const run = state.activeRun;
+    case "turnDelta": {
+      const run = state.activeTurn;
       // A delta for a run we are not showing is not ours to fold in. It arrives
       // when a stream outlives the turn it belonged to.
-      if (!run || run.runId !== action.runId) return state;
+      if (!run || run.turnId !== action.turnId) return state;
       // A CUT IS A POSITION, not content, so it is recorded rather than folded.
       // Sealing first is what makes the boundary real: text streamed afterwards
       // must start a new segment instead of merging back above the message. The
@@ -638,39 +638,39 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         const last = sealed[sealed.length - 1];
         if (!last) {
           if (run.cutHead?.includes(ref)) return state;
-          return { ...state, activeRun: { ...run, cutHead: [...(run.cutHead || []), ref] } };
+          return { ...state, activeTurn: { ...run, cutHead: [...(run.cutHead || []), ref] } };
         }
         if (last.cut_after?.includes(ref)) return state;
-        return { ...state, activeRun: { ...run, segments: [
+        return { ...state, activeTurn: { ...run, segments: [
           ...sealed.slice(0, -1),
           { ...last, cut_after: [...(last.cut_after || []), ref] },
         ] } };
       }
       const segments = applyStreamEvent(run.segments, action.event);
       if (segments === run.segments) return state;
-      return { ...state, activeRun: { ...run, segments } };
+      return { ...state, activeTurn: { ...run, segments } };
     }
 
-    case "runContext": {
-      const run = state.activeRun;
-      if (!run || run.runId !== action.runId) return state;
+    case "turnContext": {
+      const run = state.activeTurn;
+      if (!run || run.turnId !== action.turnId) return state;
       if (!(action.tokens > 0) || action.tokens === run.ctxTokens) return state;
-      return { ...state, activeRun: { ...run, ctxTokens: action.tokens } };
+      return { ...state, activeTurn: { ...run, ctxTokens: action.tokens } };
     }
 
-    case "runReattached": {
-      const run = state.activeRun;
-      if (!run || run.runId !== action.runId) return state;
+    case "turnReattached": {
+      const run = state.activeTurn;
+      if (!run || run.turnId !== action.turnId) return state;
       return {
         ...state,
-        activeRun: {
+        activeTurn: {
           ...run,
           segments: [],
           // The head cuts came from the same replayed stream and are re-sent
           // with it. Left behind, a re-attach would keep a message pinned above
           // work the replay puts back above it.
           cutHead: [],
-          // Re-stamped so `adoptRun` treats a sync ISSUED BEFORE this rewind as
+          // Re-stamped so `adoptTurn` treats a sync ISSUED BEFORE this rewind as
           // what it is: an answer about a live view that no longer exists.
           // Without it, an in-flight poll could land between the rewind and the
           // replay, restore a full snapshot, and have the replay append onto it
@@ -690,11 +690,11 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       return { ...initialThreadState(action.threadId), ...action.snapshot };
     }
 
-    case "runCommitted": {
+    case "turnCommitted": {
       // The reply is in the log now (or is about to be, on the next sync). The
       // live view has nothing left to say.
-      if (!state.activeRun || state.activeRun.runId !== action.runId) return state;
-      return { ...state, activeRun: null };
+      if (!state.activeTurn || state.activeTurn.turnId !== action.turnId) return state;
+      return { ...state, activeTurn: null };
     }
 
     default:

@@ -11,7 +11,7 @@ interrupting message landed, and three separate readers re-derived the true
 order from those tokens on every render. Here the split happens once, and comes
 out as rows: a reply interrupted twice becomes three assistant messages with the
 two user messages threaded between them. After this runs, `cut_id`, `cut_after`,
-`cut_head`, `at_unit`, `at_segment`, `during_run` and `injected` describe nothing
+`cut_head`, `at_unit`, `at_segment`, `during_turn` and `injected` describe nothing
 that is still stored.
 
 The fidelity guard from `chat_context._split_reply` is kept exactly: rebuilding
@@ -182,7 +182,7 @@ def split_reply(reply: dict, interrupts: list[dict]) -> list[tuple] | None:
 
 # --- the legacy coordinate ---------------------------------------------------
 # The cut TOKENS only started being written on 2026-08-12. Measured across this
-# installation's 90 mid-run messages: 11 carry a token, 31 carry `at_unit`, 48
+# installation's 90 mid-turn messages: 11 carry a token, 31 carry `at_unit`, 48
 # carry only `at_segment`. So 79 of 90 need the index path, and skipping it
 # would silently flatten 33 replies that the operator's transcript currently
 # renders split.
@@ -301,8 +301,8 @@ def split_reply_legacy(reply: dict, interrupts: list[dict]) -> list[tuple] | Non
 
 # Keys that describe WHERE a message landed inside a reply. They are what this
 # migration replaces with structure, so they are not carried into `meta`.
-_POSITIONAL = ("cut_id", "cut_head", "at_unit", "at_segment", "during_run",
-               "during_turn", "injected", "streaming", "segments")
+_POSITIONAL = ("cut_id", "cut_head", "at_unit", "at_segment", "during_turn",
+               "injected", "streaming", "segments")
 # Keys that moved to `chat_turn`.
 _TURN_LEVEL = ("turn_id", "model", "agent", "started_at", "ended_at", "error",
                "timeout", "stopped")
@@ -394,15 +394,15 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
     # --- turns ---------------------------------------------------------------
     turns: dict[str, Any] = {}
     for ev in events:
-        if ev.get("kind") != "run":
+        if ev.get("kind") != "turn":
             continue
-        run_id = ev.get("run_id")
-        if not run_id:
+        turn_id = ev.get("turn_id")
+        if not turn_id:
             continue
-        row = turns.get(run_id)
+        row = turns.get(turn_id)
         if row is None:
-            row = turns[run_id] = {"id": uuid7(), "started": None, "ended": None,
-                                   "status": "running"}
+            row = turns[turn_id] = {"id": uuid7(), "started": None, "ended": None,
+                                    "status": "running"}
         if ev.get("state") == "started":
             row["started"] = _iso(ev.get("ts"))
         elif ev.get("state") == "finished":
@@ -417,11 +417,11 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
         if ev.get("kind") != "message" or ev.get("role") != "assistant":
             continue
         m = ev.get("meta") or {}
-        run_id = m.get("turn_id")
-        if not run_id:
+        turn_id = m.get("turn_id")
+        if not turn_id:
             continue
-        row = turns.setdefault(run_id, {"id": uuid7(), "started": None,
-                                        "ended": None, "status": "finished"})
+        row = turns.setdefault(turn_id, {"id": uuid7(), "started": None,
+                                         "ended": None, "status": "finished"})
         row.setdefault("model", m.get("model"))
         row.setdefault("agent", m.get("agent"))
         row["started"] = row["started"] or _iso(m.get("started_at"))
@@ -431,25 +431,25 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
         row["stopped"] = m.get("stopped")
 
     org = s.scalar(text("SELECT org_id FROM chat_thread WHERE id = :t"), {"t": tid})
-    for run_id, row in turns.items():
+    for turn_id, row in turns.items():
         # ON CONFLICT DO NOTHING so a top-up re-reads the whole file without
-        # colliding with the turns it already wrote. `run_id` is globally
-        # unique, so this is an exact "have I seen this run" test.
+        # colliding with the turns it already wrote. `turn_id` is globally
+        # unique, so this is an exact "have I seen this turn" test.
         s.execute(text(
-            "INSERT INTO chat_turn (id, org_id, thread_id, run_id, status, model,"
+            "INSERT INTO chat_turn (id, org_id, thread_id, turn_id, status, model,"
             " agent_slug, started_at, ended_at, error, timeout, stopped) "
-            "VALUES (:id, :org, :t, :run, :status, :model, :agent, :started,"
+            "VALUES (:id, :org, :t, :turn, :status, :model, :agent, :started,"
             "        :ended, :error, :timeout, :stopped) "
-            "ON CONFLICT (run_id) DO NOTHING"),
-            {"id": row["id"], "org": org, "t": tid, "run": run_id,
+            "ON CONFLICT (turn_id) DO NOTHING"),
+            {"id": row["id"], "org": org, "t": tid, "turn": turn_id,
              "status": row["status"], "model": row.get("model"),
              "agent": row.get("agent"), "started": row.get("started"),
              "ended": row.get("ended"), "error": bool(row.get("error")),
              "timeout": bool(row.get("timeout")), "stopped": row.get("stopped")})
         # The row id we minted may have lost the race with one already there;
         # the messages must point at whichever row actually exists.
-        row["id"] = s.scalar(text("SELECT id FROM chat_turn WHERE run_id = :r"),
-                             {"r": run_id})
+        row["id"] = s.scalar(text("SELECT id FROM chat_turn WHERE turn_id = :r"),
+                             {"r": turn_id})
     stats["turns"] += len(turns)
 
     # --- messages ------------------------------------------------------------
@@ -476,7 +476,7 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
         if kind == "title":
             title = ev.get("title") or title
             continue
-        if kind == "run":
+        if kind == "turn":
             continue
         # Already a row. On a first load `seen` is empty and this never fires;
         # on a top-up it is what keeps the pass to the genuinely new tail --
@@ -508,17 +508,17 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
 
         m = ev.get("meta") or {}
         if ev.get("role") == "user":
-            run = m.get("during_run") or m.get("during_turn")
-            if run:
-                held.setdefault(run, []).append(ev)
+            held_by = m.get("during_turn")
+            if held_by:
+                held.setdefault(held_by, []).append(ev)
             else:
                 emit_user(ev)
             continue
 
         # assistant
-        run_id = m.get("turn_id")
-        turn_row = turns.get(run_id) if run_id else None
-        interrupts = held.pop(run_id, []) if run_id else []
+        turn_id = m.get("turn_id")
+        turn_row = turns.get(turn_id) if turn_id else None
+        interrupts = held.pop(turn_id, []) if turn_id else []
         # Tokens first, index second. The token path is exact; the index path
         # is what the transcript on disk was rendered with before tokens
         # existed, and it must keep producing the same placement.
@@ -548,10 +548,10 @@ def _load_thread(s, org_id, user_id, thread_dir: Path, stats: dict) -> None:
                     emit_assistant(ev, value, segs, turn_row)
                     stats["split_stretches"] += 1
 
-    # A run that never committed a reply leaves its messages held. They are real
+    # A turn that never committed a reply leaves its messages held. They are real
     # messages the operator sent, so they land at the end rather than nowhere.
-    for run_id in sorted(held):
-        for ev in held[run_id]:
+    for turn_id in sorted(held):
+        for ev in held[turn_id]:
             emit_user(ev)
             stats["orphan_messages"] += 1
 

@@ -13,7 +13,7 @@ import type { ThreadSnapshot } from "./threadStore";
 //
 // WHAT IS DELIBERATELY NOT HERE:
 //   - pending sends (useSendOutbox owns those; see ThreadSnapshot's comment)
-//   - the working indicator's TRUTH (a cached activeRun is a last-known guess,
+//   - the working indicator's TRUTH (a cached activeTurn is a last-known guess,
 //     painted for one frame; useThreadLog always follows a cache hit with a
 //     cursor sync, and the server's answer is what the indicator actually
 //     tracks from then on)

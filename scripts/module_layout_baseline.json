@@ -1,7 +1,7 @@
 {
-  "_measured_against": 221,
+  "_measured_against": 223,
   "big_file_count": 21,
-  "function_local_imports": 451,
+  "function_local_imports": 452,
   "largest_scc_size": 58,
   "scc_count": 3,
   "upward_violations": 42

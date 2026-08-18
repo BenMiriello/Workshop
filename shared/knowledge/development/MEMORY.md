@@ -1,6 +1,9 @@
 # Knowledge index
 
+- [A card that files a duplicate ticket looks like nothing happened](a-card-that-files-a-duplicate-ticket-looks-like-1a008879724.md)
+- [A chat's system prompt is frozen at session spawn, so prompt-contract changes never reach open chats](a-chat-s-system-prompt-is-frozen-at-session-spaw-1a0088f0481.md)
 - [Chat drafts are keyed per-thread, not per-scope](chat-drafts-are-keyed-per-thread-not-per-scope-1a0028fb2ce.md)
+- [Chat protocols self-refresh: how a contract change reaches an already-open session](chat-protocols-self-refresh-how-a-contract-chang-1a00958798e.md)
 - [Chat restores scroll position per thread via sessionStorage](chat-restores-scroll-position-per-thread-via-ses-1a0028fb2d2.md)
 - [Chat width: 1200px intermediate, full-width toolbar](chat-width-1200px-intermediate-full-width-toolba-1a0028fb2d1.md)
 - [Context meter shows rounded whole percentages only](context-meter-shows-rounded-whole-percentages-on-1a0028fb2d0.md)

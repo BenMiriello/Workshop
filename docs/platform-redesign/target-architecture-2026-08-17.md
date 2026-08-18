@@ -780,6 +780,45 @@ run.
   example does not, and an ADR that argues from a closed defect will be read as
   wrong in whole when it is wrong in part.
 
+- **Item 1a, chat `run_id` becomes `turn_id`** (2026-08-17). The translation at
+  `db/chat_repo._row` is deleted, not moved: the transcript SELECT now takes the
+  turn identity from `chat_turn` alone, because `chat_message.turn_id` (the FK row
+  pointer) and the turn's own identity were the same test for "does this message
+  belong to a turn", so one of the two columns was redundant rather than needing an
+  alias. `grep -rIn '\brun_id\b' backend/{routes,services,db}` now returns **only
+  deploy runs and the Job inbox**: `deploy_runner.py`, `services/deploys.py`,
+  `routes/deploys.py`, plus `inbox.py` / `run_inbox.py` / `refs.py`, where the value
+  is a Job attempt id and not a chat turn. That is what unblocks 1b.
+
+  **The wire field was renamed too, and the reasoning is the part worth keeping.**
+  §5 argues `/api/tasks` belongs to item 2 because it is a breaking wire change and
+  item 2 rewrites every route's contract anyway, so doing it there costs one pass
+  instead of two. That argument is about a PATH and does not carry to this FIELD. A
+  path is addressing: 52 call sites, URLs, bookmarks, and a shape item 2 is already
+  opening. `active_run.run_id` is a domain name inside a poll response with four
+  consuming call sites, no URL and no external client, and item 2 is not going to
+  revisit what the chat's own value is called. Leaving it would have kept the value
+  under two names on the wire, which is the exact defect this item exists to close.
+  So `active_run` and its `run_id` are now `active_turn` / `turn_id`, and
+  `during_run` in message meta went back to `during_turn`, the name it had before an
+  earlier half-rename, which let the dual read in `chat_context.arrival_notice` and
+  `db/chat_backfill` be deleted rather than extended.
+
+  The file store is the fourth place this value is written and the only one with
+  data already on disk, so it gets a migration (`services/chat_log_turn_rename.py`) rather
+  than a compatibility read: a reader that accepts both names is the same
+  translation layer under a different roof, and it never goes away. It runs from
+  `main.py` at startup, before anything reads a thread, because the keys and the
+  code that fences on them have to change together; a turn in flight under the
+  previous build would stop recognising its own claim. Measured on the live store:
+  2,432 events in, 2,432 out, 749 `kind: "run"` markers and 134 `during_*` keys
+  renamed, 56 `active_run_id` claims moved, zero unparseable lines rewritten.
+
+  Postgres: `a2c9f4b70e18` renames `chat_turn.run_id` and the unique index
+  `uq_chat_turn_run` that `ON CONFLICT` names. Proved on the real database by
+  upgrade, downgrade and upgrade again: 680 rows and 680 distinct ids at every step.
+  Backend 2,921 passed / 0 failed, unchanged from the baseline; frontend 945.
+
 ### The gate now
 
 Four checks were added to `scripts/reviewer.sh` this build, joining the three that
@@ -803,7 +842,8 @@ account on the same machine can read, so there is nothing to ratchet toward.
   started. The four contracts they are built against now exist, which is the thing
   that had to happen first.
 - **`task → ticket`.** Deliberately deferred to item 3, for the reasons measured in
-  §5 above. `job → run` is ready to go and is the next mechanical piece.
+  §5 above. `job → run` is unblocked now that 1a has freed the word, and is the
+  next mechanical piece.
 - **The `hardcoded_identity` reviewer reason fires on the current tree**, from
   `scripts/smoke_chat.sh` (an env-var default) and four test files using
   `agent:masini` as a fixture. Pre-existing, untouched by this build, and it is

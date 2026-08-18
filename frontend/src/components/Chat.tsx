@@ -201,7 +201,7 @@ export default function Chat({
   // The conversation itself: one store, fed by one endpoint from a cursor.
   const log = useThreadLog({ threadId: activeId, onError: setErr });
   const {
-    state, stateRef, dispatch, transcript, sync, runActive, hydrated, stale, branch,
+    state, stateRef, dispatch, transcript, sync, turnActive, hydrated, stale, branch,
     loadOlder, loadingOlder, olderError,
   } = log;
   // Sends this browser has made that the server has not taken. The ONLY chat
@@ -210,8 +210,8 @@ export default function Chat({
   // transcript, the run in flight, the queue of messages waiting on it — is
   // read from the server. See useSendOutbox.
   outboxRef.current = useSendOutbox({ scope, state, dispatch });
-  const runActiveRef = useRef(runActive);
-  runActiveRef.current = runActive;
+  const runActiveRef = useRef(turnActive);
+  runActiveRef.current = turnActive;
 
   // THE CHAT'S WORK, READ ONCE. The toolbar badge, the Work panel and (from
   // package D) every ticket card in the transcript read this one copy, which is
@@ -245,7 +245,7 @@ export default function Chat({
       target: key,
       current: scopeState.scope,
       hasHistory: !!id && stateRef.current.order.length > 0,
-      runActive: runActiveRef.current,
+      turnActive: runActiveRef.current,
     });
     if (plan.action === "noop") return;
     if (plan.action === "switch") {
@@ -321,7 +321,7 @@ export default function Chat({
   // read as having done nothing and invited a second one.
   const [stopping, setStopping] = useState(false);
   const onStopTurn = useCallback(async () => {
-    const runId = stateRef.current.activeRun?.runId ?? null;
+    const turnId = stateRef.current.activeTurn?.turnId ?? null;
     // Claim the ending before the request goes out: the `done` frame arrives
     // mid-flight and its handler would retire the turn.
     //
@@ -333,11 +333,11 @@ export default function Chat({
     beginStop();
     setStopping(true);
     try {
-      if (runId) await chatApi.stopTurn(runId);
+      if (turnId) await chatApi.stopTurn(turnId);
     } catch (e) {
       setErr({
         text: `Could not stop the turn: ${String(e)}. It may still be running; press Stop again.`,
-        endpoint: `/api/chat/turns/${runId ?? "<run>"}/stop`,
+        endpoint: `/api/chat/turns/${turnId ?? "<run>"}/stop`,
       });
     } finally {
       stopWatching();
@@ -521,7 +521,7 @@ export default function Chat({
   // local flag can only ever describe this tab, which is why the old
   // reattach-on-poll + reattach-on-send + reattach-on-drop paths each had their
   // own copy of this rule and each got it subtly different.
-  const runId = state.activeRun?.runId ?? null;
+  const turnId = state.activeTurn?.turnId ?? null;
 
   // Answer a tool-permission request from a turn. The turn is BLOCKED on stdin
   // until this lands, so a failure here has to be visible: a silent catch would
@@ -562,10 +562,10 @@ export default function Chat({
     // Keyed on the run's ID, not the run object: that object changes on every
     // streamed segment, and re-running this hundreds of times a turn to
     // early-return is not free.
-    if (!runId || !activeId) return;
-    if (hasOpenStream() || isDetached(runId)) return;
-    attach(runId);
-  }, [runId, activeId, attach, hasOpenStream, isDetached]);
+    if (!turnId || !activeId) return;
+    if (hasOpenStream() || isDetached(turnId)) return;
+    attach(turnId);
+  }, [turnId, activeId, attach, hasOpenStream, isDetached]);
 
   // ...AND THE SAME RULE ON A TIMER, because losing a socket changes none of
   // the deps above. `attach`/`hasOpenStream`/`isDetached` are stable callbacks
@@ -576,7 +576,7 @@ export default function Chat({
   // notes. A first-exchange chat kept its placeholder title until a reload.
   //
   // This is the deleted `useTurnLiveness`, restored: the question "is a run in
-  // flight" is answered by the SERVER (`active_run`, kept current by the log
+  // flight" is answered by the SERVER (`active_turn`, kept current by the log
   // poll), and whenever the answer is yes and this tab holds no socket, this
   // re-attaches. Reading the store through the ref means the interval does not
   // re-render the chat while a turn streams.
@@ -587,12 +587,12 @@ export default function Chat({
   // which is the moment the transcript has to be right.
   usePoll(
     () => {
-      const live = stateRef.current.activeRun?.runId;
+      const live = stateRef.current.activeTurn?.turnId;
       if (!live || hasOpenStream() || isDetached(live)) return;
       attach(live);
     },
     LIVENESS_MS,
-    { enabled: !!runId && !!activeId, immediate: false },
+    { enabled: !!turnId && !!activeId, immediate: false },
   );
 
   // Leaving a thread closes its socket. The store is reset by useThreadLog.
@@ -776,7 +776,7 @@ export default function Chat({
   // PWA in the background, which is where a phone pays for it most.
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
-    if (!runActive) return;
+    if (!turnActive) return;
     let id: number | undefined;
     const start = () => {
       if (id === undefined) id = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -790,8 +790,8 @@ export default function Chat({
     if (!document.hidden) start();
     document.addEventListener("visibilitychange", onVisibility);
     return () => { stop(); document.removeEventListener("visibilitychange", onVisibility); };
-  }, [runActive]);
-  const elapsed = elapsedSeconds(state.activeRun?.startedMs ?? null, nowMs);
+  }, [turnActive]);
+  const elapsed = elapsedSeconds(state.activeTurn?.startedMs ?? null, nowMs);
   const workingLabel = turnLabel({
     attached: stream.attached,
     reconnecting: stream.reconnecting,
@@ -931,11 +931,11 @@ export default function Chat({
           threadId={branchThreadId}
           anchorId={messageId}
           mode={mode}
-          runActive={runActive}
+          turnActive={turnActive}
           onChanged={onBranchChanged}
         />
       : null
-  ), [branchThreadId, runActive, onBranchChanged]);
+  ), [branchThreadId, turnActive, onBranchChanged]);
   const branchPicker = branchThreadId
     ? <BranchPicker
         threadId={branchThreadId}
@@ -959,7 +959,7 @@ export default function Chat({
       providers={scopeState.providers}
       activeProvider={scopeState.activeProvider}
       onChooseProvider={chooseScope}
-      runActive={runActive}
+      turnActive={turnActive}
       drawer={drawer}
       needsYouCount={work.data.counts.needs_you}
       workAnchor={(trigger) => <WorkPanel host="anchor" trigger={trigger} {...workProps} />}
@@ -1032,7 +1032,7 @@ export default function Chat({
   // does the moment the log arrives) is what USED to reveal the durable one. See
   // committedClientIds: the second bubble appeared because the send succeeded.
   //
-  // Keyed on the log's own maps, NOT on `state`. `runDelta` builds a new state
+  // Keyed on the log's own maps, NOT on `state`. `turnDelta` builds a new state
   // per streamed token, so `[state]` would rebuild this set dozens of times a
   // second and churn every memo below it — including the transcript one that
   // exists to keep typing from re-rendering the log. Those three references are
@@ -1112,7 +1112,7 @@ export default function Chat({
     empty: transcript.length === 0,
     loading: logLoading,
     error: !!chatProblem,
-    inFlight: runActive || pipeline.starting,
+    inFlight: turnActive || pipeline.starting,
   }) === "error";
 
   const logView = (
@@ -1127,7 +1127,7 @@ export default function Chat({
       onLoadOlder={onLoadOlder}
       blocks={transcript}
       isBuild={build}
-      inFlight={runActive || pipeline.starting}
+      inFlight={turnActive || pipeline.starting}
       selectedModel={selectedModel}
       cardCtx={cardCtx}
       onRetry={onRetryAny}
@@ -1139,7 +1139,7 @@ export default function Chat({
       elapsed={elapsed}
       nowMs={nowMs}
       answerPermission={answerPermission}
-      liveTurnId={runId}
+      liveTurnId={turnId}
       renderBranch={renderBranch}
       branchHead={branch.head}
       queued={queuedWaiting}
@@ -1185,7 +1185,7 @@ export default function Chat({
       showMentions={showMentions}
       onMentionHover={setMentionSel}
       onMentionPick={pickMention}
-      streaming={runActive}
+      streaming={turnActive}
       onSend={send}
       // One rule for "is there anything to send", shared with the Enter key:
       // text, or a finished upload, and never while one is still going up.
@@ -1208,7 +1208,7 @@ export default function Chat({
       activeId={activeId}
       messages={messages}
       ctxNonce={ctxNonce}
-      liveCtxTokens={state.activeRun?.ctxTokens}
+      liveCtxTokens={state.activeTurn?.ctxTokens}
       voiceOn={voiceOn}
       onToggleVoice={toggleVoice}
       isBuild={build}

@@ -10,7 +10,7 @@
 // answers diverged for one network round trip on every single turn, and a
 // message sent in that window took the wrong branch.
 //
-// The state below has ONE question in it, `runActive`, plus `starting`, which is
+// The state below has ONE question in it, `turnActive`, plus `starting`, which is
 // the window the timer used to paper over: a turn has been asked for and the
 // POST has not come back yet. Setting it synchronously at send time is what
 // makes the timer unnecessary — there is no interval in which the chat is
@@ -37,7 +37,7 @@ export type SendState = {
   // A turn has been requested and has not been confirmed yet.
   starting: boolean;
   // The server says a run is in flight on this thread.
-  runActive: boolean;
+  turnActive: boolean;
   // Does this chat exist yet? A blank chat has no thread until its first send
   // creates one.
   hasThread: boolean;
@@ -66,6 +66,6 @@ export function planSend(_text: string, s: SendState): SendPlan {
   // is included deliberately: a fold is a server-side operation on this thread,
   // and the endpoint that receives the message is the one that knows where the
   // boundary ended up.
-  if (s.starting || s.runActive || s.compacting) return "inject";
+  if (s.starting || s.turnActive || s.compacting) return "inject";
   return "newTurn";
 }

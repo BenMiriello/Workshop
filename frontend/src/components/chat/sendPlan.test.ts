@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { planSend } from "./sendPlan";
 import { TURN_LABEL, elapsedSeconds, turnPhase } from "./turnStatus";
 
-const idle = { compacting: false, starting: false, runActive: false, hasThread: true };
+const idle = { compacting: false, starting: false, turnActive: false, hasThread: true };
 
 describe("planSend", () => {
   // THE PLAN NEVER SAYS "DO NOT SEND THIS YET" ANY MORE, and that is the fix.
@@ -23,13 +23,13 @@ describe("planSend", () => {
     // 2026-08-10 and again 2026-08-12: `/compact` opens a turn that never reads
     // a word of input. The message still goes to the server NOW; the server is
     // what decides it has to wait, and it is what sends it afterwards.
-    expect(planSend("and also do this", { ...idle, runActive: true })).toBe("inject");
+    expect(planSend("and also do this", { ...idle, turnActive: true })).toBe("inject");
   });
 
   it("sends a slash command to the server rather than holding it", () => {
     // The CLI's command layer only runs between turns, so this cannot be
     // injected into the running turn. The server queues it as its own turn.
-    expect(planSend("/compact", { ...idle, runActive: true })).toBe("inject");
+    expect(planSend("/compact", { ...idle, turnActive: true })).toBe("inject");
     expect(planSend("/cost extra", { ...idle, starting: true })).toBe("inject");
   });
 

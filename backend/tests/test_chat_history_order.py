@@ -52,7 +52,7 @@ class TestTheMessageGoesWhereItLanded:
     def test_it_is_put_back_inside_the_reply(self):
         h = [
             user("go"),
-            user("also do Y", during_run="r1", cut_id="c1"),
+            user("also do Y", during_turn="r1", cut_id="c1"),
             reply("I'll look into X.Done both.", turn_id="r1",
                   segments=[text("I'll look into X.", cut=["c1"]), text("Done both.")]),
         ]
@@ -68,7 +68,7 @@ class TestTheMessageGoesWhereItLanded:
     def test_a_message_that_beat_the_first_word_stays_above_the_reply(self):
         h = [
             user("go"),
-            user("and also", during_run="r1", cut_id="c1"),
+            user("and also", during_turn="r1", cut_id="c1"),
             reply("all of it", turn_id="r1", cut_head=["c1"], segments=[text("all of it")]),
         ]
         assert shape(h) == ["user:go", "user:and also", "assistant:all of it"]
@@ -76,8 +76,8 @@ class TestTheMessageGoesWhereItLanded:
     def test_several_messages_each_land_in_their_own_place(self):
         h = [
             user("go"),
-            user("one", during_run="r1", cut_id="c1"),
-            user("two", during_run="r1", cut_id="c2"),
+            user("one", during_turn="r1", cut_id="c1"),
+            user("two", during_turn="r1", cut_id="c2"),
             reply("AB", turn_id="r1",
                   segments=[text("A", cut=["c1"]), tool("Read"), text("B", cut=["c2"])]),
         ]
@@ -87,15 +87,15 @@ class TestTheMessageGoesWhereItLanded:
 
     def test_two_messages_at_the_same_position_keep_their_order(self):
         h = [
-            user("one", during_run="r1", cut_id="c1"),
-            user("two", during_run="r1", cut_id="c2"),
+            user("one", during_turn="r1", cut_id="c1"),
+            user("two", during_turn="r1", cut_id="c2"),
             reply("AB", turn_id="r1", segments=[text("A", cut=["c1", "c2"]), text("B")]),
         ]
         assert shape(h) == ["assistant:A", "user:one", "user:two", "assistant:B"]
 
     def test_a_cut_on_a_tool_splits_the_text_either_side_of_it(self):
         h = [
-            user("wait", during_run="r1", cut_id="c1"),
+            user("wait", during_turn="r1", cut_id="c1"),
             reply("AB", turn_id="r1", segments=[text("A"), tool("Read", cut=["c1"]), text("B")]),
         ]
         assert shape(h) == ["assistant:A", "user:wait", "assistant:B"]
@@ -107,7 +107,7 @@ class TestItRefusesToGuess:
         it is not, something rewrote one and any split would move or drop words.
         Flat is wrong but honest; a wrong split is neither."""
         h = [
-            user("wait", during_run="r1", cut_id="c1"),
+            user("wait", during_turn="r1", cut_id="c1"),
             reply("something else entirely", turn_id="r1",
                   segments=[text("A", cut=["c1"]), text("B")]),
         ]
@@ -117,14 +117,14 @@ class TestItRefusesToGuess:
         """Every transcript recorded before 2026-08-12 is this case. They keep
         the order they have always had rather than shifting under the operator."""
         h = [
-            user("wait", during_run="r1", at_unit=1),
+            user("wait", during_turn="r1", at_unit=1),
             reply("AB", turn_id="r1", segments=[text("A"), text("B")]),
         ]
         assert shape(h) == ["user:wait", "assistant:AB"]
 
     def test_a_token_that_names_nothing_puts_the_message_after_the_reply(self):
         h = [
-            user("wait", during_run="r1", cut_id="gone"),
+            user("wait", during_turn="r1", cut_id="gone"),
             reply("AB", turn_id="r1", segments=[text("A", cut=["other"]), text("B")]),
         ]
         assert shape(h) == ["assistant:AB", "user:wait"]
@@ -134,7 +134,7 @@ class TestItRefusesToGuess:
         `j < i` test is what keeps it there."""
         h = [
             reply("AB", turn_id="r1", segments=[text("A"), text("B")]),
-            user("late", during_run="r1", cut_id="c1"),
+            user("late", during_turn="r1", cut_id="c1"),
         ]
         assert shape(h) == ["assistant:AB", "user:late"]
 
@@ -142,8 +142,8 @@ class TestItRefusesToGuess:
         """Two messages in a row mid-reply must not produce an empty assistant
         line between them: a blank turn reads as the model saying nothing."""
         h = [
-            user("one", during_run="r1", cut_id="c1"),
-            user("two", during_run="r1", cut_id="c2"),
+            user("one", during_turn="r1", cut_id="c1"),
+            user("two", during_turn="r1", cut_id="c2"),
             reply("AB", turn_id="r1",
                   segments=[text("A", cut=["c1"]), text("", cut=["c2"]), text("B")]),
         ]
@@ -161,7 +161,7 @@ class TestEveryPathThatShowsTheModelAHistory:
 
     HISTORY = [
         user("go"),
-        user("also do Y", during_run="r1", cut_id="c1"),
+        user("also do Y", during_turn="r1", cut_id="c1"),
         reply("I'll look into X.Done both.", turn_id="r1",
               segments=[text("I'll look into X.", cut=["c1"]), text("Done both.")]),
     ]

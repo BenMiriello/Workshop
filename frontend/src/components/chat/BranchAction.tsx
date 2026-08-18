@@ -32,7 +32,7 @@ export default function BranchAction({
   threadId,
   anchorId,
   mode,
-  runActive,
+  turnActive,
   onChanged,
 }: {
   threadId: string;
@@ -45,7 +45,7 @@ export default function BranchAction({
    *  answering), so the control says so rather than offering a click that 409s.
    *  Situational, unlike an action that could never do anything: that one is
    *  not rendered at all. Same treatment as the scope picker mid-turn. */
-  runActive: boolean;
+  turnActive: boolean;
   /** Re-read the thread; the visible transcript has changed. */
   onChanged: () => void;
 }) {
@@ -69,9 +69,9 @@ export default function BranchAction({
       <button
         type="button"
         className="chat-branch"
-        title={runActive ? "Wait for this turn to finish, or stop it first." : label}
+        title={turnActive ? "Wait for this turn to finish, or stop it first." : label}
         aria-label={label}
-        disabled={runActive}
+        disabled={turnActive}
         onClick={() => setConfirming(true)}
       >
         <GitBranch size={13} strokeWidth={1.8} aria-hidden />

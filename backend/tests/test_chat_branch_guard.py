@@ -42,7 +42,7 @@ def _guard(tid):
 class TestItRefusesWhileTheThreadIsBusy:
     def test_a_live_turn_blocks_branching(self, thread):
         tid = thread["id"]
-        asyncio.run(build_streaming.claim_run(tid, "r-1", model="m", accepts_input=True))
+        asyncio.run(build_streaming.claim_turn(tid, "r-1", model="m", accepts_input=True))
         with pytest.raises(HTTPException) as e:
             _guard(tid)
         assert e.value.status_code == 409
@@ -61,8 +61,8 @@ class TestItRefusesWhileTheThreadIsBusy:
 
     def test_it_is_allowed_again_once_the_turn_ends(self, thread):
         tid = thread["id"]
-        asyncio.run(build_streaming.claim_run(tid, "r-1", model="m", accepts_input=True))
-        build_streaming.release_external_run(tid, "r-1")
+        asyncio.run(build_streaming.claim_turn(tid, "r-1", model="m", accepts_input=True))
+        build_streaming.release_external_turn(tid, "r-1")
         _guard(tid)
 
     def test_it_is_allowed_again_once_the_operation_ends(self, thread):
@@ -72,13 +72,13 @@ class TestItRefusesWhileTheThreadIsBusy:
         _guard(tid)
 
     def test_a_stale_run_id_does_not_block_forever(self, thread):
-        """`active_run_id` outlives the run it names across a restart. A thread
+        """`active_turn_id` outlives the run it names across a restart. A thread
         whose meta still points at a run this process is not driving is quiet,
-        and the whole reason `run_is_live` exists is so every caller agrees."""
+        and the whole reason `turn_is_live` exists is so every caller agrees."""
         tid = thread["id"]
-        chat_log.patch_meta_sync(tid, active_run_id="r-from-a-previous-boot")
-        assert chat_store.active_run_id(tid) == "r-from-a-previous-boot"
-        assert build_streaming.run_is_live("r-from-a-previous-boot") is False
+        chat_log.patch_meta_sync(tid, active_turn_id="r-from-a-previous-boot")
+        assert chat_store.active_turn_id(tid) == "r-from-a-previous-boot"
+        assert build_streaming.turn_is_live("r-from-a-previous-boot") is False
         _guard(tid)
 
 
@@ -88,7 +88,7 @@ class TestSwitchingIsGuardedToo:
         to, so it is not the cheaper, safer half of the pair."""
         from routes import chat as chat_routes
         tid = thread["id"]
-        asyncio.run(build_streaming.claim_run(tid, "r-1", model="m", accepts_input=True))
+        asyncio.run(build_streaming.claim_turn(tid, "r-1", model="m", accepts_input=True))
         with pytest.raises(HTTPException) as e:
             chat_routes._require_quiet_for_branching(tid, "switching")
         assert e.value.status_code == 409

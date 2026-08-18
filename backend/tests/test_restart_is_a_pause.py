@@ -9,8 +9,8 @@ slow. Each maps to a specific defect found on 2026-08-13:
    way down, and the CancelledError handler ran _end_wedged, which SIGTERMs the
    child's process group and commits "This turn ended early" into the transcript.
 
-2. A restart inside the commit window duplicated the reply. commit_run appends
-   the reply and clears active_run_id, but the journal is marked done only
+2. A restart inside the commit window duplicated the reply. commit_turn appends
+   the reply and clears active_turn_id, but the journal is marked done only
    afterwards, with a seconds-long git checkpoint in between. reattach checked
    only the journal status, so it re-drove a turn whose reply was already on the
    thread: a second assistant message, and every note/ticket/learning block in
@@ -100,7 +100,7 @@ class _FakeStore:
         self.value = value
         self.boom = boom
 
-    def active_run_id(self, thread_id):
+    def active_turn_id(self, thread_id):
         if self.boom:
             raise RuntimeError("log unreadable")
         return self.value
@@ -110,13 +110,13 @@ class _FakeStore:
     "active,expected,why",
     [
         ("run-1", False, "thread still names this run: commit had NOT happened"),
-        (None, True, "field cleared: commit_run appended the reply and cleared it"),
+        (None, True, "field cleared: commit_turn appended the reply and cleared it"),
         ("run-2", True, "another run owns the thread now; re-driving would interleave"),
     ],
 )
 def test_already_committed_reads_the_thread_not_the_journal(monkeypatch, active, expected, why):
     """The journal cannot answer this. It still says "running" in every one of
-    these cases; the thread's active_run_id is the durable record of who won."""
+    these cases; the thread's active_turn_id is the durable record of who won."""
     monkeypatch.setattr(bs, "chat_store", _FakeStore(active))
     meta = {"thread_id": "th-1", "turn_id": "run-1"}
     assert bs._already_committed(meta) is expected, why

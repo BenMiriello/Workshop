@@ -128,17 +128,17 @@ class TestSaveThreadDiffsInsteadOfOverwriting:
         assert [m["content"] for m in msgs] == ["one", "the reply"]
 
     def test_a_live_run_view_is_not_committed_by_a_write_back(self, thread):
-        """A caller that read the thread mid-run is holding the run's live view
+        """A caller that read the thread mid-turn is holding the turn's live view
         as a trailing assistant message. Appending it would commit a half-written
         reply that the run is about to commit properly."""
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.begin_run(tid, "run-1")
-        chat_store.update_run(tid, "run-1", [{"t": "text", "text": "half"}], "half")
+        chat_store.begin_turn(tid, "run-1")
+        chat_store.update_turn(tid, "run-1", [{"t": "text", "text": "half"}], "half")
         t = chat_store.get_thread(tid)
         assert t["messages"][-1]["meta"]["streaming"] is True
         chat_store.save_thread(t)
-        chat_store.commit_run(tid, "run-1", [], "the whole answer")
+        chat_store.commit_turn(tid, "run-1", [], "the whole answer")
         msgs = chat_store.get_thread(tid)["messages"]
         assert [m["content"] for m in msgs] == ["go", "the whole answer"]
 
