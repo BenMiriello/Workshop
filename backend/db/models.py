@@ -749,7 +749,7 @@ MESSAGE_ROLES = ("user", "assistant")
 # a title is a column on the thread.
 MESSAGE_KINDS = ("message", "boundary", "scope")
 BOUNDARY_MODES = ("clear", "compact")
-TURN_STATUSES = ("running", "finished", "lost")
+TURN_STATUSES = ("running", "finished", "lost", "error", "stopped")
 
 # Documented for the reader; NOT constrained, because segments are a JSONB
 # render payload (see ChatMessage.segments).
