@@ -538,7 +538,7 @@ a.ws-btn { text-decoration: none; }
    default (blue, underlined) painted every descendant inside it, including
    plain-text timestamps -- reported as "timestamps render as underlined
    links". `color: inherit` + no text-decoration on the link itself removes
-   that; specific children (`.ws-ref--link` etc.) still opt back in on their
+   that; specific children (`.ws-ref--trigger` etc.) still opt back in on their
    own terms. */
 .ws-note-card__link { display: block; min-width: 0; color: inherit; text-decoration: none; }
 /* The per-chat sharing badge (Memory.tsx's ChatShareBadge): a small icon

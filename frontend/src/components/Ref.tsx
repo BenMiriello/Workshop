@@ -1,18 +1,18 @@
 // The one chip for a `workshop:<kind>/...` ref (memory-and-documentation-
-// model-2026-08-14.md sec 10): a lucide icon per kind, the resolved title,
-// click navigates to the in-app route. An unresolvable ref (refused by the
-// backend resolver -- a deleted note, a bad path) renders as plain text,
-// never as a link that goes nowhere.
+// model-2026-08-14.md sec 10; managed-file-references-and-path-scoping-
+// 2026-08-18 sec "Managed-link chip"): a lucide icon per kind, the resolved
+// title, and a dropdown with a preview (thumbnail for a showable file, else
+// the kind's icon) and three actions -- Open, Copy URL (the in-app link) and
+// Copy path (the managed `workshop:<kind>/...` address, for every user, no
+// developer-mode gate). EVERY kind gets this, not just `file`: a bare
+// navigating link never showed the managed address at all, which was the
+// point of the ticket. An unresolvable ref (refused by the backend resolver
+// -- a deleted note, a bad path) renders as plain text, never as a link that
+// goes nowhere and never as the raw ref string.
 //
-// Reads as a link WITHOUT hover (the operator is often on a phone): a faint
-// underline at rest, same rule as `.ws-md a` in the kit and `.chat-receipt--
-// link` in styles.css, not a hover-only affordance.
-//
-// A `file` ref is the exception (Layer 3 of managed-file-references-and-path-
-// scoping-2026-08-18): instead of navigating, the chip opens a preview panel
-// with the file's thumbnail/icon and the three managed actions -- Open, Copy
-// URL (the in-app link), Copy path (the managed address, for every user). No
-// raw OS path is ever shown.
+// The trigger reads as a link WITHOUT hover (the operator is often on a
+// phone): a faint underline at rest, same rule as `.ws-md a` in the kit and
+// `.chat-receipt--link` in styles.css, not a hover-only affordance.
 import { Link } from "react-router-dom";
 import {
   FileText, BookOpen, Ticket as TicketIcon, MessageSquare, Play,
@@ -59,18 +59,10 @@ export function Ref({
     return <span className="ws-ref ws-ref--unresolved">Unavailable</span>;
   }
   const Icon = REF_ICON[resolved.kind] ?? FileText;
-  if (resolved.kind === "file") {
-    return <FileRef resolved={resolved} refStr={refStr} Icon={Icon} />;
-  }
-  return (
-    <Link className="ws-ref ws-ref--link" to={resolved.href}>
-      <Icon size={13} strokeWidth={1.8} aria-hidden />
-      <span>{resolved.title}</span>
-    </Link>
-  );
+  return <RefCard resolved={resolved} refStr={refStr} Icon={Icon} />;
 }
 
-function FileRef({
+function RefCard({
   resolved,
   refStr,
   Icon,
@@ -86,9 +78,13 @@ function FileRef({
     typeof window !== "undefined"
       ? `${window.location.origin}${resolved.href}`
       : resolved.href;
+  // A `file` ref's href is a raw serve endpoint (/api/attachments/<id>), so
+  // Open leaves the SPA; every other kind's href is an in-app route, so Open
+  // navigates through the router instead of a full page load.
+  const isFile = resolved.kind === "file";
 
   const trigger = (
-    <button type="button" className="ws-ref ws-ref--file" title={resolved.title}>
+    <button type="button" className="ws-ref ws-ref--trigger" title={resolved.title}>
       <Icon size={13} strokeWidth={1.8} aria-hidden />
       <span>{resolved.title}</span>
     </button>
@@ -110,15 +106,22 @@ function FileRef({
         </div>
       </div>
       <div className="ws-ref-card__actions">
-        <a
-          className="ws-ref-action"
-          href={resolved.href}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <ExternalLink size={14} strokeWidth={1.8} aria-hidden />
-          <span>Open</span>
-        </a>
+        {isFile ? (
+          <a
+            className="ws-ref-action"
+            href={resolved.href}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <ExternalLink size={14} strokeWidth={1.8} aria-hidden />
+            <span>Open</span>
+          </a>
+        ) : (
+          <Link className="ws-ref-action" to={resolved.href}>
+            <ExternalLink size={14} strokeWidth={1.8} aria-hidden />
+            <span>Open</span>
+          </Link>
+        )}
         <div className="ws-ref-row">
           <span className="ws-ref-row__label">URL</span>
           <CopyButton value={url} />
