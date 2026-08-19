@@ -180,7 +180,7 @@ export default function ChatLog({
         <ChatProblemBlock problem={error} shape="region" />
       ) : placeholder === "empty" ? (
         <div className="chat-empty">
-          {isBuild ? "Tell the agent what to build..." : "Ask anything."}
+          {isBuild ? "Tell the agent what to build..." : "Ready to build."}
         </div>
       ) : null}
 
