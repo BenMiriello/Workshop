@@ -99,7 +99,7 @@ class Driver:
         self.proc = FakeProc()
         self.turn.proc, self.turn.pid = self.proc, self.proc.pid
 
-        async def _retire(pid, proc=None):
+        async def _retire(pid, proc=None, **_kwargs):
             self.retired = True
         monkeypatch.setattr(build_streaming, "_retire_turn_proc", _retire)
 
@@ -362,7 +362,7 @@ class TestAPromptThatCouldNotBeDeliveredAtAll:
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
         monkeypatch.setattr(build_streaming, "write_to_turn", lambda *a, **k: False)
 
-        async def _retire(pid, proc=None):
+        async def _retire(pid, proc=None, **_kwargs):
             return None
         monkeypatch.setattr(build_streaming, "_retire_turn_proc", _retire)
 

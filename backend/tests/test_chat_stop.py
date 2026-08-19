@@ -92,7 +92,7 @@ async def _drive_and_stop(turn, meta, proc, *, killer=None, stops: int = 1):
     stands in for the signal: it records, then kills the fake process the way
     SIGTERM kills a real one. `stops` presses land CONCURRENTLY, which is the
     race worth testing — two of them in the same tick."""
-    async def kill(pid, p=None):
+    async def kill(pid, p=None, **_kwargs):
         if killer is not None:
             killer(pid, p)
         proc.die()
@@ -322,7 +322,7 @@ def test_a_stop_before_the_process_exists_still_ends_the_run(thread):
     seen: list = []
 
     async def go():
-        async def kill(pid, p=None):
+        async def kill(pid, p=None, **_kwargs):
             seen.append(pid)
             proc.die()
         stopping = asyncio.create_task(build_streaming.stop_turn(turn.id))
@@ -359,7 +359,7 @@ def test_stop_returns_before_hanging_forever(thread, monkeypatch):
     turn, meta, proc = _running_turn(tid, [_text_line("x")])
     monkeypatch.setattr(build_streaming, "STOP_WAIT_S", 0.05)
 
-    async def kill(pid, p=None):
+    async def kill(pid, p=None, **_kwargs):
         return None       # the process ignores it; nothing finishes
     monkeypatch.setattr(build_streaming, "_retire_turn_proc", kill)
 

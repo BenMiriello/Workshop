@@ -135,15 +135,37 @@ reply rather than becoming a card.
 
 ---
 
-## 6. Step 0 (SHIPPED this pass): the chat delegation contract
+## 6. Step 0 (shipped 2026-08-18, then found insufficient) + Step 1 (shipped 2026-08-19)
 
-`DELEGATION_RULE` in `chat_context.py` previously described launching a subagent
-without ever saying it must complete inside the reply. It now states plainly that
-a subagent lives only inside the reply, that ending the turn kills it, that the
-model must never promise a later report or launch-and-stop, and that work which
-should run on its own and report back is a Workshop agent / a Run, not a
-subagent. This is the change that stops the recurring failure at the source: the
-model can no longer be truthfully told it may background a subagent.
+`DELEGATION_RULE` in `chat_context.py` was rewritten to state plainly that a
+subagent lives only inside the reply, that ending the turn kills it, and that
+the model must never promise a later report. THIS DID NOT HOLD. Verified against
+a real thread (89223a47..., 2026-08-19 01:25-01:34 UTC, hours after the fix went
+live): the model tried backgrounding again, got "interrupted by a session
+restart," retried, failed the same way a second time, and only then gave up and
+did the work in the foreground. A prompt is advice; the model can and did ignore
+it under pressure to be helpful fast.
+
+Root cause, confirmed empirically (spawned real `claude -p` processes,
+2026-08-19): a backgrounded Agent/Task call genuinely works when nothing
+disturbs the process — `task_notification` arrives and the model answers it
+inline, no `--resume` needed, exactly as the tool's own docs promise. The
+failure is specific to THIS deployment: every concurrent chat turn in this scope
+runs `apply.sh` as its own final step (see the runtime briefing), so this
+backend restarts often, and a background subagent's in-flight work does not
+survive that restart the way the turn's own outer process does (`KillMode=process`
++ no `os.killpg` on shutdown, `docs §2` above — built for the turn's process,
+never extended to a subagent nested inside it).
+
+Step 1: since a prompt-only fix cannot be trusted, `services/subagent_guard.py`
+is a PreToolUse hook wired into every chat turn's argv (`--settings` in
+`build_streaming._build_cmd`) that structurally denies `run_in_background: true`
+on the Agent/Task tool. Proven against the real CLI three times: the call is
+rejected with a reason, the model retries synchronously in the same reply, and
+the result lands inline — no promise the architecture can't keep. `DELEGATION_RULE`
+now says the flag is hook-enforced so the model does not spend a round trip
+discovering it. This is the change that stops the recurring failure at the
+source: the model can no longer background a subagent even if it tries.
 
 ---
 

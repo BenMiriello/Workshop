@@ -267,3 +267,34 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   attended verify, invert the code default to scoped-on and express the dev role's
   wider reach as an explicit named grant set, so a fresh deploy is confined out of
   the box and the flag becomes at most an escape hatch.
+- 2026-08-19 — Operator: a chat said "I've kicked off an investigation, I'll
+  respond when it's done" and then never did; asked why this wasn't already
+  fixed and to find the actual full fix. It HAD been diagnosed and partly fixed
+  hours earlier (`chat-agent-integration-2026-08-18.md`, commit 2f2a262,
+  09:50am): `DELEGATION_RULE` was rewritten to tell the model a background
+  subagent cannot survive turn-end. That fix did not hold — verified against a
+  real thread (89223a47..., 01:25-01:34 UTC 08-19) where the model tried it
+  again hours after the restart that put the new prompt live, got "interrupted
+  by a session restart," retried, failed the same way again, and only then gave
+  up and did the work in the foreground. Root cause, confirmed empirically by
+  spawning real `claude -p` processes: a backgrounded Agent/Task call DOES
+  deliver correctly when nothing disturbs the process (task_notification
+  arrives and gets answered inline, no `--resume` needed) — but this backend
+  restarts often, because every concurrent chat turn in this scope runs
+  `apply.sh` as its own final step, and a background subagent's in-flight work
+  does not survive that restart the way the turn's own outer process does
+  (that guarantee — `KillMode=process` + no `os.killpg` on shutdown — was built
+  for the turn's process, not for a subagent nested inside it). A prompt asking
+  the model not to do this failed twice in the same thread within 7 minutes, so
+  the fix shipped as a structural one instead: `services/subagent_guard.py`, a
+  PreToolUse hook wired into every chat turn's argv (`--settings` in
+  `build_streaming._build_cmd`) that rejects `run_in_background: true` on the
+  Agent/Task tool outright. Verified end-to-end against the real CLI: the
+  background call is denied with a clear reason, the model retries the same
+  call synchronously, and the result lands inline in the same reply — proven
+  three times against live `claude -p` processes before landing. `DELEGATION_RULE`
+  updated to say the flag is hook-enforced, not just discouraged, so the model
+  does not spend a round trip discovering it. 79 targeted tests + a new
+  `test_subagent_guard.py` green; full backend suite has pre-existing,
+  unrelated failures (db/tenancy/dev-mode fixtures) confirmed present before
+  this change and untouched by it.
