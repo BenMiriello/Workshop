@@ -196,7 +196,43 @@ export default function Chat({
     onError: setErr,
     onLeaveForList: () => navigate("/chats"),
   });
-  const { activeId, activeIdRef } = thread;
+  const { activeId, activeIdRef, loadingThreads } = thread;
+
+  // KEEP THE ADDRESS BAR HONEST about which conversation THIS TAB is on.
+  //
+  // Adopting a thread (the first message of a blank chat creating one, or any
+  // switch that does not itself call `navigate`) only ever touched React state
+  // and the per-scope selection in localStorage — never the URL. Since that
+  // localStorage key is SHARED across every tab and dock on the same scope, a
+  // tab whose address bar never picked up its own thread id had no way to stay
+  // itself: reload it, or just open a fresh one on the same scope, and it
+  // resolves through the shared "last selection" and can land on whatever
+  // conversation another tab touched most recently. Confirmed 2026-08-19: three
+  // separate tabs, started on three different conversations, had collapsed to
+  // showing the same one.
+  //
+  // Raw `history.replaceState`, not `navigate`: routing a URL change through
+  // the router would change the `initialThreadId` prop this component reads,
+  // re-arming the one-shot link intent and re-running the thread loader for a
+  // conversation that is already open. This only needs the bar to read right;
+  // nothing here should re-trigger resolution.
+  //
+  // Gated on the loader having settled, so the very first paint (URL may still
+  // carry the `?thread=` this tab was opened with, before `activeId` catches
+  // up) never clears it out from under the resolver that is about to read it.
+  useEffect(() => {
+    if (variant !== "full" || typeof window === "undefined" || loadingThreads) return;
+    const url = new URL(window.location.href);
+    const current = url.searchParams.get("thread");
+    if (activeId) {
+      if (current === activeId) return;
+      url.searchParams.set("thread", activeId);
+    } else {
+      if (!current) return;
+      url.searchParams.delete("thread");
+    }
+    window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+  }, [variant, activeId, loadingThreads]);
 
   // The conversation itself: one store, fed by one endpoint from a cursor.
   const log = useThreadLog({ threadId: activeId, onError: setErr });
