@@ -104,6 +104,30 @@ def enabled() -> bool:
     return functional()
 
 
+def _cli_root() -> str | None:
+    """Two directories up from wherever `claude` resolves on PATH.
+
+    `_RO_SYSTEM` covers a package-manager install under /usr or /usr/local, but
+    an nvm-managed Node puts `claude` (and the npm package it's a symlink into,
+    lib/node_modules/@anthropic-ai/claude-code/) under ~/.nvm/versions/node/vX.Y.Z/
+    — nowhere in `_RO_SYSTEM`. Binding just the `bin/` directory isn't enough:
+    the `claude` entry there is a symlink to `../lib/node_modules/.../claude.exe`,
+    and that relative target only resolves if the whole version directory is
+    bound as one subtree matching its real layout. Two `dirname`s off the
+    resolved path (before following any symlink) lands on exactly that
+    directory for an nvm install, and lands on an already-`_RO_SYSTEM`-covered
+    path for a system one — so this is a no-op there, not a special case.
+
+    Mirrors CLAUDE_CLI's own resolution (llm_router._claude_env) so both agree
+    on which binary a turn actually execs.
+    """
+    cli = os.environ.get("CLAUDE_CLI") or shutil.which("claude")
+    if not cli or not os.path.isabs(cli):
+        return None
+    root = os.path.dirname(os.path.dirname(cli))
+    return root if os.path.isdir(root) else None
+
+
 def _grants() -> list[tuple[str, str]]:
     """(mode, path) binds a build/dev turn needs beyond its scope, each at its
     REAL path so a tool expecting an absolute location still finds it. Skipped
@@ -114,6 +138,9 @@ def _grants() -> list[tuple[str, str]]:
       - ~/.config/workshop: instance.env and friends, read-only.
       - ~/.claude: the CLI's home (hooks, credentials fallback, file history).
       - ~/.gitconfig + ~/.config/git: identity for a commit.
+      - the CLI's own install root, when it isn't already under _RO_SYSTEM
+        (see `_cli_root`) — without it, execvp fails before the sandbox does
+        anything else: the binary it's told to run isn't in its own view.
     """
     home = os.path.expanduser("~")
     uid = os.getuid()
@@ -126,6 +153,9 @@ def _grants() -> list[tuple[str, str]]:
         ("ro", os.path.join(home, ".gitconfig")),
         ("ro", os.path.join(home, ".config", "git")),
     ]
+    cli_root = _cli_root()
+    if cli_root and not any(cli_root == r or cli_root.startswith(r + "/") for r in _RO_SYSTEM):
+        candidates.append(("ro", cli_root))
     return [(mode, p) for mode, p in candidates if p and os.path.exists(p)]
 
 
