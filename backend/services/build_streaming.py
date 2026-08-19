@@ -214,7 +214,6 @@ def session_alive(session_id: str | None, cwd: str) -> bool:
     fresh session instead of failing."""
     if not session_id:
         return False
-    home = os.path.expanduser("~")
     # The CLI keys the session dir on the cwd IT sees. Under scoped exec that is
     # the mountpoint (/workspace), not the real path, so a session must be found
     # in that dir for --resume to succeed. Checking the real-cwd dir (or globbing
@@ -222,6 +221,17 @@ def session_alive(session_id: str | None, cwd: str) -> bool:
     # resume, and the turn would fail. So when scoped, look only where the CLI
     # will look; the failed-resume self-heal is the backstop, not the norm.
     from services import scoped_exec
+    # Under the uid layer the CLI runs (and writes its session files) as the
+    # turn-user, HOME'd at its own directory (turn_env()), not clawd-a's -- and
+    # clawd-a's ~/.claude is not even bound in for that case (see _grants()).
+    # A soft check: an unavailable turn-user here just means "no session found
+    # yet" (the fresh-session path), not a hard failure -- the spawn itself is
+    # what raises on a real misconfiguration.
+    try:
+        user = scoped_exec.turn_user(os.path.realpath(cwd) if cwd else None)
+    except scoped_exec.TurnUserUnavailable:
+        user = None
+    home = scoped_exec.turn_home() if user else os.path.expanduser("~")
     scoped = scoped_exec.enabled()
     eff_cwd = scoped_exec.MOUNTPOINT if scoped else cwd
     encoded = eff_cwd.rstrip("/").replace("/", "-")
@@ -351,6 +361,11 @@ class Turn:
     # handle; `proc` only when we spawned it ourselves.
     pid: int | None = None
     proc: object | None = None
+    # Mirrors meta["turn_user"] / meta["pid_starttime"] so stop_turn (which
+    # only has this object, not `meta`) can still signal correctly across the
+    # uid layer -- see scoped_exec.signal_pg and _proc_alive.
+    turn_user: str | None = None
+    pid_starttime: str | None = None
     # The operator pressed Stop. Two flags, not one, because two different
     # coroutines act on it: stop_turn signals the process group, the drive loop
     # words the finalize. `stop_signalled` is the interlock that keeps the group
@@ -1553,7 +1568,7 @@ def _mark_meta(meta: dict, status: str) -> None:
         pass
 
 
-def _proc_alive(pid: int | None) -> bool:
+def _proc_alive(pid: int | None, *, starttime: str | None = None) -> bool:
     """Is this turn's agent process still running?
 
     IS IT STILL *OURS*. `os.kill(pid, 0)` alone answers "does some process have
@@ -1575,22 +1590,43 @@ def _proc_alive(pid: int | None) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        # The pid belongs to another user. Our agent children run as us, so this
-        # is a recycled pid, not our turn. This used to answer True, which is the
-        # same forever-spinning turn one level down: "some process exists" was
-        # never the question.
-        return False
+        # The pid exists but belongs to another uid -- expected under the uid
+        # layer (WORKSHOP_TURN_USER): `clawd-a` cannot signal a
+        # `workshop-turn`-owned process, but "cannot signal" is not "gone".
+        # `starttime` is what still tells "my turn, still running" apart from
+        # "something else now holds this number": two processes never share
+        # both a pid and a start time, and unlike a signal it is a plain file
+        # read, so it works regardless of which uid owns the target (verified:
+        # /proc/<pid>/stat is mode 444 on this host). Answering False here
+        # unconditionally (the pre-uid-layer behaviour) would make every
+        # scoped turn's restart-adoption read as "already dead" the moment
+        # isolation actually worked.
+        if starttime is not None:
+            return _proc_starttime(pid) == starttime
+        return True
+    if starttime is not None:
+        return _proc_starttime(pid) == starttime
     return _is_agent_proc(pid, unknown=True)
+
+
+_AGENT_COMMS = frozenset({"claude", "bwrap", "sudo", "turn-exec"})
 
 
 def _is_agent_proc(pid: int, *, unknown: bool = False) -> bool:
     """Is this pid an agent process (rather than whatever recycled its number)?
 
-    `/proc/<pid>/comm` is the executable name, which for the CLI is exactly
-    "claude". Matching on the COMMAND LINE instead is too loose: any process
-    whose argv happens to mention claude counts, and on this box that includes
-    every shell whose snapshot path contains `.claude/`. That false positive
-    turned up immediately in testing.
+    `/proc/<pid>/comm` is the executable name. Matching on the COMMAND LINE
+    instead is too loose: any process whose argv happens to mention claude
+    counts, and on this box that includes every shell whose snapshot path
+    contains `.claude/`. That false positive turned up immediately in testing.
+
+    Accepts more than "claude" itself: under Layer 1 (bwrap) the pid this
+    module records is bwrap's own, not the CLI's -- bwrap forks rather than
+    exec-replacing itself (confirmed live: the recorded pid's child, not the
+    pid itself, is the "claude" process) -- and under the uid layer the chain
+    is sudo -> turn-exec -> bwrap -> claude, any of which this module's
+    recorded pid might legitimately be depending on where in the exec chain a
+    check lands.
 
     `unknown` is the answer when procfs cannot say -- True where the caller is
     asking "is my known child still alive" (do not invent a death), False where
@@ -1598,12 +1634,41 @@ def _is_agent_proc(pid: int, *, unknown: bool = False) -> bool:
     """
     try:
         with open(f"/proc/{pid}/comm", "r") as fh:
-            return fh.read().strip() == "claude"
+            return fh.read().strip() in _AGENT_COMMS
     except OSError:
         return unknown
 
 
-async def _retire_turn_proc(pid: int | None, proc=None) -> None:
+def _proc_starttime(pid: int) -> str | None:
+    """Field 22 of `/proc/<pid>/stat` (start time in clock ticks since boot),
+    read verbatim and compared as a string. Two processes never share both a
+    pid and a start time, so this is an exact identity check across a pid
+    recycle -- and unlike `os.kill(pid, 0)`, reading it is a plain file read
+    that does not depend on which uid owns the target (verified: mode 444 on
+    this host, readable regardless of owner), which is what makes it the
+    mechanism that works under the uid layer.
+    """
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return None
+    # comm (stat field 2) is parenthesised and may itself contain ')' or a
+    # space, so split on the LAST ')' rather than tokenizing the whole line.
+    parts = raw.rsplit(b")", 1)
+    if len(parts) != 2:
+        return None
+    fields = parts[1].split()
+    # fields[0] here is state (stat field 3); starttime is stat field 22, i.e.
+    # index 22 - 3 = 19 into this remainder.
+    if len(fields) <= 19:
+        return None
+    return fields[19].decode()
+
+
+async def _retire_turn_proc(pid: int | None, proc=None, *,
+                             user: str | None = None,
+                             starttime: str | None = None) -> None:
     """End a turn's process once its `result` line has landed.
 
     Under `--input-format stream-json` the CLI does not exit when it finishes a
@@ -1614,25 +1679,50 @@ async def _retire_turn_proc(pid: int | None, proc=None) -> None:
     SIGTERM the whole group first and give it a moment. The group matters
     because the CLI owns children (MCP servers, tool subprocesses) and this now
     runs on every single turn rather than only on a timeout, so orphaning them
-    would accumulate fast. SIGKILL is the fallback if it does not go."""
-    try:
-        pgid = os.getpgid(pid) if pid else None
-    except OSError:
-        pgid = None
-    try:
-        if pgid is not None:
-            os.killpg(pgid, signal.SIGTERM)
-        elif proc is not None and proc.returncode is None:
-            proc.terminate()
-    except Exception:
-        pass
+    would accumulate fast. SIGKILL is the fallback if it does not go.
+
+    `user` is the uid the spawn actually used (`meta["turn_user"]`, recorded
+    then -- not recomputed now, so a self-scope turn carved out of the uid
+    layer at spawn is still signalled directly even if the flag happens to be
+    set by the time this runs). CROSS-UID, this must go through
+    `scoped_exec.signal_pg` and ONLY that: `proc.terminate()` still targets the
+    real pid via a plain `os.kill` under the hood and raises PermissionError
+    from `clawd-a` onto a `workshop-turn`-owned process, and the bare
+    `except Exception: pass` this used to fall into would swallow that and
+    silently do nothing -- leaking the process and leaving Stop a no-op.
+    """
+    if user is not None:
+        if pid:
+            from services import scoped_exec
+            try:
+                pgid = os.getpgid(pid)
+            except OSError:
+                pgid = None
+            try:
+                scoped_exec.signal_pg(pid, signal.SIGTERM, user=user, pgid=pgid)
+            except Exception:
+                pass
+    else:
+        try:
+            pgid = os.getpgid(pid) if pid else None
+        except OSError:
+            pgid = None
+        try:
+            if pgid is not None:
+                os.killpg(pgid, signal.SIGTERM)
+            elif proc is not None and proc.returncode is None:
+                proc.terminate()
+        except Exception:
+            pass
     for _ in range(20):  # up to ~2s for a clean shutdown
         await asyncio.sleep(0.1)
+        # waitpid-based, so this still reports correctly regardless of which
+        # uid the child actually ran as -- only SIGNALLING it is uid-gated.
         if proc is not None and proc.returncode is not None:
             return
-        if pid and not _proc_alive(pid):
+        if pid and not _proc_alive(pid, starttime=starttime):
             return
-    _kill_turn_proc(pid, proc)
+    _kill_turn_proc(pid, proc, user=user, starttime=starttime)
 
 
 def _cleanup_turn_input(turn_id: str) -> None:
@@ -1644,7 +1734,23 @@ def _cleanup_turn_input(turn_id: str) -> None:
         log.debug("turn %s: input channel cleanup failed: %s", turn_id, e)
 
 
-def _kill_turn_proc(pid: int | None, proc=None) -> None:
+def _kill_turn_proc(pid: int | None, proc=None, *,
+                     user: str | None = None,
+                     starttime: str | None = None) -> None:
+    if user is not None:
+        # See `_retire_turn_proc`: proc.kill() is not safe to try cross-uid,
+        # so this does not fall through to it on any failure here.
+        if pid:
+            from services import scoped_exec
+            try:
+                pgid = os.getpgid(pid)
+            except OSError:
+                pgid = None
+            try:
+                scoped_exec.signal_pg(pid, signal.SIGKILL, user=user, pgid=pgid)
+            except Exception:
+                pass
+        return
     try:
         if proc is not None and proc.returncode is None:
             proc.kill()
@@ -1789,6 +1895,19 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
         # "the bytes reached the process" into "the turn has read it" — the
         # difference between a chat that is waiting and one that looks broken.
         "--replay-user-messages",
+        # A backgrounded Agent/Task call only delivers its result if this very
+        # process survives to see the CLI's own task_notification -- proven to
+        # work when nothing disturbs it, but this backend restarts often (any
+        # concurrent turn's apply.sh can trigger one) and a background
+        # subagent's in-flight work does not survive that the way this turn's
+        # own process does (chat-agent-integration-2026-08-18.md). The prompt
+        # rule alone did not hold, so this denies the call structurally instead
+        # of asking: see services/subagent_guard.py.
+        "--settings", json.dumps({"hooks": {"PreToolUse": [{
+            "matcher": "Agent|Task",
+            "hooks": [{"type": "command",
+                       "command": f"python3 {_WORKSHOP_ROOT}/backend/services/subagent_guard.py"}],
+        }]}}),
     ]
     # WHICH SCOPE this turn's search tool reaches (memory-and-documentation-
     # model-2026-08-14.md sec C). Pinned here, once, before EITHER tool-surface
@@ -1954,7 +2073,9 @@ async def _end_wedged(turn: Turn, meta: dict, detail: str) -> None:
     # that wait for nothing while the operator watches the turn hang.
     if meta.get("pid") or turn.proc is not None:
         try:
-            await _retire_turn_proc(meta.get("pid"), turn.proc)
+            await _retire_turn_proc(meta.get("pid"), turn.proc,
+                                     user=meta.get("turn_user"),
+                                     starttime=meta.get("pid_starttime"))
         except Exception as e:  # pragma: no cover — best-effort
             log.debug("turn %s: could not retire process after crash: %s", turn.id, e)
     _cleanup_turn_input(turn.id)
@@ -2071,13 +2192,23 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
         _push(turn, "error", {"detail": turn.error})
         await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
         return
-    # Layer 1 (managed-file-references-and-path-scoping-2026-08-18.md): confine the
-    # turn to its scope, mounted at /workspace, when WORKSHOP_SCOPED_EXEC=1. OFF by
-    # default -- wrap() returns cmd unchanged -- so the live spawn is untouched
-    # until the flag is flipped attended. cwd stays the real path: that is where
-    # bwrap itself starts before entering the namespace.
+    # Layer 1 (managed-file-references-and-path-scoping-2026-08-18.md): confine
+    # the turn to its scope, mounted at /workspace. On by default where bwrap
+    # is functional (WORKSHOP_SCOPED_EXEC unset); =0/=1 force it off/on. cwd
+    # stays the real path: that is where bwrap itself starts before entering
+    # the namespace. The uid layer (spawn_argv, WORKSHOP_TURN_USER) composes on
+    # top and is off by default -- see scoped_exec's module docstring.
     from services import scoped_exec
-    spawn_cmd = scoped_exec.wrap(cmd, meta["cwd"])
+    try:
+        spawn_cmd = scoped_exec.spawn_argv(cmd, meta["cwd"])
+    except scoped_exec.TurnUserUnavailable as e:
+        out_f.close(); err_f.close(); os.close(in_fd)
+        turn.error = f"turn-user unavailable: {e}"
+        _push(turn, "error", {"detail": turn.error})
+        await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
+        return
+    turn_user = scoped_exec.turn_user(os.path.realpath(meta["cwd"])) if meta.get("cwd") else None
+    env = scoped_exec.turn_env(env, meta.get("cwd"))
     try:
         proc = await asyncio.create_subprocess_exec(
             *spawn_cmd, cwd=meta["cwd"], env=env,
@@ -2132,11 +2263,23 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
         # unread delivery so `_requeue_unread` puts it back on the queue and the
         # drain sends it. Nothing else would ever retry it.
         turn.unread.append({"origin": meta.get("origin") or []})
-        await _retire_turn_proc(proc.pid, proc)
+        await _retire_turn_proc(proc.pid, proc, user=turn_user,
+                                 starttime=_proc_starttime(proc.pid))
         _cleanup_turn_input(turn.id)
         await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
         return
     meta["pid"] = proc.pid
+    # RECORDED, not recomputed later: `turn_user` is the uid the spawn actually
+    # used (None on the self-scope carve-out even with the flag set), so a
+    # later signal/liveness check uses what happened at spawn time rather than
+    # re-deriving it from the flag, which could answer differently by then.
+    # `pid_starttime` is what makes a later liveness check exact under the uid
+    # layer, where `os.kill(pid, 0)` can no longer prove identity by itself
+    # (see `_proc_alive`).
+    meta["turn_user"] = turn_user
+    meta["pid_starttime"] = _proc_starttime(proc.pid)
+    turn.turn_user = turn_user
+    turn.pid_starttime = meta["pid_starttime"]
     _write_meta(meta)
     await _drive_turn(turn, meta, proc=proc)
 
@@ -2388,7 +2531,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                     )
                     log.warning("turn %s killed: %.0f MB > %d MB ceiling",
                                 turn.id, used, _TURN_MEMORY_MAX_MB)
-                    _kill_turn_proc(meta.get("pid"), proc)
+                    _kill_turn_proc(meta.get("pid"), proc, user=meta.get("turn_user"),
+                                    starttime=meta.get("pid_starttime"))
                     _drain(final=True)
                     break
         # A tool event still gets a fast snapshot, because a tool chip appearing
@@ -2422,7 +2566,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             # request. Retiring on it killed whatever the CLI had started for a
             # second prompt — an injected message, or the task-notification the
             # resume path delivers ahead of ours. See services/turn_end.py.
-            await _retire_turn_proc(meta.get("pid"), proc)
+            await _retire_turn_proc(meta.get("pid"), proc, user=meta.get("turn_user"),
+                                     starttime=meta.get("pid_starttime"))
             break
         if turn.stop_requested and not turn.stop_signalled:
             # The operator stopped a turn whose process did not exist yet when
@@ -2431,15 +2576,18 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             # then, so the loop signals it now — same helper, same interlock, so
             # the group is signalled exactly once either way.
             turn.stop_signalled = True
-            await _retire_turn_proc(meta.get("pid"), proc)
-        alive = (proc.returncode is None) if proc is not None else _proc_alive(meta.get("pid"))
+            await _retire_turn_proc(meta.get("pid"), proc, user=meta.get("turn_user"),
+                                     starttime=meta.get("pid_starttime"))
+        alive = (proc.returncode is None) if proc is not None else \
+            _proc_alive(meta.get("pid"), starttime=meta.get("pid_starttime"))
         if not alive:
             _drain(final=True)
             _persist()
             break
         if deadline is not None and time.time() > deadline:
             timed_out = True
-            _kill_turn_proc(meta.get("pid"), proc)
+            _kill_turn_proc(meta.get("pid"), proc, user=meta.get("turn_user"),
+                             starttime=meta.get("pid_starttime"))
             _drain(final=True)
             break
         await asyncio.sleep(0.15)
@@ -3388,8 +3536,10 @@ def reattach_running_turns() -> None:
                     except Exception:
                         pass
             turn.pid = meta.get("pid")
+            turn.turn_user = meta.get("turn_user")
+            turn.pid_starttime = meta.get("pid_starttime")
             TURNS[tid] = turn
-            alive = _proc_alive(meta.get("pid"))
+            alive = _proc_alive(meta.get("pid"), starttime=meta.get("pid_starttime"))
             log.info("re-attaching build turn %s (pid=%s alive=%s)", tid, meta.get("pid"), alive)
             _drive_task(turn, meta, _drive_turn(turn, meta, proc=None))
     except Exception as e:  # pragma: no cover — never block startup
@@ -3483,9 +3633,10 @@ async def stop_turn(turn_id: str) -> dict:
         if signal_now:
             turn.stop_signalled = True
         pid, proc = turn.pid, turn.proc
+        user, starttime = turn.turn_user, turn.pid_starttime
     if signal_now:
         log.info("turn %s: stopped by the operator; signalling pid %s", turn_id, pid)
-        await _retire_turn_proc(pid, proc)
+        await _retire_turn_proc(pid, proc, user=user, starttime=starttime)
     try:
         await asyncio.wait_for(turn.finished.wait(), STOP_WAIT_S)
     except asyncio.TimeoutError:

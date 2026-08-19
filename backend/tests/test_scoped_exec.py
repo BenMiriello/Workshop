@@ -5,6 +5,7 @@ These run the real bwrap when it is present and skip cleanly otherwise, so the
 suite is green on a host without user namespaces."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 
@@ -99,3 +100,160 @@ def test_outside_scope_is_absent(monkeypatch, tmp_path):
     if "namespace" in (ro.stderr or "").lower():
         pytest.skip("user namespaces unavailable here")
     assert ro.returncode != 0
+
+
+# --- The uid layer ([SEC-A1]): all argv-construction, no root and no real sudo ---
+
+
+def _fake_account(monkeypatch, tmp_path, name="workshop-turn"):
+    """A pwd.getpwnam() double plus the wrapper/sudo existence checks
+    turn_user() makes, so these tests exercise real validation logic without
+    a real system account -- which nothing running as this suite can create."""
+    import pwd as _pwd
+
+    home = tmp_path / "turn-home"
+    home.mkdir()
+
+    class _Entry:
+        pw_name = name
+        pw_dir = str(home)
+
+    def fake_getpwnam(n):
+        if n == name:
+            return _Entry()
+        raise KeyError(n)
+
+    real_exists = os.path.exists
+    real_which = shutil.which
+
+    monkeypatch.setattr(_pwd, "getpwnam", fake_getpwnam)
+    monkeypatch.setattr(scoped_exec.os.path, "exists",
+                         lambda p: True if p == scoped_exec.TURN_WRAPPER else real_exists(p))
+    monkeypatch.setattr(scoped_exec.shutil, "which",
+                         lambda b: "/usr/bin/sudo" if b == "sudo" else real_which(b))
+    monkeypatch.setattr(scoped_exec, "functional", lambda: True)
+    return home
+
+
+def test_turn_user_off_by_default(monkeypatch):
+    monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
+    assert scoped_exec.turn_user() is None
+
+
+def test_turn_user_missing_account_raises_rather_than_falls_back(monkeypatch):
+    # Fail closed: this flag's whole point is that a broken precondition ends
+    # the turn rather than silently spawning it as clawd-a.
+    monkeypatch.setenv("WORKSHOP_TURN_USER", "no-such-workshop-turn-account")
+    with pytest.raises(scoped_exec.TurnUserUnavailable):
+        scoped_exec.turn_user()
+
+
+def test_turn_user_valid_account_returns_the_name(monkeypatch, tmp_path):
+    _fake_account(monkeypatch, tmp_path)
+    monkeypatch.setenv("WORKSHOP_TURN_USER", "workshop-turn")
+    assert scoped_exec.turn_user() == "workshop-turn"
+
+
+def test_turn_user_self_scope_carve_out(monkeypatch, tmp_path):
+    """A turn scoped to the platform's own repo is NOT put under the uid
+    layer even with a fully valid account configured: systemctl --user
+    (which apply.sh needs) cannot cross a uid boundary."""
+    _fake_account(monkeypatch, tmp_path)
+    monkeypatch.setenv("WORKSHOP_TURN_USER", "workshop-turn")
+    from wsplatform import paths
+
+    root = str(paths.workshop_root())
+    assert scoped_exec.turn_user(root) is None
+    # A sibling scope, not the repo root itself, is not exempt.
+    assert scoped_exec.turn_user(str(tmp_path)) == "workshop-turn"
+
+
+def test_spawn_argv_passthrough_when_flag_unset(monkeypatch):
+    monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "0")
+    argv = scoped_exec.spawn_argv(["echo", "hi"], "/tmp")
+    assert argv == ["echo", "hi"]
+
+
+def test_spawn_argv_wraps_in_sudo_with_the_bwrap_tail_unchanged(monkeypatch, tmp_path):
+    _fake_account(monkeypatch, tmp_path)
+    monkeypatch.setenv("WORKSHOP_TURN_USER", "workshop-turn")
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    if not _HAS_BWRAP:
+        pytest.skip("bwrap not installed")
+    scope = tmp_path / "scope"
+    scope.mkdir()
+
+    plain = scoped_exec.wrap(["echo", "hi"], str(scope))
+    wrapped = scoped_exec.spawn_argv(["echo", "hi"], str(scope))
+
+    assert wrapped[:6] == ["/usr/bin/sudo", "-n", "-E", "-u", "workshop-turn", "--"]
+    assert wrapped[6] == scoped_exec.TURN_WRAPPER
+    assert wrapped[7] == "run"
+    # The bwrap invocation itself is untouched by the uid layer: same argv
+    # `wrap()` alone would have produced, just prefixed.
+    assert wrapped[8:] == plain
+
+
+def test_spawn_argv_raises_rather_than_silently_dropping_isolation(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKSHOP_TURN_USER", "no-such-account")
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    with pytest.raises(scoped_exec.TurnUserUnavailable):
+        scoped_exec.spawn_argv(["echo", "hi"], str(tmp_path))
+
+
+def test_turn_env_swaps_home_and_drops_xdg(monkeypatch, tmp_path):
+    _fake_account(monkeypatch, tmp_path)
+    monkeypatch.setenv("WORKSHOP_TURN_USER", "workshop-turn")
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    scope = tmp_path / "scope"
+    scope.mkdir()
+
+    base = {
+        "HOME": "/home/clawd-a",
+        "PATH": "/usr/bin:/bin",
+        "XDG_RUNTIME_DIR": "/run/user/1003",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1003/bus",
+        "CLAUDE_CODE_OAUTH_TOKEN": "keep-me",
+    }
+    out = scoped_exec.turn_env(dict(base), str(scope))
+    assert out["HOME"] == str(tmp_path / "turn-home")
+    assert "XDG_RUNTIME_DIR" not in out
+    assert "DBUS_SESSION_BUS_ADDRESS" not in out
+    assert out["CLAUDE_CODE_OAUTH_TOKEN"] == "keep-me"  # -E must carry this
+    assert out["WORKSHOP_TURN_PATH"] == base["PATH"]  # secure_path workaround
+
+
+def test_turn_env_is_a_noop_when_the_uid_layer_is_off(monkeypatch):
+    monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
+    env = {"HOME": "/home/clawd-a", "PATH": "/usr/bin"}
+    assert scoped_exec.turn_env(env, "/tmp") is env
+
+
+def test_grants_under_the_uid_layer_never_bind_the_real_claude_dir(monkeypatch, tmp_path):
+    """Only the two world-readable policy files may cross into the turn-user's
+    home; the credentials-bearing directory itself must never appear as a
+    grant once a different uid is going to run inside the sandbox."""
+    _fake_account(monkeypatch, tmp_path)
+    monkeypatch.setenv("WORKSHOP_TURN_USER", "workshop-turn")
+    scope = tmp_path / "scope"
+    scope.mkdir()
+
+    grants = scoped_exec._grants(str(scope))
+    real_claude = os.path.join(os.path.expanduser("~"), ".claude")
+    for mode, src, dest in grants:
+        if src == real_claude:
+            pytest.fail("the whole ~/.claude directory must not be a grant under the uid layer")
+        if src.startswith(real_claude + "/"):
+            assert src.rsplit("/", 1)[-1] in ("CLAUDE.md", "settings.json"), src
+
+
+def test_grants_no_longer_bind_the_whole_xdg_runtime_dir(monkeypatch):
+    """Regression for the live gap the review found: the old grant bound all
+    of $XDG_RUNTIME_DIR read-write, which also contains docker.sock -- exactly
+    what Layer 1's own acceptance criterion says a turn must not reach."""
+    monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
+    grants = scoped_exec._grants(None)
+    xdg = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/0"
+    for mode, src, dest in grants:
+        assert src != xdg, "the bare XDG runtime dir must not be a whole-directory grant"

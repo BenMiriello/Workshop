@@ -143,10 +143,30 @@ class TestALiveProcessMeansOurProcess:
 
         assert bs._proc_alive(os.getpid()) is False
 
-    def test_a_pid_owned_by_another_user(self):
-        """init. Our agent children run as us, so another user's process is a
-        recycled pid. This answered True before, which is the same hang."""
-        assert bs._proc_alive(1) is False
+    def test_a_pid_owned_by_another_user_with_no_starttime_is_conservatively_alive(self):
+        """init (root-owned; permission denied to signal it from here).
+
+        Used to answer False unconditionally ("our agent children run as us,
+        so this is a recycled pid"). That stopped being true once the uid
+        layer (WORKSHOP_TURN_USER) can run a turn's real child as a different
+        account: a PermissionError proves the pid EXISTS, just not who it
+        belongs to, and without a starttime to check identity against, "can't
+        signal it" must not be answered the same as "it's gone" -- that is
+        exactly the failure that made every scoped turn's restart-adoption
+        read as dead the moment isolation actually worked."""
+        assert bs._proc_alive(1) is True
+
+    def test_a_pid_owned_by_another_user_with_a_mismatched_starttime_is_dead(self):
+        """Same permission-denied pid, but now identity CAN be checked: a
+        starttime that does not match proves this is not the process the
+        caller is asking about, regardless of who owns it."""
+        assert bs._proc_alive(1, starttime="not-the-real-starttime") is False
+
+    def test_a_pid_owned_by_another_user_with_the_real_starttime_is_alive(self):
+        real = bs._proc_starttime(1)
+        if real is None:
+            pytest.skip("could not read /proc/1/stat on this box")
+        assert bs._proc_alive(1, starttime=real) is True
 
     def test_a_real_agent_process_is_alive(self):
         """The positive control. Without it, a predicate that always said False
@@ -212,6 +232,57 @@ class TestAnOrphanedAgentIsRecovered:
         """Alive-checks must not invent a death; scans must not invent a match."""
         assert bs._is_agent_proc(999_999, unknown=True) is True
         assert bs._is_agent_proc(999_999) is False
+
+    def test_bwrap_is_accepted_as_an_agent_proc(self):
+        """The pid this module records for a scoped turn IS bwrap's, not the
+        CLI's: bwrap forks a child rather than exec-replacing itself
+        (confirmed live via `ps --forest`: the recorded pid's comm is "bwrap",
+        with "claude" one level below it as its child). Before this, that pid
+        failed `_is_agent_proc` outright, so every scoped turn's restart-
+        adoption path (`_proc_alive` -> `_is_agent_proc`) read a live turn as
+        dead the moment Layer 1 went live."""
+        import shutil
+        import subprocess
+        import time
+
+        if not shutil.which("bwrap"):
+            pytest.skip("bwrap not installed")
+        p = subprocess.Popen(
+            ["bwrap", "--unshare-user", "--unshare-pid", "--ro-bind", "/usr", "/usr",
+             "--proc", "/proc", "--", "/bin/sleep", "2"],
+        )
+        try:
+            time.sleep(0.2)  # let it exec past the fork
+            assert bs._is_agent_proc(p.pid) is True
+        finally:
+            p.kill()
+            p.wait()
+
+
+class TestProcStarttime:
+    """The identity check the uid layer needs: two processes never share both
+    a pid and a start time, so comparing it is exact across a recycle -- and
+    unlike a signal, reading it does not depend on which uid owns the pid."""
+
+    def test_reads_a_real_process(self):
+        import os
+
+        st = bs._proc_starttime(os.getpid())
+        assert st is not None and st.isdigit()
+
+    def test_a_nonexistent_pid_reads_nothing(self):
+        assert bs._proc_starttime(999_999) is None
+
+    def test_readable_across_a_uid_boundary(self):
+        """/proc/1/stat is world-readable (mode 444) regardless of who owns
+        pid 1 -- this is what makes starttime work under the uid layer, where
+        `os.kill` cannot."""
+        assert bs._proc_starttime(1) is not None
+
+    def test_two_samples_of_the_same_process_agree(self):
+        import os
+
+        assert bs._proc_starttime(os.getpid()) == bs._proc_starttime(os.getpid())
 
 
 def test_already_committed_fails_toward_re_driving(monkeypatch):

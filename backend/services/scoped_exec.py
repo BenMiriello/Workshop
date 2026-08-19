@@ -39,13 +39,30 @@ break" guarantee. `--die-with-parent` would kill the sandbox the instant the
 backend exits and defeat that, so it is deliberately absent: an orphaned sandbox
 is reparented to init and adopted back, exactly as the un-sandboxed turn was.
 
-The uid layer (running as a dedicated sub-user for escape containment) composes on
-top of this: it is `sudo -u <user>` in front of exactly the argv this returns.
-That is a separate, root-requiring step and is not done here.
+THE UID LAYER ([SEC-A1], `spawn_argv`/`turn_env`/`signal_pg`). Composes on top of
+the bwrap view above: `sudo -n -E -u <user> -- <wrapper> run <the wrap() argv>`.
+Gated by its own flag (`WORKSHOP_TURN_USER`, unset = off) separate from
+`WORKSHOP_SCOPED_EXEC`, because a missing sudoers rule must fail the turn, never
+silently fall back to running as `clawd-a` — the opposite posture from
+`enabled()`'s degrade-safely default. `-n` (no password prompt) is load-bearing:
+without it, a misconfigured sudoers makes sudo block on stdin, which is the
+turn's fifo (opened O_RDWR so it never EOFs) — the turn would hang forever
+holding a slot instead of failing visibly. `-E` plus `SETENV:` in the sudoers
+rule is load-bearing too: `env_reset` is sudo's default and would strip
+`CLAUDE_CODE_OAUTH_TOKEN` and every `WORKSHOP_*` var the child needs.
+
+Creating the account and the sudoers rule needs root and is not something an
+agent turn can do to itself: `scripts/setup_turn_user.sh` is what the operator
+runs once, out of band. See the design doc's uid-layer section for the full
+mechanism, the `~/.claude` ownership resolution, and why a turn scoped to the
+platform's own repo (`WORKSHOP_ROOT`) is carved out of the uid layer for now
+(`systemctl --user` cannot cross a uid boundary, and `apply.sh` is how a change
+here reaches the operator).
 """
 from __future__ import annotations
 
 import os
+import pwd
 import shutil
 import subprocess
 
@@ -55,6 +72,19 @@ import subprocess
 MOUNTPOINT = "/workspace"
 
 _FLAG = "WORKSHOP_SCOPED_EXEC"
+
+# The uid layer's own flag and the one binary its sudoers rule may run. Kept as
+# constants (not derived) because the sudoers file and this module must agree
+# on the exact path without either reading the other.
+_USER_FLAG = "WORKSHOP_TURN_USER"
+TURN_WRAPPER = "/usr/local/libexec/workshop/turn-exec"
+
+
+class TurnUserUnavailable(RuntimeError):
+    """WORKSHOP_TURN_USER is set but the uid layer cannot actually run: the
+    account, the wrapper, or sudo itself is missing. Raised rather than
+    degrading to an un-isolated spawn -- see the module docstring on why this
+    flag fails closed where `enabled()` fails open."""
 
 # System directories bound read-only so the child can execute. /usr/local holds
 # the claude binary and its node_modules on this host; /etc carries the CA bundle
@@ -128,35 +158,69 @@ def _cli_root() -> str | None:
     return root if os.path.isdir(root) else None
 
 
-def _grants() -> list[tuple[str, str]]:
-    """(mode, path) binds a build/dev turn needs beyond its scope, each at its
-    REAL path so a tool expecting an absolute location still finds it. Skipped
-    silently when a path is absent, so the set is portable across hosts.
+def _grants(root: str | None = None) -> list[tuple[str, str, str]]:
+    """(mode, src, dest) binds a build/dev turn needs beyond its scope. `dest`
+    equals `src` for every grant except the two `~/.claude` policy files under
+    the uid layer, which land inside the turn-user's own home instead of
+    `clawd-a`'s (see below). Skipped silently when `src` is absent, so the set
+    is portable across hosts.
 
-      - the XDG runtime dir: the systemd --user socket + session bus, so
-        `systemctl --user` (apply.sh's restarts) works.
+      - the systemd --user socket + the session bus (NOT the whole XDG runtime
+        dir — see below), so `systemctl --user` (apply.sh's restarts) works.
       - ~/.config/workshop: instance.env and friends, read-only.
-      - ~/.claude: the CLI's home (hooks, credentials fallback, file history).
-      - ~/.gitconfig + ~/.config/git: identity for a commit.
+      - ~/.claude, ~/.claude.json, ~/.gitconfig, ~/.config/git: the CLI's home
+        and commit identity, when no uid layer is running this turn (see below).
       - the CLI's own install root, when it isn't already under _RO_SYSTEM
         (see `_cli_root`) — without it, execvp fails before the sandbox does
         anything else: the binary it's told to run isn't in its own view.
+
+    THE XDG BIND WAS TOO WIDE. It bound the whole runtime dir read-write, which
+    also contains `docker.sock` (owned `clawd-a:nogroup`, mode 660, and
+    `clawd-a` is a member of `nogroup`) -- reachable from inside a turn that
+    Layer 1's own acceptance criterion says should not reach the docker socket
+    at all. `systemctl --user` needs exactly two things under there: the
+    private socket at `<xdg>/systemd` and the session bus at `<xdg>/bus`
+    (confirmed against this host's own `DBUS_SESSION_BUS_ADDRESS`). Binding
+    only those two closes the socket without touching what apply.sh needs.
+
+    ~/.claude IS NOT BOUND WHEN A UID LAYER IS RUNNING THIS TURN. A bind mount
+    does not change ownership, so binding a `clawd-a`-owned, mode-0700 home
+    into a turn running as a different uid grants nothing there anyway --
+    except `.credentials.json` (mode 0600), which a looser directory mode
+    would have made reachable. See `turn_home()` / the design doc's uid-layer
+    section for the replacement: a dedicated home for the turn-user, with only
+    the two world-readable policy files (`CLAUDE.md`, `settings.json`) bound in
+    from `clawd-a`'s real `~/.claude`.
     """
     home = os.path.expanduser("~")
     uid = os.getuid()
     xdg = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{uid}"
-    candidates: list[tuple[str, str]] = [
-        ("rw", xdg),
-        ("ro", os.path.join(home, ".config", "workshop")),
-        ("rw", os.path.join(home, ".claude")),
-        ("rw", os.path.join(home, ".claude.json")),  # CLI settings + MCP config
-        ("ro", os.path.join(home, ".gitconfig")),
-        ("ro", os.path.join(home, ".config", "git")),
+    candidates: list[tuple[str, str, str]] = [
+        ("rw", os.path.join(xdg, "systemd"), os.path.join(xdg, "systemd")),
+        ("rw", os.path.join(xdg, "bus"), os.path.join(xdg, "bus")),
+        ("ro", os.path.join(home, ".config", "workshop"), os.path.join(home, ".config", "workshop")),
     ]
+    user = turn_user(root)
+    if user is None:
+        candidates += [
+            ("rw", os.path.join(home, ".claude"), os.path.join(home, ".claude")),
+            ("rw", os.path.join(home, ".claude.json"), os.path.join(home, ".claude.json")),
+            ("ro", os.path.join(home, ".gitconfig"), os.path.join(home, ".gitconfig")),
+            ("ro", os.path.join(home, ".config", "git"), os.path.join(home, ".config", "git")),
+        ]
+    else:
+        thome = turn_home()
+        candidates += [
+            ("rw", thome, thome),
+            ("ro", os.path.join(home, ".claude", "CLAUDE.md"),
+             os.path.join(thome, ".claude", "CLAUDE.md")),
+            ("ro", os.path.join(home, ".claude", "settings.json"),
+             os.path.join(thome, ".claude", "settings.json")),
+        ]
     cli_root = _cli_root()
     if cli_root and not any(cli_root == r or cli_root.startswith(r + "/") for r in _RO_SYSTEM):
-        candidates.append(("ro", cli_root))
-    return [(mode, p) for mode, p in candidates if p and os.path.exists(p)]
+        candidates.append(("ro", cli_root, cli_root))
+    return [(mode, s, d) for mode, s, d in candidates if s and os.path.exists(s)]
 
 
 def _remap(arg: str, root: str) -> str:
@@ -220,10 +284,160 @@ def wrap(cmd: list[str], workdir: str) -> list[str]:
         if os.path.isdir(p):
             args += ["--ro-bind", p, p]
     # The grant set: the few things beyond the scope a build/dev turn needs to
-    # operate, each at its real path.
-    for mode, p in _grants():
-        args += (["--bind", p, p] if mode == "rw" else ["--ro-bind", p, p])
+    # operate. `dest` differs from `src` only for the two ~/.claude policy
+    # files under the uid layer (they land in the turn-user's own home).
+    for mode, src, dest in _grants(root):
+        args += (["--bind", src, dest] if mode == "rw" else ["--ro-bind", src, dest])
     # The scope, writable, at the fixed managed mountpoint. Bound AFTER the tmpfs
     # so a scope that happens to live under /tmp is still present.
     args += ["--bind", root, MOUNTPOINT, "--chdir", MOUNTPOINT, "--"]
     return args + cmd
+
+
+# --- The uid layer ([SEC-A1]): sudo -u <turn-user>, composed on top of wrap() ---
+
+
+def turn_user(root: str | None = None) -> str | None:
+    """The dedicated uid this turn should run as, or None to run as `clawd-a`.
+
+    Unset `WORKSHOP_TURN_USER`: None, always -- the uid layer is off.
+
+    Set: validates the account, the wrapper and sudo actually exist, and
+    RAISES `TurnUserUnavailable` if not, rather than falling back to running
+    as `clawd-a`. That is the opposite posture from `enabled()`'s
+    degrade-safely default, deliberately: this flag is explicit opt-in, so a
+    broken precondition is the exact failure the layer exists to prevent, not
+    something to paper over.
+
+    SELF-SCOPE CARVE-OUT. A turn whose scope root IS the platform's own repo
+    (`root == wsplatform.paths.workshop_root()`) returns None even with the
+    flag set and valid. `systemctl --user` ties its connection to the caller's
+    real uid (SO_PEERCRED), so it cannot be delegated across a `sudo -u`
+    boundary -- and `apply.sh`, which every dev-turn instruction tells an
+    agent to run after a change, needs exactly that. Isolating platform-repo
+    turns needs a small apply broker (a socket the backend listens on, on
+    behalf of a turn that cannot restart itself) as its own follow-up; this
+    carve-out is the named, tested state until that lands, not a silent gap.
+    """
+    name = os.environ.get(_USER_FLAG)
+    if not name:
+        return None
+    if root is not None:
+        try:
+            from wsplatform import paths
+            if os.path.realpath(root) == os.path.realpath(str(paths.workshop_root())):
+                return None
+        except Exception:
+            pass
+    try:
+        pwd.getpwnam(name)
+    except KeyError:
+        raise TurnUserUnavailable(f"{_USER_FLAG}={name!r} but no such system account")
+    if not os.path.exists(TURN_WRAPPER):
+        raise TurnUserUnavailable(f"{_USER_FLAG} is set but {TURN_WRAPPER} is missing")
+    if not shutil.which("sudo"):
+        raise TurnUserUnavailable(f"{_USER_FLAG} is set but sudo is not on PATH")
+    if not enabled():
+        # The uid layer composes ON TOP of the bwrap view; without it there is
+        # no filesystem confinement for `sudo -u` to run inside, only a bare
+        # uid switch with the full host tree visible to it.
+        raise TurnUserUnavailable(f"{_USER_FLAG} is set but the bwrap layer is off or non-functional")
+    return name
+
+
+def turn_home() -> str:
+    """The uid layer's own home directory: the account's real `pw_dir` when
+    `WORKSHOP_TURN_USER` names a real account, else the caller's own home (a
+    harmless default for a caller that has not first checked `turn_user()`).
+    Deliberately re-reads the account directly rather than going through
+    `turn_user()`, which also applies the self-scope carve-out -- a grant
+    destination is a fact about the account, not about which turn is asking.
+    """
+    name = os.environ.get(_USER_FLAG)
+    if name:
+        try:
+            return pwd.getpwnam(name).pw_dir
+        except KeyError:
+            pass
+    return os.path.expanduser("~")
+
+
+def spawn_argv(cmd: list[str], workdir: str) -> list[str]:
+    """The full argv to actually spawn for a turn: the bwrap view from
+    `wrap()`, further wrapped in `sudo -n -E -u <user> -- <turn-exec> run`
+    when the uid layer is on for this scope.
+
+    `-n` (no password prompt) is load-bearing: without it, a misconfigured
+    sudoers rule makes sudo block reading a password from stdin, which is the
+    turn's fifo -- opened O_RDWR so it never EOFs. The turn would hang forever
+    holding an agent slot instead of failing visibly. `-E` (plus `SETENV:` in
+    the sudoers rule) is load-bearing too: sudo's default `env_reset` would
+    strip `CLAUDE_CODE_OAUTH_TOKEN` and every `WORKSHOP_*` var the child needs
+    to run at all.
+
+    Raises `TurnUserUnavailable` (never silently falls back to an un-isolated
+    spawn) when the flag is set but its precondition is not met -- propagates
+    to the caller, which must end the turn rather than spawn it unconfined.
+    """
+    base = wrap(cmd, workdir)
+    root = os.path.realpath(workdir) if workdir else None
+    user = turn_user(root)
+    if user is None:
+        return base
+    sudo = shutil.which("sudo")  # presence already validated inside turn_user()
+    return [sudo, "-n", "-E", "-u", user, "--", TURN_WRAPPER, "run", *base]
+
+
+def turn_env(env: dict, workdir: str | None = None) -> dict:
+    """The env for a spawn under the uid layer: point HOME and git identity at
+    the turn-user's own home instead of `clawd-a`'s (which is no longer bound
+    in -- see `_grants()`), and drop the XDG/D-Bus vars that named `clawd-a`'s
+    runtime dir. A no-op when the uid layer is off for this scope, so callers
+    can apply it unconditionally rather than branching.
+    """
+    root = os.path.realpath(workdir) if workdir else None
+    user = turn_user(root)
+    if user is None:
+        return env
+    home = turn_home()
+    env = dict(env)
+    env["HOME"] = home
+    env.pop("XDG_RUNTIME_DIR", None)
+    env.pop("DBUS_SESSION_BUS_ADDRESS", None)
+    env["GIT_CONFIG_GLOBAL"] = os.path.join(home, ".gitconfig")
+    # Debian's sudoers sets `secure_path`, which overrides PATH even under -E
+    # and would strip nvm's node from every Bash tool call inside the turn.
+    # sudo does not recognise this name, so -E carries it through untouched;
+    # the turn-exec wrapper restores PATH from it before the final exec.
+    env["WORKSHOP_TURN_PATH"] = env.get("PATH", "")
+    return env
+
+
+def signal_pg(pid: int, sig: int, *, user: str | None, pgid: int | None = None) -> None:
+    """Signal a turn's whole process group, whether or not it runs under the
+    uid layer. `user` is the value RECORDED at spawn time (`turn_user(root)`
+    then, not now) -- required as a keyword, not recomputed here, because a
+    turn that was carved out of the uid layer at spawn (the self-scope case)
+    must still be signalled directly even if the flag happens to be set when
+    this runs later.
+
+    `pgid` is used when the caller already resolved it (`os.getpgid` works
+    same-uid); otherwise this falls back to `pid` itself, which IS the group
+    id for anything spawned with `start_new_session=True` (a new session's
+    leader has pgid == pid). Same-uid: `os.killpg` directly. Cross-uid:
+    `os.killpg` from `clawd-a` onto a `workshop-turn`-owned group raises EPERM
+    (silently swallowed by a bare except at the call site, which is what made
+    this the layer's most likely regression), so the signal is routed through
+    the turn wrapper's own identity instead.
+    """
+    gid = pgid or pid
+    if user is None:
+        os.killpg(gid, sig)
+        return
+    sudo = shutil.which("sudo")
+    if not sudo:
+        return
+    subprocess.run(
+        [sudo, "-n", "-u", user, "--", TURN_WRAPPER, "signal", str(int(sig)), str(gid)],
+        capture_output=True, timeout=5,
+    )
