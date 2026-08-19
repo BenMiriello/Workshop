@@ -12,8 +12,16 @@ SERVICE=workshop-backend.service
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 have_unit() {
+  # `systemctl --user cat` reads the unit FILE off disk client-side, which a
+  # scoped-exec turn cannot see (its sandbox does not bind ~/.config/systemd --
+  # deliberately: that directory is not a grant this role needs). `show` is
+  # answered by the systemd manager over the D-Bus socket, which IS bound, so
+  # it works identically confined or not. Confirmed live 2026-08-19: `cat`
+  # failed inside the sandbox and silently dropped every restart to the broken
+  # legacy nohup fallback, which then failed too (/proc/<pid>/environ of a
+  # non-ancestor process is not readable even same-uid, ptrace_scope).
   command -v systemctl >/dev/null 2>&1 \
-    && systemctl --user cat "$SERVICE" >/dev/null 2>&1
+    && [ "$(systemctl --user show -p LoadState --value "$SERVICE" 2>/dev/null)" = "loaded" ]
 }
 
 # Deferred mode: schedule the restart DETACHED and after a short delay, then exit

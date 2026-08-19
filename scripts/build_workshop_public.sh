@@ -48,7 +48,10 @@ if [ "$restart_edge" != "1" ]; then
   exit 0
 fi
 
-if systemctl --user cat workshop-public.service >/dev/null 2>&1; then
+# `show -p LoadState` is a D-Bus query, unlike `cat` which reads the unit file
+# off disk client-side and fails inside a scoped-exec sandbox that does not
+# bind ~/.config/systemd (see restart_backend.sh have_unit()).
+if [ "$(systemctl --user show -p LoadState --value workshop-public.service 2>/dev/null)" = "loaded" ]; then
   echo "Restarting workshop-public.service (edge code changed) ..."
   systemctl --user restart workshop-public.service
   sleep 2

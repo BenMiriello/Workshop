@@ -51,8 +51,11 @@ ensure() {
 
   # A unit owns this port -> it is systemd's job. Restarting the unit keeps the
   # process inside its cgroup, which is what makes it restartable at all.
+  # `show -p LoadState` is a D-Bus query, unlike `cat` which reads the unit
+  # file off disk client-side and fails inside a scoped-exec sandbox that does
+  # not bind ~/.config/systemd (see restart_backend.sh have_unit()).
   if [ -n "$unit" ] && command -v systemctl >/dev/null 2>&1 \
-     && systemctl --user cat "$unit" >/dev/null 2>&1; then
+     && [ "$(systemctl --user show -p LoadState --value "$unit" 2>/dev/null)" = "loaded" ]; then
     log "frontend '$name' down on :$port — restarting unit $unit"
     systemctl --user restart "$unit" >/dev/null 2>&1 \
       && log "  restarted $unit" \
