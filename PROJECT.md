@@ -298,3 +298,35 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   `test_subagent_guard.py` green; full backend suite has pre-existing,
   unrelated failures (db/tenancy/dev-mode fixtures) confirmed present before
   this change and untouched by it.
+- 2026-08-18 (4) — Operator: since the bwrap layer (Layer 1) is live and
+  proven, have an Opus subagent review the [SEC-A1] uid-layer plan (a
+  dedicated sub-user composed on top of bwrap) before building it, then
+  implement whatever it returns. The review found the plan's one-line
+  description ("sudo -u in front of the argv") was wrong in both directions —
+  it omitted `-n`/`-E`, the env/grant-set changes, and a REVERSE signal channel
+  (cross-uid `os.killpg`/`proc.kill()` raise `PermissionError`, silently
+  swallowed by the existing bare `except Exception: pass`, which would have
+  made Stop a no-op and leaked every process) — and, independently, found two
+  live gaps in the ALREADY-SHIPPED bwrap layer: the grant set bound the whole
+  `$XDG_RUNTIME_DIR` read-write (including `docker.sock`, reachable via
+  `clawd-a`'s existing group membership) and `_proc_alive`'s identity check
+  never recognized bwrap's own pid as the turn (bwrap forks rather than
+  exec-replacing), which broke restart-adoption for every scoped turn since
+  Layer 1 went default-on. Fixed both same-day, uid-layer or not. Built:
+  `scoped_exec.spawn_argv`/`turn_env`/`signal_pg`/`turn_user`, threaded
+  through `build_streaming.py`'s spawn/retire/kill/liveness/`session_alive`
+  paths on the uid actually used (recorded at spawn, not recomputed later),
+  gated by `WORKSHOP_TURN_USER` (unset = off, FAILS CLOSED on a broken
+  precondition rather than silently running as `clawd-a`) and carved out for
+  a turn scoped to the platform's own repo (`systemctl --user` cannot cross a
+  uid boundary, and `apply.sh` needs it — named, not silent).
+  `scripts/setup_turn_user.sh` is the one-time root setup step (idempotent,
+  `--check` mode) an agent turn categorically cannot run itself: turns are
+  bwrap-sandboxed by default, and bwrap sets `PR_SET_NO_NEW_PRIVS`, which
+  makes `sudo` refuse unconditionally even with a perfect sudoers rule
+  (confirmed empirically, twice, in this exact conversation). Full backend
+  suite confirmed green against a throwaway worktree of the pre-change tree
+  (no regressions). NOT done and NOT flipped on: the account, verification,
+  and flag-setting are the operator's, per the design doc's own Layer-1 rule.
+  Details: `docs/platform-redesign/managed-file-references-and-path-scoping-2026-08-18.md`
+  section 9a.
