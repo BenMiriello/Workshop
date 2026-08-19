@@ -148,6 +148,7 @@ export type OutboxSend = {
   attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
   at: number;
   afterSeq: number;
+  duringActiveTurn: boolean;
 };
 
 /** How long a send that never landed stays offered as a Retry.
@@ -217,6 +218,10 @@ export function readOutbox(key: string): OutboxSend[] {
           : {}),
         at: Number(x.at) || 0,
         afterSeq: Number(x.afterSeq) || 0,
+        // Whatever turn this send was made during belonged to a browser session
+        // that is gone; it never joined the one running now, so it cannot be
+        // placed as though it did.
+        duringActiveTurn: false,
       });
     }
     return out;

@@ -701,6 +701,38 @@ describe("a pending send's place in the log", () => {
     });
     expect(shape(selectTranscript(later))).toEqual(["pending:lost", "user:b"]);
   });
+
+  it("stays above the working indicator for the turn it started, and does not flip once the send is acknowledged", () => {
+    // Nothing was running when this send began, so it is what started the turn:
+    // it belongs above the indicator from the first frame, not just once the
+    // log catches up. Reported 2026-08-18: the message rendered under the
+    // indicator, then jumped above it once the send was reconciled.
+    const s0 = stateOf([user("a")]);
+    const sent = threadReducer(s0, {
+      type: "sendStarted", clientId: "c1", text: "go", ts: "2026-08-18T00:00:00Z",
+    });
+    const live = threadReducer(sent, { type: "turnStarted", turnId: "r1" });
+    expect(shape(selectTranscript(live))).toEqual(["user:a", "pending:go", "live:*"]);
+
+    // The send is acknowledged and the run starts emitting: the message must
+    // still read above the working line, not jump sides.
+    const acked = threadReducer(live, { type: "sendAcked", clientId: "c1" });
+    const writing = threadReducer(acked, {
+      type: "turnDelta", turnId: "r1", event: { kind: "text", content: "working" },
+    });
+    expect(shape(selectTranscript(writing))).toEqual(["user:a", "pending:go", "live:working*"]);
+  });
+
+  it("still renders below the working indicator when it joined a turn already running", () => {
+    // The opposite case: a turn was already in flight when this send began, so
+    // it is a mid-turn message and belongs below the indicator, same as a
+    // committed one would.
+    const s0 = threadReducer(stateOf([user("a")]), { type: "turnStarted", turnId: "r1" });
+    const sent = threadReducer(s0, {
+      type: "sendStarted", clientId: "c1", text: "also", ts: "2026-08-18T00:00:00Z",
+    });
+    expect(shape(selectTranscript(sent))).toEqual(["user:a", "live:*", "pending:also"]);
+  });
 });
 
 // The split that keeps a streamed frame cheap. These are not style assertions:
@@ -881,6 +913,7 @@ describe("everything in the transcript comes from the transcript", () => {
       sends: [{
         clientId: "c1", text: "the one that never landed", ts: "2026-08-12T17:44:00Z",
         status: "failed", error: "the backend was restarting", at: 0, afterSeq: 0,
+        duringActiveTurn: false,
       }],
     });
     const blocks = selectTranscript(state);

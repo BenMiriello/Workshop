@@ -93,6 +93,14 @@ export type PendingSend = {
    *  above this old message, and then subsequent chat messages show above these
    *  messages". See transcriptBlocks.composeTranscript. */
   afterSeq: number;
+  /** Whether a turn was already running in this thread at the moment this send
+   *  began. A send made while nothing was running is what STARTS a turn, so it
+   *  belongs above the working indicator once one appears; a send made while a
+   *  turn was already in flight belongs below it, same as a committed mid-turn
+   *  message. Read at send time, not at render time, because by the time a
+   *  render happens `activeTurn` may already be set from the very turn THIS
+   *  send caused. See `composeTranscript`. */
+  duringActiveTurn: boolean;
 };
 
 /** A message the SERVER is holding to send next.
@@ -603,6 +611,7 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
             // knows the log's tail, and a caller computing it would be reading
             // the same state one render late.
             afterSeq: lastSeq(state),
+            duringActiveTurn: !!state.activeTurn,
           },
         },
       };

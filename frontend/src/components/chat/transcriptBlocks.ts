@@ -543,12 +543,29 @@ export function composeTranscript(
   // so walking it backwards gives non-increasing indices, and two sends landing
   // on the same index keep their order (the later one is inserted first and the
   // earlier one pushes it right).
+  //
+  // A send at the tail splits again, by `duringActiveTurn`. One sent while a
+  // turn was already running joined that turn and belongs where every mid-turn
+  // message belongs: below the working indicator, same as `atTail` always did.
+  // One sent while nothing was running is what STARTED the turn, so it belongs
+  // ABOVE the indicator, same as the committed floor `workingPieceIndex`
+  // enforces once this send lands in the log. Without the split, a fresh send
+  // rendered after the live block the instant `turnStarted` set `activeTurn`,
+  // then jumped above it the moment the log caught up and reconciled it out of
+  // `pending` — the same message visibly changing sides mid-turn. Reported
+  // 2026-08-18: "it shows up above my continue message... it started working
+  // after I sent it... then the two messages flip order."
   const atTail: TranscriptBlock[] = [];
+  const beforeLive: TranscriptBlock[] = [];
   for (let i = pending.length - 1; i >= 0; i--) {
     const p = pending[i];
-    if (p.afterSeq >= tail) atTail.unshift(toBlock(p));
-    else out.splice(anchorIndex(out, p.afterSeq), 0, toBlock(p));
+    if (p.afterSeq >= tail) {
+      (p.duringActiveTurn ? atTail : beforeLive).unshift(toBlock(p));
+    } else {
+      out.splice(anchorIndex(out, p.afterSeq), 0, toBlock(p));
+    }
   }
+  out.push(...beforeLive);
 
   // Only when the committed half agrees the run is still writing. See the
   // liveTurnId note in selectCommitted: the snapshot can name a run whose reply

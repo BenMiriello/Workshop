@@ -380,7 +380,13 @@ function PendingBubble({
               Without this an attached image vanished for the length of the round
               trip and then reappeared, which reads as the file not having gone. */}
           {!!attachments?.length && <SentAttachments items={attachments} />}
-          {text}
+          {/* `.chat-clamp` is what the copy/branch inline reserve (styles.css,
+              "ROOM FOR THE ACTIONS ON THE LAST LINE") looks for: without it the
+              icon has nothing to measure against and sits on top of the last
+              word until this bubble is replaced by the committed message, which
+              DOES wrap its text this way. That swap is what made the overlap
+              look like it "corrected itself" a moment after sending. */}
+          <div className="chat-clamp">{text}</div>
           {failed && <UnsentNote reason={error} onRetry={onRetry} />}
         </div>
         {text.trim() && <CopyMessage value={text} />}
