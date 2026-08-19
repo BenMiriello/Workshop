@@ -719,7 +719,16 @@ export default function Chat({
   // accepted when TYPED (/compact, /clear, /new) and handled in the send
   // pipeline; nothing suggests them. See chat/typedCommands.
   const build = effectiveMode === "build";
-  const popOut = useCallback(() => navigate(`/chat/${encodeURIComponent(contextKey)}`), [navigate, contextKey]);
+  // Carry the open conversation's id along, or the full route has nothing to
+  // resolve it from and falls back to the scope's shared last-selection —
+  // which any other dock or tab on the same scope can have overwritten. That
+  // gap is why the address bar could read `/chat/general` with no thread on
+  // it: right after popping out, and again on every reload from then on.
+  const popOut = useCallback(() => navigate(
+    activeId
+      ? `/chat/${encodeURIComponent(contextKey)}?thread=${encodeURIComponent(activeId)}`
+      : `/chat/${encodeURIComponent(contextKey)}`,
+  ), [navigate, contextKey, activeId]);
 
   const { matches: mentionMatches, show: showMentions } = matchMention(input, mentionable);
 
