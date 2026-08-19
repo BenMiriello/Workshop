@@ -91,7 +91,7 @@ function RefCard({
   );
 
   return (
-    <Popover trigger={trigger} label={resolved.title} side="bottom" className="ws-ref-pop">
+    <Popover trigger={trigger} label={resolved.title} side="bottom">
       <div className="ws-ref-card">
         <div className="ws-ref-card__preview">
           {p.thumb_url ? (

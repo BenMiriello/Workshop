@@ -13,37 +13,62 @@ const GAP = 4;
 const CHAT_LOG = rect(120, 60, 1200, 780);
 
 describe("placeMenu", () => {
-  it("opens left-anchored and downward when there is room", () => {
+  it("opens flush with the trigger's left edge and downward when there is room", () => {
     expect(placeMenu(rect(100, 100, 20, 20), LIST, VIEWPORT, "bottom", GAP))
-      .toEqual({ align: "start", side: "bottom" });
+      .toEqual({ insetStart: 0, side: "bottom" });
   });
 
-  it("flips to right-anchored at the viewport edge", () => {
-    expect(placeMenu(rect(1400, 100, 20, 20), LIST, VIEWPORT, "bottom", GAP).align).toBe("end");
+  it("slides left off the viewport edge", () => {
+    // trigger.left=1400; flush would put the surface's right edge at 1640,
+    // 200px past the 1440 viewport. Clamped so the surface's right edge lands
+    // exactly at the edge (minus EDGE_PAD): left = 1440-8-240 = 1192.
+    expect(placeMenu(rect(1400, 100, 20, 20), LIST, VIEWPORT, "bottom", GAP).insetStart)
+      .toBe(1192 - 1400);
   });
 
   describe("the clipping ancestor, not just the viewport", () => {
-    it("flips at the CLIP edge while the viewport still has room", () => {
+    it("slides off the CLIP edge while the viewport still has room", () => {
       // A control near the right edge of the chat column. 1130 + 240 = 1370,
       // well inside the 1440 viewport, and well past the log's right edge of
       // 1320. Measured against the viewport this does not overflow, which is
       // precisely why the menu was being sliced off.
       const trigger = rect(1130, 400, 20, 20);
-      expect(placeMenu(trigger, LIST, VIEWPORT, "bottom", GAP).align).toBe("start");
-      expect(placeMenu(trigger, LIST, CHAT_LOG, "bottom", GAP).align).toBe("end");
+      expect(placeMenu(trigger, LIST, VIEWPORT, "bottom", GAP).insetStart).toBe(0);
+      // Clamped against CHAT_LOG's right edge (1320): left = 1320-8-240 = 1072.
+      expect(placeMenu(trigger, LIST, CHAT_LOG, "bottom", GAP).insetStart).toBe(1072 - 1130);
     });
 
-    it("stays left-anchored on a narrow bubble near the left of the log", () => {
-      // Flipping here would push the list off the LEFT edge instead, which is
+    it("stays flush on a narrow bubble near the left of the log", () => {
+      // Sliding here would push the list off the LEFT edge instead, which is
       // the same bug mirrored.
-      expect(placeMenu(rect(200, 400, 20, 20), LIST, CHAT_LOG, "bottom", GAP).align).toBe("start");
+      expect(placeMenu(rect(200, 400, 20, 20), LIST, CHAT_LOG, "bottom", GAP).insetStart).toBe(0);
     });
 
-    it("does not flip when the other side has no room either", () => {
-      // A clip box narrower than the list: neither placement fits, so it keeps
-      // the default and scrolls rather than thrashing.
+    it("clamps to the clip's own edge when NEITHER position fits", () => {
+      // A clip box narrower than the list: no position avoids overflow, so it
+      // anchors to the clip's own left edge (overflowing only the right, by
+      // the smallest amount the mismatch allows) rather than the trigger's.
       const narrow = rect(0, 0, 200, 780);
-      expect(placeMenu(rect(150, 400, 20, 20), LIST, narrow, "bottom", GAP).align).toBe("start");
+      const p = placeMenu(rect(150, 400, 20, 20), LIST, narrow, "bottom", GAP);
+      expect(p.insetStart).toBe(8 - 150); // clip.left + EDGE_PAD, minus trigger.left
+    });
+
+    it("slides to keep a wide surface fully on screen when the trigger is in the MIDDLE", () => {
+      // The bug this fix exists for: a ref chip inline in wrapped chat text can
+      // land anywhere across a line, unlike a toolbar button pinned near a
+      // screen edge. A phone-width clip (375px) with a popover-width surface
+      // (300px, close to the real 18-24rem Popover panel) and a trigger dead
+      // center. The OLD two-choice algorithm picked whichever of the trigger's
+      // edges overflowed less and still overflowed by 83px on the right
+      // (flush-left: 150+300=450 vs the 367 edge) because ending on the
+      // trigger's right edge (230-300=-70) was no better. Reported 2026-08-19:
+      // "opens... slightly hanging off the screen to the side" on mobile.
+      const phoneClip = rect(0, 0, 375, 800);
+      const centered = rect(150, 100, 80, 20);
+      const p = placeMenu(centered, { width: 300, height: 150 }, phoneClip, "bottom", GAP);
+      const left = centered.left + p.insetStart;
+      expect(left).toBeGreaterThanOrEqual(phoneClip.left + 8);
+      expect(left + 300).toBeLessThanOrEqual(phoneClip.right - 8);
     });
   });
 
@@ -121,7 +146,7 @@ describe("narrowClip", () => {
     const log = rect(120, 60, 1200, 780);
     const trigger = rect(1130, 400, 20, 20);
     const clip = narrowClip(VIEWPORT, [{ rect: log, clipsX: true, clipsY: false }]);
-    expect(placeMenu(trigger, LIST, VIEWPORT, "bottom", GAP).align).toBe("start");
-    expect(placeMenu(trigger, LIST, clip, "bottom", GAP).align).toBe("end");
+    expect(placeMenu(trigger, LIST, VIEWPORT, "bottom", GAP).insetStart).toBe(0);
+    expect(placeMenu(trigger, LIST, clip, "bottom", GAP).insetStart).toBe(1072 - 1130);
   });
 });

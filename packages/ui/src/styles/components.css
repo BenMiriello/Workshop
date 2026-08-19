@@ -1671,8 +1671,6 @@ span.ws-filterchip__open { cursor: default; }
   border-radius: var(--radius-md); box-shadow: var(--shadow-md);
   animation: ws-pop var(--dur-fast) var(--ease-out);
 }
-.ws-menu__list--start { left: 0; }
-.ws-menu__list--end { right: 0; }
 .ws-menu__list--bottom { top: calc(100% + var(--space-1)); }
 .ws-menu__list--top { bottom: calc(100% + var(--space-1)); }
 .ws-menu__item {
@@ -1770,8 +1768,6 @@ span.ws-filterchip__open { cursor: default; }
   border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
   animation: ws-pop var(--dur-fast) var(--ease-out);
 }
-.ws-popover__surface--start { left: 0; }
-.ws-popover__surface--end { right: 0; }
 .ws-popover__surface--bottom { top: calc(100% + var(--space-1)); }
 .ws-popover__surface--top { bottom: calc(100% + var(--space-1)); }
 

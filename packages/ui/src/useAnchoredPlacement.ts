@@ -65,17 +65,14 @@ export function useAnchoredPlacement(
   side: "bottom" | "top",
   anchorRef: RefObject<HTMLElement | null>,
   surfaceRef: RefObject<HTMLElement | null>,
-): { align: "start" | "end"; side: "bottom" | "top" } {
-  // Horizontal alignment is NOT a caller choice — it used to be (`align`
-  // start|end per instance), and every caller had to reason about where in its
-  // row it sat and guess whether that made left or right the safe direction.
-  // Two guesses were wrong on a narrow phone (Effort and Mode, both hardcoded
-  // "end", ran off the LEFT edge). Left-anchored ("start") is the one default;
-  // this measures itself after opening and flips to right-anchored ("end")
-  // only if that default would run past the right edge of the box it must stay
-  // inside. One rule, no per-caller guessing, correct at any position in any
-  // row.
-  const [align, setAlign] = useState<"start" | "end">("start");
+): { insetStart: number; side: "bottom" | "top" } {
+  // Horizontal position is NOT a caller choice, and it is not a binary pick
+  // between the trigger's two edges either any more (see menuPlacement.ts):
+  // it is a pixel offset, clamped into the box the surface must stay inside,
+  // so it is correct at any trigger position in any row -- including one
+  // that lands in the middle of a narrow phone screen, which a two-way pick
+  // could not guarantee.
+  const [insetStart, setInsetStart] = useState(0);
   // Where it ACTUALLY opened, which is `side` unless that would be clipped.
   const [placed, setPlaced] = useState<"bottom" | "top">(side);
 
@@ -83,7 +80,7 @@ export function useAnchoredPlacement(
   // resize and on any ancestor scroll while open: the trigger's position
   // relative to the clip edge can change without a close and reopen.
   useLayoutEffect(() => {
-    if (!open) { setAlign("start"); setPlaced(side); return; }
+    if (!open) { setInsetStart(0); setPlaced(side); return; }
     const measure = () => {
       const surface = surfaceRef.current;
       const anchor = anchorRef.current;
@@ -100,7 +97,7 @@ export function useAnchoredPlacement(
         // the token rather than restated as a number that can drift from it.
         parseFloat(getComputedStyle(surface).getPropertyValue("--space-1")) || 4,
       );
-      setAlign(p.align);
+      setInsetStart(p.insetStart);
       setPlaced(p.side);
     };
     measure();
@@ -116,5 +113,5 @@ export function useAnchoredPlacement(
     };
   }, [open, side, anchorRef, surfaceRef]);
 
-  return { align, side: placed };
+  return { insetStart, side: placed };
 }

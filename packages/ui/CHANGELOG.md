@@ -12,6 +12,28 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.15 - 2026-08-19 - Popover/Menu clamp position instead of picking an edge
+
+**Fix, internal only (no public prop or export changed).** `useAnchoredPlacement`
+used to pick between exactly two horizontal positions: flush with the trigger's
+left edge, or flush with its right edge, whichever overflowed less. That is only
+correct when the surface is comfortably narrower than the clip box (a toolbar
+menu near a screen edge). Once the surface approaches the clip box's own width
+(Popover's panel is 18-24rem, a real fraction of a phone's viewport), a trigger
+in the MIDDLE of the clip box can overflow past both edges no matter which one
+it is pinned to. Reported 2026-08-19: a chat ref chip's dropdown (which, unlike
+a toolbar button, can land anywhere across a wrapped line of text) opened
+"slightly hanging off the screen to the side" on mobile.
+
+Replaced the binary `align: "start" | "end"` with a clamped pixel offset
+(`insetStart`), applied as an inline `left` style rather than a `--start`/`--end`
+modifier class (now removed from `.ws-popover__surface` and `.ws-menu__list`).
+The surface slides to stay fully inside the clip box at any trigger position,
+and only anchors to the clip's own edge (rather than the trigger's) in the
+genuinely-unfittable case where the surface is wider than the box has room for
+at all. `menuPlacement.ts` and `useAnchoredPlacement.ts` are internal, not
+re-exported from the package entry point, so no consumer-facing API moved.
+
 ## 0.5.14 - 2026-08-18 - Markdown forwards `components` and `urlTransform`
 
 **Compatible (additive, no name moved).** `Markdown` gains two optional props,

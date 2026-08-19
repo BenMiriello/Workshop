@@ -56,7 +56,7 @@ export function Menu({
   const id = useId();
   // Which edge it pins to and which side it opens on, measured before paint and
   // re-measured on resize and ancestor scroll. Shared with Popover.
-  const { align, side: placed } = useAnchoredPlacement(open, side, wrapRef, listRef);
+  const { insetStart, side: placed } = useAnchoredPlacement(open, side, wrapRef, listRef);
   // Whether this menu is being driven by the keyboard. Focus is only sent back
   // to the trigger when it is: a programmatic .focus() after a mouse/touch pick
   // re-triggers the global :focus-visible ring, which looks like a border the
@@ -143,7 +143,10 @@ export function Menu({
           role="menu"
           tabIndex={-1}
           aria-label={label}
-          className={cx("ws-menu__list", `ws-menu__list--${align}`, `ws-menu__list--${placed}`)}
+          className={cx("ws-menu__list", `ws-menu__list--${placed}`)}
+          // A clamped pixel offset, not a CSS class pinning to one of two
+          // fixed edges: see menuPlacement.ts.
+          style={{ left: insetStart }}
           // Activating an ITEM closes the menu; individual items don't each have
           // to remember to. Gated to role="menuitem" rather than "any click in
           // the list", because a menu can also hold a persistent control (a

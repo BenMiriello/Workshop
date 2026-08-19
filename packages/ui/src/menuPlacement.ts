@@ -48,8 +48,18 @@ export function narrowClip(base: Rect, clippers: readonly Clipper[]): Rect {
 }
 
 export type Placement = {
-  /** Which trigger edge the list is pinned to. */
-  align: "start" | "end";
+  /** Pixel offset from the trigger's own left edge to the surface's left
+   * edge. Not a binary "pin to whichever edge fits": a surface whose width
+   * is close to the clip box's own width (Popover's ref-card panel is
+   * 18-24rem, a real fraction of a phone's viewport) can overflow BOTH edges
+   * depending on where the trigger sits, and picking the lesser of two fixed
+   * anchor points cannot fix that -- only sliding the surface between them
+   * can. A chat ref chip, unlike a toolbar button pinned near a screen edge,
+   * can land anywhere across a wrapped line, including the middle of a
+   * narrow phone screen. Reported 2026-08-19: a doc/note/ticket chip's
+   * dropdown opened "slightly hanging off the screen to the side" on mobile.
+   */
+  insetStart: number;
   /** Which side of the trigger it opens on. */
   side: "bottom" | "top";
 };
@@ -85,21 +95,32 @@ export function placeMenu(
   side: "bottom" | "top",
   gap: number,
 ): Placement {
-  // Left-anchored is the one default. It used to be a caller choice (`align`
-  // start|end per instance) and every caller had to reason about where in its
-  // row it sat and guess whether that made left or right the safe direction.
-  // Two guesses were wrong on a narrow phone. One rule, no per-caller guessing.
-  const startOverflows = trigger.left + size.width > clip.right - EDGE_PAD;
-  const endFits = trigger.right - size.width >= clip.left + EDGE_PAD;
+  // Left-flush with the trigger is the preference -- same default as before.
+  // But it is a STARTING point now, clamped into the box the surface must
+  // stay inside, rather than one of exactly two fixed anchor points. Pinning
+  // to whichever of the trigger's two edges overflows less is only correct
+  // when the surface is comfortably narrower than the clip box (a toolbar
+  // menu near a screen edge); once the surface approaches the clip box's own
+  // width, a trigger anywhere in the MIDDLE overflows past BOTH edges no
+  // matter which one it is pinned to, and no binary choice fixes that.
+  const lo = clip.left + EDGE_PAD;
+  const hi = clip.right - EDGE_PAD - size.width;
+  // hi < lo means the surface is wider than the box has room for at all: no
+  // position avoids overflow. Anchor to the clip's own left edge rather than
+  // the trigger's, which overflows by exactly (width - available room) on
+  // the right and nowhere else, instead of an overflow whose size depends on
+  // an arbitrary trigger position.
+  const left = hi >= lo ? Math.min(Math.max(trigger.left, lo), hi) : lo;
 
-  // Only flip when the preference is genuinely clipped AND the other way has
-  // room. A list too big for either side stays where the caller asked for it and
-  // scrolls, rather than thrashing between two bad placements.
+  // Only flip vertically when the preference is genuinely clipped AND the
+  // other way has room. A surface too tall for either side stays where the
+  // caller asked for it and scrolls, rather than thrashing between two bad
+  // placements.
   const belowOverflows = trigger.bottom + gap + size.height > clip.bottom - EDGE_PAD;
   const aboveOverflows = trigger.top - gap - size.height < clip.top + EDGE_PAD;
 
   return {
-    align: startOverflows && endFits ? "end" : "start",
+    insetStart: left - trigger.left,
     side: side === "bottom"
       ? (belowOverflows && !aboveOverflows ? "top" : "bottom")
       : (aboveOverflows && !belowOverflows ? "bottom" : "top"),

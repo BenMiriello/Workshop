@@ -1445,7 +1445,11 @@ button.ws-ref--trigger {
 }
 button.ws-ref--trigger:hover { color: var(--you); text-decoration-color: currentColor; }
 button.ws-ref--trigger:hover > svg { color: var(--you); }
-.ws-ref-pop { padding: var(--space-3); max-width: 22rem; }
+/* The popover PANEL's own sizing (min/max-width, padding) comes entirely from
+   the kit's .ws-popover__surface -- Popover's className prop lands on the tiny
+   inline trigger wrapper, not the panel, so an app-level max-width here would
+   be inert at best. The kit's vw-capped default plus useAnchoredPlacement's
+   clamped position (menuPlacement.ts) is what keeps this on screen on a phone. */
 .ws-ref-card { display: flex; gap: var(--space-3); align-items: flex-start; }
 /* Preview left, never wider than the info column beside it. */
 .ws-ref-card__preview {

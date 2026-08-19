@@ -78,7 +78,7 @@ export function Popover({
     onOpenChange?.(next);
   }, [controlled, onOpenChange]);
 
-  const { align, side: placed } = useAnchoredPlacement(open, side, wrapRef, surfaceRef);
+  const { insetStart, side: placed } = useAnchoredPlacement(open, side, wrapRef, surfaceRef);
 
   useEffect(() => {
     if (!open) return;
@@ -138,11 +138,11 @@ export function Popover({
           ref={surfaceRef}
           role="dialog"
           aria-label={label}
-          className={cx(
-            "ws-popover__surface",
-            `ws-popover__surface--${align}`,
-            `ws-popover__surface--${placed}`,
-          )}
+          className={cx("ws-popover__surface", `ws-popover__surface--${placed}`)}
+          // A clamped pixel offset, not a CSS class pinning to one of two
+          // fixed edges: see menuPlacement.ts for why a surface this close in
+          // width to a phone's clip box needs to slide, not just flip.
+          style={{ left: insetStart }}
         >
           {children}
         </div>
