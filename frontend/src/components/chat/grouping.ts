@@ -301,10 +301,14 @@ export function groupLabel(item: Extract<TurnItem, { t: "group" }>): string {
 
 /** The trailing meta of a collapsed group: how many steps, and anything blocked.
  *
- *  The count is DROPPED when there are as many distinct names as steps, because
- *  the label has then enumerated them one for one and the number is just the
- *  length of a list already on screen. "Read, Bash, Grep" needs no "3 steps"
- *  after it; "Read, Bash" over six calls does.
+ *  ALWAYS SAID for 2+ steps, whether or not the names above already enumerate
+ *  them one for one. It used to be dropped whenever every step had a distinct
+ *  name ("Read, Bash, Grep" showed no "3 steps"), on the theory that the count
+ *  was then just the length of a list already on screen. Operator, 2026-08-19:
+ *  that made the count's presence look arbitrary from outside, since nothing on
+ *  screen explains why it is there on some groups and not others. Dropped only
+ *  at n=1, where the single tool name already says "one call" and a trailing
+ *  "1 step" would be pure noise.
  *
  *  `blocked` is always said. It used to append "N failed" off the raw is_error
  *  flag too, which on this history would have shouted about 37 nonzero exit
@@ -315,7 +319,7 @@ export function groupCount(item: Extract<TurnItem, { t: "group" }>): string {
   const blocked = item.steps.filter((s) => stepAlert(s)).length;
   const parts: string[] = [];
   // `named &&`: with no names at all the label already IS the count.
-  if (named && n > named) parts.push(stepCount(n));
+  if (named && n > 1) parts.push(stepCount(n));
   if (blocked) parts.push(`${blocked} blocked`);
   return parts.join(", ");
 }

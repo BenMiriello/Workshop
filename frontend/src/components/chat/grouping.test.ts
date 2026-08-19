@@ -122,19 +122,21 @@ describe("what breaks a group", () => {
 });
 
 describe("the group header names its tools, never describes them", () => {
-  // NAMES LEAD, THE COUNT TRAILS, and the count is dropped when the names have
-  // already enumerated every step. The turn line above keeps the count and is
-  // the only line that does, so the two nesting levels stop reading identically.
+  // NAMES LEAD, THE COUNT TRAILS. The count used to be dropped whenever the
+  // names had already enumerated every step ("Read, Bash, Grep" with no "3
+  // steps" after it), but that made the count's presence look arbitrary from
+  // outside: nothing on screen explained why it was there on some groups and
+  // not others. Operator, 2026-08-19: always show it, past one step.
   it("leads with the names and counts only what they do not say", () => {
     const g = items(buildTurnBlocks([read("a"), read("b")]))[0];
     expect(groupLabel(g as never)).toBe("Read");
     expect(groupCount(g as never)).toBe("2 steps");
   });
 
-  it("says no count when there is one distinct name per step", () => {
+  it("still says the count when every step has a distinct name", () => {
     const g = items(buildTurnBlocks([read("a"), bash("ls"), grep("x")]))[0];
     expect(groupLabel(g as never)).toBe("Read, Bash, Grep");
-    expect(groupCount(g as never)).toBe("");
+    expect(groupCount(g as never)).toBe("3 steps");
   });
 
   it("falls back to the count when no step carries a name", () => {
@@ -324,9 +326,8 @@ describe("marks in the collapsed lines", () => {
     const work: ChatSegment[] = [read("a"), { t: "tool", name: "Bash", input: "x", ok: false, id: "s9" }];
     const g = items(buildTurnBlocks(work))[0] as Extract<TurnItem, { t: "group" }>;
     expect(groupLabel(g)).toBe("Read, Bash");
-    expect(groupCount(g)).toBe("");
-    // And the TURN line is the one that counts. This pair is the whole point of
-    // the split: the two levels no longer print the same string.
+    // No "stopped here", no error mark: a nonzero exit alone earns neither.
+    expect(groupCount(g)).toBe("2 steps");
     expect(turnWorkSummary(work)).toBe("2 steps");
   });
 
