@@ -1,0 +1,8 @@
+<!-- author: self; chat: 1a6cf9dda32f467295f46c97594f4e3c -->
+Root cause of the recurring 'agent says it will report back and then never responds' bug (dead turn b35b74f5, 2026-08-20).
+
+A chat turn is a one-shot `claude -p` process: it exits the moment it stops emitting tool calls, and nothing re-invokes it to collect a nested subagent's async result. The Agent/Task tool in this CLI (2.1.143) BACKGROUNDS BY DEFAULT when run_in_background is omitted, returning 'Async agent launched successfully'. The model's natural call therefore backgrounds, and the turn dies waiting for a task_notification it can never live to receive.
+
+The first guard (2026-08-19) denied only EXPLICIT run_in_background:true, so the default-background (omitted) call sailed through. Fixed 2026-08-20: services/subagent_guard.py now allows Agent/Task ONLY when run_in_background is explicitly false (fail closed). chat_context.DELEGATION_RULE rewritten to instruct 'pass run_in_background: false on every call' instead of the old harmful 'call it without it'. Wired via --settings PreToolUse matcher Agent|Task in build_streaming._build_cmd. Scope: chat turns only; does not touch the operator's own CLI or Workshop autonomy runs.
+
+Invariant: in a chat turn, a subagent is always foreground/inline. Do NOT try to make background subagents deliver by keeping the process alive past text emission; the frequent-restart reality defeats it. Durable fire-and-forget work is a Workshop agent/Run, which has its own process.

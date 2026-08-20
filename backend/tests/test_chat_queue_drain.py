@@ -220,6 +220,70 @@ def test_a_batch_already_committed_is_not_sent_twice(tid, starter):
     assert chat_queue.read(tid) == []
 
 
+def test_a_continuation_seed_starts_a_turn_attributed_to_no_one(tid, monkeypatch):
+    """Fire-and-continue. A finished background run leaves an auto seed; the
+    drain must start a turn from it WITHOUT recording an operator message, so the
+    chat continues on its own with nothing put in the operator's mouth."""
+    import asyncio as _a
+    from routes import chat as chat_routes
+
+    seen: list[dict] = []
+
+    async def fake_run(thread_id, t, content, model, parts, **kw):
+        seen.append({"content": content, "already_recorded": kw.get("already_recorded"),
+                     "parts": parts})
+        # A real turn with already_recorded=True records nothing here.
+        return None
+
+    monkeypatch.setattr(chat_routes, "_turn_for_message", fake_run)
+    chat_drain.request_continuation(tid, seed="read the result above and continue",
+                                    dedupe_id="job1-" + tid)
+    # The starter is what decides HOW a batch becomes a turn; the drop-after is
+    # drain()'s job and is covered by the batching tests. Here we pin the routing:
+    # a lone auto seed starts a turn with already_recorded=True and no user turn.
+    assert _a.run(chat_routes._start_queued_batch(tid, chat_queue.read(tid))) is True
+    assert len(seen) == 1
+    assert seen[0]["content"] == "read the result above and continue"
+    assert seen[0]["already_recorded"] is True
+    assert seen[0]["parts"] is None
+    # No operator (user) message was written to the log.
+    users = [e for e in chat_log.read_events(tid)
+             if e.get("kind") == "message" and e.get("role") == "user"]
+    assert users == []
+
+
+def test_a_continuation_seed_is_idempotent_on_the_job(tid):
+    """Re-finishing the same run (a retry, a restart replaying the close) must not
+    stack continuations: the seed dedupes on the job+thread id."""
+    chat_drain.request_continuation(tid, seed="continue once", dedupe_id="jobX-" + tid)
+    chat_drain.request_continuation(tid, seed="continue once", dedupe_id="jobX-" + tid)
+    seeds = [e for e in chat_queue.read(tid) if e.get("auto")]
+    assert len(seeds) == 1
+
+
+def test_a_continuation_waits_behind_operator_messages(tid, starter):
+    """An operator message typed before a run finished goes out first; the seed
+    is its own turn afterward, never batched into the operator's."""
+    chat_queue.enqueue(tid, text="what the operator typed", client_id="c1",
+                       ts="2026-08-20T10:00:00Z")
+    chat_drain.request_continuation(tid, seed="now continue", dedupe_id="jobY-" + tid)
+    assert asyncio.run(chat_drain.drain(tid, reason="test")) is True
+    assert [e["text"] for e in starter[0]] == ["what the operator typed"]
+    assert not any(e.get("auto") for e in starter[0])
+
+
+def test_a_continuation_does_not_fire_while_a_turn_runs(tid, starter):
+    """The seed waits for the thread to be genuinely idle, same as any queued
+    message: a continuation must never start a rival to a live turn."""
+    chat_drain.request_continuation(tid, seed="continue", dedupe_id="jobZ-" + tid)
+    chat_store.begin_turn(tid, "run-1")
+    assert asyncio.run(chat_drain.drain(tid, reason="test")) is False
+    assert starter == []
+    chat_store.release_turn(tid, "run-1")
+    assert asyncio.run(chat_drain.drain(tid, reason="test")) is True
+    assert starter[0][0].get("auto") is True
+
+
 def test_an_archived_chat_does_not_fire_its_queue(tid, starter):
     """Archiving puts a conversation away. A queue firing afterwards would start
     a turn in a chat the operator has closed. The messages are not dropped: they

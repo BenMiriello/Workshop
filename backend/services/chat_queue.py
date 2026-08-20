@@ -186,11 +186,28 @@ def is_command(text: str) -> bool:
     return s.startswith("/") and "\n" not in s
 
 
+def is_auto(entry: dict) -> bool:
+    """A system continuation seed, which is always a turn by itself (see enqueue)."""
+    return bool(isinstance(entry, dict) and entry.get("auto"))
+
+
+def _alone(entry: dict) -> bool:
+    """An entry that must be the whole of its turn: a slash command or an auto
+    seed. Batching either with operator messages would change what it is."""
+    return is_auto(entry) or is_command(entry.get("text", ""))
+
+
+def has_auto(thread_id: str) -> bool:
+    """Whether this thread has a continuation seed waiting. Read by the backend
+    continuation loop, which only needs to touch threads that have one."""
+    return any(is_auto(e) for e in _read_raw(thread_id)["entries"])
+
+
 def enqueue(thread_id: str, *, text: str, client_id: str, ts: str | None = None,
             attachments: list[dict] | None = None,
             model: str | None = None, effort: str | None = None,
             permission_mode: str | None = None,
-            recorded: bool = False) -> dict:
+            recorded: bool = False, auto: bool = False) -> dict:
     """Take responsibility for a message that cannot run yet.
 
     IDEMPOTENT ON `client_id`. A retry after a timeout, a second tab replaying
@@ -198,6 +215,15 @@ def enqueue(thread_id: str, *, text: str, client_id: str, ts: str | None = None,
     with the id the message was first sent under, and none of them may turn one
     message into two. The stored entry wins; a re-enqueue only refreshes the
     fields a retry could legitimately carry.
+
+    `auto` marks a SYSTEM continuation seed, not an operator message: a finished
+    background run enqueues one so the thread picks its result up on its own (see
+    services/chat_drain.request_continuation). It is not shown as an operator
+    bubble and is never recorded as a user turn; the drain starts a turn from it
+    with `already_recorded=True` so nothing is attributed to the operator. It
+    still rides the queue for one reason: the queue is the only store that
+    survives a backend restart between the run finishing and the turn starting,
+    and its idle/lock guards are exactly the ones a continuation needs.
 
     Returns the queue state, so the caller can answer the request with the
     truth rather than with what it assumes it just did.
@@ -210,6 +236,8 @@ def enqueue(thread_id: str, *, text: str, client_id: str, ts: str | None = None,
         "ts": ts or chat_log.now_iso(),
         "received_at": chat_log.now_iso(),
     }
+    if auto:
+        entry["auto"] = True
     if recorded:
         # The message is ALREADY in the log (a delivery was attempted against a
         # run that could not read it), so finding it there does not mean it was
@@ -296,11 +324,11 @@ def next_batch(thread_id: str) -> list[dict]:
     entries = sorted(raw["entries"], key=_order_key)
     if not entries:
         return []
-    if is_command(entries[0].get("text", "")):
+    if _alone(entries[0]):
         return [entries[0]]
     out: list[dict] = []
     for e in entries:
-        if is_command(e.get("text", "")):
+        if _alone(e):
             break
         out.append(e)
     return out

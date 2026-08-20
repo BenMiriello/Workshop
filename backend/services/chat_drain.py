@@ -145,6 +145,58 @@ async def _guarded(thread_id: str, reason: str) -> None:
         log.warning("chat queue drain task failed for %s: %s", thread_id, e)
 
 
+def request_continuation(thread_id: str, *, seed: str, dedupe_id: str) -> bool:
+    """Ask a thread to take its own next turn after a background run finished.
+
+    This is the write half of fire-and-continue. A run's completion handler
+    (services/run_report) calls it, and that handler runs in the DETACHED WORKER
+    process, not the backend, so all this can safely do is persist the seed: the
+    enqueue writes the queue file (idempotent on `dedupe_id`, so re-finishing the
+    same job cannot double-fire), and `drain_soon` starts the turn immediately
+    IF we happen to be on the backend's event loop, or no-ops if we are not. When
+    it no-ops, the backend's `continuation_loop` picks the seed up on its next
+    pass. Either way the turn starts exactly once, and survives a restart in
+    between because the seed is on disk. Returns True if the seed was persisted.
+    """
+    if not (seed or "").strip():
+        return False
+    try:
+        chat_queue.enqueue(
+            thread_id,
+            text=seed,
+            client_id=f"auto-{dedupe_id}",
+            auto=True,
+        )
+    except Exception as e:  # pragma: no cover - defensive: a run must still close
+        log.warning("continuation seed for %s could not be queued: %s", thread_id, e)
+        return False
+    drain_soon(thread_id, reason="continuation")
+    return True
+
+
+async def continuation_loop(*, interval: float = 5.0) -> None:
+    """Start the turn for any thread holding a continuation seed, once it is idle.
+
+    The seed is usually written by a worker process that cannot reach this event
+    loop (see request_continuation), so nothing else would ever start that turn.
+    This is that trigger: it is the backend, it outlives every run, and `drain`
+    already refuses to start while a turn or a thread-op is in flight, so a seed
+    simply waits here until the thread is genuinely free. Only threads that have
+    a seed are touched, so an idle system does no work.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            for tid in chat_queue.threads_with_queues():
+                try:
+                    if chat_queue.has_auto(tid):
+                        await drain(tid, reason="continuation")
+                except Exception as e:  # pragma: no cover - defensive
+                    log.warning("continuation drain failed for %s: %s", tid, e)
+        except Exception as e:  # pragma: no cover - defensive
+            log.warning("continuation loop pass failed: %s", e)
+
+
 async def drain_all(*, reason: str = "startup") -> int:
     """Every thread holding a queue. Runs at startup.
 

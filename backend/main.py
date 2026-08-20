@@ -57,6 +57,14 @@ async def lifespan(app: FastAPI):
     # outlives every run, so it reaps.
     from services import jobs as jobs_svc
     app.state._bg_job_reconcile = asyncio.create_task(jobs_svc.reconcile_loop())
+    # Fire-and-continue: a finished background run leaves a continuation seed on
+    # the originating thread's queue (services/run_report -> chat_drain), written
+    # from the detached worker process that cannot reach this event loop. This is
+    # the backend side that notices the seed and starts the thread's own next
+    # turn once it is idle, so a chat acts on a run's result without the operator
+    # having to prompt it. Only threads holding a seed are touched.
+    from services import chat_drain as _chat_drain
+    app.state._bg_chat_continuation = asyncio.create_task(_chat_drain.continuation_loop())
     # Dedup vectors: embed the open backlog so filing a ticket does not. `decide`
     # compares a new ticket against every open one, and the embedder is one HTTP
     # call per text, so a cold cache made the File ticket button wait 17.5s

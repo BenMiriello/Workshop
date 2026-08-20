@@ -29,6 +29,7 @@
 - [Chat scope: one race caused every 'opens blank / opens the wrong chat' bug](chat-scope-one-race-caused-every-opens-blank-ope-19fca241ce5.md)
 - [Chat send failures: the edge's connection pool, not the network](chat-send-failures-the-edge-s-connection-pool-no-19ff2daaac3.md)
 - [Chat should show related tasks/runs with live progress](chat-should-show-related-tasks-runs-with-live-pr-1a0028fb291.md)
+- [Chat subagents must be foreground; the guard fails closed on the CLI's default-background](chat-subagents-must-be-foreground-the-guard-fail-1a02048d4d5.md)
 - [Chat system needed a complete overhaul first](chat-system-needed-a-complete-overhaul-first-1a0028fb2ab.md)
 - [Chats have user-changeable scope](chats-have-user-changeable-scope-1a0028fb294.md)
 - [Claude Code permission modes need --permission-prompt-tool stdio or they silently deny](claude-code-permission-modes-need-permission-pro-19fe9598408.md)

@@ -3679,6 +3679,25 @@ async def _start_queued_batch(thread_id: str, batch: list[dict]) -> bool:
     if chat_context.dev_scope_refused(t.get("context_key")):
         raise RuntimeError(task_scope.dev_mode_refusal(t.get("context_key"))
                            or "developer mode is off, so this scope cannot run here")
+    # A CONTINUATION SEED is not an operator message and never batches: a
+    # finished background run left it so the thread would take its own next turn
+    # (services/chat_drain.request_continuation). It starts a turn with
+    # `already_recorded=True`, so nothing is attributed to the operator and no
+    # user bubble appears; the run's result is already an autonomous message in
+    # the thread, and this seed only tells the model to read it and continue.
+    if len(batch) == 1 and batch[0].get("auto"):
+        seed = (batch[0].get("text") or "").strip()
+        if not seed:
+            return False
+        try:
+            await _turn_for_message(
+                thread_id, t, seed, None, None,
+                already_recorded=True, client_id=None)
+        except build_streaming.TurnInFlight:
+            # A real turn claimed the thread first. The seed stays queued and the
+            # continuation loop retries when that turn ends.
+            return False
+        return True
     # ALREADY DELIVERED? Entries leave the queue only after the turn carrying
     # them has been recorded, which is the right order — a crash in between
     # leaves them queued rather than gone. The cost is that a crash in exactly

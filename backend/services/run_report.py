@@ -121,6 +121,34 @@ def _summarize(job: dict, tickets: list[dict], status: str) -> str:
     return "\n".join(lines)
 
 
+def _continuation_seed(job: dict, tickets: list[dict], status: str) -> str:
+    """The system prompt that starts the thread's own next turn after a run.
+
+    Written to the MODEL, not the operator, and framed so the model does not
+    mistake it for the operator speaking: the run's result is already an
+    autonomous message directly above in the thread, and this only tells the
+    model to act on it. Kept short; the model has the full report in history.
+    """
+    jid = job.get("id") or "?"
+    verb = _VERB.get(status, status)
+    heads = [
+        (t.get("text") or "").splitlines()[0][:90]
+        for t in tickets[:3] if (t.get("text") or "").strip()
+    ]
+    what = ("; ".join(heads)) if heads else "the work you handed off"
+    return (
+        "[AUTONOMOUS CONTINUATION - not a message from the operator]\n"
+        f"A background run you started (`{jid}`, for: {what}) has just {verb}, "
+        "and its result is the autonomous message directly above this one in the "
+        "thread. Read that result and carry the conversation forward for the "
+        "operator: if it answers what they were waiting on, give them the answer "
+        "plainly; if there is a clear next step, take it or propose it. Do not "
+        "greet the operator or ask what they want, and do not repeat the report "
+        "verbatim. If the run failed or produced nothing useful, say so briefly "
+        "and stop rather than inventing work."
+    )
+
+
 def _run_comment(job: dict, task: dict, status: str) -> str:
     """The one comment a run posts on the linked issue (lifecycle doc §9.2:
     "one run-summary comment per run", not full comment sync).
@@ -305,6 +333,24 @@ def post_for_job(job_id: str, status: str = "done") -> int:
                           "tickets": [t.get("id") for t in tickets]},
                 )
                 posted += 1
+                # FIRE-AND-CONTINUE, but only for a run THIS chat launched. The
+                # report above goes to every chat that filed a ticket the run
+                # worked; a continuation turn does not, or an old chat would
+                # spring to life whenever an autonomous sweep happened to finish
+                # one of its tickets. `job.chat_id` is set only by the chat
+                # launch path (routes.tasks_all.launch_task_run), so gating on it
+                # scopes the continuation to work the operator started from here.
+                # Best-effort and idempotent (dedupe on job+thread).
+                if str(job.get("chat_id") or "") == thread_id:
+                    try:
+                        from services import chat_drain
+                        chat_drain.request_continuation(
+                            thread_id,
+                            seed=_continuation_seed(job, tickets, status),
+                            dedupe_id=f"{job_id}-{thread_id}",
+                        )
+                    except Exception as e:  # pragma: no cover - defensive
+                        log.debug("continuation seed for %s skipped: %s", thread_id, e)
             except Exception as e:
                 log.debug("run report to thread %s failed: %s", thread_id, e)
             finally:
