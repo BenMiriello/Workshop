@@ -20,11 +20,9 @@
 
 import { Suspense } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { Outlet, Route } from "react-router-dom";
+import { Route } from "react-router-dom";
 import { RouteBoundary, RouteSkeleton, lazyPage } from "../lib/lazyPage";
 import { timeAgoSeconds } from "../lib/time";
-import { Banknote, Bird, MapPin, NotebookPen, PiggyBank, TrainFront } from "lucide-react";
-import type { LucideProps } from "lucide-react";
 
 export type CrumbNode = { label: string; parent?: string };
 
@@ -41,8 +39,11 @@ export type AppModule = {
   link?: { label: string; to: string };
   /** A provider the shell mounts for the whole session while installed. */
   Provider?: ComponentType<{ children: ReactNode }>;
-  /** The glyph for this app's launcher card. */
-  Icon?: ComponentType<LucideProps>;
+  /** The app's icon, DECLARED not imported: an icon token (see lib/appIcon),
+   *  a url/path for a custom image, or absent for a monogram of its name.
+   *  It was `Icon?: ComponentType` holding a lucide component, which put "this
+   *  particular app wants a bird" in platform source. */
+  icon?: string;
   /** Live state for the launcher card. The launcher used to switch on app ids
    *  and fetch each app's endpoint itself; an app knows its own summary. */
   status?: () => Promise<AppStatus>;
@@ -68,21 +69,19 @@ const Recordings = lazyPage(() => import("../pages/apps/birds/RecordingsPage"));
 const Atlas = lazyPage(() => import("../pages/apps/birds/Atlas"));
 const ForecastWeek = lazyPage(() => import("../pages/apps/birds/ForecastWeek"));
 const HealthSettings = lazyPage(() => import("../pages/apps/health/HealthSettings"));
-
-import { BirdsScopeProvider } from "../pages/apps/birds/scope";
-import BirdsShell from "../pages/apps/birds/BirdsShell";
-import { RecorderProvider } from "../pages/apps/birds/recorder";
-
 // Birds runs inside its own responsive shell (sidebar / mobile tabs) with the
-// persistent Location·Device·Time scope. The Workshop topnav stays the outer
-// nav level; this is the inner one.
-function BirdsLayout() {
-  return (
-    <BirdsScopeProvider>
-      <BirdsShell><Outlet /></BirdsShell>
-    </BirdsScopeProvider>
-  );
-}
+// persistent Location·Device·Time scope. Lazy like every other app module:
+// eager, it put `birds.css` in the entry stylesheet for every visitor.
+const BirdsLayout = lazyPage(() => import("../pages/apps/birds/BirdsLayout"));
+
+// EAGER, and the last one. A Provider is mounted around the whole session, so
+// `AppProviders` reduces over it synchronously and cannot await a chunk without
+// unmounting the app underneath it. `recorder.tsx` imports no CSS, so the cost
+// is bounded, but a provider that must outlive navigation is exactly what the
+// manifest should declare and the app loader should mount with the app's own
+// bundle. Tracked as stage 5 of
+// docs/platform-redesign/app-separation-and-github-2026-08-20.md.
+import { RecorderProvider } from "../pages/apps/birds/recorder";
 
 
 // ---- launcher status ------------------------------------------------------
@@ -153,7 +152,7 @@ export const APPS: AppModule[] = [
   },
   {
     id: "finance",
-    Icon: Banknote,
+    icon: "banknote",
     status: financeStatus,
     group: "money",
     link: { label: "Finance", to: "/apps/finance" },
@@ -162,7 +161,7 @@ export const APPS: AppModule[] = [
   },
   {
     id: "budget",
-    Icon: PiggyBank,
+    icon: "piggy-bank",
     status: async () => ({ text: "plan & simulate", tone: "muted" }),
     group: "money",
     link: { label: "Budget", to: "/apps/budget" },
@@ -171,7 +170,7 @@ export const APPS: AppModule[] = [
   },
   {
     id: "location",
-    Icon: MapPin,
+    icon: "map-pin",
     status: locationStatus,
     group: "place",
     link: { label: "Location", to: "/apps/location" },
@@ -180,7 +179,7 @@ export const APPS: AppModule[] = [
   },
   {
     id: "commute",
-    Icon: TrainFront,
+    icon: "train-front",
     status: async () => ({ text: "schedule & live status", tone: "muted" }),
     group: "place",
     link: { label: "Commute", to: "/apps/commute" },
@@ -189,13 +188,13 @@ export const APPS: AppModule[] = [
   },
   {
     id: "notes-app",
-    Icon: NotebookPen,
+    icon: "notebook-pen",
     crumbs: { "/apps/notes": { label: "Notes", parent: "/apps" } },
     routes: () => <Route key="notes" path="/apps/notes" element={<Notes />} />,
   },
   {
     id: "birds",
-    Icon: Bird,
+    icon: "bird",
     status: birdsStatus,
     Provider: RecorderProvider,
     crumbs: {
@@ -277,9 +276,11 @@ export function appSettingsPanels(): ReactNode[] {
   });
 }
 
-/** The glyph an app declared, if it declared one. */
-export function appIcon(id: string): ComponentType<LucideProps> | undefined {
-  return APPS.find((a) => a.id === id)?.Icon;
+/** The icon an app declared, if it declared one. A token/url string, never a
+ *  component: resolving it is lib/appIcon's job, and the fallback is a monogram
+ *  of the app's name rather than a generic placeholder glyph. */
+export function appIcon(id: string): string | undefined {
+  return APPS.find((a) => a.id === id)?.icon;
 }
 
 /** Every app that has a screen to open, as the shell's dock needs it.
@@ -295,9 +296,9 @@ export function appPlaces(): {
   id: string;
   name: string;
   home: string;
-  Icon?: ComponentType<LucideProps>;
+  icon?: string;
 }[] {
-  const out: { id: string; name: string; home: string; Icon?: ComponentType<LucideProps> }[] = [];
+  const out: { id: string; name: string; home: string; icon?: string }[] = [];
   for (const a of APPS) {
     const paths = Object.keys(a.crumbs).sort((x, y) => x.length - y.length);
     const home = a.link?.to ?? paths[0];
@@ -306,7 +307,7 @@ export function appPlaces(): {
       id: a.id,
       name: a.link?.label ?? a.crumbs[home]?.label ?? a.id,
       home,
-      Icon: a.Icon,
+      icon: a.icon,
     });
   }
   return out;

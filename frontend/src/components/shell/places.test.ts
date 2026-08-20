@@ -89,10 +89,13 @@ describe("buildPlaces", () => {
     expect(birds.defaultColumnOpen).toBe(false);
   });
 
-  it("gives an app a letter tile and Home a glyph", () => {
-    expect(birds.letter).toBe("B");
+  it("carries an app's DECLARED icon and gives Home an imported glyph", () => {
+    // An app's icon is data (a token, a url, or absent -> a monogram of the
+    // name). A platform place's is an import, because Home is not an app.
+    expect(birds.icon).toBeUndefined(); // this fixture declares none
+    expect(birds.Icon).toBeUndefined();
     expect(home.Icon).toBeTruthy();
-    expect(home.letter).toBeUndefined();
+    expect(home.icon).toBeUndefined();
   });
 
   it("lists no page that has nothing behind it", () => {
@@ -115,5 +118,41 @@ describe("buildPlaces", () => {
     expect(landingFor(home)).toBe("/");
     expect(landingFor(chats)).toBe("/chats");
     expect(landingFor(birds)).toBe("/apps/birds");
+  });
+});
+
+describe("the Settings place", () => {
+  const settings = places.find((p) => p.id === "settings") as ShellPlace;
+
+  it("is a place, not a row on Home", () => {
+    // It used to be the last page of Home, so reaching it meant landing on Home
+    // first. Operator, 2026-08-20: "clicking settings just goes to the workshop
+    // home page and then settings, which is actually not correct."
+    expect(settings).toBeTruthy();
+    expect(settings.kind).toBe("settings");
+    expect(home.pages.find((p) => p.id === "settings")).toBeUndefined();
+  });
+
+  it("owns every /settings path, including the ones that were already routed", () => {
+    expect(placeFor(places, "/settings").id).toBe("settings");
+    expect(placeFor(places, "/settings/host").id).toBe("settings");
+    // Grants, Trackers, MCP and Base apps were separate pages reached through a
+    // link-in-a-Card on the Settings blob. They are tabs now, so they must
+    // resolve to this place rather than falling back to Home.
+    expect(placeFor(places, "/settings/grants").id).toBe("settings");
+    expect(placeFor(places, "/settings/mcp").id).toBe("settings");
+  });
+
+  it("lights the right tab, and Account only on exactly /settings", () => {
+    expect(pageFor(settings, "/settings")?.id).toBe("account");
+    expect(pageFor(settings, "/settings/appearance")?.id).toBe("appearance");
+    expect(pageFor(settings, "/settings/host")?.id).toBe("host");
+    // `end` on Account: as a prefix, "/settings" matches every tab below it and
+    // two rows light at once.
+    expect(pageFor(settings, "/settings/memory")?.id).toBe("memory");
+  });
+
+  it("has more than one page, so the phone draws its tab bar", () => {
+    expect(settings.pages.length).toBeGreaterThan(1);
   });
 });

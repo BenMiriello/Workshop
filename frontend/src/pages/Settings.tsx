@@ -8,15 +8,11 @@ import {
   Moon,
   Monitor,
   Trash2,
-  FolderGit2,
-  Network,
   UserRound,
   LogOut,
   Smartphone,
   MessageSquare,
-  Link2,
   Pencil,
-  Plug,
   Library,
 } from "lucide-react";
 import {
@@ -67,8 +63,12 @@ import type { PermissionState } from "@shared/native-bridge";
 import { AppSuspense, appSettingsPanels } from "../apps/registry";
 import { timeAgo } from "../lib/time";
 
-// Settings page. Logical groupings, no over-engineering. Sections in order
-// of how often the operator actually touches them.
+// Settings. One section per tab, ordered by how often the operator touches it.
+//
+// The four "pointer" sections that used to live here (Mcp, BaseApps, Trackers,
+// Platform) are gone: each was ~15 lines of Card chrome wrapping a single link
+// to a page that already existed. In a tabbed Settings that link IS the tab, so
+// the wrapper had nothing left to do.
 
 type ServiceProbe = {
   name: string;
@@ -79,25 +79,82 @@ type ServiceProbe = {
   notes?: string | null;
 };
 
-export default function Settings() {
+/** Which tab of Settings is on screen. One per route; see App.tsx. */
+export type SettingsTab =
+  | "account"
+  | "appearance"
+  | "chat"
+  | "memory"
+  | "apps"
+  | "host";
+
+const TAB_TITLE: Record<SettingsTab, string> = {
+  account: "Account",
+  appearance: "Appearance",
+  chat: "Chat",
+  memory: "Memory",
+  apps: "Apps",
+  host: "This host",
+};
+
+/**
+ * Settings is a PLACE with one page per section, not one long page.
+ *
+ * Operator, 2026-08-20: "clicking settings just goes to the workshop home page
+ * and then settings, which is actually not correct. Settings should be its own
+ * page, and the secondary toolbar should have all the tabs for all the
+ * different sections. So instead of settings all being one big blob of things,
+ * all of these things should be separate tabs."
+ *
+ * It was thirteen sections stacked vertically, and rendering them all mounted
+ * AutonomyControls, Services and Events together: five polling loops (services
+ * every 10s from two different callers, events 15s, autonomy 15s x2, health
+ * 60s) plus about nine one-shot fetches, on a screen most visits use to change
+ * the theme. One tab at a time fixes that as a side effect.
+ *
+ * The sections themselves did not move. Each tab renders the same components
+ * this file already had, so this is a routing change, not a rewrite of any
+ * control.
+ */
+export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
   return (
     <div>
-      <PageHeader title="Settings" />
-      <AccountSection />
-      <DeviceSection />
-      <AppearanceSection />
-      <ChatSection />
-      <MemorySection />
-      <McpSection />
-      <BaseAppsSection />
-      <PlatformSection />
-      <TrackersSection />
+      <PageHeader title={TAB_TITLE[tab]} />
+      {tab === "account" && (
+        <>
+          <AccountSection />
+          {/* Native-shell only; renders nothing in a browser. It belongs to
+              this signed-in session's device, so it sits under Account. */}
+          <DeviceSection />
+        </>
+      )}
+      {tab === "appearance" && <AppearanceSection />}
+      {tab === "chat" && <ChatSection />}
+      {tab === "memory" && <MemorySection />}
       {/* Panels contributed by installed apps. Settings does not know which
           apps exist or what they need configured. */}
-      <AppSuspense>{appSettingsPanels()}</AppSuspense>
-      <AgentsSection />
-      <AutonomyControls />
-      <SystemSection />
+      {tab === "apps" && <AppSuspense>{appSettingsPanels()}</AppSuspense>}
+      {tab === "host" && (
+        <>
+          {/* EVERYTHING HERE IS ABOUT THIS MACHINE, and that is why it is one
+              tab with that name rather than scattered through Settings.
+              Operator, 2026-08-20, on the GPU and broker rows: "the broker is a
+              specific thing to my particular distribution and should not be
+              included in this at all", and on the system section: "that might
+              not be correct at all or relevant to a production system, like a
+              cloud hosted version of this".
+              He is right: gpubrokerd is an external daemon at 127.0.0.1:8447
+              that Workshop is only a client of, and it cannot exist in a cloud
+              deploy. Quarantining it under an honest name is the step that can
+              be taken without breaking controls he uses today; deciding what is
+              deleted versus gated is the settings-redesign phase, recorded in
+              docs/platform-redesign/app-separation-and-github-2026-08-20.md
+              section 5.1. */}
+          <AgentsSection />
+          <AutonomyControls />
+          <SystemSection />
+        </>
+      )}
     </div>
   );
 }
@@ -242,39 +299,11 @@ function MemorySection() {
 // 2026-08-10 three of this host's MCP servers were failing to connect, two more
 // were unauthenticated, and no screen in the app said so.
 // ----------------------------------------------------------------------------
-function McpSection() {
-  return (
-    <Section icon={Plug} title="MCP">
-      <Row label="servers">
-        <Link to="/settings/mcp" style={{ color: "var(--accent)" }}>
-          installed servers + health + cost ↗
-        </Link>
-        <span className="ws-muted" style={{ marginLeft: "0.5rem", fontSize: "var(--fs-xs)" }}>
-          (what each one costs every turn, and whether it connects)
-        </span>
-      </Row>
-    </Section>
-  );
-}
 
 // ----------------------------------------------------------------------------
 // Base Apps section — pointer into Settings → Base Apps subroute. Holds the
 // tenant-level git-repo listing previously at /projects. See ADR-008.
 // ----------------------------------------------------------------------------
-function BaseAppsSection() {
-  return (
-    <Section icon={FolderGit2} title="Base Apps">
-      <Row label="repos">
-        <Link to="/settings/base-apps" style={{ color: "var(--accent)" }}>
-          tenant repos + branches ↗
-        </Link>
-        <span className="ws-muted" style={{ marginLeft: "0.5rem", fontSize: "var(--fs-xs)" }}>
-          (foundational tooling: workshop, clawdbot, infra)
-        </span>
-      </Row>
-    </Section>
-  );
-}
 
 // ----------------------------------------------------------------------------
 // Trackers section: pointer into Settings -> Trackers. ONE external ticket
@@ -282,40 +311,12 @@ function BaseAppsSection() {
 // looked like a setting collapsed into a decision already made, so this is a
 // pointer and not a panel.
 // ----------------------------------------------------------------------------
-function TrackersSection() {
-  return (
-    <Section icon={Link2} title="Trackers">
-      <Row label="integration">
-        <Link to="/settings/trackers" style={{ color: "var(--accent)" }}>
-          external tickets + triage ↗
-        </Link>
-        <span className="ws-muted" style={{ marginLeft: "0.5rem", fontSize: "var(--fs-xs)" }}>
-          (one at a time; imported issues need approving)
-        </span>
-      </Row>
-    </Section>
-  );
-}
 
 // ----------------------------------------------------------------------------
 // Platform section: pointer into Settings -> Grants. Cross-app + guest access
 // control (capability grants). Operator is always fully permitted; these govern
 // shared/guest access only.
 // ----------------------------------------------------------------------------
-function PlatformSection() {
-  return (
-    <Section icon={Network} title="Platform">
-      <Row label="grants">
-        <Link to="/settings/grants" style={{ color: "var(--accent)" }}>
-          capability map + cross-app/guest access ↗
-        </Link>
-        <span className="ws-muted" style={{ marginLeft: "0.5rem", fontSize: "var(--fs-xs)" }}>
-          (governs shared/guest access only)
-        </span>
-      </Row>
-    </Section>
-  );
-}
 
 // ----------------------------------------------------------------------------
 // This device — native capabilities, surfaced only inside the iOS shell (the

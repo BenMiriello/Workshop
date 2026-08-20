@@ -50,7 +50,13 @@ export function clearChunkReloadGuard(): void {
  *  The retry is deliberately not a re-import of the same URL: a 404 on a
  *  content-hashed chunk means this document is stale, and only a reload gets a
  *  new one. */
-export function lazyPage<T extends ComponentType<unknown>>(
+// `ComponentType<any>`, not `ComponentType<unknown>`: the constraint is only
+// here to say "this is a component", and `unknown` props make every page
+// prop-LESS, so a routed page that takes one (Settings takes its tab) stops
+// type-checking at the call site with an error about IntrinsicAttributes that
+// points at the route rather than at this line.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function lazyPage<T extends ComponentType<any>>(
   load: () => Promise<{ default: T }>,
 ) {
   return lazy(() =>

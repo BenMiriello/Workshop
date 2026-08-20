@@ -29,7 +29,7 @@
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
 
-export type PlaceKind = "home" | "chats" | "app";
+export type PlaceKind = "home" | "chats" | "app" | "settings";
 
 export type ShellPage = {
   id: string;
@@ -50,9 +50,12 @@ export type ShellPlace = {
    *  is the fallback, which is what makes it the root. */
   prefixes: string[];
   pages: ShellPage[];
-  /** The dock tile's glyph, or its uppercase letter when it has none. */
+  /** A platform place's glyph. Home and All chats are platform nav, so their
+   *  icons ARE imports; an app's is not. See `icon` below. */
   Icon?: ComponentType<LucideProps>;
-  letter?: string;
+  /** An APP place's declared icon: a token, a url, or absent for a monogram.
+   *  Resolved by lib/appIcon at render time, never imported here. */
+  icon?: string;
   /** Whether the page column starts open the first time you arrive.
    *
    *  An app starts CLOSED: "each app should open full screen with the
@@ -62,15 +65,16 @@ export type ShellPlace = {
 };
 
 /** The minimum an installed app has to tell the shell to earn a dock tile.
- *  `Icon` is optional and the uppercase first letter is the fallback, which is
- *  what the design called for. In practice every installed app declares a
- *  glyph, and it should be used: two apps whose names start with the same
- *  letter (Budget and Birds) are indistinguishable as letters. */
+ *
+ *  `icon` is a DECLARED value and it is optional. Absent, the tile falls back to
+ *  a two-letter monogram of the name -- two, because one is ambiguous on this
+ *  very instance: Budget and Birds both render "B", which shipped and was
+ *  immediately visible. See lib/appIcon. */
 export type AppDescriptor = {
   id: string;
   name: string;
   home: string;
-  Icon?: ComponentType<LucideProps>;
+  icon?: string;
 };
 
 function matchesPrefix(pathname: string, prefix: string): boolean {
@@ -154,7 +158,6 @@ export function buildPlaces(
       { id: "deploys", label: "Deploys", to: "/deploys", Icon: icons.deploys },
       { id: "memory", label: "Memory", to: "/memory", Icon: icons.memory },
       { id: "usage", label: "Usage", to: "/usage", Icon: icons.usage },
-      { id: "settings", label: "Settings", to: "/settings", Icon: icons.settings },
     ],
   };
 
@@ -174,13 +177,45 @@ export function buildPlaces(
     ],
   };
 
+  // SETTINGS IS A PLACE, not a row on Home. Operator, 2026-08-20: "clicking
+  // settings just goes to the workshop home page and then settings, which is
+  // actually not correct. Settings should be its own page, and the secondary
+  // toolbar should have all the tabs for all the different sections."
+  //
+  // It has no dock TILE, because the avatar at the foot of the dock is already
+  // the way in and a second control to the same place is the duplication the
+  // dock was built to remove. `prefixes` is what makes the avatar land here
+  // with this column open.
+  const settings: ShellPlace = {
+    id: "settings",
+    kind: "settings",
+    name: "Settings",
+    prefixes: ["/settings"],
+    Icon: icons.settings,
+    defaultColumnOpen: true,
+    pages: [
+      { id: "account", label: "Account", to: "/settings", Icon: icons.account, end: true },
+      { id: "appearance", label: "Appearance", to: "/settings/appearance", Icon: icons.appearance },
+      { id: "chat", label: "Chat", to: "/settings/chat", Icon: icons.chats },
+      { id: "memory", label: "Memory", to: "/settings/memory", Icon: icons.memory },
+      { id: "apps", label: "Apps", to: "/settings/apps", Icon: icons.apps },
+      { id: "trackers", label: "Trackers", to: "/settings/trackers", Icon: icons.trackers },
+      { id: "mcp", label: "MCP", to: "/settings/mcp", Icon: icons.mcp },
+      { id: "access", label: "Access", to: "/settings/grants", Icon: icons.access },
+      { id: "base-apps", label: "Base apps", to: "/settings/base-apps", Icon: icons.baseApps },
+      // Named for what it is. Everything on it is about THIS machine (the GPU
+      // rows, the broker, the loopback service probes), which a cloud deploy
+      // has none of. See the comment on the `host` tab in pages/Settings.tsx.
+      { id: "host", label: "This host", to: "/settings/host", Icon: icons.host },
+    ],
+  };
+
   const appPlaces: ShellPlace[] = apps.map((app) => ({
     id: `app:${app.id}`,
     kind: "app" as const,
     name: app.name,
     prefixes: [app.home],
-    Icon: app.Icon,
-    letter: app.Icon ? undefined : app.name.slice(0, 1).toUpperCase(),
+    icon: app.icon,
     defaultColumnOpen: false,
     // ONE ROW, and that is honest. Not a nav choice: an app has no ticket queue
     // (`chat_work._QUEUELESS_PREFIXES = ("app:",)`), no runs and no deploys
@@ -191,5 +226,5 @@ export function buildPlaces(
     pages: [{ id: "app", label: app.name, to: app.home, Icon: icons.apps }],
   }));
 
-  return [home, chats, ...appPlaces];
+  return [home, chats, ...appPlaces, settings];
 }

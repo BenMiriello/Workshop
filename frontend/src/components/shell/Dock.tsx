@@ -14,17 +14,14 @@
 // click is intercepted.
 
 import { Link } from "react-router-dom";
+import { AppGlyph, monogram } from "../../lib/appIcon";
 import { useAuth } from "../../auth/AuthProvider";
 import type { Shell } from "./useShell";
 import type { ShellPlace } from "./places";
 
-function initials(name: string | null | undefined, email: string): string {
-  const source = (name || email || "").trim();
-  if (!source) return "?";
-  const words = source.split(/[\s._-]+/).filter(Boolean);
-  const letters = words.length > 1 ? words[0][0] + words[1][0] : source.slice(0, 2);
-  return letters.toUpperCase();
-}
+/** The signed-in person's initials. The same two-letter rule an app with no
+ *  icon falls back to, so it is literally the same function. */
+const initials = (name: string | null | undefined, email: string) => monogram(name || email || "");
 
 function Tile({ shell, place }: { shell: Shell; place: ShellPlace }) {
   const active = shell.place.id === place.id;
@@ -49,15 +46,26 @@ function Tile({ shell, place }: { shell: Shell; place: ShellPlace }) {
         shell.selectPlace(place);
       }}
     >
-      {Icon ? <Icon size={18} aria-hidden /> : <span aria-hidden>{place.letter}</span>}
+      {/* A platform place imports its glyph; an app DECLARES one and AppGlyph
+          resolves it (token, custom image, or a monogram of its name). The
+          platform never imports an icon on an app's behalf. */}
+      {Icon ? (
+        <Icon size={18} aria-hidden />
+      ) : (
+        <AppGlyph icon={place.icon} name={place.name} size={18} />
+      )}
     </Link>
   );
 }
 
 export function Dock({ shell }: { shell: Shell }) {
   const { user } = useAuth();
-  const fixed = shell.places.filter((p) => p.kind !== "app");
+  // Settings is a place but NOT a tile: the avatar below is already the way in,
+  // and two controls to one destination is the duplication the dock exists to
+  // remove. It still highlights, because it is still a place.
+  const fixed = shell.places.filter((p) => p.kind === "home" || p.kind === "chats");
   const apps = shell.places.filter((p) => p.kind === "app");
+  const inSettings = shell.place.kind === "settings";
 
   return (
     <nav className="ws-rail" aria-label="Places">
@@ -71,7 +79,8 @@ export function Dock({ shell }: { shell: Shell }) {
       <span className="ws-rail__spacer" aria-hidden />
       <Link
         to="/settings"
-        className="ws-rail__avatar"
+        className={"ws-rail__avatar" + (inSettings ? " is-active" : "")}
+        aria-current={inSettings ? "page" : undefined}
         aria-label="Account and settings"
         title="Account and settings"
       >

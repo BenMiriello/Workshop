@@ -42,3 +42,19 @@
 .ef-grid { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.5rem 0.7rem; min-width: 0; }
 /* (.ef-field / .ef-inwrap / .ef-prefix / .ef-del / .ef-add deleted — the Budget
    edit form uses Field/Input/Select/Button from src/ui now.) */
+
+/* ---- moved out of the platform stylesheet, 2026-08-20 --------------------
+   These are Budget's, and only Budget's: `.tabs` is its Plan|Projection strip
+   and `.sec-h` heads its sections. They sat in frontend/src/styles.css, which
+   is loaded for every visitor including those without this app installed. */
+
+/* Tab strip (Plan | Projection). */
+.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; }
+.tabs button {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--muted); font-size: 0.95rem; padding: 0.5rem 0.85rem; cursor: pointer; margin-bottom: -1px;
+}
+.tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+/* Section heading used across budget sections. */
+.sec-h { margin: 0 0 0.6rem; font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }

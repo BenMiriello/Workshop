@@ -140,21 +140,17 @@ label {
   code, .mono { word-break: break-all; }
 }
 
-/* App-owned styles have moved to the apps that own them:
+/* App-owned styles live in the app that owns them:
  *   pages/apps/birds/birds.css, pages/apps/budget/budget.css
- * Generic legacy classes several pages share (.pill, .tabs, .num-in,
- * .sec-h, the range sliders) deliberately stayed here. */
-
-/* Tab strip (Plan | Projection). */
-.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; }
-.tabs button {
-  background: none; border: none; border-bottom: 2px solid transparent;
-  color: var(--muted); font-size: 0.95rem; padding: 0.5rem 0.85rem; cursor: pointer; margin-bottom: -1px;
-}
-.tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
-
-/* Section heading used across budget sections. */
-.sec-h { margin: 0 0 0.6rem; font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+ * `.tabs` and `.sec-h` moved to budget.css on 2026-08-20 -- they were only ever
+ * used by Budget.tsx and budget/Projection.tsx, so "generic legacy classes
+ * several pages share" was true of the set but not of those two.
+ *
+ * `.num-in` and the range sliders stay, and are the honest remainder: `.num-in`
+ * is used by BOTH birds and budget, so moving it to either app's sheet breaks
+ * the other and copying it into both guarantees drift. It is a numeric field
+ * and its real home is a kit primitive alongside Input/Select. Until then it
+ * lives here on purpose, not by omission. */
 
 /* Compact numeric input used in the edit form and simulator controls. */
 /* Legacy field class, still used by the birds sub-app (migrated last per

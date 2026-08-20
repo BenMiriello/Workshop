@@ -130,7 +130,17 @@ export default function App() {
           <Route path="/voice/:contextKey" element={<VoiceRedirect />} />
           {/* Legacy path + the old external link both land on the in-workshop app now. */}
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />
-          <Route path="/settings" element={<Settings />} />
+          {/* Settings is a PLACE with one route per tab (see pages/Settings.tsx
+              and the `settings` entry in components/shell/places.ts). All six
+              share one lazy chunk, so the split costs no extra request; what it
+              buys is that only the section you are looking at mounts, instead
+              of all thirteen starting their polls at once. */}
+          <Route path="/settings" element={<Settings tab="account" />} />
+          <Route path="/settings/appearance" element={<Settings tab="appearance" />} />
+          <Route path="/settings/chat" element={<Settings tab="chat" />} />
+          <Route path="/settings/memory" element={<Settings tab="memory" />} />
+          <Route path="/settings/apps" element={<Settings tab="apps" />} />
+          <Route path="/settings/host" element={<Settings tab="host" />} />
           {/* Retired standalone routes. Services/Events moved into Settings >
               System; their page files are still there (pages/Services.tsx,
               pages/Events.tsx), but only as panels Settings renders, not as

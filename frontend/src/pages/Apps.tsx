@@ -1,20 +1,13 @@
-import { useCallback, useEffect, useState, type ComponentType } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { appIcon, appStatuses } from "../apps/registry";
+import { AppGlyph } from "../lib/appIcon";
 import type { AppStatus } from "../apps/registry";
 import {
-  Banknote,
-  PiggyBank,
-  TrainFront,
-  Watch,
-  Bird,
-  MapPin,
   ExternalLink,
   ChevronDown,
   Wrench,
   FolderPlus,
-  LayoutGrid,
-  type LucideProps,
 } from "lucide-react";
 import {
   Button,
@@ -69,7 +62,9 @@ const toneStatus = (tone: Tone | undefined): StatusKind | null => {
 
 type AppCard = {
   key: string;
-  Icon: ComponentType<LucideProps>;
+  /** What the app declared. Resolved at render by AppGlyph, which falls back to
+   *  a monogram of the title, so a card always has a glyph. */
+  icon?: string;
   title: string;
   tagline: string;
   status: { text: string; tone?: Tone } | null;
@@ -93,19 +88,16 @@ type LauncherApp = {
   probe?: string; // service-probe name for external apps (health dot)
 };
 
-// Icon-name -> lucide component, for apps that are not compiled in (an
-// external app declares an icon NAME in its manifest and has no registry
-// entry). A built-in app declares the component itself; see apps/registry.
-const ICONS: Record<string, ComponentType<LucideProps>> = {
-  Banknote,
-  PiggyBank,
-  TrainFront,
-  Watch,
-  Bird,
-  MapPin,
-};
-const iconFor = (app: { id: string; icon: string }): ComponentType<LucideProps> =>
-  appIcon(app.id) ?? ICONS[app.icon] ?? LayoutGrid;
+// What icon this app declared. The frontend registry entry wins (it is the
+// app's own declaration for a compiled-in app), then the backend launcher
+// card's `icon`, which is what an EXTERNAL app with no registry entry supplies.
+// Both are strings. This used to hold a second name -> lucide component table
+// beside the registry's component field: two tables, two spellings, and a
+// generic placeholder for anything in neither. AppGlyph resolves the string and
+// falls back to a monogram of the title, which names the app instead of
+// shrugging at it.
+const iconFor = (app: { id: string; icon: string }): string | undefined =>
+  appIcon(app.id) ?? app.icon;
 
 type LauncherState =
   | { kind: "loading" }
@@ -135,12 +127,11 @@ type ProjectsState =
   | { kind: "error"; message: string };
 
 function CardBody({ card }: { card: AppCard }) {
-  const Icon = card.Icon;
   const kind = card.status ? toneStatus(card.status.tone) : null;
   return (
     <div style={{ padding: "var(--space-5)", height: "100%" }}>
       <Row style={{ marginBottom: "var(--space-2)" }}>
-        <Icon size={22} strokeWidth={1.8} aria-hidden style={{ flexShrink: 0 }} />
+        <AppGlyph icon={card.icon} name={card.title} size={22} />
         <h3 className="ws-card__title" style={{ display: "flex", alignItems: "center", gap: "var(--space-1)" }}>
           {card.title}
           {card.external && <ExternalLink size={14} strokeWidth={1.8} aria-hidden style={{ color: "var(--muted)" }} />}
@@ -482,7 +473,7 @@ export default function Apps() {
     launcher.kind === "loaded"
       ? launcher.apps.map((app) => ({
           key: app.id,
-          Icon: iconFor(app),
+          icon: iconFor(app),
           title: app.title,
           tagline: app.tagline,
           to: app.external ? undefined : app.route,

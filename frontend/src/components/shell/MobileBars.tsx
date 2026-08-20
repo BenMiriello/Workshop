@@ -21,16 +21,14 @@
 import { Link } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
 import { Menu, MenuItem } from "@workshop/ui";
+import { AppGlyph, monogram } from "../../lib/appIcon";
 import { useAuth } from "../../auth/AuthProvider";
 import type { Shell } from "./useShell";
 
-function initials(name: string | null | undefined, email: string): string {
-  const source = (name || email || "").trim();
-  if (!source) return "?";
-  const words = source.split(/[\s._-]+/).filter(Boolean);
-  const letters = words.length > 1 ? words[0][0] + words[1][0] : source.slice(0, 2);
-  return letters.toUpperCase();
-}
+/** The signed-in person's initials. Same two-letter rule as an app with no
+ *  icon, so it is the same function; this file and Dock.tsx each had their own
+ *  copy of it, which is how three spellings of one rule appear. */
+const initials = (name: string | null | undefined, email: string) => monogram(name || email || "");
 
 export function MobileBars({ shell }: { shell: Shell }) {
   const { place, page, tabsOpen, fullScreen, hasPageList } = shell;
@@ -47,14 +45,24 @@ export function MobileBars({ shell }: { shell: Shell }) {
           label="Places"
           trigger={
             <button type="button" className="ws-bar1__tile" aria-label={`${place.name}. Switch place`}>
-              {place.Icon ? <place.Icon size={17} aria-hidden /> : <span aria-hidden>{place.letter}</span>}
+              {place.Icon ? (
+                <place.Icon size={17} aria-hidden />
+              ) : (
+                <AppGlyph icon={place.icon} name={place.name} size={17} />
+              )}
             </button>
           }
         >
           {shell.places.map((p) => (
             <MenuItem
               key={p.id}
-              icon={p.Icon ? <p.Icon size={16} /> : <span className="ws-bar1__menuletter">{p.letter}</span>}
+              icon={
+                p.Icon ? (
+                  <p.Icon size={16} />
+                ) : (
+                  <AppGlyph icon={p.icon} name={p.name} size={16} className="ws-bar1__menuletter" />
+                )
+              }
               active={p.id === place.id}
               onSelect={() => shell.selectPlace(p)}
             >

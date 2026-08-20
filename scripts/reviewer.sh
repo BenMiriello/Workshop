@@ -420,6 +420,25 @@ if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(backend/services/(chat_context|bui
   fi
 fi
 
+# 4.6c-iiib No platform source file may name a specific app (CLAUDE.md; §6 of
+# docs/platform-redesign/app-is-the-entity-2026-08-20.md). UNCONDITIONAL, unlike
+# the two ratchets above, and deliberately so: check_pluggable_apps.sh below is
+# gated to five files and reported "clean" for five weeks while 143 tracked
+# files of one operator's apps sat in the platform tree. A rule this central
+# cannot be enforced only on diffs that happen to touch the right path.
+# Pinned-baseline ratchet: the three counts may only go DOWN. See
+# check_no_app_names.py, and §0.2 of app-separation-and-github-2026-08-20.md.
+NO_APP_NAMES_CHECK="skipped"
+if [[ -f "$WORKSHOP/scripts/check_no_app_names.py" && -f "$WORKSHOP/scripts/no_app_names_baseline.json" ]]; then
+  if python3 "$WORKSHOP/scripts/check_no_app_names.py" >/dev/null 2>&1; then
+    NO_APP_NAMES_CHECK="ok"
+  else
+    NO_APP_NAMES_CHECK="fail"
+  fi
+else
+  AMBIGUOUS+=("no_app_names_check_unavailable")
+fi
+
 # 4.6c-iv response_model= on every route (ADR 0023, §2.4). Gated on touching a
 # routes/ file specifically (narrower than the two checks above, because this
 # one IS scoped per-file) and uses `--only-changed` exactly like
@@ -684,6 +703,10 @@ if [[ "$NO_RAW_PATHS_CHECK" == "fail" ]]; then
   REASONS+=("raw_path_in_agent_text")
   COMPLETE="false"
 fi
+if [[ "$NO_APP_NAMES_CHECK" == "fail" ]]; then
+  REASONS+=("app_name_in_platform_source")
+  COMPLETE="false"
+fi
 if [[ "$RESPONSE_MODEL_CHECK" == "fail" ]]; then
   REASONS+=("response_model_regression")
   COMPLETE="false"
@@ -772,7 +795,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK
+export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -810,6 +833,7 @@ out = {
     # no NEW mutable state file under a source dir. Pinned baseline, GATES.
     "no_state_in_source": os.environ.get("NO_STATE_IN_SOURCE_CHECK", "skipped"),
     "no_raw_paths": os.environ.get("NO_RAW_PATHS_CHECK", "skipped"),
+    "no_app_names": os.environ.get("NO_APP_NAMES_CHECK", "skipped"),
     "response_model": os.environ.get("RESPONSE_MODEL_CHECK", "skipped"),
     # Absolute, not ratcheted: the tree is at zero raw storage calls, so any
     # new one is a cross-account leak rather than incremental debt.
@@ -837,7 +861,7 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

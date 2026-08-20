@@ -10,17 +10,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Archive,
+  Blocks,
   Bot,
   Brain,
+  CircleUser,
   FolderGit2,
   Gauge,
   House,
+  KeyRound,
   LayoutDashboard,
   LayoutGrid,
   ListChecks,
   MessagesSquare,
+  Monitor,
+  Palette,
   Rocket,
   Settings as SettingsIcon,
+  Tags,
 } from "lucide-react";
 import { appPlaces } from "../../apps/registry";
 import { userStorage } from "../../lib/storage";
@@ -55,6 +61,14 @@ const ICONS = {
   memory: Brain,
   usage: Gauge,
   settings: SettingsIcon,
+  // Settings' own page rows.
+  account: CircleUser,
+  appearance: Palette,
+  trackers: Tags,
+  mcp: Blocks,
+  access: KeyRound,
+  baseApps: FolderGit2,
+  host: Monitor,
 };
 
 export type Shell = {
