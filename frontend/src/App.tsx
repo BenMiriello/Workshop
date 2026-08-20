@@ -141,11 +141,11 @@ export default function App() {
           <Route path="/settings/memory" element={<Settings tab="memory" />} />
           <Route path="/settings/apps" element={<Settings tab="apps" />} />
           <Route path="/settings/host" element={<Settings tab="host" />} />
-          {/* Retired standalone routes. Services/Events moved into Settings >
-              System; their page files are still there (pages/Services.tsx,
-              pages/Events.tsx), but only as panels Settings renders, not as
-              routed pages of their own — this redirect is what keeps an old
-              /services or /events link working. "Jobs" is the legacy noun for
+          {/* Retired standalone routes. Services is a panel Settings renders
+              under "This host" rather than a routed page of its own. Events was
+              deleted on 2026-08-20 (its endpoints were edge-blocked and had
+              never rendered on this origin); the redirect stays so an old link
+              still lands somewhere. "Jobs" is the legacy noun for
               a Run (entity model section 5). The Runs feed was a tab on the
               ticket list until 2026-08-12; it is /runs now, because a run
               belongs to the ticket that produced it and the standalone feed

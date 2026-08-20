@@ -7,7 +7,7 @@
 # the user crontab between its markers, leaving any unrelated entries alone.
 #
 # WHY CRON AND NOT SYSTEMD TIMERS. These predate the systemd units and several
-# encode wall-clock windows (the commute ticks) that read more clearly as cron
+# encode wall-clock windows (an app's timed ticks) that read more clearly as cron
 # expressions than as OnCalendar= lists. Converting them is a real change with
 # real risk of a missed window, so it is a deliberate open choice, not an
 # oversight. If you convert them, convert ALL of them and delete this file.
@@ -34,25 +34,13 @@
 # */20 * * * * @WORKSHOP_ROOT@/cron_agent.sh
 0 14 * * * @WORKSHOP_ROOT@/scripts/daily_todo_digest.sh
 
-# ---- Commute (Phase 6) — times are in system tz (US/Pacific, operator's tz) ----
-# Pre-commute briefs: 60min and 30min before AM target_depart_home (07:10)
-10 6 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh pre-1h
-40 6 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh pre-30m
-# Pre-commute briefs: 60min and 30min before PM target_depart_work (18:00)
-0 17 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh pre-1h
-30 17 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh pre-30m
-# During-commute: every 5 minutes through the AM active window (07:00-09:30)
-*/5 7 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh during
-*/5 8 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh during
-0,5,10,15,20,25,30 9 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh during
-# During-commute: every 5 minutes through the PM active window (18:00-20:00)
-*/5 18 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh during
-*/5 19 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh during
-# Post-commute settle (cooldown reset reads happen here; mostly no-op)
-30 9 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh post
-0 20 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh post
-# Post-commute pattern-learning note (19:30 PT = 19:30 system time)
-30 19 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/notes.sh
+# An APP's schedule is not the platform's. Anything an app needs to run on a
+# timer lives in `apps/<id>/*.crontab`, and scripts/install_cron.sh concatenates
+# those fragments into the managed block after this file.
+#
+# This file used to carry one app's seventeen lines, including wall-clock times
+# that were a specific person's daily routine. Personal data in tracked platform
+# source. Moved to the app on 2026-08-20.
 
 # ---- Autonomy reinforcement (rebuild 2026-05-22) ----
 # Curriculum tick: refill the queue when [ ] count drops below threshold (hourly)

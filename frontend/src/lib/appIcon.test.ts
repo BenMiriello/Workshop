@@ -70,11 +70,19 @@ describe("resolveAppIcon", () => {
 });
 
 describe("the token vocabulary", () => {
-  it("names no app", () => {
-    // The whole point: this table is a design vocabulary, not a roster. If an
-    // app id ever appears here, the platform has learned about an app again.
-    const apps = ["budget", "finance", "commute", "birds", "location", "health", "wearables", "notes-app"];
-    for (const token of ICON_TOKENS) expect(apps).not.toContain(token);
+  it("is named by one rule: kebab-case of a lucide export", () => {
+    // This replaced an assertion that listed every app id and checked no token
+    // matched one. That test was correct and self-defeating: it put the whole
+    // app roster into platform source in order to prove the roster is not in
+    // platform source, and check_no_app_names.py counted all eight.
+    //
+    // This is the stronger property anyway. A token derived mechanically from a
+    // lucide name CANNOT be an app name unless lucide ships an icon called
+    // "budget", and it constrains every future entry rather than only the ones
+    // someone remembered to blocklist.
+    for (const token of ICON_TOKENS) {
+      expect(token).toMatch(/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/);
+    }
   });
 
   it("resolves every token it advertises", () => {

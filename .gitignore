@@ -134,3 +134,25 @@ shared/queue/.tasks.json
 # Tenant operational records: bring-up playbook and security audits of one
 # operator's own box. Kept on disk, not shipped as platform documentation.
 docs/masini/
+
+# ---- ONE OPERATOR'S APPS ARE NOT PLATFORM SOURCE -------------------------
+# 2026-08-20. An app is installed content; the platform is the container. A
+# clone by anyone else must contain no trace of whoever ran the instance it was
+# cloned from, and until now it contained 143 tracked files of one.
+#
+# These four are the part that could be untracked immediately, because nothing
+# in the build imports them: every reference is a runtime path lookup over an
+# env-overridable directory, or a comment. The files stay on disk and keep
+# working here; they just stop being in the repo.
+#
+# The REST of an app (its React pages under frontend/src/pages/apps, its
+# route/service modules in the flat backend dirs) cannot follow yet: the
+# frontend registry statically imports those pages, so gitignoring them would
+# break a fresh clone's build. That needs the app loader and the AppSpec seams.
+# Plan: docs/platform-redesign/app-separation-and-github-2026-08-20.md.
+#
+# History is untouched: `git log --follow` still has all of it.
+apps/
+agents/apps/
+backend/mcp/plaid/
+commute/

@@ -63,7 +63,19 @@ _BLOCKED_PREFIXES = (
     # entry read "/auto", which did NOT match, because blocking is segment-exact
     # after normalize, so /api/auto-pr was proxied straight through and inherited
     # loopback trust (security-audit-2026-07-18 H1, fixed 2026-07-18).
-    "/tools", "/relay", "/services", "/events", "/auto-pr",
+    #
+    # "/services" was here until 2026-08-20 and should not be: it is a read-only
+    # health prober with no ingest, it is require_operator-authed now, and
+    # blocking it broke two real features on this origin (the Apps launcher's
+    # per-app status, and Commute reporting its 511 key missing when it was set).
+    #
+    # "/events" STAYS, and the asymmetry is the point: that router carries
+    # POST /events/{source}, an unauthenticated webhook receiver. Its two
+    # read-only GETs were deleted rather than exempted, because blocking is
+    # per-prefix and they cannot be separated from the ingest they share a
+    # router with without giving them their own authed prefix, which a raw JSONL
+    # tail does not earn.
+    "/tools", "/relay", "/events", "/auto-pr",
 )
 
 # An app's own unauthenticated ingest paths are declared on its AppSpec

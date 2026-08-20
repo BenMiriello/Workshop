@@ -51,6 +51,11 @@ path position, and _AMBIGUOUS carries the platform senses that are excluded.
 Under-reporting there is deliberate: a number that is wrong upward gets
 disbelieved and then ignored, which is how the last gate died.
 
+PIN FROM A COMMITTED TREE. The counts come from `git ls-files`, so pinning with
+work in progress records whatever the index happened to hold: the first baseline
+was written mid-edit and read 313/143 when the committed tree was 331/144, which
+then failed the ratchet on the next run for no reason. Commit, then --write-baseline.
+
 Usage:
     python3 scripts/check_no_app_names.py                 # report + gate on baseline
     python3 scripts/check_no_app_names.py --json
@@ -117,7 +122,8 @@ def _imports_app_module(body: str, short: str) -> bool:
         n and n not in _PLATFORM_MODULES and re.fullmatch(rf"{short}(_\w+)?", n) for n in names
     ):
         return True
-    # TS: import ... from "../pages/apps/Birds"
+    # TS: an app page import. Written with a placeholder, not a real app name:
+    # a real one here makes this file trip its own matcher, which it did.
     return bool(re.search(rf"""from\s+["'][^"']*pages/apps/{short}[^"']*["']""", body, re.I))
 
 
@@ -190,6 +196,12 @@ def scan(apps: list[str]) -> dict:
     literals: list[dict] = []
 
     for rel in files:
+        # The gate's own memory is not a violation. `watched` in the baseline is
+        # a list of app names, it lives under scripts/, and without this the
+        # ratchet counts itself: eight literals that can only ever be removed by
+        # forgetting which apps to watch for.
+        if rel == str(BASELINE.relative_to(ROOT)):
+            continue
         owner = next((a for a in apps if any(p.search(rel) for p in content_pat[a])), None)
         if owner:
             content[owner].append(rel)

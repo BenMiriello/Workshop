@@ -358,7 +358,15 @@ for _spec in app_registry.installed_specs():
 
 # Internal machine-to-machine infra — loopback only, no personal data, not public.
 app.include_router(relay.router, dependencies=_LOOPBACK)
-app.include_router(services.router, dependencies=_LOOPBACK)
+# OPERATOR-AUTHED, not loopback-gated (changed 2026-08-20). This router is a
+# read-only health prober: it has one GET, no ingest, and no unauthenticated
+# surface. Gating it on network position was the anti-pattern the public edge's
+# own comment says was removed for every other platform router, and it had a
+# measured cost: /services is on the edge blocklist, so the endpoint 404'd on
+# the origin the operator actually uses, which silently broke the Apps
+# launcher's per-app status AND made Commute's settings say the 511 API key was
+# "missing" whether or not it was set. Identity gates it on either origin now.
+app.include_router(services.router, dependencies=_OPERATOR)
 app.include_router(events.router, dependencies=_LOOPBACK)
 # Letta tool sandbox runs off-loopback (Docker bridge); internal-only, no
 # personal data, never proxied to the public origin.

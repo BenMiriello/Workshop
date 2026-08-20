@@ -105,6 +105,18 @@ class Signature(BaseModel):
     reason: str
 
 
+class EventAccepted(BaseModel):
+    """`enqueued_runs` is named honestly: this route's job ends at ENQUEUED, not
+    at ran. The cron loop pops those pending runs and decides whether to fire a
+    model at all."""
+
+    ok: bool
+    logged: bool
+    subscribers_pending: int
+    enqueued_runs: int
+    enqueued_agent_ids: list[str]
+
+
 class EventRecord(BaseModel):
     """One logged event. `body` is the caller's payload verbatim and stays open:
     it is an arbitrary webhook's schema. `headers` has already had authorization
@@ -125,29 +137,9 @@ class EventRecord(BaseModel):
     body: dict[str, Any]
 
 
-class EventAccepted(BaseModel):
-    """`enqueued_runs` is named honestly: this route's job ends at ENQUEUED, not
-    at ran. The cron loop pops those pending runs and decides whether to fire a
-    model at all."""
-
-    ok: bool
-    logged: bool
-    subscribers_pending: int
-    enqueued_runs: int
-    enqueued_agent_ids: list[str]
-
-
 class RecentEvents(BaseModel):
     events: list[EventRecord]
     count: int
-
-
-class Subscriptions(BaseModel):
-    """Read-only. Metadata keys (leading `_`) and non-list values are stripped,
-    so this is consistently source -> agent ids."""
-
-    subscriptions: dict[str, list[str]]
-    path: str
 
 
 @router.post("/{source}", response_model=EventAccepted, response_model_exclude_unset=True)
@@ -206,6 +198,31 @@ async def receive_event(source: str, request: Request):
     }
 
 
+# GET /events/subscriptions IS GONE (2026-08-20). It dumped the source -> agent
+# map for frontend/src/pages/Events.tsx, which is deleted; nothing else called
+# it. `_load_subscriptions` stays, because event_dispatch and routes/birds read
+# it.
+#
+# GET /events/recent SURVIVES, and not for the UI. `scripts/chat_event_bridge.py`
+# polls it every 2s as an OUTBOUND MESSAGE BUS: it reads `discord-reply` records
+# back off the webhook audit log and delivers them to Discord, deduping on an
+# ISO-timestamp string comparison. That is a jerry-rig -- a webhook audit log is
+# not a queue, and a string-compared timestamp is not a cursor -- and it should
+# become a real outbound queue. It is left alone here because the fix is a
+# design change, not a cleanup, and deleting the route underneath a script that
+# calls it would leave a landmine for whoever next starts that bridge.
+#
+# Measured 2026-08-20: the bridge is NOT running and `discord-reply` has never
+# appeared in the log (sources present: plaid, gmail, commute-ui, custom,
+# birdnet, test_source). So this route has one caller and that caller has never
+# succeeded. Recorded in the handoff rather than acted on.
+#
+# Both were, and /events/recent still is, unreachable from the operator's origin:
+# /events is on the public edge blocklist because THIS router also carries
+# POST /events/{source}, an unauthenticated webhook receiver, and blocking is
+# per-prefix. Loopback callers are unaffected, which is all this one has.
+
+
 @router.get("/recent", response_model=RecentEvents, response_model_exclude_unset=True)
 async def recent_events(limit: int = 20, source: str | None = None):
     """Tail the events log. Limit caps at 200 to keep responses bounded."""
@@ -231,12 +248,3 @@ async def recent_events(limit: int = 20, source: str | None = None):
             break
     return {"events": out, "count": len(out)}
 
-
-@router.get("/subscriptions", response_model=Subscriptions, response_model_exclude_unset=True)
-async def list_subscriptions():
-    """Read-only view of which agents are wired to which sources. Strips
-    metadata keys (those starting with `_`) and any non-list values so the
-    response is consistently `{source: [agent_id, ...]}` for the UI."""
-    raw = _load_subscriptions()
-    clean = {k: v for k, v in raw.items() if not k.startswith("_") and isinstance(v, list)}
-    return {"subscriptions": clean, "path": str(SUBSCRIPTIONS)}

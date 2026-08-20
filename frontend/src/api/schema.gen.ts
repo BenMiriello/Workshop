@@ -3053,7 +3053,8 @@ export interface paths {
          *
          *     So this folds, and the fold is the point:
          *
-         *       1. everything except the last `_COMPACT_KEEP_TAIL` messages is summarized
+         *       1. everything except roughly the last `_COMPACT_KEEP_TAIL_TOKENS` worth
+         *          of the tail (walked newest to oldest, see `_fold_summary`) is summarized
          *          into a running summary stored on the thread;
          *       2. the cut moves to that point, so the prompt carries `summary + tail`;
          *       3. the live session is detached, so the next turn actually uses it.
@@ -4435,8 +4436,9 @@ export interface paths {
         /**
          * Read Doc
          * @description Raw markdown of a single doc. The path must resolve to a `.md` file inside
-         *     docs/ (traversal outside docs/ is rejected as a correctness check, not a
-         *     permission wall). Read-only.
+         *     the repo root (traversal outside the tree is rejected as a correctness check,
+         *     not a permission wall). Read-only, so it addresses any markdown in the tree,
+         *     which is what a managed `workshop:doc/...` ref points at.
          */
         get: operations["read_doc_documents_file_get"];
         /**
@@ -4510,28 +4512,6 @@ export interface paths {
          * @description Tail the events log. Limit caps at 200 to keep responses bounded.
          */
         get: operations["recent_events_events_recent_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/events/subscriptions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Subscriptions
-         * @description Read-only view of which agents are wired to which sources. Strips
-         *     metadata keys (those starting with `_`) and any non-list values so the
-         *     response is consistently `{source: [agent_id, ...]}` for the UI.
-         */
-        get: operations["list_subscriptions_events_subscriptions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -13124,19 +13104,6 @@ export interface components {
             ts?: string | null;
         } & {
             [key: string]: unknown;
-        };
-        /**
-         * Subscriptions
-         * @description Read-only. Metadata keys (leading `_`) and non-list values are stripped,
-         *     so this is consistently source -> agent ids.
-         */
-        Subscriptions: {
-            /** Path */
-            path: string;
-            /** Subscriptions */
-            subscriptions: {
-                [key: string]: string[];
-            };
         };
         /** SuggestedCommand */
         SuggestedCommand: {
@@ -22643,7 +22610,7 @@ export interface operations {
     read_doc_documents_file_get: {
         parameters: {
             query: {
-                /** @description repo-relative path to a doc under docs/ */
+                /** @description repo-relative path to any .md in the repo */
                 path: string;
             };
             header?: never;
@@ -22800,26 +22767,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_subscriptions_events_subscriptions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Subscriptions"];
                 };
             };
         };

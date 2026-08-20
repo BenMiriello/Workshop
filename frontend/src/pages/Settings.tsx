@@ -44,7 +44,6 @@ import { effortLabel } from "../components/chat/effort";
 import { permissionModeDef } from "../components/chat/permissionModes";
 import { useAuth } from "../auth/AuthProvider";
 import Services from "./Services";
-import Events from "./Events";
 import { SettingsSection as Section, SettingsRow as Row } from "../components/AppSettings";
 import {
   getPolicy,
@@ -107,10 +106,9 @@ const TAB_TITLE: Record<SettingsTab, string> = {
  * all of these things should be separate tabs."
  *
  * It was thirteen sections stacked vertically, and rendering them all mounted
- * AutonomyControls, Services and Events together: five polling loops (services
- * every 10s from two different callers, events 15s, autonomy 15s x2, health
- * 60s) plus about nine one-shot fetches, on a screen most visits use to change
- * the theme. One tab at a time fixes that as a side effect.
+ * AutonomyControls and Services together: several polling loops (services every
+ * 10s from two different callers, autonomy 15s x2, health 60s) plus about nine
+ * one-shot fetches, on a screen most visits use to change the theme. One tab at a time fixes that as a side effect.
  *
  * The sections themselves did not move. Each tab renders the same components
  * this file already had, so this is a routing change, not a rewrite of any
@@ -1005,13 +1003,13 @@ function SystemSection() {
         </Row>
       </Section>
 
-      {/* Telemetry, re-homed from the retired Activity page: the full Services
-          probe grid and the recent Event feed live under System now. */}
+      {/* The Services probe grid. The Event feed that used to sit beside it is
+          gone (2026-08-20): it read GET /events/recent and /events/subscriptions,
+          both of which were blocked at the public edge and had therefore never
+          rendered anything but an error on this origin. Its routes were deleted
+          with it. The event LOG is untouched and still drives agent dispatch. */}
       <section style={{ marginBottom: "var(--space-6)" }}>
         <Services />
-      </section>
-      <section style={{ marginBottom: "var(--space-6)" }}>
-        <Events />
       </section>
     </>
   );

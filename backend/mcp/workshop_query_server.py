@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Read-only workshop-query MCP server (Stage 7 / design 2e).
+"""Workshop MCP server (Stage 7 / design 2e).
 
-A scoped, read-only tool for the general chat to answer "what is going on / what
-tasks and notes exist" from the task + knowledge digest ONLY. It is deliberately
-NOT a filesystem Read grant: it exposes a bounded, computed summary (open tasks,
-running/recent jobs, knowledge note titles) and never reads arbitrary files, so
-it cannot leak `.runtime` secrets through the model's egress.
+Two read-only tools for the chat to answer "what is going on / what tasks and
+notes exist" from the task + knowledge digest and a semantic search. Neither is
+a filesystem Read grant: they expose a bounded, computed summary and ranked
+passages, never arbitrary files, so they cannot leak `.runtime` secrets through
+the model's egress.
+
+Plus one WRITE tool, `spawn_background`, offered ONLY to a real chat (when
+WORKSHOP_QUERY_THREAD is bound): it launches a background agent for that chat and
+returns an id, not file contents. The agent's own file access is a run's, not
+this server's, and its result reaches the operator through the chat, not this
+tool's return. See services/background_runs.
 
 Transport: MCP stdio (newline-delimited JSON-RPC 2.0), implemented by hand so it
 needs no MCP SDK (none is installed in the backend venv). The claude CLI spawns
@@ -89,6 +95,42 @@ SEARCH_TOOL_SCHEMA = {
         },
     },
     "required": ["query"],
+    "additionalProperties": False,
+}
+
+# The one WRITE tool on this otherwise read-only server: spawn a background agent
+# for THIS chat. It does not return work to the model; it launches a detached
+# run that reports back into the chat later and lets the chat continue on its
+# own (services/background_runs). The thread it belongs to comes from
+# WORKSHOP_QUERY_THREAD, pinned at turn-start exactly like the owner and scope.
+SPAWN_TOOL_NAME = "spawn_background"
+SPAWN_TOOL_DESC = (
+    "Start a BACKGROUND AGENT for a piece of work you want done out-of-band while "
+    "you keep talking to the operator: a slow investigation, reading a large "
+    "surface, a long search, drafting something sizeable. It runs as its own "
+    "process, so the operator is not left waiting, and when it finishes its "
+    "result is posted back into THIS chat and the chat continues on its own. Use "
+    "this instead of a foreground subagent ONLY when the work is genuinely worth "
+    "running in the background; for something quick, just do it inline. Give a "
+    "clear, self-contained prompt: the agent does not see this conversation. "
+    "Returns immediately with the agent's id; it does NOT return the result."
+)
+SPAWN_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "prompt": {
+            "type": "string",
+            "description": (
+                "The full, self-contained instruction for the background agent. "
+                "It cannot see this chat, so state everything it needs."
+            ),
+        },
+        "label": {
+            "type": "string",
+            "description": "A short name for the agent, shown to the operator. Optional.",
+        },
+    },
+    "required": ["prompt"],
     "additionalProperties": False,
 }
 
@@ -239,6 +281,55 @@ def _run_search(args: dict) -> str:
     return "\n".join(out)
 
 
+def _bound_thread() -> str | None:
+    """The chat this server instance belongs to, if any. Pinned at turn-start as
+    WORKSHOP_QUERY_THREAD (app_registry.set_current_query_thread). Absent for a
+    background/CLI spawn with no chat behind it, which is why spawn_background is
+    only offered when it is present."""
+    t = (os.environ.get("WORKSHOP_QUERY_THREAD") or "").strip()
+    return t or None
+
+
+def _tool_list() -> list:
+    tools = [
+        {"name": TOOL_NAME, "description": TOOL_DESC, "inputSchema": TOOL_SCHEMA},
+        {"name": SEARCH_TOOL_NAME, "description": SEARCH_TOOL_DESC,
+         "inputSchema": SEARCH_TOOL_SCHEMA},
+    ]
+    # Only a real chat can spawn a background agent for itself.
+    if _bound_thread():
+        tools.append({"name": SPAWN_TOOL_NAME, "description": SPAWN_TOOL_DESC,
+                      "inputSchema": SPAWN_TOOL_SCHEMA})
+    return tools
+
+
+def _run_spawn(args: dict) -> str:
+    """Launch a background agent for the bound chat. Returns a confirmation."""
+    thread = _bound_thread()
+    if not thread:
+        return "Cannot spawn a background agent: this tool is not bound to a chat."
+    owner_raw = (os.environ.get("WORKSHOP_QUERY_OWNER") or "").strip()
+    try:
+        owner_id = int(owner_raw)
+    except ValueError:
+        return "Cannot spawn a background agent: no owner is bound to this chat."
+    scope = (os.environ.get("WORKSHOP_QUERY_SCOPE") or "workshop").strip() or "workshop"
+    prompt = (args.get("prompt") or "").strip()
+    if not prompt:
+        return "A background agent needs a prompt describing what to do."
+    label = (args.get("label") or "").strip() or None
+    from services import background_runs
+    job_id = background_runs.launch(
+        thread_id=thread, owner_id=owner_id, scope=scope, prompt=prompt, label=label)
+    return (
+        f"Background agent started (id {job_id}"
+        + (f", '{label}'" if label else "")
+        + "). It is running now; its result will appear in this chat when it "
+        "finishes, and the chat will continue on its own. Tell the operator you "
+        "have kicked it off, in one line, and carry on."
+    )
+
+
 def _handle(msg: dict) -> dict | None:
     """Return a JSON-RPC response dict, or None for a notification (no reply)."""
     method = msg.get("method")
@@ -260,22 +351,21 @@ def _handle(msg: dict) -> dict | None:
     if method == "tools/list":
         return {
             "jsonrpc": "2.0", "id": mid,
-            "result": {"tools": [
-                {"name": TOOL_NAME, "description": TOOL_DESC,
-                 "inputSchema": TOOL_SCHEMA},
-                {"name": SEARCH_TOOL_NAME, "description": SEARCH_TOOL_DESC,
-                 "inputSchema": SEARCH_TOOL_SCHEMA},
-            ]},
+            "result": {"tools": _tool_list()},
         }
     if method == "tools/call":
         params = msg.get("params") or {}
         name = params.get("name")
-        if name not in (TOOL_NAME, SEARCH_TOOL_NAME):
+        if name not in (TOOL_NAME, SEARCH_TOOL_NAME, SPAWN_TOOL_NAME):
             return {"jsonrpc": "2.0", "id": mid,
                     "error": {"code": -32602, "message": f"unknown tool: {name}"}}
         try:
-            text = (_run_search(params.get("arguments") or {})
-                    if name == SEARCH_TOOL_NAME else _build_digest())
+            if name == SEARCH_TOOL_NAME:
+                text = _run_search(params.get("arguments") or {})
+            elif name == SPAWN_TOOL_NAME:
+                text = _run_spawn(params.get("arguments") or {})
+            else:
+                text = _build_digest()
         except Exception as e:  # noqa: BLE001
             return {"jsonrpc": "2.0", "id": mid,
                     "result": {"content": [{"type": "text", "text": f"error: {e}"}],

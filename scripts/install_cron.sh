@@ -28,8 +28,29 @@ MODE="${1:-install}"
 [ -f "$TEMPLATE" ] || { echo "missing template: $TEMPLATE" >&2; exit 1; }
 command -v crontab >/dev/null 2>&1 || { echo "no crontab command; is cron installed?" >&2; exit 1; }
 
+# The platform template, then every installed app's own cron fragment.
+#
+# AN APP'S SCHEDULE BELONGS TO THE APP. The platform template used to carry one
+# app's seventeen lines directly, including wall-clock times that were a
+# specific person's daily routine; a platform file must not name an app, let
+# alone describe its owner's day. An app drops `apps/<id>/*.crontab` beside its
+# code and it is picked up here, in sorted order so the rendered block is
+# stable across runs and --check does not report phantom drift.
+#
+# `apps/` is untracked, so on a fresh clone this loop finds nothing and the
+# managed block is exactly the platform's own lines. That is the correct
+# outcome, not a degraded one.
+render() {
+  sed "s#@WORKSHOP_ROOT@#$REPO_ROOT#g" "$TEMPLATE"
+  local frag
+  for frag in $(ls "$REPO_ROOT"/apps/*/*.crontab 2>/dev/null | sort); do
+    printf '\n# ---- %s ----\n' "${frag#"$REPO_ROOT/"}"
+    sed "s#@WORKSHOP_ROOT@#$REPO_ROOT#g" "$frag"
+  done
+}
+
 # Rendered block, markers included.
-RENDERED="$(printf '%s\n' "$BEGIN"; sed "s#@WORKSHOP_ROOT@#$REPO_ROOT#g" "$TEMPLATE"; printf '%s\n' "$END")"
+RENDERED="$(printf '%s\n' "$BEGIN"; render; printf '%s\n' "$END")"
 
 # Current crontab ("no crontab for user" is not an error here).
 CURRENT="$(crontab -l 2>/dev/null || true)"
@@ -47,7 +68,7 @@ EXISTING="$(printf '%s\n' "$CURRENT" | awk -v b="$BEGIN" -v e="$END" '
   skip    { print }
   $0 == b { skip = 1 }
 ')"
-EXPECTED="$(sed "s#@WORKSHOP_ROOT@#$REPO_ROOT#g" "$TEMPLATE")"
+EXPECTED="$(render)"
 
 if [ "$MODE" = "--check" ]; then
   if ! printf '%s\n' "$CURRENT" | grep -qF "$BEGIN"; then
