@@ -1,7 +1,9 @@
 # App separation, the app loader, and GitHub integration
 
 - Date: 2026-08-20
-- Status: **research complete, design decided, staged. Stages 0-3 built in this pass.**
+- Status: **research complete, design decided, staged. Stages 0-3 built, plus the
+  first extraction (55 files). Handoff for the rest:
+  [`HANDOFF-app-platform-and-github-2026-08-20.md`](HANDOFF-app-platform-and-github-2026-08-20.md).**
 - Builds on [`app-is-the-entity-2026-08-20.md`](app-is-the-entity-2026-08-20.md)
   (the container model) and closes the seam
   [`apps-are-pluggable.md`](../apps-are-pluggable.md) deferred on 2026-07-12.
