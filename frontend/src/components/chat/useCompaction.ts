@@ -61,6 +61,20 @@ import type { ChatProblem } from "./chatProblem";
 /** Which fold is in flight. Both hold the composer; only the wording differs. */
 export type FoldMode = "compact" | "clear";
 
+// THE NOTE MUST BE ON SCREEN LONG ENOUGH TO READ. A compact whose tail is
+// already short is a ~150ms round trip (no summarizer call, no fold to land),
+// so `folding` used to flip on and off inside one render frame and the
+// operator never saw FoldingNote at all — the same "it just disappeared"
+// report the note exists to fix, just moved to the fast path instead of the
+// slow one. This floors how long the line stays mounted; it does not fake how
+// long the operation took, it only holds the door a beat after it is done.
+const _MIN_FOLD_VISIBLE_MS = 700;
+
+function _minFoldVisible(startedAt: number): Promise<void> {
+  const remaining = _MIN_FOLD_VISIBLE_MS - (Date.now() - startedAt);
+  return remaining > 0 ? new Promise((r) => setTimeout(r, remaining)) : Promise.resolve();
+}
+
 export type Compaction = {
   // Bumped after a fold so the context meter refetches: folding does not change
   // the message count, which is what otherwise drives that read.
@@ -98,6 +112,7 @@ export function useCompaction({
     // against the session being dropped, and shown at the foot of the log for
     // as long as the hold lasts.
     setFolding("compact");
+    const startedAt = Date.now();
     try {
       const r = await chatApi.compactThread(id);
       // The fold moved the cut and wrote the summary; the divider is drawn from
@@ -139,6 +154,7 @@ export function useCompaction({
         endpoint: `/api/chat/threads/${id}/compact`,
       });
     } finally {
+      await _minFoldVisible(startedAt);
       setFolding(null);
     }
   }, [activeIdRef, setFolding, setErr, sync]);
@@ -152,6 +168,7 @@ export function useCompaction({
     // before the boundary actually moves, or it would land above the cut and
     // read as having vanished.
     setFolding("clear");
+    const startedAt = Date.now();
     try {
       const r = await chatApi.clearThreadContext(id);
       // `cleared` is about the TRANSCRIPT boundary; `session_reset` is about the
@@ -180,6 +197,7 @@ export function useCompaction({
         endpoint: `/api/chat/threads/${id}/clear`,
       });
     } finally {
+      await _minFoldVisible(startedAt);
       setFolding(null);
     }
   }, [activeIdRef, setFolding, setErr, sync]);

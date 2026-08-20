@@ -1304,6 +1304,31 @@ def _set_cut(thread_id: str, through: int, mode: str = "clear",
                              cut_through=ct, cut_mode=mode)
 
 
+def note_session_reset(thread_id: str) -> None:
+    """Record that a compact dropped the live session without folding anything.
+
+    A compact whose tail is already short (`fold_n <= 0`, see
+    `routes/chat.py:_fold_summary`) still detaches the live session, which is a
+    real reclaim, but writes nothing through `_set_cut`: there is nothing to
+    fold and moving `cut_through` here would cut the tail out of the prompt for
+    no reason. Without ANY event the transcript looked exactly like a `/compact`
+    that did nothing, which is the bug this exists to fix.
+
+    So this writes a boundary too, `mode="reset"`, but deliberately not through
+    `_set_cut`: it carries no `at_seq` cut position for `_fold` to honour and no
+    summary, and `_fold`'s cut-resolution loop does not match `"reset"` against
+    either of its conditions (`mode == "clear"` or `mode == "compact" and
+    <has a summary>`), so it changes nothing about what a turn sends the model.
+    It exists solely for `MessageList`'s `ContextCut` to read and draw an
+    honest line: the session reset, nothing was folded."""
+    folded = _fold(thread_id)
+    if folded is None:
+        return
+    _meta, _msgs, seqs, _cut = folded
+    at_seq = seqs[-1] if seqs else 0
+    chat_log.append_sync(thread_id, {"kind": "boundary", "mode": "reset", "at_seq": at_seq})
+
+
 def set_summary(thread_id: str, summary: str, *, folded_through: int) -> dict | None:
     """Store what a fold produced, and move the cut to match.
 

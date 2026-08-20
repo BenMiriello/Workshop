@@ -91,7 +91,14 @@ export type TranscriptBlock =
   // it with a summary. Both are read from the log's own `boundary` event, and
   // both leave the transcript itself untouched: the cut is about what the MODEL
   // is handed, never about what the operator can see.
-  | { kind: "cut"; key: string; count: number; mode: "clear" | "compact" }
+  //
+  // `reset` is the third kind and it moves nothing: a compact that found
+  // nothing worth folding (the tail was already short) still drops the live
+  // session, and this is the honest record of that — no count, because none of
+  // the prompt changed. Placed directly from the log's own event, unlike the
+  // other two which wait on the server's resolved cut (see below): there is no
+  // resolved state for a reset to wait on, since it never touches `cut_through`.
+  | { kind: "cut"; key: string; count: number; mode: "clear" | "compact" | "reset" }
   // This chat was re-bound to another scope, read from the log's own `scope`
   // event. It is where it happened, it survives a reload, and it is the same on
   // every device — none of which was true when it was React state.
@@ -446,6 +453,15 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
 
   for (const ev of events) {
     if (ev.kind === "boundary") {
+      // A `reset` never moves `cut_through`, so there is no resolved state to
+      // wait for and nothing for the server to disagree with: the event alone
+      // is the whole answer, same as `scope` below. Pushed in place rather than
+      // through `cutAt`/`state.cut`, which exist only to hold a real cut for a
+      // resolved answer that a `reset` does not have.
+      if (ev.mode === "reset") {
+        out.push({ kind: "cut", key: `reset:${ev.seq}`, count: 0, mode: "reset" });
+        continue;
+      }
       // WHERE, from the log. WHETHER and WHICH KIND, from the server (below):
       // the log records every boundary ever written, and the server ignores
       // some of them. Drawing a divider for one the prompt does not honour is

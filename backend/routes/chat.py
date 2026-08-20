@@ -1838,6 +1838,15 @@ async def compact_thread(thread_id: str):
             # /clear's session half does) and touches no ordering, so it
             # happens inline whatever the thread is doing.
             session_reset = _detach_live_session(thread_id, t, provider)
+            # A REAL RECLAIM WITH NO RECORD OF IT is the bug this closes: a
+            # thread whose tail is already short drops its live session on
+            # every compact, folds nothing, and used to leave no trace at all
+            # in the transcript. Written only when a session actually existed
+            # to drop (`session_reset`) and the summarizer did not fail
+            # (`error`, which is a genuine problem, not "nothing to do") -
+            # otherwise there is nothing true to say happened.
+            if session_reset and not error:
+                chat_store.note_session_reset(thread_id)
             return {"folded": 0, "session_reset": session_reset,
                     "error": error or "", "summary_chars": 0}
         rid = chat_store.active_turn_id(thread_id)

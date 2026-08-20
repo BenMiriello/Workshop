@@ -1,5 +1,5 @@
 import { Fragment, memo, useRef, useState, type ReactNode } from "react";
-import { Archive, ArrowRightLeft, Bot, Clock, Eraser, FileText, Lightbulb, Radio, Ticket, TriangleAlert, Zap } from "lucide-react";
+import { Archive, ArrowRightLeft, Bot, Clock, Eraser, FileText, Lightbulb, Radio, RotateCcw, Ticket, TriangleAlert, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { chatApi, type ChatMsg } from "../../lib/chat";
 import { scopeName } from "./chatScope";
@@ -57,17 +57,27 @@ import { branchTargets } from "./branchable";
 // above the line, so the clause spends a third of the sentence stating what the
 // reader can see. It says what happened and stops. The same fold, while it is
 // running, is FoldingNote.
-function ContextCut({ count, mode }: { count: number; mode: "clear" | "compact" }) {
+//
+// THIRD MODE: `reset`. A compact whose tail was already short folds nothing,
+// so there is no count and no summary to name, but it still drops the live
+// session, which is a real reclaim. Saying "0 messages folded into a summary"
+// there would be a lie in the shape of the true sentence; this says what
+// actually happened instead.
+function ContextCut({ count, mode }: { count: number; mode: "clear" | "compact" | "reset" }) {
   const n = `${count} earlier ${count === 1 ? "message" : "messages"}`;
   return (
     <div className="chat-fold" role="separator">
       {mode === "compact"
         ? <Archive size={14} strokeWidth={1.8} aria-hidden />
-        : <Eraser size={14} strokeWidth={1.8} aria-hidden />}
+        : mode === "reset"
+          ? <RotateCcw size={14} strokeWidth={1.8} aria-hidden />
+          : <Eraser size={14} strokeWidth={1.8} aria-hidden />}
       <span>
         {mode === "compact"
           ? `Compacted. ${n} folded into a summary`
-          : `Context cleared. ${n} no longer sent to the model`}
+          : mode === "reset"
+            ? "Compacted. Nothing needed folding, so the session was reset"
+            : `Context cleared. ${n} no longer sent to the model`}
       </span>
     </div>
   );

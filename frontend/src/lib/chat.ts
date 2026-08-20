@@ -336,10 +336,11 @@ export type LogEvent = {
   // that flipped the picker, gone on reload, absent on every other device.
   from?: string;
   to?: string;
-  // kind === "boundary" — a context cut, which only /clear makes.
-  // `mode` survives as a discriminator: a boundary left behind by the removed
-  // folding path reads as "compact" and is ignored everywhere.
-  mode?: "compact" | "clear";
+  // kind === "boundary" — a context cut (`clear`, `compact`), or a `reset`:
+  // a compact that found nothing worth folding but still dropped the live
+  // session. `mode` survives as a discriminator: a boundary left behind by the
+  // removed folding path reads as "compact" and is ignored everywhere.
+  mode?: "compact" | "clear" | "reset";
   at_seq?: number;
   // kind === "title"
   title?: string;
