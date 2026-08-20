@@ -50,7 +50,6 @@ import {
   setDefaults,
   SHARE_VALUES,
   SHARE_LABEL,
-  SHARE_HELP,
   type MemoryPolicy,
   type ShareValue,
 } from "../lib/memoryPolicy";
@@ -158,20 +157,30 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
 }
 
 // ----------------------------------------------------------------------------
-// Memory section: what one chat's search turns up from another's work
-// (memory-and-documentation-model-2026-08-14.md sec 6).
+// Memory section: defaults for what a chat's SEARCH can find outside its own
+// scope (memory-and-documentation-model-2026-08-14.md sec 6).
 //
 // This is CURATION, NOT SECURITY, and the copy has to keep saying so. Everything
 // on this box runs as one uid, so none of this stops anything reading anything;
 // it decides what a SEARCH surfaces, so a chat's recall stays about that chat's
 // own work. Per SEC-A2 this repo already has one open ticket about having
 // described scope as a boundary it was not. Do not reintroduce the words
-// permission, access, allowed or blocked here.
+// permission, access, allowed or blocked here. Real confinement is a separate,
+// already-shipped mechanism (the bwrap/uid scoped-execution layer, A1): it
+// governs what an agent's OWN turn can touch on disk, not what a search index
+// returns, so making search enforce a boundary is a different feature, not a
+// tightening of this one.
 //
-// Chats default to "Only this scope" on the operator's 2026-08-14 direction:
+// Chats default to "Its scope only" on the operator's 2026-08-14 direction:
 // transcripts are the biggest and least deliberate corpus, so they stay out of
 // other chats' recall unless he says otherwise. Per-item overrides live on the
 // Memory page.
+//
+// Commits on change, like the other view-preference controls on this page
+// (AppearanceSection above): each is a low-stakes default for items that don't
+// exist yet, so a misclick costs nothing already written. Operator, 2026-08-20:
+// "having to click an edit button to edit the contents is probably not the
+// right way that we want to do this."
 // ----------------------------------------------------------------------------
 type ShareDraft = { note: ShareValue; doc: ShareValue; chat: ShareValue };
 
@@ -179,6 +188,7 @@ function MemorySection() {
   const [policy, setPolicy] = useState<MemoryPolicy | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [savingKey, setSavingKey] = useState<keyof ShareDraft | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -194,15 +204,17 @@ function MemorySection() {
     chat: policy?.defaults.chat ?? "private",
   };
 
-  const edit = useEditMode<ShareDraft>(current, async (draft) => {
+  const setDefault = useCallback(async (key: keyof ShareDraft, value: ShareValue) => {
     setSaveErr(null);
+    setSavingKey(key);
     try {
-      setPolicy(await setDefaults({ note: draft.note, doc: draft.doc, chat: draft.chat }));
+      setPolicy(await setDefaults({ ...current, [key]: value }));
     } catch (e) {
       setSaveErr(String(e));
-      throw e;
+    } finally {
+      setSavingKey(null);
     }
-  });
+  }, [current]);
 
   if (err) {
     return (
@@ -226,65 +238,51 @@ function MemorySection() {
   }
 
   const kinds: Array<{ key: keyof ShareDraft; label: string; hint: string }> = [
-    { key: "note", label: "notes", hint: "Notes are written to be read, so they follow the tree by default." },
-    { key: "doc", label: "documents", hint: "Documents sit in no scope, so this only matters if you narrow them." },
+    {
+      key: "note",
+      label: "notes",
+      hint: "A note is meant to be found, so a new one defaults to reaching parent scopes too.",
+    },
+    {
+      key: "doc",
+      label: "documents",
+      hint: "Documents live in the docs folder, not in a scope, so this only matters once you scope one yourself.",
+    },
     {
       key: "chat",
       label: "chat transcripts",
-      hint: "Transcripts are the biggest and least finished writing here, so they stay out of other chats' searches by default. The notes a chat files are the intended path. Override a single chat on the Memory page.",
+      hint: "A transcript is the biggest, least curated thing here, so a new chat defaults to its own scope only. File a note if you want the substance to travel further, or change one chat's own default from its card on the Memory page.",
     },
   ];
 
   return (
     <Section icon={Library}>
       <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
-        What one chat finds when it searches another's work. This shapes what
-        search turns up, to keep a chat's recall about its own work. It is not a
-        security boundary and does not stop anything from reading anything.
+        Defaults for what a new item lets other chats' searches find. This is a
+        search filter, not a lock: everything here runs as one user, so it never
+        stops anything from being read. It only decides whether a chat's search
+        reaches outside its own scope.
       </p>
 
       {kinds.map(({ key, label, hint }) => (
         <Row key={key} label={label} hint={hint}>
-          {edit.editing ? (
-            <Select
-              value={edit.draft[key]}
-              onChange={(e) => edit.set(key, e.target.value as ShareValue)}
-              aria-label={`Default for ${label}`}
-            >
-              {SHARE_VALUES.map((v) => (
-                <option key={v} value={v}>{SHARE_LABEL[v]}</option>
-              ))}
-            </Select>
-          ) : (
-            <ReadOnly value={SHARE_LABEL[current[key]]} />
-          )}
+          <Select
+            value={current[key]}
+            onChange={(e) => { void setDefault(key, e.target.value as ShareValue); }}
+            disabled={savingKey === key}
+            aria-label={`Default for ${label}`}
+          >
+            {SHARE_VALUES.map((v) => (
+              <option key={v} value={v}>{SHARE_LABEL[v]}</option>
+            ))}
+          </Select>
         </Row>
       ))}
-
-      <Row label="right now" hint={SHARE_HELP[edit.editing ? edit.draft.chat : current.chat]}>
-        <ReadOnly value={`Chats: ${SHARE_LABEL[edit.editing ? edit.draft.chat : current.chat]}`} />
-      </Row>
 
       {saveErr && (
         <Notice tone="error" detail={saveErr} where="PUT /api/memory-policy/defaults">
           Couldn't save memory settings.
         </Notice>
-      )}
-
-      {edit.editing ? (
-        <ActionBar flash={edit.flash ? "Saved" : undefined}>
-          <Button variant="ghost" onClick={edit.cancel} disabled={edit.saving}>Cancel</Button>
-          <Button
-            variant="primary"
-            onClick={() => { void edit.save().catch(() => {}); }}
-            loading={edit.saving}
-            disabled={!edit.dirty}
-          >
-            Save
-          </Button>
-        </ActionBar>
-      ) : (
-        <Button variant="ghost" onClick={edit.begin}><Pencil size={16} strokeWidth={1.8} aria-hidden /> Edit</Button>
       )}
     </Section>
   );
@@ -654,9 +652,14 @@ function AppearanceSection() {
 // are consulted per turn, BELOW whatever the thread itself stored, so changing
 // one moves every chat that never picked for itself and no chat that did.
 //
-// All three commit on explicit Save. They write config (design system rule 7),
-// and a mis-click on the mode picker would put the next chat's work somewhere
-// the operator did not intend.
+// All three commit on change, matching the Memory section's defaults above.
+// This used to require an explicit Save on the theory that these write config
+// (design system rule 7) and a mis-click would misroute the next chat's work.
+// Overridden by the operator, 2026-08-20: none of the three touches a chat
+// that already exists, so the actual cost of a mis-click is picking a
+// different default for chats not yet created, which the same control fixes
+// in one more click. That is the "view preference" case in rule 7's table,
+// not the "config" one.
 // ----------------------------------------------------------------------------
 const CHAT_MODE_OPTIONS: SegmentedOption<ChatModeId>[] = CHAT_MODES.map(({ id, label, Icon }) => ({
   value: id,
@@ -677,6 +680,7 @@ function ChatSection() {
   const [prefs, setPrefs] = useState<ChatPrefs | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [savingKey, setSavingKey] = useState<keyof ChatPrefsDraft | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -692,16 +696,17 @@ function ChatSection() {
     default_permission_mode: prefs?.default_permission_mode ?? NO_PREFERENCE,
   };
 
-  const edit = useEditMode<ChatPrefsDraft>(current, async (draft) => {
+  const setPref = useCallback(async <K extends keyof ChatPrefsDraft>(key: K, value: ChatPrefsDraft[K]) => {
     setSaveErr(null);
+    setSavingKey(key);
     try {
-      setPrefs(await chatApi.setChatPrefs(draft));
+      setPrefs(await chatApi.setChatPrefs({ ...current, [key]: value }));
     } catch (e) {
-      // Keep the stored values on screen; the draft is what failed to store.
       setSaveErr(String(e));
-      throw e;
+    } finally {
+      setSavingKey(null);
     }
-  });
+  }, [current]);
 
   if (err) {
     return (
@@ -725,10 +730,6 @@ function ChatSection() {
   }
 
   const platformMode = permissionModeDef(prefs.platform_permission_mode).label;
-  // What the hints describe: the draft while editing, the stored values while
-  // not. A hint that keeps describing the old value during an edit is a caption
-  // for a control that has already moved.
-  const shown = edit.editing ? edit.draft : current;
 
   return (
     <Section icon={MessageSquare}>
@@ -736,71 +737,53 @@ function ChatSection() {
         label="new chats"
         // The hint follows what is SELECTED, so it explains the choice being
         // made rather than the one being replaced.
-        hint={`${chatModeDef(shown.default_mode).title} Existing chats keep the mode they were started in.`}
+        hint={`${chatModeDef(current.default_mode).title} Existing chats keep the mode they were started in.`}
       >
-        {edit.editing ? (
-          <Segmented
-            options={CHAT_MODE_OPTIONS}
-            value={edit.draft.default_mode}
-            onChange={(v) => edit.set("default_mode", v)}
-            ariaLabel="Mode for new chats"
-          />
-        ) : (
-          <ReadOnly value={chatModeDef(current.default_mode).label} />
-        )}
+        <Segmented
+          options={CHAT_MODE_OPTIONS}
+          value={current.default_mode}
+          onChange={(v) => { void setPref("default_mode", v); }}
+          ariaLabel="Mode for new chats"
+        />
       </Row>
 
       <Row
         label="effort"
         hint="How hard the model works on a turn, for any chat that hasn't picked its own. A level the chosen model doesn't offer falls back to that model's default."
       >
-        {edit.editing ? (
-          <Select
-            value={edit.draft.default_effort}
-            onChange={(e) => edit.set("default_effort", e.target.value)}
-            aria-label="Default effort"
-          >
-            <option value={NO_PREFERENCE}>Model default</option>
-            {prefs.efforts.map((level) => (
-              <option key={level} value={level}>{effortLabel(level)}</option>
-            ))}
-          </Select>
-        ) : (
-          <ReadOnly
-            value={current.default_effort ? effortLabel(current.default_effort) : "Model default"}
-          />
-        )}
+        <Select
+          value={current.default_effort}
+          onChange={(e) => { void setPref("default_effort", e.target.value); }}
+          disabled={savingKey === "default_effort"}
+          aria-label="Default effort"
+        >
+          <option value={NO_PREFERENCE}>Model default</option>
+          {prefs.efforts.map((level) => (
+            <option key={level} value={level}>{effortLabel(level)}</option>
+          ))}
+        </Select>
       </Row>
 
       <Row
         label="asks before acting"
         hint={
-          shown.default_permission_mode
-            ? permissionModeDef(shown.default_permission_mode).hint
+          current.default_permission_mode
+            ? permissionModeDef(current.default_permission_mode).hint
             : `Chats that haven't picked run at ${platformMode}: ` +
               `${permissionModeDef(prefs.platform_permission_mode).hint}`
         }
       >
-        {edit.editing ? (
-          <Select
-            value={edit.draft.default_permission_mode}
-            onChange={(e) => edit.set("default_permission_mode", e.target.value)}
-            aria-label="Default permission mode"
-          >
-            <option value={NO_PREFERENCE}>{`System default (${platformMode})`}</option>
-            {prefs.permission_modes.map((id) => (
-              <option key={id} value={id}>{permissionModeDef(id).label}</option>
-            ))}
-          </Select>
-        ) : (
-          <ReadOnly
-            value={
-              current.default_permission_mode
-                ? permissionModeDef(current.default_permission_mode).label
-                : `System default (${platformMode})`
-            }
-          />
-        )}
+        <Select
+          value={current.default_permission_mode}
+          onChange={(e) => { void setPref("default_permission_mode", e.target.value); }}
+          disabled={savingKey === "default_permission_mode"}
+          aria-label="Default permission mode"
+        >
+          <option value={NO_PREFERENCE}>{`System default (${platformMode})`}</option>
+          {prefs.permission_modes.map((id) => (
+            <option key={id} value={id}>{permissionModeDef(id).label}</option>
+          ))}
+        </Select>
       </Row>
 
       {/* A line, not a region: the settings it failed to save are still on
@@ -809,30 +792,6 @@ function ChatSection() {
         <Notice tone="error" detail={saveErr} where="POST /api/chat/prefs">
           Couldn't save chat settings.
         </Notice>
-      )}
-
-      {/* Direct children of the card, not a Row: the action bar is sticky and
-          full width, and a label-beside-value grid cell is neither. */}
-      {edit.editing ? (
-        <ActionBar flash={edit.flash ? "Saved" : undefined}>
-          <Button variant="ghost" onClick={edit.cancel} disabled={edit.saving}>Cancel</Button>
-          <Button
-            variant="primary"
-            // The rejection is already surfaced as `saveErr`; swallowing it here
-            // keeps a failed save from becoming an unhandled rejection.
-            onClick={() => { void edit.save().catch(() => {}); }}
-            loading={edit.saving}
-            disabled={!edit.dirty}
-          >
-            Save
-          </Button>
-        </ActionBar>
-      ) : (
-        <div style={{ paddingTop: "var(--space-3)" }}>
-          <Button size="sm" variant="ghost" onClick={edit.begin}>
-            <Pencil aria-hidden /> Edit
-          </Button>
-        </div>
       )}
     </Section>
   );

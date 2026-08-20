@@ -9,16 +9,19 @@ export type ShareValue = "inherit" | "open" | "private";
 export const SHARE_VALUES: ShareValue[] = ["inherit", "open", "private"];
 
 // Written at the control, so the wording cannot drift away from the meaning.
+// Item-level phrasing ("this"): used on one specific note/doc/chat, where
+// "this" has a clear referent. Settings' page of DEFAULTS writes its own
+// hints instead of reusing these, since a default has no single "this".
 export const SHARE_HELP: Record<ShareValue, string> = {
-  inherit: "Follows the scope tree: chats in this scope and above it can find this.",
-  open: "Any chat can find this, wherever it is in the tree.",
+  inherit: "Chats in this scope, and any scope above it, can find this.",
+  open: "Any chat, in any scope, can find this.",
   private: "Only chats in this exact scope can find this.",
 };
 
 export const SHARE_LABEL: Record<ShareValue, string> = {
-  inherit: "Follow the tree",
-  open: "Anyone can find it",
-  private: "Only this scope",
+  inherit: "Its scope and above",
+  open: "Every scope",
+  private: "Its scope only",
 };
 
 export type MemoryPolicy = {
