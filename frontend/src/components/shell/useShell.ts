@@ -1,0 +1,169 @@
+// The shell's live state: which place, which page, is the column open, and
+// may this transition animate.
+//
+// Everything here that could be a rule instead of a hook already IS one, in
+// `places.ts` and `shellState.ts`. What is left is the part that genuinely
+// needs React: reading the router, persisting to storage, and the one piece of
+// state that is about MOTION rather than about navigation.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import {
+  Archive,
+  Bot,
+  Brain,
+  FolderGit2,
+  Gauge,
+  House,
+  LayoutDashboard,
+  LayoutGrid,
+  ListChecks,
+  MessagesSquare,
+  Rocket,
+  Settings as SettingsIcon,
+} from "lucide-react";
+import { appPlaces } from "../../apps/registry";
+import { userStorage } from "../../lib/storage";
+import { buildPlaces, pageFor, placeFor, type ShellPage, type ShellPlace } from "./places";
+import {
+  EMPTY_MEMORY,
+  STORAGE_KEY,
+  columnOpen as readColumnOpen,
+  openPath,
+  parseMemory,
+  rememberPath,
+  tabsKey,
+  tabsOpen as readTabsOpen,
+  toggleColumn,
+  toggleTabs,
+  type ShellMemory,
+} from "./shellState";
+
+const ICONS = {
+  home: House,
+  dashboard: LayoutDashboard,
+  chats: MessagesSquare,
+  archived: Archive,
+  projects: FolderGit2,
+  apps: LayoutGrid,
+  agents: Bot,
+  tickets: ListChecks,
+  deploys: Rocket,
+  memory: Brain,
+  usage: Gauge,
+  settings: SettingsIcon,
+};
+
+export type Shell = {
+  places: ShellPlace[];
+  place: ShellPlace;
+  page: ShellPage | null;
+  columnOpen: boolean;
+  /** True only for a transition that should animate. See `animate` below. */
+  animating: boolean;
+  /** A route that owns the whole screen: no page column, no mobile tab bar. */
+  fullScreen: boolean;
+  tabsOpen: boolean;
+  /** Tapping a dock tile or a menu row. Switches place, or toggles the column
+   *  when it is the place you are already in. */
+  selectPlace: (place: ShellPlace) => void;
+  /** Where a tile POINTS, so it can be a real link (middle-click, copy link,
+   *  hover preview) even though clicking it while you are there toggles the
+   *  column instead of navigating. */
+  hrefFor: (place: ShellPlace) => string;
+  /** Tapping a page row. */
+  selectPage: (page: ShellPage) => void;
+  toggleTabs: () => void;
+};
+
+export function useShell(): Shell {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+
+  // The app catalog cannot change without a reload, so this is built once.
+  const places = useMemo(() => buildPlaces(appPlaces(), ICONS), []);
+
+  const [memory, setMemory] = useState<ShellMemory>(() =>
+    parseMemory(userStorage.local.getItem(STORAGE_KEY)),
+  );
+  useEffect(() => {
+    if (memory === EMPTY_MEMORY) return; // nothing written yet, nothing to store
+    userStorage.local.setItem(STORAGE_KEY, JSON.stringify(memory));
+  }, [memory]);
+
+  const place = useMemo(() => placeFor(places, pathname), [places, pathname]);
+  const page = useMemo(() => pageFor(place, pathname), [place, pathname]);
+
+  // ONE OPEN CONVERSATION OWNS THE SCREEN. It is not a page of All chats, it is
+  // a record below it, and it has its own toolbar. The dock stays (it is the
+  // way out); the column and the mobile tab bar go.
+  const fullScreen = pathname.startsWith("/chat/");
+
+  // MOTION IS NOT NAVIGATION STATE, which is why it is separate.
+  //
+  // "Toggling the same app animates. Switching apps HARD CUTS. This is
+  // deliberate: motion means 'the same thing changed', not 'you moved'."
+  // A boolean that only `selectPlace` sets, and that every navigation clears,
+  // is the whole mechanism.
+  const [animating, setAnimating] = useState(false);
+  const lastPlace = useRef(place.id);
+  useEffect(() => {
+    if (lastPlace.current !== place.id) {
+      lastPlace.current = place.id;
+      setAnimating(false);
+    }
+  }, [place.id]);
+
+  // Where you were, per place. Records the real path, so a record page below a
+  // row is restored too, not just the row.
+  useEffect(() => {
+    setMemory((m) => rememberPath(m, place, pathname));
+  }, [place, pathname]);
+
+  const columnOpen = readColumnOpen(memory, place) && !fullScreen;
+  const key = tabsKey(place.id, page?.id ?? null);
+  const tabsOpen = readTabsOpen(memory, key) && !fullScreen;
+
+  const selectPlace = useCallback(
+    (next: ShellPlace) => {
+      if (next.id === place.id && !fullScreen) {
+        // Rule 2: the place you are already in. Toggle, and animate it.
+        setAnimating(true);
+        setMemory((m) => toggleColumn(m, next));
+        return;
+      }
+      // Rule 1: a different place never toggles the column, and hard cuts.
+      setAnimating(false);
+      navigate(openPath(memory, next));
+    },
+    [place.id, fullScreen, memory, navigate],
+  );
+
+  const selectPage = useCallback(
+    (next: ShellPage) => {
+      setAnimating(false);
+      navigate(next.to);
+    },
+    [navigate],
+  );
+
+  const onToggleTabs = useCallback(() => {
+    setMemory((m) => toggleTabs(m, key));
+  }, [key]);
+
+  const hrefFor = useCallback((next: ShellPlace) => openPath(memory, next), [memory]);
+
+  return {
+    places,
+    place,
+    page,
+    columnOpen,
+    animating,
+    fullScreen,
+    tabsOpen,
+    selectPlace,
+    hrefFor,
+    selectPage,
+    toggleTabs: onToggleTabs,
+  };
+}

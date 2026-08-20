@@ -225,25 +225,41 @@ export function _resetCurrentUserForTest(): void {
   currentUserId = null;
 }
 
-function read(area: Storage, key: string): string | null {
+// LOOKED UP LAZILY, AND THROUGH `globalThis`. A bare `localStorage` is a global
+// REFERENCE, so in an environment that has none (server rendering, which this
+// repo uses to smoke-test components without a DOM) evaluating it throws a
+// ReferenceError before any try/catch around the call can help. Reading the
+// property off `globalThis` yields undefined instead, which every function
+// below already handles.
+function area(kind: "local" | "session"): Storage | null {
   try {
-    return area.getItem(isDeviceScoped(key) ? key : namespacedKey(currentUserId, key));
+    const g = globalThis as { localStorage?: Storage; sessionStorage?: Storage };
+    return (kind === "local" ? g.localStorage : g.sessionStorage) ?? null;
+  } catch {
+    // A cookies-off policy can make the property itself throw on access.
+    return null;
+  }
+}
+
+function read(area: Storage | null, key: string): string | null {
+  try {
+    return area?.getItem(isDeviceScoped(key) ? key : namespacedKey(currentUserId, key)) ?? null;
   } catch {
     return null;
   }
 }
 
-function write(area: Storage, key: string, value: string): void {
+function write(area: Storage | null, key: string, value: string): void {
   try {
-    area.setItem(isDeviceScoped(key) ? key : namespacedKey(currentUserId, key), value);
+    area?.setItem(isDeviceScoped(key) ? key : namespacedKey(currentUserId, key), value);
   } catch {
     /* quota / private mode — caller already treats this as best-effort */
   }
 }
 
-function remove(area: Storage, key: string): void {
+function remove(area: Storage | null, key: string): void {
   try {
-    area.removeItem(isDeviceScoped(key) ? key : namespacedKey(currentUserId, key));
+    area?.removeItem(isDeviceScoped(key) ? key : namespacedKey(currentUserId, key));
   } catch {
     /* nothing to do */
   }
@@ -257,7 +273,8 @@ const PROBE_KEY = "ws:probe";
  *  throws on write. A caller that must tell "blocked" apart from "not set yet"
  *  (lib/lazyPage.tsx's reload guard, so it does not loop when it can't
  *  remember that it already reloaded) checks this first. */
-function available(area: Storage): boolean {
+function available(area: Storage | null): boolean {
+  if (!area) return false;
   try {
     area.setItem(PROBE_KEY, "1");
     area.removeItem(PROBE_KEY);
@@ -273,15 +290,15 @@ function available(area: Storage): boolean {
  *  `userStorage.session.`) and nothing else about it changes. */
 export const userStorage = {
   local: {
-    getItem: (key: string) => read(localStorage, key),
-    setItem: (key: string, value: string) => write(localStorage, key, value),
-    removeItem: (key: string) => remove(localStorage, key),
-    available: () => available(localStorage),
+    getItem: (key: string) => read(area("local"), key),
+    setItem: (key: string, value: string) => write(area("local"), key, value),
+    removeItem: (key: string) => remove(area("local"), key),
+    available: () => available(area("local")),
   },
   session: {
-    getItem: (key: string) => read(sessionStorage, key),
-    setItem: (key: string, value: string) => write(sessionStorage, key, value),
-    removeItem: (key: string) => remove(sessionStorage, key),
-    available: () => available(sessionStorage),
+    getItem: (key: string) => read(area("session"), key),
+    setItem: (key: string, value: string) => write(area("session"), key, value),
+    removeItem: (key: string) => remove(area("session"), key),
+    available: () => available(area("session")),
   },
 };

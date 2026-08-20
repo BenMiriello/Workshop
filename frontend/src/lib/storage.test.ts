@@ -32,6 +32,27 @@ beforeEach(() => {
   _resetCurrentUserForTest();
 });
 
+describe("with no storage at all", () => {
+  // Server rendering has neither global. A bare `localStorage` reference is
+  // what used to throw here: it is a REFERENCE, so it fails before any
+  // try/catch around the call can help, and it took the whole shell down with
+  // it (found 2026-08-20 by the shell's mount test).
+  beforeEach(() => {
+    Reflect.deleteProperty(globalThis, "localStorage");
+    Reflect.deleteProperty(globalThis, "sessionStorage");
+  });
+
+  it("reads null, writes nothing, and reports unavailable", () => {
+    expect(() => userStorage.local.getItem("k")).not.toThrow();
+    expect(userStorage.local.getItem("k")).toBeNull();
+    expect(() => userStorage.local.setItem("k", "v")).not.toThrow();
+    expect(() => userStorage.local.removeItem("k")).not.toThrow();
+    expect(userStorage.local.available()).toBe(false);
+    expect(userStorage.session.getItem("k")).toBeNull();
+    expect(userStorage.session.available()).toBe(false);
+  });
+});
+
 describe("namespacedKey", () => {
   it("is exactly ws:<user_id>:<key>, ADR 0025 clause 4's own words", () => {
     expect(namespacedKey(7, "ws-chat-sel:general")).toBe("ws:7:ws-chat-sel:general");

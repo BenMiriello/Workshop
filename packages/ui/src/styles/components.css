@@ -1924,20 +1924,12 @@ span.ws-filterchip__open { cursor: default; }
    its own width. The only width modifier is --appfull, and it is not "a wider
    page" — it hands width to an APP, which owns its own layout (see below). */
 
-.ws-topnav {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-3) var(--page-pad-x);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-}
-/* The content region: everything below the top nav, and the containing block
-   for overlays. A dialog is scoped to the app it was opened in — it covers
-   this box and never the nav above it. The scoping lives here, in the shell,
-   precisely so no app or dialog has to style around the chrome. */
+/* `.ws-topnav` was here. The top toolbar is gone (2026-08-20): a dock and a
+   page column replaced it, and they are below under THE SHELL. */
+/* The content region, and the containing block for overlays. A dialog is
+   scoped to the page it was opened in — it covers this box and never the dock
+   or the toolbars beside it. The scoping lives here, in the shell, precisely so
+   no app or dialog has to style around the chrome. */
 .ws-app__body {
   position: relative;
   flex: 1 1 auto;
@@ -2016,7 +2008,6 @@ span.ws-filterchip__open { cursor: default; }
   max-width: var(--page-max);
   margin-inline: auto;
 }
-.ws-brand { font-size: var(--fs-md); font-weight: var(--fw-bold); letter-spacing: -0.01em; color: var(--fg); text-decoration: none; }
 .ws-nav { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 .ws-nav a {
   color: var(--muted); text-decoration: none; font-size: var(--fs-base); font-weight: var(--fw-medium);
@@ -2031,6 +2022,277 @@ span.ws-filterchip__open { cursor: default; }
    written for a vertical sidebar, and on this horizontal toolbar it reads as
    decoration (operator, 2026-08-11). */
 .ws-nav a.is-active { color: var(--accent); background: var(--accent-soft); font-weight: var(--fw-semi); }
+
+/* ---- THE SHELL: dock, page column, phone toolbars -------------------------
+   Primary navigation is a 60px icon rail on a desktop and a 52px bar on a
+   phone; secondary navigation is a 252px column beside the content on a
+   desktop and a 40px scrolling tab row under the bar on a phone. There is no
+   top toolbar on either.
+
+   Full design record, including every rule that was re-specified until it was
+   exact: docs/platform-redesign/navigation-shell-2026-08-20.md
+
+   The switch is at 900px, matching DetailLayout's rail. Below it a three
+   column layout leaves the content column too narrow to be worth the chrome,
+   so the phone shell is used on a tablet too, deliberately.
+
+   MOTION IS ON TOKENS, not on the mockup's exact milliseconds. The design
+   calls for 300ms on the column and 240ms on the mobile toolbar; --dur-slow
+   (320ms) and --dur-base (200ms) are what the system has and the difference is
+   not perceptible. Do not add motion tokens for a twenty-millisecond gap. */
+.ws-shell {
+  --rail-w: 60px;
+  --rail-tile: 38px;
+  --pagecol-w: 252px;
+  --bar1-h: 52px;
+  --tabbar-h: 40px;
+  /* Phone default. The desktop query below turns it into a row. */
+  flex-direction: column;
+}
+.ws-shell__stage {
+  flex: 1 1 auto;
+  min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+}
+.ws-shell__cols { flex: 1 1 auto; min-height: 0; display: flex; }
+.ws-shell .ws-app__body { flex: 1 1 auto; min-width: 0; }
+
+/* ---- Dock ---------------------------------------------------------------- */
+/* Structure at the top level, the breakpoint switch alone in the query: a rule
+   that only exists inside a media block cannot be read by styles.test.ts, and
+   these are exactly the ones worth pinning. */
+.ws-rail {
+  display: none;
+  flex: 0 0 var(--rail-w);
+  width: var(--rail-w);
+  flex-direction: column; align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+}
+@media (min-width: 900px) {
+  .ws-shell { flex-direction: row; }
+  .ws-rail { display: flex; }
+}
+.ws-rail__tile {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--rail-tile); height: var(--rail-tile);
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md);
+  color: var(--faint);
+  text-decoration: none;
+  font-size: var(--fs-md); font-weight: var(--fw-semi);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.ws-rail__tile:hover { background: var(--card-hover); color: var(--fg); }
+.ws-rail__tile.is-active { background: var(--accent-soft); color: var(--accent); }
+/* The 3px leading marker. The note on `.ws-nav a.is-active` above forbids one
+   there and gives the reason: it was written for a vertical sidebar and read as
+   decoration on a horizontal toolbar (operator, 2026-08-11). This IS the
+   vertical sidebar it was written for, and on a rail of glyphs with no labels
+   the marker is what makes "which one am I in" readable at a glance. */
+.ws-rail__tile.is-active::before {
+  content: "";
+  position: absolute; left: -9px; top: 11px;
+  width: 3px; height: 16px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+.ws-rail__rule {
+  flex: 0 0 auto;
+  width: var(--space-5); height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--border);
+}
+.ws-rail__spacer { flex: 1 1 auto; }
+.ws-rail__avatar,
+.ws-bar1__avatar {
+  flex: 0 0 auto;
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  border: 1px solid var(--border-strong);
+  color: var(--accent);
+  font-size: var(--fs-xs); font-weight: var(--fw-semi);
+  text-decoration: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.ws-rail__avatar:hover,
+.ws-bar1__avatar:hover { border-color: var(--accent); }
+
+/* ---- Page column ---------------------------------------------------------
+   Closing it is TWO movements at once: the clip box collapses to zero width
+   while the panel inside translates fully out to the left. That is what makes
+   the column slide itself out from under the dock with the content arriving
+   behind it, rather than the content simply covering it over. */
+.ws-pagecol {
+  display: none;
+  flex: 0 0 auto;
+  width: var(--pagecol-w);
+  overflow: hidden;
+}
+.ws-pagecol:not(.is-open) { width: 0; }
+.ws-pagecol__inner {
+  width: var(--pagecol-w); height: 100%;
+  display: flex; flex-direction: column;
+  background: var(--bg-inset);
+  border-right: 1px solid var(--border);
+}
+.ws-pagecol:not(.is-open) .ws-pagecol__inner { transform: translateX(-100%); }
+/* ONLY when the same place's tile was tapped. Switching place hard cuts:
+   motion means "the same thing changed", not "you moved". `is-animating` is set
+   by useShell and cleared by every navigation, so the transition can never be
+   on the base rule. */
+.ws-pagecol.is-animating { transition: width var(--dur-slow) var(--ease-out); }
+.ws-pagecol.is-animating .ws-pagecol__inner { transition: transform var(--dur-slow) var(--ease-out); }
+@media (min-width: 900px) { .ws-pagecol { display: block; } }
+.ws-pagecol__title {
+  flex: 0 0 auto;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  font-size: var(--fs-lg); font-weight: var(--fw-semi);
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ws-pagecol__list {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-2) var(--space-3);
+  display: flex; flex-direction: column; gap: 1px;
+}
+.ws-pagerow {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: var(--space-2);
+  height: 32px;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-base);
+  color: var(--muted);
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.ws-pagerow svg { flex: 0 0 auto; opacity: 0.85; }
+.ws-pagerow__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-pagerow:hover { background: var(--card-hover); color: var(--fg); }
+.ws-pagerow.is-active { background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-medium); }
+
+/* ---- Phone: bar one ------------------------------------------------------ */
+.ws-bar1__wrap {
+  flex: 0 0 auto;
+  background: var(--bg-inset);
+}
+@media (min-width: 900px) { .ws-bar1__wrap { display: none; } }
+.ws-bar1 {
+  height: var(--bar1-h);
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.ws-bar1__tile {
+  flex: 0 0 auto;
+  width: var(--rail-tile); height: var(--rail-tile);
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: inherit; font-size: var(--fs-md); font-weight: var(--fw-semi);
+  cursor: pointer;
+}
+.ws-bar1__menuletter {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px;
+  font-size: var(--fs-xs); font-weight: var(--fw-semi);
+}
+.ws-bar1__titlebtn {
+  display: flex; align-items: center; gap: var(--space-1);
+  height: var(--rail-tile);
+  padding: 0 var(--space-2);
+  border: none; background: transparent;
+  border-radius: var(--radius-md);
+  font-family: inherit; color: var(--fg);
+  cursor: pointer;
+  min-width: 0;
+}
+.ws-bar1__titlebtn:hover { background: var(--card-hover); }
+.ws-bar1__title {
+  font-size: var(--fs-lg); font-weight: var(--fw-semi);
+  letter-spacing: -0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ws-bar1__caret {
+  flex: 0 0 auto;
+  color: var(--faint);
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.ws-bar1__caret.is-open { transform: rotate(180deg); }
+.ws-bar1__avatar { margin-left: auto; }
+
+/* ---- Phone: page toolbar -------------------------------------------------
+   NOTHING IS RAISED on selection: weight plus a 2px underline on the bar's own
+   bottom edge, every label on one baseline. And it never defaults to closed on
+   any page. Both were specified, built wrong once, and corrected. */
+.ws-tabbar__slot {
+  overflow: hidden;
+  height: calc(var(--tabbar-h) + 1px);
+  transition: height var(--dur-base) var(--ease-out), opacity var(--dur-fast) linear;
+}
+.ws-tabbar__slot:not(.is-open) { height: 0; opacity: 0; }
+.ws-tabbar {
+  height: var(--tabbar-h);
+  display: flex; align-items: stretch; gap: var(--space-4);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-strong);
+  overflow-x: auto; overflow-y: hidden;
+  /* Firefox, then WebKit. It previously showed a full-width horizontal
+     scrollbar inside a strip too short to contain it. */
+  scrollbar-width: none;
+}
+.ws-tabbar::-webkit-scrollbar { display: none; height: 0; }
+.ws-tabbar__tab {
+  flex: 0 0 auto;
+  display: flex; align-items: flex-end;
+  padding-bottom: 2px;
+  border-bottom: 2px solid transparent;
+  font-size: var(--fs-base); font-weight: var(--fw-normal);
+  color: var(--faint);
+  text-decoration: none; white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.ws-tabbar__tab:hover { color: var(--fg); }
+.ws-tabbar__tab.is-active { color: var(--fg); font-weight: var(--fw-semi); border-bottom-color: var(--accent); }
+
+/* ---- The trail -----------------------------------------------------------
+   Not a bar across the top: a line at the head of the content column, and only
+   where the path goes deeper than the page column already says. See
+   components/shell/ShellTrail.tsx for why it survived the toolbar's removal. */
+.ws-trail {
+  flex: 0 0 auto;
+  display: flex; align-items: baseline; flex-wrap: wrap;
+  min-width: 0;
+  /* The same centring measure <main> uses, so the trail lines up with the
+     content under it instead of with the viewport edge. */
+  padding: var(--space-4) max(var(--page-pad-x), (100% - var(--page-max)) / 2) 0;
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+}
+.ws-trail__item { display: inline-flex; align-items: baseline; min-width: 0; }
+.ws-trail__sep { padding: 0 var(--space-2); color: var(--faint); }
+.ws-trail__link { color: var(--muted); text-decoration: none; }
+.ws-trail__link:hover { color: var(--fg); }
+.ws-trail__cur { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-app--appfull .ws-trail { padding-inline: var(--page-pad-x); }
+
+/* ---- Reduced motion ------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  .ws-pagecol.is-animating,
+  .ws-pagecol.is-animating .ws-pagecol__inner,
+  .ws-tabbar__slot,
+  .ws-bar1__caret { transition: none; }
+}
 
 /* ---- SEGMENTED CONTROL — sliding thumb ----------------------------------- */
 .ws-segmented { position: relative; display: inline-flex; padding: 3px; gap: 2px; background: var(--field-bg); border-radius: var(--radius-md); }
@@ -2553,20 +2815,31 @@ span.ws-filterchip__open { cursor: default; }
   display: flex; flex-direction: column;
   overflow: hidden;
 }
-.ws-app.ws-app--chatfull > .ws-app__body { display: flex; flex-direction: column; }
+/* Descendant, not child: the shell puts .ws-shell__stage and .ws-shell__cols
+   between .ws-app and the content region. Every box on that path has to pass
+   the height through or the chat cannot be viewport-tall. */
+.ws-app.ws-app--chatfull .ws-shell__stage,
+.ws-app.ws-app--chatfull .ws-shell__cols,
+.ws-app.ws-app--chatfull .ws-app__body { display: flex; flex-direction: column; min-height: 0; }
+.ws-app.ws-app--chatfull .ws-shell__cols { flex-direction: row; }
+/* The dock stays beside the chat on a desktop, so the shell must stay a row
+   here even though --chatfull sets a column above. Specificity (0,3,0) beats
+   it, which is why this works regardless of source order. */
+@media (min-width: 900px) {
+  .ws-app.ws-shell.ws-app--chatfull { flex-direction: row; }
+}
 .ws-app.ws-app--chatfull .ws-app__body > main {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
   padding: 0; overflow: hidden;
 }
-/* Focused chat uses the IDENTICAL top nav as every other page — same vertical
-   band (--space-3) and same bottom border. It used to slim this (--space-2,
-   borderless) to save a few pixels and avoid a perceived doubled border with
-   the chat toolbar below, but that made the one piece of chrome that is meant
-   to be constant vary by route — the toolbar looked different in the chat than
-   everywhere else. Consistency wins: the top nav never changes, and the chat's
-   own toolbar sits beneath it exactly like any other page's header does. So
-   there is deliberately no `.ws-app--chatfull > .ws-topnav` override here. */
+/* The chrome around a focused chat is the same chrome as everywhere else, and
+   that rule outlived the toolbar it was written about. The toolbar used to be
+   slimmed here and it made the one piece of chrome meant to be constant vary by
+   route. Same now: the dock is the dock, bar one is bar one, and the chat's own
+   toolbar sits beneath them exactly like any other page's header does. The only
+   thing --chatfull changes is that the page column and the mobile page toolbar
+   are suppressed, because a single conversation has no page list. */
 
 /* ---- MARKDOWN (.ws-md) --------------------------------------------------- */
 /* Rendered markdown (Brief, Notes, assistant chat). Tight + calm: tokens only,
@@ -2727,7 +3000,6 @@ span.ws-filterchip__open { cursor: default; }
        wrong. */
     --page-pad-b: calc(var(--space-4) + env(safe-area-inset-bottom));
   }
-  .ws-topnav { gap: var(--space-3); }
   .ws-app .ws-app__body > main { padding-top: var(--space-4); }
 
   /* A segmented control is inline-flex with no wrap and no scroller, so a

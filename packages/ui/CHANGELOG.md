@@ -12,6 +12,43 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.16 - 2026-08-20 - The navigation shell: dock, page column, phone toolbars
+
+**Additive plus one removal, CSS only (no export, prop or token changed).** The
+top toolbar is gone and a three-column shell replaced it. Design record:
+`docs/platform-redesign/navigation-shell-2026-08-20.md`.
+
+Added, all under `THE SHELL` in `components.css`:
+
+- `.ws-shell`, `.ws-shell__stage`, `.ws-shell__cols` — the frame. A row at
+  900px and up, a column below it.
+- `.ws-rail`, `.ws-rail__tile`, `.ws-rail__rule`, `.ws-rail__spacer`,
+  `.ws-rail__avatar` — the 60px primary rail (desktop). **It is called `rail`
+  and not `dock` because `.ws-dock` is already the floating chat dock panel.**
+  The concept is still "the dock" in the design doc and in the code.
+- `.ws-pagecol`, `.ws-pagecol__inner`, `.ws-pagecol__title`,
+  `.ws-pagecol__list`, `.ws-pagerow`, `.ws-pagerow__label` — the 252px
+  secondary column. It collapses by clipping to zero width AND translating its
+  panel fully left, which is what slides it out from under the rail with the
+  content arriving behind it rather than covering it over.
+- `.ws-bar1__wrap`, `.ws-bar1`, `.ws-bar1__tile`, `.ws-bar1__titlebtn`,
+  `.ws-bar1__title`, `.ws-bar1__caret`, `.ws-bar1__avatar`,
+  `.ws-bar1__menuletter` — the phone's first bar.
+- `.ws-tabbar__slot`, `.ws-tabbar`, `.ws-tabbar__tab` — the phone's page
+  toolbar. **`__tab`, not `.ws-tab`,** which is the Tabs primitive.
+- `.ws-trail`, `.ws-trail__item`, `.ws-trail__sep`, `.ws-trail__link`,
+  `.ws-trail__cur` — a trail at the head of the content column, rendered only
+  where the path goes deeper than the page column already says.
+
+Removed: `.ws-topnav`, `.ws-brand`, and (from the app's own `styles.css`)
+`.ws-breadcrumbs`, `.ws-brand__home`, `.ws-bc__*`, `.ws-sectionnav-*`,
+`.ws-iconbtn`. Nothing renders them: `BreadcrumbBar` and `SectionNav` were
+deleted with the toolbar. An out-of-repo consumer that hand-wrote a
+`.ws-topnav` band has to supply its own rule now.
+
+`.ws-app--chatfull`'s selectors changed from child to descendant, because the
+shell puts two boxes between `.ws-app` and `.ws-app__body`.
+
 ## 0.5.15 - 2026-08-19 - Popover/Menu clamp position instead of picking an edge
 
 **Fix, internal only (no public prop or export changed).** `useAnchoredPlacement`

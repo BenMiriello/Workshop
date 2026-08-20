@@ -34,63 +34,12 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Toolbar breadcrumbs (.ws-breadcrumbs). Route-driven trail "Workshop / Apps /
-   … / Leaf". Fills the toolbar's remaining width and clips; the JS in
-   appNav.tsx measures and collapses it (Workshop→W first, then folds the
-   highest-level crumbs into "…"). Only "Workshop" links home; deeper crumbs
-   are mono, the leaf is the current page. App shell lives in components.css. */
-.ws-breadcrumbs { display: flex; align-items: baseline; flex: 1 1 auto; min-width: 0; overflow: hidden; }
-.ws-brand__home {
-  flex: 0 0 auto;
-  font-size: var(--fs-md); font-weight: var(--fw-bold); letter-spacing: -0.01em;
-  color: var(--fg); text-decoration: none; white-space: nowrap;
-}
-.ws-brand__home:hover { color: var(--accent); }
-.ws-bc__item { display: inline-flex; align-items: baseline; min-width: 0; }
-.ws-bc__sep { flex: 0 0 auto; color: var(--faint); margin: 0 0.4rem; font-weight: var(--fw-normal); }
-.ws-bc__link, .ws-bc__ellipsis, .ws-bc__cur {
-  font-family: var(--font-mono); font-size: 0.92em; font-weight: var(--fw-medium);
-  text-decoration: none; white-space: nowrap;
-}
-.ws-bc__link, .ws-bc__ellipsis { color: var(--muted); }
-.ws-bc__link:hover, .ws-bc__ellipsis:hover { color: var(--accent); }
-.ws-bc__cur { color: var(--fg); }
-.ws-bc__leaf { overflow: hidden; text-overflow: ellipsis; }
-.ws-bc__measure { position: absolute; left: -9999px; top: 0; visibility: hidden; pointer-events: none; white-space: nowrap; }
-@media (max-width: 640px) { .ws-bc__sep { margin: 0 0.3rem; } }
-
-/* The topnav shell (fixed-height band, no sticky / no negative margins) lives in
-   components.css under APP SHELL + NAV. */
-
-/* Section nav: inline links on desktop, overflow-menu button on mobile. */
-.ws-sectionnav-menu { display: none; }
-@media (max-width: 640px) {
-  .ws-sectionnav-inline { display: none; }
-  /* inline-flex, not block: this is the Menu primitive's wrapper now. */
-  .ws-sectionnav-menu { display: inline-flex; }
-}
-/* THIS MENU IS A NAV, SO IT MUST NOT SCROLL. The Menu primitive caps its list at
-   16rem, which is right for an open-ended list (a model picker, a scope list)
-   and wrong here: the sections are a fixed, known set, and at ten rows the list
-   needs ~21.6rem (each row is 0.5rem+0.5rem padding around a 1.3 line-height
-   --fs-sm, so ~2.06rem, plus --space-2 top and bottom on the list). The last two
-   rows, ending in Settings, sat below the fold and had to be scrolled to.
-   Raised past the content with room for a few more sections, and scoped to this
-   one menu so every other dropdown keeps the primitive's cap.
-   Still bounded: the viewport term wins on a short screen (a landscape phone),
-   so it can never grow taller than the window and become its own problem. */
-.ws-sectionnav-menu .ws-menu__list {
-  max-height: min(26rem, calc(100dvh - 5rem));
-}
-.ws-iconbtn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 2.25rem; height: var(--control-h); padding: 0;
-  border: 1px solid var(--border); border-radius: var(--radius-sm);
-  background: var(--card); color: var(--fg); cursor: pointer;
-}
-.ws-iconbtn:hover { background: var(--card-hover); }
-/* (The app-nav overflow popover was a second, hand-rolled menu. It is gone —
-   SectionNav uses the `Menu` primitive, which is the only menu in the app.) */
+/* The top toolbar is gone (2026-08-20). The breadcrumb trail, the brand link,
+   the ten section links and their mobile overflow menu all lived here; the
+   shell's dock and page column replaced them, and `.ws-trail` in the kit is the
+   only trail left. See docs/platform-redesign/navigation-shell-2026-08-20.md.
+   `.ws-iconbtn` went with them: nothing rendered it (TicketFilters uses
+   `.ws-iconbtn-lg`, which is a different rule in the kit). */
 
 /* Linked-app switcher (Finance ⇄ Budget, Location ⇄ Commute). Lives inline in
    the PageHeader actions row, left of Refresh — compact pills, no own row. */

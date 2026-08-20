@@ -76,8 +76,37 @@ describe("the app shell cannot scroll its own chrome away", () => {
     expect(app).toContain("overflow: hidden");
   });
 
-  it("keeps the top nav out of the flow that scrolls", () => {
-    expect(kitRule(".ws-topnav")).toContain("flex: 0 0 auto");
+  it("keeps every piece of chrome out of the flow that scrolls", () => {
+    // The top toolbar is gone; the dock, the page column and the phone bars
+    // are what has to stay put now. Each of them is `flex: 0 0 auto` on its own
+    // axis, which is what makes <main> the only scroller (asserted below).
+    expect(kitRule(".ws-rail")).toContain("flex: 0 0 var(--rail-w)");
+    expect(kitRule(".ws-pagecol")).toContain("flex: 0 0 auto");
+    expect(kitRule(".ws-bar1__wrap")).toContain("flex: 0 0 auto");
+    expect(kitRule(".ws-trail")).toContain("flex: 0 0 auto");
+  });
+
+  it("collapses the page column by clipping AND sliding, not by hiding it", () => {
+    // Two movements at once is what makes the column slide out from under the
+    // dock with content arriving behind it. Either one alone is a different,
+    // wrong animation, and both have been built by mistake before.
+    expect(kitRule(".ws-pagecol:not(.is-open)")).toContain("width: 0");
+    expect(kitRule(".ws-pagecol:not(.is-open) .ws-pagecol__inner")).toContain("translateX(-100%)");
+  });
+
+  it("only transitions the column when it was told to", () => {
+    // Switching place hard cuts. If the transition were on `.ws-pagecol`
+    // unconditionally, every navigation between places would animate, which is
+    // the exact thing the design forbids.
+    expect(kit).toContain(".ws-pagecol.is-animating { transition:");
+    expect(kitRule(".ws-pagecol")).not.toContain("transition:");
+  });
+
+  it("puts the mobile page toolbar underline on the bar, and raises nothing", () => {
+    const tab = kitRule(".ws-tabbar__tab");
+    expect(tab).toContain("border-bottom: 2px solid transparent");
+    expect(tab).not.toContain("transform");
+    expect(kitRule(".ws-tabbar__tab.is-active")).toContain("border-bottom-color: var(--accent)");
   });
 
   it("leaves main as the only scroller", () => {

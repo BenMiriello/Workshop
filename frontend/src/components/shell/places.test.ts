@@ -1,0 +1,113 @@
+import { describe, expect, it } from "vitest";
+import { Bot } from "lucide-react";
+import { buildPlaces, landingFor, pageFor, placeFor, type ShellPlace } from "./places";
+
+// One glyph stands in for all of them: this module decides ROUTES, and which
+// icon a row draws is the render's business.
+const icons = new Proxy({} as Record<string, typeof Bot>, { get: () => Bot });
+
+const APPS = [
+  { id: "finance", name: "Finance", home: "/apps/finance" },
+  { id: "birds", name: "Birds", home: "/apps/birds" },
+];
+
+const places = buildPlaces(APPS, icons);
+const home = places.find((p) => p.id === "home") as ShellPlace;
+const chats = places.find((p) => p.id === "chats") as ShellPlace;
+const birds = places.find((p) => p.id === "app:birds") as ShellPlace;
+
+describe("placeFor", () => {
+  it("puts an unclaimed route on Home rather than nowhere", () => {
+    expect(placeFor(places, "/").id).toBe("home");
+    expect(placeFor(places, "/work").id).toBe("home");
+    expect(placeFor(places, "/some/route/nobody/claimed").id).toBe("home");
+  });
+
+  it("keeps the Apps LIST on Home and only a specific app on its own tile", () => {
+    expect(placeFor(places, "/apps").id).toBe("home");
+    expect(placeFor(places, "/apps/finance").id).toBe("app:finance");
+    expect(placeFor(places, "/apps/birds/locations").id).toBe("app:birds");
+  });
+
+  it("lights All chats while one conversation is open", () => {
+    expect(placeFor(places, "/chats").id).toBe("chats");
+    expect(placeFor(places, "/chats/archived").id).toBe("chats");
+    expect(placeFor(places, "/chat/general").id).toBe("chats");
+  });
+
+  it("does not let the /chat prefix swallow /chats", () => {
+    // Both belong to the same place, so this is about the matcher and not the
+    // outcome: a bare startsWith would make "/chats" a hit for "/chat", which
+    // would be wrong the moment the two are ever separate places.
+    expect(placeFor(places, "/chats").id).toBe("chats");
+  });
+});
+
+describe("pageFor", () => {
+  it("matches / exactly, or Dashboard would be the active page everywhere", () => {
+    expect(pageFor(home, "/")?.id).toBe("dashboard");
+    expect(pageFor(home, "/work")?.id).toBe("tickets");
+    expect(pageFor(home, "/usage")?.id).toBe("usage");
+  });
+
+  it("gives the longest match, so Archived beats All chats", () => {
+    expect(pageFor(chats, "/chats")?.id).toBe("all");
+    expect(pageFor(chats, "/chats/archived")?.id).toBe("archived");
+  });
+
+  it("keeps an app's single row active across its own sub-routes", () => {
+    expect(pageFor(birds, "/apps/birds")?.id).toBe("app");
+    expect(pageFor(birds, "/apps/birds/locations")?.id).toBe("app");
+  });
+
+  it("keeps a row lit while you are on a record BELOW it", () => {
+    // You are still in Agents when you are reading one agent. A page column
+    // that goes dark on every detail page is a page column that tells you
+    // nothing exactly when you are deepest.
+    expect(pageFor(home, "/agents/reviewer")?.id).toBe("agents");
+    expect(pageFor(home, "/projects/workshop")?.id).toBe("projects");
+  });
+
+  it("returns null where no row owns the path at all", () => {
+    // A ticket record lives at /tickets/:scope/:id while the list is at /work,
+    // so nothing in the column owns it. Null, not a wrong row lit.
+    expect(pageFor(home, "/tickets/workshop/abc123")).toBeNull();
+    expect(pageFor(home, "/runs/xyz")).toBeNull();
+  });
+});
+
+describe("buildPlaces", () => {
+  it("opens an app full screen and Home with its list", () => {
+    expect(home.defaultColumnOpen).toBe(true);
+    expect(chats.defaultColumnOpen).toBe(true);
+    expect(birds.defaultColumnOpen).toBe(false);
+  });
+
+  it("gives an app a letter tile and Home a glyph", () => {
+    expect(birds.letter).toBe("B");
+    expect(home.Icon).toBeTruthy();
+    expect(home.letter).toBeUndefined();
+  });
+
+  it("lists no page that has nothing behind it", () => {
+    // The mockup gave every place Files, and every app a Chats/Memory/Work/
+    // Deploys set. None of that exists (design doc section 8), and a row that
+    // navigates nowhere is the one thing this shell must never ship.
+    const everyPath = places.flatMap((p) => p.pages.map((pg) => pg.to));
+    expect(everyPath).not.toContain("/files");
+    expect(everyPath.filter((p) => p.endsWith("/files"))).toEqual([]);
+    expect(everyPath).not.toContain("/activity");
+    expect(birds.pages).toHaveLength(1);
+  });
+
+  it("does not offer two rows to one destination", () => {
+    const everyPath = places.flatMap((p) => p.pages.map((pg) => pg.to));
+    expect(new Set(everyPath).size).toBe(everyPath.length);
+  });
+
+  it("lands a place on its first page", () => {
+    expect(landingFor(home)).toBe("/");
+    expect(landingFor(chats)).toBe("/chats");
+    expect(landingFor(birds)).toBe("/apps/birds");
+  });
+});

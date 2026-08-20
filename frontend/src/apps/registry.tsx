@@ -282,6 +282,26 @@ export function appIcon(id: string): ComponentType<LucideProps> | undefined {
   return APPS.find((a) => a.id === id)?.Icon;
 }
 
+/** Every app that has a screen to open, as the shell's dock needs it.
+ *
+ *  An app with no routes (health, whose entire frontend is a Settings panel)
+ *  has nowhere to land, so it gets no dock tile. That is a normal case, not a
+ *  special one — same reasoning as `routes: () => null` being allowed.
+ *
+ *  The landing path is the app's `link`, or its shallowest breadcrumb node.
+ *  Nothing new has to be declared per app for the dock to work, which is the
+ *  point: the shell must not become a second place that lists apps. */
+export function appPlaces(): { id: string; name: string; home: string }[] {
+  const out: { id: string; name: string; home: string }[] = [];
+  for (const a of APPS) {
+    const paths = Object.keys(a.crumbs).sort((x, y) => x.length - y.length);
+    const home = a.link?.to ?? paths[0];
+    if (!home) continue;
+    out.push({ id: a.id, name: a.link?.label ?? a.crumbs[home]?.label ?? a.id, home });
+  }
+  return out;
+}
+
 /** Load every installed app's launcher status, keyed by app id. */
 export async function appStatuses(): Promise<Record<string, AppStatus>> {
   const out: Record<string, AppStatus> = {};

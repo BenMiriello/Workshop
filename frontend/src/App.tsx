@@ -1,7 +1,6 @@
 import { lazyPage } from "./lib/lazyPage";
 import { runHref } from "./lib/jobs";
-import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
-import { OverlayHost } from "@workshop/ui";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import Agents from "./pages/Agents";
 import Chats, { ChatsArchived } from "./pages/Chats";
 import Projects from "./pages/Projects";
@@ -11,7 +10,8 @@ import Work from "./pages/Work";
 import Deploys from "./pages/Deploys";
 import TicketDetail from "./pages/TicketDetail";
 import FocusedChat from "./pages/FocusedChat";
-import { BreadcrumbBar, BreadcrumbProvider, SectionNav } from "./components/appNav";
+import { BreadcrumbProvider } from "./components/appNav";
+import { Shell } from "./components/shell/Shell";
 import { AppProviders, AppSuspense, appRoutes } from "./apps/registry";
 
 // LAZY BY ROUTE. Each of these is a page the app does not need to render its
@@ -71,35 +71,15 @@ function VoiceRedirect() {
   return <Navigate to={`/chat/${encodeURIComponent(contextKey)}`} replace />;
 }
 
+// The shell is `components/shell/Shell.tsx` now: a dock, a page column and the
+// content on a desktop, two toolbars and the content on a phone. The two width
+// modifiers (--chatfull, --appfull) moved there with it and are still the ONLY
+// per-route width logic there is. Do not reintroduce a route-by-route list.
 export default function App() {
-  // Two shell modifiers, and they are the ONLY per-route width logic there is.
-  // Regular pages need no class: <main> caps their content at --page-max on its
-  // own. Do not reintroduce the route-by-route width list that used to live here.
-  //   - ws-app--chatfull: the focused chat. A viewport-tall column that never
-  //     scrolls (the log is the only scroller, composer above the mobile
-  //     keyboard). Width is handled inside, on .chat-panel--full.
-  //   - ws-app--appfull: an APP route (/apps/<name>, or an app running in
-  //     preview). Drops the content cap so the app owns its own width; the app
-  //     opts back into the page measure with `.ws-page` if it wants it.
-  const { pathname } = useLocation();
-  const chatFull = pathname.startsWith("/chat/");
-  const appFull = !chatFull &&
-    (/^\/apps\/[^/]/.test(pathname) || /^\/projects\/[^/]+\/run/.test(pathname));
-  const widthClass = chatFull ? " ws-app--chatfull" : appFull ? " ws-app--appfull" : "";
   return (
     <AppProviders>
     <BreadcrumbProvider>
-    <div className={"ws-root ws-app" + widthClass}>
-      <header className="ws-topnav">
-        <BreadcrumbBar />
-        <SectionNav />
-      </header>
-      {/* The content region, and the only place an overlay may land. Dialogs
-          portal into the host this renders, so they cover the app and not the
-          top nav above it — that scoping is the shell's job, and no page or
-          dialog has to know about it. See ui/OverlayHost. */}
-      <OverlayHost>
-      <main>
+    <Shell>
         <AppSuspense>
         <Routes>
           <Route path="/" element={<Home />} />
@@ -166,9 +146,7 @@ export default function App() {
           <Route path="/location" element={<Navigate to="/apps/location" replace />} />
         </Routes>
         </AppSuspense>
-      </main>
-      </OverlayHost>
-    </div>
+    </Shell>
     </BreadcrumbProvider>
     </AppProviders>
   );
