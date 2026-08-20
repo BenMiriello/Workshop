@@ -174,6 +174,26 @@ def request_continuation(thread_id: str, *, seed: str, dedupe_id: str) -> bool:
     return True
 
 
+def _all_owner_ids() -> list[int]:
+    """Every owner with a runtime store. The chat stores are per-owner and
+    resolved through an `ownership` ContextVar, so a background loop that means
+    to touch chats has to pin each owner in turn; nothing is pinned by default
+    (ownership.current_owner() would raise). Same directory scan run_report uses
+    to find a thread's owner."""
+    from services import ownership
+    out: list[int] = []
+    try:
+        for d in (ownership._RUNTIME / "users").iterdir():
+            if d.is_dir():
+                try:
+                    out.append(int(d.name))
+                except ValueError:
+                    continue
+    except OSError:  # pragma: no cover - defensive
+        pass
+    return out
+
+
 async def continuation_loop(*, interval: float = 5.0) -> None:
     """Start the turn for any thread holding a continuation seed, once it is idle.
 
@@ -183,34 +203,57 @@ async def continuation_loop(*, interval: float = 5.0) -> None:
     already refuses to start while a turn or a thread-op is in flight, so a seed
     simply waits here until the thread is genuinely free. Only threads that have
     a seed are touched, so an idle system does no work.
+
+    Runs with NO owner pinned, so it pins each owner in turn before reading that
+    owner's chat stores (see _all_owner_ids). Setting the owner on this task
+    before awaiting `drain` keeps it pinned through the drain and the turn spawn,
+    because a ContextVar set on a task is held across that task's awaits.
     """
+    from services import ownership
     while True:
         await asyncio.sleep(interval)
         try:
-            for tid in chat_queue.threads_with_queues():
+            for owner_id in _all_owner_ids():
+                ownership.set_current_owner(owner_id)
                 try:
-                    if chat_queue.has_auto(tid):
-                        await drain(tid, reason="continuation")
-                except Exception as e:  # pragma: no cover - defensive
-                    log.warning("continuation drain failed for %s: %s", tid, e)
+                    for tid in chat_queue.threads_with_queues():
+                        try:
+                            if chat_queue.has_auto(tid):
+                                await drain(tid, reason="continuation")
+                        except Exception as e:  # pragma: no cover - defensive
+                            log.warning("continuation drain failed for %s: %s", tid, e)
+                finally:
+                    ownership.clear_current_owner()
         except Exception as e:  # pragma: no cover - defensive
             log.warning("continuation loop pass failed: %s", e)
 
 
 async def drain_all(*, reason: str = "startup") -> int:
-    """Every thread holding a queue. Runs at startup.
+    """Every thread holding a queue, across every owner. Runs at startup.
 
     A backend that went down while a turn was running comes back with the turn
     gone and the queue still there. Nothing else would ever notice: the browser
     that queued the message may never open that thread again.
+
+    Pins each owner in turn: the queue stores are per-owner behind an ownership
+    ContextVar, and this runs with none pinned, so an un-owned pass would raise
+    OwnerUnset off the first store read and deliver nothing. (It did, silently,
+    until 2026-08-20 — the operator-queue drains that DO work all fire from
+    already-owned contexts like turn-finalize, so the gap never showed.)
     """
+    from services import ownership
     sent = 0
-    for tid in chat_queue.threads_with_queues():
+    for owner_id in _all_owner_ids():
+        ownership.set_current_owner(owner_id)
         try:
-            if await drain(tid, reason=reason):
-                sent += 1
-        except Exception as e:  # pragma: no cover - defensive
-            log.warning("startup drain failed for %s: %s", tid, e)
+            for tid in chat_queue.threads_with_queues():
+                try:
+                    if await drain(tid, reason=reason):
+                        sent += 1
+                except Exception as e:  # pragma: no cover - defensive
+                    log.warning("startup drain failed for %s: %s", tid, e)
+        finally:
+            ownership.clear_current_owner()
     if sent:
         log.info("chat queue: delivered queued messages on %d thread(s) at %s", sent, reason)
     return sent

@@ -220,6 +220,32 @@ def test_a_batch_already_committed_is_not_sent_twice(tid, starter):
     assert chat_queue.read(tid) == []
 
 
+def test_draining_works_with_no_owner_pinned(owned, starter):
+    """The regression that end-to-end scrutiny caught (2026-08-20).
+
+    The backend's continuation loop and its startup drain both run with NO owner
+    pinned, and the chat stores are per-owner behind an ownership ContextVar. An
+    un-owned pass used to raise OwnerUnset off the first store read and deliver
+    nothing, so a finished background run's continuation would never fire in the
+    live backend. drain_all now pins each owner it finds on disk."""
+    tid = chat_store.create_thread("general")["id"]
+    chat_queue.enqueue(tid, text="waiting across a restart", client_id="c1")
+    # As the live loop runs: nothing pinned.
+    ownership.clear_current_owner()
+    assert asyncio.run(chat_drain.drain_all(reason="test")) == 1
+    assert starter and starter[0][0]["text"] == "waiting across a restart"
+    # And the owner is left unset afterward, exactly as it was found.
+    assert ownership.owner_or_none() is None
+
+
+def test_owner_enumeration_finds_every_store(owned):
+    """_all_owner_ids is what lets the un-owned loops reach each owner's chats."""
+    chat_store.create_thread("general")  # materialises owner 1's store on disk
+    (ownership._RUNTIME / "users" / "7").mkdir(parents=True, exist_ok=True)
+    ids = set(chat_drain._all_owner_ids())
+    assert {1, 7} <= ids
+
+
 def test_a_continuation_seed_starts_a_turn_attributed_to_no_one(tid, monkeypatch):
     """Fire-and-continue. A finished background run leaves an auto seed; the
     drain must start a turn from it WITHOUT recording an operator message, so the
