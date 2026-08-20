@@ -1895,14 +1895,16 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
         # "the bytes reached the process" into "the turn has read it" — the
         # difference between a chat that is waiting and one that looks broken.
         "--replay-user-messages",
-        # A backgrounded Agent/Task call only delivers its result if this very
-        # process survives to see the CLI's own task_notification -- proven to
-        # work when nothing disturbs it, but this backend restarts often (any
-        # concurrent turn's apply.sh can trigger one) and a background
-        # subagent's in-flight work does not survive that the way this turn's
-        # own process does (chat-agent-integration-2026-08-18.md). The prompt
-        # rule alone did not hold, so this denies the call structurally instead
-        # of asking: see services/subagent_guard.py.
+        # A chat turn is a one-shot process: it exits when it stops emitting
+        # tool calls, and nothing re-invokes it to collect a backgrounded
+        # subagent's late result (and this backend restarts often -- any
+        # concurrent turn's apply.sh can trigger one). The Agent/Task tool
+        # backgrounds BY DEFAULT in this CLI, so a naturally-written call (the
+        # flag omitted) backgrounds and the turn dies waiting for it. This hook
+        # fails closed: it allows the call ONLY when run_in_background is
+        # explicitly false, forcing the subagent inline. The prompt rule alone
+        # did not hold twice, so this is the structural guarantee behind it.
+        # See services/subagent_guard.py and chat-agent-integration-2026-08-18.md.
         "--settings", json.dumps({"hooks": {"PreToolUse": [{
             "matcher": "Agent|Task",
             "hooks": [{"type": "command",
