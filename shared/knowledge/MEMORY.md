@@ -41,10 +41,12 @@
 - [Deep search degrades to lexical when the GPU dies](deep-search-dies-with-the-gpu-no-lexical-fallbac-1a001d05335.md) - `search()` is hybrid since aa457c8: BM25 over the same chunks when `embed()` raises, and `mode` says which path answered
 - [Fable review-and-refine improves design plans](fable-review-and-refine-improves-design-plans-1a0028fb29c.md)
 - [Filing a ticket is not progress](filing-a-ticket-is-not-progress-1a0028fb2a7.md)
+- [Fire-and-continue: how a chat acts on a finished run on its own](fire-and-continue-how-a-chat-acts-on-a-finished-1a020796c2f.md)
 - [Five fixed color scheme pairs decided](five-fixed-color-scheme-pairs-decided-1a0028fb2e5.md)
 - [Focus ring inherits border-radius, not forced on descendants](focus-ring-inherits-border-radius-not-forced-on-1a0028fb2b9.md)
 - [Gzip middleware must be registered FIRST, or it silently compresses nothing](gzip-middleware-must-be-registered-first-or-it-s-1a002e9891e.md)
 - [Handoff: tickets surface + automation loop (2026-08-12)](handoff-tickets-surface-automation-loop-2026-08-19ff9747432.md)
+- [In-chat background agent (spawn_background): how it is wired](in-chat-background-agent-spawn-background-how-it-1a0215176e5.md)
 - [Letta memory: human (email-triager)](letta-email-triager-human.md) - Exported Letta human block, held by email-triager.
 - [Letta memory: persona (email-triager)](letta-email-triager-persona.md) - Exported Letta persona block, held by email-triager.
 - [Letta memory: human (masini-ch-1507029806909362237)](letta-masini-ch-1507029806909362237-human.md) - Exported Letta human block, held by masini-ch-1507029806909362237.
@@ -90,6 +92,7 @@
 - [Task filing should learn from operator patterns](task-filing-should-learn-from-operator-patterns-1a0028fb292.md)
 - [The autonomous loop has never been able to write a file](the-autonomous-loop-has-never-been-able-to-write-1a002e04bad.md)
 - [The chat sync endpoint is a single point of failure with four faces](the-chat-sync-endpoint-is-a-single-point-of-fail-1a0131b4024.md)
+- [The empty app page column and 'agents keep naming my apps' are one defect](the-empty-app-page-column-and-agents-keep-naming-1a0208f976b.md)
 - [The turn stream's wire vocabulary has one owner](the-turn-stream-s-wire-vocabulary-has-one-owner-1a003231bba.md)
 - [Ticket dependencies: first-class edge model (addendum to T0)](ticket-dependencies-first-class-edge-model-adden-19f7440aaf0.md)
 - [Ticket drafts persist on threads](ticket-drafts-persist-on-threads-1a0028fb2c0.md)

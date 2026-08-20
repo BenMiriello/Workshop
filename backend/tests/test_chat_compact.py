@@ -45,6 +45,12 @@ def chatty(owned):
     within budget; a 7th would push it over) and folding the other 15 -- the
     same split the old fixed "last 6 records" constant produced, but now
     because of size, not count.
+
+    The messages alternate user/assistant (OLD-i, reply-i), so that raw
+    6-message cut lands on an ASSISTANT message (reply-7): the tail-alignment
+    step (see `_fold_summary`) pulls one more message (OLD-7, a user turn)
+    into the kept tail so the verbatim portion opens on a prompt rather than
+    a stranded reply, settling the real split at keep 7 / fold 14.
     """
     tid = chat_store.create_thread("general")["id"]
     for i in range(10):
@@ -118,7 +124,10 @@ class TestCompactionFolds:
         folded, err = asyncio.run(
             _fold_now(chatty))
         assert err == ""
-        assert folded == 15          # 21 messages, last 6 kept under the token budget
+        # 21 messages; the token budget alone would keep the last 6, but that
+        # lands on an assistant reply, so alignment pulls in one more (the
+        # user turn ahead of it) and the real split is keep 7 / fold 14.
+        assert folded == 14
         after = _conversation(_prompt(chatty))
         assert len(after) < len(before) / 2
         # The tail is what the conversation is ABOUT right now, and summarizing
@@ -130,7 +139,7 @@ class TestCompactionFolds:
         asyncio.run(_fold_now(chatty))
         prompt = _prompt(chatty)
         assert "EARLIER IN THIS CONVERSATION (summary)" in prompt
-        assert "SUMMARY of 15 messages" in prompt
+        assert "SUMMARY of 14 messages" in prompt
 
     def test_the_transcript_is_untouched(self, chatty, stub_summary):
         asyncio.run(_fold_now(chatty))
@@ -149,7 +158,7 @@ class TestCompactionFolds:
     def test_folding_twice_folds_what_arrived_since(self, chatty, stub_summary):
         asyncio.run(_fold_now(chatty))
         # Sized like `chatty` itself: big enough that the second fold's tail
-        # (the 6 messages kept by the first fold, plus these 8) clears the
+        # (the 7 messages kept by the first fold, plus these 8) clears the
         # token budget again, so this exercises the count-from-the-front
         # invariant on a real second fold rather than a no-op one.
         for i in range(8):
@@ -157,7 +166,7 @@ class TestCompactionFolds:
         folded, err = asyncio.run(
             _fold_now(chatty))
         assert err == ""
-        assert folded == 8   # 6 old tail + 8 new = 14, keep 6, fold 8
+        assert folded == 9   # 7 old tail + 8 new = 15, keep 6, fold 9
         assert "NEW-7" in _conversation(_prompt(chatty))
 
     def test_a_short_chat_folds_nothing(self, owned, stub_summary):
@@ -235,6 +244,89 @@ class TestTheTokenBudgetReplacesTheRecordCount:
         assert folded_through == ct_before + fold_n
 
 
+class TestTheFoldAlignsToAUserTurn:
+    """`_fold_summary`'s token-budget walk stops purely on cost, and can land
+    the cut between an exchange's two halves, keeping an assistant reply
+    verbatim while folding the user prompt it answered. The alignment step
+    keeps the verbatim tail starting at a user turn so a reply is never
+    stranded from its prompt -- see `_fold_summary` and the `chatty` fixture's
+    own docstring for the exact split this produces on it."""
+
+    @pytest.fixture()
+    def stub_summary(self, monkeypatch):
+        from routes import chat as chat_routes
+        monkeypatch.setattr(chat_routes, "_summarize_sync",
+                            lambda prev, msgs: f"SUMMARY of {len(msgs)} messages")
+        return chat_routes
+
+    def test_the_kept_tail_opens_on_a_user_message_not_a_stranded_reply(self, chatty, stub_summary):
+        asyncio.run(_fold_now(chatty))
+        after = _conversation(_prompt(chatty))
+        # The raw token-budget cut (keep 6) would open on "reply-7", the
+        # assistant's answer to "OLD-7". Alignment pulls OLD-7 in too, so the
+        # verbatim tail never opens mid-exchange.
+        assert "OLD-7" in after
+        assert "reply-7" in after
+        assert "OLD-6" not in after
+
+    def test_alignment_declines_when_it_would_break_the_meaningful_fold_guardrail(self, owned, stub_summary):
+        """No user turn sits anywhere in this tail, so walking back to one would
+        run off the front and leave nothing folded -- well under the "fold at
+        least 2 messages" guardrail. Aligning must be declined and the
+        token-budget answer (fold the first 4 of these 6) kept as-is."""
+        tid = chat_store.create_thread("general")["id"]
+        for i in range(6):
+            chat_store.append_message(tid, "assistant", f"A{i} " + ("filler " * 1200))
+        folded, err = asyncio.run(_fold_now(tid))
+        assert err == ""
+        assert folded == 4
+
+
+class TestTheSummarizerMetersItsSpend:
+    """`_summarize_sync` is a real `call_cloud` call and was going entirely
+    unrecorded in `usage_ledger`, so a thread that compacted often looked
+    cheaper than it actually was. `call_cloud` returns no token counts, so
+    the entry is an ESTIMATE from the same chars/4 proxy `_est_tokens` uses,
+    recorded report-only: it must never gate or block a compaction."""
+
+    @pytest.fixture()
+    def stub_summary(self, monkeypatch):
+        from routes import chat as chat_routes
+        monkeypatch.setattr(chat_routes, "_summarize_sync",
+                            lambda prev, msgs: f"SUMMARY of {len(msgs)} messages")
+        return chat_routes
+
+    @pytest.fixture()
+    def ledger(self, tmp_path, monkeypatch):
+        from services import usage_ledger
+        monkeypatch.setattr(usage_ledger, "LEDGER_PATH", tmp_path / "usage.jsonl")
+        return usage_ledger
+
+    def test_a_successful_fold_records_an_estimate(self, chatty, stub_summary, ledger):
+        asyncio.run(_fold_now(chatty))
+        entries = ledger._read_entries()
+        compaction = [e for e in entries if e.get("role") == "compaction"]
+        assert len(compaction) == 1
+        assert compaction[0]["chat"] == chatty
+        assert compaction[0]["tokens"] > 0
+
+    def test_a_fold_with_nothing_to_do_records_nothing(self, owned, stub_summary, ledger):
+        tid = chat_store.create_thread("general")["id"]
+        chat_store.append_message(tid, "user", "hello")
+        asyncio.run(_fold_now(tid))
+        assert ledger._read_entries() == []
+
+    def test_a_failed_summarizer_records_nothing(self, chatty, ledger, monkeypatch):
+        from routes import chat as chat_routes
+
+        def boom(prev, msgs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(chat_routes, "_summarize_sync", boom)
+        asyncio.run(_fold_now(chatty))
+        assert ledger._read_entries() == []
+
+
 class TestAFailedFoldChangesNothingAndSaysSo:
     def test_a_summarizer_that_raises_is_reported(self, chatty, monkeypatch):
         from routes import chat as chat_routes
@@ -271,6 +363,43 @@ class TestLegacyBoundariesStayInert:
         chat_log.append_sync(chatty, {"kind": "boundary", "mode": "compact", "at_seq": 10})
         assert "OLD-0" in _conversation(_prompt(chatty))
         assert not chat_store.get_thread(chatty).get("cleared_through")
+
+
+class TestNoteAutoCompactMarksTheTranscriptWithoutMovingTheCut:
+    """`chat_store.note_auto_compact` records that the CLI compacted its own
+    window mid-turn, unasked. Per the 2026-08-20 operator decision it draws
+    the SAME divider a manual compact draws (`MessageList.ContextCut`), but
+    it must not itself change what the next turn sends the model: it carries
+    no cut position and no summary, so `_fold`'s cut-resolution loop ignores
+    it exactly the way it ignores "reset"."""
+
+    def test_it_writes_an_auto_boundary_event(self, chatty):
+        chat_store.note_auto_compact(chatty)
+        boundaries = [e for e in chat_log.read_events(chatty) if e.get("kind") == "boundary"]
+        assert [b["mode"] for b in boundaries] == ["auto"]
+        assert boundaries[0]["at_seq"] > 0
+
+    def test_it_does_not_move_the_cut(self, chatty):
+        before = _conversation(_prompt(chatty))
+        chat_store.note_auto_compact(chatty)
+        after = _conversation(_prompt(chatty))
+        assert after == before
+        assert not chat_store.get_thread(chatty).get("cleared_through")
+
+    def test_it_does_not_disturb_an_existing_compact_cut(self, chatty, monkeypatch):
+        from routes import chat as chat_routes
+        monkeypatch.setattr(chat_routes, "_summarize_sync", lambda prev, msgs: "S")
+        asyncio.run(_fold_now(chatty))
+        cut_before = chat_store.cut_state(chatty)
+        chat_store.note_auto_compact(chatty)
+        assert chat_store.cut_state(chatty) == cut_before
+
+    def test_it_is_a_quiet_no_op_on_a_thread_that_is_gone(self, owned):
+        # `_fold` returns None for an unknown thread; this must return quietly
+        # rather than raise, the same as `note_session_reset`. A well-formed
+        # id (hex + dashes) that was never created, so it fails at "no such
+        # thread" rather than at id validation.
+        chat_store.note_auto_compact("deadbeef-dead-beef-dead-beefdeadbeef")
 
 
 class TestTheCutOnTheWire:

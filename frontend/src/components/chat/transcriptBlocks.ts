@@ -98,7 +98,12 @@ export type TranscriptBlock =
   // the prompt changed. Placed directly from the log's own event, unlike the
   // other two which wait on the server's resolved cut (see below): there is no
   // resolved state for a reset to wait on, since it never touches `cut_through`.
-  | { kind: "cut"; key: string; count: number; mode: "clear" | "compact" | "reset" }
+  //
+  // `auto` is the fourth kind: the CLI compacted its own window mid-turn,
+  // unasked (see chat_store.note_auto_compact). It never touches `cut_through`
+  // either, so it is placed the same way `reset` is, directly from the log's
+  // own event.
+  | { kind: "cut"; key: string; count: number; mode: "clear" | "compact" | "reset" | "auto" }
   // This chat was re-bound to another scope, read from the log's own `scope`
   // event. It is where it happened, it survives a reload, and it is the same on
   // every device — none of which was true when it was React state.
@@ -460,6 +465,13 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
       // resolved answer that a `reset` does not have.
       if (ev.mode === "reset") {
         out.push({ kind: "cut", key: `reset:${ev.seq}`, count: 0, mode: "reset" });
+        continue;
+      }
+      // `auto` carries no cut position and no summary either, same as
+      // `reset` above: pushed in place from the log's own event rather than
+      // through `cutAt`/`state.cut`.
+      if (ev.mode === "auto") {
+        out.push({ kind: "cut", key: `auto:${ev.seq}`, count: 0, mode: "auto" });
         continue;
       }
       // WHERE, from the log. WHETHER and WHICH KIND, from the server (below):

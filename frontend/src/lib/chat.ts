@@ -338,9 +338,13 @@ export type LogEvent = {
   to?: string;
   // kind === "boundary" — a context cut (`clear`, `compact`), or a `reset`:
   // a compact that found nothing worth folding but still dropped the live
-  // session. `mode` survives as a discriminator: a boundary left behind by the
-  // removed folding path reads as "compact" and is ignored everywhere.
-  mode?: "compact" | "clear" | "reset";
+  // session. `auto` is a fourth kind: the CLI compacted its own window
+  // mid-turn, unasked (see chat_store.note_auto_compact); rendered the same
+  // as `compact` per the 2026-08-20 operator decision that auto and manual
+  // are the same event with a different trigger. `mode` survives as a
+  // discriminator: a boundary left behind by the removed folding path reads
+  // as "compact" and is ignored everywhere.
+  mode?: "compact" | "clear" | "reset" | "auto";
   at_seq?: number;
   // kind === "title"
   title?: string;

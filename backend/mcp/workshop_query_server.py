@@ -135,6 +135,47 @@ SPAWN_TOOL_SCHEMA = {
 }
 
 
+# --- Workshop toolkit (Phase L1/L2): reach things by tool, not by grep. -------
+
+WHERE_IS_TOOL_NAME = "where_is"
+WHERE_IS_TOOL_DESC = (
+    "Return the orientation map for this chat: what its scope is and which tool "
+    "reaches each kind of thing (uploads, notes, docs, tickets, runs). Call it "
+    "when you are unsure where something lives, instead of searching the "
+    "filesystem for it. Takes no arguments."
+)
+WHERE_IS_TOOL_SCHEMA = {"type": "object", "properties": {}, "additionalProperties": False}
+
+LIST_ATTACHMENTS_TOOL_NAME = "list_attachments"
+LIST_ATTACHMENTS_TOOL_DESC = (
+    "List the files uploaded to THIS chat: their id, name, kind and size. Use it "
+    "to see what the operator attached before reading one with get_file. Text "
+    "attachments are already injected into the conversation; use this and "
+    "get_file for binaries (zips, images, PDFs) or to re-read one on demand. "
+    "Takes no arguments."
+)
+LIST_ATTACHMENTS_TOOL_SCHEMA = {"type": "object", "properties": {}, "additionalProperties": False}
+
+GET_FILE_TOOL_NAME = "get_file"
+GET_FILE_TOOL_DESC = (
+    "Read one file uploaded to this chat, by its attachment id (from "
+    "list_attachments). Returns the file's text when it is textual or has a text "
+    "rendering; for a binary (a zip, an image) it returns the file's on-disk path "
+    "so a tool-capable chat can open it directly. This is how you reach an upload "
+    "without hunting for where it is stored."
+)
+GET_FILE_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string", "description": "The attachment id, as shown by list_attachments."},
+    },
+    "required": ["id"],
+    "additionalProperties": False,
+}
+
+_GET_FILE_MAX_CHARS = 100_000
+
+
 def _pin_owner() -> None:
     """Pin the data owner so owner-scoped stores (jobs, knowledge) resolve.
 
@@ -281,6 +322,80 @@ def _run_search(args: dict) -> str:
     return "\n".join(out)
 
 
+def _run_where_is() -> str:
+    """The orientation map for this chat's scope. Single source of truth is
+    services.orientation, shared with the injected L1 manifest."""
+    scope = os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop").strip() or "workshop"
+    from services import orientation
+    return orientation.manifest_text(scope)
+
+
+def _run_list_attachments() -> str:
+    """Files uploaded to THIS chat: id, name, kind, size."""
+    _pin_owner()
+    from services import chat_attachments
+    thread = _bound_thread()
+    recs = chat_attachments.list_records()
+    if thread:
+        recs = [r for r in recs if (r.get("thread_id") or "") == thread]
+    if not recs:
+        return "No files have been uploaded to this chat."
+    lines = [f"{len(recs)} file(s) in this chat:"]
+    for r in recs:
+        size = r.get("size")
+        human = f"{size} bytes" if isinstance(size, int) else "unknown size"
+        lines.append(f"- id {r.get('id')}: {r.get('name')}  ({r.get('kind')}, {human})")
+    lines.append("Read one with get_file, by its id.")
+    return "\n".join(lines)
+
+
+def _run_get_file(args: dict) -> str:
+    """One attachment's text, or its on-disk path for a binary."""
+    _pin_owner()
+    from services import chat_attachments
+    att_id = (args.get("id") or "").strip()
+    if not att_id:
+        return "error: an attachment id is required (see list_attachments)."
+    rec = chat_attachments.get(att_id)
+    if rec is None:
+        return f"No attachment with id {att_id} in this chat."
+    name = rec.get("name") or att_id
+    kind = rec.get("kind") or ""
+    head = f"{name} (id {att_id}, {kind}, {rec.get('size')} bytes)"
+    # A converted binary (pdf, docx) carries a text rendering: prefer it.
+    derived = chat_attachments.derived_path(rec)
+    if derived is not None:
+        try:
+            text = derived.read_text("utf-8", errors="replace")
+            return _render_text(head, text)
+        except Exception as e:  # noqa: BLE001
+            return f"{head}\n(could not read the text rendering: {e})"
+    blob = chat_attachments.blob_for(rec)
+    if blob is None:
+        return f"{head}\n(the file's bytes are missing from the store.)"
+    if kind == "text":
+        try:
+            return _render_text(head, blob.read_text("utf-8", errors="replace"))
+        except Exception as e:  # noqa: BLE001
+            return f"{head}\n(could not read as text: {e})"
+    # A binary with no text rendering (a zip, an image): hand back the real path
+    # so a tool-capable chat can open it. This is a live tool result, not static
+    # agent-facing copy, and there is no managed address for "operate on these
+    # bytes with Bash".
+    return (
+        f"{head}\n"
+        f"This is a binary file with no text rendering. Its path on disk is:\n"
+        f"{blob}\n"
+        "Open it with your own tools (for a zip, unzip it; for an image, view it)."
+    )
+
+
+def _render_text(head: str, text: str) -> str:
+    if len(text) > _GET_FILE_MAX_CHARS:
+        text = text[:_GET_FILE_MAX_CHARS] + "\n...(truncated)"
+    return f"{head}\n\n{text}"
+
+
 def _bound_thread() -> str | None:
     """The chat this server instance belongs to, if any. Pinned at turn-start as
     WORKSHOP_QUERY_THREAD (app_registry.set_current_query_thread). Absent for a
@@ -295,6 +410,12 @@ def _tool_list() -> list:
         {"name": TOOL_NAME, "description": TOOL_DESC, "inputSchema": TOOL_SCHEMA},
         {"name": SEARCH_TOOL_NAME, "description": SEARCH_TOOL_DESC,
          "inputSchema": SEARCH_TOOL_SCHEMA},
+        {"name": WHERE_IS_TOOL_NAME, "description": WHERE_IS_TOOL_DESC,
+         "inputSchema": WHERE_IS_TOOL_SCHEMA},
+        {"name": LIST_ATTACHMENTS_TOOL_NAME, "description": LIST_ATTACHMENTS_TOOL_DESC,
+         "inputSchema": LIST_ATTACHMENTS_TOOL_SCHEMA},
+        {"name": GET_FILE_TOOL_NAME, "description": GET_FILE_TOOL_DESC,
+         "inputSchema": GET_FILE_TOOL_SCHEMA},
     ]
     # Only a real chat can spawn a background agent for itself.
     if _bound_thread():
@@ -356,7 +477,9 @@ def _handle(msg: dict) -> dict | None:
     if method == "tools/call":
         params = msg.get("params") or {}
         name = params.get("name")
-        if name not in (TOOL_NAME, SEARCH_TOOL_NAME, SPAWN_TOOL_NAME):
+        if name not in (TOOL_NAME, SEARCH_TOOL_NAME, SPAWN_TOOL_NAME,
+                        WHERE_IS_TOOL_NAME, LIST_ATTACHMENTS_TOOL_NAME,
+                        GET_FILE_TOOL_NAME):
             return {"jsonrpc": "2.0", "id": mid,
                     "error": {"code": -32602, "message": f"unknown tool: {name}"}}
         try:
@@ -364,6 +487,12 @@ def _handle(msg: dict) -> dict | None:
                 text = _run_search(params.get("arguments") or {})
             elif name == SPAWN_TOOL_NAME:
                 text = _run_spawn(params.get("arguments") or {})
+            elif name == WHERE_IS_TOOL_NAME:
+                text = _run_where_is()
+            elif name == LIST_ATTACHMENTS_TOOL_NAME:
+                text = _run_list_attachments()
+            elif name == GET_FILE_TOOL_NAME:
+                text = _run_get_file(params.get("arguments") or {})
             else:
                 text = _build_digest()
         except Exception as e:  # noqa: BLE001

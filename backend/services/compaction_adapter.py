@@ -94,11 +94,17 @@ class ClaudeCLIAdapter:
     2026-08-12 measurement in `routes.chat.compact_thread`'s docstring: the
     manual `/compact` command is confirmed dead in headless mode (a leading
     slash over stream-json is parsed into a local-command block nothing
-    executes), there is no control-protocol request for it either, and
-    automatic threshold-triggered compaction inside a `--resume`d session is
-    a genuinely open question -- not confirmed to happen, not confirmed not
-    to -- so `native_auto` stays `False` until that question is settled
-    rather than being reported as a fact this adapter doesn't have.
+    executes), and there is no control-protocol request for it either. Native
+    AUTO compaction, in contrast, is a confirmed fact, not an open question:
+    `services.build_streaming` detects the CLI's own `compact_boundary` meta
+    event mid-turn (`elif kind == "meta" and payload.get("subtype") ==
+    "compact_boundary": state["compacted"] = True`) and a `--resume`d session
+    really does compact itself when the window fills, which is why that same
+    module carries a marker write (`chat_store.note_auto_compact`) for exactly
+    this case and a passing regression
+    (`test_an_auto_compact_mid_work_keeps_its_real_reply`). So `native_auto`
+    is `True`: the CLI compacts on its own, uncontrolled by Workshop, even
+    though Workshop cannot ask it to (that is `native_manual`, still `False`).
     """
 
     def __init__(self, fold_summary, land_fold, detach_live_session):
@@ -109,7 +115,7 @@ class ClaudeCLIAdapter:
     def capabilities(self) -> CompactionCapabilities:
         return {
             "native_manual": False,
-            "native_auto": False,
+            "native_auto": True,
             "can_evict_tool_output": False,
             "preserves_cache_prefix": False,
         }

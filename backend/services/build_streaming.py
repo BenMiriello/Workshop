@@ -3157,6 +3157,15 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         )
     except Exception as e:
         log.warning("turn %s: chat_store commit failed: %s", turn.id, e)
+    # A native compact seen mid-turn (`compact_boundary`, above) gets the same
+    # divider a manual compact gets -- see chat_store.note_auto_compact. Only
+    # once the commit above confirms the thread still exists, and best-effort:
+    # a marker write must never fail a turn the operator already received.
+    if compacted and turn.committed:
+        try:
+            chat_store.note_auto_compact(turn.thread_id)
+        except Exception as e:
+            log.warning("turn %s: auto-compact marker failed: %s", turn.id, e)
     # Self-heal a bad resume. If a turn that was RESUMING this thread's session
     # failed outright, the session is the prime suspect (pruned, corrupted, or
     # written under a different cwd). Detach it so the next turn mints a fresh one

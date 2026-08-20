@@ -36,13 +36,22 @@ class TestCapabilitiesReportTheRealCLIFacts:
         caps = adapter.capabilities()
         assert caps["native_manual"] is False
 
+    def test_native_auto_is_true(self):
+        """Unlike `native_manual`, automatic compaction inside a `--resume`d
+        session is a CONFIRMED fact, not an open question:
+        `services.build_streaming` detects the CLI's own `compact_boundary`
+        meta event mid-turn and writes a marker for it
+        (`chat_store.note_auto_compact`), and
+        `test_an_auto_compact_mid_work_keeps_its_real_reply` pins the CLI
+        really doing this. Reporting `False` here would contradict the rest
+        of the codebase, which already treats it as fact."""
+        adapter = ClaudeCLIAdapter(None, None, None)
+        caps = adapter.capabilities()
+        assert caps["native_auto"] is True
+
     def test_the_rest_of_the_capability_set_is_also_honest(self):
         adapter = ClaudeCLIAdapter(None, None, None)
         caps = adapter.capabilities()
-        # Automatic compaction inside a --resume'd session is a genuinely
-        # open question (per the plan doc), not a confirmed capability, so
-        # this stays False rather than guessing True.
-        assert caps["native_auto"] is False
         # No CLI primitive does surgical tool-output eviction.
         assert caps["can_evict_tool_output"] is False
         assert caps["preserves_cache_prefix"] is False

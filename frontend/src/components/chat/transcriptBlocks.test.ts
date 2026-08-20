@@ -27,7 +27,7 @@ const user = (content: string, meta?: Record<string, unknown>): LogEvent =>
   ({ seq: ++seq, id: `e${seq}`, ts: "2026-08-09T12:00:00Z", kind: "message", role: "user", content, ...(meta ? { meta } : {}) });
 const reply = (content: string, meta: Record<string, unknown>): LogEvent =>
   ({ seq: ++seq, id: `e${seq}`, ts: "2026-08-09T12:00:00Z", kind: "message", role: "assistant", content, meta });
-const boundary = (mode: "compact" | "clear"): LogEvent =>
+const boundary = (mode: "compact" | "clear" | "reset" | "auto"): LogEvent =>
   ({ seq: ++seq, id: `e${seq}`, ts: "2026-08-09T12:00:00Z", kind: "boundary", mode });
 
 /** `cut` is what the SERVER says it is applying. Without it there is no
@@ -525,6 +525,16 @@ describe("pending sends and the context cut", () => {
       [user("a"), boundary("compact"), user("b"), boundary("clear"), user("c")],
       { clearedThrough: 2 });
     expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "cut:2", "user:c"]);
+  });
+
+  it("draws a cut block for an auto-compact, at its own position, with no server cut", () => {
+    // `auto` marks the CLI compacting its own window mid-turn (unasked), and
+    // it never moves `cut_through` -- same as `reset` -- so it is placed
+    // directly from the log's own event with no `state.cut` needed.
+    const s = stateOf([user("a"), user("b"), boundary("auto"), user("c")]);
+    expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "cut:0", "user:c"]);
+    const cut = selectTranscript(s).find((b) => b.kind === "cut") as { mode: string } | undefined;
+    expect(cut?.mode).toBe("auto");
   });
 
   it("says which command made the cut", () => {

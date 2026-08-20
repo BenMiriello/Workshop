@@ -63,11 +63,19 @@ import { branchTargets } from "./branchable";
 // session, which is a real reclaim. Saying "0 messages folded into a summary"
 // there would be a lie in the shape of the true sentence; this says what
 // actually happened instead.
-function ContextCut({ count, mode }: { count: number; mode: "clear" | "compact" | "reset" }) {
+//
+// FOURTH MODE: `auto`. The CLI compacted its own window mid-turn, unasked
+// (see chat_store.note_auto_compact). Operator decision 2026-08-20: an auto
+// and a manual compact are the same event with a different trigger, so this
+// renders with the SAME icon as `compact` and copy that reads as the same
+// event class, deliberately not a distinct-looking indicator. It carries no
+// message count, unlike a manual compact, because a mid-turn native compact
+// does not report how much it folded.
+function ContextCut({ count, mode }: { count: number; mode: "clear" | "compact" | "reset" | "auto" }) {
   const n = `${count} earlier ${count === 1 ? "message" : "messages"}`;
   return (
     <div className="chat-fold" role="separator">
-      {mode === "compact"
+      {mode === "compact" || mode === "auto"
         ? <Archive size={14} strokeWidth={1.8} aria-hidden />
         : mode === "reset"
           ? <RotateCcw size={14} strokeWidth={1.8} aria-hidden />
@@ -75,9 +83,11 @@ function ContextCut({ count, mode }: { count: number; mode: "clear" | "compact" 
       <span>
         {mode === "compact"
           ? `Compacted. ${n} folded into a summary`
-          : mode === "reset"
-            ? "Compacted. Nothing needed folding, so the session was reset"
-            : `Context cleared. ${n} no longer sent to the model`}
+          : mode === "auto"
+            ? "Conversation compacted to free up context"
+            : mode === "reset"
+              ? "Compacted. Nothing needed folding, so the session was reset"
+              : `Context cleared. ${n} no longer sent to the model`}
       </span>
     </div>
   );

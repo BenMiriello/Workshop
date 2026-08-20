@@ -470,6 +470,10 @@ def _stale_path() -> Path:
     return index_dir() / "index.stale"
 
 
+def _fingerprints_path() -> Path:
+    return index_dir() / "index.fingerprints.json"
+
+
 def _vecs_path() -> Path:
     return index_dir() / "index.vecs.npy"
 
@@ -529,6 +533,11 @@ def _save(meta: list[dict], vecs: np.ndarray) -> None:
 # spawned per turn. An in-memory flag would be invisible across that boundary,
 # which is the boundary that matters. It lives in the owner's index dir, so it is
 # per-owner exactly as the index is.
+#
+# THE MARKER IS ONE OF TWO SIGNALS. It covers every kind with a store that can
+# actually stamp it on every write. `doc` cannot be reached that way -- see the
+# "ON-DISK FINGERPRINTING" block further down, by `_fs_is_stale` -- so
+# `is_stale()` is the OR of this marker and that on-disk check.
 
 def mark_stale(reason: str = "") -> None:
     """Record that the corpus changed under the index. Never raises.
@@ -557,10 +566,15 @@ def mark_stale(reason: str = "") -> None:
 
 
 def is_stale() -> bool:
+    """True when EITHER the explicit marker above says so, OR the on-disk
+    fingerprint check below does. See that check's own comment for why a
+    second, independent signal exists at all."""
     try:
-        return _stale_path().exists()
+        if _stale_path().exists():
+            return True
     except Exception:
-        return False
+        pass
+    return _fs_is_stale()
 
 
 def _clear_stale() -> None:
@@ -568,6 +582,134 @@ def _clear_stale() -> None:
         _stale_path().unlink(missing_ok=True)
     except Exception:
         log.debug("could not clear the semantic index stale marker", exc_info=True)
+
+
+# ---------------------------------------------------- on-disk fingerprinting
+#
+# WHY THIS EXISTS ALONGSIDE THE MARKER ABOVE. `mark_stale` is a write-path
+# signal: whoever accepts a write leaves a marker so the next search rebuilds
+# first. That is complete for note (services/knowledge.py), chat
+# (services/chat_log.py) and ticket (services/tasks.py) -- every note, chat
+# message and ticket is written through exactly the one store that stamps the
+# marker, with no other way in. `doc` has no such choke point:
+# routes/docs_index.py marks the index when the in-app editor writes one, but
+# the overwhelming majority of docs are written straight to `docs/*.md` by an
+# editor or an agent's filesystem tools, none of which import this module or
+# know the marker exists. That path leaves nothing behind, so the doc corpus
+# in the index could drift from what is actually on disk indefinitely, healed
+# only by accident the next time an unrelated note/chat/ticket write happens
+# to flip the shared marker.
+#
+# The fix is a second, independent staleness signal that does not depend on
+# being told: a cheap fingerprint of the doc TREE (which files exist, and
+# each one's size and mtime -- never a file's body, see `_stat_fingerprint`),
+# compared against the fingerprint the last successful build actually
+# observed. A mismatch means the disk moved since the index was built, full
+# stop, regardless of which tool moved it.
+#
+# ONLY `doc` GETS THIS. `note`, `chat` and `ticket` are also read from
+# storage on every build, but each already has a reliable write-path signal
+# (above) covering every way into that store, so a second signal would only
+# add a stat walk with nothing new to catch. `vault` has the same filesystem
+# gap `doc` does (no writer marks anything), but is deliberately left out: it
+# is opt-in only (see DEFAULT_KINDS) and is never part of a self-heal rebuild
+# unless a caller already asked for it by name, so the failure mode this
+# closes -- the DEFAULT corpus silently drifting -- does not apply to it. If
+# vault ever needs this too, add `"vault": _vault_fingerprint` to
+# `_FS_FINGERPRINTERS` below; nothing else changes.
+#
+# NO BASELINE MEANS SILENT, ON PURPOSE. `is_stale()` runs on every search, so
+# a kind with no prior fingerprint (never built, or built before this
+# existed) must not manufacture staleness out of nothing -- that is what the
+# explicit marker and the ordinary first-build path are for. Once one
+# successful build records a baseline for a kind, drift from THAT baseline is
+# what gets caught, forever, with no further write-path wiring required.
+
+def _stat_fingerprint(root: Path, pattern: str) -> str:
+    """A cheap identity for a directory tree of files: which files exist,
+    and each one's size and mtime. NEVER a file's body -- a glob plus
+    `stat()` per match is O(number of files) and runs on the `is_stale()`
+    path (so on every search); reading every file to confirm its body
+    actually changed would be O(total bytes) and defeat the point of a check
+    meant to be cheap enough to pay unconditionally.
+
+    Sorted by relative path first so the result does not depend on directory
+    iteration order, which the filesystem gives no guarantee about."""
+    h = hashlib.sha1()
+    try:
+        entries = sorted(root.rglob(pattern))
+    except OSError:
+        return ""
+    for f in entries:
+        try:
+            st = f.stat()
+        except OSError:
+            continue
+        h.update(_rel(f).encode())
+        h.update(f"\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+    return h.hexdigest()
+
+
+def _doc_fingerprint() -> str:
+    return _stat_fingerprint(paths.workshop_root() / "docs", "*.md")
+
+
+_FS_FINGERPRINTERS = {"doc": _doc_fingerprint}
+
+
+def _load_fingerprints() -> dict:
+    try:
+        return json.loads(_fingerprints_path().read_text())
+    except Exception:
+        return {}
+
+
+def _save_fingerprints(fps: dict) -> None:
+    """Written to a temp file and renamed, same as `_save`, so a reader never
+    sees a half-written file."""
+    try:
+        d = index_dir()
+        tmp = d / "index.fingerprints.tmp.json"
+        tmp.write_text(json.dumps(fps))
+        os.replace(tmp, _fingerprints_path())
+    except Exception:
+        log.debug("could not persist semantic index fingerprints", exc_info=True)
+
+
+def _refresh_fingerprints(kinds) -> None:
+    """Record the on-disk state this build actually just collected, per
+    fingerprinted kind. Only for kinds THIS call covered: a build restricted
+    to e.g. `("chat",)` never re-ran `collect_docs`, so it must not overwrite
+    the doc baseline as if nothing had changed since -- that baseline is only
+    trustworthy right after a build that actually looked at the doc tree."""
+    to_update = [k for k in kinds if k in _FS_FINGERPRINTERS]
+    if not to_update:
+        return
+    fps = _load_fingerprints()
+    for k in to_update:
+        fps[k] = _FS_FINGERPRINTERS[k]()
+    _save_fingerprints(fps)
+
+
+def _fs_is_stale() -> bool:
+    """The on-disk half of `is_stale()`. Best-effort like the marker: a
+    fingerprint that cannot be computed must not make every search look stale
+    forever, so a failure here reads as "no drift detected", not "stale"."""
+    try:
+        saved = _load_fingerprints()
+    except Exception:
+        return False
+    for kind, fp_fn in _FS_FINGERPRINTERS.items():
+        baseline = saved.get(kind)
+        if baseline is None:
+            continue  # never built; the marker and the first build own this
+        try:
+            if fp_fn() != baseline:
+                return True
+        except Exception:
+            log.debug("could not compute the %s fingerprint; skipping", kind,
+                      exc_info=True)
+    return False
 
 
 def rebuild_kinds() -> tuple[str, ...]:
@@ -714,12 +856,14 @@ def build(kinds: tuple[str, ...] | list[str] = DEFAULT_KINDS,
         _save([], np.zeros((0, 0), dtype=np.float32))
         if covered:
             _clear_stale()
+        _refresh_fingerprints(kinds)
         return {"ok": True, "chunks": 0, "embedded": 0, "reused": 0}
 
     matrix = np.vstack([r for r in rows if r is not None]).astype(np.float32)
     _save(meta, matrix)
     if covered:
         _clear_stale()
+    _refresh_fingerprints(kinds)
     return {"ok": True, "chunks": len(meta), "embedded": len(todo),
             "reused": len(meta) - len(todo), "dim": int(matrix.shape[1])}
 

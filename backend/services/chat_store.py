@@ -1329,6 +1329,26 @@ def note_session_reset(thread_id: str) -> None:
     chat_log.append_sync(thread_id, {"kind": "boundary", "mode": "reset", "at_seq": at_seq})
 
 
+def note_auto_compact(thread_id: str) -> None:
+    """Record that the CLI compacted its own window mid-turn, unasked.
+
+    Operator decision 2026-08-20: an auto-compact and a manual `/compact` are
+    the same event with a different trigger, so the transcript shows them the
+    same way, not as a distinct-looking indicator. This writes the same shape
+    of marker `note_session_reset` does -- `mode="auto"`, no `at_seq` cut
+    position and no summary -- so `_fold`'s cut-resolution loop does not match
+    it against either of its conditions (`mode == "clear"` or `mode ==
+    "compact" and <has a summary>`) and it changes nothing about what a turn
+    sends the model. It exists solely for `MessageList`'s `ContextCut` to read
+    and draw the same divider a manual compact gets."""
+    folded = _fold(thread_id)
+    if folded is None:
+        return
+    _meta, _msgs, seqs, _cut = folded
+    at_seq = seqs[-1] if seqs else 0
+    chat_log.append_sync(thread_id, {"kind": "boundary", "mode": "auto", "at_seq": at_seq})
+
+
 def set_summary(thread_id: str, summary: str, *, folded_through: int) -> dict | None:
     """Store what a fold produced, and move the cut to match.
 

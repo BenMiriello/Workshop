@@ -481,6 +481,121 @@ class TestMarkStaleCallSites:
         assert si.is_stale()
 
 
+class TestOnDiskFingerprinting:
+    """D6/M1 left a gap the marker mechanism cannot close: a doc written
+    straight to `docs/*.md` by an editor or an agent's filesystem tools never
+    goes through `routes/docs_index.py`, so it never calls `mark_stale`. The
+    on-disk fingerprint in `_fs_is_stale` is the second, independent signal
+    that catches that drift anyway, with no new write-path call site."""
+
+    @pytest.fixture(autouse=True)
+    def _tmp_index(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(si, "index_dir", lambda: tmp_path)
+        root = tmp_path / "fakeroot"
+        (root / "docs").mkdir(parents=True)
+        monkeypatch.setattr(si.paths, "workshop_root", lambda: root)
+        monkeypatch.setattr(si, "available", lambda: (True, ""))
+        monkeypatch.setattr(
+            si, "embed",
+            lambda texts: np.ones((len(texts), 4), dtype=np.float32))
+        monkeypatch.setattr(si, "_COLLECTORS", {
+            "note": lambda: [], "chat": lambda: [], "ticket": lambda: [],
+            "doc": si.collect_docs,
+        })
+        self.docs_dir = root / "docs"
+
+    def _write(self, name: str, body: str) -> None:
+        (self.docs_dir / name).write_text(body)
+
+    def test_a_direct_filesystem_doc_edit_flips_staleness(self):
+        """The bug, reproduced: a doc changes on disk with no call anywhere
+        near `mark_stale`, and `is_stale()` still catches it."""
+        self._write("a.md", "# A\n\noriginal body")
+        res = si.build(si.DEFAULT_KINDS)
+        assert res["ok"] is True
+        assert si.is_stale() is False
+
+        self._write("a.md", "# A\n\nedited body")  # a plain Path.write_text,
+        # exactly what an editor or an agent's Edit/Write tool does -- no
+        # mark_stale call anywhere in this line.
+        assert si.is_stale() is True
+
+    def test_adding_a_doc_file_flips_staleness(self):
+        self._write("a.md", "# A\n\nbody")
+        si.build(si.DEFAULT_KINDS)
+        assert si.is_stale() is False
+        self._write("b.md", "# B\n\na second doc that did not exist before")
+        assert si.is_stale() is True
+
+    def test_removing_a_doc_file_flips_staleness(self):
+        self._write("a.md", "# A\n\nbody")
+        si.build(si.DEFAULT_KINDS)
+        assert si.is_stale() is False
+        (self.docs_dir / "a.md").unlink()
+        assert si.is_stale() is True
+
+    def test_an_unrelated_doc_untouched_is_not_stale(self):
+        """Building, then checking again with nothing changed at all, must
+        not itself flip staleness -- the fingerprint has to be stable."""
+        self._write("a.md", "# A\n\nbody")
+        si.build(si.DEFAULT_KINDS)
+        assert si.is_stale() is False
+        assert si.is_stale() is False
+
+    def test_a_never_built_index_is_not_marked_stale_by_the_fs_check_alone(self):
+        """No baseline yet (nothing has ever been built) means the fs signal
+        stays silent -- manufacturing staleness with nothing to diff against
+        would just be noise. The ordinary first-build path owns that case,
+        not this one."""
+        self._write("a.md", "# A\n\nbody nobody has indexed yet")
+        assert si.is_stale() is False
+
+    def test_the_explicit_marker_still_forces_a_rebuild_on_its_own(self):
+        """The pre-existing note/chat/ticket-style path is untouched: a bare
+        `mark_stale` call, no filesystem change at all, still flips
+        `is_stale()` and `rebuild_if_stale()` still clears it."""
+        self._write("a.md", "# A\n\nbody")
+        si.build(si.DEFAULT_KINDS)
+        assert si.is_stale() is False
+
+        si.mark_stale("a note landed")
+        assert si.is_stale() is True
+
+        res = si.rebuild_if_stale()
+        assert res is not None and res["ok"] is True
+        assert si.is_stale() is False
+
+    def test_a_partial_build_does_not_refresh_the_doc_baseline(self):
+        """`build(("chat",))` never re-ran `collect_docs`, so it must not
+        silently accept whatever the doc tree currently looks like as the new
+        baseline -- the doc corpus in the saved index did not change."""
+        self._write("a.md", "# A\n\nbody")
+        si.build(si.DEFAULT_KINDS)
+        assert si.is_stale() is False
+
+        si.build(("chat",))  # collects no docs at all
+        self._write("a.md", "# A\n\nedited after the partial build")
+        assert si.is_stale() is True
+
+    def test_the_fingerprint_is_stat_based_and_never_reads_a_file_body(self):
+        """Constructed proof, not a timing guess: the file is statable but its
+        permission bits make a body read raise `PermissionError`.
+        `_stat_fingerprint` must produce a real hash anyway, which it only can
+        if it never opens the file for reading (see its own docstring: a glob
+        plus `stat()` per match, O(number of files), no body ever touched)."""
+        import os as _os
+        f = self.docs_dir / "locked.md"
+        f.write_text("body that must never be read")
+        _os.chmod(f, 0)
+        try:
+            with pytest.raises(PermissionError):
+                f.read_text()
+            fp = si._stat_fingerprint(self.docs_dir, "*.md")
+        finally:
+            _os.chmod(f, 0o644)
+        assert fp, "a fingerprint must still be produced from stat() alone"
+
+
 class TestEmbedNormalisation:
     def test_a_zero_vector_does_not_become_nan(self, monkeypatch):
         """A NaN row poisons every later comparison, silently and forever."""

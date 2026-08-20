@@ -1444,15 +1444,21 @@ def _build_prompt(
     *,
     preamble: str = "",
     summary: str = "",
+    tools_active: bool = False,
 ) -> str:
-    # Layered prompt (see docs 01 §3):
-    #   1. ROLE PREAMBLE (platform-owned safety/capability facts) — first, and
-    #      never overridden by anything below it. Computed from the real run
-    #      config in the caller and passed in, so it can't drift from reality.
+    # Layered prompt (see docs 01 §3 and agent-context-and-toolkit-2026-08-20):
+    #   0. PLATFORM KERNEL (L0) — confidential, non-editable, highest authority.
+    #   1. ROLE PREAMBLE (platform-owned safety/capability facts) — computed from
+    #      the real run config in the caller, so it can't drift from reality.
+    #   1b. ORIENTATION MANIFEST (L1) — the tool-centric "where things are" map,
+    #      only when tools are active (it points at tools).
     #   2. App/project context (persona + live snapshot).
     #   3. User-owned custom prompt (provider.custom_prompt(); default "").
     #   4. The conversation.
     parts: list[str] = []
+    # L0 first, always, so it heads the cache-stable prefix and outranks
+    # everything below it.
+    parts.append(chat_context.platform_kernel())
     if preamble:
         parts.append(preamble)
     # Build providers get the templated runtime briefing right after the platform
@@ -1461,6 +1467,13 @@ def _build_prompt(
     briefing = chat_context.runtime_briefing(provider)
     if briefing:
         parts.append(briefing)
+    # L1 orientation: the tool-centric map, so nothing has to grep to find
+    # uploads/notes/docs/tickets/runs. Only when tools are actually granted,
+    # since it points at tools a tools-off chat would not have.
+    if tools_active:
+        manifest = chat_context.orientation_manifest(provider)
+        if manifest:
+            parts.append(manifest)
     parts.append(provider.persona())
     # Capability-aware fragment (doc 01 §3): consult the permissions framework so
     # an app-bound assistant states its REAL allowed actions instead of promising
@@ -1922,13 +1935,12 @@ def _fmt_for_summary(messages: list[dict]) -> str:
     return "\n\n".join(out)
 
 
-def _summarize_sync(prev_summary: str, to_fold: list[dict]) -> str:
-    """One summarization call. Text in, text out, no tools.
-
-    `tools_disabled` matters: without it this runs in the CLI's default agentic
-    mode, which spins up every MCP server just to write a paragraph and takes
-    minutes, which is what made /compact look hung."""
-    prompt = (
+def _summary_prompt(prev_summary: str, to_fold: list[dict]) -> str:
+    """The exact text `_summarize_sync` sends. Split out so the ledger estimate
+    in `_fold_summary` can measure the SAME prompt `call_cloud` actually saw,
+    without duplicating it out of sync or re-plumbing `_summarize_sync`'s
+    return type (tests monkeypatch that function directly)."""
+    return (
         "You are compacting a chat transcript to reclaim context. Write a running "
         "summary that preserves decisions made, facts established, the operator's "
         "stated preferences, file paths and identifiers, and anything unfinished. "
@@ -1939,6 +1951,15 @@ def _summarize_sync(prev_summary: str, to_fold: list[dict]) -> str:
         + f"=== MESSAGES TO FOLD IN ===\n{_fmt_for_summary(to_fold)}\n\n"
         "=== OUTPUT ===\nThe updated summary only, no preamble."
     )
+
+
+def _summarize_sync(prev_summary: str, to_fold: list[dict]) -> str:
+    """One summarization call. Text in, text out, no tools.
+
+    `tools_disabled` matters: without it this runs in the CLI's default agentic
+    mode, which spins up every MCP server just to write a paragraph and takes
+    minutes, which is what made /compact look hung."""
+    prompt = _summary_prompt(prev_summary, to_fold)
     res = llm_router.call_cloud(prompt, model=llm_router.TIER_HAIKU,
                                tools_disabled=True, timeout_s=180)
     return (res.get("text") or "").strip()
@@ -1985,6 +2006,25 @@ async def _fold_summary(thread_id: str, t: dict) -> tuple[int, str, int, str]:
         keep_n += 1
     fold_n = len(tail) - keep_n
 
+    # Keep the verbatim tail starting at a user turn so a reply is never
+    # stranded from its prompt. The token-budget walk above stops purely on
+    # cost, which can land the cut mid-exchange -- the oldest kept message
+    # is the ASSISTANT half of an exchange whose own user prompt just fell
+    # on the folded side. Fold one fewer message at a time until the oldest
+    # kept message is role == "user", or until there is nothing left above
+    # it to fold instead.
+    if 0 < fold_n < len(tail):
+        aligned_fold_n = fold_n
+        while aligned_fold_n > 0 and tail[aligned_fold_n].get("role") != "user":
+            aligned_fold_n -= 1
+        # Don't let alignment defeat the "meaningful fold" guardrails below: if
+        # pulling the tail back to a user turn would fold too little to be
+        # worth a model call, keep the token-budget result instead.
+        aligned_to_fold = tail[:aligned_fold_n]
+        if (aligned_fold_n >= 2
+                and sum(_est_tokens(m) for m in aligned_to_fold) >= _COMPACT_KEEP_TAIL_TOKENS):
+            fold_n = aligned_fold_n
+
     # "Meaningful" fold: folding a single message, or folding a sliver that is
     # smaller than one keep-budget's worth, buys almost nothing and just costs
     # a model call every time the button is pressed. Requiring the folded
@@ -2009,6 +2049,24 @@ async def _fold_summary(thread_id: str, t: dict) -> tuple[int, str, int, str]:
     summary = (summary or "").strip()
     if not summary:
         return 0, "", 0, "the summarizer returned nothing"
+    # Meter the summarizer's own spend. Reported, never gated (same posture as
+    # the turn/voice metering in build_streaming._commit_turn) -- this is a real
+    # `call_cloud` invocation and was going entirely unrecorded, so a thread that
+    # compacted often looked cheaper than it was. `call_cloud` returns no token
+    # counts, so this is an ESTIMATE from the same chars/4 proxy `_est_tokens`
+    # and `_context_estimate` already use, not a billed figure.
+    try:
+        from services import usage_ledger
+        prompt_len = len(_summary_prompt((t.get("summary") or "").strip(), to_fold))
+        estimated_tokens = round((prompt_len + len(summary)) / 4)
+        usage_ledger.record(
+            build_streaming.usage_scope_for_thread(thread_id),
+            estimated_tokens,
+            role="compaction",
+            chat=thread_id,
+        )
+    except Exception as e:
+        log.debug("chat compaction usage record failed for %s: %s", thread_id, e)
     return fold_n, summary, ct + fold_n, ""
 
 
@@ -2240,7 +2298,7 @@ async def thread_context(thread_id: str):
     # while turns sent the whole thing, which is how a chat could read 12% and
     # still be re-sending every message ever written in it.
     prompt = _build_prompt(provider, history, "", preamble=preamble,
-                           summary=(t.get("summary") or ""))
+                           summary=(t.get("summary") or ""), tools_active=tools_active)
     used = max(1, round(len(prompt) / 4))
     return {
         "used_tokens": used,
@@ -2487,7 +2545,7 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     # The transcript goes as it is. `chat_store` already cut it at the last
     # /clear before handing it over, and nothing else may remove a message.
     prompt = _build_prompt(provider, history, content, preamble=preamble,
-                           summary=summary)
+                           summary=summary, tools_active=tools_active)
     # Stated after the persona so it can override the ticket protocols the
     # persona carries, in the direction that removes capability.
     prompt = prompt + "\n\n" + chat_context.chat_mode_block(t.get("mode"))
