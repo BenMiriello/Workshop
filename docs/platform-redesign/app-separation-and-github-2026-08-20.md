@@ -1,7 +1,7 @@
 # App separation, the app loader, and GitHub integration
 
 - Date: 2026-08-20
-- Status: **research complete, design decided, staged. Stages 0-2 built in this pass.**
+- Status: **research complete, design decided, staged. Stages 0-3 built in this pass.**
 - Builds on [`app-is-the-entity-2026-08-20.md`](app-is-the-entity-2026-08-20.md)
   (the container model) and closes the seam
   [`apps-are-pluggable.md`](../apps-are-pluggable.md) deferred on 2026-07-12.
@@ -518,6 +518,26 @@ He is right about the broker: `gpubrokerd` is an external daemon at
 `127.0.0.1:8447` that Workshop is only a client of, with a hardcoded 22500 MiB
 budget. It cannot exist in a cloud deploy.
 
+**And Events and Services are already dead on his origin, which settles them.**
+Measured 2026-08-20 against the built origin with a real session: `/api/services/`,
+`/api/events/recent` and `/api/events/subscriptions` all return **404**. They
+return 200 on loopback. The cause is deliberate and correct:
+`workshop_public_app.py:56-67` blocks `/services` and `/events` at the public
+edge because they are loopback-trusted with no user auth, and proxying them
+would hand them the edge's loopback trust (the same class of bug as the
+security-audit H1 `/auto-pr` typo, which that comment records).
+
+So those three panels have never worked on the origin the operator actually
+uses. They rendered an error state inside the Settings blob and nobody saw it,
+because the blob was long and they were at the bottom. That is a stronger
+argument for removing them than the product one: they are not a section that
+might not belong in a cloud deploy, they are a section that does not function
+in this one.
+
+Not removed in this pass, because the operator was explicit that the
+section-by-section decisions belong to the settings phase and not to this one.
+They are quarantined under the honestly-named "This host" tab in the meantime.
+
 Full audit already done (§6 below covers the structural half). The
 section-by-section product decisions are a later phase: "we shouldn't dive into
 that when we really do settings."
@@ -586,7 +606,8 @@ settings.
 **8. Per-app page column** including per-app Settings, which is the operator's
 outstanding complaint and depends on stages 3 and 4.
 
-Stages 0-2 are built in this pass. 3 is next.
+Stages 0-3 are built in this pass. Stage 4 (the six AppSpec seams) is next, and
+it is the one that unblocks extraction.
 
 ---
 
