@@ -4,6 +4,21 @@
 - Supersedes: concept-schema-2026-07-16.md (see Integration map, section 9)
 - Depends on: ADR 0001 (task store), ADR 0002 (knowledge store), ADR 0004 (agent identity), ADR 0005 (policy rules), ADR 0006 (learning mechanism)
 
+> **PARTLY SUPERSEDED, 2026-08-20.** The App-vs-Project split this document
+> asserts (§2's scope list, and §9.4's "Project, App, Deployment are preserved
+> as-is") is superseded by
+> [`app-is-the-entity-2026-08-20.md`](app-is-the-entity-2026-08-20.md). **App is
+> the entity; "project" is the build view of an app, not a second object; a
+> Deployment is a running instance; `scope` is internal addressing and never
+> appears in the UI.** Read that doc for the container model before doing
+> anything with apps, projects or scopes.
+>
+> Everything else here still stands and is still the reference: the Chat / Ticket
+> / Run / Agent vocabulary, the state machines, the field lists and the
+> cross-links. Ticket remains the surface noun, now enforced everywhere the
+> operator can see it by
+> [ADR 0028](../decisions/0028-tickets-is-the-name-everywhere-the-operator-can-see.md).
+
 This document is the single authoritative reference for every entity in the Workshop
 platform. All subsequent design tickets, ADRs, and implementation work build from
 the vocabulary and schemas defined here. When this doc and a prior 2026-07-16 report

@@ -4,9 +4,11 @@ import { buildPlaces, type ShellPlace } from "./places";
 import {
   EMPTY_MEMORY,
   columnOpen,
+  grantMotion,
   openPath,
   parseMemory,
   rememberPath,
+  settleMotion,
   tabsKey,
   tabsOpen,
   toggleColumn,
@@ -47,8 +49,8 @@ describe("openPath", () => {
   });
 
   it("restores exactly what you left", () => {
-    const m = rememberPath(EMPTY_MEMORY, home, "/work");
-    expect(openPath(m, home)).toBe("/work");
+    const m = rememberPath(EMPTY_MEMORY, home, "/tickets");
+    expect(openPath(m, home)).toBe("/tickets");
   });
 
   it("restores a sub-route of a page, not just the page", () => {
@@ -64,8 +66,8 @@ describe("openPath", () => {
   });
 
   it("does not rewrite memory when the path has not moved", () => {
-    const m = rememberPath(EMPTY_MEMORY, home, "/work");
-    expect(rememberPath(m, home, "/work")).toBe(m);
+    const m = rememberPath(EMPTY_MEMORY, home, "/tickets");
+    expect(rememberPath(m, home, "/tickets")).toBe(m);
   });
 });
 
@@ -106,5 +108,36 @@ describe("parseMemory", () => {
 
   it("drops a tabs override with no key rather than trusting it", () => {
     expect(parseMemory('{"places":{},"tabs":{"open":false}}').tabs).toBeUndefined();
+  });
+});
+
+describe("column motion", () => {
+  it("animates a toggle, because it happened where you are standing", () => {
+    const m = grantMotion("/agents");
+    expect(settleMotion(m, "/agents")).not.toBeNull();
+  });
+
+  it("hard cuts on any navigation away, in the same read", () => {
+    const m = grantMotion("/agents");
+    expect(settleMotion(m, "/apps/finance")).toBeNull();
+  });
+
+  it("does not animate on the way BACK to where the toggle happened", () => {
+    // The case a bare path comparison gets wrong, and the one that produced the
+    // slide-on-switch: toggle at Home, open an app, return to Home.
+    let m = grantMotion("/agents");
+    m = settleMotion(m, "/apps/finance"); // leaving retires the grant
+    expect(settleMotion(m, "/agents")).toBeNull();
+  });
+
+  it("survives repeated reads while you stay put, so it is safe on every render", () => {
+    let m = grantMotion("/");
+    m = settleMotion(m, "/");
+    m = settleMotion(m, "/");
+    expect(settleMotion(m, "/")).not.toBeNull();
+  });
+
+  it("starts hard-cut: nothing animates until a tile is tapped", () => {
+    expect(settleMotion(null, "/")).toBeNull();
   });
 });

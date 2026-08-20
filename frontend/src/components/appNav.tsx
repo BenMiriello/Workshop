@@ -39,9 +39,9 @@ const NODES: Record<string, RouteNode> = {
   "/": { label: "Home" },
   "/agents": { label: "Agents" },
   "/agents/new": { label: "New agent", parent: "/agents" },
-  // Route stays /work so every existing link and bookmark resolves; the LABEL
-  // is the ticket, which is the ratified noun (entity-model-2026-07-18 §1).
-  "/work": { label: "Tickets" },
+  // Route and label agree since ADR 0023. /work still resolves, as a redirect
+  // that keeps its query, so old links and bookmarks are unaffected.
+  "/tickets": { label: "Tickets" },
   "/memory": { label: "Memory" },
   "/runs": { label: "Runs" },
   "/usage": { label: "Usage" },

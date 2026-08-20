@@ -6,7 +6,7 @@
 // needs React: reading the router, persisting to storage, and the one piece of
 // state that is about MOTION rather than about navigation.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Archive,
@@ -29,13 +29,16 @@ import {
   EMPTY_MEMORY,
   STORAGE_KEY,
   columnOpen as readColumnOpen,
+  grantMotion,
   openPath,
   parseMemory,
   rememberPath,
+  settleMotion,
   tabsKey,
   tabsOpen as readTabsOpen,
   toggleColumn,
   toggleTabs,
+  type Motion,
   type ShellMemory,
 } from "./shellState";
 
@@ -110,16 +113,33 @@ export function useShell(): Shell {
   //
   // "Toggling the same app animates. Switching apps HARD CUTS. This is
   // deliberate: motion means 'the same thing changed', not 'you moved'."
-  // A boolean that only `selectPlace` sets, and that every navigation clears,
-  // is the whole mechanism.
-  const [animating, setAnimating] = useState(false);
-  const lastPlace = useRef(place.id);
-  useEffect(() => {
-    if (lastPlace.current !== place.id) {
-      lastPlace.current = place.id;
-      setAnimating(false);
-    }
-  }, [place.id]);
+  // (Operator, sessions 2 and 4, raised repeatedly: the column may slide when
+  // you open or close it WHERE YOU ARE, and never when a dock tile moves you
+  // somewhere else.)
+  //
+  // THE CLEAR HAS TO HAPPEN DURING RENDER, NOT IN AN EFFECT. This was a
+  // `useState` + `useEffect(..., [place.id])` pair, and an effect runs AFTER
+  // the browser has already painted the frame it was meant to suppress. So
+  // navigating from a place whose column is open (Home) to one whose column is
+  // closed (any app) rendered once with `is-animating` still set and the width
+  // going 240px -> 0, which starts the CSS transition; the effect then cleared
+  // a flag the transition no longer needed. That is the slide-on-switch that
+  // kept getting reported. Comparing against the path the toggle happened at
+  // makes the answer available in the same render as the navigation, so there
+  // is no frame in which the class is wrong.
+  //
+  // A toggle does not navigate, which is what makes the path a valid key for
+  // it: `animAt === pathname` is true for exactly the renders between tapping
+  // your own tile and going anywhere at all.
+  const [motion, setMotion] = useState<Motion>(null);
+  const settled = settleMotion(motion, pathname);
+  if (settled !== motion) {
+    // Adjusting state during render, the documented React pattern for "derive
+    // from a change you just saw". React discards this render and re-runs
+    // before touching the DOM, so the class is never applied to a navigation.
+    setMotion(settled);
+  }
+  const animating = settled !== null;
 
   // Where you were, per place. Records the real path, so a record page below a
   // row is restored too, not just the row.
@@ -136,20 +156,21 @@ export function useShell(): Shell {
     (next: ShellPlace) => {
       if (next.id === place.id && !fullScreen) {
         // Rule 2: the place you are already in. Toggle, and animate it.
-        setAnimating(true);
+        setMotion(grantMotion(pathname));
         setMemory((m) => toggleColumn(m, next));
         return;
       }
-      // Rule 1: a different place never toggles the column, and hard cuts.
-      setAnimating(false);
+      // Rule 1: a different place never toggles the column, and hard cuts. The
+      // navigation below is what clears the flag; nothing has to clear it here.
       navigate(openPath(memory, next));
     },
-    [place.id, fullScreen, memory, navigate],
+    [place.id, fullScreen, memory, navigate, pathname],
   );
 
   const selectPage = useCallback(
     (next: ShellPage) => {
-      setAnimating(false);
+      // A page row is a navigation, so it hard cuts like any other. The path
+      // change clears the flag on its own.
       navigate(next.to);
     },
     [navigate],

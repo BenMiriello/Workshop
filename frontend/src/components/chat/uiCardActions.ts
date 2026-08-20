@@ -336,7 +336,7 @@ async function fileTicket(
 // ticket it cannot name, so it falls back to the old heading plus this one
 // button, and the label says honestly that the destination is a list.
 const filedActions: UiCardAction[] = [
-  { id: "openWork", label: "Open in Work", variant: "primary" },
+  { id: "openWork", label: "Open in Tickets", variant: "primary" },
 ];
 
 // THE CARD'S DURABLE HANDLE ON WHAT IT FILED, and why it is spelled `slug`.
@@ -449,7 +449,7 @@ const addTasksAndRun: UiCardHandler = async (state, ctx) => {
 
 const openWork: UiCardHandler = async (state, ctx) => {
   const scope = (state.values.scope || "").trim();
-  ctx.navigate(scope ? `/work?scope=${encodeURIComponent(scope)}` : "/work");
+  ctx.navigate(scope ? `/tickets?scope=${encodeURIComponent(scope)}` : "/tickets");
   return { status: "noop" };
 };
 
@@ -469,7 +469,7 @@ const openTicket: UiCardHandler = async (state, ctx) => {
 // difference meant anything. It does not.
 const viewRun: UiCardHandler = async (state, ctx) => {
   const jid = (state.values.__job_id || "").trim();
-  ctx.navigate(jid ? runHref(jid) : "/work");
+  ctx.navigate(jid ? runHref(jid) : "/tickets");
   return { status: "noop" };
 };
 

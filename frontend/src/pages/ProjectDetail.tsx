@@ -374,10 +374,10 @@ function TaskRow({
         <Link
           to={`/work?scope=${encodeURIComponent(`project:${slug}`)}`}
           className="ws-bc__link"
-          title="Open this project's tickets in Work"
+          title="Open this project's tickets"
           style={{ fontSize: "var(--fs-sm)", whiteSpace: "nowrap" }}
         >
-          View in Work
+          View in Tickets
         </Link>
         <Button size="sm" variant="danger-ghost" icon aria-label="Delete task" onClick={() => onDelete(task)}>
           <Trash2 aria-hidden />
@@ -420,7 +420,7 @@ export default function ProjectDetail() {
   // /api/projects/{slug}/tasks routes that used to back this section are gone:
   // they wrote the same store while skipping dedup, provenance and the queue
   // runner's wake file, so a ticket filed here behaved differently from the
-  // identical ticket filed on the Work page.
+  // identical ticket filed on the Tickets page.
   const taskScope = `project:${slug}`;
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [tasksErr, setTasksErr] = useState<string | null>(null);

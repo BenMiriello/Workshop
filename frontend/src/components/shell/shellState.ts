@@ -124,3 +124,30 @@ export function parseMemory(raw: string | null): ShellMemory {
     return EMPTY_MEMORY;
   }
 }
+
+/* ---- Rule 1's motion half -------------------------------------------------
+   Whether the page column may animate is a value, not a side effect, so the
+   awkward case is testable without a DOM: toggle the column at A, go to B,
+   come back to A. The column must NOT animate on that return, even though the
+   path matches the one the toggle happened at.
+
+   Modelling it as "the toggle, and where it happened" plus a settle step run on
+   every path read gets that right, because the settle at B already threw the
+   grant away. Comparing a bare path against the current one would not. */
+
+/** A granted animation, and the path it was granted at. Null means hard cut. */
+export type Motion = { at: string } | null;
+
+/** Rule 2 fired: the operator tapped their own tile. Motion is granted here
+ *  and nowhere else. A toggle does not navigate, which is what makes the path
+ *  a usable key for the grant. */
+export function grantMotion(pathname: string): Motion {
+  return { at: pathname };
+}
+
+/** Read the grant against where we now are. Any navigation retires it, which
+ *  is Rule 1: moving is not "the same thing changed". Call this on every read;
+ *  it is idempotent while you stay put. */
+export function settleMotion(motion: Motion, pathname: string): Motion {
+  return motion && motion.at === pathname ? motion : null;
+}

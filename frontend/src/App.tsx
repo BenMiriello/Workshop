@@ -1,12 +1,12 @@
 import { lazyPage } from "./lib/lazyPage";
 import { runHref } from "./lib/jobs";
-import { Navigate, Route, Routes, useParams } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import Agents from "./pages/Agents";
 import Chats, { ChatsArchived } from "./pages/Chats";
 import Projects from "./pages/Projects";
 import Apps from "./pages/Apps";
 import Home from "./pages/Home";
-import Work from "./pages/Work";
+import Tickets from "./pages/Tickets";
 import Deploys from "./pages/Deploys";
 import TicketDetail from "./pages/TicketDetail";
 import FocusedChat from "./pages/FocusedChat";
@@ -56,6 +56,11 @@ function AgentBuildRedirect() {
 // "Job" was the legacy noun for a Run. Old /jobs/:id deep-links live in chat
 // spawn notes, agent cards and ticket histories that are already persisted, so
 // they keep resolving — to the canonical /runs/:id.
+function WorkRedirect() {
+  const { search, hash } = useLocation();
+  return <Navigate to={`/tickets${search}${hash}`} replace />;
+}
+
 function JobIdRedirect() {
   const { id = "" } = useParams();
   // Through `runHref` like every other caller. This was the last hand-spelled
@@ -84,7 +89,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/agents" element={<Agents />} />
-          <Route path="/work" element={<Work />} />
+          <Route path="/tickets" element={<Tickets />} />
           <Route path="/deploys" element={<Deploys />} />
           <Route path="/tickets/:scope/:id" element={<TicketDetail />} />
           <Route path="/deploys/:id" element={<DeployDetail />} />
@@ -140,6 +145,13 @@ export default function App() {
           <Route path="/events" element={<Navigate to="/settings" replace />} />
           <Route path="/jobs" element={<Navigate to="/runs" replace />} />
           <Route path="/jobs/:id" element={<JobIdRedirect />} />
+          {/* /work was the ticket list until 2026-08-20. ADR 0023 finished
+              the rename ADR 0016 stopped halfway through: the page said
+              "Tickets" over an eyebrow that said "Work", and a reader of the
+              UI could not tell which noun was the product's. A plain
+              <Navigate> would drop ?scope= and ?status=, and those filters
+              are what the in-app links carry. */}
+          <Route path="/work" element={<WorkRedirect />} />
           <Route path="/notes" element={<Navigate to="/memory" replace />} />
           {/* Old /location web-geolocation page removed. Owntracks iOS now
               posts to /api/location/owntracks; viewer lives at /apps/location. */}

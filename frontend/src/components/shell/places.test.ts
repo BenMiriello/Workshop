@@ -19,7 +19,7 @@ const birds = places.find((p) => p.id === "app:birds") as ShellPlace;
 describe("placeFor", () => {
   it("puts an unclaimed route on Home rather than nowhere", () => {
     expect(placeFor(places, "/").id).toBe("home");
-    expect(placeFor(places, "/work").id).toBe("home");
+    expect(placeFor(places, "/tickets").id).toBe("home");
     expect(placeFor(places, "/some/route/nobody/claimed").id).toBe("home");
   });
 
@@ -46,7 +46,7 @@ describe("placeFor", () => {
 describe("pageFor", () => {
   it("matches / exactly, or Dashboard would be the active page everywhere", () => {
     expect(pageFor(home, "/")?.id).toBe("dashboard");
-    expect(pageFor(home, "/work")?.id).toBe("tickets");
+    expect(pageFor(home, "/tickets")?.id).toBe("tickets");
     expect(pageFor(home, "/usage")?.id).toBe("usage");
   });
 
@@ -66,13 +66,19 @@ describe("pageFor", () => {
     // nothing exactly when you are deepest.
     expect(pageFor(home, "/agents/reviewer")?.id).toBe("agents");
     expect(pageFor(home, "/projects/workshop")?.id).toBe("projects");
+    // A ticket record now does the same. It did not until ADR 0023: the list
+    // was at /work while a record was at /tickets/:scope/:id, so reading a
+    // ticket darkened the whole column. One noun fixed that as a side effect,
+    // which is the clearest evidence the split spellings were costing
+    // something real rather than only reading badly.
+    expect(pageFor(home, "/tickets/workshop/abc123")?.id).toBe("tickets");
   });
 
   it("returns null where no row owns the path at all", () => {
-    // A ticket record lives at /tickets/:scope/:id while the list is at /work,
-    // so nothing in the column owns it. Null, not a wrong row lit.
-    expect(pageFor(home, "/tickets/workshop/abc123")).toBeNull();
+    // Runs has no row in the column: a run belongs to the ticket that produced
+    // it. Null, not a wrong row lit.
     expect(pageFor(home, "/runs/xyz")).toBeNull();
+    expect(pageFor(home, "/stores")).toBeNull();
   });
 });
 

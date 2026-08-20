@@ -54,9 +54,9 @@ export default function WorkSettings({
       <div className="chat-workpanel__head">
         <button type="button" className="chat-workpanel__back" onClick={onBack}>
           <ChevronLeft size={14} strokeWidth={1.8} aria-hidden />
-          Work
+          Tickets
         </button>
-        <span className="chat-workpanel__heading">Work settings</span>
+        <span className="chat-workpanel__heading">Ticket settings</span>
       </div>
 
       <SectionLabel>When work comes up</SectionLabel>

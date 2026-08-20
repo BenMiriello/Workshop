@@ -1067,11 +1067,11 @@ function ExistingAgent({ agentId }: { agentId: string }) {
           )}
         </section>
 
-        {/* --- Tasks (the agent's work queue, canonical cross-scope store) --- */}
+        {/* --- Tickets (the agent's queue, canonical cross-scope store) --- */}
         <TaskPanel
           scope={`agent:${agent.slug}`}
           variant="section"
-          heading="Tasks"
+          heading="Tickets"
         />
 
         {/* --- Job history --- */}

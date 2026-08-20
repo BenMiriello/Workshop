@@ -43,7 +43,7 @@ import { shortHttpError } from "../lib/httpError";
 
 type TasksResp = { tasks: Task[]; count: number; total: number };
 
-export default function Work() {
+export default function Tickets() {
   const nav = useNavigate();
   const [search, setSearch] = useSearchParams();
   const wide = useIsWide();
@@ -251,7 +251,7 @@ export default function Work() {
         <div className="ws-tickets__headrow">
           <div className="ws-tickets__ident">
             <div className="ws-tickets__eyebrow">
-              Work{urlFilters.scope ? ` · ${scopeLabel(urlFilters.scope)}` : ""}
+              {urlFilters.scope ? scopeLabel(urlFilters.scope) : "Workshop"}
             </div>
             <div className="ws-tickets__titlerow">
               <h1 className="ws-tickets__title">Tickets</h1>

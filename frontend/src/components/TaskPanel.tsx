@@ -617,7 +617,7 @@ export default function TaskPanel({
     body = (
       <StateBlock
         variant="error"
-        title="Couldn't load tasks"
+        title="Couldn't load tickets"
         hint={<><code>{endpoint}</code> ({err})</>}
         action={<Button size="sm" onClick={() => void load()}>Retry</Button>}
       />
@@ -633,7 +633,7 @@ export default function TaskPanel({
   } else if (visibleAll.length === 0) {
     body = (
       <StateBlock
-        title={openCount === 0 && !showDone && scoped.some((t) => !isOpenStatus(t.status)) ? "No open tasks" : "No tasks yet"}
+        title={openCount === 0 && !showDone && scoped.some((t) => !isOpenStatus(t.status)) ? "No open tickets" : "No tickets yet"}
         hint={
           openCount === 0 && !showDone && scoped.some((t) => !isOpenStatus(t.status))
             ? "Every task here is done or cancelled. Turn on Show done to see them."
@@ -663,7 +663,7 @@ export default function TaskPanel({
   const toolbar = (
     <div className="chat-tasks__toolbar" style={{ justifyContent: "space-between" }}>
       <Toggle checked={showDone} onChange={setShowDone} label="Show done" />
-      <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} aria-label="Refresh tasks" title="Refresh">
+      <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} aria-label="Refresh tickets" title="Refresh">
         <RefreshCw aria-hidden /> Refresh
       </Button>
     </div>
@@ -683,7 +683,7 @@ export default function TaskPanel({
         }}
         aria-label="New task"
       />
-      <Button variant="primary" icon onClick={() => void add()} disabled={adding || !newText.trim()} aria-label="Add task" title="Add task">
+      <Button variant="primary" icon onClick={() => void add()} disabled={adding || !newText.trim()} aria-label="Add ticket" title="Add ticket">
         <Plus aria-hidden />
       </Button>
     </div>
@@ -695,7 +695,7 @@ export default function TaskPanel({
       onCancel={() => setConfirmDel(null)}
       onConfirm={() => confirmDel && void del(confirmDel)}
       busy={acting === `delete:${confirmDel?.id}`}
-      title="Delete this task?"
+      title="Delete this ticket?"
       body={<>This removes <strong>{confirmDel ? (taskTitle(confirmDel) || "the task") : "the task"}</strong> from this scope. It can't be undone. Linked run history is kept.</>}
       confirmLabel="Delete task"
     />
@@ -714,7 +714,7 @@ export default function TaskPanel({
     return (
       <section>
         <Row between wrap style={{ alignItems: "baseline" }}>
-          <SectionLabel>{heading ?? "Tasks"}</SectionLabel>
+          <SectionLabel>{heading ?? "Tickets"}</SectionLabel>
         </Row>
         <Card style={{ padding: "var(--space-3)" }}>{inner}</Card>
         {confirmDialog}

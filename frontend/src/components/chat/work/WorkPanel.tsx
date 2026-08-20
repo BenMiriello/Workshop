@@ -127,7 +127,7 @@ export default function WorkPanel(props: WorkPanelProps) {
         trigger={trigger}
         open={open}
         onOpenChange={onOpenChange}
-        label="Work"
+        label="Tickets"
       >
         <div className="chat-workpanel">
           <WorkBody {...props} />
@@ -146,7 +146,7 @@ export default function WorkPanel(props: WorkPanelProps) {
         aria-hidden
         onPointerDown={() => onOpenChange(false)}
       />
-      <div ref={sheetRef} className="chat-workpanel chat-workpanel--sheet" role="dialog" aria-label="Work">
+      <div ref={sheetRef} className="chat-workpanel chat-workpanel--sheet" role="dialog" aria-label="Tickets">
         <WorkBody {...props} />
       </div>
     </>
@@ -257,18 +257,18 @@ function WorkBody({
     // What the inbox tab used to list is blocked work across every scope, which
     // the one ticket list answers with a filter. A link onto a real query beats
     // a fourth surface, and that was the drawer's decision too.
-    ? { to: "/work?status=blocked", label: "Open blocked work" }
+    ? { to: "/tickets?status=blocked", label: "Open blocked tickets" }
     : scope
       ? {
           to: `/work?scope=${encodeURIComponent(scope)}`,
           label: `Open ${scopeName(scope)} board`,
         }
-      : { to: "/work", label: "Open the board" };
+      : { to: "/tickets", label: "Open the board" };
 
   return (
     <>
       <div className="chat-workpanel__head">
-        <span className="chat-workpanel__heading">Work</span>
+        <span className="chat-workpanel__heading">Tickets</span>
         {scope && (
           <Tag hue={catFor(scope)} variant="neutral">{scopeName(scope)}</Tag>
         )}
@@ -294,8 +294,8 @@ function WorkBody({
           type="button"
           className="chat-workpanel__iconbtn"
           onClick={openSettings}
-          title="Work settings"
-          aria-label="Work settings"
+          title="Ticket settings"
+          aria-label="Ticket settings"
         >
           <Settings2 size={14} strokeWidth={1.8} aria-hidden />
         </button>
@@ -304,7 +304,7 @@ function WorkBody({
       {/* All four, always, including the zeroes. They are the chat's summary of
           its own work, and dropping an empty one would slide the other three
           sideways the moment an agent raised something. */}
-      <div className="chat-workpanel__chips" role="group" aria-label="Which work to show">
+      <div className="chat-workpanel__chips" role="group" aria-label="Which tickets to show">
         {WORK_CHIPS.map((c) => (
           <FilterChip
             key={c.id}

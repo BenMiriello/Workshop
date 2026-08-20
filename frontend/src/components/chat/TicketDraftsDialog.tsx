@@ -350,7 +350,7 @@ export default function TicketDraftsDialog({
         {drafts.length > 0 && (
           <span className="tdraft__note">
             {drafts.length} waiting for approval. Nothing runs them until you approve;
-            they are visible in Work either way.
+            they are visible in Tickets either way.
           </span>
         )}
       </Stack>

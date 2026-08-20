@@ -32,7 +32,7 @@ function renderAt(path: string): string {
 
 describe("the shell mounts", () => {
   it("renders the rail, a page column and the content on every top-level route", () => {
-    for (const path of ["/", "/work", "/chats", "/apps/finance", "/agents/reviewer"]) {
+    for (const path of ["/", "/tickets", "/chats", "/apps/finance", "/agents/reviewer"]) {
       const html = renderAt(path);
       expect(html, path).toContain("ws-rail");
       expect(html, path).toContain("ws-pagecol");
@@ -73,7 +73,7 @@ describe("the shell mounts", () => {
 
   it("shows a trail only where the path goes deeper than the page column", () => {
     // A top-level page is already named by the column and the tab bar.
-    expect(renderAt("/work")).not.toContain("ws-trail");
+    expect(renderAt("/tickets")).not.toContain("ws-trail");
     expect(renderAt("/")).not.toContain("ws-trail");
     // A record below one is not named anywhere else.
     expect(renderAt("/agents/reviewer")).toContain("ws-trail");
@@ -82,7 +82,7 @@ describe("the shell mounts", () => {
   it("never animates on first paint", () => {
     // `is-animating` is set only by tapping the tile of the place you are in.
     // If it were ever on at mount, every page load would slide.
-    for (const path of ["/", "/work", "/apps/finance", "/chats"]) {
+    for (const path of ["/", "/tickets", "/apps/finance", "/chats"]) {
       expect(renderAt(path), path).not.toContain("is-animating");
     }
   });

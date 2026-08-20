@@ -6,13 +6,20 @@
 // behaviour (`transcriptBlocks`, `workRows`, `branchable`). Everything the
 // shell decides that is not layout lives here or in `shellState.ts`.
 //
-// A PLACE IS NOT AN APP. The design sessions used one word for both and the
-// two turned out to be different things: a place is anything the dock can
-// point at (Home, All chats, an installed app), while an app is one installed
-// feature module. See docs/platform-redesign/navigation-shell-2026-08-20.md
-// section 7.1 — whether the dock should also list PROJECTS is the open
-// question there, and this file is the one place that changes when it is
-// answered.
+// A PLACE IS NOT AN APP. A place is anything the dock can point at (Home, All
+// chats, an installed app); an app is one installed feature module.
+//
+// THE DOCK'S UNIT IS AN APP, and that question is now settled: "project" is
+// retired as an entity and is the build view of an app, so there is no second
+// list for the dock to hold. See
+// docs/platform-redesign/app-is-the-entity-2026-08-20.md.
+//
+// The MIGRATION behind that decision is not built. Until it is, apps and
+// projects are still two unlinked registries and every collection worth a page
+// (tickets, runs, deploys, agents, repo) hangs off the PROJECT half while the
+// dock lists the APP half. That is the whole reason an app gets one row below
+// and Home gets nine. It is a data-model gap, not a nav decision, and it closes
+// in stage C of that doc's §9 — this file is where it lands.
 //
 // EVERY PAGE HERE RESOLVES TO A ROUTE THAT EXISTS. There is no Files page, no
 // per-app Chats/Memory/Deploys and no Activity entry, because none of those has
@@ -143,7 +150,7 @@ export function buildPlaces(
       { id: "projects", label: "Projects", to: "/projects", Icon: icons.projects },
       { id: "apps", label: "Apps", to: "/apps", Icon: icons.apps },
       { id: "agents", label: "Agents", to: "/agents", Icon: icons.agents },
-      { id: "tickets", label: "Tickets", to: "/work", Icon: icons.tickets },
+      { id: "tickets", label: "Tickets", to: "/tickets", Icon: icons.tickets },
       { id: "deploys", label: "Deploys", to: "/deploys", Icon: icons.deploys },
       { id: "memory", label: "Memory", to: "/memory", Icon: icons.memory },
       { id: "usage", label: "Usage", to: "/usage", Icon: icons.usage },
@@ -175,10 +182,12 @@ export function buildPlaces(
     Icon: app.Icon,
     letter: app.Icon ? undefined : app.name.slice(0, 1).toUpperCase(),
     defaultColumnOpen: false,
-    // ONE ROW, and that is honest. No installed app has chats, memory, deploys
-    // or agents of its own, and Birds (the only app with several screens) ships
-    // its own inner nav, so listing its screens here would put two page
-    // switchers on one screen. See design doc section 8.6.
+    // ONE ROW, and that is honest. Not a nav choice: an app has no ticket queue
+    // (`chat_work._QUEUELESS_PREFIXES = ("app:",)`), no runs and no deploys
+    // (both keyed by `project_slug`), and no scope-filtered chat listing exists
+    // at all. Those rows become real in stage C of
+    // app-is-the-entity-2026-08-20.md §9, once the collections hang off an app.
+    // Adding them before then would be a nav that lies.
     pages: [{ id: "app", label: app.name, to: app.home, Icon: icons.apps }],
   }));
 

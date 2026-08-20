@@ -2158,8 +2158,14 @@ span.ws-filterchip__open { cursor: default; }
 .ws-pagecol:not(.is-open) .ws-pagecol__inner { transform: translateX(-100%); }
 /* ONLY when the same place's tile was tapped. Switching place hard cuts:
    motion means "the same thing changed", not "you moved". `is-animating` is set
-   by useShell and cleared by every navigation, so the transition can never be
-   on the base rule. */
+   by useShell and retired by every navigation, so the transition can never be
+   on the base rule.
+
+   The retiring has to happen DURING RENDER. It was a useEffect once, and an
+   effect runs after the browser has painted the frame it was meant to suppress,
+   so Home (column open) -> an app (column closed) painted one frame with this
+   class still on and the width going 240px -> 0, which is all a transition
+   needs. See shellState's grantMotion/settleMotion. */
 .ws-pagecol.is-animating { transition: width var(--dur-slow) var(--ease-out); }
 .ws-pagecol.is-animating .ws-pagecol__inner { transition: transform var(--dur-slow) var(--ease-out); }
 @media (min-width: 900px) { .ws-pagecol { display: block; } }
