@@ -54,7 +54,7 @@ export type SendOutcome = { ok: true } | { ok: false; error: string };
 
 export function useSendPipeline({
   scope, selectedModel, selectedEffort, selectedPermissionMode,
-  chatModeRef, activeIdRef, adoptThread,
+  chatModeRef, activeIdRef, adoptThread, scheduleAutoNameRefetch,
   stateRef, dispatch, sync, draftKey,
   compacting, compact, clear, setErr, onSend, onNewChat,
 }: {
@@ -65,6 +65,10 @@ export function useSendPipeline({
   chatModeRef: React.MutableRefObject<ChatModeId>;
   activeIdRef: React.MutableRefObject<string | null>;
   adoptThread: (t: ThreadSummary | Thread) => void;
+  /** Start the picker's backed-off look for a landed auto-name. Called at
+   *  SEND time for a brand-new thread's first message, not only at turn end
+   *  (see the call site in sendTurn for why). */
+  scheduleAutoNameRefetch: (wasFirstExchange: boolean) => void;
   stateRef: React.MutableRefObject<ThreadState>;
   dispatch: React.Dispatch<ThreadAction>;
   sync: () => Promise<void>;
@@ -120,6 +124,7 @@ export function useSendPipeline({
     setStartingBoth(true);
     try {
       let id = activeIdRef.current;
+      const isNewThread = !id;
       if (!id) {
         // Carry the mode chosen on the blank chat into the thread it becomes,
         // so the very first turn runs in the mode the toolbar was showing.
@@ -210,6 +215,17 @@ export function useSendPipeline({
       // Show the run as in flight in the same commit that stops "starting".
       // The re-attach effect opens the socket; nothing here needs to know how.
       if (res.turn_id) dispatch({ type: "turnStarted", turnId: res.turn_id });
+      // THE NAMER ALSO RUNS RIGHT NOW, server-side, not only at turn end. It is
+      // scheduled the moment this message lands (chat_naming.schedule, from
+      // chat_store.append_message) so a chat can be named while its first turn
+      // is still running, which for a real conversation here is minutes. The
+      // ONLY other place this refetch fired was onTurnEnd, so a title that
+      // landed early sat unseen in the picker for the turn's entire length —
+      // "New chat" through the whole first reply, on a chat that was already
+      // correctly named seconds in. Firing it here too means the picker looks
+      // again on the same backed-off schedule regardless of how long the reply
+      // takes.
+      if (isNewThread) scheduleAutoNameRefetch(true);
       void sync();
       return { ok: true };
     } catch (e) {
@@ -264,7 +280,7 @@ export function useSendPipeline({
         }
       }
     }
-  }, [scope, selectedModel, selectedEffort, selectedPermissionMode, chatModeRef, activeIdRef, adoptThread, dispatch, sync, setErr, setStartingBoth]);
+  }, [scope, selectedModel, selectedEffort, selectedPermissionMode, chatModeRef, activeIdRef, adoptThread, scheduleAutoNameRefetch, dispatch, sync, setErr, setStartingBoth]);
 
   // Hand a message to the run already in flight. It is PERSISTED BEFORE
   // DELIVERY server-side, so `delivered: true` means the chat has it whether or

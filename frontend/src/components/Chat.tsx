@@ -536,6 +536,7 @@ export default function Chat({
     selectedPermissionMode: scopeState.selectedPermissionMode,
     chatModeRef: thread.chatModeRef, activeIdRef,
     adoptThread: thread.adoptThread,
+    scheduleAutoNameRefetch: thread.scheduleAutoNameRefetch,
     stateRef, dispatch, sync, draftKey,
     compacting,
     // Typed `/compact` and `/clear` ask as well. One rule for the action, not
