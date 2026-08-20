@@ -33,7 +33,10 @@ function initials(name: string | null | undefined, email: string): string {
 }
 
 export function MobileBars({ shell }: { shell: Shell }) {
-  const { place, page, tabsOpen, fullScreen } = shell;
+  const { place, page, tabsOpen, fullScreen, hasPageList } = shell;
+  // No pages to switch between (an app with one screen), or one conversation
+  // taking the whole screen: the title is a label, not a control.
+  const togglable = hasPageList && !fullScreen;
   const { user } = useAuth();
 
   return (
@@ -60,7 +63,7 @@ export function MobileBars({ shell }: { shell: Shell }) {
           ))}
         </Menu>
 
-        {fullScreen ? (
+        {!togglable ? (
           <span className="ws-bar1__title">{place.name}</span>
         ) : (
           <button
@@ -88,6 +91,7 @@ export function MobileBars({ shell }: { shell: Shell }) {
         </Link>
       </div>
 
+      {hasPageList && (
       <div className={"ws-tabbar__slot" + (tabsOpen ? " is-open" : "")}>
         <nav className="ws-tabbar" aria-label={`${place.name} pages`}>
           {place.pages.map((p) => {
@@ -106,6 +110,7 @@ export function MobileBars({ shell }: { shell: Shell }) {
           })}
         </nav>
       </div>
+      )}
     </div>
   );
 }

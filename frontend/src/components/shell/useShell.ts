@@ -63,6 +63,13 @@ export type Shell = {
   animating: boolean;
   /** A route that owns the whole screen: no page column, no mobile tab bar. */
   fullScreen: boolean;
+  /** Whether this place has pages to switch BETWEEN. A place with one page has
+   *  no page list, so the phone draws no tab bar and no caret for it: a bar
+   *  holding a single always-active tab is not a switcher, it is a second copy
+   *  of the title directly under the title, on the smallest screen there is.
+   *  (The desktop column still opens on that place, because it is opt-in and
+   *  it is the mechanism that will hold more rows later.) */
+  hasPageList: boolean;
   tabsOpen: boolean;
   /** Tapping a dock tile or a menu row. Switches place, or toggles the column
    *  when it is the place you are already in. */
@@ -121,8 +128,9 @@ export function useShell(): Shell {
   }, [place, pathname]);
 
   const columnOpen = readColumnOpen(memory, place) && !fullScreen;
+  const hasPageList = place.pages.length > 1;
   const key = tabsKey(place.id, page?.id ?? null);
-  const tabsOpen = readTabsOpen(memory, key) && !fullScreen;
+  const tabsOpen = readTabsOpen(memory, key) && !fullScreen && hasPageList;
 
   const selectPlace = useCallback(
     (next: ShellPlace) => {
@@ -160,6 +168,7 @@ export function useShell(): Shell {
     columnOpen,
     animating,
     fullScreen,
+    hasPageList,
     tabsOpen,
     selectPlace,
     hrefFor,

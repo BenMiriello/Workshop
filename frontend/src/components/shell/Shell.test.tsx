@@ -59,6 +59,18 @@ describe("the shell mounts", () => {
     expect(html).not.toContain("ws-tabbar__slot is-open");
   });
 
+  it("draws no phone tab bar for a place with only one page", () => {
+    // A bar holding one always-active tab is a second copy of the title, one
+    // row under the title, on the smallest screen there is.
+    const app = renderAt("/apps/finance");
+    expect(app).not.toContain("ws-tabbar");
+    expect(app).not.toContain("ws-bar1__caret");
+    // Home has nine pages, so it keeps both.
+    const home = renderAt("/");
+    expect(home).toContain("ws-tabbar");
+    expect(home).toContain("ws-bar1__caret");
+  });
+
   it("shows a trail only where the path goes deeper than the page column", () => {
     // A top-level page is already named by the column and the tab bar.
     expect(renderAt("/work")).not.toContain("ws-trail");
