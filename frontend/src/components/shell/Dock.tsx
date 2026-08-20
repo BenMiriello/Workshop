@@ -32,7 +32,11 @@ function Tile({ shell, place }: { shell: Shell; place: ShellPlace }) {
   return (
     <Link
       to={shell.hrefFor(place)}
-      className={"ws-rail__tile" + (active ? " is-active" : "")}
+      className={
+        "ws-rail__tile" +
+        (place.kind === "app" ? " ws-rail__tile--app" : "") +
+        (active ? " is-active" : "")
+      }
       aria-current={active ? "page" : undefined}
       aria-label={place.name}
       title={place.name}

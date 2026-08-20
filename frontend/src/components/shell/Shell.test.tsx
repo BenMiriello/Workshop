@@ -42,7 +42,7 @@ describe("the shell mounts", () => {
 
   it("lights exactly one rail tile, and it is the one the path belongs to", () => {
     const html = renderAt("/apps/finance");
-    expect(html.match(/ws-rail__tile is-active/g) ?? []).toHaveLength(1);
+    expect(html.match(/ws-rail__tile[^"]* is-active/g) ?? []).toHaveLength(1);
     // aria-current is what a screen reader reads, so it has to agree with the tint.
     expect(html.match(/aria-current="page"/g)?.length ?? 0).toBeGreaterThan(0);
   });

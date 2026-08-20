@@ -291,13 +291,23 @@ export function appIcon(id: string): ComponentType<LucideProps> | undefined {
  *  The landing path is the app's `link`, or its shallowest breadcrumb node.
  *  Nothing new has to be declared per app for the dock to work, which is the
  *  point: the shell must not become a second place that lists apps. */
-export function appPlaces(): { id: string; name: string; home: string }[] {
-  const out: { id: string; name: string; home: string }[] = [];
+export function appPlaces(): {
+  id: string;
+  name: string;
+  home: string;
+  Icon?: ComponentType<LucideProps>;
+}[] {
+  const out: { id: string; name: string; home: string; Icon?: ComponentType<LucideProps> }[] = [];
   for (const a of APPS) {
     const paths = Object.keys(a.crumbs).sort((x, y) => x.length - y.length);
     const home = a.link?.to ?? paths[0];
     if (!home) continue;
-    out.push({ id: a.id, name: a.link?.label ?? a.crumbs[home]?.label ?? a.id, home });
+    out.push({
+      id: a.id,
+      name: a.link?.label ?? a.crumbs[home]?.label ?? a.id,
+      home,
+      Icon: a.Icon,
+    });
   }
   return out;
 }

@@ -54,8 +54,17 @@ export type ShellPlace = {
   defaultColumnOpen: boolean;
 };
 
-/** The minimum an installed app has to tell the shell to earn a dock tile. */
-export type AppDescriptor = { id: string; name: string; home: string };
+/** The minimum an installed app has to tell the shell to earn a dock tile.
+ *  `Icon` is optional and the uppercase first letter is the fallback, which is
+ *  what the design called for. In practice every installed app declares a
+ *  glyph, and it should be used: two apps whose names start with the same
+ *  letter (Budget and Birds) are indistinguishable as letters. */
+export type AppDescriptor = {
+  id: string;
+  name: string;
+  home: string;
+  Icon?: ComponentType<LucideProps>;
+};
 
 function matchesPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(prefix + "/");
@@ -163,7 +172,8 @@ export function buildPlaces(
     kind: "app" as const,
     name: app.name,
     prefixes: [app.home],
-    letter: app.name.slice(0, 1).toUpperCase(),
+    Icon: app.Icon,
+    letter: app.Icon ? undefined : app.name.slice(0, 1).toUpperCase(),
     defaultColumnOpen: false,
     // ONE ROW, and that is honest. No installed app has chats, memory, deploys
     // or agents of its own, and Birds (the only app with several screens) ships
