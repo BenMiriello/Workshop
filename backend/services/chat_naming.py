@@ -129,16 +129,21 @@ def _looks_like_a_title(title: str) -> bool:
     return not title.lower().startswith(_NON_TITLE_STARTS)
 
 
-def compute_title(thread_id: str) -> tuple[str | None, bool]:
+def compute_title(thread_id: str) -> tuple[str | None, bool, bool]:
     """Blocking: ask a cheap model for a name for this thread.
 
-    Returns (title, counted_rejection):
-      - (title, False)  a usable name — apply it.
-      - (None, True)    the model saw no nameable topic yet, or broke
-                        character. This counts against `_MAX_NAME_ATTEMPTS`.
-      - (None, False)   nothing to do, or a TRANSIENT failure (no full exchange
-                        yet, a rate limit, a restart). Does NOT count, so an
-                        unlucky attempt never spends the budget.
+    Returns (title, counted_rejection, advance_index):
+      - (title, False, ...)   a usable name — apply it.
+      - (None, True, adv)     the model saw no nameable topic yet, or broke
+                              character. `adv` says whether this rejection
+                              was against a COMPLETE exchange (counts against
+                              `_MAX_NAME_ATTEMPTS` and moves on to the next
+                              exchange) or a still-PENDING one (does not:
+                              see below).
+      - (None, False, False)  nothing to do, or a TRANSIENT failure (no
+                              exchange to read yet, a rate limit, a restart).
+                              Does NOT count, so an unlucky attempt never
+                              spends the budget.
 
     READ ONLY. Safe in a worker thread: it makes the model call and touches
     nothing. Both the title write (`apply_title`) and the rejection count
@@ -146,26 +151,47 @@ def compute_title(thread_id: str) -> tuple[str | None, bool]:
     ~2s model call between a read and an off-loop write of the thread dropped
     everything the operator sent in that window.
 
-    Reads the chat FROM THE FRONT: attempt N names from exchange N. A thin opener
-    (a greeting, a bare command) yields NONE, which counts, so the next attempt
-    reads the next exchange. The title therefore always describes the beginning
-    of the conversation and can never be taken from a later tangent, which is the
-    "the name changed to something irrelevant mid-chat" bug. The attempt cap stops
-    it asking forever when nothing near the start is ever nameable.
+    Reads the chat FROM THE FRONT: the Nth exchange tried is exchange N. A thin
+    opener (a greeting, a bare command) yields NONE, which moves on to the next
+    exchange. The title therefore always describes the beginning of the
+    conversation and can never be taken from a later tangent, which is the "the
+    name changed to something irrelevant mid-chat" bug.
+
+    A PENDING exchange (user message landed, no reply yet — naming runs on send,
+    not just on commit, so the chat can be named while the first turn is still
+    running) gets ONE untallied look before its reply exists. If that look comes
+    back NONE, we do NOT advance past it and do NOT spend budget: the model was
+    judging an incomplete thought, and the same exchange is asked again, with
+    the reply included, the next time naming runs (the turn's own commit).
+    Only a rejection of a COMPLETE exchange (reply present, or none is coming)
+    advances the pointer and counts against the cap. Skipping this distinction
+    is what left real, nameable single-exchange chats (a clear request, one
+    reply, done) permanently on their raw first-message seed: the send-time
+    look saw the message alone, came back NONE, and the pointer moved past the
+    only exchange the chat would ever have — the reply that would have named it
+    was never re-examined.
     """
     t = chat_store.get_thread(thread_id)
     if t is None or not is_blank_title(t.get("title")):
-        return None, False
-    attempt = int(t.get("_name_attempts", 0) or 0)
-    if attempt >= _MAX_NAME_ATTEMPTS:
-        return None, False
+        return None, False, False
+    attempts = int(t.get("_name_attempts", 0) or 0)
+    if attempts >= _MAX_NAME_ATTEMPTS:
+        return None, False, False
+    # `_name_idx` is the exchange pointer; `_name_attempts` is the spent budget.
+    # They used to be the same counter, which is what conflated "which exchange
+    # to read" with "how many complete-exchange rejections we've paid for" and
+    # caused the bug above. Old records carry only `_name_attempts`; resume
+    # exactly where they left off rather than replaying already-rejected
+    # exchanges.
+    idx = int(t.get("_name_idx", attempts) or 0)
     exchanges = _exchanges(t.get("messages", []))
-    if attempt >= len(exchanges):
+    if idx >= len(exchanges):
         # The exchange this attempt is for has not happened yet. Transient and
         # UNCOUNTED: waiting for the next reply is not a rejection, and counting
         # it here would burn the budget on a chat that is simply still young.
-        return None, False
-    last_user, last_assistant = exchanges[attempt]
+        return None, False, False
+    last_user, last_assistant = exchanges[idx]
+    complete = bool(last_assistant)
 
     # The reply is included only when there IS one. An empty "Assistant:" line
     # invites the model to describe the absence ("Awaiting Response") rather than
@@ -193,20 +219,20 @@ def compute_title(thread_id: str) -> tuple[str | None, bool]:
         )
     except Exception as e:
         log.info("auto-name skipped (model call failed) for %s: %s", thread_id, e)
-        return None, False   # transient — do not count it
+        return None, False, False   # transient — do not count it
 
     title = (result.get("text") or "").strip().strip('"').strip()
     title = title.splitlines()[0].strip() if title else ""  # first line only
     if not title or title.rstrip(".").strip().upper() == _NO_TOPIC:
-        log.info("auto-name: no nameable topic yet for %s", thread_id)
-        return None, True
+        log.info("auto-name: no nameable topic yet for %s (pending=%s)", thread_id, not complete)
+        return None, True, complete
     if not _looks_like_a_title(title):
         log.info("auto-name skipped (model broke character) for %s: %r", thread_id, title)
-        return None, True
+        return None, True, complete
     words = title.split()
     if len(words) > 6:
         title = " ".join(words[:6])
-    return title, False
+    return title, False, False
 
 
 def apply_title(thread_id: str, title: str) -> None:
@@ -221,36 +247,47 @@ def apply_title(thread_id: str, title: str) -> None:
         log.info("auto-named thread %s -> %r", thread_id, title)
 
 
-def _count_rejection(thread_id: str) -> None:
-    """Record that this turn's naming attempt found no nameable topic. After
-    `_MAX_NAME_ATTEMPTS` of these the chat stops asking and keeps its seed /
-    "New chat" fallback. Writes, so it runs on the loop; re-reads so a name the
-    operator typed meanwhile still wins (an already-named chat is left alone)."""
+def _count_rejection(thread_id: str, advance: bool) -> None:
+    """Record that a naming attempt found no nameable topic.
+
+    `advance=True` (a COMPLETE exchange was rejected): move the exchange
+    pointer forward and spend one unit of `_MAX_NAME_ATTEMPTS` — the next
+    attempt reads the next exchange and the cap moves closer.
+
+    `advance=False` (a still-PENDING exchange was rejected): touch nothing.
+    The same exchange is asked again, with its reply included, once one
+    exists — see `compute_title`'s docstring for why this half doesn't count.
+
+    Writes, so it runs on the loop; re-reads so a name the operator typed
+    meanwhile still wins (an already-named chat is left alone)."""
+    if not advance:
+        return
     cur = chat_store.get_thread(thread_id)
     if cur is None or not is_blank_title(cur.get("title")):
         return
+    idx = int(cur.get("_name_idx", cur.get("_name_attempts", 0)) or 0) + 1
     n = int(cur.get("_name_attempts", 0) or 0) + 1
-    chat_store.update_thread(thread_id, _name_attempts=n)
+    chat_store.update_thread(thread_id, _name_idx=idx, _name_attempts=n)
 
 
 def generate_title(thread_id: str) -> None:
     """Name the thread, start to finish, on the calling thread. For callers that
     are already on the loop and can afford to block (scripts, tests)."""
-    title, rejected = compute_title(thread_id)
+    title, rejected, advance = compute_title(thread_id)
     if title:
         apply_title(thread_id, title)
     elif rejected:
-        _count_rejection(thread_id)
+        _count_rejection(thread_id, advance)
 
 
 async def name_thread(thread_id: str) -> None:
     """Name the thread without blocking the loop: the model call goes to a
     worker thread, the write stays here."""
-    title, rejected = await asyncio.to_thread(compute_title, thread_id)
+    title, rejected, advance = await asyncio.to_thread(compute_title, thread_id)
     if title:
         apply_title(thread_id, title)
     elif rejected:
-        _count_rejection(thread_id)
+        _count_rejection(thread_id, advance)
 
 
 # In-flight auto-naming tasks BY THREAD, held so nothing is collected

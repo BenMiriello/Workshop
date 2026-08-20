@@ -223,7 +223,7 @@ def _now_iso() -> str:
 # latent race window R7 in docs/platform-redesign/chat-concurrency-model).
 _PRESERVED_ON_SAVE = ("claude_session", "agent_sessions", "summary",
                       "context_tokens", "turn_marks", "card_states",
-                      "_seed_title", "_name_attempts", "cut_through",
+                      "_seed_title", "_name_attempts", "_name_idx", "cut_through",
                       "cut_mode", "voice_session", "live_message")
 
 _INTERNAL_META = ("last_seq", "boundary_seq", "active_turn_id", "active_turn_seq",

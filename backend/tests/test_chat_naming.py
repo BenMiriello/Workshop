@@ -267,6 +267,44 @@ class TestNoTopicAndTheAttemptCap:
         chat_naming.generate_title(tid)
         assert chat_store.get_thread(tid)["title"] == "Latitude Model Design"
 
+    def test_a_pending_exchanges_none_is_retried_once_the_reply_lands(self, store, monkeypatch):
+        """The real bug this file was extended for: naming runs at send time, so
+        a single-exchange chat can get judged on the user's message ALONE before
+        any reply exists. If that pending look comes back NONE, the exchange
+        pointer must not move past it — the same exchange is asked again once
+        the reply lands, not skipped in favor of an exchange 1 that will never
+        exist for a one-and-done chat.
+
+        Before this fix: the send-time NONE consumed exchange 0's only shot,
+        the pointer moved to index 1, and a real, clear request stayed on its
+        raw first-message seed forever even though its reply was informative."""
+        tid = chat_store.create_thread("general")["id"]
+        chat_store.append_message(tid, "user", "Add a keyboard shortcut to jump to search")
+        calls = {"n": 0}
+
+        def none_call(*a, **k):
+            calls["n"] += 1
+            return {"text": "NONE"}
+
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud", none_call)
+        chat_naming.generate_title(tid)   # the send-time look: user message only
+        assert calls["n"] == 1
+        assert chat_store.get_thread(tid)["title"] == "New chat"
+        # The pending rejection must not have spent the budget or moved the
+        # pointer forward.
+        assert chat_store.get_thread(tid).get("_name_attempts", 0) == 0
+
+        chat_store.append_message(tid, "assistant", "Bound Ctrl+K to focus the search field.")
+
+        def title_call(*a, **k):
+            calls["n"] += 1
+            return {"text": "Search Shortcut Binding"}
+
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud", title_call)
+        chat_naming.generate_title(tid)   # the commit-time look: same exchange, now complete
+        assert calls["n"] == 2
+        assert chat_store.get_thread(tid)["title"] == "Search Shortcut Binding"
+
     def test_transient_failures_do_not_count_toward_the_cap(self, store, monkeypatch):
         """A rate limit is not a verdict that a chat is unnameable. Five failed
         calls, then a good one, still names it — the original retry property."""
