@@ -1,26 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { usePoll } from "../lib/usePoll";
-import { Power, Cpu, Play, Square } from "lucide-react";
+import { Power, Play, Square } from "lucide-react";
 import { Button, ConfirmDialog, Notice, Select, StatusDot, Toggle } from "@workshop/ui";
 import { describeAutonomy } from "../lib/autonomy";
-import { formatMiB, formatVramBytes } from "../lib/bytes";
 import { SettingsSection, SettingsRow as Row } from "./AppSettings";
 
-// Autonomy & GPU controls. The global cron-autonomy pause (AUTONOMY_DISABLED)
-// and Ollama/GPU broker controls. Moved out of the platform Settings page
-// (Phase 5) onto the Agents surface, where the fleet it governs lives. The
-// AUTONOMY_DISABLED switch is operationally load-bearing and must stay
-// reachable — this component is that home.
+// Autonomy controls. The global cron-autonomy pause (AUTONOMY_DISABLED) and the
+// queue runner. The AUTONOMY_DISABLED switch is operationally load-bearing and
+// must stay reachable — this component is that home.
 //
-// Three independent controls, and keeping them independent is the point:
+// Two independent controls, and keeping them independent is the point:
 //   - The BRAKE: whether unattended work is permitted at all. A policy, so a
 //     Toggle. Instant and reversible, so no dialog.
 //   - The RUNNER: a resident worker process in one named tree. A process, so a
 //     Button plus the tree to run it in. Stopping it gets a dialog.
-//   - Ollama GPU residency (unload resident models to free VRAM; Ollama keeps
-//     running, this only evicts the resident model).
-// Plus a single "Stop all" that does all three at once, which is the one place
-// they are allowed to move together because the dialog says so.
+// Plus a single "Stop all" that does both at once, which is the one place they
+// are allowed to move together because the dialog says so.
 
 type AutonomyStatus = {
   cron_autonomy: {
@@ -55,56 +50,11 @@ type AutonomyStatus = {
 // it otherwise and an option that always fails is not an option.
 type RunTarget = { key: string; label: string; dir: string };
 
-type LoadedModel = {
-  name: string;
-  size_vram_bytes: number | null;
-  expires_at: string | null;
-};
-
-type OllamaStatus = {
-  ollama_up: boolean;
-  loaded_models: LoadedModel[];
-  gpu: {
-    available: boolean;
-    memory_used_mib?: number;
-    memory_free_mib?: number;
-    memory_total_mib?: number;
-    utilization_pct?: number;
-    error?: string;
-  };
-};
-
-type BrokerLease = {
-  id: string;
-  app: string;
-  vram_budget_mib: number;
-  vram_actual_mib: number;
-  priority: number;
-  state: string;
-  reason: string;
-  implicit: boolean;
-};
-
-type BrokerStatus = {
-  available: boolean;
-  mode?: string;
-  total_vram_mib?: number;
-  committed_mib?: number;
-  free_budget_mib?: number;
-  active_lease_count?: number;
-  queue_depth?: number;
-  my_leases?: BrokerLease[];
-};
-
 export default function AutonomyControls() {
   const [auto, setAuto] = useState<AutonomyStatus | null>(null);
-  const [oll, setOll] = useState<OllamaStatus | null>(null);
-  const [bro, setBro] = useState<BrokerStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmStopAll, setConfirmStopAll] = useState(false);
   const [confirmStopRunner, setConfirmStopRunner] = useState(false);
-  const [confirmUnload, setConfirmUnload] = useState(false);
-  const [confirmReserve, setConfirmReserve] = useState(false);
   const [targets, setTargets] = useState<RunTarget[] | null>(null);
   const [targetsFailed, setTargetsFailed] = useState(false);
   const [scope, setScope] = useState("");
@@ -122,14 +72,8 @@ export default function AutonomyControls() {
 
   const load = useCallback(async () => {
     try {
-      const [a, o, b] = await Promise.all([
-        fetch("/api/agents/autonomy/status").then((r) => r.ok ? r.json() : null),
-        fetch("/api/ollama/status").then((r) => r.ok ? r.json() : null),
-        fetch("/api/gpu/broker/status").then((r) => r.ok ? r.json() : { available: false }),
-      ]);
+      const a = await fetch("/api/agents/autonomy/status").then((r) => r.ok ? r.json() : null);
       setAuto(a);
-      setOll(o);
-      setBro(b);
     } catch {
       // keep prior state
     }
@@ -194,7 +138,6 @@ export default function AutonomyControls() {
   const onStopAll = async () => {
     setBusy("stop-all");
     try {
-      // Stop the loop FIRST so nothing reloads a model right after we unload it.
       await fetch("/api/agents/autonomy/override", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -203,9 +146,8 @@ export default function AutonomyControls() {
       // ONLY A NAMED TREE. Runners are per tree, and an unnamed stop used to
       // resolve server-side to the platform repo: start a runner on
       // `projects/birds`, reload the page (which clears the picker), hit Stop
-      // all, and the brake engaged, the GPU unloaded, the birds runner kept
-      // working, and the panel reported it stopped. A control that lies,
-      // shipped by the change whose whole purpose is deleting controls that lie.
+      // all, and the brake engaged while the birds runner kept working and the
+      // panel reported it stopped. A control that lies.
       //
       // The brake still goes on, which is what actually stops the NEXT sweep
       // anywhere. The dialog says which half happened.
@@ -213,7 +155,6 @@ export default function AutonomyControls() {
         await fetch(`/api/queue/runner/stop?dir=${encodeURIComponent(scope)}`,
           { method: "POST" });
       }
-      await fetch("/api/ollama/unload", { method: "POST" });
       await load();
       await loadScope();
     } finally {
@@ -261,34 +202,8 @@ export default function AutonomyControls() {
     }
   };
 
-  const onUnload = async () => {
-    setBusy("unload");
-    try {
-      await fetch("/api/ollama/unload", { method: "POST" });
-      await load();
-    } finally {
-      setBusy(null);
-      setConfirmUnload(false);
-    }
-  };
-
-  const onReserve = async () => {
-    setBusy("reserve");
-    try {
-      await fetch("/api/gpu/broker/reserve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ duration_s: 1800, reason: "operator hold via UI" }),
-      });
-      await load();
-    } finally {
-      setBusy(null);
-      setConfirmReserve(false);
-    }
-  };
-
   return (
-    <SettingsSection icon={Power} title="Autonomy & GPU">
+    <SettingsSection icon={Power} title="Autonomy">
       <Row label="all autonomy">
         {auto == null ? "loading…" : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
@@ -429,49 +344,14 @@ export default function AutonomyControls() {
       )}
       {runnerError && <Notice tone="error">{runnerError}</Notice>}
 
-      <Row label="gpu memory">
-        {oll == null || !oll.gpu.available ? (
-          oll?.gpu.error ? <span className="ws-muted">no GPU detected</span> : "loading…"
-        ) : (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
-              {formatMiB(oll.gpu.memory_used_mib)} / {formatMiB(oll.gpu.memory_total_mib)}
-              {" · "}{oll.gpu.utilization_pct}% util
-            </span>
-            <Button
-              size="sm"
-              variant="danger-ghost"
-              disabled={busy != null || !oll.ollama_up || oll.loaded_models.length === 0}
-              onClick={() => setConfirmUnload(true)}
-            >
-              {busy === "unload" ? "unloading…" : "Free GPU"}
-            </Button>
-          </span>
-        )}
-      </Row>
-
-      <Row label="broker">
-        {bro == null ? "–" : !bro.available ? (
-          <span className="ws-muted">offline · Workshop has the GPU to itself</span>
-        ) : (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <StatusDot status="ok">up</StatusDot>
-            <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
-              mode={bro.mode} · committed {formatMiB(bro.committed_mib)}/{formatMiB(bro.total_vram_mib)}
-              {" · "}q={bro.queue_depth} · {bro.active_lease_count} lease{bro.active_lease_count === 1 ? "" : "s"}
-            </span>
-          </span>
-        )}
-      </Row>
-
       <ConfirmDialog
         open={confirmStopAll}
         onCancel={() => setConfirmStopAll(false)}
         onConfirm={onStopAll}
-        title="Stop all autonomy and free GPU?"
+        title="Stop all autonomy?"
         body={scope
-          ? "Stops the runner in the selected tree, switches unattended work off, and frees the GPU. A ticket half-worked when the runner stops goes back on the queue. Starting it again reloads the models, which takes about 20 seconds."
-          : "Switches unattended work off and frees the GPU. No tree is selected, so no resident runner is stopped: pick one first if a worker is running. Starting the models again takes about 20 seconds."}
+          ? "Stops the runner in the selected tree and switches unattended work off. A ticket half-worked when the runner stops goes back on the queue."
+          : "Switches unattended work off. No tree is selected, so no resident runner is stopped: pick one first if a worker is running."}
         confirmLabel="Stop all"
         busy={busy === "stop-all"}
       />
@@ -484,99 +364,6 @@ export default function AutonomyControls() {
         confirmLabel="Stop runner"
         busy={busy === "stop-runner"}
       />
-      <ConfirmDialog
-        open={confirmUnload}
-        onCancel={() => setConfirmUnload(false)}
-        onConfirm={onUnload}
-        title="Free GPU memory?"
-        body="Frees the GPU by unloading the local models. The next run reloads them, which takes about 20 seconds."
-        confirmLabel="Free GPU"
-        busy={busy === "unload"}
-      />
-      <ConfirmDialog
-        open={confirmReserve}
-        onCancel={() => setConfirmReserve(false)}
-        onConfirm={onReserve}
-        danger={false}
-        title="Reserve the GPU for yourself?"
-        body="Holds the GPU for you for 30 minutes. Workshop and other apps lose it until the hold expires."
-        confirmLabel="Reserve for 30m"
-        busy={busy === "reserve"}
-      />
-
-      {bro?.available && (
-        <Row label="my leases">
-          {bro.my_leases && bro.my_leases.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
-              {bro.my_leases.map((l) => (
-                <span key={l.id} style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.78rem" }}>
-                  {l.app} · {formatMiB(l.vram_budget_mib)} budget · {formatMiB(l.vram_actual_mib)} actual · pri {l.priority}
-                  {l.implicit ? " · implicit" : ""}
-                </span>
-              ))}
-              <span>
-                <button
-                  onClick={async () => {
-                    setBusy("release-mine");
-                    try {
-                      await fetch("/api/gpu/broker/release-mine", { method: "POST" });
-                      await load();
-                    } finally { setBusy(null); }
-                  }}
-                  disabled={busy != null}
-                  style={{ padding: "0.2rem 0.6rem", fontSize: "0.78rem", color: "var(--err)" }}
-                >
-                  {busy === "release-mine" ? "releasing…" : "release all mine"}
-                </button>
-              </span>
-            </div>
-          ) : (
-            <span className="muted">none</span>
-          )}
-        </Row>
-      )}
-
-      {bro?.available && (
-        <Row label="operator hold">
-          <button
-            onClick={() => setConfirmReserve(true)}
-            disabled={busy != null}
-            style={{ padding: "0.2rem 0.6rem", fontSize: "0.78rem" }}
-          >
-            {busy === "reserve" ? "reserving…" : "reserve for me (30m)"}
-          </button>
-          <button
-            onClick={async () => {
-              setBusy("boost");
-              try {
-                await fetch("/api/gpu/broker/boost", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ priority: 80, ttl_s: 1800 }),
-                });
-                await load();
-              } finally { setBusy(null); }
-            }}
-            disabled={busy != null}
-            style={{ marginLeft: "0.5rem", padding: "0.2rem 0.6rem", fontSize: "0.78rem" }}
-          >
-            {busy === "boost" ? "boosting…" : "boost workshop priority (30m)"}
-          </button>
-        </Row>
-      )}
-
-      {oll && oll.loaded_models.length > 0 && (
-        <Row label="loaded">
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
-            {oll.loaded_models.map((m) => (
-              <span key={m.name} style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>
-                <Cpu size={11} strokeWidth={1.8} style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
-                {m.name} · {formatVramBytes(m.size_vram_bytes)}
-              </span>
-            ))}
-          </div>
-        </Row>
-      )}
     </SettingsSection>
   );
 }

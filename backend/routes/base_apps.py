@@ -1,13 +1,10 @@
-"""Base Apps — tenant-level git-repo listing.
+"""The app platform surface, mounted at /base-apps/.
 
-Returns one record per top-level directory containing a `.git/`, with
-branch and last-commit metadata. Previously mounted at /projects/ (named
-to match the original top-nav tab); moved to /base-apps/ per ADR-008 so
-"/projects/" can host the operator's Projects hub.
+Hosts the app launcher, per-app manifests and permissions, the registry
+(publish/install/update), garbage collection, the app runner (start/stop/status/
+logs/env) and the port registry. It is keyed by app spec, not by scanning any
+machine's filesystem.
 """
-import os
-import subprocess
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -20,9 +17,6 @@ from services import app_overlay, app_registry, app_runner, gc, manifests, permi
 from routes.gc_models import GcReport
 
 router = APIRouter()
-
-# Defaults to the tenant home. Configurable to scan a different root if needed.
-BASE_APPS_ROOT = Path(os.environ.get("WORKSHOP_BASE_APPS_ROOT", str(Path.home())))
 
 
 # ---- Response models (ADR 0023 clause 6) ------------------------------------
@@ -37,19 +31,6 @@ BASE_APPS_ROOT = Path(os.environ.get("WORKSHOP_BASE_APPS_ROOT", str(Path.home())
 # and `started_at` (a float of epoch seconds) are the names and encodings the
 # stores and the frontend already use, and renaming them is a wire-shape change
 # that the ADR's migration posture says must land with its frontend edit.
-
-
-class BaseApp(BaseModel):
-    """One top-level directory containing a `.git/`. The git fields are absent
-    when `git log` failed (a repo with no commits, or a timeout), which is why
-    every one of them is optional."""
-
-    name: str
-    path: str
-    commit: str | None = None
-    subject: str | None = None
-    ts: str | None = None
-    branch: str | None = None
 
 
 class LauncherCard(BaseModel):
@@ -324,37 +305,6 @@ class PortRegistry(BaseModel):
 
     windows: dict[str, list[int]]
     allocations: list[PortAllocation]
-
-
-def _git_meta(repo: Path):
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(repo), "log", "-1", "--format=%H%n%s%n%ci"],
-            capture_output=True, text=True, timeout=5, check=True,
-        ).stdout.strip().splitlines()
-        commit, subject, ts = out[0], out[1], out[2]
-        branch = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True, text=True, timeout=5, check=True,
-        ).stdout.strip()
-        return {"commit": commit, "subject": subject, "ts": ts, "branch": branch}
-    except Exception:
-        return None
-
-
-@router.get("/", response_model=list[BaseApp], response_model_exclude_unset=True)
-async def list_base_apps():
-    if not BASE_APPS_ROOT.exists():
-        raise HTTPException(404, "base apps root missing")
-    out = []
-    for entry in sorted(BASE_APPS_ROOT.iterdir()):
-        if not entry.is_dir() or entry.name.startswith("."):
-            continue
-        if not (entry / ".git").exists():
-            continue
-        meta = _git_meta(entry)
-        out.append({"name": entry.name, "path": str(entry), **(meta or {})})
-    return out
 
 
 # ---- App manifests (data layer only — no enforcement) -----------------------

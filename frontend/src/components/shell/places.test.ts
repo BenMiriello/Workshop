@@ -135,8 +135,8 @@ describe("the Settings place", () => {
 
   it("owns every /settings path, including the ones that were already routed", () => {
     expect(placeFor(places, "/settings").id).toBe("settings");
-    expect(placeFor(places, "/settings/host").id).toBe("settings");
-    // Grants, Trackers, MCP and Base apps were separate pages reached through a
+    expect(placeFor(places, "/settings/agents").id).toBe("settings");
+    // Grants, Trackers and MCP were separate pages reached through a
     // link-in-a-Card on the Settings blob. They are tabs now, so they must
     // resolve to this place rather than falling back to Home.
     expect(placeFor(places, "/settings/grants").id).toBe("settings");
@@ -146,7 +146,7 @@ describe("the Settings place", () => {
   it("lights the right tab, and Account only on exactly /settings", () => {
     expect(pageFor(settings, "/settings")?.id).toBe("account");
     expect(pageFor(settings, "/settings/appearance")?.id).toBe("appearance");
-    expect(pageFor(settings, "/settings/host")?.id).toBe("host");
+    expect(pageFor(settings, "/settings/agents")?.id).toBe("agents");
     // `end` on Account: as a prefix, "/settings" matches every tab below it and
     // two rows light at once.
     expect(pageFor(settings, "/settings/memory")?.id).toBe("memory");

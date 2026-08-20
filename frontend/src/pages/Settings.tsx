@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Bot,
-  Server,
   Palette,
   Sun,
   Moon,
@@ -43,7 +42,6 @@ import { CHAT_MODES, chatModeDef, type ChatModeId } from "../components/chat/cha
 import { effortLabel } from "../components/chat/effort";
 import { permissionModeDef } from "../components/chat/permissionModes";
 import { useAuth } from "../auth/AuthProvider";
-import Services from "./Services";
 import { SettingsSection as Section, SettingsRow as Row } from "../components/AppSettings";
 import {
   getPolicy,
@@ -68,15 +66,6 @@ import { timeAgo } from "../lib/time";
 // to a page that already existed. In a tabbed Settings that link IS the tab, so
 // the wrapper had nothing left to do.
 
-type ServiceProbe = {
-  name: string;
-  category?: string;
-  status: string;
-  http_status?: number | null;
-  latency_ms?: number | null;
-  notes?: string | null;
-};
-
 /** Which tab of Settings is on screen. One per route; see App.tsx. */
 export type SettingsTab =
   | "account"
@@ -84,7 +73,7 @@ export type SettingsTab =
   | "chat"
   | "memory"
   | "apps"
-  | "host";
+  | "agents";
 
 const TAB_TITLE: Record<SettingsTab, string> = {
   account: "Account",
@@ -92,7 +81,7 @@ const TAB_TITLE: Record<SettingsTab, string> = {
   chat: "Chat",
   memory: "Memory",
   apps: "Apps",
-  host: "This host",
+  agents: "Agents",
 };
 
 /**
@@ -131,25 +120,18 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
       {/* Panels contributed by installed apps. Settings does not know which
           apps exist or what they need configured. */}
       {tab === "apps" && <AppSuspense>{appSettingsPanels()}</AppSuspense>}
-      {tab === "host" && (
+      {tab === "agents" && (
         <>
-          {/* EVERYTHING HERE IS ABOUT THIS MACHINE, and that is why it is one
-              tab with that name rather than scattered through Settings.
-              Operator, 2026-08-20, on the GPU and broker rows: "the broker is a
-              specific thing to my particular distribution and should not be
-              included in this at all", and on the system section: "that might
-              not be correct at all or relevant to a production system, like a
-              cloud hosted version of this".
-              He is right: gpubrokerd is an external daemon at 127.0.0.1:8447
-              that Workshop is only a client of, and it cannot exist in a cloud
-              deploy. Quarantining it under an honest name is the step that can
-              be taken without breaking controls he uses today; deciding what is
-              deleted versus gated is the settings-redesign phase, recorded in
-              docs/platform-redesign/app-separation-and-github-2026-08-20.md
-              section 5.1. */}
+          {/* How the agent fleet runs: concurrency limits, the autonomy brake,
+              and the queue runner. The GPU/broker/Ollama residency rows and the
+              loopback service-probe grid that used to sit here were removed on
+              2026-08-20: they were a client of one local machine's daemons
+              (gpubrokerd at 127.0.0.1:8447, a single consumer GPU) and cannot
+              exist in a production deploy. Ollama stays only as the embeddings
+              backend behind the WORKSHOP_TEXT_EMBED_URL config seam, which is
+              not a Settings control. */}
           <AgentsSection />
           <AutonomyControls />
-          <SystemSection />
         </>
       )}
     </div>
@@ -933,43 +915,3 @@ function AgentsSection() {
   );
 }
 
-// ----------------------------------------------------------------------------
-// System section
-// ----------------------------------------------------------------------------
-function SystemSection() {
-  const [health, setHealth] = useState<{ ok: boolean } | null>(null);
-  const [services, setServices] = useState<ServiceProbe[] | null>(null);
-
-  useEffect(() => {
-    fetch("/api/healthz").then((r) => r.ok ? r.json() : null).then(setHealth).catch(() => setHealth(null));
-    fetch("/api/services/").then((r) => r.ok ? r.json() : { services: [] }).then((j) => setServices(j.services || []));
-  }, []);
-
-  const up = services?.filter((s) => s.status === "up").length ?? 0;
-  const down = services?.filter((s) => s.status === "down").length ?? 0;
-
-  return (
-    <>
-      <Section icon={Server} title="System">
-        <Row label="backend">{health?.ok ? <StatusDot status="ok">healthy</StatusDot> : <StatusDot status="danger">down</StatusDot>}</Row>
-        <Row label="services">
-          {services == null ? "probing…" : (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-              <StatusDot status="ok">{up} up</StatusDot>
-              {down > 0 && <StatusDot status="danger">{down} down</StatusDot>}
-            </span>
-          )}
-        </Row>
-      </Section>
-
-      {/* The Services probe grid. The Event feed that used to sit beside it is
-          gone (2026-08-20): it read GET /events/recent and /events/subscriptions,
-          both of which were blocked at the public edge and had therefore never
-          rendered anything but an error on this origin. Its routes were deleted
-          with it. The event LOG is untouched and still drives agent dispatch. */}
-      <section style={{ marginBottom: "var(--space-6)" }}>
-        <Services />
-      </section>
-    </>
-  );
-}

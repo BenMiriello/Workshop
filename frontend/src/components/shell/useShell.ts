@@ -23,7 +23,6 @@ import {
   LayoutGrid,
   ListChecks,
   MessagesSquare,
-  Monitor,
   Palette,
   Rocket,
   Settings as SettingsIcon,
@@ -69,8 +68,6 @@ const ICONS = {
   trackers: Tags,
   mcp: Blocks,
   access: KeyRound,
-  baseApps: FolderGit2,
-  host: Monitor,
 };
 
 export type Shell = {

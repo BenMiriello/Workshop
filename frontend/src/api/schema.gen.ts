@@ -851,23 +851,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/base-apps/": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Base Apps */
-        get: operations["list_base_apps_base_apps__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/base-apps/gc/preview": {
         parameters: {
             query?: never;
@@ -2736,6 +2719,53 @@ export interface paths {
          *     text is lossy, so the real docx/xlsx/archive stays reachable.
          */
         get: operations["get_attachment_original_chat_attachments__att_id__original_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/custom-instructions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Custom Instructions
+         * @description The operator's L3 custom instructions for one scope (empty if none).
+         */
+        get: operations["get_custom_instructions_chat_custom_instructions_get"];
+        put?: never;
+        /**
+         * Set Custom Instructions
+         * @description Set (or clear, when text is blank) the L3 custom instructions for a scope.
+         *     Applies to that scope's chats from their next turn; the platform layers above
+         *     it are unaffected and cannot be edited here.
+         */
+        post: operations["set_custom_instructions_chat_custom_instructions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat/custom-instructions/all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * All Custom Instructions
+         * @description Every scope that has custom instructions set, for the settings UI. Keys
+         *     are knowledge scopes (workshop, development, project:*, app:*, agent:*).
+         */
+        get: operations["all_custom_instructions_chat_custom_instructions_all_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4693,99 +4723,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/gpu/broker/boost": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Broker Boost */
-        post: operations["broker_boost_gpu_broker_boost_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/gpu/broker/register": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Broker Register
-         * @description Idempotent app registration. Called on backend startup; exposed here
-         *     so the operator can re-register from the UI if the broker was restarted.
-         */
-        post: operations["broker_register_gpu_broker_register_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/gpu/broker/release-mine": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Broker Release Mine */
-        post: operations["broker_release_mine_gpu_broker_release_mine_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/gpu/broker/reserve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Broker Reserve
-         * @description Operator hold: acquire a high-priority short-TTL lease so other apps
-         *     yield. Body: {duration_s: int, reason: str}.
-         */
-        post: operations["broker_reserve_gpu_broker_reserve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/gpu/broker/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Broker Status */
-        get: operations["broker_status_gpu_broker_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/grants": {
         parameters: {
             query?: never;
@@ -5524,49 +5461,6 @@ export interface paths {
         get: operations["list_scopes_tree_notes_scopes_tree_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ollama/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Ollama Status
-         * @description Snapshot of Ollama + GPU state for the Settings UI.
-         */
-        get: operations["ollama_status_ollama_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ollama/unload": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Ollama Unload
-         * @description Evict every currently-resident Ollama model so the GPU is freed.
-         *
-         *     Returns the post-unload GPU snapshot so the UI can show the freed memory
-         *     immediately.
-         */
-        post: operations["ollama_unload_ollama_unload_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8389,26 +8283,6 @@ export interface components {
             /** Path */
             path: string;
         };
-        /**
-         * BaseApp
-         * @description One top-level directory containing a `.git/`. The git fields are absent
-         *     when `git log` failed (a repo with no commits, or a timeout), which is why
-         *     every one of them is optional.
-         */
-        BaseApp: {
-            /** Branch */
-            branch?: string | null;
-            /** Commit */
-            commit?: string | null;
-            /** Name */
-            name: string;
-            /** Path */
-            path: string;
-            /** Subject */
-            subject?: string | null;
-            /** Ts */
-            ts?: string | null;
-        };
         /** Body_analyze_birds_analyze_post */
         Body_analyze_birds_analyze_post: {
             /**
@@ -8806,43 +8680,6 @@ export interface components {
              * @default false
              */
             force: boolean;
-        };
-        /**
-         * BrokerLease
-         * @description A lease as `gpubrokerd` returns it. Left open for the same reason
-         *     `BrokerStatus` is.
-         */
-        BrokerLease: {
-            [key: string]: unknown;
-        };
-        /**
-         * BrokerRegistered
-         * @description Idempotent. Called on backend startup and exposed here so the operator
-         *     can re-register after the broker restarts.
-         */
-        BrokerRegistered: {
-            /** Registered */
-            registered: boolean;
-        };
-        /** BrokerReleased */
-        BrokerReleased: {
-            /** Released Count */
-            released_count: number;
-        };
-        /**
-         * BrokerStatus
-         * @description `gpubrokerd`'s own status body with `available` and this app's leases
-         *     spliced on. The broker is ADDITIVE: when it is down this is just
-         *     `{available: false}` and Workshop's own off-switch remains the authoritative
-         *     control plane. Its body is the broker's schema, not ours, hence extra.
-         */
-        BrokerStatus: {
-            /** Available */
-            available: boolean;
-            /** My Leases */
-            my_leases?: Record<string, never>[] | null;
-        } & {
-            [key: string]: unknown;
         };
         /** BudgetPatch */
         BudgetPatch: {
@@ -10135,26 +9972,6 @@ export interface components {
             [key: string]: unknown;
         };
         /**
-         * GpuSnapshot
-         * @description One `nvidia-smi` sample of the first GPU. `available: false` with an
-         *     `error` is what a host with no nvidia-smi, or unparseable output, looks
-         *     like -- distinct from a card reporting zeros.
-         */
-        GpuSnapshot: {
-            /** Available */
-            available: boolean;
-            /** Error */
-            error?: string | null;
-            /** Memory Free Mib */
-            memory_free_mib?: number | null;
-            /** Memory Total Mib */
-            memory_total_mib?: number | null;
-            /** Memory Used Mib */
-            memory_used_mib?: number | null;
-            /** Utilization Pct */
-            utilization_pct?: number | null;
-        };
-        /**
          * GrantRevoked
          * @description False when the token matched nothing, so revoking twice is not an
          *     error.
@@ -10610,18 +10427,6 @@ export interface components {
             hearing: unknown[];
             /** Token */
             token: string;
-        };
-        /**
-         * LoadedModel
-         * @description One resident Ollama model, projected from `/api/ps`.
-         */
-        LoadedModel: {
-            /** Expires At */
-            expires_at?: string | null;
-            /** Name */
-            name?: string | null;
-            /** Size Vram Bytes */
-            size_vram_bytes?: number | null;
         };
         /** LocalRequest */
         LocalRequest: {
@@ -11292,33 +11097,6 @@ export interface components {
         OkOut: {
             /** Ok */
             ok: boolean;
-        };
-        /**
-         * OllamaStatus
-         * @description `ollama_up: false` comes back with an empty model list rather than an
-         *     error, so the Settings screen renders a reachable-but-down state.
-         */
-        OllamaStatus: {
-            gpu: components["schemas"]["GpuSnapshot"];
-            /** Loaded Models */
-            loaded_models: components["schemas"]["LoadedModel"][];
-            /** Ollama Up */
-            ollama_up: boolean;
-        };
-        /**
-         * OllamaUnloaded
-         * @description The post-unload GPU snapshot rides along so the UI can show the freed
-         *     memory immediately. `note` appears only when nothing was resident, which is
-         *     a success with nothing to do rather than a failure.
-         */
-        OllamaUnloaded: {
-            gpu: components["schemas"]["GpuSnapshot"];
-            /** Note */
-            note?: string | null;
-            /** Ok */
-            ok: boolean;
-            /** Unloaded */
-            unloaded: components["schemas"]["UnloadResult"][];
         };
         /**
          * OperationCancelled
@@ -12774,6 +12552,19 @@ export interface components {
         SetChatMode: {
             /** Mode */
             mode: string;
+        };
+        /** SetCustomInstructions */
+        SetCustomInstructions: {
+            /**
+             * Scope
+             * @default workshop
+             */
+            scope: string;
+            /**
+             * Text
+             * @default
+             */
+            text: string;
         };
         /**
          * Signature
@@ -14246,21 +14037,6 @@ export interface components {
             ts?: string | null;
         } & {
             [key: string]: unknown;
-        };
-        /**
-         * UnloadResult
-         * @description One model's eviction. `ok` is the HTTP verdict from Ollama, so a model
-         *     that refused carries a `status`; a transport failure carries an `error`.
-         */
-        UnloadResult: {
-            /** Error */
-            error?: string | null;
-            /** Model */
-            model: string;
-            /** Ok */
-            ok: boolean;
-            /** Status */
-            status?: number | null;
         };
         /**
          * Unregistered
@@ -16574,26 +16350,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_base_apps_base_apps__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BaseApp"][];
                 };
             };
         };
@@ -20218,6 +19974,90 @@ export interface operations {
             };
         };
     };
+    get_custom_instructions_chat_custom_instructions_get: {
+        parameters: {
+            query?: {
+                scope?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_custom_instructions_chat_custom_instructions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetCustomInstructions"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    all_custom_instructions_chat_custom_instructions_all_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     read_draft_chat_drafts__key__get: {
         parameters: {
             query?: never;
@@ -23020,132 +22860,6 @@ export interface operations {
             };
         };
     };
-    broker_boost_gpu_broker_boost_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": Record<string, never>;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BrokerLease"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    broker_register_gpu_broker_register_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BrokerRegistered"];
-                };
-            };
-        };
-    };
-    broker_release_mine_gpu_broker_release_mine_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BrokerReleased"];
-                };
-            };
-        };
-    };
-    broker_reserve_gpu_broker_reserve_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": Record<string, never>;
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BrokerLease"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    broker_status_gpu_broker_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BrokerStatus"];
-                };
-            };
-        };
-    };
     get_grants_grants_get: {
         parameters: {
             query?: never;
@@ -24451,46 +24165,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScopeTree"];
-                };
-            };
-        };
-    };
-    ollama_status_ollama_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OllamaStatus"];
-                };
-            };
-        };
-    };
-    ollama_unload_ollama_unload_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OllamaUnloaded"];
                 };
             };
         };

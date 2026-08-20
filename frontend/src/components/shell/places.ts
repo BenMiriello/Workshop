@@ -203,11 +203,11 @@ export function buildPlaces(
       { id: "trackers", label: "Trackers", to: "/settings/trackers", Icon: icons.trackers },
       { id: "mcp", label: "MCP", to: "/settings/mcp", Icon: icons.mcp },
       { id: "access", label: "Access", to: "/settings/grants", Icon: icons.access },
-      { id: "base-apps", label: "Base apps", to: "/settings/base-apps", Icon: icons.baseApps },
-      // Named for what it is. Everything on it is about THIS machine (the GPU
-      // rows, the broker, the loopback service probes), which a cloud deploy
-      // has none of. See the comment on the `host` tab in pages/Settings.tsx.
-      { id: "host", label: "This host", to: "/settings/host", Icon: icons.host },
+      // Fleet concurrency, the autonomy brake, and the queue runner. This was
+      // "This host" until 2026-08-20, when the GPU/broker/Ollama residency rows
+      // and the loopback service-probe grid (one machine's daemons, absent from
+      // any production deploy) were removed. See pages/Settings.tsx.
+      { id: "agents", label: "Agents", to: "/settings/agents", Icon: icons.agents },
     ],
   };
 

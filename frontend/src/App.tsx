@@ -28,7 +28,6 @@ const AgentBuild = lazyPage(() => import("./pages/AgentBuild"));
 const ProjectNew = lazyPage(() => import("./pages/ProjectNew"));
 const ProjectDetail = lazyPage(() => import("./pages/ProjectDetail"));
 const AppPreview = lazyPage(() => import("./pages/AppPreview"));
-const BaseApps = lazyPage(() => import("./pages/settings/BaseApps"));
 const Grants = lazyPage(() => import("./pages/settings/Grants"));
 const Trackers = lazyPage(() => import("./pages/settings/Trackers"));
 const McpServers = lazyPage(() => import("./pages/settings/McpServers"));
@@ -116,7 +115,6 @@ export default function App() {
           <Route path="/projects/new" element={<ProjectNew />} />
           <Route path="/projects/:slug" element={<ProjectDetail />} />
           <Route path="/projects/:slug/run" element={<AppPreview />} />
-          <Route path="/settings/base-apps" element={<BaseApps />} />
           <Route path="/settings/grants" element={<Grants />} />
           <Route path="/settings/trackers" element={<Trackers />} />
           <Route path="/settings/mcp" element={<McpServers />} />
@@ -142,17 +140,22 @@ export default function App() {
           <Route path="/settings/chat" element={<Settings tab="chat" />} />
           <Route path="/settings/memory" element={<Settings tab="memory" />} />
           <Route path="/settings/apps" element={<Settings tab="apps" />} />
-          <Route path="/settings/host" element={<Settings tab="host" />} />
-          {/* Retired standalone routes. Services is a panel Settings renders
-              under "This host" rather than a routed page of its own. Events was
-              deleted on 2026-08-20 (its endpoints were edge-blocked and had
-              never rendered on this origin); the redirect stays so an old link
-              still lands somewhere. "Jobs" is the legacy noun for
+          <Route path="/settings/agents" element={<Settings tab="agents" />} />
+          {/* Retired standalone routes. The "This host" tab became "Agents" on
+              2026-08-20 when its GPU/broker/Ollama residency rows and the
+              loopback service-probe grid were removed (a single machine's
+              daemons, absent from any production deploy); the redirect keeps old
+              /settings/host and /settings/base-apps links landing somewhere.
+              Events was deleted on 2026-08-20 (its endpoints were edge-blocked
+              and had never rendered on this origin); its redirect stays too.
+              "Jobs" is the legacy noun for
               a Run (entity model section 5). The Runs feed was a tab on the
               ticket list until 2026-08-12; it is /runs now, because a run
               belongs to the ticket that produced it and the standalone feed
               is the leftovers, not a peer of the ticket list. */}
           <Route path="/activity" element={<Navigate to="/" replace />} />
+          <Route path="/settings/host" element={<Navigate to="/settings/agents" replace />} />
+          <Route path="/settings/base-apps" element={<Navigate to="/settings/agents" replace />} />
           <Route path="/services" element={<Navigate to="/settings" replace />} />
           <Route path="/events" element={<Navigate to="/settings" replace />} />
           <Route path="/jobs" element={<Navigate to="/runs" replace />} />

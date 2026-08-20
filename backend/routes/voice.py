@@ -17,7 +17,6 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from services import chat_store, voice_engine, voice_worker
-from services.gpu_warmhold import VOICE_HOLD
 from services.ownership import user_runtime_dir
 
 log = logging.getLogger("workshop.voice")

@@ -48,17 +48,6 @@ export type WorktreeBranch = {
   created?: string;
 };
 
-// Tenant-level base-app: a git repo under the tenant home. Tenant
-// diagnostic view, lives at Settings → Base Apps.
-export type BaseApp = {
-  name: string;
-  path: string;
-  branch?: string;
-  commit?: string;
-  subject?: string;
-  ts?: string;
-};
-
 // Operator-built Project: standalone-or-integrated, with a working brain,
 // surfaces, and a persistent vibe-coding session. Lives at /projects.
 // See ADR-008 + docs/projects-hub.md (in clawd-house/docs).

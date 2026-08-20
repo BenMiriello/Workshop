@@ -11,10 +11,9 @@ Nothing loads at import time. If the model packages or weights are missing the
 engine reports `available=False` and the routes answer 503, so the frontend
 falls back to the browser speech APIs and voice mode still works.
 
-Device: CPU by default (24 cores handle short utterances comfortably). With
-`VOICE_DEVICE=auto` the engine opportunistically loads onto CUDA when the GPU
-broker grants VRAM (see `gpu_warmhold`); it never blocks and always falls back
-to CPU. `VOICE_DEVICE=cpu|cuda` forces the choice.
+Device: CPU by default. With `VOICE_DEVICE=auto` the engine opportunistically
+loads onto CUDA when a usable GPU is present; it never blocks and always falls
+back to CPU. `VOICE_DEVICE=cpu|cuda` forces the choice.
 """
 from __future__ import annotations
 
@@ -65,9 +64,7 @@ def _resolve_device() -> str:
     if want == "cuda":
         return "cuda" if _cuda_ok() else "cpu"
     if want == "auto":
-        # Opportunistic: only take the GPU if it's actually usable. The broker
-        # warm-hold (touched by the routes) keeps the lease alive across a
-        # session; here we just check the device is present.
+        # Opportunistic: only take the GPU if it's actually usable.
         return "cuda" if _cuda_ok() else "cpu"
     return "cpu"
 
