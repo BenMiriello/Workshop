@@ -35,11 +35,21 @@ def owned(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def chatty(owned):
-    """A thread with a real amount of conversation in it."""
+    """A thread with a real amount of conversation in it.
+
+    Sized in TOKENS, not records, to exercise the token-budget fold
+    (`_COMPACT_KEEP_TAIL_TOKENS`, ~4000): each OLD/reply message here is
+    ``len("OLD-{i} " + "filler " * 400) / 4`` ~= 702 estimated tokens, so the
+    21-message tail totals well past the budget and the walk from the newest
+    message settles on keeping the last 6 verbatim (~5 * 702 + 6 = 3516,
+    within budget; a 7th would push it over) and folding the other 15 -- the
+    same split the old fixed "last 6 records" constant produced, but now
+    because of size, not count.
+    """
     tid = chat_store.create_thread("general")["id"]
     for i in range(10):
-        chat_store.append_message(tid, "user", f"OLD-{i} " + ("filler " * 50))
-        chat_store.append_message(tid, "assistant", f"reply-{i} " + ("filler " * 50))
+        chat_store.append_message(tid, "user", f"OLD-{i} " + ("filler " * 400))
+        chat_store.append_message(tid, "assistant", f"reply-{i} " + ("filler " * 400))
     chat_store.append_message(tid, "user", "RECENT the latest thing")
     return tid
 
@@ -108,7 +118,7 @@ class TestCompactionFolds:
         folded, err = asyncio.run(
             _fold_now(chatty))
         assert err == ""
-        assert folded == 15          # 21 messages, 6 kept verbatim
+        assert folded == 15          # 21 messages, last 6 kept under the token budget
         after = _conversation(_prompt(chatty))
         assert len(after) < len(before) / 2
         # The tail is what the conversation is ABOUT right now, and summarizing
@@ -138,8 +148,12 @@ class TestCompactionFolds:
 
     def test_folding_twice_folds_what_arrived_since(self, chatty, stub_summary):
         asyncio.run(_fold_now(chatty))
+        # Sized like `chatty` itself: big enough that the second fold's tail
+        # (the 6 messages kept by the first fold, plus these 8) clears the
+        # token budget again, so this exercises the count-from-the-front
+        # invariant on a real second fold rather than a no-op one.
         for i in range(8):
-            chat_store.append_message(chatty, "user", f"NEW-{i}")
+            chat_store.append_message(chatty, "user", f"NEW-{i} " + ("filler " * 350))
         folded, err = asyncio.run(
             _fold_now(chatty))
         assert err == ""
@@ -152,6 +166,73 @@ class TestCompactionFolds:
         folded, err = asyncio.run(_fold_now(tid))
         assert (folded, err) == (0, "")
         assert not chat_store.get_thread(tid).get("summary")
+
+
+class TestTheTokenBudgetReplacesTheRecordCount:
+    """The bug the token-aware walk fixes: a record COUNT says nothing about
+    size. A thread with few records but a huge message used to fold nothing
+    (the old `_COMPACT_KEEP_TAIL = 6` never even looked at content length),
+    which is exactly backwards -- that thread is the one that most needs it."""
+
+    @pytest.fixture()
+    def stub_summary(self, monkeypatch):
+        from routes import chat as chat_routes
+        monkeypatch.setattr(chat_routes, "_summarize_sync",
+                            lambda prev, msgs: f"SUMMARY of {len(msgs)} messages")
+        return chat_routes
+
+    def test_few_records_but_one_huge_message_still_folds(self, owned, stub_summary):
+        """4 records total -- well under the old fixed keep of 6, so the old
+        heuristic would have folded nothing here at all -- but two of them are
+        each bigger than the whole keep budget on their own."""
+        tid = chat_store.create_thread("general")["id"]
+        chat_store.append_message(tid, "user", "HUGE-0 " + ("x " * 10000))   # ~5000 tok
+        chat_store.append_message(tid, "assistant", "HUGE-1 " + ("x " * 10000))  # ~5000 tok
+        chat_store.append_message(tid, "user", "small-2")
+        chat_store.append_message(tid, "assistant", "small-3 RECENT")
+        folded, err = asyncio.run(_fold_now(tid))
+        assert err == ""
+        assert folded == 2           # the two huge messages, not the two small ones
+        after = _conversation(_prompt(tid))
+        assert "HUGE-0" not in after and "HUGE-1" not in after
+        assert "small-2" in after and "RECENT" in after
+
+    def test_the_last_two_messages_survive_even_over_budget(self, owned, stub_summary):
+        """The guardrail: the newest message here is bigger than the entire
+        keep budget by itself, so the walk blows the budget on the very first
+        (mandatory) message it looks at. It must still keep the last 2
+        verbatim rather than folding everything, or the exchange in progress
+        gets summarized out from under itself."""
+        tid = chat_store.create_thread("general")["id"]
+        for i in range(6):
+            chat_store.append_message(tid, "user", f"OLD-{i} " + ("filler " * 400))
+        chat_store.append_message(tid, "user", "SECOND-TO-LAST " + ("z " * 10000))
+        chat_store.append_message(tid, "assistant", "RECENT-LAST")
+        folded, err = asyncio.run(_fold_now(tid))
+        assert err == ""
+        assert folded == 6           # only the 6 old records; the guardrail held
+        after = _conversation(_prompt(tid))
+        assert "SECOND-TO-LAST" in after
+        assert "RECENT-LAST" in after
+        assert "OLD-0" not in after
+
+    def test_folded_through_is_still_a_count_from_the_front(self, chatty, stub_summary):
+        """The cut stays `cleared_through + fold_n` regardless of the new
+        retention math -- the append-at-back invariant the rest of the fold
+        (and `_land_fold`'s landing) depends on is untouched by this change."""
+        from routes import chat as chat_routes
+        # A prior /clear moves `cleared_through` off zero, so this also checks
+        # the walk is relative to the tail, not the whole message list.
+        chat_store.clear_thread_context(chatty)
+        ct_before = chat_store.get_thread(chatty)["cleared_through"]
+        assert ct_before > 0
+        for i in range(12):
+            chat_store.append_message(chatty, "user", f"AFTER-CLEAR-{i} " + ("filler " * 400))
+        fold_n, summary, folded_through, err = asyncio.run(
+            chat_routes._fold_summary(chatty, chat_store.get_thread(chatty)))
+        assert err == ""
+        assert fold_n > 0
+        assert folded_through == ct_before + fold_n
 
 
 class TestAFailedFoldChangesNothingAndSaysSo:

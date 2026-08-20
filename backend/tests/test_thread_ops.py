@@ -32,10 +32,13 @@ def thread(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def chatty(thread):
+    """Sized in tokens, not records, so the fold's ~4000-token keep budget
+    (`_COMPACT_KEEP_TAIL_TOKENS`) is actually exceeded -- see the same-shaped
+    fixture and comment in test_chat_compact.py for the exact arithmetic."""
     tid = thread["id"]
     for i in range(10):
-        chat_store.append_message(tid, "user", f"OLD-{i} " + ("filler " * 30))
-        chat_store.append_message(tid, "assistant", f"reply-{i} " + ("filler " * 30))
+        chat_store.append_message(tid, "user", f"OLD-{i} " + ("filler " * 400))
+        chat_store.append_message(tid, "assistant", f"reply-{i} " + ("filler " * 400))
     return tid
 
 

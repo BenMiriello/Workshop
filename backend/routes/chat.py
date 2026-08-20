@@ -54,6 +54,7 @@ from services import skills
 from services import llm_router
 from services import build_streaming
 from services import draft_store
+from services import compaction_adapter
 
 log = logging.getLogger("workshop.chat")
 router = APIRouter()
@@ -1790,7 +1791,8 @@ async def compact_thread(thread_id: str):
 
     So this folds, and the fold is the point:
 
-      1. everything except the last `_COMPACT_KEEP_TAIL` messages is summarized
+      1. everything except roughly the last `_COMPACT_KEEP_TAIL_TOKENS` worth
+         of the tail (walked newest to oldest, see `_fold_summary`) is summarized
          into a running summary stored on the thread;
       2. the cut moves to that point, so the prompt carries `summary + tail`;
       3. the live session is detached, so the next turn actually uses it.
@@ -1812,6 +1814,14 @@ async def compact_thread(thread_id: str):
     if t is None:
         raise HTTPException(404, "thread not found")
     provider = chat_context.get_provider(t.get("context_key"))
+    # THE SEAM, CONSULTED: this is the fact from the docstring above (no
+    # reachable native compaction in headless mode) made queryable instead of
+    # asserted in prose. Nothing branches on it yet -- there is only one
+    # adapter -- but the fold below is what `native_manual=False` means in
+    # practice, and a future API adapter answering `True` here is what lets
+    # the route layer stop needing this whole custom fold at all.
+    caps = _cli_adapter.capabilities()
+    log.debug("compact: adapter capabilities for %s: %s", thread_id, caps)
     # ONE OPERATION AT A TIME, and admission respects it: from here until the
     # fold lands (or is handed to the landing task), a new message on this
     # thread queues instead of becoming a turn against the pre-fold prompt.
@@ -1871,10 +1881,33 @@ async def compact_thread(thread_id: str):
             thread_ops.end(thread_id)
 
 
-# How many messages stay verbatim. The tail is what the conversation is ABOUT
-# right now, and summarizing it is what makes a compacted chat feel like it has
-# had a stroke: it can describe what you were doing but not continue it.
-_COMPACT_KEEP_TAIL = 6
+# How much of the tail stays verbatim, in TOKENS rather than message records.
+# A message record is the wrong unit: a tool-heavy agentic turn can be one
+# record holding dozens of content blocks, so "keep the last N records" can
+# keep a huge multi-tool turn or a trivial sliver depending on shape alone,
+# with no relationship to what the context window (or the meter, or any future
+# per-token billing) actually measures. ~4000 tokens is picked to cover "the
+# last real exchange" -- a user message plus a substantial reply -- without
+# being so large that a short chat's whole history reads as "the tail" and the
+# fold never triggers. Tunable; there is no usage data behind this number yet,
+# see docs/platform-redesign/compaction-both-paths-plan-2026-08-20.md (f)#1.
+_COMPACT_KEEP_TAIL_TOKENS = 4000
+
+# A fold below this many kept-verbatim messages would cut a thread's current
+# exchange out from under it, so the guardrail in `_fold_summary` always keeps
+# at least this many regardless of the token budget.
+_COMPACT_KEEP_TAIL_MIN = 2
+
+
+def _est_tokens(msg: dict) -> int:
+    """Chars-to-tokens proxy for one message: len(content) / 4, the same
+    approximation `_context_estimate` already uses for a whole prompt
+    (`len(prompt) / 4`, above). Deliberately not a real tokenizer -- this path
+    only needs to pick a reasonable cut point, not bill anyone a cent, and a
+    real tokenizer would be a new dependency for a comparison that a rough
+    proxy already answers well enough."""
+    content = msg.get("content") or ""
+    return max(1, round(len(content) / 4))
 
 
 def _fmt_for_summary(messages: list[dict]) -> str:
@@ -1929,10 +1962,41 @@ async def _fold_summary(thread_id: str, t: dict) -> tuple[int, str, int, str]:
             if not (m.get("meta") or {}).get("streaming")]
     ct = int(t.get("cleared_through", 0) or 0)
     tail = msgs[ct:] if 0 < ct <= len(msgs) else msgs
-    fold_n = max(0, len(tail) - _COMPACT_KEEP_TAIL)
-    if fold_n <= 0:
+
+    # Walk the tail NEWEST to OLDEST, spending the token budget as we go, and
+    # keep messages verbatim until it runs out. This is the fix over a fixed
+    # record count: a thread whose last 6 records are one 50-tool-call turn
+    # used to force fold_n to 0 (the tail alone blew the record count with
+    # nothing to compare it to), while a thread whose last 6 records are six
+    # one-line replies over-retained almost nothing worth keeping.
+    #
+    # The first `_COMPACT_KEEP_TAIL_MIN` messages are kept unconditionally, so
+    # a single message bigger than the whole budget (a long paste, a huge tool
+    # result) can never empty the tail out from under the exchange in
+    # progress; every message after that is kept only while the running total
+    # stays inside the budget.
+    keep_n = 0
+    budget = _COMPACT_KEEP_TAIL_TOKENS
+    for m in reversed(tail):
+        cost = _est_tokens(m)
+        if keep_n >= _COMPACT_KEEP_TAIL_MIN and budget - cost < 0:
+            break
+        budget -= cost
+        keep_n += 1
+    fold_n = len(tail) - keep_n
+
+    # "Meaningful" fold: folding a single message, or folding a sliver that is
+    # smaller than one keep-budget's worth, buys almost nothing and just costs
+    # a model call every time the button is pressed. Requiring the folded
+    # content to clear roughly the same budget the tail is held to is what
+    # makes a short chat -- one that would never have threatened the window --
+    # correctly fold nothing instead of trimming a couple of messages off the
+    # front for no real gain.
+    if fold_n < 2:
         return 0, "", 0, ""
     to_fold = tail[:fold_n]
+    if sum(_est_tokens(m) for m in to_fold) < _COMPACT_KEEP_TAIL_TOKENS:
+        return 0, "", 0, ""
     try:
         summary = await asyncio.to_thread(
             _summarize_sync, (t.get("summary") or "").strip(), to_fold)
@@ -1964,6 +2028,17 @@ def _land_fold(thread_id: str, summary: str, folded_through: int) -> bool:
         return False
     provider = chat_context.get_provider(t.get("context_key"))
     return _detach_live_session(thread_id, t, provider)
+
+
+# The provider-agnostic seam (see `services.compaction_adapter` and
+# docs/platform-redesign/compaction-both-paths-plan-2026-08-20.md). Workshop
+# runs one provider today, so this is the only adapter instance that exists;
+# it wraps the fold/detach functions above rather than reimplementing them, so
+# nothing about their behavior changes here. Built as a module-level singleton
+# (not per-request) because it is stateless -- three bound functions and a
+# static capabilities dict, nothing thread-specific.
+_cli_adapter = compaction_adapter.ClaudeCLIAdapter(
+    _fold_summary, _land_fold, _detach_live_session)
 
 
 async def _land_fold_when_quiet(thread_id: str, summary: str, folded_through: int) -> None:
