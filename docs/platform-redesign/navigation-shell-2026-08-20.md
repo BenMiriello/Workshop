@@ -614,3 +614,53 @@ running. Without the composer (8.5).
 chat, which is the highest-traffic screen in the product and has never been designed.
 
 Settle 9.3 before stage 4; it changes what the dock lists and therefore what the Dashboard summarises.
+
+---
+
+## 13. Stage 1, as built (2026-08-20)
+
+Shipped in `frontend/src/components/shell/` plus `THE SHELL` in the kit's
+`components.css` (@workshop/ui 0.5.16). The rules live in two pure, tested
+modules (`places.ts`, `shellState.ts`); the rest is render.
+
+**Where the implementation departs from the mockup, and why.** Each of these is
+a decision, not a shortcut.
+
+1. **The trail survived, moved.** The mockup has no top toolbar because it drew
+   no record pages. This app is full of them and only five of twenty-six page
+   files carry their own `back` slot, so deleting the breadcrumb outright would
+   strand `/agents/:slug`, `/projects/:slug`, `/tickets/:scope/:id` and the rest.
+   `ShellTrail` renders at the head of the content column and **only where the
+   trail is deeper than the page column already says**, which is never on any
+   screen the mockup drew. It can go when every detail page carries `back`.
+2. **Home keeps Projects and does not repeat Chats.** Projects is a real,
+   heavily used route the mockup has nowhere at all (section 7.1). Chats is not
+   duplicated as a Home page because the dock owns it, and two rows to one
+   destination is the duplication that got the search field deleted.
+3. **Tickets, not Work** (section 9.1's recommendation, applied provisionally).
+   One word to change if the operator decides otherwise.
+4. **App tiles use each app's declared lucide glyph**, with the uppercase letter
+   as the fallback the design specified. Every installed app declares one, and
+   as letters Budget and Birds are both "B".
+5. **A place with one page gets no phone tab bar and no caret.** A bar holding a
+   single always-active tab is a second copy of the title, one row under the
+   title. The desktop column still opens on such a place, because it is opt-in
+   rather than always on screen.
+6. **`.ws-rail` and `.ws-tabbar__tab`,** not `.ws-dock` and `.ws-tab`: both of
+   those already exist in the kit (the floating chat dock, and the Tabs
+   primitive). Caught by `styles.test.ts`, not by review.
+7. **The breakpoint is 900px**, matching `DetailLayout`'s rail. A tablet gets the
+   phone shell deliberately: below 900px the third column is not worth its
+   chrome.
+8. **Motion is on the existing tokens** (`--dur-slow` 320ms, `--dur-base` 200ms)
+   rather than the design's exact 300ms and 240ms. Twenty milliseconds is not
+   worth two new tokens.
+
+**Not built, and named in section 8:** Search, Activity, Files, the ref pill,
+per-app Chats/Memory/Work/Deploys pages, the Dashboard composer, and the
+directory takeover. None of them is stubbed anywhere.
+
+**Also fixed on the way through**, because the shell's mount test found it:
+`lib/storage`'s `read(localStorage, key)` evaluated a bare global REFERENCE, so
+it threw before its own try/catch in any environment without one. It goes
+through `globalThis` now.
