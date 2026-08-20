@@ -579,6 +579,25 @@ def current_query_scope() -> str | None:
     return _query_scope_ctx.get()
 
 
+# WHICH chat the workshop MCP server belongs to. Pinned at the same turn-start
+# seam as the scope and owner, so the `spawn_background` tool (a background agent
+# for THIS chat) knows which thread to attach its run to. None for a caller with
+# no chat behind it (a background pass, a CLI invocation): the env var is then
+# omitted and the server does not offer the spawn tool at all.
+_query_thread_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "workshop_query_thread", default=None
+)
+
+
+def set_current_query_thread(thread_id: str | None) -> None:
+    """Pin the chat's thread id for whatever spawns the workshop MCP server next."""
+    _query_thread_ctx.set(thread_id)
+
+
+def current_query_thread() -> str | None:
+    return _query_thread_ctx.get()
+
+
 # Platform-level MCP servers, always available (not tied to an installed app):
 # the read-only workshop-query tool the general chat uses to answer "what is
 # going on" from the task + knowledge digest (Stage 7 / 2e). It is NOT a
@@ -615,6 +634,11 @@ def _platform_mcp_servers() -> dict[str, dict]:
     owner_id = ownership.owner_or_none()
     if owner_id is not None:
         env["WORKSHOP_QUERY_OWNER"] = str(owner_id)
+    # WHICH chat, so the server can offer spawn_background bound to it. Omitted
+    # for a caller with no chat behind it, exactly like scope and owner above.
+    thread_id = current_query_thread()
+    if thread_id:
+        env["WORKSHOP_QUERY_THREAD"] = str(thread_id)
     return {
         "workshop": {
             "type": "stdio",

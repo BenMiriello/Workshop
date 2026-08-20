@@ -1931,6 +1931,9 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
     except Exception:
         ctx_key = None
     app_registry.set_current_query_scope(ctx_key)
+    # And WHICH chat, so the workshop MCP server can offer this thread a
+    # background agent (spawn_background) bound to it. Same seam, same reason.
+    app_registry.set_current_query_thread(meta.get("thread_id"))
     # Effort is validated by the CLI against one fixed list for EVERY model, so a
     # level the model doesn't honour is accepted and quietly does nothing. The
     # caller resolves against services/model_caps before this point; by here a
