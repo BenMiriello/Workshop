@@ -155,7 +155,14 @@ export default function Chat({
     const url = new URL(window.location.href);
     if (!url.searchParams.has("new")) return;
     url.searchParams.delete("new");
-    window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+    // Preserve the existing history state (never `{}`): React Router's browser
+    // history stores its own stack position in `state.idx`, and wiping it out
+    // from outside the router corrupts that bookkeeping. Its own source calls
+    // this out by name as a cause of bugs. Confirmed 2026-08-20: with the idx
+    // gone, a later `navigate()` (e.g. from RecentChatsMenu) computed its next
+    // stack position off the corrupted value and intermittently failed to
+    // switch conversations.
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
   }, []);
 
   const scopeState = useChatScope({
@@ -231,7 +238,9 @@ export default function Chat({
       if (!current) return;
       url.searchParams.delete("thread");
     }
-    window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+    // Preserve `window.history.state` here too (see stripNewParam above): `{}`
+    // wipes React Router's `idx` bookkeeping and corrupts later navigate() calls.
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
   }, [variant, activeId, loadingThreads]);
 
   // The conversation itself: one store, fed by one endpoint from a cursor.
