@@ -220,7 +220,7 @@ export function useSendPipeline({
       // chat_store.append_message) so a chat can be named while its first turn
       // is still running, which for a real conversation here is minutes. The
       // ONLY other place this refetch fired was onTurnEnd, so a title that
-      // landed early sat unseen in the picker for the turn's entire length —
+      // landed early sat unseen in the picker for the turn's entire length:
       // "New chat" through the whole first reply, on a chat that was already
       // correctly named seconds in. Firing it here too means the picker looks
       // again on the same backed-off schedule regardless of how long the reply
