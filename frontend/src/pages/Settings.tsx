@@ -208,7 +208,7 @@ function MemorySection() {
 
   if (err) {
     return (
-      <Section icon={Library} title="Memory">
+      <Section icon={Library}>
         <StateBlock
           variant="error"
           title="Couldn't load memory settings"
@@ -219,7 +219,7 @@ function MemorySection() {
   }
   if (!policy) {
     return (
-      <Section icon={Library} title="Memory">
+      <Section icon={Library}>
         <Row label="notes"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
         <Row label="documents"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
         <Row label="chat transcripts"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
@@ -238,7 +238,7 @@ function MemorySection() {
   ];
 
   return (
-    <Section icon={Library} title="Memory">
+    <Section icon={Library}>
       <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
         What one chat finds when it searches another's work. This shapes what
         search turns up, to keep a chat's recall about its own work. It is not a
@@ -473,7 +473,7 @@ function AccountSection() {
   }
 
   return (
-    <Section icon={UserRound} title="Account">
+    <Section icon={UserRound}>
       <Row label="signed in as">{user.name ? `${user.name} · ${user.email}` : user.email}</Row>
       <Row label="role">
         {user.is_operator ? (
@@ -637,7 +637,7 @@ function AppearanceSection() {
   const mode = useResolvedMode(theme);
   const current = PALETTE_META.find((p) => p.id === palette);
   return (
-    <Section icon={Palette} title="Appearance">
+    <Section icon={Palette}>
       <Row label="theme">
         <Segmented options={THEME_OPTIONS} value={theme} onChange={setTheme} ariaLabel="Theme" />
       </Row>
@@ -707,7 +707,7 @@ function ChatSection() {
 
   if (err) {
     return (
-      <Section icon={MessageSquare} title="Chat">
+      <Section icon={MessageSquare}>
         <StateBlock
           variant="error"
           title="Couldn't load chat settings"
@@ -718,7 +718,7 @@ function ChatSection() {
   }
   if (!prefs) {
     return (
-      <Section icon={MessageSquare} title="Chat">
+      <Section icon={MessageSquare}>
         <Row label="new chats"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
         <Row label="effort"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
         <Row label="asks before acting"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
@@ -733,7 +733,7 @@ function ChatSection() {
   const shown = edit.editing ? edit.draft : current;
 
   return (
-    <Section icon={MessageSquare} title="Chat">
+    <Section icon={MessageSquare}>
       <Row
         label="new chats"
         // The hint follows what is SELECTED, so it explains the choice being

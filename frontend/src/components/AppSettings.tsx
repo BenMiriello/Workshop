@@ -57,19 +57,26 @@ export function AppSettings({
   );
 }
 
-// Reusable section shell — design-system SectionLabel + Card.
+// Reusable section shell: design-system SectionLabel + Card.
+//
+// `title` is optional. Omit it when the section is the ONLY one on its screen
+// and the page header already names it, which is every tab of Settings that
+// holds a single section: the header said "Account" and the label said
+// "ACCOUNT" directly under it, one word twice, plus the lit row in the page
+// column saying it a third time. A label earns its place by telling groups
+// apart, so one group means no label.
 export function SettingsSection({
   icon: Icon,
   title,
   children,
 }: {
   icon: ComponentType<LucideProps>;
-  title: string;
+  title?: string;
   children: ReactNode;
 }) {
   return (
     <section style={{ marginBottom: "var(--space-6)" }}>
-      <SectionLabel icon={<Icon aria-hidden />}>{title}</SectionLabel>
+      {title && <SectionLabel icon={<Icon aria-hidden />}>{title}</SectionLabel>}
       <Card>{children}</Card>
     </section>
   );
