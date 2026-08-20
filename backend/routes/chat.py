@@ -969,6 +969,50 @@ async def set_card_state(thread_id: str, body: CardState):
     return {"card_states": t.get("card_states", {})}
 
 
+class SetCustomInstructions(BaseModel):
+    scope: str = "workshop"
+    text: str = ""
+
+
+def _canon_scope(scope: str) -> str:
+    """Canonicalize an incoming scope/context key to the knowledge scope the
+    store and the chat's custom_prompt() both use, so a value the UI holds as a
+    context key ("general", "budget") lands on the same key the chat reads
+    ("workshop", "app:budget"). Idempotent for an already-canonical scope."""
+    from services import knowledge
+    try:
+        return knowledge.scope_for_context(scope)
+    except Exception:
+        return scope or "workshop"
+
+
+@router.get("/custom-instructions")
+def get_custom_instructions(scope: str = "workshop"):
+    """The operator's L3 custom instructions for one scope (empty if none)."""
+    from services import custom_instructions
+    key = _canon_scope(scope)
+    return {"scope": key, "text": custom_instructions.get(key)}
+
+
+@router.get("/custom-instructions/all")
+def all_custom_instructions():
+    """Every scope that has custom instructions set, for the settings UI. Keys
+    are knowledge scopes (workshop, development, project:*, app:*, agent:*)."""
+    from services import custom_instructions
+    return {"scopes": custom_instructions.all_scopes()}
+
+
+@router.post("/custom-instructions")
+def set_custom_instructions(body: SetCustomInstructions):
+    """Set (or clear, when text is blank) the L3 custom instructions for a scope.
+    Applies to that scope's chats from their next turn; the platform layers above
+    it are unaffected and cannot be edited here."""
+    from services import custom_instructions
+    key = _canon_scope(body.scope)
+    saved = custom_instructions.set(key, body.text)
+    return {"scope": key, "text": saved}
+
+
 _DISTILL_PROMPT = (
     "From this conversation, write ONE self-contained ticket a background worker "
     "can execute WITHOUT seeing the chat.\n\n"

@@ -53,6 +53,7 @@ const NODES: Record<string, RouteNode> = {
   "/settings/grants": { label: "Grants", parent: "/settings" },
   "/settings/trackers": { label: "Trackers", parent: "/settings" },
   "/settings/mcp": { label: "MCP servers", parent: "/settings" },
+  "/settings/instructions": { label: "Instructions", parent: "/settings" },
 };
 
 Object.assign(NODES, appCrumbs());

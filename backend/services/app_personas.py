@@ -479,8 +479,13 @@ class AppPersona(ContextProvider):
         d = agents_registry.app_persona(self.key)   # raises if absent/empty
         self.label = d["name"]
         self.purpose = d["purpose"]
-        self.allowed_tools = d["tools"]
-        self.mcp_servers = d["mcp_servers"]
+        # Every app chat also gets the workshop toolkit (orientation + reach its
+        # own uploads) on top of whatever the app declares, so no app assistant
+        # arrives unable to see what it has access to. Deferred import avoids a
+        # circular with chat_context, which imports this module.
+        from services import chat_context as _cc
+        self.allowed_tools = list(dict.fromkeys([*d["tools"], *_cc.WORKSHOP_TOOLKIT]))
+        self.mcp_servers = list(dict.fromkeys([*d["mcp_servers"], "workshop"]))
         self.default_model = _llm.tier(d["model"], ContextProvider.default_model)
         self.definition_path = d["definition_path"]
         self._persona = d["persona"]

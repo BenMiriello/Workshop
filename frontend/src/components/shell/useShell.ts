@@ -14,6 +14,7 @@ import {
   Bot,
   Brain,
   CircleUser,
+  FileText,
   FolderGit2,
   Gauge,
   House,
@@ -64,6 +65,7 @@ const ICONS = {
   // Settings' own page rows.
   account: CircleUser,
   appearance: Palette,
+  instructions: FileText,
   trackers: Tags,
   mcp: Blocks,
   access: KeyRound,

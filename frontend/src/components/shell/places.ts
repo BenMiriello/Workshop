@@ -197,6 +197,7 @@ export function buildPlaces(
       { id: "account", label: "Account", to: "/settings", Icon: icons.account, end: true },
       { id: "appearance", label: "Appearance", to: "/settings/appearance", Icon: icons.appearance },
       { id: "chat", label: "Chat", to: "/settings/chat", Icon: icons.chats },
+      { id: "instructions", label: "Instructions", to: "/settings/instructions", Icon: icons.instructions },
       { id: "memory", label: "Memory", to: "/settings/memory", Icon: icons.memory },
       { id: "apps", label: "Apps", to: "/settings/apps", Icon: icons.apps },
       { id: "trackers", label: "Trackers", to: "/settings/trackers", Icon: icons.trackers },

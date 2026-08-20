@@ -1562,11 +1562,18 @@ class ContextProvider:
         return reply, []
 
     def custom_prompt(self) -> str:
-        """User-owned free-text system prompt (layer 3), appended after the
-        platform context and BEFORE the conversation. The platform safety
-        preamble (layer 1) always precedes this and is never overridden by it.
-        Default empty — the seam exists; no UI is built here yet."""
-        return ""
+        """L3: the operator's own free-text system prompt for this chat's scope,
+        appended after the platform layers (L0 kernel, L1 orientation, L2
+        persona) and BEFORE the conversation. Lower authority than the platform
+        layers and never overrides them. Read per-scope from the
+        custom_instructions store (editable in Settings); "" when none is set.
+        Best-effort so a store hiccup never breaks the chat path."""
+        try:
+            from services import custom_instructions
+            return custom_instructions.get(self.knowledge_scope())
+        except Exception as e:
+            log.warning("custom_prompt read failed for %s: %s", self.key, e)
+            return ""
 
     # The app id this provider's chat is bound to, for permissions resolution.
     # Data/app assistants whose `key` matches an apps.json manifest id (budget,

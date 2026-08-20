@@ -27,7 +27,7 @@ from pathlib import Path
 
 from services import (agent_slots, build_agents, chat_attachments, chat_drain,
                       chat_log, chat_queue, chat_store, llm_router, model_caps,
-                      ownership, turn_end)
+                      ownership, reply_guard, turn_end)
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -740,8 +740,13 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
         for block in msg.get("content", []) or []:
             if isinstance(block, dict):
                 if block.get("type") == "text":
+                    # Output-side confidentiality guard (defence-in-depth behind
+                    # the L0 kernel): strip any leaked platform-prompt region from
+                    # the live chunk. The committed final_text is scrubbed again
+                    # in _turn_content as the guaranteed-clean backstop.
                     out.append(("text", {
-                        "content": _rewrite_cli_copy(block.get("text", "")),
+                        "content": reply_guard.scrub(
+                            _rewrite_cli_copy(block.get("text", ""))),
                         "parent": parent,
                     }))
                 elif block.get("type") == "tool_use":
@@ -1053,8 +1058,13 @@ def _agent_step(turn: "Turn", parent: str, seg: dict) -> bool:
 
 def _turn_content(turn: "Turn") -> str:
     """The operator-visible answer: TOP-LEVEL text only. A subagent's interim
-    text lives in its own segment's steps and is not part of the reply."""
-    return "".join(s["text"] for s in turn.segments if s.get("t") == "text").strip()
+    text lives in its own segment's steps and is not part of the reply.
+
+    Scrubbed through reply_guard: the guaranteed-clean backstop for the stored
+    transcript, so a leaked platform-prompt region never persists even if the
+    live per-chunk guard missed a split banner."""
+    joined = "".join(s["text"] for s in turn.segments if s.get("t") == "text").strip()
+    return reply_guard.scrub(joined)
 
 
 def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:
