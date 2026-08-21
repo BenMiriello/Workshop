@@ -225,54 +225,84 @@ export function useChatThread({
     // Gate: never load a thread under a scope that is still being resolved.
     if (!providersReady) return;
     let cancelled = false;
+
+    // Consume the URL intents SYNCHRONOUSLY, before any await. `startNew` and a
+    // linked `?thread` are mutually exclusive; taking one disarms the other so a
+    // stale `?thread` can't undo an explicit New chat.
+    const startingNew = startNewRef.current;
+    startNewRef.current = false;
+    if (startingNew) {
+      linkedThreadRef.current = null;
+      writeSelection(scope, NEW_CHAT);
+      stripNewParam();
+    }
+    const linked = linkedThreadRef.current;
+    linkedThreadRef.current = null;
+
+    // OPTIMISTIC SWITCH. When the URL names a thread (a picker switch or a deep
+    // link) the target is known up front, so flip to it in THIS render. The
+    // transcript (cached => instant, cold => its own skeleton) starts loading at
+    // once instead of waiting on listThreads + getThread to resolve first, and
+    // that wait was exactly what left the previous conversation on screen for two
+    // round trips after the switch already looked done. The list and the thread's
+    // settings hydrate behind it; neither gates the content swap.
+    if (linked && linked !== activeIdRef.current) {
+      setActiveId(linked);
+      writeSelection(scope, linked);
+    }
+
     (async () => {
       onError(null);
       setLoadingThreads(true);
       try {
-        const list = await chatApi.listThreads(scope);
+        // Independent reads, issued together rather than in series: the picker
+        // list, and (when a thread is linked) that thread's settings document.
+        // The list no longer sits IN FRONT OF the switch; it fills the picker and
+        // supplies the fallback if the linked thread turns out to be gone.
+        const listP = chatApi.listThreads(scope);
+
+        // A linked thread is fetched by id, not looked up in `list`: the chat
+        // list spans every context, so the thread the operator clicked need not
+        // live in THIS scope. This is settings ONLY (card_states / model / effort
+        // / mode); the transcript comes from useThreadLog by id, so a slow
+        // document here no longer delays what is on screen.
+        let t: Thread | null = null;
+        if (linked) {
+          t = await chatApi.getThread(linked).catch(() => null);
+          if (cancelled) return;
+          if (t) adoptSettings(t);
+        }
+
+        const list = await listP;
         if (cancelled) return;
         setThreads(list);
         const has = (id: string | null | undefined): boolean => !!id && list.some((x) => x.id === id);
-        if (startNewRef.current) {
-          startNewRef.current = false;
-          // The two URL intents are mutually exclusive; taking one disarms the
-          // other so a stale `?thread` can't undo an explicit New chat.
-          linkedThreadRef.current = null;
-          writeSelection(scope, NEW_CHAT);
-          stripNewParam();
-        }
-        const linked = linkedThreadRef.current;
-        linkedThreadRef.current = null;
-        const stored = readSelection(scope);
-        const fallbackTarget = (): string | null => {
-          const current = activeIdRef.current;
-          if (has(current)) return current;
-          if (stored === NEW_CHAT) return null;
-          if (has(stored)) return stored;
-          return list.length ? list[0].id : null;
-        };
-        // A linked thread is fetched by id, not looked up in `list`: the chat
-        // list spans every context, so the thread the operator clicked need not
-        // live in THIS scope. If it's gone, fall back as if no link were given
-        // rather than stranding the chat on an error.
-        let t: Thread | null = null;
-        if (linked) t = await chatApi.getThread(linked).catch(() => null);
-        if (cancelled) return;
+
+        // Either nothing was linked (a scope change, or first load), or the
+        // linked thread is gone: pick a target from the freshly-loaded list and
+        // adopt it the ordinary (non-optimistic) way.
         if (!t) {
-          const target = fallbackTarget();
-          t = target ? await chatApi.getThread(target) : null;
-        }
-        if (cancelled) return;
-        if (t) {
-          setActiveId(t.id);
-          writeSelection(scope, t.id);
-          adoptSettings(t);
-        } else {
-          setActiveId(null);
-          setCardStates({});
-          // Landing blank: the outbox belongs to the blank-chat slot, and a
-          // send that never reached the server is still owed delivery.
-          outboxRef.current.bind(`scope:${scope}`);
+          const stored = readSelection(scope);
+          const target = startingNew ? null : (() => {
+            const current = activeIdRef.current;
+            if (has(current)) return current;
+            if (stored === NEW_CHAT) return null;
+            if (has(stored)) return stored;
+            return list.length ? list[0].id : null;
+          })();
+          t = target ? await chatApi.getThread(target).catch(() => null) : null;
+          if (cancelled) return;
+          if (t) {
+            setActiveId(t.id);
+            writeSelection(scope, t.id);
+            adoptSettings(t);
+          } else {
+            setActiveId(null);
+            setCardStates({});
+            // Landing blank: the outbox belongs to the blank-chat slot, and a
+            // send that never reached the server is still owed delivery.
+            outboxRef.current.bind(`scope:${scope}`);
+          }
         }
       } catch (e) {
         if (!cancelled) {

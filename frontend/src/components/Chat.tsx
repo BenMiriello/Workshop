@@ -1152,6 +1152,14 @@ export default function Chat({
     retryRef.current(clientId);
   }, []);
 
+  // Same reasoning as retryRef: pipeline.cancel is a stable useCallback, but
+  // reading it through a ref keeps this identity from depending on that.
+  const cancelRef = useRef(pipeline.cancel);
+  cancelRef.current = pipeline.cancel;
+  const onCancelPending = useCallback((clientId: string) => {
+    cancelRef.current(clientId);
+  }, []);
+
   // Taking a queued message back out, and telling a stopped queue to go. Both
   // are writes to the SERVER's queue: this browser has no copy to fix up, and
   // the sync brings back whatever actually happened.
@@ -1177,7 +1185,15 @@ export default function Chat({
   }, [activeIdRef, sync, setErr]);
 
 
-  const logLoading = thread.loadingThreads || !hydrated;
+  // The transcript's readiness, decoupled from the picker-list fetch. Once a
+  // thread is active only `hydrated` (its first events page) governs the
+  // skeleton; folding `loadingThreads` in too kept a skeleton up over a
+  // transcript that had ALREADY loaded, until the cross-scope list came back,
+  // which is a large part of what made a switch feel slow. Before any thread is
+  // chosen the list load IS the resolution, so it stands in there. `hydrated` is
+  // false from the render the thread changes, so the empty-state-over-an-open-
+  // chat flash that first put `loadingThreads` here cannot come back.
+  const logLoading = activeId ? !hydrated : thread.loadingThreads;
   // EXACTLY ONE OF THE TWO renders a given failure. The log owns the error one
   // of its four list states, so when it has nothing else to show, the problem
   // block goes IN it; when the transcript is full of valid history the log is
@@ -1206,6 +1222,7 @@ export default function Chat({
       selectedModel={selectedModel}
       cardCtx={cardCtx}
       onRetry={onRetryAny}
+      onCancelPending={onCancelPending}
       onCancelQueued={cancelQueued}
       onReleaseQueue={releaseQueue}
       queueHeld={state.queueHeld}

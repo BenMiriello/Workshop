@@ -4,6 +4,13 @@ import { Menu, MenuItem, MenuSeparator } from "@workshop/ui";
 import { chatApi, type ThreadSummary } from "../../lib/chat";
 import { scopeKind } from "./chatScope";
 import ScopeIcon from "./ScopeIcon";
+import { recentChatsCache } from "./recentChatsCache";
+
+// Trim a full cross-scope list to the recent few this menu shows, newest first.
+const recentSlice = (list: ThreadSummary[]): ThreadSummary[] =>
+  [...list]
+    .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""))
+    .slice(0, RECENT_LIMIT);
 
 // The chat's name in the toolbar, and behind it the conversations you were in
 // most recently.
@@ -38,26 +45,31 @@ export default function RecentChatsMenu({
   /** The overflow path: more chats exist than this menu shows. */
   onSeeAll: () => void;
 }) {
-  const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
-  const [total, setTotal] = useState(0);
+  // Seed from the tab-lifetime cache so a re-open (or a remount from a scope
+  // switch) paints the last-known list in the FIRST render instead of the
+  // "Loading" row. Cold on the very first open of the tab, which is the only time
+  // "Loading" now shows.
+  const seed = recentChatsCache.get();
+  const [threads, setThreads] = useState<ThreadSummary[] | null>(
+    seed ? recentSlice(seed) : null);
+  const [total, setTotal] = useState(seed ? seed.length : 0);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Re-reads on every open rather than caching: the list is a handful of rows,
-  // and a "recent" list an hour of conversation out of date is worse than one
-  // that costs a request. A second open while one is in flight is ignored.
+  // Revalidates on every open: the list is a handful of rows, and a "recent"
+  // list an hour of conversation out of date is worse than one that costs a
+  // request. The cached rows stay on screen while it runs (never cleared to
+  // null), so revalidation refreshes in place rather than flashing "Loading". A
+  // second open while one is in flight is ignored.
   const load = useCallback(() => {
     if (loading) return;
     setLoading(true);
     setErr(null);
     chatApi.listThreads()
       .then((list) => {
+        recentChatsCache.set(list);
         setTotal(list.length);
-        setThreads(
-          [...list]
-            .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""))
-            .slice(0, RECENT_LIMIT),
-        );
+        setThreads(recentSlice(list));
       })
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
