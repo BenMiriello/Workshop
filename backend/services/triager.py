@@ -960,6 +960,16 @@ if __name__ == "__main__":
     grp.add_argument("--dry-run", action="store_true", help="preview only (the default)")
     args = ap.parse_args()
 
+    # Pin the data owner. The triager reads and (on --apply) writes the relational
+    # task store, which fails closed with OwnerUnset unless an owner is set. This
+    # is a background automation with no request behind it, so it runs AS THE
+    # OPERATOR -- the same pin llm_router.mcp_config_json uses for the background
+    # loop. Without this the triager cannot even list open tickets to dedup against.
+    from services import auth_store, ownership
+    _oid = auth_store.operator_id()
+    if _oid is not None:
+        ownership.set_current_owner(int(_oid))
+
     if args.queue:
         import sys as _sys
 

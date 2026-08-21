@@ -242,10 +242,28 @@ def test_turn_env_swaps_home_and_drops_xdg(monkeypatch, tmp_path):
     assert out["WORKSHOP_TURN_PATH"] == base["PATH"]  # secure_path workaround
 
 
-def test_turn_env_is_a_noop_when_the_uid_layer_is_off(monkeypatch):
+def test_turn_env_noop_when_unconfined_and_uid_off(monkeypatch):
+    # Neither layer active: env passes through untouched (same object).
     monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "0")  # confinement forced off
     env = {"HOME": "/home/clawd-a", "PATH": "/usr/bin"}
     assert scoped_exec.turn_env(env, "/tmp") is env
+
+
+def test_turn_env_remaps_scope_paths_when_confined(monkeypatch):
+    # Confined, uid layer off: env values pointing under the scope root are
+    # rewritten to the mountpoint, so paths.workshop_root() and everything derived
+    # from it resolve INSIDE the sandbox instead of at the absent host path. This
+    # is the fix for the confined triager reading zero notes.
+    monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")  # confinement forced on
+    env = {"WORKSHOP_ROOT": "/scope/root",
+           "WORKSHOP_NOTIFY_FILE": "/scope/root/.runtime/n.txt",
+           "OUTSIDE": "/home/clawd-a/.claude"}
+    out = scoped_exec.turn_env(env, "/scope/root")
+    assert out["WORKSHOP_ROOT"] == scoped_exec.MOUNTPOINT
+    assert out["WORKSHOP_NOTIFY_FILE"] == scoped_exec.MOUNTPOINT + "/.runtime/n.txt"
+    assert out["OUTSIDE"] == "/home/clawd-a/.claude"  # outside the root, unchanged
 
 
 def test_grants_under_the_uid_layer_never_bind_the_real_claude_dir(monkeypatch, tmp_path):

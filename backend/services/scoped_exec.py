@@ -445,18 +445,39 @@ def spawn_argv(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -
 
 
 def turn_env(env: dict, workdir: str | None = None) -> dict:
-    """The env for a spawn under the uid layer: point HOME and git identity at
-    the turn-user's own home instead of `clawd-a`'s (which is no longer bound
-    in -- see `_grants()`), and drop the XDG/D-Bus vars that named `clawd-a`'s
-    runtime dir. A no-op when the uid layer is off for this scope, so callers
-    can apply it unconditionally rather than branching.
+    """The env a confined turn should run with.
+
+    TWO responsibilities, layered:
+
+    1. CONFINEMENT PATH REMAP (whenever the bwrap layer is on for this scope,
+       uid layer or not). The backend's own environment sets WORKSHOP_ROOT and a
+       dozen sibling vars (WORKSHOP_RUNTIME, WORKSHOP_NOTIFY_FILE, WORKSHOP_CHAT_CWD,
+       ...) to the turn's REAL host scope path. Inside the sandbox that path is
+       absent -- only the mountpoint exists -- so any value pointing under the
+       scope root is rewritten to MOUNTPOINT, exactly as `wrap()` rewrites the
+       argv. Without this, `paths.workshop_root()` reads the host WORKSHOP_ROOT
+       and every path derived from it (the knowledge store, `.runtime`, the notify
+       file) resolves OUTSIDE the sandbox and reads nothing -- which is why a
+       confined triager saw zero notes. Only values under the scope root change;
+       a granted path (~/.claude, ~/.config/workshop) lives outside the root and
+       is left at its real location, matching its bind.
+
+    2. UID LAYER (only when `WORKSHOP_TURN_USER` runs this turn): point HOME and
+       git identity at the turn-user's own home instead of `clawd-a`'s (no longer
+       bound in -- see `_grants()`), and drop the XDG/D-Bus vars that named
+       `clawd-a`'s runtime dir.
+
+    A no-op for an un-confined, non-uid spawn, so callers apply it unconditionally.
     """
     root = os.path.realpath(workdir) if workdir else None
+    if root and enabled():
+        env = {k: (_remap(v, root) if isinstance(v, str) else v) for k, v in env.items()}
     user = turn_user(root)
     if user is None:
         return env
-    home = turn_home()
+    # turn_user raised unless enabled(), so the remap above already copied env.
     env = dict(env)
+    home = turn_home()
     env["HOME"] = home
     env.pop("XDG_RUNTIME_DIR", None)
     env.pop("DBUS_SESSION_BUS_ADDRESS", None)
