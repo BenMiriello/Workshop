@@ -131,7 +131,17 @@ def _imports_app_module(body: str, short: str) -> bool:
 # sense, excluded from `literals`. Each was verified against the tree.
 _AMBIGUOUS: dict[str, tuple[str, ...]] = {
     "health": (r"healthz", r"health[_-]?check", r"healthy", r"mcp[_-]health", r"auth[_-]health"),
-    "location": (r"window\.location", r"\.location\b", r"file location", r"location of"),
+    "location": (
+        r"window\.location", r"\.location\b", r"file location", r"location of",
+        # `packages/ui/src/native/*` (Stage 4b, 2026-08-20): the Workshop
+        # native-bridge capability named "location" (background GPS tracking,
+        # one of six on `WorkshopNative`, alongside audio/speech/localNotify/
+        # liveActivity/secureStore), not the location APP. `has("location")`
+        # and the `Capability` union member are the platform's own bridge
+        # vocabulary, mirrored locally from shared/native-bridge.ts's
+        # `CAP_METHODS` keys.
+        r'has\("location"\)', r'\["location"\]', r'"location"\s*\|\s*"audio"',
+    ),
     "budget": (r"token budget", r"budget\.remaining", r"wall[- ]clock budget", r"per-scope budget",
                r"injection budget", r"reconnect budget", r"budget ceiling"),
     "notes": (r"notes_all", r"notes and docs", r"knowledge", r"release notes"),
