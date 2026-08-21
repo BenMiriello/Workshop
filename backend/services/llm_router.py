@@ -1,20 +1,13 @@
-"""LLM router — cloud calls via `claude -p`, plus an explicit local (Ollama) path.
+"""LLM router — cloud calls via `claude -p`.
 
-The workshop autonomy tier-ladder (auto-classify a task and route the cheap ones
-to Ollama) has been retired: autonomous work runs through `claude -p` (see
-scripts/ralph.sh). What remains is the two explicit call paths:
-
-    Local (Ollama qwen2.5:32b)  used only when a caller ASKS for it — the
-                                redaction classifier and the /relay/local
-                                passthrough. Health/GPU gated so a saturated or
-                                down GPU raises OllamaUnavailable instead of
-                                blocking; the caller decides the fallback.
-    Cloud (Claude via claude -p)  Haiku / Sonnet / Opus / Fable by explicit model.
+Autonomous and interactive work runs through `claude -p` (see scripts/ralph.sh).
+The local Ollama call path (`call_local` and its health/GPU gating) was removed
+on 2026-08-20: it was a single machine's daemon that cannot be assumed in a
+cloud tenant or a desktop install, and it had no live caller. Local embeddings
+now run in-process through services/embeddings.py, which is a separate concern.
 
 Public API:
-    call_local(prompt, **kw) -> dict      # raises OllamaUnavailable if gated out
     call_cloud(prompt, model, **kw)       # subprocess to `claude -p --model <model>`
-    ollama_health() / ollama_available()  # health probes (redaction + status)
 
 Subscription auth: all cloud calls go through `claude -p` (subprocess to the
 local Claude Code CLI). That uses CLAUDE_CODE_OAUTH_TOKEN; never ANTHROPIC_API_KEY.
@@ -27,11 +20,8 @@ import os
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
-import httpx
 
 from services import agent_slots
 
@@ -39,8 +29,6 @@ from services import agent_slots
 log = logging.getLogger("workshop.llm_router")
 
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:32b")
 # Cloud chat shells out to the `claude` CLI. Per-deployment and portable: honor
 # an explicit CLAUDE_CLI, else resolve `claude` on PATH, else bare "claude".
 # Under systemd --user the PATH can be minimal (no ~/.local/bin), so a local
@@ -91,175 +79,9 @@ def tier(name: object, default: str = TIER_HAIKU) -> str:
     return name.strip() if n.startswith("claude-") else default
 
 
-# Health thresholds
-OLLAMA_HEALTH_TIMEOUT_S = 3
-OLLAMA_REQUEST_TIMEOUT_S = 60
-OLLAMA_REDACTION_TIMEOUT_S = 180
-GPU_BUSY_UTIL_PCT = 85
-
-# Auto-cooldown after consecutive failures: after N back-to-back Ollama errors,
-# stop trying for COOLDOWN_S to give the system a chance to recover.
-OLLAMA_FAILURE_COOLDOWN_THRESHOLD = 3
-OLLAMA_FAILURE_COOLDOWN_S = 120
-
-
-class OllamaUnavailable(RuntimeError):
-    """Ollama is down, GPU is busy, or the router has cooled it down."""
-
 
 class CloudCallFailed(RuntimeError):
     """`claude -p` returned non-zero or no parseable output."""
-
-
-@dataclass
-class RouterState:
-    consecutive_failures: int = 0
-    cooldown_until_epoch: float = 0.0
-    last_gpu_check_epoch: float = 0.0
-    last_gpu_util_pct: int = 0
-    last_gpu_free_mb: int = 0
-    last_health_ok: bool = True
-    last_health_check_epoch: float = 0.0
-
-
-_state = RouterState()
-
-
-# -------------------------------------------------------------------- Ollama health
-
-
-def _check_gpu_via_nvidia_smi() -> tuple[int, int]:
-    """Returns (utilization_pct, free_memory_mb). On any failure → (0, large) so the
-    router doesn't false-positive 'busy' if nvidia-smi isn't available."""
-    if not shutil.which("nvidia-smi"):
-        return (0, 99999)
-    try:
-        out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=utilization.gpu,memory.free", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if out.returncode != 0:
-            return (0, 99999)
-        line = out.stdout.strip().splitlines()[0]
-        util_s, free_s = [p.strip() for p in line.split(",")]
-        return (int(util_s), int(free_s))
-    except (subprocess.SubprocessError, ValueError, IndexError):
-        return (0, 99999)
-
-
-def ollama_health() -> dict:
-    """Cheap probe: HTTP /api/tags + GPU util sample. Caches result for 5s to
-    avoid storming nvidia-smi from every consecutive call."""
-    now = time.time()
-    if now - _state.last_health_check_epoch < 5:
-        return {
-            "ok": _state.last_health_ok,
-            "gpu_util_pct": _state.last_gpu_util_pct,
-            "gpu_free_mb": _state.last_gpu_free_mb,
-            "cooldown_active": now < _state.cooldown_until_epoch,
-            "cached": True,
-        }
-    _state.last_health_check_epoch = now
-
-    try:
-        with httpx.Client(timeout=OLLAMA_HEALTH_TIMEOUT_S) as cl:
-            r = cl.get(f"{OLLAMA_URL}/api/tags")
-            ollama_up = r.status_code == 200
-    except (httpx.HTTPError, httpx.TimeoutException):
-        ollama_up = False
-
-    util, free = _check_gpu_via_nvidia_smi()
-    _state.last_gpu_util_pct = util
-    _state.last_gpu_free_mb = free
-    _state.last_health_ok = ollama_up
-    return {
-        "ok": ollama_up,
-        "gpu_util_pct": util,
-        "gpu_free_mb": free,
-        "cooldown_active": now < _state.cooldown_until_epoch,
-        "cached": False,
-    }
-
-
-def ollama_available(for_purpose: str = "general") -> bool:
-    """Final decision: should this call route to Ollama right now? `for_purpose`
-    can be 'redaction' (more tolerant) or 'general'. Redaction is more
-    important to do locally, so we tolerate higher GPU util."""
-    h = ollama_health()
-    if not h["ok"]:
-        return False
-    if h["cooldown_active"]:
-        return False
-    gpu_threshold = GPU_BUSY_UTIL_PCT
-    if for_purpose == "redaction":
-        gpu_threshold = 95   # only reject Ollama for redaction if GPU is truly pinned
-    if h["gpu_util_pct"] > gpu_threshold:
-        return False
-    return True
-
-
-def _record_failure() -> None:
-    _state.consecutive_failures += 1
-    if _state.consecutive_failures >= OLLAMA_FAILURE_COOLDOWN_THRESHOLD:
-        _state.cooldown_until_epoch = time.time() + OLLAMA_FAILURE_COOLDOWN_S
-        log.warning(
-            "llm_router: ollama in cooldown for %ds after %d consecutive failures",
-            OLLAMA_FAILURE_COOLDOWN_S, _state.consecutive_failures,
-        )
-
-
-def _record_success() -> None:
-    _state.consecutive_failures = 0
-
-
-# -------------------------------------------------------------------- Ollama call
-
-
-def call_local(
-    prompt: str,
-    *,
-    model: str = OLLAMA_MODEL,
-    json_mode: bool = False,
-    timeout_s: float = OLLAMA_REQUEST_TIMEOUT_S,
-    purpose: str = "general",
-) -> dict:
-    """Call Ollama directly. Raises OllamaUnavailable if router gates it out.
-
-    Returns: {"text": str, "model": str, "elapsed_s": float, "tokens_out": int}
-    """
-    if not ollama_available(for_purpose=purpose):
-        h = ollama_health()
-        raise OllamaUnavailable(
-            f"ollama gated: up={h['ok']} cooldown={h['cooldown_active']} gpu_util={h['gpu_util_pct']}"
-        )
-
-    payload: dict[str, Any] = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"num_ctx": 8192, "temperature": 0.2},
-    }
-    if json_mode:
-        payload["format"] = "json"
-
-    start = time.time()
-    try:
-        with httpx.Client(timeout=timeout_s) as cl:
-            r = cl.post(f"{OLLAMA_URL}/api/generate", json=payload)
-            r.raise_for_status()
-            data = r.json()
-    except (httpx.HTTPError, httpx.TimeoutException, json.JSONDecodeError) as e:
-        _record_failure()
-        raise OllamaUnavailable(f"ollama call failed: {type(e).__name__}: {e}") from e
-
-    _record_success()
-    return {
-        "text": data.get("response", ""),
-        "model": model,
-        "elapsed_s": round(time.time() - start, 3),
-        "tokens_out": data.get("eval_count", 0),
-    }
-
 
 # -------------------------------------------------------------------- Cloud call
 
@@ -895,19 +717,7 @@ def call_cloud(
 
 def status() -> dict:
     """Diagnostic snapshot — used by /health/llm-router endpoint."""
-    h = ollama_health()
     return {
-        "ollama": {
-            "url": OLLAMA_URL,
-            "model": OLLAMA_MODEL,
-            "up": h["ok"],
-            "gpu_util_pct": h["gpu_util_pct"],
-            "gpu_free_mb": h["gpu_free_mb"],
-            "available_general": ollama_available("general"),
-            "available_redaction": ollama_available("redaction"),
-            "cooldown_active": h["cooldown_active"],
-            "consecutive_failures": _state.consecutive_failures,
-        },
         "cloud_tiers": {
             "haiku_model_id": TIER_HAIKU,
             "sonnet_model_id": TIER_SONNET,
