@@ -37,13 +37,25 @@ all of which must reach zero. Run it before and after everything.
 
 ---
 
-## 2. State as of 2026-08-20
+## 2. State as of 2026-08-21 (stage 4 backend landed)
 
 ```
-content   95  tracked files that ARE app source      (was 143)
-imports   24  platform files importing an app module (unchanged)
-literals 315  platform lines naming an app           (was 331)
+content  102  tracked files that ARE app source      (was 143, then 95)
+imports   20  platform files importing an app module (was 24)
+literals 314  platform lines naming an app           (was 331, then 315)
 ```
+
+**`content` went UP, on purpose, and the gate now makes you say so.** Stage 4's
+job is to lift an app's logic out of a platform module into an app-owned file.
+That is more app-source files in the repo (`content`) and fewer platform files
+that know an app exists (`imports`, `literals`). Both moved in the same change.
+All seven new files leave with their app at stage 7, which is where `content`
+goes to zero.
+
+`--write-baseline` now REFUSES to pin an increase without `--because "<why>"`,
+records the reason in the baseline, and prints it on every subsequent run until
+the count comes back down. A ratchet you re-pin whenever it fails is not a
+ratchet, and that is exactly how `check_pluggable_apps.sh` died.
 
 ### Done
 
@@ -73,36 +85,18 @@ literals 315  platform lines naming an app           (was 331)
   key missing whether or not it was set.
 - **`GET /events/subscriptions` and `pages/Events.tsx` deleted.**
 
+- **Stage 4, the backend seams. DONE 2026-08-21.** All six, plus the catalog and
+  both cross-app edges. Detail in §2b below.
+
 ### Not done, in dependency order
 
-**Stage 4 — the six AppSpec seams. This is the blocker and it is the next job.**
-
-Extraction is not "move files". The platform imports FROM apps in six places,
-each needing a different extension point that does not exist:
-
-| Platform site | Needs |
-|---|---|
-| `routes/events.py` `VERIFIERS = {"plaid": ...}` | `AppSpec.event_verifiers` |
-| `services/stores.py` (`NoteAdapter`, `FinanceAdapter`) | `AppSpec.store_adapters` |
-| `services/semantic_index.py` imports `notes_vault` | `AppSpec.index_collectors` |
-| `services/event_dispatch.py` `if source == "plaid"` | app-supplied idempotency derivation |
-| `routes/birds.py` imports `_load_subscriptions`, appends `EVENTS_LOG` | a public event-publish API |
-| `services/app_personas.py` (560 lines, four apps' logic) | an out-of-tree persona loader |
-
-And `_CATALOG_FACTORIES` is a literal tuple: no entry-point scan, no plugin
-path. **Nothing outside `backend/routes/` and `backend/services/` can become an
-app today.** Tolerant (a missing module degrades) is not the same as extensible.
-
-Also in this stage: promote the 11 platform-internal frontend modules app pages
-reach for (`lib/usePoll` 18 uses, `lib/time`, `components/appNav`,
-`components/AppSettings`, `lib/storage`, `components/AppChatDock`) into
-`@workshop/ui`. `notes-app` already imports nothing outside the kit, which is
-the proof this is achievable.
-
-And fix the two cross-app edges that block independent extraction: **budget
-imports finance** (`routes/budget.py`, `services/categorizer.py`) and **commute
-imports location** (`services/commute/scoring.py`), both at load time, both
-ignoring the capability their own AppSpec declares.
+**Stage 4b — the frontend half, and it is now the next job.** Promote the 11
+platform-internal modules app pages reach for (`lib/usePoll` 18 uses, `lib/time`,
+`components/appNav`, `components/AppSettings`, `lib/storage`,
+`components/AppChatDock`) into `@workshop/ui`. `notes-app` already imports
+nothing outside the kit, which is the proof this is achievable. Until this is
+done, gitignoring `frontend/src/pages/apps/` breaks a fresh clone's build, which
+is what holds `content` at 102.
 
 **Stage 5 — the loader.** Import maps + dynamic `import()` of a built ESM
 bundle. Decided; do not relitigate. Doc 2 §2 has the mechanism, the two fatal
@@ -122,6 +116,101 @@ weeks to 2026-08-10, all from forwarding kwargs to `git`).
 **Stage 8 — the per-app page column**, including per-app Settings. This is the
 operator's outstanding UI complaint and it depends on 4 and the `app_id`
 columns from doc 1's stage A.
+
+---
+
+## 2b. Stage 4, as built (2026-08-21)
+
+Six seams, the catalog, and both cross-app edges. Every one is exercised by
+`backend/tests/test_appspec_seams.py`, which plugs in a fabricated app
+(`seamtest`) with a fabricated source, store type and corpus. That is the point:
+each of these sites was already TOLERANT (a missing app degraded rather than
+crashing), and tolerant is not extensible. The test of extensible is whether
+something the platform has never heard of can plug in, so no test in that file
+names a real app.
+
+**New `AppSpec` fields**, each with an `installed_*` accessor resolved per call
+so installing an app takes effect without a restart:
+
+- `event_verifiers` — `{source: (headers, body) -> (ok, reason)}`. Replaces
+  `routes/events.py`'s `VERIFIERS = {"plaid": ...}`. The platform keeps only
+  `github` (a platform source), and an app CANNOT override a platform source:
+  `verifier_for()` checks `PLATFORM_VERIFIERS` first, so an app cannot claim
+  `github` and vouch for it. Pinned by a test.
+- `event_dedup` — `{source: (summary) -> str | None}`. Replaces the
+  `if source == "plaid":` branch in `services/event_dispatch.py`. An app's
+  `None` is an ANSWER, not a fallthrough: falling back to the platform's content
+  hash would overrule an owner that has said this payload carries no stable
+  identity, and dedup two genuinely distinct events that serialize alike.
+- `store_adapters` — replaces `stores._ADAPTERS`. `StoreAdapter` gained
+  `claims(store)` (type alone by default) and `write(...)` (refusal by default).
+- `index_collectors` / `index_collectors_default` — replaces
+  `semantic_index._COLLECTORS["vault"]`, which imported the notes app's module.
+
+**Modules moved out of platform directories, and what they were:**
+
+- `services/app_personas.py` (559 lines, four apps' logic) is GONE. The base
+  class is `services/app_persona.py` (platform); the rest is
+  `services/{budget,finance,commute,location}_persona.py`. Plaid's PFC
+  bucketization, a commute schedule reader and a budget plan-patch applier no
+  longer sit in a platform directory.
+- `NoteAdapter` served TWO substrates and picked between them with
+  `if store.owner_app == "knowledge"` — the platform's generic data door
+  branching on which app it was talking to. Split: `KnowledgeNoteAdapter` stays
+  in `stores.py` (the knowledge scope IS the platform's own note store),
+  `VaultNoteAdapter` moved to `services/notes_store_adapter.py`.
+- `FinanceAdapter` moved to `services/finance_store_adapter.py`.
+- The plaid verifier and dedup deriver moved to `services/finance_events.py`.
+
+**`services/event_log.py` is new, and it is the seam `routes/birds.py` needed.**
+There was no event-publish API at all: the append-to-events.jsonl sequence was
+hand-copied in three places and the three had already drifted. Plaid's copy
+wrote **no `signature` field**, so a fully ES256-verified webhook was
+indistinguishable in the feed from an unverified one, despite that route having
+just verified it. Birds' copy imported `EVENTS_LOG` and the PRIVATE
+`_load_subscriptions` from `routes/events.py`, so one app's route module
+depended on another route module's internals. `publish()` / `publish_and_dispatch()`
+own the record shape, the credential-header strip, and the
+capture-the-offset-BEFORE-the-write rule (that offset is the event's address;
+a pending run seeks to it). `_load_subscriptions` had FOUR copies and now has one.
+
+**The catalog can be extended.** `_CATALOG_FACTORIES` was a literal tuple
+consumed once at import, with the factory required to be defined in
+`app_registry.py` and the route module required to sit in `backend/routes/`.
+There is now a second path, the standard Python one:
+
+```
+[project.entry-points."workshop.apps"]
+my-app = "my_app.spec:app_spec"
+```
+
+`app_spec()` returns an `AppSpec` exactly as a built-in factory does. No new
+format, no manifest parser, `pip install` is the install step. A discovered app
+SHADOWS a built-in of the same id, deliberately: that is what extraction looks
+like from the platform's side. A broken entry point is skipped, and one that
+returns a non-`AppSpec` fails at build rather than entering the catalog and
+failing at every accessor that reads a field.
+
+**Both cross-app load-time edges are call-time now.** `routes/budget.py` and
+`services/categorizer.py` imported finance at module level, so budget could not
+LOAD without finance even though the catalog admits budget on the `budget` route
+module alone. `services/commute/scoring.py` was the one load-time
+commute -> location import in a package whose other three are already call-time
+and say why. Each now degrades with the dependency named (a 503 that says budget
+needs finance; a commute brief without the location block) instead of an
+ImportError.
+
+Watch out: `scoring.py` needed a module `__getattr__` to keep serving
+`scoring.location_svc`, because nine existing tests reach it as
+`patch.object(scoring.location_svc, "latest", ...)`. Removing a module-level
+import removes the attribute, and those tests fail with `AttributeError`.
+
+**Verification.** Full backend suite run against a detached worktree of
+unmodified HEAD with the same command: **zero regressions**, and 15 previously
+failing tests now pass. Seven of those 15 were `test_app_personas_declared.py`,
+which had been RED ON MAIN since commit 18d984c widened `WORKSHOP_TOOLKIT`: the
+test asserted `p.allowed_tools == d["tools"]` while the base class had begun
+adding the toolkit on top. Repaired to assert the superset plus the toolkit.
 
 ---
 
