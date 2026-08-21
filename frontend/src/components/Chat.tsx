@@ -26,6 +26,7 @@ import {
   deriveMode, agentSlug, taskScopeFor, composerPlaceholder,
   isEgressFailure, type AgentBinding, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
+import { linkedAppSlugs } from "../lib/apps";
 import { useLogScroll } from "./chat/useLogScroll";
 import { spliceDictation, dictationLost, typedPortion } from "./chat/voiceDictation";
 import { useTurnStream } from "./chat/useTurnStream";
@@ -678,7 +679,16 @@ export default function Chat({
   const [confirmClear, setConfirmClear] = useState(false);
   const [mentionSel, setMentionSel] = useState(0);
   const slug = boundSlug;
-  const taskScope = taskScopeFor(contextKey);
+  // Loaded once per session (lib/apps.ts caches the fetch) and null until it
+  // resolves, so the Tickets affordance stays hidden for an app scope rather
+  // than showing and then 400ing while this is still in flight.
+  const [linkedApps, setLinkedApps] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    let live = true;
+    linkedAppSlugs().then((s) => { if (live) setLinkedApps(s); });
+    return () => { live = false; };
+  }, []);
+  const taskScope = taskScopeFor(contextKey, linkedApps);
 
   // ONE PANEL, TWO MOUNT POINTS, one set of props. The toolbar hosts it as a
   // popover anchored to the Tickets button on a wide screen; the log wrap hosts

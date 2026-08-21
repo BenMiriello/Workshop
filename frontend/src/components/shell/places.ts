@@ -14,20 +14,33 @@
 // list for the dock to hold. See
 // docs/platform-redesign/app-is-the-entity-2026-08-20.md.
 //
-// The MIGRATION behind that decision is not built. Until it is, apps and
-// projects are still two unlinked registries and every collection worth a page
-// (tickets, runs, deploys, agents, repo) hangs off the PROJECT half while the
-// dock lists the APP half. That is the whole reason an app gets one row below
-// and Home gets nine. It is a data-model gap, not a nav decision, and it closes
-// in stage C of that doc's §9 — this file is where it lands.
+// STAGE C IS BUILT (2026-08-20): every app place gets the same eight-row page
+// list -- App, Chats, Agents, Memory, Files, Tickets, Runs, Deploys -- backed
+// by GET /api/apps/{id} and its nested collections (routes/apps.py). This
+// used to be one row per app because the collections hung off a separate
+// PROJECT registry the dock never read; now every collection is a real
+// /api/apps/{id}/... route and an app's page list is the same eight rows
+// whether or not that app happens to have a linked project tree.
 //
-// EVERY PAGE HERE RESOLVES TO A ROUTE THAT EXISTS. There is no Files page, no
-// per-app Chats/Memory/Deploys and no Activity entry, because none of those has
-// anything behind it today (design doc section 8). A row that navigates
+// AN APP WITH NO LINKED PROJECT TREE (finance, health, wearables at design
+// time) still gets all eight rows, and five of them (Files, Tickets, Runs,
+// Deploys, Agents) are honestly empty on that app, with the page itself
+// saying why ("this app has no linked project tree..."). That is not a nav
+// row with nothing behind it: the route is real, the fetch is real, and the
+// answer is a real, explained empty list -- never a 404, never another app's
+// data. Chats and Memory are real and non-empty-by-default for every app,
+// linked or not (services/apps.py chats_for_app / notes_for_app need no
+// project link at all).
+//
+// EVERY PAGE HERE RESOLVES TO A ROUTE THAT EXISTS. A row that navigates
 // nowhere is worse than a missing row: it teaches the operator the nav lies.
 
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
+// The seven per-app tab rows, in the operator's own order. One list, read by
+// both this file (the page column) and App.tsx (the route table), so the two
+// can never drift apart on what a tab is called or where it lives.
+import { APP_TABS } from "../../pages/apps/tabs/appTabState";
 
 export type PlaceKind = "home" | "chats" | "app" | "settings";
 
@@ -218,13 +231,20 @@ export function buildPlaces(
     prefixes: [app.home],
     icon: app.icon,
     defaultColumnOpen: false,
-    // ONE ROW, and that is honest. Not a nav choice: an app has no ticket queue
-    // (`chat_work._QUEUELESS_PREFIXES = ("app:",)`), no runs and no deploys
-    // (both keyed by `project_slug`), and no scope-filtered chat listing exists
-    // at all. Those rows become real in stage C of
-    // app-is-the-entity-2026-08-20.md §9, once the collections hang off an app.
-    // Adding them before then would be a nav that lies.
-    pages: [{ id: "app", label: app.name, to: app.home, Icon: icons.apps }],
+    // EIGHT ROWS, the same set for every app: the app's own screen plus the
+    // seven tabs in `APP_TABS`, each a real route backed by a real
+    // /api/apps/{id}/... collection (routes/apps.py). No per-app branch here
+    // -- see the module comment above for which rows are honestly empty on an
+    // unlinked app and why that is not the same thing as a fake row.
+    pages: [
+      { id: "app", label: app.name, to: app.home, Icon: icons.apps },
+      ...APP_TABS.map((t) => ({
+        id: t.id,
+        label: t.label,
+        to: `${app.home}${t.suffix}`,
+        Icon: icons[t.id] ?? icons.apps,
+      })),
+    ],
   }));
 
   return [home, chats, ...appPlaces, settings];

@@ -59,16 +59,21 @@ describe("the shell mounts", () => {
     expect(html).not.toContain("ws-tabbar__slot is-open");
   });
 
-  it("draws no phone tab bar for a place with only one page", () => {
-    // A bar holding one always-active tab is a second copy of the title, one
-    // row under the title, on the smallest screen there is.
-    const app = renderAt("/apps/finance");
-    expect(app).not.toContain("ws-tabbar");
-    expect(app).not.toContain("ws-bar1__caret");
-    // Home has nine pages, so it keeps both.
+  it("draws a phone tab bar for a place with pages to switch between", () => {
+    // Home has nine pages. An app has eight now (stage C of
+    // app-is-the-entity-2026-08-20.md gave every app the same Chats/Agents/
+    // Memory/Files/Tickets/Runs/Deploys set alongside its own screen), so
+    // there is no longer a real one-page app place to exercise the
+    // suppression rule against at the render level -- `hasPageList =
+    // place.pages.length > 1` in useShell.ts is the whole rule, and
+    // `places.test.ts` covers the data it reads (a place's page count) at
+    // the pure level. This test keeps the positive case wired.
     const home = renderAt("/");
     expect(home).toContain("ws-tabbar");
     expect(home).toContain("ws-bar1__caret");
+    const app = renderAt("/apps/finance");
+    expect(app).toContain("ws-tabbar");
+    expect(app).toContain("ws-bar1__caret");
   });
 
   it("shows a trail only where the path goes deeper than the page column", () => {

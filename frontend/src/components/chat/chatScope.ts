@@ -145,8 +145,8 @@ export function scopeGroups(devMode: boolean = DEV_MODE): { kind: ScopeKind; lab
 export const SCOPE_GROUPS = scopeGroups();
 
 // The task-store scope a chat maps to, or null when the chat has no task queue
-// (general chat, app docks). Project and agent chats both get the shared
-// TaskPanel.
+// (general chat, an app dock with no linked project). Project and agent chats
+// both get the shared TaskPanel.
 //
 // It used to answer with the contextKey itself, off its own four-branch prefix
 // test. That was the client's copy of a mapping the backend had five copies of,
@@ -159,9 +159,15 @@ export const SCOPE_GROUPS = scopeGroups();
 // like any other work scope (the platform repo's own tickets). It was once
 // omitted, so the ONE scope with the most work was the only work scope whose
 // chat could not see its own tickets.
-export function taskScopeFor(contextKey: string): string | null {
+//
+// `linkedApps` mirrors the backend's `chat_work.task_scope_for`, which used to
+// blanket-exclude every `app:` scope (`_QUEUELESS_PREFIXES = ("app:",)`) and
+// no longer does: an app that owns a linked project tree owns a ticket queue.
+// See `scopeHasQueue` in lib/scope.ts for what an absent/not-yet-loaded set
+// means here.
+export function taskScopeFor(contextKey: string, linkedApps?: ReadonlySet<string> | null): string | null {
   const scope = scopeForContext(contextKey);
-  return scopeHasQueue(scope) ? scope : null;
+  return scopeHasQueue(scope, linkedApps) ? scope : null;
 }
 
 // "12s" under a minute, "1m 05s" beyond — for the live working indicator.

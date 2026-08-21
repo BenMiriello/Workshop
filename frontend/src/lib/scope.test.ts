@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scopeLabel, scopeHref, orderScopes, scopeForContext } from "./scope";
+import { scopeLabel, scopeHref, orderScopes, scopeForContext, scopeHasQueue } from "./scope";
 import { taskScopeFor } from "../components/chat/chatScope";
 
 // `role:<r>` is the SECOND AXIS of the knowledge store (backend scope_tree:
@@ -109,5 +109,35 @@ describe("which scopes a chat gets a task queue for", () => {
     for (const key of ["development", "project:birds", "agent:scribe"]) {
       expect(taskScopeFor(key)).toBe(scopeForContext(key));
     }
+  });
+
+  // app-is-the-entity-2026-08-20.md sec 2.2: the backend removed the blanket
+  // `_QUEUELESS_PREFIXES = ("app:",)` exclusion because a linked app owns a
+  // ticket queue now. `scopeHasQueue`/`taskScopeFor` mirror that with a
+  // caller-supplied set of linked app slugs, since neither is allowed to
+  // fetch it itself. Fixture app ids here are deliberately made up (not the
+  // ones the tests above use) -- this file's own literals are watched by
+  // scripts/check_no_app_names.py, and the rule under test does not care
+  // which app it is.
+  it("opens a queue for an app scope once its link is known", () => {
+    const linked = new Set(["sample-app"]);
+    expect(scopeHasQueue("app:sample-app", linked)).toBe(true);
+    expect(taskScopeFor("app:sample-app", linked)).toBe("app:sample-app");
+    expect(taskScopeFor("sample-app", linked)).toBe("app:sample-app");
+  });
+
+  it("still gives no queue to an app that is not linked", () => {
+    const linked = new Set(["sample-app"]);
+    expect(scopeHasQueue("app:other-app", linked)).toBe(false);
+    expect(taskScopeFor("app:other-app", linked)).toBeNull();
+  });
+
+  it("defaults to no queue while the link set has not loaded yet", () => {
+    expect(scopeHasQueue("app:sample-app", null)).toBe(false);
+    expect(scopeHasQueue("app:sample-app", undefined)).toBe(false);
+  });
+
+  it("the workshop root never gets a queue, linked or not", () => {
+    expect(scopeHasQueue("workshop", new Set(["workshop"]))).toBe(false);
   });
 });

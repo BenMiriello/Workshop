@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Bot } from "lucide-react";
 import { buildPlaces, landingFor, pageFor, placeFor, type ShellPlace } from "./places";
+import { APP_TABS } from "../../pages/apps/tabs/appTabState";
 
 // One glyph stands in for all of them: this module decides ROUTES, and which
 // icon a row draws is the render's business.
@@ -98,15 +99,23 @@ describe("buildPlaces", () => {
     expect(home.icon).toBeUndefined();
   });
 
-  it("lists no page that has nothing behind it", () => {
-    // The mockup gave every place Files, and every app a Chats/Memory/Work/
-    // Deploys set. None of that exists (design doc section 8), and a row that
-    // navigates nowhere is the one thing this shell must never ship.
+  it("gives every app the same eight rows, each a real /api/apps/{id} route", () => {
+    // Stage C of app-is-the-entity-2026-08-20.md: an app's own screen plus
+    // Chats, Agents, Memory, Files, Tickets, Runs, Deploys, all backed by
+    // routes/apps.py -- real for every app, whether or not it happens to be
+    // linked to a project tree (five of the seven are honestly empty on an
+    // unlinked app, never a fake row with nothing behind it).
+    const home = birds.pages[0].to;
+    expect(birds.pages.map((p) => p.id)).toEqual(["app", ...APP_TABS.map((t) => t.id)]);
+    expect(birds.pages.map((p) => p.to)).toEqual([
+      home,
+      ...APP_TABS.map((t) => `${home}${t.suffix}`),
+    ]);
+  });
+
+  it("still lists no Activity entry (design doc section 8.3, not built yet)", () => {
     const everyPath = places.flatMap((p) => p.pages.map((pg) => pg.to));
-    expect(everyPath).not.toContain("/files");
-    expect(everyPath.filter((p) => p.endsWith("/files"))).toEqual([]);
     expect(everyPath).not.toContain("/activity");
-    expect(birds.pages).toHaveLength(1);
   });
 
   it("does not offer two rows to one destination", () => {

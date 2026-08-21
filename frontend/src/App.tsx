@@ -42,6 +42,17 @@ const RunDetail = lazyPage(() => import("./pages/RunDetail"));
 const Usage = lazyPage(() => import("./pages/Usage"));
 const Settings = lazyPage(() => import("./pages/Settings"));
 
+// The seven per-app tabs (app-is-the-entity-2026-08-20.md sec 9 stage C).
+// Generic over `:appSlug` -- these name no app, unlike the routes appRoutes()
+// contributes below, so they live here rather than in apps/registry.tsx.
+const AppChats = lazyPage(() => import("./pages/apps/tabs/AppChats"));
+const AppAgentsTab = lazyPage(() => import("./pages/apps/tabs/AppAgentsTab"));
+const AppMemoryTab = lazyPage(() => import("./pages/apps/tabs/AppMemoryTab"));
+const AppFilesTab = lazyPage(() => import("./pages/apps/tabs/AppFilesTab"));
+const AppTicketsTab = lazyPage(() => import("./pages/apps/tabs/AppTicketsTab"));
+const AppRunsTab = lazyPage(() => import("./pages/apps/tabs/AppRunsTab"));
+const AppDeploysTab = lazyPage(() => import("./pages/apps/tabs/AppDeploysTab"));
+
 // Workshop IS the homepage. Apps live INSIDE Workshop — the Apps tab lists
 // them. No peer-app nav strip; the Apps tab is the discovery surface. Which
 // apps exist is src/apps/registry.tsx's business, not this file's.
@@ -124,6 +135,16 @@ export default function App() {
           {/* Every app's routes come from src/apps/registry.tsx — the shell
               does not know which apps exist. */}
           {appRoutes()}
+          {/* The seven per-app tabs, generic over :appSlug: the shell does not
+              need to know which apps exist to route to them, only that every
+              app gets the same eight rows (places.ts). */}
+          <Route path="/apps/:appSlug/chats" element={<AppChats />} />
+          <Route path="/apps/:appSlug/agents" element={<AppAgentsTab />} />
+          <Route path="/apps/:appSlug/memory" element={<AppMemoryTab />} />
+          <Route path="/apps/:appSlug/files" element={<AppFilesTab />} />
+          <Route path="/apps/:appSlug/tickets" element={<AppTicketsTab />} />
+          <Route path="/apps/:appSlug/runs" element={<AppRunsTab />} />
+          <Route path="/apps/:appSlug/deploys" element={<AppDeploysTab />} />
           <Route path="/chat/:contextKey" element={<FocusedChat />} />
           {/* Voice is a toggle inside the chat, not a separate screen. Old
               /voice deep-links redirect to the one focused chat (no second mount). */}

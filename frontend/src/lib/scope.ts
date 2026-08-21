@@ -42,12 +42,24 @@ export function scopeForContext(contextKey: string | null | undefined): string {
 }
 
 // The scopes a chat gets no task queue for. The workshop root HAS one
-// (`shared/queue`), but a chat is not put in front of it just for being unbound:
-// showing a general chat the root backlog would make every chat in the system
-// look like it owned the same work. An app dock has no queue at all.
-// `chat_work._QUEUELESS_SCOPES` is the same rule on the server.
-export function scopeHasQueue(scope: string): boolean {
-  return scope !== WORKSHOP_SCOPE && !scope.startsWith("app:");
+// (`shared/queue`), but a chat is not put in front of it just for being
+// unbound: showing a general chat the root backlog would make every chat in
+// the system look like it owned the same work. `chat_work._QUEUELESS_SCOPES`
+// is the same rule on the server.
+//
+// An app scope is no longer a blanket exclusion (app-is-the-entity-2026-08-20.md
+// sec 2.2): an app that owns a linked project tree owns a ticket queue now,
+// same as `chat_work.task_scope_for` on the server. `linkedApps` is the set
+// of app slugs currently linked (`lib/apps.ts`'s `linkedAppSlugs()`), which a
+// caller loads once and passes in -- this stays a pure function and cannot
+// fetch it itself. Absent/null means "not loaded yet", and the safe answer
+// while unknown is the same one an unlinked app gets: no queue, so a chat
+// never shows a Tickets affordance that 400s on `_require_root` the instant
+// it is opened.
+export function scopeHasQueue(scope: string, linkedApps?: ReadonlySet<string> | null): boolean {
+  if (scope === WORKSHOP_SCOPE) return false;
+  if (scope.startsWith("app:")) return !!linkedApps && linkedApps.has(scope.slice("app:".length));
+  return true;
 }
 
 // Scope keys that exist only in a developer build. Empty otherwise -- the
