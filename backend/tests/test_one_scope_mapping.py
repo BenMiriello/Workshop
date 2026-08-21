@@ -21,6 +21,8 @@ moment a sixth copy appears.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from db import chat_repo
@@ -79,14 +81,34 @@ def catalog(tmp_path, monkeypatch):
     `bare-app` is the only installed app; `has-a-project` is the only project on
     disk. Both are read through the real seams (`app_registry.installed_app_ids`
     and `paths.projects_root`), so the mapping is exercised, not bypassed.
+
+    `services.app_links` (what `chat_work.task_scope_for` asks for an
+    `app:<slug>` key, app-is-the-entity-2026-08-20.md sec 5.1) reads the raw
+    per-instance registry directly rather than through the catalog stub
+    above, so it is isolated a second time here -- otherwise it falls through
+    to this host's real `.runtime/installed-apps.json` and
+    `.runtime/projects.json`, and the table stops being deterministic.
+    Neither `bare-app` nor `budget` names `has-a-project`, so both stay
+    unlinked and queueless, same as before this fixture existed.
     """
-    from services import app_registry
+    from services import app_registry, installed_apps
 
     projects = tmp_path / "projects"
     (projects / "has-a-project").mkdir(parents=True)
     monkeypatch.setattr(paths, "projects_root", lambda: projects)
     monkeypatch.setattr(app_registry, "installed_app_ids",
                         lambda: ["bare-app", "budget"])
+    # Only `bare-app` needs to be here: `app_links.linked_project_slug`
+    # answers None for anything not ALSO a key of the projects registry
+    # below (neither `bare-app` nor the app-form-tested `budget` name
+    # `has-a-project`), so the KEY_FORMS row for `budget` is unaffected by
+    # whether it appears in this particular list.
+    monkeypatch.setattr(installed_apps, "installed_app_ids",
+                        lambda: ["bare-app"])
+    registry = tmp_path / "projects.json"
+    registry.write_text(json.dumps({
+        "projects": {"has-a-project": {"dir": str(projects / "has-a-project")}}}))
+    monkeypatch.setattr(paths, "projects_registry", lambda: registry)
     return tmp_path
 
 

@@ -20,6 +20,7 @@ from routes import agents, projects, base_apps, relay, services, events, jobs, p
 from routes import mcp as mcp_routes
 from routes import stores as stores_routes
 from routes import deploys as deploys_routes
+from routes import apps as apps_routes
 from services import app_registry
 import asyncio
 import datetime as _dt
@@ -302,6 +303,7 @@ app.include_router(jobs.router, dependencies=_OPERATOR)  # top-level Job feed (/
 app.include_router(tasks_all.router, dependencies=_OPERATOR)  # cross-scope task feed (/tasks)
 app.include_router(trackers.router, dependencies=_OPERATOR)  # external tracker connection + triage (/trackers)
 app.include_router(notes_all.router, dependencies=_OPERATOR)  # cross-scope notes feed (/notes)
+app.include_router(apps_routes.router, dependencies=_OPERATOR)  # the app entity + its collections (/apps)
 app.include_router(inbox.router, dependencies=_OPERATOR)      # agent inbox (/inbox)
 app.include_router(docs_index.router, dependencies=_OPERATOR)  # docs index, read + write (/docs)
 app.include_router(refs_routes.router, dependencies=_OPERATOR)  # ref resolve + backlinks (/refs)

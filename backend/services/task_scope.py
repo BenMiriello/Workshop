@@ -111,6 +111,20 @@ def _raw_root_for_context(context_key: str | None) -> Path | None:
         if rec and rec.get("role") == "maker":
             return _maker_root(rec)
         return _agent_scope_dir(slug)  # no tree of its own: its own scope
+    if context_key.startswith("app:"):
+        # STAGE A/B (app-is-the-entity-2026-08-20.md sec 4.2, 5.1). An app
+        # owns a ticket queue exactly when it owns a working tree: resolved
+        # through `services.app_links.linked_project_slug`, the one place
+        # that computes the app<->project merge, off the registries, never a
+        # hardcoded roster. An installed-only app with no project (finance,
+        # health, wearables at design time) returns None here, same as
+        # before this case existed -- it genuinely has no task store, and
+        # `chat_work._QUEUELESS_PREFIXES` no longer blankets every `app:`
+        # scope for exactly this reason: the exclusion belongs on "no linked
+        # project", not on "is an app".
+        from services import app_links, build_agents
+        project_slug = app_links.linked_project_slug(context_key.split(":", 1)[1])
+        return build_agents._project_dir(project_slug) if project_slug else None
     return None
 
 

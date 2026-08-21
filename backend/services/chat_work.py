@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from services import chat_store, inbox, jobs, knowledge, scope_tree, tasks
+from services import chat_store, inbox, jobs, knowledge, scope_tree, task_scope, tasks
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +43,24 @@ ACTIVE_STATE_TYPES = ("unstarted", "started")
 # showing a general chat the root backlog would make every chat in the system
 # look like it owned the same work. An app dock has no queue at all.
 _QUEUELESS_SCOPES = ("workshop",)
-_QUEUELESS_PREFIXES = ("app:",)
+
+# `("app:",)` used to blanket EVERY app scope here, unconditionally -- the
+# state app-is-the-entity-2026-08-20.md's sec 2.2 measured
+# (`chat_work._QUEUELESS_PREFIXES = ("app:",)`) and asked to be reconsidered.
+# It is gone as a prefix rule, on purpose: an app can own tickets now
+# (stage A/B), exactly when it owns a working tree. Whether THIS app does is
+# decided per-call, below, by asking `task_scope.root_for_context` the same
+# question every other scope answers already -- not by a second copy of the
+# app<->project link rule. An installed-only app with no project (finance,
+# health, wearables at design time) still gets no queue, because it still has
+# no task-store root; that is the one case the old prefix rule was right
+# about, and it now falls out of the resolution instead of being asserted.
+#
+# NOTE for the frontend: `taskScopeFor` in
+# `frontend/src/components/chat/chatScope.ts` still blankets `app:` and has
+# not been updated here (frontend is out of scope for this change) -- it
+# needs the same fix or an app chat's Tickets badge will keep hiding itself
+# for a linked app.
 
 
 def task_scope_for(context_key: str | None) -> str | None:
@@ -59,7 +76,9 @@ def task_scope_for(context_key: str | None) -> str | None:
     Mirrors `taskScopeFor` in `frontend/src/components/chat/chatScope.ts`.
     """
     scope = scope_tree.scope_for_context(context_key)
-    if scope in _QUEUELESS_SCOPES or scope.startswith(_QUEUELESS_PREFIXES):
+    if scope in _QUEUELESS_SCOPES:
+        return None
+    if scope.startswith("app:") and task_scope.root_for_context(scope) is None:
         return None
     return scope
 

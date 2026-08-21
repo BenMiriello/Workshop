@@ -286,6 +286,66 @@ class Membership(Base, Timestamps):
     )
 
 
+# --- apps ----------------------------------------------------------------
+
+class App(Base, Timestamps, SoftDelete):
+    """The one container the user names
+    (docs/platform-redesign/app-is-the-entity-2026-08-20.md sec 3.1, 4.1).
+    Every app can be used and every app can be worked on; "project" is retired
+    as a second entity and folds into this one as its build view.
+
+    STAGE A OF THE DESIGN, NOT THE WHOLE OF IT. This table and the nullable
+    `app_id` on `chat_thread`/`ticket` below are additive: `scope`/
+    `context_key`, a knowledge `scope_key`, and every `.runtime/*.json` file
+    registry keep meaning exactly what they mean today. `project_slug` here is
+    a BRIDGE column, not a foreign key to `project` (the Postgres `project`
+    table exists only for the two RELATIONAL_SCOPES roots, `development` and
+    `workshop` -- see services.task_scope -- and names no app). The real
+    project registry is still `.runtime/projects.json`, a file, so the link is
+    a slug column resolved by `services/app_links.py`, the one place that
+    computes it, always from the registries and never from a hardcoded roster
+    (the same rule scripts/check_no_app_names.py enforces on platform code).
+
+    `kind` distinguishes an app record from an agent-as-container record
+    (design doc sec 3.3, explicitly deferred there). Every row the stage-A
+    backfill writes is `'app'`; `'agent'` is reserved for that later stage.
+    """
+    __tablename__ = "app"
+
+    id: Mapped[uuid.UUID] = _pk()
+    org_id: Mapped[uuid.UUID] = _org_fk()
+    # MUTABLE label ("a slug is a label, never an identity", design doc sec
+    # 4.1). Renaming an app is a PATCH of this column, never a migration --
+    # which is the whole reason `id` is the surrogate every caller keys on.
+    slug: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # A design-system icon token (frontend lib/appIcon.tsx) or an uploaded
+    # asset ref -- never a platform import (design doc sec 8.3). This column
+    # is what makes that true at the data layer rather than by convention.
+    icon: Mapped[str | None] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default="app")
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+    # See the class docstring. Populated by the stage-A backfill wherever a
+    # slug names both an installed app and a row in the project registry --
+    # "the same thing, two records" the design doc calls out by name (sec
+    # 2.1: budget, birds, location, commute, notes-app). NULL means this app
+    # has no working tree of its own (an installed-only app with no repo).
+    project_slug: Mapped[str | None] = mapped_column(String(64))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(_one_of("kind", ("app", "agent")), name="ck_app_kind"),
+        CheckConstraint("parent_id IS NULL OR parent_id <> id",
+                        name="ck_app_not_own_parent"),
+        _org_target("app"),
+        _org_ref("app", "parent_id", "app", ondelete="SET NULL (parent_id)"),
+        Index("uq_app_slug", "org_id", "slug", unique=True, postgresql_where=_ALIVE),
+        Index("ix_app_project_slug", "org_id", "project_slug",
+              postgresql_where=text(
+                  "project_slug IS NOT NULL AND deleted_at IS NULL")),
+    )
+
+
 # --- work --------------------------------------------------------------------
 
 class Project(Base, Timestamps, SoftDelete):
@@ -430,6 +490,17 @@ class Ticket(Base, Timestamps, SoftDelete):
     # failure the backfill review already caught once.
     blocked_reason: Mapped[str | None] = mapped_column(Text)
 
+    # STAGE A (app-is-the-entity-2026-08-20.md sec 4.2). Nullable and
+    # additive: `project_id` stays how a ticket is filed today. Currently
+    # backfilled to 0 rows -- only `development`/`workshop`-scoped tickets are
+    # mirrored into Postgres at all (services.task_scope.RELATIONAL_SCOPES),
+    # and neither is an app -- so this column exists now so ticket mirroring
+    # can widen to an app-linked project scope later without a second
+    # migration. An app's REAL tickets live in the JSON store today and are
+    # served to `GET /apps/{id}/tickets` from there (routes/apps.py), not from
+    # this column; see that route's docstring for why.
+    app_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+
     # `{kind, spec, criteria: [{desc, cmd, expect}]}`. Genuinely nested, 5 of
     # 112, and nothing filters or sorts on it, so a column per key would be
     # modelling for its own sake.
@@ -529,10 +600,13 @@ class Ticket(Base, Timestamps, SoftDelete):
                  ondelete="SET NULL (type_id)"),
         _org_ref("ticket", "parent_id", "ticket",
                  ondelete="SET NULL (parent_id)"),
+        _org_ref("ticket", "app_id", "app", ondelete="SET NULL (app_id)"),
         Index("uq_ticket_number", "project_id", "number", unique=True),
         # The list view: newest-first within a project.
         Index("ix_ticket_updated", "org_id", "project_id", "updated_at"),
         Index("ix_ticket_state", "org_id", "project_id", "state_id"),
+        Index("ix_ticket_app", "org_id", "app_id",
+              postgresql_where=text("app_id IS NOT NULL AND deleted_at IS NULL")),
         # The scheduler. Partial because the queue only ever looks at open work,
         # and most tickets in a mature store are closed.
         Index("ix_ticket_queue", "org_id", "project_id", "priority", "created_at",
@@ -785,6 +859,17 @@ class ChatThread(Base, Timestamps, SoftDelete):
     mode: Mapped[str] = mapped_column(String(16), nullable=False,
                                       server_default="orchestrated")
 
+    # STAGE A (app-is-the-entity-2026-08-20.md sec 4.2, 5.1). Nullable and
+    # additive: `scope`/`context_key` remain how a thread is addressed and
+    # routed today. This is the real, indexed, queryable owner the design doc
+    # asks for -- backfilled from `scope` (an `app:<slug>` scope, or a
+    # `project:<slug>` scope whose slug is a known app's linked project) via
+    # `services/app_links.py`, and set going forward wherever a thread's scope
+    # resolves to an app. `GET /apps/{id}/chats` (routes/apps.py) reads this
+    # column directly rather than re-deriving the scope per row, which is what
+    # makes the query real instead of a directory walk.
+    app_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+
     title: Mapped[str | None] = mapped_column(String(255))
     # `title_source` and `pre_plan_permission_mode` and `mcp_servers_enabled`
     # lived here and are gone (T4, coherence-overhaul-2026-08-16, migration
@@ -856,6 +941,9 @@ class ChatThread(Base, Timestamps, SoftDelete):
               postgresql_where=_ALIVE),
         Index("ix_chat_thread_scope", "org_id", "scope", "updated_at",
               postgresql_where=_ALIVE),
+        _org_ref("chat_thread", "app_id", "app", ondelete="SET NULL (app_id)"),
+        Index("ix_chat_thread_app", "org_id", "app_id", "updated_at",
+              postgresql_where=text("app_id IS NOT NULL AND deleted_at IS NULL")),
     )
 
 

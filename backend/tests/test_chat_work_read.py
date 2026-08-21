@@ -68,8 +68,23 @@ class TestScopeKey:
         assert body["scope"] == []
         assert body["counts"]["all"] == 0
 
-    def test_an_app_chat_has_no_task_scope(self, env):
-        assert chat_work.task_scope_for("budget") is None
+    def test_an_app_chat_has_no_task_scope_when_unlinked(self, env, monkeypatch):
+        """An installed-only app (no working tree) still gets no queue --
+        app-is-the-entity-2026-08-20.md sec 5.1: `_QUEUELESS_PREFIXES` used to
+        blanket every `app:` scope; now it asks `task_scope.root_for_context`,
+        and an unlinked app's root is None exactly like before."""
+        from services import task_scope
+        monkeypatch.setattr(task_scope, "root_for_context", lambda scope: None)
+        assert chat_work.task_scope_for("app:zzz-app") is None
+
+    def test_an_app_chat_gets_a_task_scope_when_linked_to_a_project(
+            self, env, monkeypatch, tmp_path):
+        """The reconsidered half of the same change: an app linked to a
+        project (services.app_links) now owns a queue, because it owns a
+        working tree to file tickets into."""
+        from services import task_scope
+        monkeypatch.setattr(task_scope, "root_for_context", lambda scope: tmp_path)
+        assert chat_work.task_scope_for("app:zzz-app") == "app:zzz-app"
 
     def test_a_work_chat_maps_to_its_own_key(self, env):
         """Mirrors `taskScopeFor` in frontend/src/components/chat/chatScope.ts.
