@@ -2216,9 +2216,12 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     from services import scoped_exec
     try:
         spawn_cmd = scoped_exec.spawn_argv(cmd, meta["cwd"])
-    except scoped_exec.TurnUserUnavailable as e:
+    except (scoped_exec.TurnUserUnavailable, scoped_exec.ConfinementUnavailable) as e:
+        # FAIL-CLOSED: the turn cannot be confined, so it is refused, NOT spawned
+        # with host access. Both the filesystem layer (bwrap) and the uid layer
+        # raise here rather than degrade to an un-isolated spawn.
         out_f.close(); err_f.close(); os.close(in_fd)
-        turn.error = f"turn-user unavailable: {e}"
+        turn.error = f"turn cannot run confined, refused: {e}"
         _push(turn, "error", {"detail": turn.error})
         await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
         return

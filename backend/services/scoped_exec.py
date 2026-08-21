@@ -80,6 +80,24 @@ _USER_FLAG = "WORKSHOP_TURN_USER"
 TURN_WRAPPER = "/usr/local/libexec/workshop/turn-exec"
 
 
+class ConfinementUnavailable(RuntimeError):
+    """Filesystem confinement could not be established for a turn, so the turn
+    must NOT run. This is the fail-CLOSED contract: a turn is confined to its
+    scope or it does not run at all -- it is NEVER spawned with host filesystem
+    access. Raised by `spawn_argv` (the turn-spawn boundary) whenever `wrap()`
+    could not build a real bwrap sandbox: bwrap missing, unprivileged user
+    namespaces unavailable, no scope root, or the confinement flag forced off.
+    The caller (build_streaming) turns this into a refused turn with a visible
+    error, exactly as it already does for `TurnUserUnavailable`.
+
+    Confinement being unavailable used to mean the turn ran UNCONFINED (`wrap()`
+    returned the command unchanged) -- a fail-open posture that ran every turn
+    with full host access whenever the sandbox could not initialise (e.g. the
+    2026-08-21 probe bug that disabled it host-wide). That is the exact misdesign
+    this class exists to make impossible: the walls dropping is not a degraded
+    mode, it is a refusal."""
+
+
 class TurnUserUnavailable(RuntimeError):
     """WORKSHOP_TURN_USER is set but the uid layer cannot actually run: the
     account, the wrapper, or sudo itself is missing. Raised rather than
@@ -111,11 +129,21 @@ def functional() -> bool:
         _functional_cache = False
         return False
     try:
-        r = subprocess.run(
-            [bwrap, "--unshare-user", "--unshare-pid", "--ro-bind", "/usr", "/usr",
-             "--proc", "/proc", "--", "/bin/true"],
-            capture_output=True, timeout=10,
-        )
+        # Mirror the binds wrap() actually uses. The old probe bound only /usr and
+        # then exec'd /bin/true: on a usrmerge host the dynamic linker lives under
+        # /lib64 (left unbound here), so execvp failed with a misleading ENOENT and
+        # the probe declared the sandbox dead on a host whose kernel fully supports
+        # unprivileged user namespaces (measured 2026-08-21: userns available, probe
+        # under-bound, so every turn ran UNCONFINED). Bind the same _RO_SYSTEM set
+        # the real confinement binds, so the probe passes iff a real turn would run.
+        # --unshare-pid is dropped to match wrap(), which deliberately keeps the
+        # shared PID namespace so systemd --user (apply.sh's restarts) still works.
+        args = [bwrap, "--unshare-user", "--proc", "/proc", "--dev", "/dev"]
+        for p in _RO_SYSTEM:
+            if os.path.isdir(p):
+                args += ["--ro-bind", p, p]
+        args += ["--", "/bin/true"]
+        r = subprocess.run(args, capture_output=True, timeout=10)
         _functional_cache = r.returncode == 0
     except (OSError, subprocess.SubprocessError):
         _functional_cache = False
@@ -380,6 +408,21 @@ def spawn_argv(cmd: list[str], workdir: str) -> list[str]:
     to the caller, which must end the turn rather than spawn it unconfined.
     """
     base = wrap(cmd, workdir)
+    # FAIL-CLOSED. `wrap()` returns the command UNCHANGED when it could not build
+    # a sandbox (bwrap missing, the kernel probe failed, an empty scope root, or
+    # the flag forced confinement off). For an agent turn that unchanged command
+    # means FULL HOST FILESYSTEM ACCESS, which must never happen: the walls
+    # dropping is a refusal, not a degraded mode. A confined result is a bwrap
+    # invocation, so if `base` does not start with bwrap it was not confined.
+    bwrap = shutil.which("bwrap")
+    if not (bwrap and base and base[0] == bwrap):
+        raise ConfinementUnavailable(
+            "filesystem confinement could not be established for this turn "
+            f"(bwrap={'present' if bwrap else 'MISSING'}, functional={functional()}, "
+            f"scope_root={'set' if workdir else 'EMPTY'}, {_FLAG}={os.environ.get(_FLAG)!r}). "
+            "A turn runs confined to its scope or it does not run; it is never "
+            "spawned with host filesystem access."
+        )
     root = os.path.realpath(workdir) if workdir else None
     user = turn_user(root)
     if user is None:

@@ -168,11 +168,24 @@ def test_turn_user_self_scope_carve_out(monkeypatch, tmp_path):
     assert scoped_exec.turn_user(str(tmp_path)) == "workshop-turn"
 
 
-def test_spawn_argv_passthrough_when_flag_unset(monkeypatch):
+def test_spawn_argv_refuses_when_confinement_off(monkeypatch):
+    # FAIL-CLOSED. With the sandbox forced off, a turn is REFUSED, never run
+    # unconfined. spawn_argv is the turn-spawn boundary: the walls dropping is a
+    # refusal, not a passthrough. (`wrap()` itself stays a no-op primitive -- see
+    # the wrap passthrough tests above -- but no turn is spawned through it.)
     monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
     monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "0")
-    argv = scoped_exec.spawn_argv(["echo", "hi"], "/tmp")
-    assert argv == ["echo", "hi"]
+    with pytest.raises(scoped_exec.ConfinementUnavailable):
+        scoped_exec.spawn_argv(["echo", "hi"], "/tmp")
+
+
+def test_spawn_argv_refuses_on_empty_scope_root(monkeypatch):
+    # No scope root means nothing to confine to, so the turn is refused rather
+    # than run against the host filesystem.
+    monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
+    monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
+    with pytest.raises(scoped_exec.ConfinementUnavailable):
+        scoped_exec.spawn_argv(["echo", "hi"], "")
 
 
 def test_spawn_argv_wraps_in_sudo_with_the_bwrap_tail_unchanged(monkeypatch, tmp_path):
@@ -196,6 +209,11 @@ def test_spawn_argv_wraps_in_sudo_with_the_bwrap_tail_unchanged(monkeypatch, tmp
 
 
 def test_spawn_argv_raises_rather_than_silently_dropping_isolation(monkeypatch, tmp_path):
+    # With bwrap absent the filesystem layer refuses first (ConfinementUnavailable),
+    # which is also fail-closed; this test targets the uid layer's refusal, so it
+    # needs the filesystem layer to actually confine.
+    if not _HAS_BWRAP:
+        pytest.skip("bwrap not installed; ConfinementUnavailable fires before the uid layer")
     monkeypatch.setenv("WORKSHOP_TURN_USER", "no-such-account")
     monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")
     with pytest.raises(scoped_exec.TurnUserUnavailable):
