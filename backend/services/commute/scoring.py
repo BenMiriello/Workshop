@@ -24,6 +24,54 @@ from math import asin, cos, radians, sin, sqrt
 from . import config, places, poller, timefmt
 
 
+def _location_service():
+    """The location app's service module, or None when it is not installed.
+
+    CALL TIME, like the other three commute->location edges in this package
+    (places.py, journeys.py and alerter.py all import it inside a function and
+    say why). This one was the outlier: a load-time `from .. import location as
+    location_svc` that made the whole commute package unimportable without the
+    location app, even though commute declares location as a `needs` rather than
+    assuming it.
+
+    Read through this module's own namespace first, so the existing tests that
+    monkeypatch `scoring.location_svc` keep working: a patched attribute wins,
+    an unpatched one is imported here, and an absent app is None rather than an
+    ImportError escaping into a commute brief.
+    """
+    import sys
+
+    got = sys.modules[__name__].__dict__.get("location_svc")
+    if got is not None:
+        return got
+    return _import_location()
+
+
+def _import_location():
+    try:
+        from .. import location as _loc
+    except ImportError:
+        return None
+    return _loc
+
+
+def __getattr__(name):
+    """`scoring.location_svc` still resolves, on access.
+
+    The tests reach it as `patch.object(scoring.location_svc, "latest", ...)`,
+    which patches an attribute on the location MODULE itself, so the patch is
+    seen by `_location_service()` too (it hands back the same module object).
+    Served here rather than bound at import so the commute package still loads
+    when the location app is absent.
+    """
+    if name == "location_svc":
+        loc = _import_location()
+        if loc is None:
+            raise AttributeError("the location app is not installed")
+        return loc
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 # How close (meters) to home/work counts as "at destination" — generous to
 # cover building entrance vs GPS scatter. Mountain View row of houses ≈ 50m.
 AT_DESTINATION_RADIUS_M = 200.0
@@ -71,14 +119,8 @@ def _location_status(sch: dict[str, Any], now: datetime) -> dict[str, Any]:
     dest = places.endpoint_coords(dest_name)
     if not dest:
         return {"available": False, "reason": f"no learned/known coords for {dest_name} yet (needs location history)"}
-    # Call-time, like the other three commute->location edges in this package
-    # (places.py, journeys.py, alerter.py all import it inside a function and
-    # say why). This one was the outlier: a load-time import that made the whole
-    # commute package unimportable without the location app, despite commute
-    # declaring location as a `needs` rather than assuming it.
-    try:
-        from .. import location as location_svc
-    except ImportError:
+    location_svc = _location_service()
+    if location_svc is None:
         return {"available": False, "reason": "the location app is not installed"}
     rec = location_svc.latest()
     if not rec:

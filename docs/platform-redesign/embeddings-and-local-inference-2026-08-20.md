@@ -1,7 +1,44 @@
 # Embeddings and local inference: get Ollama out of production
 
 - Date: 2026-08-20
-- Status: **proposal, awaiting operator decisions (section 8). No code yet.**
+- Status: **PARTLY BUILT. Operator approved (section 8): local bge-small
+  everywhere including cloud, hosted providers deferred, fastembed dependency
+  approved, local-LLM features dropped. Shipped so far: the embedding provider +
+  both text embedders on it (Ollama out of the whole data layer), and the dead
+  Ollama path removed from llm_router. Remaining: the /relay/local + commute
+  local reasoner, the 511 decouple, and health/wearables. See "Progress" below.**
+
+## Progress (2026-08-20)
+
+Shipped and committed:
+- `services/embeddings.py`: the local ONNX provider (bge-small-en-v1.5, 384-d,
+  in-process via fastembed). `WORKSHOP_EMBED_PROVIDER` defaults to local; a
+  non-local value fails loudly. `fastembed==0.8.0` added to core requirements.
+- `semantic_index` and `task_dedup` both embed through the provider now. The
+  index is tagged with the provider name and rebuilds on a model change, fixing
+  the silent model-mixing bug (stages 1-3). `task_dedup` dropped its local-LLM
+  same-work gate; a cosine >= MERGE_AT now links (non-destructive) instead of
+  auto-merging.
+- `llm_router`: the dead `call_local` Ollama apparatus removed; cloud path
+  (`claude -p`) untouched.
+
+Not done, and why:
+- **`/relay/local` + commute's forced-local reasoner** (`routes/relay.py`,
+  `services/commute/llm.py` `decide_interject`, `services/commute/reason.py`'s
+  qwen rung) still call Ollama. This is the one LIVE Ollama LLM path. It is
+  load-bearing (commute alerting) and mid-migration (two reasoner modules,
+  `reason.py` Claude-first but `__init__` wiring `llm.py`'s local path), and the
+  commute app is under active refactor in a parallel session. Ripping it out
+  blind, unverified against a live commute brief, would risk silencing commute
+  alerts. It needs either that refactor to settle or a decision to make commute
+  cloud-only, then a verified cut.
+- **511 decouple** (§4.1): isolated and doable (a commute-owned config endpoint +
+  `CommuteSettings.tsx`), pending; the frontend half needs a bundle rebuild.
+- **health/wearables** (§4.3): full decouple from platform source IS the
+  app-extraction effort (the AppSpec seams, stage 4 of app-separation), which is
+  what the parallel session is building now. Not a separate quick edit; doing it
+  here would collide with that work.
+
 - Operator direction, 2026-08-20: "We should not be using Ollama in production."
   On embeddings: "In production it probably makes most sense to use an external
   service... but if we're anticipating local implementations, does it make sense
