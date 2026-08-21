@@ -22,10 +22,9 @@
 // /api/apps/{id}/... route and an app's page list is the same eight rows
 // whether or not that app happens to have a linked project tree.
 //
-// AN APP WITH NO LINKED PROJECT TREE (finance, health, wearables at design
-// time) still gets all eight rows, and five of them (Files, Tickets, Runs,
-// Deploys, Agents) are honestly empty on that app, with the page itself
-// saying why ("this app has no linked project tree..."). That is not a nav
+// AN APP WITH NO LINKED PROJECT TREE still gets all eight rows, and five of
+// them (Files, Tickets, Runs, Deploys, Agents) are honestly empty there, with
+// the page itself saying why. That is not a nav
 // row with nothing behind it: the route is real, the fetch is real, and the
 // answer is a real, explained empty list -- never a 404, never another app's
 // data. Chats and Memory are real and non-empty-by-default for every app,
