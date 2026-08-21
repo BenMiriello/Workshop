@@ -24,6 +24,19 @@ import { CHAT_MODES, type ChatModeId } from "../chatModes";
 
 type Autonomy = { cron_autonomy?: { disabled?: boolean } } | null;
 
+// The per-SCOPE execution setting (services/scope_execution). Filing is a per-chat
+// choice above; this is the scope choice: does the scope's filed work auto-run in
+// the background, and how far. Shown only for a chat that has a scope, since a chat
+// that files nowhere has no queue to arm. The route has no response_model yet, so
+// there is no generated type; this local shape is the minimum it reads.
+type ScopeExec = { mode?: string; armed?: boolean } | null;
+
+const EXEC_MODES: { id: string; name: string; gloss: string }[] = [
+  { id: "reactive", name: "Off", gloss: "Filed work waits for you. Nothing runs on its own." },
+  { id: "supervised", name: "Run to review", gloss: "Filed work runs in the background and stops at review for your approval." },
+  { id: "autonomous", name: "Run to done", gloss: "Filed work runs in the background all the way to done." },
+];
+
 export default function WorkSettings({
   scope, chatMode, onChooseChatMode, onBack,
 }: {
@@ -48,6 +61,34 @@ export default function WorkSettings({
   }, []);
 
   const off = !!autonomy?.cron_autonomy?.disabled;
+
+  // The scope's execution mode. Read on mount (and when the scope changes), and
+  // committed ON CHANGE like the filing mode above: it is reversible and the
+  // sweep reads it fresh each pass, so there is nothing to Save.
+  const [exec, setExec] = useState<ScopeExec>(null);
+  useEffect(() => {
+    if (!scope) return;
+    let cancelled = false;
+    fetch(`/api/agents/autonomy/scope-execution?scope=${encodeURIComponent(scope)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (!cancelled) setExec(j); })
+      .catch(() => { if (!cancelled) setExec(null); });
+    return () => { cancelled = true; };
+  }, [scope]);
+
+  const execMode = exec?.mode ?? "reactive";
+  function chooseExec(mode: string) {
+    if (!scope || mode === execMode) return;
+    setExec({ mode, armed: mode !== "reactive" }); // optimistic; server confirms
+    fetch("/api/agents/autonomy/scope-execution", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope, mode }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j) setExec(j); })
+      .catch(() => {});
+  }
 
   return (
     <>
@@ -102,6 +143,41 @@ export default function WorkSettings({
           {scope ? scopeLabel(scope) : "Nowhere. This chat has no ticket queue."}
         </Prop>
       </Props>
+
+      {/* The scope choice, distinct from the chat choice above: filing is what
+          THIS conversation does, execution is what the whole scope does with
+          filed work. Shown only when the chat has a scope to arm. */}
+      {scope && (
+        <>
+          <SectionLabel>Background execution</SectionLabel>
+          <div className="chat-workpanel__modes" role="radiogroup" aria-label="Background execution">
+            {EXEC_MODES.map((m) => {
+              const on = m.id === execMode;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  className="chat-workpanel__mode"
+                  role="radio"
+                  aria-checked={on}
+                  onClick={() => chooseExec(m.id)}
+                >
+                  <span className="chat-workpanel__mode-mark">
+                    {on && <Check size={14} strokeWidth={2} aria-hidden />}
+                  </span>
+                  <span className="chat-workpanel__mode-body">
+                    <span className="chat-workpanel__mode-name">{m.name}</span>
+                    <span className="chat-workpanel__mode-gloss">{m.gloss}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <Props className="chat-workpanel__props">
+            <Prop label="Applies to">{scopeLabel(scope)}, not just this chat.</Prop>
+          </Props>
+        </>
+      )}
 
       {/* The ceiling above everything above. A chat set to file and run on its
           own still runs nothing while the workshop is paused, and the operator
