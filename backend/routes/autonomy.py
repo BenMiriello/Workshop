@@ -24,7 +24,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from routes import autonomy_models as am
-from services import agent_slots, autonomy_override, jobs
+from services import agent_slots, autonomy_override, jobs, scope_execution, task_scope
 from pydantic import BaseModel, Field
 from wsplatform import paths
 
@@ -442,4 +442,49 @@ def _jobs_summary(limit: int = 200) -> dict:
         "by_status": by_status,
         "running": by_status.get("running", 0),
         "last": recent[0] if recent else None,
+    }
+
+
+# --- per-scope execution mode (the per-scope half of the autonomy model) -------
+#
+# FILING is a per-chat choice; EXECUTION is a per-scope choice (a ticket lives in
+# a scope, the sweep works a scope's queue). This exposes the scope half. It
+# composes UNDER the global override: the override off-switch supersedes it.
+
+
+class ScopeExecutionMode(BaseModel):
+    scope: str
+    mode: str = Field(description="reactive | supervised | autonomous")
+
+
+def _scope_root(scope_key: str):
+    root = task_scope.root_for_context(scope_key)
+    return root if root is not None else paths.workshop_root()
+
+
+@router.get("/agents/autonomy/scope-execution")
+async def get_scope_execution(scope: str):
+    """The execution mode for one scope: does its filed work auto-run, how far."""
+    root = _scope_root(scope)
+    return {
+        "scope": scope,
+        "mode": scope_execution.get_mode(root),
+        "armed": scope_execution.is_armed(root),
+        "ceiling": scope_execution.stage_ceiling(root),
+        "global_override_engaged": autonomy_override.is_engaged(),
+    }
+
+
+@router.post("/agents/autonomy/scope-execution")
+async def set_scope_execution(body: ScopeExecutionMode):
+    if body.mode not in scope_execution.MODES:
+        raise HTTPException(status_code=422,
+                            detail=f"mode must be one of {scope_execution.MODES}")
+    root = _scope_root(body.scope)
+    mode = scope_execution.set_mode(root, body.mode)
+    return {
+        "scope": body.scope,
+        "mode": mode,
+        "armed": scope_execution.is_armed(root),
+        "ceiling": scope_execution.stage_ceiling(root),
     }

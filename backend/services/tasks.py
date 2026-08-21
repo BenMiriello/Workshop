@@ -1869,6 +1869,15 @@ def next_ready(root: Path, *, assignee: str | None = None,
     re-sort, because a human running the queue by hand still wants the most
     important thing first.
     """
+    # The per-scope execution setting gates the UNATTENDED path only. A scope
+    # left at its reactive default (fail-closed) yields no unattended work, so
+    # nothing auto-runs until the operator arms it (services/scope_execution).
+    # The attended path is untouched: readiness and arming must never refuse a
+    # human, only the background sweep. Composes under the global override.
+    if unattended:
+        from services import scope_execution
+        if not scope_execution.is_armed(root):
+            return None
     reconcile(root)
     reclaim(root)
     tasks = _load(root)

@@ -1310,6 +1310,20 @@ async def spawn_task(thread_id: str, body: SpawnTask):
     # than merging one, because a merge decided after the operator has watched
     # his ticket appear would take it away again.
     _filed_id = (result.get("task") or {}).get("id")
+    # CHAT -> LOOP. If this scope is ARMED for background execution, a freshly
+    # filed ticket is classified executable (execution="code") so the sweep can
+    # actually pick it up; in a reactive scope it stays unclassified and
+    # fail-closed, waiting for a person. This is the one place the "auto-run work
+    # filed here" setting connects to filing. It only makes the ticket ELIGIBLE:
+    # supervised mode still lands it at in_review with the operator as final gate.
+    if _filed_id and result.get("decision") not in ("exact", "merge"):
+        try:
+            from services import scope_execution
+            if scope_execution.is_armed(root) and (result.get("task") or {}).get("execution") is None:
+                tasks.update(root, _filed_id, execution="code")
+                result["task"]["execution"] = "code"
+        except Exception:
+            log.warning("execution classification on file failed for %s", _filed_id, exc_info=True)
     if _filed_id and result.get("decision") not in ("exact", "merge"):
         async def _link_after_response(root_=root, tid=_filed_id):
             try:

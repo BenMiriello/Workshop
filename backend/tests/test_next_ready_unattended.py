@@ -20,6 +20,17 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services import tasks  # noqa: E402
+from services import scope_execution  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _armed_scope(monkeypatch):
+    # These tests exercise what the unattended SWEEP selects, which now presupposes
+    # the scope is armed for background execution (services/scope_execution). Arm
+    # every scope so the selection logic under test is reached; the arming gate
+    # itself is covered by test_scope_execution.
+    monkeypatch.setattr(scope_execution, "is_armed", lambda root: True)
+
 
 # Passes every readiness check: objective, acceptance, entry points, boundaries.
 READY_BODY = (
