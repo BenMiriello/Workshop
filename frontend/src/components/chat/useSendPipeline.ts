@@ -45,6 +45,8 @@ export type SendPipeline = {
   submitText: (raw: string, attachments?: AttachmentRef[]) => void;
   /** Re-send a message that never reached the server, under its own id. */
   retry: (clientId: string) => void;
+  /** Give up on a still-local send (sending or failed) and drop it from view. */
+  cancel: (clientId: string) => void;
 };
 
 /** How a send ended. `ok` means THE SERVER HAS IT — running now, handed to the
@@ -419,7 +421,19 @@ export function useSendPipeline({
     dispatchSend(pending.text, clientId, pending.attachments);
   }, [stateRef, setErr, dispatchSend]);
 
-  return { starting, submitText, retry };
+  // Pull a still-local send back. Safe unconditionally: `sending` means the
+  // request is in flight and this browser is simply giving up on showing it
+  // (the request itself cannot be aborted from here, and if it does land the
+  // server's own record of it is what the next sync shows, same as any other
+  // message this tab did not know about yet); `failed` means the request
+  // never reached the server at all, so there is nothing anywhere else to
+  // take back. Either way a late `sendAcked`/`sendFailed` for this id is a
+  // no-op (the reducer's `if (!cur) return state` guard).
+  const cancel = useCallback((clientId: string) => {
+    dispatch({ type: "sendCancelled", clientId });
+  }, [dispatch]);
+
+  return { starting, submitText, retry, cancel };
 }
 
 /** Whether this turn is the first exchange in the chat, which is when the

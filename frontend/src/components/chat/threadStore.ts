@@ -219,6 +219,12 @@ export type ThreadAction =
   | { type: "sendAcked"; clientId: string }
   | { type: "sendFailed"; clientId: string; error?: string }
   | { type: "sendRetracted"; clientId: string }
+  // The OPERATOR pulled a still-local send back, from its X. Same effect on
+  // `pending` as `sendRetracted` (the outbox mirror is keyed off that map, not
+  // off which action emptied it), but a distinct type: `sendRetracted` means
+  // the server took the message over onto its own queue, and conflating the
+  // two would say a message the operator discarded is still owed somewhere.
+  | { type: "sendCancelled"; clientId: string }
   // Un-acknowledged sends read back from durable storage on mount. THE
   // REDUCER'S `pending` DOES NOT SURVIVE A RELOAD on its own, and a send the
   // server never took is text the operator hit enter on: it has to come back.
@@ -630,7 +636,8 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       };
     }
 
-    case "sendRetracted": {
+    case "sendRetracted":
+    case "sendCancelled": {
       if (!state.pending[action.clientId]) return state;
       const pending = { ...state.pending };
       delete pending[action.clientId];

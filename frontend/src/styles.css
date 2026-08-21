@@ -501,9 +501,42 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-unsent {
   display: flex; align-items: center; gap: 0.4rem;
   /* --warn, not --warn-solid: the `-solid` step is solved for 3:1 as a MARK
-     (a dot, a fill), and this is 0.72rem TEXT, which needs the 4.5:1 step. */
+     (a dot, a fill), and this is 0.72rem TEXT, which needs the 4.5:1 step —
+     against --bg/--card/--bg-inset. THIS ROW ONLY CLEARS THAT ON A TRANSPARENT
+     BUBBLE. A user bubble is normally filled with --accent (see
+     .chat-msg.user .chat-bubble below), which --warn was never solved against,
+     so a failed send used to render unreadable warn-on-accent text. A failed
+     send drops the "mine" fill for the same outline treatment .chat-bubble.error
+     and .chat-bubble--timeout already use (see .chat-bubble--unsent), which is
+     also the more honest shape: it did not send, so it is not yet mine. */
   margin-top: 0.35rem; font-size: 0.72rem; color: var(--warn);
 }
+
+/* A failed send superseded by a later one (MessageList's `lastPendingKey`):
+   the full bubble collapses to one line so an operator who has moved on is
+   not still confronted with the whole message, but Retry and Cancel stay
+   reachable. Line, not region — the failure sits beside content that is
+   already elsewhere on screen, so this follows the same "a line, not a
+   StateBlock" rule as any other Notice (frontend/CLAUDE.md). Only the icon
+   carries the warn hue; the text stays neutral ink, same convention as
+   .chat-timeout-tag/.chat-unsent above it. */
+.chat-unsent-collapsed {
+  display: flex; align-items: center; gap: 0.4rem; max-width: 100%;
+  padding: 0.15rem 0; font-size: 0.78rem; color: var(--muted);
+}
+.chat-unsent-collapsed > svg:first-child { color: var(--warn); flex: none; }
+.chat-unsent-collapsed__text {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.chat-unsent-collapsed__cancel {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; width: 1.15rem; height: 1.15rem; padding: 0;
+  background: none; border: none; border-radius: 5px;
+  color: color-mix(in srgb, var(--muted) 50%, var(--card)); cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.chat-unsent-collapsed__cancel:hover { color: var(--fg); }
+.chat-unsent-collapsed__cancel:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
 
 /* Messages the SERVER is holding to send next, and what they are waiting for.
    Muted, not warn: nothing has gone wrong. They are saved and they will be
@@ -734,6 +767,47 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-msg.user .chat-branch { color: color-mix(in srgb, var(--accent-fg) 50%, var(--accent)); }
 .chat-msg.user .chat-branch:hover:enabled,
 .chat-msg.user .chat-branch:focus-visible { color: var(--accent-fg); }
+
+/* Discard a still-local send (sending or failed): its own X, same corner and
+   size as Copy/Branch, immediately left of Copy since Branch never appears on
+   a message that is not on the server yet. */
+.chat-cancel {
+  position: absolute; right: 0.5rem; bottom: 0.5rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15rem; height: 1.15rem; padding: 0;
+  background: none; border: none; border-radius: 5px;
+  color: color-mix(in srgb, var(--muted) 50%, var(--card)); cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.chat-bubble--copyable .chat-cancel { right: 1.95rem; }
+.chat-cancel:hover { color: var(--fg); }
+.chat-cancel:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
+/* The accent tint, same as Copy/Branch: a `sending` bubble is still filled
+   with --accent, so the resting icon needs the same mix toward --accent-fg
+   they use, not the plain --muted/--card one above. Overridden back down for
+   `.chat-bubble--unsent` further below, where the fill is gone. */
+.chat-msg.user .chat-cancel { color: color-mix(in srgb, var(--accent-fg) 50%, var(--accent)); }
+.chat-msg.user .chat-cancel:hover,
+.chat-msg.user .chat-cancel:focus-visible { color: var(--accent-fg); }
+/* NOT the accent tint .chat-msg.user .chat-copy/.chat-cancel carry above: a
+   failed send is `.chat-bubble--unsent`, transparent rather than accent-
+   filled (see the readability fix above .chat-bubble--unsent), so an icon
+   tinted for the accent fill would be reading against the wrong background
+   there. Named down to `.chat-msg.user .chat-bubble--unsent` rather than just
+   `.chat-bubble--unsent` so this OUTWEIGHS `.chat-msg.user .chat-copy` on
+   specificity (four class steps to three) rather than relying on staying
+   later in the file to win a source-order tie. A `sending` bubble is still
+   accent-filled and keeps the tint above unchanged. */
+.chat-msg.user .chat-bubble--unsent .chat-copy,
+.chat-msg.user .chat-bubble--unsent .chat-cancel {
+  color: color-mix(in srgb, var(--muted) 50%, var(--card));
+}
+.chat-msg.user .chat-bubble--unsent .chat-copy:hover,
+.chat-msg.user .chat-bubble--unsent .chat-copy:focus-visible,
+.chat-msg.user .chat-bubble--unsent .chat-cancel:hover,
+.chat-msg.user .chat-bubble--unsent .chat-cancel:focus-visible {
+  color: var(--fg);
+}
 /* Room for both controls, on the last line only. See the spacer above. */
 /* ANYTHING BUT THE TEXT RESERVES WITH PADDING, because the two cases want
    opposite things. The message text is many lines and must only give up width
@@ -775,6 +849,12 @@ input[type="range"].grad::-moz-range-thumb {
 }
 .chat-bubble--branchable { --chat-actions-gap: 1.2rem; }
 .chat-bubble--branchable.chat-bubble--copyable { --chat-actions-gap: 2.65rem; }
+/* Cancel is Branch's opposite number on a not-yet-sent message: same one icon
+   of reserve alone, same two-icon reserve beside Copy. Never combined with
+   `--branchable` — a pending send cannot be branched (see branchable.ts's own
+   comment: none of a pending/queued/live block is IN the conversation yet). */
+.chat-bubble--cancelable { --chat-actions-gap: 1.2rem; }
+.chat-bubble--cancelable.chat-bubble--copyable { --chat-actions-gap: 2.65rem; }
 /* THREE ROWS, THEN IT SCROLLS. The operator asked for exactly this: a picker
    that stays a small target no matter how many times a conversation has been
    branched. The kit's menu already scrolls at 16rem; this is the tighter cap
@@ -802,6 +882,16 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-bubble--timeout {
   background: transparent; color: var(--fg);
   border: 1px solid color-mix(in oklab, var(--warn), transparent 70%);
+}
+/* A user message that failed to send. Same outline language as the two rules
+   above, on the user side: the accent fill means "mine, delivered", and a
+   message the server never saw is neither. Higher specificity than
+   `.chat-msg.user .chat-bubble` (below) is not needed — same selector depth,
+   later in the sheet — but it must stay declared after that rule. */
+.chat-msg.user .chat-bubble--unsent {
+  background: transparent; color: var(--fg);
+  border: 1px solid color-mix(in oklab, var(--warn), transparent 70%);
+  border-bottom-right-radius: 4px;
 }
 
 /* ---- AUTONOMOUS MESSAGE — it moved with nobody watching -------------------
@@ -1530,8 +1620,17 @@ button.ws-ref--trigger:hover > svg { color: var(--you); }
 .chat-input {
   display: block; width: 100%; resize: none;
   /* Starts at one row; the autosize handler grows it as you type, up to 3 rows
-     (then it scrolls internally). Keep --chat-input-max in sync with the JS cap. */
-  min-height: 2.6rem;
+     (then it scrolls internally). Keep --chat-input-max in sync with the JS cap.
+     A TEXTAREA NEVER CENTERS ITS TEXT VERTICALLY — unlike a single-line <input>,
+     its content box always top-aligns. min-height therefore has to equal
+     padding-block + line-height EXACTLY, or the slack shows up as dead space
+     below the caret line, not above it. This was 2.6rem against a real content
+     height of 2 * var(--space-2) + 1.45rem (= 2.45rem), so an empty or one-line
+     box always carried 0.15rem of extra space under the text, and the expand
+     button pinned to the top corner read the same fraction low. Computed from
+     the same two values the padding/line-height rules below use, so it cannot
+     drift out of sync with them again. */
+  min-height: calc(2 * var(--space-2) + 1.45rem);
   max-height: 6rem;
   /* Matches the standard field scale (--field-pad-x / --space-2), same as every
      .ws-input/.ws-textarea, rather than a bespoke looser inset. The right inset

@@ -1,6 +1,7 @@
 import { Fragment, memo, useRef, useState, type ReactNode } from "react";
-import { Archive, ArrowRightLeft, Bot, Clock, Eraser, FileText, Lightbulb, Radio, RotateCcw, Ticket, TriangleAlert, Zap } from "lucide-react";
+import { Archive, ArrowRightLeft, Bot, Clock, Eraser, FileText, Lightbulb, Radio, RotateCcw, Ticket, TriangleAlert, X, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
+import { Button } from "@workshop/ui";
 import { chatApi, type ChatMsg } from "../../lib/chat";
 import { scopeName } from "./chatScope";
 import type { UiCardCtx } from "./uiCardActions";
@@ -383,18 +384,48 @@ export function SentAttachments({ items }: {
 }
 
 function PendingBubble({
-  text, status, error, attachments, onRetry,
+  text, status, error, attachments, collapsed, onRetry, onCancel,
 }: {
   text: string;
   status: "sending" | "sent" | "failed";
   error?: string;
   attachments?: NonNullable<ChatMsg["meta"]>["attachments"];
+  /** An earlier failed send, superseded by a later one. Rendered as a single
+   *  compact line rather than the full bubble: it is still visible, still
+   *  offers Retry and Cancel, but no longer argues for the same attention as
+   *  the one the operator is actually looking at. See MessageList's
+   *  `lastPendingKey`. */
+  collapsed?: boolean;
   onRetry: () => void;
+  /** Drop this still-local send from view. Works for `sending` too — there is
+   *  no way to abort the request itself from here, only to stop showing it;
+   *  see useSendPipeline's `cancel`. */
+  onCancel: () => void;
 }) {
   const failed = status === "failed";
+  if (collapsed) {
+    return (
+      <div className="chat-msg user">
+        <div className="chat-unsent-collapsed">
+          <TriangleAlert size={13} strokeWidth={1.8} aria-hidden />
+          <span className="chat-unsent-collapsed__text">{text || "(no text)"}</span>
+          <Button size="sm" variant="ghost" onClick={onRetry}>Retry</Button>
+          <button
+            type="button"
+            className="chat-unsent-collapsed__cancel"
+            onClick={onCancel}
+            aria-label="Discard this message"
+            title="Discard this message"
+          >
+            <X size={13} strokeWidth={1.8} aria-hidden />
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="chat-msg user">
-      <div className={`chat-bubble ${failed ? "" : "chat-bubble--inflight"}${text.trim() ? " chat-bubble--copyable" : ""}`}>
+      <div className={`chat-bubble ${failed ? "chat-bubble--unsent" : "chat-bubble--inflight"} chat-bubble--cancelable${text.trim() ? " chat-bubble--copyable" : ""}`}>
         <div className="chat-bubble__body">
           {/* Shown while the send is still in flight, not only once it commits.
               Without this an attached image vanished for the length of the round
@@ -409,6 +440,19 @@ function PendingBubble({
           <div className="chat-clamp">{text}</div>
           {failed && <UnsentNote reason={error} onRetry={onRetry} />}
         </div>
+        {/* Same corner as Copy/Branch on a committed message: one cluster of
+            per-message chrome, bottom-right, always. This is the only action a
+            message not yet on the server can offer besides Retry, so it takes
+            the same spot Branch would once the message is real. */}
+        <button
+          type="button"
+          className="chat-cancel"
+          onClick={onCancel}
+          aria-label="Discard this message"
+          title="Discard this message"
+        >
+          <X size={13} strokeWidth={1.8} aria-hidden />
+        </button>
         {text.trim() && <CopyMessage value={text} />}
       </div>
     </div>
@@ -435,6 +479,7 @@ export type AnswerPermissionFor = (
 // turns this memo off and nothing fails visibly; it just gets slow again.
 function MessageList({
   blocks, selectedModel, cardCtx, workingLabel, elapsed, nowMs, onRetry,
+  onCancelPending,
   answerPermission, liveTurnId, renderBranch, branchHead, onStop, stopping,
 }: {
   blocks: TranscriptBlock[];
@@ -455,6 +500,8 @@ function MessageList({
   // nothing new because LiveTurn re-renders on the tick regardless.
   nowMs: number;
   onRetry: (clientId: string) => void;
+  /** Drop a still-local send from view via its own X, not Retry's opposite. */
+  onCancelPending: (clientId: string) => void;
   answerPermission?: AnswerPermissionFor;
   liveTurnId?: string | null;
   /** End the run in flight. Rendered on the working line itself. Must be stable
@@ -486,6 +533,18 @@ function MessageList({
     blocks.flatMap((b) => (b.kind === "message" ? [{ key: b.key, id: b.id, role: b.msg.role }] : [])),
     branchHead ?? null,
   );
+
+  // ONLY THE NEWEST FAILED SEND STAYS FULL SIZE. Pending blocks are always at
+  // the tail (see frontend/CLAUDE.md's block-ordering rule), so more than one
+  // on screen at once means an earlier send is still sitting there, unresolved,
+  // while the operator has already moved on and typed past it. That one no
+  // longer needs to argue for attention at full size; it collapses to a single
+  // line with the same Retry/X it always had. The last one stays full size
+  // because it is the one the operator is most likely mid-recovery on.
+  let lastPendingKey: string | null = null;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (blocks[i].kind === "pending") { lastPendingKey = blocks[i].key; break; }
+  }
 
   return (
     <>
@@ -528,7 +587,9 @@ function MessageList({
             <PendingBubble
               text={b.text} status={b.status} error={b.error}
               attachments={b.attachments}
+              collapsed={b.status === "failed" && b.key !== lastPendingKey}
               onRetry={() => onRetry(b.clientId)}
+              onCancel={() => onCancelPending(b.clientId)}
             />
           )}
         </Fragment>

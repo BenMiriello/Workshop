@@ -74,7 +74,7 @@ import { VoiceReply } from "./VoiceTurn";
 export default function ChatLog({
   scrollRef, onScroll,
   loading, error, blocks, isBuild, inFlight,
-  selectedModel, cardCtx, onRetry, onCancelQueued, onReleaseQueue,
+  selectedModel, cardCtx, onRetry, onCancelPending, onCancelQueued, onReleaseQueue,
   queueHeld, queueError, workingLabel, elapsed, nowMs,
   answerPermission, liveTurnId, renderBranch, branchHead,
   queued, folding, onStop, stopping, onStopFold, foldStopping,
@@ -102,6 +102,9 @@ export default function ChatLog({
   selectedModel: string;
   cardCtx: UiCardCtx;
   onRetry: (clientId: string) => void;
+  /** Drop a still-local send (sending or failed) from view. Its own X, not
+   *  Retry's opposite: retry re-sends under the same id, this gives up on it. */
+  onCancelPending: (clientId: string) => void;
   /** Unsend a message the SERVER is holding. It is the operator's text and
    *  taking it back before it goes is theirs to do. */
   onCancelQueued: (clientId: string) => void;
@@ -192,6 +195,7 @@ export default function ChatLog({
         elapsed={elapsed}
         nowMs={nowMs}
         onRetry={onRetry}
+        onCancelPending={onCancelPending}
         answerPermission={answerPermission}
         liveTurnId={liveTurnId}
         renderBranch={renderBranch}

@@ -83,6 +83,29 @@ class TestAdmissionRespectsThePendingOp:
         entries = chat_queue.read(tid)
         assert [e["text"] for e in entries] == ["typed mid-fold"]
 
+    def test_inject_queues_instead_of_answering_no_turn_running(self, thread):
+        """The composer plans a message typed during /compact as `inject`
+        (sendPlan.ts: `compacting` routes to `/inject` exactly like a live
+        turn does), but a compact is not a turn, so /inject used to see
+        `_live_turn_id() is None` and answer `queued_for_turn: false` --
+        correct only when the thread is genuinely idle. Told that, the
+        client's fallback (POST /turns) reaches `_send` and queues it
+        anyway, so this was never a lost message, but it cost a second
+        round trip on exactly the path an operator hits while a fold is
+        already ~30s slow, and left a window between the two requests. The
+        inject endpoint now checks `thread_ops.pending` itself and queues
+        directly, the same as `_send` does."""
+        import routes.chat as rc
+        tid = thread["id"]
+        thread_ops.begin(tid, "compact")
+
+        out = asyncio.run(rc.inject_into_thread(tid, rc.InjectMessage(content="typed mid-fold")))
+        assert out["queued"] is True
+        assert out["queued_for_turn"] is True
+        assert out["delivered"] is False
+        entries = chat_queue.read(tid)
+        assert [e["text"] for e in entries] == ["typed mid-fold"]
+
     def test_ending_the_op_kicks_the_drain(self, thread, monkeypatch):
         tid = thread["id"]
         kicked = []
