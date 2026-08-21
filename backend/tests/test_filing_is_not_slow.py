@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from services import task_dedup, tasks
+from services import embeddings, task_dedup, tasks
 
 
 @pytest.fixture
@@ -65,13 +65,12 @@ def test_the_pass_afterwards_links_and_never_merges(tmp_path, monkeypatch):
     # Both are near-identical in meaning; force the semantic tier to say so.
     monkeypatch.setattr(task_dedup, "embed_texts",
                         lambda texts: [[1.0, 0.0]] * len(texts))
-    monkeypatch.setattr(task_dedup, "same_work_llm",
-                        lambda a, b, timeout_s=None: True)
 
     out = task_dedup.link_near_matches(tmp_path, second["id"])
 
     assert out["status"] == "linked"
-    assert out["decision"] in ("merge", "exact")
+    # A cosine >= MERGE_AT links, never merges (no auto-merge on cosine alone).
+    assert out["decision"] == "related"
     # The filed ticket SURVIVES a decision that would have merged it.
     assert tasks.get_task(tmp_path, second["id"]) is not None
     kinds = {e["kind"] for e in tasks.get_task(tmp_path, second["id"])["evidence"]}
@@ -90,8 +89,7 @@ def test_a_vector_is_embedded_once_and_then_cached(tmp_path, monkeypatch):
         calls.append(len(texts))
         return [[1.0, 0.0] for _ in texts]
 
-    monkeypatch.setattr(task_dedup, "_ollama_embed", counted)
-    monkeypatch.setattr(task_dedup, "_http_embed", lambda t, u: None)
+    monkeypatch.setattr(embeddings, "embed_documents", counted)
 
     corpus = ["ticket one", "ticket two", "ticket three"]
     task_dedup.embed_texts(corpus)
@@ -104,9 +102,9 @@ def test_a_vector_is_embedded_once_and_then_cached(tmp_path, monkeypatch):
 def test_the_cache_key_includes_the_model(tmp_path, monkeypatch):
     """A cosine between two models' vectors is a number with no meaning, so a
     model change must not be able to serve the old one."""
-    monkeypatch.setattr(task_dedup, "_EMBED_MODEL", "model-a")
+    monkeypatch.setattr(task_dedup, "_active_backend", lambda: "local:model-a")
     a = task_dedup._vec_key("the same words")
-    monkeypatch.setattr(task_dedup, "_EMBED_MODEL", "model-b")
+    monkeypatch.setattr(task_dedup, "_active_backend", lambda: "local:model-b")
     assert task_dedup._vec_key("the same words") != a
 
 
@@ -114,8 +112,7 @@ def test_warming_is_free_when_everything_is_cached(tmp_path, monkeypatch):
     monkeypatch.setattr(task_dedup, "_vec_cache_path",
                         lambda: tmp_path / "vectors.json")
     monkeypatch.setattr(task_dedup, "_vec_cache_mem", None, raising=False)
-    monkeypatch.setattr(task_dedup, "_http_embed", lambda t, u: None)
-    monkeypatch.setattr(task_dedup, "_ollama_embed",
+    monkeypatch.setattr(embeddings, "embed_documents",
                         lambda texts: [[1.0, 0.0] for _ in texts])
     tasks.add(tmp_path, text="An open ticket in this scope")
 

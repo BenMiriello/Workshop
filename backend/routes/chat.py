@@ -977,8 +977,8 @@ class SetCustomInstructions(BaseModel):
 def _canon_scope(scope: str) -> str:
     """Canonicalize an incoming scope/context key to the knowledge scope the
     store and the chat's custom_prompt() both use, so a value the UI holds as a
-    context key ("general", "budget") lands on the same key the chat reads
-    ("workshop", "app:budget"). Idempotent for an already-canonical scope."""
+    context key ("general", or an app id) lands on the same key the chat reads
+    ("workshop", "app:<id>"). Idempotent for an already-canonical scope."""
     from services import knowledge
     try:
         return knowledge.scope_for_context(scope)
@@ -1305,7 +1305,6 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         # SOMEONE IS WATCHING A SPINNER, so the comparison that costs seconds
         # runs after this returns (below) instead of inside it.
         semantic=False,
-        llm_timeout_s=task_dedup.INTERACTIVE_LLM_TIMEOUT_S,
     )
     # The semantic comparison, off the request. It LINKS a near-duplicate rather
     # than merging one, because a merge decided after the operator has watched
@@ -4243,6 +4242,30 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
     if not chat_log.exists(thread_id):
         raise HTTPException(404, "thread not found")
     if _live_turn_id(thread_id) is None:
+        # A PENDING OPERATION (compact/clear) IS NOT A TURN, so it never reaches
+        # `_send` below, but this message must not be left for the client's
+        # ordinary-turn fallback to sort out. That fallback (POST /turns, which
+        # re-enters `_send` and correctly checks `thread_ops.pending`) is not a
+        # data-loss bug -- it does queue the message correctly in the end -- but
+        # it costs a second round trip on exactly the path an operator hits
+        # while a fold is already taking ~30s to answer, and it opens a real if
+        # narrow window: the operation can land BETWEEN this response and the
+        # client's follow-up POST, and a client that started that POST before
+        # reading this one's `queued_for_turn: false` would have no way to know
+        # to retry through `/turns` instead of assuming the thread is idle. This
+        # request already knows the message and already knows the operation is
+        # pending, so it queues it directly -- the same call `_send` makes for
+        # the idle+pending case just below.
+        if thread_ops.pending(thread_id) or chat_queue.read(thread_id):
+            st = chat_queue.enqueue(
+                thread_id, text=content, client_id=body.client_id or chat_log.new_ulid(),
+                ts=body.sent_at, attachments=atts)
+            chat_drain.drain_soon(thread_id, reason="joined the queue via inject")
+            if body.draft_key:
+                draft_store.clear_draft(body.draft_key)
+            return {"delivered": False, "queued_for_turn": True, "queued": True,
+                    "turn_id": None, "at_segment": None, "queue": st,
+                    "reason": "a compact or clear is running on this chat; this goes out next"}
         # Nothing is running and nothing has been written. The client sends it as
         # an ordinary turn instead, which is the only case where re-sending is
         # correct: this endpoint has not taken the message.

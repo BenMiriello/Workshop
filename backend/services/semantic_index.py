@@ -57,17 +57,12 @@ from wsplatform import paths
 
 log = logging.getLogger("workshop.semantic_index")
 
-EMBED_MODEL = os.environ.get("WORKSHOP_EMBED_MODEL", "nomic-embed-text")
-EMBED_BATCH = 32
-EMBED_TIMEOUT_S = 120.0
-
-# Measured 2026-08-14 on this box: CPU does 121 ms/chunk batched, a query embed
-# in about 0.1s warm, a full 3,800-chunk cold rebuild in about 8 minutes. GPU
-# buys nothing at this corpus size and costs the whole feature whenever another
-# workload holds the card, which is the state this box was actually found in:
-# `/api/embed` 500ing with a CUDA OOM. Default is CPU (`num_gpu: 0`); a box
-# with a genuinely free GPU can opt back in with the env var.
-EMBED_NUM_GPU = int(os.environ.get("WORKSHOP_EMBED_NUM_GPU", "0"))
+# Embeddings run through services/embeddings.py, an in-process local ONNX model
+# (bge-small-en-v1.5, 384-d) with no daemon, no network, no GPU dependency. This
+# replaced the Ollama /api/embed backend on 2026-08-20. The provider records its
+# own name; this module tags the index with it and rebuilds on a model change
+# (see _index_model / load), which is what stops two models' vectors from ever
+# sharing one matrix.
 
 # ~1200 characters is about 300 tokens: long enough to carry an argument, short
 # enough that a hit points at a paragraph rather than a document. The overlap
@@ -84,12 +79,53 @@ CHUNK_OVERLAP = 150
 # design doc (design doc sec 8: "kinds: [ticket] is how documentation and
 # tickets integrate without merging the stores: separate stores, separate
 # lifecycles, one query surface, one ref format").
-KINDS = ("note", "doc", "chat", "ticket", "vault")
+# The platform's own corpora. An app contributes more through
+# `AppSpec.index_collectors`; `vault` (the operator's Obsidian folder) used to be
+# listed here and is now the notes app's declaration.
+PLATFORM_KINDS = ("note", "doc", "chat", "ticket")
 
-# The vault is the operator's own Obsidian folder. It is indexed only when asked
-# for by name: a search about routing code must never surface a personal note.
-# See the decision note in docs/memory-and-transcript-simplification-2026-08-12.md.
-DEFAULT_KINDS = ("note", "doc", "chat", "ticket")
+# Indexed on every build. A corpus an app marks opt-in (its id absent from
+# `AppSpec.index_collectors_default`) is indexed only when asked for by name, so
+# a search about routing code never surfaces a personal note. See the decision in
+# docs/memory-and-transcript-simplification-2026-08-12.md.
+PLATFORM_DEFAULT_KINDS = ("note", "doc", "chat", "ticket")
+
+
+def _app_collectors() -> tuple[dict, set[str]]:
+    try:
+        from services import app_registry
+
+        return app_registry.installed_index_collectors()
+    except Exception:
+        return {}, set()
+
+
+def collectors() -> dict:
+    """kind -> collector, platform first then installed apps. Resolved per call:
+    installing an app makes its corpus searchable without a restart."""
+    app, _ = _app_collectors()
+    return {**_COLLECTORS, **app}
+
+
+def kinds() -> tuple[str, ...]:
+    return tuple(collectors())
+
+
+def default_kinds() -> tuple[str, ...]:
+    _, app_default = _app_collectors()
+    extra = tuple(k for k in kinds() if k in app_default and k not in PLATFORM_DEFAULT_KINDS)
+    return PLATFORM_DEFAULT_KINDS + extra
+
+
+def __getattr__(name):
+    """`KINDS` and `DEFAULT_KINDS` were module constants and are read by the MCP
+    query server and the tests. They are now derived, so they are served as
+    module attributes rather than renamed at every call site."""
+    if name == "KINDS":
+        return kinds()
+    if name == "DEFAULT_KINDS":
+        return default_kinds()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # Below this cosine score, a hit is not a hit and the search returns nothing.
 #
@@ -136,32 +172,24 @@ class Chunk:
 
 # ---------------------------------------------------------------- embedding
 
-def _ollama_url() -> str:
-    try:
-        from services import llm_router
-        return llm_router.OLLAMA_URL
-    except Exception:
-        return os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+def _index_model() -> str:
+    """The provider identity to tag this index with. A change here means the
+    stored vectors are from a different model and must be discarded (load()
+    enforces that)."""
+    from services import embeddings
+    return embeddings.provider_name()
 
 
 def embed(texts: list[str]) -> np.ndarray:
-    """L2-normalised embeddings, one row per text. Raises on failure.
+    """L2-normalised embeddings, one row per text, via the local provider.
 
     Normalised here rather than at query time so the ranking is a plain dot
-    product and the stored matrix is directly usable."""
+    product and the stored matrix is directly usable. Idempotent when the
+    provider already returns unit vectors."""
+    from services import embeddings
     if not texts:
-        return np.zeros((0, 0), dtype=np.float32)
-    import httpx
-    out: list[list[float]] = []
-    with httpx.Client(timeout=EMBED_TIMEOUT_S) as cl:
-        for i in range(0, len(texts), EMBED_BATCH):
-            batch = texts[i:i + EMBED_BATCH]
-            r = cl.post(f"{_ollama_url()}/api/embed",
-                        json={"model": EMBED_MODEL, "input": batch,
-                              "options": {"num_gpu": EMBED_NUM_GPU}})
-            r.raise_for_status()
-            out.extend(r.json()["embeddings"])
-    m = np.asarray(out, dtype=np.float32)
+        return np.zeros((0, embeddings.provider_dim()), dtype=np.float32)
+    m = np.asarray(embeddings.embed_documents(list(texts)), dtype=np.float32)
     norms = np.linalg.norm(m, axis=1, keepdims=True)
     # A zero vector would divide to NaN and poison every later comparison.
     norms[norms == 0] = 1.0
@@ -195,30 +223,12 @@ def available() -> tuple[bool, str]:
 
 
 def _probe_embedder() -> tuple[bool, str]:
-    """The uncached check. Split out so `available()` owns the caching and this
-    owns the actual test, which is a real (tiny) embed call and not just "is
-    the model pulled".
-
-    That distinction is the whole point: `/api/tags` reporting the model as
-    pulled says nothing about whether the runtime backing it can currently run
-    it. Measured on this box: the model was pulled, `/api/tags` was healthy,
-    and every embed still 500'd with a CUDA out-of-memory because another
-    workload held the GPU. Only an actual embed call catches that."""
-    try:
-        import httpx
-        with httpx.Client(timeout=5.0) as cl:
-            r = cl.get(f"{_ollama_url()}/api/tags")
-            r.raise_for_status()
-            names = {m.get("name", "").split(":")[0] for m in r.json().get("models", [])}
-        if EMBED_MODEL.split(":")[0] not in names:
-            return False, f"ollama is up but the model {EMBED_MODEL} is not pulled"
-    except Exception as e:
-        return False, f"ollama is unreachable at {_ollama_url()}: {e}"
-    try:
-        embed(["ok"])
-    except Exception as e:
-        return False, f"the model {EMBED_MODEL} is pulled but cannot embed right now: {e}"
-    return True, ""
+    """The uncached check: whether the local provider can actually embed right
+    now. It is a real (tiny) embed call, which for the in-process ONNX model
+    also forces the one-time model load, so a missing dependency or a failed
+    model download surfaces here as a nameable reason."""
+    from services import embeddings
+    return embeddings.available()
 
 
 # ---------------------------------------------------------------- chunking
@@ -371,13 +381,17 @@ def collect_chats() -> list[Chunk]:
     return out
 
 
-def collect_vault() -> list[Chunk]:
-    """The operator's own Obsidian vault. Opt-in only: see DEFAULT_KINDS."""
-    from services import notes_vault
+def collect_markdown_tree(kind: str, root) -> list[Chunk]:
+    """Chunk every markdown file under `root` as `kind`. The platform-owned half
+    of a corpus collector: an app that has a folder of notes declares WHERE it is
+    (`AppSpec.index_collectors`) and gets the chunking, titling, hidden-file skip
+    and relative-ref rules from here rather than reimplementing them.
+
+    This was `collect_vault`, which named one app's corpus in platform code and
+    imported that app's module to find it.
+    """
     out: list[Chunk] = []
-    try:
-        root = notes_vault.vault_root()
-    except Exception:
+    if root is None:
         return out
     for f in sorted(root.rglob("*.md")):
         if any(part.startswith(".") for part in f.parts):
@@ -391,7 +405,7 @@ def collect_vault() -> list[Chunk]:
         except Exception:
             ref = str(f)
         for c in _split(body):
-            out.append(Chunk("vault", ref, _first_heading(body, f.stem), "", _iso(f), c))
+            out.append(Chunk(kind, ref, _first_heading(body, f.stem), "", _iso(f), c))
     return out
 
 
@@ -443,12 +457,13 @@ def collect_tickets() -> list[Chunk]:
     return out
 
 
+# The PLATFORM's collectors. An app's are unioned in by collectors(); tests that
+# monkeypatch this dict still control the platform half exactly as before.
 _COLLECTORS = {
     "note": collect_notes,
     "doc": collect_docs,
     "chat": collect_chats,
     "ticket": collect_tickets,
-    "vault": collect_vault,
 }
 
 
@@ -478,11 +493,29 @@ def _vecs_path() -> Path:
     return index_dir() / "index.vecs.npy"
 
 
+def _model_path() -> Path:
+    return index_dir() / "index.model"
+
+
 def load() -> tuple[list[dict], np.ndarray]:
     """The index as it stands, or empty. Never raises: a corrupt or half-written
-    index must degrade to "no results", not break the tool that reads it."""
+    index must degrade to "no results", not break the tool that reads it.
+
+    A model change makes every stored vector meaningless (two models' vectors do
+    not share a space), so an index tagged with a different provider than the one
+    running now, OR an untagged legacy index from the Ollama era, is treated as
+    empty. That forces a one-time full rebuild onto the new model rather than
+    ever mixing dimensions or spaces."""
     mp, vp = _meta_path(), _vecs_path()
     if not mp.exists() or not vp.exists():
+        return [], np.zeros((0, 0), dtype=np.float32)
+    try:
+        stored_model = _model_path().read_text().strip() if _model_path().exists() else ""
+    except Exception:
+        stored_model = ""
+    if stored_model != _index_model():
+        log.info("semantic index model changed (%r -> %r); rebuilding from scratch",
+                 stored_model or "(untagged)", _index_model())
         return [], np.zeros((0, 0), dtype=np.float32)
     try:
         # `split("\n")`, NEVER `splitlines()`. Python also splits on U+2028,
@@ -510,6 +543,11 @@ def _save(meta: list[dict], vecs: np.ndarray) -> None:
     np.save(tmp_v, vecs)
     os.replace(tmp_m, mp)
     os.replace(tmp_v, vp)
+    # Tag the index with the provider that produced these vectors, so load()
+    # discards them if the model ever changes. Written last: a reader that sees
+    # the vectors already sees a matching (or, briefly, an older) tag, never a
+    # newer tag over old vectors.
+    _model_path().write_text(_index_model())
 
 
 # -------------------------------------------------------------- staleness
@@ -612,7 +650,8 @@ def _clear_stale() -> None:
 # (above) covering every way into that store, so a second signal would only
 # add a stat walk with nothing new to catch. `vault` has the same filesystem
 # gap `doc` does (no writer marks anything), but is deliberately left out: it
-# is opt-in only (see DEFAULT_KINDS) and is never part of a self-heal rebuild
+# is opt-in only (an app-declared kind outside index_collectors_default) and is
+# never part of a self-heal rebuild
 # unless a caller already asked for it by name, so the failure mode this
 # closes -- the DEFAULT corpus silently drifting -- does not apply to it. If
 # vault ever needs this too, add `"vault": _vault_fingerprint` to
@@ -722,8 +761,10 @@ def rebuild_kinds() -> tuple[str, ...]:
     defaults, plus anything already indexed — so an opted-in `vault` survives a
     rebuild it did not ask for.
     """
-    present = {m.get("kind") for m in load()[0] if m.get("kind") in KINDS}
-    return tuple(k for k in KINDS if k in present or k in DEFAULT_KINDS)
+    all_kinds = kinds()
+    dflt = default_kinds()
+    present = {m.get("kind") for m in load()[0] if m.get("kind") in all_kinds}
+    return tuple(k for k in all_kinds if k in present or k in dflt)
 
 
 def rebuild_if_stale() -> dict | None:
@@ -803,7 +844,7 @@ def _background_rebuild_if_stale() -> bool:
 
 # ---------------------------------------------------------------- build
 
-def build(kinds: tuple[str, ...] | list[str] = DEFAULT_KINDS,
+def build(kinds: tuple[str, ...] | list[str] | None = None,
           *, log_fn=None) -> dict:
     """Rebuild the index, re-embedding only what is new.
 
@@ -811,6 +852,10 @@ def build(kinds: tuple[str, ...] | list[str] = DEFAULT_KINDS,
     mtimes: an unchanged note keeps its vector, an edited one gets a new digest
     and is re-embedded, and a deleted one simply stops being collected. That
     also makes the operation idempotent, which a mtime cache is not."""
+    # Resolved at call time, not as a default argument: which kinds are default
+    # now depends on which apps are installed.
+    if kinds is None:
+        kinds = default_kinds()
     say = log_fn or (lambda s: None)
     ok, why = available()
     if not ok:
@@ -818,7 +863,7 @@ def build(kinds: tuple[str, ...] | list[str] = DEFAULT_KINDS,
 
     chunks: list[Chunk] = []
     for k in kinds:
-        c = _COLLECTORS[k]()
+        c = collectors()[k]()
         say(f"collected {len(c)} chunks from {k}")
         chunks.extend(c)
 
@@ -850,7 +895,7 @@ def build(kinds: tuple[str, ...] | list[str] = DEFAULT_KINDS,
     # letting it clear a marker a note write left would lose that note until the
     # next unrelated write. An `ok: False` return above (embedder down) never
     # reaches here at all, so the marker survives and the next search retries.
-    covered = set(DEFAULT_KINDS).issubset(set(kinds))
+    covered = set(default_kinds()).issubset(set(kinds))
 
     if not rows:
         _save([], np.zeros((0, 0), dtype=np.float32))
@@ -1160,7 +1205,7 @@ def status() -> dict:
         by_kind[m.get("kind", "?")] = by_kind.get(m.get("kind", "?"), 0) + 1
     ok, why = available()
     return {"chunks": len(meta), "dim": int(vecs.shape[1]) if vecs.size else 0,
-            "by_kind": by_kind, "model": EMBED_MODEL,
+            "by_kind": by_kind, "model": _index_model(),
             "embedder_ok": ok, "embedder_error": why}
 
 
@@ -1183,7 +1228,7 @@ def _main(argv: list[str]) -> int:
     pin_owner()
     verb = argv[1] if len(argv) > 1 else "status"
     if verb == "build":
-        kinds = tuple(argv[2].split(",")) if len(argv) > 2 else DEFAULT_KINDS
+        kinds = tuple(argv[2].split(",")) if len(argv) > 2 else default_kinds()
         print(json.dumps(build(kinds, log_fn=lambda s: print(f"  {s}")), indent=2))
     elif verb == "search":
         result = search(" ".join(argv[2:]), limit=5)

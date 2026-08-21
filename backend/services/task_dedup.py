@@ -48,47 +48,27 @@ import logging
 import math
 import os
 import re
-import urllib.request
 from pathlib import Path
 
 from services import tasks
 
 log = logging.getLogger(__name__)
 
-# Cosine decision thresholds (design 2e). Calibrated for a semantic embedder;
-# the >= MERGE_AT tier is additionally gated by an LLM same-work check so a
-# slightly generous threshold cannot cause a silent false merge.
+# Cosine decision thresholds (design 2e). Calibrated for a semantic embedder.
+# A cosine >= MERGE_AT is a near-duplicate, but nothing auto-merges on cosine
+# alone: a false merge silently drops a unit of work, so the high tier LINKS
+# (creates a `related` task pointing at the match) rather than merging. Merging
+# was previously gated by a local Ollama LLM confirmation; that local-model
+# dependency was removed on 2026-08-20, and without a confirmation the safe,
+# non-destructive default is to link. A future hosted confirmation could
+# re-enable auto-merge behind this same threshold.
 MERGE_AT = 0.90
 RELATED_AT = 0.80
 
-# Local Ollama embedding + same-work check (the Ollama service is kept alive for
-# this and the local relay). All best-effort: any failure falls back cleanly.
-_OLLAMA_URL = os.environ.get("WORKSHOP_OLLAMA_URL", "http://localhost:11434").rstrip("/")
-_EMBED_MODEL = os.environ.get("WORKSHOP_EMBED_OLLAMA_MODEL", "bge-m3").strip()
-# The same-work confirmation model: a small, fast local instruct model is plenty
-# for a binary judgement. Set WORKSHOP_DEDUP_LLM_CHECK=0 to disable the gate
-# (pure-cosine merge, the pre-hardening behavior).
-_DEDUP_LLM_MODEL = os.environ.get("WORKSHOP_DEDUP_LLM_MODEL", "llama3:latest").strip()
-
-# HOW LONG THE CONFIRMATION MAY TAKE, and why there are two answers.
-#
-# The check is a local Ollama call. Measured 2026-08-15 on this box: ~2.0s with
-# the model resident, 9-11s when it has to be loaded, which is every filing
-# after an idle stretch. `dedup_add` runs INSIDE the request, so an operator who
-# clicks File ticket pays that wall time watching a spinner on a dead button,
-# and that is exactly what was reported.
-#
-# The budget therefore belongs to the CALLER, because the two kinds of caller
-# want opposite things:
-#   - a sweep, a triager, an import: nobody is watching, and a false merge
-#     silently drops a unit of work, so wait for the answer.
-#   - a click: the answer is worth about as much as the wait. Timing out is not
-#     a failure here, it is the documented downgrade -- an unconfirmed match
-#     becomes a `related` link, so the ticket is created and nothing is lost.
-_LLM_TIMEOUT_S = float(os.environ.get("WORKSHOP_DEDUP_LLM_TIMEOUT_S", "45") or 45)
-# What a caller with someone waiting on it should pass. Comfortably above the
-# warm 2.0s, comfortably below the cold load.
-INTERACTIVE_LLM_TIMEOUT_S = 6.0
+# Embeddings run through services/embeddings.py, an in-process local ONNX model
+# (bge-small-en-v1.5, 384-d) with no daemon and no network. This replaced the
+# local Ollama /api/embeddings backend on 2026-08-20. On any failure the lexical
+# hashing vectorizer below is the fallback so filing never breaks.
 
 # Hashing-vectorizer width. Small is fine: the task corpus per scope is tiny and
 # collisions only slightly blur cosine, never break the hash-exact merge path.
@@ -144,56 +124,8 @@ def _lexical_vector(text: str) -> list[float]:
     return vec
 
 
-def _http_embed(texts: list[str], url: str) -> list[list[float]] | None:
-    """POST texts to an external text-embed endpoint. Returns L2-normalized
-    vectors, or None on any failure (caller falls back)."""
-    try:
-        body = json.dumps({"texts": texts}).encode()
-        req = urllib.request.Request(
-            url, data=body, headers={"content-type": "application/json"}
-        )
-        with urllib.request.urlopen(req, timeout=15) as r:
-            vecs = json.loads(r.read()).get("vectors")
-        if not isinstance(vecs, list) or len(vecs) != len(texts):
-            return None
-        out: list[list[float]] = []
-        for v in vecs:
-            v = [float(x) for x in v]
-            norm = math.sqrt(sum(x * x for x in v))
-            out.append([x / norm for x in v] if norm > 0 else v)
-        return out
-    except Exception:
-        return None
-
-
-def _ollama_embed(texts: list[str]) -> list[list[float]] | None:
-    """Embed each text via the local Ollama /api/embeddings (one call per text;
-    the corpus is tiny). Returns L2-normalized vectors, or None on any failure so
-    the caller falls back to the lexical embedder."""
-    if not _EMBED_MODEL:
-        return None
-    out: list[list[float]] = []
-    try:
-        for t in texts:
-            body = json.dumps({"model": _EMBED_MODEL, "prompt": t or ""}).encode()
-            req = urllib.request.Request(
-                _OLLAMA_URL + "/api/embeddings",
-                data=body, headers={"content-type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=20) as r:
-                v = json.loads(r.read()).get("embedding")
-            if not isinstance(v, list) or not v:
-                return None
-            v = [float(x) for x in v]
-            norm = math.sqrt(sum(x * x for x in v))
-            out.append([x / norm for x in v] if norm > 0 else v)
-        return out
-    except Exception:
-        return None
-
-
 # ---- vector cache ---------------------------------------------------------
-# Keyed by (backend, model, text). The MODEL is in the key rather than checked
+# Keyed by (backend/model, text). The MODEL is in the key rather than checked
 # separately, so switching embedders cannot serve a vector from the old one: a
 # cosine between two models' vectors is a number with no meaning, and a silent
 # wrong merge is the expensive failure here. An edited ticket changes its text,
@@ -208,10 +140,21 @@ def _vec_cache_path() -> Path:
     return paths.runtime("dedup-vectors.json")
 
 
+def _active_backend() -> str:
+    """The backend identity to key cached vectors by. The provider name changes
+    with the model, so a model swap changes every key and old vectors are never
+    served. `provider_name()` does not load the model, so this is cheap; it only
+    fails if the provider is misconfigured, in which case the lexical fallback
+    owns the key."""
+    from services import embeddings
+    try:
+        return embeddings.provider_name()
+    except Exception:
+        return "lexical"
+
+
 def _vec_key(text: str) -> str:
-    url = os.environ.get("WORKSHOP_TEXT_EMBED_URL", "").strip()
-    backend = f"http:{url}" if url else f"ollama:{_EMBED_MODEL}"
-    return hashlib.sha256(f"{backend}\x00{text or ''}".encode()).hexdigest()[:32]
+    return hashlib.sha256(f"{_active_backend()}\x00{text or ''}".encode()).hexdigest()[:32]
 
 
 def _vec_cache() -> dict[str, list[float]]:
@@ -286,32 +229,29 @@ def embed_available() -> bool:
 
 
 def embed_backend() -> str:
-    """Name of the embedding backend that embed_texts() would use right now, for
-    observability + model-change tracking. Cheap probe (no network for the URL
-    case; a tiny Ollama call to confirm reachability)."""
+    """Name of the embedding backend embed_texts() would use right now, for
+    observability + model-change tracking. Cheap: the provider name is a string,
+    it does not load the model or hit the network."""
     if not embed_available():
         return "disabled"
-    if os.environ.get("WORKSHOP_TEXT_EMBED_URL", "").strip():
-        return "http-embed"
-    if _ollama_embed(["ping"]) is not None:
-        return f"ollama:{_EMBED_MODEL}"
-    return "lexical"
+    return _active_backend()
 
 
 def embed_texts(texts: list[str]) -> list[list[float]] | None:
     """Embed each text to an L2-normalized vector, or None if embedding is
-    force-disabled (hash-only fallback). Preference: an explicit HTTP text-embed
-    service (WORKSHOP_TEXT_EMBED_URL); else local Ollama semantic embeddings; else
-    the local lexical embedder. Never raises.
+    force-disabled (hash-only fallback). Uses the in-process local provider
+    (services/embeddings), falling back to the lexical hashing vectorizer if the
+    provider cannot run. Never raises.
 
     CACHED BY TEXT, which is what makes filing a ticket fast. `decide` compares a
     new ticket against every OPEN ticket in the scope, so it asks for the new
-    text plus the whole backlog, and `_ollama_embed` is one HTTP call per text.
-    Measured 2026-08-16 on the live store: 28 texts, 17.5 seconds, paid on every
-    single filing, which is the delay the operator reported. A ticket's vector
-    depends only on its words, and the backlog's words almost never change
-    between two filings, so all but one of those calls was recomputing an answer
-    the machine already had.
+    text plus the whole backlog. Measured 2026-08-16 on the live store (against
+    the older per-text Ollama call): 28 texts, 17.5 seconds, paid on every single
+    filing, which is the delay the operator reported. A ticket's vector depends
+    only on its words, and the backlog's words almost never change between two
+    filings, so caching means all but one of those embeds is skipped. The local
+    ONNX model is far faster than the old network call, but the cache still earns
+    its keep on a large backlog.
     """
     if not texts:
         return []
@@ -335,14 +275,21 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
 
 
 def _embed_uncached(texts: list[str]) -> dict[str, list[float]] | None:
-    """The actual embedding call, for texts with no cached vector."""
-    url = os.environ.get("WORKSHOP_TEXT_EMBED_URL", "").strip()
-    got = None
-    if url:
-        got = _http_embed(texts, url)
-        # endpoint configured but unreachable -> fall through
-    if got is None:
-        got = _ollama_embed(texts)
+    """The actual embedding call, for texts with no cached vector. The in-process
+    local provider first; the lexical hashing vectorizer if it cannot run, so
+    filing never breaks on an embedding failure."""
+    from services import embeddings
+    got: list[list[float]] | None = None
+    try:
+        raw = embeddings.embed_documents(texts)
+        got = []
+        for v in raw:
+            v = [float(x) for x in v]
+            norm = math.sqrt(sum(x * x for x in v))
+            got.append([x / norm for x in v] if norm > 0 else v)
+    except Exception as e:  # noqa: BLE001
+        log.warning("embedding provider failed, using lexical fallback: %s", e)
+        got = None
     if got is None:
         try:
             got = [_lexical_vector(t) for t in texts]
@@ -351,51 +298,6 @@ def _embed_uncached(texts: list[str]) -> dict[str, list[float]] | None:
     if got is None or len(got) != len(texts):
         return None
     return dict(zip(texts, got))
-
-
-def _dedup_llm_check_enabled() -> bool:
-    return os.environ.get("WORKSHOP_DEDUP_LLM_CHECK", "1").strip() not in ("0", "false", "no", "")
-
-
-def same_work_llm(a: str, b: str, timeout_s: float | None = None) -> bool | None:
-    """Ask a small local model whether two task lines are the SAME unit of work
-    (same change, same target). Returns True/False, or None when the check is
-    disabled or the model is unreachable (caller treats None as "cannot confirm").
-    Deterministic-ish (temperature 0) and cheap; only ever called on the rare
-    >= MERGE_AT tier."""
-    if not _dedup_llm_check_enabled() or not _DEDUP_LLM_MODEL:
-        return None
-    prompt = (
-        "You are deduplicating a task queue. Two task descriptions are below.\n"
-        "Answer strictly whether they are the SAME unit of work: the same change "
-        "to the same target (same file/endpoint/feature). Different targets, or a "
-        "broader-vs-narrower scope, are NOT the same work.\n\n"
-        f"TASK A: {a}\n\nTASK B: {b}\n\n"
-        "Answer with exactly one word on the first line: YES or NO."
-    )
-    try:
-        body = json.dumps({
-            "model": _DEDUP_LLM_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0},
-        }).encode()
-        req = urllib.request.Request(
-            _OLLAMA_URL + "/api/generate",
-            data=body, headers={"content-type": "application/json"},
-        )
-        budget = _LLM_TIMEOUT_S if timeout_s is None else float(timeout_s)
-        with urllib.request.urlopen(req, timeout=budget) as r:
-            resp = json.loads(r.read()).get("response") or ""
-        head = resp.strip().splitlines()[0].strip().upper() if resp.strip() else ""
-        if head.startswith("YES"):
-            return True
-        if head.startswith("NO"):
-            return False
-        # Ambiguous answer -> cannot confirm.
-        return None
-    except Exception:
-        return None
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -428,13 +330,13 @@ def _open_tasks(root: Path) -> list[dict]:
 
 
 def decide(text: str, open_tasks: list[dict], *,
-           llm_timeout_s: float | None = None,
            semantic: bool = True) -> dict:
     """Classify a new task text against the scope's open tasks WITHOUT mutating
     anything. Returns {decision, matched_id, cosine, stage} where decision is one
     of exact | merge | related | distinct. `exact` and `merge` both mean "attach
     to matched_id, do not create"; `related` means "create + link to matched_id";
-    `distinct` means "create fresh"."""
+    `distinct` means "create fresh". Cosine alone never returns `merge` (see
+    MERGE_AT): only the hash-exact tier attaches, everything else links."""
     new_hash = canonical_hash(text)
     for t in open_tasks:
         if canonical_hash(t.get("text") or "") == new_hash:
@@ -465,20 +367,15 @@ def decide(text: str, open_tasks: list[dict], *,
             best_cos, best_id, best_text = c, t["id"], (t.get("text") or "")
 
     if best_id is not None and best_cos >= MERGE_AT:
-        # Non-destructive gate: a false merge silently drops a distinct unit of
-        # work, so confirm same-work with a cheap local LLM before merging. With
-        # the gate disabled we keep the pre-hardening pure-cosine merge; with it
-        # enabled, only an explicit "yes" merges -- a "no" or an unreachable model
-        # downgrades to a linked "related" task rather than risking a false merge.
-        if not _dedup_llm_check_enabled():
-            return {"decision": "merge", "matched_id": best_id, "cosine": best_cos,
-                    "stage": "cosine"}
-        confirm = same_work_llm(text, best_text, timeout_s=llm_timeout_s)
-        if confirm is True:
-            return {"decision": "merge", "matched_id": best_id, "cosine": best_cos,
-                    "stage": "cosine+llm"}
+        # A near-duplicate, but nothing auto-merges on cosine alone: a false
+        # merge silently drops a distinct unit of work. Merging used to be gated
+        # by a local Ollama same-work confirmation, which was removed with the
+        # rest of the local-model dependency (2026-08-20). Without a confirmation
+        # the safe result is a LINK: the ticket is created and points at the
+        # match, nothing is taken away. A future hosted confirmation could
+        # re-enable a `merge` here behind this same threshold.
         return {"decision": "related", "matched_id": best_id, "cosine": best_cos,
-                "stage": "cosine+llm-downgrade", "gate": confirm}
+                "stage": "cosine-high-no-confirm"}
     if best_id is not None and best_cos >= RELATED_AT:
         return {"decision": "related", "matched_id": best_id, "cosine": best_cos, "stage": "cosine"}
     return {"decision": "distinct", "matched_id": best_id, "cosine": best_cos, "stage": "cosine"}
@@ -500,7 +397,6 @@ def dedup_add(
     labels: list[str] | None = None,
     scoped_by: str | None = None,
     status: str = "todo",
-    llm_timeout_s: float | None = None,
     semantic: bool = True,
 ) -> dict:
     """Create a task from a chat, deduped against open tasks in this scope.
@@ -533,8 +429,7 @@ def dedup_add(
     src_ref = src.get("ref") or "chat"
     prov = provenance or canonical_hash(text)
 
-    d = decide(text, _open_tasks(root), llm_timeout_s=llm_timeout_s,
-               semantic=semantic)
+    d = decide(text, _open_tasks(root), semantic=semantic)
     decision = d["decision"]
     matched_id = d.get("matched_id")
     cosine = d.get("cosine")
@@ -601,8 +496,7 @@ def dedup_add(
 
 # ---- the semantic pass, off the request path -------------------------------
 
-def link_near_matches(root: Path, task_id: str, *,
-                      llm_timeout_s: float | None = None) -> dict:
+def link_near_matches(root: Path, task_id: str) -> dict:
     """Find near-duplicates of a just-filed ticket and LINK them.
 
     This is the half of dedup that costs seconds: an embedding call per uncached
@@ -627,7 +521,7 @@ def link_near_matches(root: Path, task_id: str, *,
     others = [t for t in _open_tasks(root) if t.get("id") != task_id]
     if not others:
         return {"status": "nothing to compare"}
-    d = decide(text, others, llm_timeout_s=llm_timeout_s)
+    d = decide(text, others)
     matched_id, cosine = d.get("matched_id"), d.get("cosine")
     if d["decision"] == "distinct" or not matched_id:
         return {"status": "distinct", "cosine": cosine}
