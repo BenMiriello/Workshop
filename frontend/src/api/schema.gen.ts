@@ -798,6 +798,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/apps/{app_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** App Files Tree */
+        get: operations["app_files_tree_apps__app_id__files_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{app_id}/files/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** App Files Read */
+        get: operations["app_files_read_apps__app_id__files_content_get"];
+        /** App Files Write */
+        put: operations["app_files_write_apps__app_id__files_content_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/apps/{app_id}/notes": {
         parameters: {
             query?: never;
@@ -8085,6 +8120,65 @@ export interface components {
         AppDeployList: {
             /** Deploys */
             deploys: Record<string, never>[];
+        };
+        /** AppFileContent */
+        AppFileContent: {
+            /** Content */
+            content: string;
+            /** Editable */
+            editable: boolean;
+            /** Encoding */
+            encoding: string;
+            /** Modified */
+            modified?: string | null;
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** AppFileEntry */
+        AppFileEntry: {
+            /** Kind */
+            kind: string;
+            /** Modified */
+            modified?: string | null;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Size */
+            size?: number | null;
+        };
+        /** AppFileTree */
+        AppFileTree: {
+            /** Entries */
+            entries: components["schemas"]["AppFileEntry"][];
+            /** Filtered */
+            filtered?: string[] | null;
+            /** Path */
+            path: string;
+            /** Reason */
+            reason?: string | null;
+            /** Root */
+            root: string;
+        };
+        /** AppFileWriteIn */
+        AppFileWriteIn: {
+            /** Content */
+            content: string;
+            /** Path */
+            path: string;
+        };
+        /** AppFileWriteOut */
+        AppFileWriteOut: {
+            /** Modified */
+            modified: string;
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
         };
         /**
          * AppGrant
@@ -16606,6 +16700,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppDeployList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    app_files_tree_apps__app_id__files_get: {
+        parameters: {
+            query?: {
+                path?: string;
+            };
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppFileTree"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    app_files_read_apps__app_id__files_content_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppFileContent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    app_files_write_apps__app_id__files_content_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppFileWriteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppFileWriteOut"];
                 };
             };
             /** @description Validation Error */
