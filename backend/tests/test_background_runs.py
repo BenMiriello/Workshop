@@ -36,19 +36,37 @@ def test_launch_opens_a_background_job_and_spawns_a_detached_runner(owned, monke
         thread_id="t-123", owner_id=6, scope="workshop",
         prompt="Investigate the widget", label="widget probe")
 
-    # The Job is a background run linked to the chat.
-    j = jobs._read_all().get(job_id)
-    assert j, "job was not recorded"
-    assert j["kind"] == "background"
-    assert j["chat_id"] == "t-123"
     # Detached, and the runner carries the ids it needs.
     assert spawned["kw"].get("start_new_session") is True
     assert "services.background_runs" in spawned["cmd"] and "run" in spawned["cmd"]
     assert "--thread" in spawned["cmd"] and "t-123" in spawned["cmd"]
+    assert "--job-id" in spawned["cmd"] and job_id in spawned["cmd"]
+    # The runner is pinned to the chat store's runtime root, so its Job record
+    # lands where the backend reads it (not a sandbox-local path that evaporates).
+    assert spawned["kw"]["env"].get("WORKSHOP_RUNTIME") == str(ownership._RUNTIME)
     # The prompt is handed off in a file, not on the command line.
     pf_idx = spawned["cmd"].index("--prompt-file") + 1
     from pathlib import Path
     assert Path(spawned["cmd"][pf_idx]).read_text() == "Investigate the widget"
+
+
+def test_the_runner_opens_the_job_record(owned, monkeypatch):
+    # The runner, not launch, writes the Job (so it uses the corrected runtime).
+    monkeypatch.setattr(background_runs, "_run_claude",
+                        lambda *a, **k: (0, "the finding", {"output_tokens": 5}))
+    delivered = {}
+    monkeypatch.setattr(background_runs, "_deliver",
+                        lambda **kw: delivered.update(kw))
+    from pathlib import Path
+    pf = Path(str(owned)) / "p.txt"
+    pf.write_text("do the thing")
+    background_runs.run(["--job-id", "job-run-1", "--thread", "t-9", "--owner", "6",
+                         "--scope", "workshop", "--label", "probe", "--prompt-file", str(pf)])
+    j = jobs._read_all().get("job-run-1")
+    assert j, "runner did not record the job"
+    assert j["kind"] == "background" and j["chat_id"] == "t-9"
+    assert j["status"] == "done"  # finish line collapsed over the start
+    assert delivered["status"] == "done" and delivered["text"] == "the finding"
 
 
 def test_launch_refuses_an_empty_prompt(owned):

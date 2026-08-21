@@ -82,13 +82,14 @@ def launch(*, thread_id: str, owner_id: int, scope: str, prompt: str,
         raise ValueError("a background agent needs a prompt")
     label = (label or prompt.splitlines()[0][:60]).strip()
 
-    from services import jobs
-    job = jobs.start(
-        trigger="manual", status="running", kind="background",
-        chat_id=thread_id,
-        binding={"label": label, "scope": scope, "kind": "chat_background"},
-    )
-    job_id = job["id"]
+    # Only mint the id here; the RUNNER opens the Job record. Why not here: this
+    # call runs inside the chat turn's bwrap view, where the run log's path
+    # (paths.runtime_dir(), a symlink-resolved host path) is unmounted, so a
+    # jobs.start() write here lands in a throwaway layer and the run never shows
+    # up. The runner is given WORKSHOP_RUNTIME below so its jobs writes go to the
+    # SAME bind-mounted root the chat store already uses.
+    from services import jobs, ownership
+    job_id = jobs._new_id()
 
     prompt_file = _job_dir(job_id) / "prompt.txt"
     prompt_file.write_text(prompt)
@@ -106,6 +107,11 @@ def launch(*, thread_id: str, owner_id: int, scope: str, prompt: str,
     try:
         env = dict(os.environ)
         env["PYTHONPATH"] = str(_BACKEND)
+        # Pin the runtime root to the one the chat store uses (ownership._RUNTIME,
+        # the bind-mounted /workspace/.runtime), so the runner's Job records land
+        # in the same jobs.jsonl the backend reads instead of a sandbox-local path
+        # that evaporates. See the note above.
+        env["WORKSHOP_RUNTIME"] = str(ownership._RUNTIME)
         proc = subprocess.Popen(
             runner, cwd=str(_BACKEND), stdout=logf, stderr=subprocess.STDOUT,
             start_new_session=True, env=env,
@@ -113,10 +119,6 @@ def launch(*, thread_id: str, owner_id: int, scope: str, prompt: str,
     finally:
         if hasattr(logf, "close"):
             logf.close()
-    try:
-        jobs.record_pid(job_id, proc.pid)
-    except OSError:
-        pass
     log.info("background agent launched: job=%s thread=%s label=%r", job_id, thread_id, label)
     return job_id
 
@@ -211,6 +213,16 @@ def run(argv: list[str] | None = None) -> int:
     ap.add_argument("--prompt-file", required=True)
     a = ap.parse_args(argv)
 
+    # Open the Job record HERE, not in launch(): this process was given
+    # WORKSHOP_RUNTIME pointing at the bind-mounted runtime root, so its jobs
+    # writes persist where the backend reads them. pid is ours, the process the
+    # liveness watchdog can actually probe.
+    from services import jobs
+    jobs.start(job_id=a.job_id, trigger="manual", status="running", kind="background",
+               chat_id=a.thread, pid=os.getpid(),
+               binding={"label": a.label or "background agent", "scope": a.scope,
+                        "kind": "chat_background"})
+
     prompt = Path(a.prompt_file).read_text()
     exit_code, text, usage = _run_claude(prompt, _scope_cwd(a.scope), a.owner, a.scope)
     status = "done" if exit_code == 0 else "failed"
@@ -224,7 +236,6 @@ def run(argv: list[str] | None = None) -> int:
     except Exception as e:
         log.warning("background agent delivery failed for job %s: %s", a.job_id, e)
 
-    from services import jobs
     ev = {"summary": text[:2000]} if text else {"summary": ""}
     if usage:
         ev["usage"] = usage
