@@ -264,7 +264,7 @@ def _remap(arg: str, root: str) -> str:
     return arg
 
 
-def wrap(cmd: list[str], workdir: str) -> list[str]:
+def wrap(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -> list[str]:
     """The command to actually spawn for a turn whose scope root is `workdir`.
 
     When scoped exec is off or bwrap is missing or `workdir` is empty, returns
@@ -274,6 +274,14 @@ def wrap(cmd: list[str], workdir: str) -> list[str]:
     The caller keeps passing the REAL `workdir` as the subprocess cwd: that is
     where bwrap itself starts, before it enters the namespace. bwrap's own
     --chdir puts the child at MOUNTPOINT.
+
+    `die_with_parent` adds bwrap's `--die-with-parent`, tying the whole sandbox's
+    lifetime to the launching process. A detached CHAT turn must NOT set it (it is
+    reparented to init and adopted back across a backend restart -- the module
+    docstring's "a restart is a pause, not a break"). A FOREGROUND WORKER (ralph
+    under `timeout`) is the opposite case: when `timeout` fires or the sweep dies
+    it must take the whole sandbox down with it, or an orphaned `claude` runs past
+    its wall budget. So the worker sets it and the chat turn leaves it off.
     """
     if not enabled() or not workdir:
         return cmd
@@ -308,6 +316,8 @@ def wrap(cmd: list[str], workdir: str) -> list[str]:
         "--dev", "/dev",
         "--tmpfs", "/tmp",
     ]
+    if die_with_parent:
+        args.append("--die-with-parent")
     for p in _RO_SYSTEM:
         if os.path.isdir(p):
             args += ["--ro-bind", p, p]
@@ -390,10 +400,13 @@ def turn_home() -> str:
     return os.path.expanduser("~")
 
 
-def spawn_argv(cmd: list[str], workdir: str) -> list[str]:
+def spawn_argv(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -> list[str]:
     """The full argv to actually spawn for a turn: the bwrap view from
     `wrap()`, further wrapped in `sudo -n -E -u <user> -- <turn-exec> run`
     when the uid layer is on for this scope.
+
+    `die_with_parent` is forwarded to `wrap()` -- set by a foreground worker so
+    the sandbox dies with its launcher, left off by a detached chat turn.
 
     `-n` (no password prompt) is load-bearing: without it, a misconfigured
     sudoers rule makes sudo block reading a password from stdin, which is the
@@ -407,7 +420,7 @@ def spawn_argv(cmd: list[str], workdir: str) -> list[str]:
     spawn) when the flag is set but its precondition is not met -- propagates
     to the caller, which must end the turn rather than spawn it unconfined.
     """
-    base = wrap(cmd, workdir)
+    base = wrap(cmd, workdir, die_with_parent=die_with_parent)
     # FAIL-CLOSED. `wrap()` returns the command UNCHANGED when it could not build
     # a sandbox (bwrap missing, the kernel probe failed, an empty scope root, or
     # the flag forced confinement off). For an agent turn that unchanged command
@@ -484,3 +497,53 @@ def signal_pg(pid: int, sig: int, *, user: str | None, pgid: int | None = None) 
         [sudo, "-n", "-u", user, "--", TURN_WRAPPER, "signal", str(int(sig)), str(gid)],
         capture_output=True, timeout=5,
     )
+
+
+# --- Shell-callable entrypoint: confine a foreground worker (scripts/ralph.sh) --
+#
+# The chat turn wires confinement in Python (build_streaming calls spawn_argv).
+# The ralph worker is a bash loop that spawns `claude -p` itself, so it needs a
+# way into the SAME fail-closed seam from the shell. `python -m services.scoped_exec
+# exec --workdir <scope> -- <cmd...>` builds the confined argv and execs it, so the
+# worker runs confined to its scope or -- if the sandbox cannot be built -- does
+# not run at all (exit 3), never with host filesystem access. This is the worker's
+# side of the operator's inviolable rule: confinement is not opt-in and does not
+# degrade to open.
+def _exec_main(argv: list[str]) -> int:
+    import argparse
+    import sys
+
+    ap = argparse.ArgumentParser(prog="scoped_exec")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    ex = sub.add_parser("exec", help="run a command confined to a scope root")
+    ex.add_argument("--workdir", required=True,
+                    help="the scope root to confine to (bind-mounted at /workspace)")
+    ex.add_argument("rest", nargs=argparse.REMAINDER,
+                    help="-- then the command to run confined")
+    args = ap.parse_args(argv)
+
+    cmd = args.rest
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+    if not cmd:
+        print("scoped_exec exec: no command given after --", file=sys.stderr)
+        return 2
+
+    try:
+        spawn = spawn_argv(cmd, args.workdir, die_with_parent=True)
+    except (ConfinementUnavailable, TurnUserUnavailable) as e:
+        # Fail-closed: refuse rather than run the worker unconfined. Bash sees a
+        # nonzero exit and treats the iteration as failed, which is correct -- a
+        # writer that cannot be sandboxed must not write.
+        print(f"scoped_exec: refusing to run unconfined: {e}", file=sys.stderr)
+        return 3
+    env = turn_env(dict(os.environ), args.workdir)
+    # Nothing is printed on the success path: os.execvpe replaces this process, so
+    # the worker's own stdout (claude's --output-format json) is never corrupted.
+    os.execvpe(spawn[0], spawn, env)
+    return 127  # unreachable unless execvpe fails
+
+
+if __name__ == "__main__":
+    import sys
+    raise SystemExit(_exec_main(sys.argv[1:]))

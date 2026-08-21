@@ -461,14 +461,18 @@ fi
 # made that call on 2026-08-21 (see
 # docs/platform-redesign/work-loop-core-design-2026-08-21.md, step S2).
 #
-# The in-run boundary is the irreversible-action deny gate built just above
-# (push/publish/merge/delete/sudo/reboot via --disallowedTools) plus
-# git-revertability — the same net every bypass turn in this system relies on.
-# Note: bwrap confinement is NON-FUNCTIONAL on this host (no user namespace;
-# scoped_exec.functional() is False), so kernel confinement is not what gates
-# writes here and is not claimed to be. On a host where userns works, chat turns
-# are confined via scoped_exec and wiring this worker through the same seam is a
-# tracked follow-up; it buys nothing on this host.
+# The boundary has TWO layers now, not one. (1) Kernel confinement: the spawn
+# below runs through `scoped_exec exec`, the same bwrap seam the chat path uses,
+# so an authorized-to-write worker still only sees its own scope root (mounted at
+# /workspace) plus the named grants — the host tree, other scopes and other
+# owners' data are structurally absent, not merely denied. This corrects a stale
+# claim that lived here: bwrap confinement WAS non-functional on this host because
+# scoped_exec.functional() under-bound its probe, which was fixed 2026-08-21
+# (commit 0daa352); userns works here and every turn is confined. (2) The in-run
+# irreversible-action deny gate built just above (push/publish/merge/delete/sudo/
+# reboot via --disallowedTools) plus git-revertability — the same net every bypass
+# turn relies on. Confinement bounds WHERE a write can land; the deny gate bounds
+# WHAT cannot be done; together they are why bypassPermissions is safe here.
 #
 # EXPLICIT AND REVERSIBLE. Off unless WORKSHOP_UNATTENDED_WRITES is truthy, so
 # merging this changes no existing run until it is deliberately enabled. Set
@@ -505,14 +509,22 @@ esac
 # legitimately configures. Best-effort, like the deny gate above: if the emitter
 # fails the run proceeds without search rather than not proceeding, and the log
 # line below says which happened.
-MCP_CFG=$( (cd "$WORKSHOP/backend" && .venv/bin/python -m services.llm_router \
-  mcp-config --server workshop 2>>"$LOG") || true)
+# INLINE JSON, not a temp file (--stdout, not the path-emitting default). Under
+# confinement the worker runs in a bwrap view with a fresh `--tmpfs /tmp`, so a
+# `--mcp-config /tmp/...json` path written on the host is simply ABSENT inside the
+# sandbox and the search tool silently vanishes. The chat path (build_streaming)
+# already passes the document inline for exactly this reason; ralph now matches it.
+# `wrap()` remaps the server's absolute paths under the scope root to /workspace,
+# so an inline spec resolves inside the sandbox where a /tmp path could not.
+MCP_JSON=$( (cd "$WORKSHOP/backend" && .venv/bin/python -m services.llm_router \
+  mcp-config --server workshop --stdout 2>>"$LOG") || true)
 MCP_FLAGS=()
-if [[ -n "$MCP_CFG" && -f "$MCP_CFG" ]]; then
-  MCP_FLAGS=(--mcp-config "$MCP_CFG")
-  # The emitter writes to the system temp dir and leaves cleanup to the caller.
-  trap 'rm -f "$MCP_CFG"' EXIT
-  log "workshop search tool: enabled (mcp-config $MCP_CFG)"
+if [[ -n "$MCP_JSON" && "${MCP_JSON:0:1}" == "{" ]]; then
+  # Placed so the next token in the spawn is always a flag (--max-turns or the
+  # redirect): `--mcp-config` is variadic and would otherwise eat a following
+  # non-flag token. Additive, never --strict-mcp-config (see comment above).
+  MCP_FLAGS=(--mcp-config "$MCP_JSON")
+  log "workshop search tool: enabled (inline mcp-config)"
   # Told to the model only when the tool is actually there. A prompt that
   # describes a tool the CLI was never given is worse than silence: the model
   # spends a turn calling it and reads the failure as its own mistake.
@@ -530,7 +542,7 @@ did we say about X'. An empty result is a real answer, not a malfunction: it
 means there is no prior art here and you should proceed on the ticket alone.
 Do not re-run the same query hoping for a different result."
 else
-  log "workshop search tool: NOT APPLIED (llm_router emitted no mcp-config)"
+  log "workshop search tool: NOT APPLIED (llm_router emitted no inline mcp-config)"
 fi
 
 # The persona paragraph. Latitude is an INSTRUCTION about the residue the ticket
@@ -715,8 +727,23 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   # </dev/null so claude doesn't wait on (and warn about) stdin — that warning
   # would otherwise be merged into ITER_OUT by 2>&1 and corrupt the JSON.
   ITER_START=$(date +%s)
-  timeout "$PER_ITER_TIMEOUT" "$CLAUDE" "${RESUME_FLAG[@]}" -p "$ITER_PROMPT" \
+  # CONFINED SPAWN. The worker's `claude -p` runs through `scoped_exec exec`, the
+  # same fail-closed bwrap seam the chat path uses: it confines the process to
+  # $DIR (the ticket's scope root) mounted at /workspace, or -- if the sandbox
+  # cannot be built -- REFUSES (exit 3) rather than running with host filesystem
+  # access. An authorized-to-write worker must be sandboxed; this is the seam that
+  # guarantees it, in one place, fail-closed. `--die-with-parent` (set by the
+  # exec entrypoint) ties the sandbox to this `timeout`, so a wall-budget kill
+  # takes claude down with it instead of orphaning it. The inherited fds
+  # (stdout -> $ITER_OUT, stdin < /dev/null) cross the namespace as already-open
+  # descriptors, so the JSON capture is unaffected. PYTHONPATH lets the launcher
+  # (which runs OUTSIDE the sandbox, building the argv) import services.scoped_exec.
+  SCOPED_EXEC=("$WORKSHOP/backend/.venv/bin/python" -m services.scoped_exec exec --workdir "$DIR" --)
+  PYTHONPATH="$WORKSHOP/backend" timeout "$PER_ITER_TIMEOUT" \
+    "${SCOPED_EXEC[@]}" \
+    "$CLAUDE" "${RESUME_FLAG[@]}" -p "$ITER_PROMPT" \
     --output-format json \
+    "${PERM_FLAGS[@]}" \
     "${DENY_FLAGS[@]}" \
     "${MCP_FLAGS[@]}" \
     "${TURN_CAP[@]}" \
