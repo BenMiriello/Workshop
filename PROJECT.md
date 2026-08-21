@@ -359,3 +359,26 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   design, `execution` unset/fail-closed — making them dispatchable is the
   filing-vs-execution autonomy setting, not a silent default); then S3 (one
   supervised resident driver). Model of record: `work-loop-core-design-2026-08-21.md`.
+- 2026-08-21 (2) — Operator: stop asking, do it. Three directives, all built+tested.
+  (1) VOICE was not exempt on purpose; it spawned `claude -p` directly with
+  bypassPermissions. Confined it through the same scoped_exec.spawn_argv+turn_env
+  seam (41367f1); no agent-spawn path is now outside the sandbox except by explicit
+  future choice. (2) Ran the attended S2 LIVE WRITE-VERIFY. `systemd-run --user`
+  runs UNCONFINED (the granted systemd socket spawns in the manager's context, not
+  the turn's namespace) -- that is both the way to run the verify from an
+  unconfined parent AND a noted capability of the dev role's systemd grant. Proved
+  it two ways: an sh worker (pwd=/workspace, only clawd-a home, host tree absent,
+  wrote its file) and a real `claude -p` agent that wrote NOTE.md and COMMITTED it
+  (4c5010d) unattended, confined. The worker the loop runs IS a claude process, so
+  that is the thing that had to work, and it does. (3) Built the per-scope EXECUTION
+  SETTING (the answer to "what scope": a ticket lives in a scope, so per-scope, not
+  per-chat; the per-chat filing mode already exists). services/scope_execution.py
+  (reactive|supervised|autonomous, default reactive/fail-closed), gated in
+  next_ready(unattended=True) at the one chokepoint (attended path untouched),
+  GET/POST /agents/autonomy/scope-execution, spawn_task classifies execution="code"
+  when the scope is armed (the chat->loop connection), and a Background execution
+  control in the chat Work settings (6b97299, 9d07b75). Tested: scope_execution
+  store, the gate, the API round-trip, next_ready regression fixed, typecheck +
+  check_design clean, 1032 frontend tests pass. STILL not turned on: nothing
+  auto-runs until a scope is armed AND the global override is clear AND a resident
+  driver (S3) runs; S3 is the next build.
