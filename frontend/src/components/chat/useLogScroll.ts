@@ -160,9 +160,54 @@ export function useLogScroll({
   // token, and animating each of those fights itself. `smooth` is for the
   // explicit, one-off jumps (the Jump-to-latest button, sending a message):
   // an operator-triggered scroll should read as scrolling, not teleporting.
+  //
+  // A SCROLL WE STARTED IS NOT THE OPERATOR LEAVING THE BOTTOM. `el.scrollTo`
+  // fires ordinary `scroll` events on every frame it moves, `smooth` or not,
+  // and `onLogScroll` below is the one writer of `atBottomRef` — so a call here
+  // used to race its own animation: `behavior:"smooth"` runs over several
+  // frames, each firing a `scroll` event with the scrollTop still short of the
+  // target, `onLogScroll` reads that as "more than a follow-slop from the
+  // bottom" and flips `atBottomRef` to false PARTWAY THROUGH, and nothing ever
+  // set it back — the follow effect two lines down then declines to correct it
+  // on the next batch of streamed content, and the animation itself lands on
+  // whatever `scrollHeight` was at the moment it was told to move, short of
+  // whatever grew underneath it since. The result reads exactly as reported:
+  // the log looks like it is at the bottom the instant a message is sent, then
+  // resettles noticeably higher as the reply keeps streaming in. `settleRestore`
+  // already had to solve this for the restore path (see its "PRESERVE THE
+  // INTENT" comment); this is the same fix for the ordinary follow path,
+  // applied at the one place both `followLatest` and the streamed-token follow
+  // effect actually move the scrollTop. `programmaticRef` marks the window
+  // `onLogScroll` must not treat as the operator moving the view; it clears on
+  // the browser's own `scrollend` (fired once the movement, animated or not,
+  // is actually over), with a timeout fallback for the engines that do not
+  // fire it for a no-op scroll (already at the target). Reported repeatedly,
+  // most recently 2026-08-20, on desktop Firefox and Safari.
+  const programmaticRef = useRef(false);
+  const scrollEndCleanupRef = useRef<(() => void) | null>(null);
   const scrollToBottom = useCallback((smooth = false) => {
     const el = scrollRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+    if (!el) return;
+    const target = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (Math.abs(el.scrollTop - target) < 1) return;
+    scrollEndCleanupRef.current?.();
+    programmaticRef.current = true;
+    const settle = () => {
+      programmaticRef.current = false;
+      scrollEndCleanupRef.current = null;
+      const cur = scrollRef.current;
+      if (!cur) return;
+      const atBottom = cur.scrollHeight - cur.scrollTop - cur.clientHeight < FOLLOW_SLOP;
+      atBottomRef.current = atBottom;
+      setShowJumpToLatest(!atBottom);
+    };
+    const timeout = setTimeout(settle, 1000);
+    el.addEventListener("scrollend", settle, { once: true });
+    scrollEndCleanupRef.current = () => {
+      clearTimeout(timeout);
+      el.removeEventListener("scrollend", settle);
+    };
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   }, []);
 
   // Land the last coalesced position before the page can stop running frames,
@@ -178,8 +223,12 @@ export function useLogScroll({
     };
   }, []);
 
-  // The ONLY writer of atBottomRef.
+  // The ONLY writer of atBottomRef, EXCEPT while a scroll we started ourselves
+  // is still in flight (see `programmaticRef` in `scrollToBottom`): that scroll
+  // settles its own outcome when it ends, and reading its intermediate frames
+  // here is what produced the race this guard exists to close.
   const onLogScroll = useCallback(() => {
+    if (programmaticRef.current) return;
     const el = scrollRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
