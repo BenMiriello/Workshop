@@ -252,8 +252,19 @@ async def _spawn_proc(worker: VoiceWorker, resume: bool) -> None:
     # so the first turn has to carry the thread in with it. See _thread_seed.
     worker.needs_seed = not resumed
     env = llm_router._claude_env()
+    # CONFINED, like the text chat and the ralph worker. A build voice turn runs
+    # bypassPermissions in the agent's tree, so it must be sandboxed to that scope
+    # exactly as they are -- there is no reason voice is exempt. `spawn_argv` is
+    # fail-closed: it confines to worker.cwd (mounted at /workspace) or raises, and
+    # the raise propagates to the SSE caller as a refused turn rather than a spawn
+    # with host access. die_with_parent stays OFF (default): a voice worker is
+    # long-lived and respawns with --resume across a backend restart, like the
+    # detached chat turn and unlike the foreground ralph loop.
+    from services import scoped_exec
+    spawn_cmd = scoped_exec.spawn_argv(cmd, worker.cwd)
+    env = scoped_exec.turn_env(env, worker.cwd)
     worker.proc = await asyncio.create_subprocess_exec(
-        *cmd, cwd=worker.cwd, env=env,
+        *spawn_cmd, cwd=worker.cwd, env=env,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
