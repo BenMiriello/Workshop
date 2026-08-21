@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { MapPin, Radio, Star, Pencil, Check, X, AlertTriangle, ChevronRight, Trash2 } from "lucide-react";
-import { useCrumbLabel } from "../../../components/appNav";
+import { useCrumbLabel, usePoll } from "@workshop/ui";
 import { API, jget } from "./ui";
 import AddressPicker from "./AddressPicker";
 import type { Place } from "./geocode";
-import { usePoll } from "../../../lib/usePoll";
 
 // The editing surface for one place: rename it, pin its coordinates (so adaptive
 // devices merge into it), set it home, merge it into another, and see the devices

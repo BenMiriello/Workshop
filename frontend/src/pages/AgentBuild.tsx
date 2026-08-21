@@ -24,10 +24,10 @@ import {
   type SegmentedOption,
   type StatusKind,
   Notice,
+  useCrumbLabel,
+  shortHttpError,
 } from "@workshop/ui";
 import Chat from "../components/Chat";
-import { useCrumbLabel } from "../components/appNav";
-import { shortHttpError } from "../lib/httpError";
 import { userStorage } from "../lib/storage";
 
 // Build-agent surface = chat-first. Opening a builder lands you in the CHAT (the

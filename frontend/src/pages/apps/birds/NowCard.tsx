@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Sunrise, Sunset, Moon, Sun, Bird, Gauge, AlertTriangle } from "lucide-react";
 import { API, hh } from "./ui";
 import { wx, OUTLOOK, cToF, localTime, dayLen, pressureSub, untilLabel, type Level } from "./forecastUtil";
-import { usePoll } from "../../../lib/usePoll";
+import { usePoll } from "@workshop/ui";
 
 // The "Bird forecast" card. The forecast LEADS: activity level, what's likely now
 // (Tier 1 conditional ranking), and the day's expected shape. Reasoning + calibration

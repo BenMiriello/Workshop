@@ -1,14 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Database, RefreshCw } from "lucide-react";
-import {
-  Button, Card, Row, Stack, PageHeader, StateBlock, StatusDot, Badge, Tag,
-  Skeleton, Field, Input, Select, catFor,
-} from "@workshop/ui";
-import { TableScroll, Table } from "@workshop/ui";
-import { shortHttpError } from "../lib/httpError";
-import { tierKind } from "../lib/stores";
+import { Button, Card, Row, Stack, PageHeader, StateBlock, StatusDot, Badge, Tag, Skeleton, Field, Input, Select, catFor, TableScroll, Table, shortHttpError } from "@workshop/ui";
 
+import { tierKind } from "../lib/stores";
 
 type Store = {
   uri: string;
@@ -19,7 +14,6 @@ type Store = {
   host_project?: string | null;
   tier?: string;
 };
-
 
 // /stores — cross-app catalog. Every declared Store, filterable by type and
 // tier. Each row links to the store's detail page.

@@ -1,21 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { FileText, ShieldCheck } from "lucide-react";
-import {
-  ActionBar,
-  Button,
-  Card,
-  Field,
-  PageHeader,
-  Row,
-  SectionLabel,
-  Select,
-  Textarea,
-  StateBlock,
-  StatusDot,
-  Skeleton,
-} from "@workshop/ui";
+import { ActionBar, Button, Card, Field, PageHeader, Row, SectionLabel, Select, Textarea, StateBlock, StatusDot, Skeleton, shortHttpError } from "@workshop/ui";
 import { scopeLabel } from "../../lib/scope";
-import { shortHttpError } from "../../lib/httpError";
 
 // Settings / Custom instructions: the operator's L3 layer.
 //

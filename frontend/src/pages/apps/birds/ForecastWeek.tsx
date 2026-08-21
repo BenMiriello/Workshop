@@ -5,11 +5,10 @@ import {
   Area, Bar, CartesianGrid, ComposedChart, ErrorBar, LabelList, Line,
   ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { Skeleton, StateBlock, ChartTooltip, CHART_TARGET } from "@workshop/ui";
+import { Skeleton, StateBlock, ChartTooltip, CHART_TARGET, userStorage } from "@workshop/ui";
 import BirdsHeader from "./BirdsHeader";
 import { API, hh, CHART_SERIES } from "./ui";
 import { wx, OUTLOOK, localTime, dayLen, type Level } from "./forecastUtil";
-import { userStorage } from "../../../lib/storage";
 
 // The 7-day BIRD forecast: the bird activity is the subject. A week-activity graph
 // up top, bird-first day cards (predicted activity level + species count, weather

@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ChevronRight, RefreshCw, Trash2 } from "lucide-react";
-import {
-  Modal, Button, Stack, Row, Tag, Field, Input, Textarea,
-  StateBlock, Skeleton, catFor,
-  Notice,
-} from "@workshop/ui";
+import { Modal, Button, Stack, Row, Tag, Field, Input, Textarea, StateBlock, Skeleton, catFor, Notice, shortHttpError } from "@workshop/ui";
 import { scopeLabel } from "../../lib/tasks";
-import { shortHttpError } from "../../lib/httpError";
 
 // Turning a conversation into tickets, as a review step.
 //

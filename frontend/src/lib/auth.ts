@@ -17,7 +17,7 @@ export interface AuthUser {
   is_operator: boolean;
 }
 
-import { native } from "../native/bridge";
+import { native } from "@workshop/ui";
 
 export class AuthError extends Error {}
 

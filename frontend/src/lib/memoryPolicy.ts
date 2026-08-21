@@ -1,4 +1,4 @@
-import { shortHttpError } from "./httpError";
+import { shortHttpError } from "@workshop/ui";
 // What other chats SEE and SEARCH (memory-and-documentation-model-2026-08-14.md
 // sec 6). This is CURATION, not security: everything on this box runs as one
 // uid, so nothing here restricts what any process can read. It keeps a chat's

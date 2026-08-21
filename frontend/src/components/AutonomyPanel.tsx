@@ -1,18 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
-import { usePoll } from "../lib/usePoll";
+import { usePoll, timeAbsolute, shortHttpError, Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill, Skeleton, Input, Field, ActionBar, Tag, Segmented, catFor, useEditMode, type StatusKind, type SegmentedOption } from "@workshop/ui";
 import {
   Repeat, Play, RefreshCw, X, Clock, Zap, RotateCw,
   ChevronDown, ChevronRight, HelpCircle, SlidersHorizontal, Compass,
 } from "lucide-react";
-import {
-  Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill,
-  Skeleton, Input, Field, ActionBar, Tag, Segmented, catFor,
-  useEditMode, type StatusKind, type SegmentedOption,
-} from "@workshop/ui";
+
 import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib/tasks";
 import { jobStatusKind } from "../lib/jobs";
-import { timeAbsolute } from "../lib/time";
-import { shortHttpError } from "../lib/httpError";
 
 // Autonomy = how a PROJECT decides when to work its own task queue through the
 // Ralph loop. The PRIMARY control is a preset (Section
@@ -131,7 +125,6 @@ function isPreset(v: unknown): v is Preset {
 function isLatitude(v: unknown): v is Latitude {
   return v === "strict" || v === "standard" || v === "open";
 }
-
 
 function cronFromTriggers(triggers?: Trigger[]): string {
   const cron = (triggers || []).find((t) => t.kind === "cron");

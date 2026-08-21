@@ -1,6 +1,6 @@
-// Workshop Design System — React primitives.
+// Workshop Design System, React primitives.
 // Single import surface: `import { Button, Card, StatusPill, ... } from "@workshop/ui"`.
-// Every primitive is a thin className wrapper over components.css — no inline
+// Every primitive is a thin className wrapper over components.css: no inline
 // styles, no CSS-in-JS. See frontend/CLAUDE.md for the rules that govern these.
 //
 // This is the CORE entry: its only runtime dependencies are react, react-dom
@@ -59,3 +59,32 @@ export { StateBlock, Notice, Skeleton, ActionBar, CopyButton, RevealField } from
 export { TableScroll, Table, NumCell, TimeCell } from "./Table";
 export { ChartFrame, ChartTooltip, CHART_SERIES, CHART_TARGET } from "./chart";
 export { useEditMode, type EditMode } from "./useEditMode";
+
+// App-facing capabilities, promoted from the frontend's platform-internal
+// modules 2026-08-20 (Stage 4b), so a page under `frontend/src/pages/apps/**`
+// can import everything it legitimately needs from this one package. See
+// docs/platform-redesign/HANDOFF-app-platform-and-github-2026-08-20.md.
+export { usePoll, pollShouldRun, type WhenHidden } from "./usePoll";
+export { timeAgo, timeAbsolute, timeAbsoluteShort, formatDuration, timeAgoSeconds } from "./time";
+export { formatBytes, formatVramBytes, formatMiB, VRAM_UNKNOWN } from "./bytes";
+export {
+  HttpError, ERROR_BODY_CAP, isTransientNetworkError, withTransientRetry, shortHttpError,
+} from "./httpError";
+export {
+  userStorage, setCurrentUser, registerDeviceScoped, isDeviceScoped, namespacedKey,
+  isNamespacedKey, planMigration, _resetCurrentUserForTest, _resetDeviceScopedForTest,
+  type UserId, type StorageExemption,
+} from "./storage";
+export {
+  BreadcrumbProvider, useCrumbLabel, useCrumbTrail, useBreadcrumbOverride, type Crumb,
+} from "./breadcrumbs";
+export { AppSettings, SettingsSection, SettingsRow } from "./AppSettings";
+export {
+  native, isNativeShell, hasCapability, isPaidTier, onNativeEvent,
+  type Capability, type WorkshopNative, type BridgeEventTopic,
+} from "./native/bridge";
+export {
+  getCurrentFix, startDeviceTracking, stopDeviceTracking, backgroundTrackingSupported,
+} from "./native/location";
+export { useNative, useNativeEvent, useTrackingStatus, type NativeInfo } from "./native/useNative";
+export { type AppChatDockRenderer, type AppChatDockOptions } from "./appChatDock";

@@ -1,4 +1,4 @@
-import { shortHttpError } from "./httpError";
+import { shortHttpError } from "@workshop/ui";
 // The one ref format, resolved in-app (memory-and-documentation-model-
 // 2026-08-14.md sec 10). A ref names another entity as `workshop:<kind>/...`
 // -- never a file path, never a copyable URL -- and this is the ONLY place the

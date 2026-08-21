@@ -48,7 +48,7 @@ describe("timeAgo", () => {
 describe("timeAbsolute / timeAbsoluteShort", () => {
   it("are empty for a missing or unparseable timestamp, never the raw string", () => {
     // ProjectDetail's own `fmtTs` returned the raw, unparsed string on
-    // failure instead of "" — the divergent failure mode this module fixes.
+    // failure instead of "": the divergent failure mode this module fixes.
     expect(timeAbsolute(undefined)).toBe("");
     expect(timeAbsolute("not a date")).toBe("");
     expect(timeAbsoluteShort(undefined)).toBe("");

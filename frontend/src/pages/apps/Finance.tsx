@@ -1,13 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
-import AppChatDock from "../../components/AppChatDock";
-import { AppGroupNav } from "../../components/appNav";
-import { AppSettings } from "../../components/AppSettings";
 import FinanceSettings from "./finance/FinanceSettings";
 import { ConnectBankButton } from "./finance/PlaidLink";
-import { userStorage } from "../../lib/storage";
-import { timeAgoSeconds } from "../../lib/time";
 import {
+  AppSettings,
   Button,
   Card,
   CardGrid,
@@ -22,6 +18,9 @@ import {
   Table,
   TableScroll,
   TimeCell,
+  timeAgoSeconds,
+  userStorage,
+  type AppChatDockRenderer,
 } from "@workshop/ui";
 
 // Finance app — shows Plaid-linked accounts and recent transactions.
@@ -95,7 +94,13 @@ const fmt = (n: number | null, ccy: string | null) => {
   return f.format(n);
 };
 
-export default function Finance() {
+export default function Finance({
+  groupNav,
+  renderChatDock,
+}: {
+  groupNav?: ReactNode;
+  renderChatDock?: AppChatDockRenderer;
+}) {
   // What to display — starts with localStorage, updated by live API
   const [items, setItems] = useState<Item[] | null>(null);
   const [txns, setTxns] = useState<Transaction[] | null>(null);
@@ -270,7 +275,7 @@ export default function Finance() {
         }
         actions={
           <>
-            <AppGroupNav />
+            {groupNav}
             <ConnectBankButton onLinked={() => doRefresh(true)} variant="ghost" label="Add bank" />
             <Button size="sm" onClick={() => doRefresh(true)} loading={refreshing}>
               <RefreshCw aria-hidden /> Refresh
@@ -418,11 +423,10 @@ export default function Finance() {
         <FinanceSettings />
       </AppSettings>
 
-      <AppChatDock
-        appId="finance"
-        title="Accounts assistant"
-        placeholder="Ask about balances or recent spend…"
-      />
+      {renderChatDock?.({
+        title: "Accounts assistant",
+        placeholder: "Ask about balances or recent spend…",
+      })}
     </div>
   );
 }

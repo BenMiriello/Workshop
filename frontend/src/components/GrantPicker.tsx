@@ -1,18 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Database, Check } from "lucide-react";
-import {
-  Modal,
-  Button,
-  Row,
-  SectionLabel,
-  Checkbox,
-  StateBlock,
-  Skeleton,
-  Tag,
-  StatusDot,
-  catFor,
-} from "@workshop/ui";
-import { shortHttpError } from "../lib/httpError";
+import { Modal, Button, Row, SectionLabel, Checkbox, StateBlock, Skeleton, Tag, StatusDot, catFor, shortHttpError } from "@workshop/ui";
 
 // GrantPicker — the Store broker (Phase 4).
 //

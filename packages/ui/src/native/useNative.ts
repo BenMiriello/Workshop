@@ -1,7 +1,7 @@
 // React conveniences over the native bridge.
 
 import { useEffect, useState } from "react";
-import type { Capability } from "@shared/native-bridge";
+import type { Capability } from "./types";
 import { native, hasCapability, isNativeShell } from "./bridge";
 
 export interface NativeInfo {
@@ -31,7 +31,7 @@ export function useNativeEvent<T = unknown>(
     const n = native();
     if (!n) return;
     return n.on<T>(topic, cb);
-    // cb is intentionally not a dep — callers pass stable handlers or accept the
+    // cb is intentionally not a dep: callers pass stable handlers or accept the
     // first-render closure, matching how the rest of the app wires effects.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topic]);

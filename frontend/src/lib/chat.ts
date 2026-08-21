@@ -41,7 +41,7 @@ import type { ChatModeId } from "../components/chat/chatModes";
 // The narrowings that remain below are deliberate and each says why. Anything
 // not narrowed is the schema verbatim; do not re-widen or re-declare one here.
 import type { components } from "../api/schema.gen";
-import { HttpError, shortHttpError } from "./httpError";
+import { HttpError, shortHttpError } from "@workshop/ui";
 
 type CutAfter = { cut_after?: string[] };
 

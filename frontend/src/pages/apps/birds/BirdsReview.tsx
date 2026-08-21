@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Segmented } from "@workshop/ui";
+import { Segmented, usePoll } from "@workshop/ui";
 import BirdsHeader from "./BirdsHeader";
 import { useBirdsScope } from "./scope";
 import { jget, pct, SpeciesLink, BirdThumb } from "./ui";
 import SpeciesRow, { type SpeciesAgg, type TrustStatus } from "./SpeciesRow";
-import { usePoll } from "../../../lib/usePoll";
 
 // The review surface: every species for the current scope, segmented by trust
 // status (Confirmed / Suggested / Rejected, default Confirmed). This is the ONLY

@@ -1,4 +1,4 @@
-import { shortHttpError } from "./httpError";
+import { shortHttpError } from "@workshop/ui";
 // Client for the local app + kit registry (the marketplace).
 // Backend: /api/base-apps/registry/* (docs/workshop-v1/03-ui-kit-and-marketplace.md).
 // Local-now, remote-later: the same interface backs both, so this client does

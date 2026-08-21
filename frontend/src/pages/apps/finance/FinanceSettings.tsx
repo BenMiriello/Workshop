@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Banknote } from "lucide-react";
-import { ConfirmDialog, SectionLabel } from "@workshop/ui";
+import { ConfirmDialog, SectionLabel, SettingsSection, SettingsRow as Row } from "@workshop/ui";
 import { BankConnections } from "./PlaidLink";
-import { SettingsSection, SettingsRow as Row } from "../../../components/AppSettings";
 
 // Finance app settings — bank connections + Plaid response cache. Moved verbatim
 // out of the platform Settings page (Phase 5 settings split). Renders inside the

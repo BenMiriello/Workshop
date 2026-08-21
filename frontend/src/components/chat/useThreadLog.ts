@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { usePoll } from "../../lib/usePoll";
+import { usePoll, withTransientRetry } from "@workshop/ui";
 import { chatApi } from "../../lib/chat";
-import { withTransientRetry } from "../../lib/httpError";
 import {
   initialThreadState, threadReducer, snapshotThread,
   type ThreadAction, type ThreadState,

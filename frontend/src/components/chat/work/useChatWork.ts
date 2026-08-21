@@ -14,8 +14,7 @@
 // reappear, and a half-typed answer survives the panel closing.
 
 import { useCallback, useMemo, useState } from "react";
-import { usePoll } from "../../../lib/usePoll";
-import { shortHttpError } from "../../../lib/httpError";
+import { usePoll, shortHttpError } from "@workshop/ui";
 import { jobIsLive } from "../../../lib/jobs";
 import { EMPTY_WORK, type WorkPayload, type WorkTicket } from "./workTypes";
 

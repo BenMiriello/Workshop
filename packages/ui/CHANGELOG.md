@@ -12,6 +12,66 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.17 - 2026-08-20 - App-facing capabilities: polling, time, bytes, HTTP errors, storage, breadcrumbs, native bridge
+
+**Additive only.** Stage 4b of the app-separation plan
+(`docs/platform-redesign/HANDOFF-app-platform-and-github-2026-08-20.md`):
+`frontend/src/pages/apps/**` was reaching into platform-internal frontend
+modules, which is the frontend mirror of the backend coupling Stage 4 removed.
+Everything below moved here from `frontend/src/lib/*` and `frontend/src/native/*`
+verbatim (their own headers explain the "why", unchanged); every in-repo call
+site (platform pages too, not just app pages) was updated in the same change so
+there is exactly one copy of each.
+
+Added:
+
+- `usePoll`, `pollShouldRun`, `type WhenHidden`: the one polling hook, pauses
+  while the tab is hidden and catches up on return.
+- `timeAgo`, `timeAbsolute`, `timeAbsoluteShort`, `formatDuration`,
+  `timeAgoSeconds`: the one set of date/time formatters.
+- `formatBytes`, `formatVramBytes`, `formatMiB`, `VRAM_UNKNOWN`: byte-size
+  formatting.
+- `HttpError`, `ERROR_BODY_CAP`, `isTransientNetworkError`,
+  `withTransientRetry`, `shortHttpError`: shaping a failed request into what
+  is safe to put on screen.
+- `userStorage`, `setCurrentUser`, `registerDeviceScoped`, `isDeviceScoped`,
+  `namespacedKey`, `isNamespacedKey`, `planMigration`,
+  `_resetCurrentUserForTest`, `_resetDeviceScopedForTest`, `type UserId`,
+  `type StorageExemption`: the namespaced-storage engine (active-user
+  namespacing, the one-time legacy-key migration). Ships with ZERO built-in
+  exemptions; a host registers its own device-scoped keys via
+  `registerDeviceScoped`, which is the generic half of what was Workshop's
+  `lib/storage.ts` (that file now instantiates this engine with Workshop's own
+  exemptions, and stays where it was).
+- `BreadcrumbProvider`, `useCrumbLabel`, `useCrumbTrail`,
+  `useBreadcrumbOverride`, `type Crumb`: a page telling its host what its
+  current entity/trail is. The RESOLUTION half (mapping a route to its default
+  trail) is host-specific and stays in Workshop's `components/appNav.tsx`.
+- `AppSettings`, `SettingsSection`, `SettingsRow`: the collapsible app-settings
+  slot, moved as-is: it was already built entirely from kit primitives.
+- `native`, `isNativeShell`, `hasCapability`, `isPaidTier`, `onNativeEvent`,
+  `type Capability`, `type WorkshopNative`, `type BridgeEventTopic`,
+  `getCurrentFix`, `startDeviceTracking`, `stopDeviceTracking`,
+  `backgroundTrackingSupported`, `useNative`, `useNativeEvent`,
+  `useTrackingStatus`, `type NativeInfo`: the Workshop native-bridge
+  accessors. Their wire types are a LOCAL mirror of `shared/native-bridge.ts`
+  (`packages/ui/src/native/types.ts`), not an import of it: the monorepo-only
+  `shared/` alias broke the kit's declaration build (files landed at
+  `dist/packages/ui/src/*` instead of `dist/*`) because `tsc
+  --emitDeclarationOnly` tried to also emit a declaration for the resolved
+  file. See that file's header.
+- `type AppChatDockRenderer`, `type AppChatDockOptions`: type-only contract
+  for a shell-provided "render my assistant dock" prop. `AppChatDock` itself
+  (wired to Workshop's chat threads and its manifest endpoint) is NOT promoted:
+  it is platform furniture, not a design-system capability. An app page now
+  receives a `renderChatDock` function prop from the shell
+  (`frontend/src/apps/registry.tsx`) instead of importing the component.
+
+Not promoted, deliberately: `components/appNav.tsx`'s `AppGroupNav` (needs the
+platform's app registry) and `frontend/src/api/schema.gen.ts` (a generated
+backend wire-contract type, not platform UI behaviour; `Location.tsx` keeps
+this one cross-boundary import with a comment explaining why).
+
 ## 0.5.16 - 2026-08-20 - The navigation shell: dock, page column, phone toolbars
 
 **Additive plus one removal, CSS only (no export, prop or token changed).** The

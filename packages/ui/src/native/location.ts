@@ -4,7 +4,7 @@
 //
 // Same call sites work in the mobile shell and in a desktop/Safari browser.
 
-import type { LocationFix, BackgroundTrackingOptions } from "@shared/native-bridge";
+import type { LocationFix, BackgroundTrackingOptions } from "./types";
 import { native } from "./bridge";
 
 const API = "/api"; // vite proxy + tailnet serve both expose the backend here

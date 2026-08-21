@@ -1,14 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Rocket, RefreshCw, ExternalLink, Ban, Power } from "lucide-react";
-import {
-  Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
-  Badge, Tag, Skeleton, Field, Input, Modal, ConfirmDialog, type StatusKind,
-} from "@workshop/ui";
-import { TableScroll, Table } from "@workshop/ui";
-import { timeAgo } from "../lib/time";
+import { Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill, Badge, Tag, Skeleton, Field, Input, Modal, ConfirmDialog, type StatusKind, TableScroll, Table, timeAgo, shortHttpError } from "@workshop/ui";
+
 import { shortSha } from "../lib/sha";
-import { shortHttpError } from "../lib/httpError";
 
 // /deploys — cross-project index of every hosted target across the workshop.
 // Each row is a Deploy: which project, which target, which branch, what's
@@ -33,7 +28,6 @@ type Deploy = {
 type Override = { engaged: boolean; reason?: string | null; engaged_at?: string | null; engaged_by?: string | null };
 
 type Filter = "all" | "prod" | "preview" | "failed" | "autonomous";
-
 
 export default function Deploys() {
   const [deploys, setDeploys] = useState<Deploy[] | null>(null);

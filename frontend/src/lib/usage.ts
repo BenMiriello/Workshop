@@ -1,4 +1,4 @@
-import { shortHttpError } from "./httpError";
+import { shortHttpError } from "@workshop/ui";
 // Usage API — the rolling 5-hour token budget for autonomous background work.
 // Backed by GET /api/usage (backend routes/usage -> services.usage_ledger.status).
 // Interactive chat turns are never metered, so they never appear here; only

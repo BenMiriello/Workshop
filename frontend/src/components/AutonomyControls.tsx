@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { usePoll } from "../lib/usePoll";
+import { usePoll, Button, ConfirmDialog, Notice, Select, StatusDot, Toggle, SettingsSection, SettingsRow as Row } from "@workshop/ui";
 import { Power, Play, Square } from "lucide-react";
-import { Button, ConfirmDialog, Notice, Select, StatusDot, Toggle } from "@workshop/ui";
 import { describeAutonomy } from "../lib/autonomy";
-import { SettingsSection, SettingsRow as Row } from "./AppSettings";
 
 // Autonomy controls. The global cron-autonomy pause (AUTONOMY_DISABLED) and the
 // queue runner. The AUTONOMY_DISABLED switch is operationally load-bearing and

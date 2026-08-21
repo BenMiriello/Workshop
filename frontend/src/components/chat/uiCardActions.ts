@@ -18,7 +18,7 @@ import type { TaskProposalSpec } from "@shared/types";
 import { scopeIsRunnable } from "../../lib/scopePickup";
 import { scopeLabel, ticketHref } from "../../lib/tasks";
 import { runHref } from "../../lib/jobs";
-import { shortHttpError } from "../../lib/httpError";
+import { shortHttpError } from "@workshop/ui";
 
 // ---- Wire shape (matches the A.1 contract) ---------------------------------
 export type UiCardFieldType =

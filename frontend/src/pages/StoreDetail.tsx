@@ -3,13 +3,9 @@ import { Link, useParams } from "react-router-dom";
 import {
   ChevronLeft, RefreshCw, Download, KeyRound, Shield, ExternalLink,
 } from "lucide-react";
-import {
-  Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot,
-  Badge, Tag, Skeleton, Field, Input, Textarea,
-} from "@workshop/ui";
-import { shortHttpError } from "../lib/httpError";
-import { tierKind as tierKindFor } from "../lib/stores";
+import { Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot, Badge, Tag, Skeleton, Field, Input, Textarea, shortHttpError } from "@workshop/ui";
 
+import { tierKind as tierKindFor } from "../lib/stores";
 
 type Store = {
   uri: string;
@@ -38,7 +34,6 @@ type Grant = {
   expiry?: string | null;
   [k: string]: unknown;
 };
-
 
 // Store detail — the Store entity's home. Shows what the store IS (URI, owner
 // app, host project, filesystem path, adapter type, policy tier), the policies

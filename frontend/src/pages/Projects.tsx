@@ -2,24 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Download, Plus, FolderGit2 } from "lucide-react";
 import type { Project, ProjectSensitivity, ProjectState } from "@shared/types";
-import {
-  Button,
-  Card,
-  CardGrid,
-  Field,
-  Input,
-  Modal,
-  PageHeader,
-  Row,
-  Segmented,
-  StateBlock,
-  StatusPill,
-  type SegmentedOption,
-  type StatusKind,
-  Notice,
-} from "@workshop/ui";
-import { timeAgo } from "../lib/time";
-import { shortHttpError } from "../lib/httpError";
+import { Button, Card, CardGrid, Field, Input, Modal, PageHeader, Row, Segmented, StateBlock, StatusPill, type SegmentedOption, type StatusKind, Notice, timeAgo, shortHttpError } from "@workshop/ui";
 
 const SENS_OPTIONS: SegmentedOption<ProjectSensitivity>[] = [
   { value: "private", label: "Private" },

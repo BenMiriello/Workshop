@@ -1,23 +1,10 @@
 import { useCallback, useState } from "react";
-import { usePoll } from "../lib/usePoll";
+import { usePoll, formatDuration, timeAgo, shortHttpError, Button, Card, Row, Stack, Skeleton, StateBlock, StatusDot, Segmented, agencyFor, type SegmentedOption } from "@workshop/ui";
 import { Link } from "react-router-dom";
 import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronRight, ChevronDown } from "lucide-react";
-import {
-  Button,
-  Card,
-  Row,
-  Stack,
-  Skeleton,
-  StateBlock,
-  StatusDot,
-  Segmented,
-  agencyFor,
-  type SegmentedOption,
-} from "@workshop/ui";
+
 import { type Job, jobStatusKind as statusKind, runHref } from "../lib/jobs";
 import { runTicketScope, ticketHref } from "../lib/tasks";
-import { formatDuration, timeAgo } from "../lib/time";
-import { shortHttpError } from "../lib/httpError";
 
 // The Jobs feed: one list for every bounded execution (cron task, drained
 // event, project sweep, supervisor heartbeat, manual run). Reads /api/jobs
@@ -297,7 +284,6 @@ export default function JobsFeed() {
       </Card>
     );
   }
-
 
   return (
     <div>

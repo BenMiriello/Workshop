@@ -1,37 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { usePoll } from "../lib/usePoll";
+import { usePoll, shortHttpError, Badge, Button, Card, CardGrid, Field, Modal, PageHeader, Row, SectionLabel, Segmented, Select, Skeleton, Stack, StateBlock, StatusDot, StatusPill, Tag, catFor, type StatusKind, Notice } from "@workshop/ui";
 import { Link, useNavigate } from "react-router-dom";
 import { Plus, Bot, Brain, Clock, SlidersHorizontal, ListChecks, Play, RotateCw, Power, Compass, FileStack } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Project } from "@shared/types";
-import {
-  Badge,
-  Button,
-  Card,
-  CardGrid,
-  Field,
-  Modal,
-  PageHeader,
-  Row,
-  SectionLabel,
-  Segmented,
-  Select,
-  Skeleton,
-  Stack,
-  StateBlock,
-  StatusDot,
-  StatusPill,
-  Tag,
-  catFor,
-  type StatusKind,
-  Notice,
-} from "@workshop/ui";
+
 import DelegatesSection from "../components/DelegatesSection";
 import { triggerSummary, nextScheduled, agentAgency, type UnifiedAgent } from "../lib/agentTriggers";
 import { latitudeDesc, type Latitude } from "../lib/tasks";
 import { type AutonomyMode } from "../lib/autonomy";
 import { runHref } from "../lib/jobs";
-import { shortHttpError } from "../lib/httpError";
 
 // Roster item enriched with the O6/O7 autonomy fields the backend now returns on
 // GET /api/agents/ (autonomy preset + role + latitude). Kept local so the shared

@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Waypoints, Tag as TagIcon, Volume2, Info, Map as MapIcon, ZoomIn, ZoomOut, Maximize2, X, ScatterChart, Grid3x3, Sparkles } from "lucide-react";
-import { Button, Segmented, StateBlock, Skeleton, StatusPill, catFor, type CatHue } from "@workshop/ui";
+import { Button, Segmented, StateBlock, Skeleton, StatusPill, catFor, type CatHue, timeAbsoluteShort, usePoll } from "@workshop/ui";
 import BirdsHeader, { InlineSelect } from "./BirdsHeader";
 import { ClipPlayButton } from "./recordings";
 import { jget, apost, API, conf } from "./ui";
 import { scatterSVG, heatSVG, noveltySVG } from "./atlasInsightCharts";
-import { timeAbsoluteShort } from "../../../lib/time";
-import { usePoll } from "../../../lib/usePoll";
 
 // The Soundscape Atlas: every stored detection is a point in a learned acoustic
 // map (BirdNET embedding -> UMAP). The Overview colours the whole yard by species

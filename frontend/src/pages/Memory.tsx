@@ -4,41 +4,14 @@ import {
   RefreshCw, Plus, Pencil, Trash2, FileText, BookOpen, MessageSquare, Pin,
   ShieldCheck, Lock, Globe, GitBranch,
 } from "lucide-react";
-import {
-  Button,
-  Card,
-  CardGrid,
-  PageHeader,
-  SectionLabel,
-  Row,
-  Stack,
-  Segmented,
-  Select,
-  Input,
-  Textarea,
-  Field,
-  Modal,
-  ConfirmDialog,
-  StateBlock,
-  Notice,
-  Skeleton,
-  StatusDot,
-  Table,
-  TableScroll,
-  Tag,
-  Checkbox,
-  catFor,
-  type SegmentedOption,
-} from "@workshop/ui";
+import { Button, Card, CardGrid, PageHeader, SectionLabel, Row, Stack, Segmented, Select, Input, Textarea, Field, Modal, ConfirmDialog, StateBlock, Notice, Skeleton, StatusDot, Table, TableScroll, Tag, Checkbox, catFor, type SegmentedOption, shortHttpError, timeAbsolute, formatBytes } from "@workshop/ui";
 import { scopeLabel, scopeHref } from "../lib/tasks";
 import { orderScopes } from "../lib/devMode";
 import AttachmentViewer from "../components/chat/AttachmentViewer";
 import { Ref } from "../components/Ref";
 import { backlinksFor } from "../lib/refs";
 import { useResolvedRefs } from "../lib/useResolvedRefs";
-import { shortHttpError } from "../lib/httpError";
-import { timeAbsolute } from "../lib/time";
-import { formatBytes } from "../lib/bytes";
+
 import {
   getPolicy,
   setItem as setItemShare,

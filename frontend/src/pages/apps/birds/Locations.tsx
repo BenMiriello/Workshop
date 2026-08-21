@@ -5,7 +5,7 @@ import { useShowNonBird, nonBirdQuery } from "./settings";
 import { API, jget } from "./ui";
 import AddressPicker from "./AddressPicker";
 import type { Place } from "./geocode";
-import { usePoll } from "../../../lib/usePoll";
+import { usePoll } from "@workshop/ui";
 
 // All the places birds have been heard. Mirrors the Devices page: each place is a
 // read-only card with a per-card Edit pencil that opens an INLINE editor (no

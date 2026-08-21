@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Circle, RefreshCw, CalendarClock, Check, Play, Dot,
   ChevronDown, ChevronRight, Inbox, Sparkles } from "lucide-react";
-import { ConfirmDialog, StatusPill, Stepper, Tabs, type StatusKind } from "@workshop/ui";
-import { shortHttpError } from "../../../lib/httpError";
-import { timeAgo } from "../../../lib/time";
-import { usePoll } from "../../../lib/usePoll";
+import { ConfirmDialog, StatusPill, Stepper, Tabs, type StatusKind, shortHttpError, timeAgo, usePoll } from "@workshop/ui";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

@@ -4,16 +4,13 @@ import {
   MapPin, Smartphone, ExternalLink, Mic, Pin, PinOff, Trash2,
   Check, Ban, CircleDashed, ChevronDown,
 } from "lucide-react";
-import { useCrumbTrail, type Crumb } from "../../../components/appNav";
+import { useCrumbTrail, type Crumb, ConfirmDialog, Segmented, formatBytes, usePoll } from "@workshop/ui";
 import { useBirdInfo } from "./birdinfo";
-import { ConfirmDialog, Segmented } from "@workshop/ui";
 import { pct, conf, jget, apost, API, Stat, StatGrid } from "./ui";
 import ActivityCard from "./ActivityCard";
 import BirdsHeader from "./BirdsHeader";
 import { useBirdsScope } from "./scope";
 import { PlayButton } from "./recordings";
-import { formatBytes } from "../../../lib/bytes";
-import { usePoll } from "../../../lib/usePoll";
 
 // One species' page: photo + description (client-side reference lookup), stats,
 // the same activity charts as the rest of the app (NOT subject to the status

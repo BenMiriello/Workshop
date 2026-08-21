@@ -7,7 +7,7 @@
 // nothing private leaves the device. Results are cached in localStorage with a
 // TTL; misses are negatively cached so we do not refetch every render.
 import { useEffect, useState } from "react";
-import { userStorage } from "../../../lib/storage";
+import { userStorage } from "@workshop/ui";
 
 export type BirdInfo = {
   scientific_name: string;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { chatApi, type CardState, type Thread, type ThreadSummary } from "../../lib/chat";
-import { withTransientRetry } from "../../lib/httpError";
+import { withTransientRetry } from "@workshop/ui";
 import {
   NEW_CHAT, forgetThread, readSelection, writeSelection,
 } from "../../lib/chatSelection";

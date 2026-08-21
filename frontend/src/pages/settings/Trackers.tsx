@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link2, Link2Off, RefreshCw, Check, X, Clock, Inbox } from "lucide-react";
-import {
-  Button, Card, ConfirmDialog, Field, Input, PageHeader, Row, SectionLabel,
-  Select, Skeleton, Stack, StateBlock, StatusDot, StatusPill, Tag, catFor,
-} from "@workshop/ui";
+import { Button, Card, ConfirmDialog, Field, Input, PageHeader, Row, SectionLabel, Select, Skeleton, Stack, StateBlock, StatusDot, StatusPill, Tag, catFor, shortHttpError } from "@workshop/ui";
 import { scopeLabel } from "../../lib/tasks";
-import { shortHttpError } from "../../lib/httpError";
 
 // Settings -> Trackers: the one external ticket integration, and its triage.
 //

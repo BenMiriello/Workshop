@@ -1,23 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, ShieldCheck, ArrowRight, Users, Network, Database, Download } from "lucide-react";
-import {
-  ActionBar,
-  Button,
-  Card,
-  ConfirmDialog,
-  PageHeader,
-  Row,
-  SectionLabel,
-  Select,
-  Input,
-  StateBlock,
-  StatusDot,
-  Skeleton,
-  Tag,
-  catFor,
-} from "@workshop/ui";
+import { ActionBar, Button, Card, ConfirmDialog, PageHeader, Row, SectionLabel, Select, Input, StateBlock, StatusDot, Skeleton, Tag, catFor, shortHttpError } from "@workshop/ui";
 import GrantPicker from "../../components/GrantPicker";
-import { shortHttpError } from "../../lib/httpError";
 
 // Platform / Grants: operator-facing access-control editor.
 // app-platform-plan.md §3.2 + workshop-v1/01-agents-and-chat.md §2.

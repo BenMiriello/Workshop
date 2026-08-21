@@ -8,10 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Check, Copy, Eye, EyeOff, Heart } from "lucide-react";
-import { ConfirmDialog, StatusDot } from "@workshop/ui";
-import { SettingsSection as Section, SettingsRow as Row } from "../../../components/AppSettings";
-import { timeAgo } from "../../../lib/time";
-import { usePoll } from "../../../lib/usePoll";
+import { ConfirmDialog, StatusDot, SettingsSection as Section, SettingsRow as Row, timeAgo, usePoll } from "@workshop/ui";
 
 export default function HealthSettings() {
   const [metrics, setMetrics] = useState<Record<string, { ts?: string; date?: string; qty?: unknown; units?: string }> | null>(null);

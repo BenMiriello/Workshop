@@ -9,30 +9,12 @@ import {
   Wrench,
   FolderPlus,
 } from "lucide-react";
-import {
-  Button,
-  Card,
-  CardGrid,
-  Divider,
-  PageHeader,
-  Notice,
-  Row,
-  SectionLabel,
-  Segmented,
-  Skeleton,
-  StateBlock,
-  StatusDot,
-  Toggle,
-  type SegmentedOption,
-  type StatusKind,
-} from "@workshop/ui";
-import { shortHttpError } from "../lib/httpError";
+import { Button, Card, CardGrid, Divider, PageHeader, Notice, Row, SectionLabel, Segmented, Skeleton, StateBlock, StatusDot, Toggle, type SegmentedOption, type StatusKind, shortHttpError } from "@workshop/ui";
 
 // Apps page: a uniform grid of cards. Every app — internal or external — looks
 // the same here. Tap a card to enter the app. Privacy-on-glance: cards show
 // generic status (counts / freshness / health) but never specific values like
 // dollar amounts. Real data lives one tap deeper, on each app's full page.
-
 
 type ServiceProbe = {
   name: string;

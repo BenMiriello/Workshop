@@ -10,7 +10,7 @@ import "@workshop/ui/tokens.css";
 import "@workshop/ui/styles.css";
 import "../../../../styles.css";
 import { RecorderProvider } from "../recorder";
-import { BreadcrumbProvider } from "../../../../components/appNav";
+import { BreadcrumbProvider } from "@workshop/ui";
 import { BirdsScopeProvider } from "../scope";
 import BirdsShell from "../BirdsShell";
 import Birds from "../../Birds";

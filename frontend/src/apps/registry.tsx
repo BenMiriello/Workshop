@@ -20,9 +20,10 @@
 
 import { Suspense } from "react";
 import type { ComponentType, ReactNode } from "react";
-import { Route } from "react-router-dom";
+import { Route, NavLink, useLocation } from "react-router-dom";
 import { RouteBoundary, RouteSkeleton, lazyPage } from "../lib/lazyPage";
-import { timeAgoSeconds } from "../lib/time";
+import { timeAgoSeconds, type AppChatDockRenderer } from "@workshop/ui";
+import AppChatDock from "../components/AppChatDock";
 
 export type CrumbNode = { label: string; parent?: string };
 
@@ -141,6 +142,30 @@ async function locationStatus(): Promise<AppStatus> {
   }
 }
 
+// ---- shell-provided props --------------------------------------------------
+// `AppGroupNav` and `AppChatDock` both need platform knowledge (this
+// registry's own group list; Workshop's chat system and its manifest
+// endpoint) an app page must not import directly (Stage 4b,
+// docs/platform-redesign/HANDOFF-app-platform-and-github-2026-08-20.md). This
+// file is the one place allowed to know an app's id, so it renders both and
+// hands the result down as props: `groupNav` is a ready element (it takes no
+// per-render arguments), `renderChatDock` is a function (a page supplies its
+// own title/placeholder copy and an optional onAction callback bound to its
+// own state, and decides whether to call it at all (Birds gates it on a
+// `PUBLIC` flag). A page that needs neither declares neither prop.
+
+/** Bind a ready-to-call chat dock renderer to one app's id. */
+function makeChatDock(appId: string): AppChatDockRenderer {
+  return (opts) => (
+    <AppChatDock
+      appId={appId}
+      title={opts?.title}
+      placeholder={opts?.placeholder}
+      onAction={opts?.onAction}
+    />
+  );
+}
+
 export const APPS: AppModule[] = [
   {
     // Health has no page of its own: a settings panel is its entire frontend.
@@ -157,7 +182,7 @@ export const APPS: AppModule[] = [
     group: "money",
     link: { label: "Finance", to: "/apps/finance" },
     crumbs: { "/apps/finance": { label: "Finance", parent: "/apps" } },
-    routes: () => <Route key="finance" path="/apps/finance" element={<Finance />} />,
+    routes: () => <Route key="finance" path="/apps/finance" element={<Finance groupNav={<AppGroupNav />} renderChatDock={makeChatDock("finance")} />} />,
   },
   {
     id: "budget",
@@ -166,7 +191,7 @@ export const APPS: AppModule[] = [
     group: "money",
     link: { label: "Budget", to: "/apps/budget" },
     crumbs: { "/apps/budget": { label: "Budget", parent: "/apps" } },
-    routes: () => <Route key="budget" path="/apps/budget" element={<Budget />} />,
+    routes: () => <Route key="budget" path="/apps/budget" element={<Budget groupNav={<AppGroupNav />} renderChatDock={makeChatDock("budget")} />} />,
   },
   {
     id: "location",
@@ -175,7 +200,7 @@ export const APPS: AppModule[] = [
     group: "place",
     link: { label: "Location", to: "/apps/location" },
     crumbs: { "/apps/location": { label: "Location", parent: "/apps" } },
-    routes: () => <Route key="location" path="/apps/location" element={<LocationApp />} />,
+    routes: () => <Route key="location" path="/apps/location" element={<LocationApp groupNav={<AppGroupNav />} renderChatDock={makeChatDock("location")} />} />,
   },
   {
     id: "commute",
@@ -184,7 +209,7 @@ export const APPS: AppModule[] = [
     group: "place",
     link: { label: "Commute", to: "/apps/commute" },
     crumbs: { "/apps/commute": { label: "Commute", parent: "/apps" } },
-    routes: () => <Route key="commute" path="/apps/commute" element={<CommuteApp />} />,
+    routes: () => <Route key="commute" path="/apps/commute" element={<CommuteApp groupNav={<AppGroupNav />} renderChatDock={makeChatDock("commute")} />} />,
   },
   {
     id: "notes-app",
@@ -209,7 +234,7 @@ export const APPS: AppModule[] = [
     },
     routes: () => (
       <Route key="birds" element={<BirdsLayout />}>
-        <Route path="/apps/birds" element={<Birds />} />
+        <Route path="/apps/birds" element={<Birds renderChatDock={makeChatDock("birds")} />} />
         <Route path="/apps/birds/birds" element={<BirdsReview />} />
         <Route path="/apps/birds/locations" element={<Locations />} />
         <Route path="/apps/birds/location" element={<LocationDetail />} />
@@ -244,6 +269,43 @@ export function appGroups(): { label: string; to: string }[][] {
     byGroup.set(a.group, list);
   }
   return [...byGroup.values()].filter((g) => g.length > 1);
+}
+
+// ---- Linked-app switcher ---------------------------------------------------
+// Each app belongs to at most one group; the group's siblings render as the
+// switcher, passed down to the four grouped app pages as the `groupNav` prop
+// (see the route elements above). This used to live in `components/appNav.tsx`,
+// but that file imports `appCrumbs` FROM this one to build its route table, so
+// this file importing `AppGroupNav` back from there would have made a cycle:
+// `apps/registry.test.tsx` caught it at module-init time ("appCrumbs is not a
+// function"), because appNav.tsx calls `appCrumbs()` at its own top level and a
+// circular import hands it the registry module before that export exists yet.
+// This file already owns the group data, so it renders the switcher itself.
+type AppLink = { label: string; to: string };
+const APP_GROUPS: AppLink[][] = appGroups();
+
+function groupFor(pathname: string): AppLink[] | null {
+  return (
+    APP_GROUPS.find((g) => g.some((a) => pathname === a.to || pathname.startsWith(a.to + "/"))) ?? null
+  );
+}
+
+function AppGroupNav() {
+  const { pathname } = useLocation();
+  const group = groupFor(pathname);
+  if (!group) return null;
+  return (
+    <nav className="ws-nav ws-appgroup" aria-label="Related apps">
+      {group.map((a) => {
+        const active = pathname === a.to || pathname.startsWith(a.to + "/");
+        return (
+          <NavLink key={a.to} to={a.to} className={active ? "is-active" : undefined}>
+            {a.label}
+          </NavLink>
+        );
+      })}
+    </nav>
+  );
 }
 
 /** Mounts every app provider around the shell, outermost first. */

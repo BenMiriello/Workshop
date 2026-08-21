@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
-import { Button, PageHeader, Row, StateBlock, StatusDot, Skeleton } from "@workshop/ui";
-import { useCrumbLabel } from "../components/appNav";
-import { shortHttpError } from "../lib/httpError";
+import { Button, PageHeader, Row, StateBlock, StatusDot, Skeleton, useCrumbLabel, shortHttpError } from "@workshop/ui";
 
 // Embedded preview of a running app service. The service binds 127.0.0.1; this
 // frames it through the backend reverse proxy inside the Workshop chrome, so there

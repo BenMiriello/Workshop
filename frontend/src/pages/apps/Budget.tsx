@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import "./budget/budget.css";
 import { Check, TriangleAlert, Pencil, Trash2, Plus, RefreshCw } from "lucide-react";
-import { AppGroupNav } from "../../components/appNav";
-import { Button, Field, Input, PageHeader, Select, Tabs } from "@workshop/ui";
+import {
+  Button, Field, Input, PageHeader, Select, Tabs, shortHttpError,
+  type AppChatDockRenderer,
+} from "@workshop/ui";
 import Projection from "./budget/Projection";
-import AppChatDock from "../../components/AppChatDock";
-import { shortHttpError } from "../../lib/httpError";
 
 // Budget app — the planning layer over the raw Finance viewer. Implements the
 // operator's mental model as a priority waterfall: income flows down through
@@ -332,7 +332,13 @@ function ScaledInner({
   );
 }
 
-export default function Budget() {
+export default function Budget({
+  groupNav,
+  renderChatDock,
+}: {
+  groupNav?: ReactNode;
+  renderChatDock?: AppChatDockRenderer;
+}) {
   const [tab, setTab] = useState<"plan" | "projection">("plan");
   const [data, setData] = useState<Budget | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -383,7 +389,7 @@ export default function Budget() {
         sub={data?.cache?.stale && !refreshing ? "updating…" : undefined}
         actions={
           <>
-            <AppGroupNav />
+            {groupNav}
             <Button size="sm" onClick={() => load({ refresh: true })} loading={refreshing} title="Pull fresh live balances from your banks">
               <RefreshCw aria-hidden /> Refresh
             </Button>
@@ -433,10 +439,14 @@ export default function Budget() {
 
       {data && tab === "projection" && <Projection budget={data} />}
 
-      {/* In-app assistant — query the budget or tell it to change the plan.
-          Reusable: <AppChatDock appId="..."> drops into any app, gated by the
-          app's manifest ui.agent_button setting. */}
-      <AppChatDock appId="budget" title="Budget assistant" placeholder="Ask about or change your budget…" onAction={() => load()} />
+      {/* In-app assistant, query the budget or tell it to change the plan.
+          renderChatDock is supplied by the shell (apps/registry.tsx), gated by
+          the app's manifest ui.agent_button setting. */}
+      {renderChatDock?.({
+        title: "Budget assistant",
+        placeholder: "Ask about or change your budget…",
+        onAction: () => load(),
+      })}
     </div>
   );
 }

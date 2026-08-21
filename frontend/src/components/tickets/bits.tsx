@@ -2,9 +2,8 @@
 // priority/effort meta, relative time. One definition each, so the board card,
 // the table row and the phone list cannot drift into three ideas of what a
 // ticket looks like.
-import { Tag, catFor } from "@workshop/ui";
+import { Tag, catFor, timeAgo } from "@workshop/ui";
 import { ticketKey, type Task } from "../../lib/tasks";
-import { timeAgo } from "../../lib/time";
 
 // Relative time, the unit every tracker's list column uses. An absolute
 // timestamp in a list is precision nobody reads; the ticket page has the full

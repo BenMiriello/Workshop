@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { TrainFront } from "lucide-react";
-import { StatusDot } from "@workshop/ui";
-import { SettingsSection, SettingsRow as Row } from "../../../components/AppSettings";
-import { shortHttpError } from "../../../lib/httpError";
+import { StatusDot, SettingsSection, SettingsRow as Row, shortHttpError } from "@workshop/ui";
 
 // Commute app settings — 511 key status + home/work coordinates. Moved verbatim
 // out of the platform Settings page (Phase 5 settings split). Renders inside the

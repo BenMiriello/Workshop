@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePoll } from "../lib/usePoll";
+import { usePoll, Notice } from "@workshop/ui";
 import { useNavigate } from "react-router-dom";
 import { WifiOff, ArrowDown, Paperclip, Unplug } from "lucide-react";
-import { Notice } from "@workshop/ui";
 import WorkPanel from "./chat/work/WorkPanel";
 import { useChatWork } from "./chat/work/useChatWork";
 import { ChatWorkProvider, type ChatWorkAccess } from "./chat/work/TicketCard";

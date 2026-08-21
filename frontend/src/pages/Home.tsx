@@ -13,20 +13,7 @@ import {
   MapPin,
   type LucideProps,
 } from "lucide-react";
-import {
-  Card,
-  CardGrid,
-  PageHeader,
-  Row,
-  Stack,
-  SectionLabel,
-  Skeleton,
-  StateBlock,
-  StatusPill,
-  type StatusKind,
-} from "@workshop/ui";
-import { timeAgo } from "../lib/time";
-import { shortHttpError } from "../lib/httpError";
+import { Card, CardGrid, PageHeader, Row, Stack, SectionLabel, Skeleton, StateBlock, StatusPill, type StatusKind, timeAgo, shortHttpError } from "@workshop/ui";
 
 // Home — three bands per operator direction 2026-07-18: Apps + Chats +
 // Projects, each capped to the four most-recently-active items. No

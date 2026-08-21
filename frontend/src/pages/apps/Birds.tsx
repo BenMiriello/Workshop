@@ -8,15 +8,13 @@ import AddressPicker from "./birds/AddressPicker";
 import type { Place } from "./birds/geocode";
 import { useShowNonBird } from "./birds/settings";
 import { useBirdsScope, type Source } from "./birds/scope";
-import { Segmented } from "@workshop/ui";
+import { Segmented, usePoll, type AppChatDockRenderer } from "@workshop/ui";
 import { API, pct, jget, Stat, StatGrid, SpeciesLink, BirdThumb } from "./birds/ui";
 import { RecordingsBanner } from "./birds/recordings";
 import ActivityCard from "./birds/ActivityCard";
 import NowCard from "./birds/NowCard";
 import LiveFeed from "./birds/LiveFeed";
 import Aviary from "./birds/Aviary";
-import AppChatDock from "../../components/AppChatDock";
-import { usePoll } from "../../lib/usePoll";
 
 // Birds home. One page, reshaped by two dropdown filters: which place (the
 // always-on yard, or any device-created location) and which device. The live
@@ -24,7 +22,11 @@ import { usePoll } from "../../lib/usePoll";
 // always-on yard's live feed is viewable on its own.
 const PUBLIC = import.meta.env.VITE_PUBLIC === "1";
 
-export default function Birds() {
+export default function Birds({
+  renderChatDock,
+}: {
+  renderChatDock?: AppChatDockRenderer;
+}) {
   const rec = useRecorder();
   // The persistent Location · Device · Time scope now lives in the shell; the
   // home page just reads the current selection from it.
@@ -54,7 +56,10 @@ export default function Birds() {
             </p>
           </div>
         )}
-      {!PUBLIC && <AppChatDock appId="birds" title="Birds assistant" placeholder="Ask about recent detections…" />}
+      {!PUBLIC && renderChatDock?.({
+        title: "Birds assistant",
+        placeholder: "Ask about recent detections…",
+      })}
     </div>
   );
 }

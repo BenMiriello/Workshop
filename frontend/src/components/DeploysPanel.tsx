@@ -4,15 +4,10 @@ import {
   Rocket, RefreshCw, Plus, ExternalLink, RotateCcw, Trash2, ChevronDown, ChevronRight,
   TriangleAlert,
 } from "lucide-react";
-import {
-  Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill,
-  Badge, Tag, Skeleton, Field, Input, Select, Modal, ConfirmDialog, type StatusKind,
-  Notice,
-} from "@workshop/ui";
+import { Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill, Badge, Tag, Skeleton, Field, Input, Select, Modal, ConfirmDialog, type StatusKind, Notice, timeAgo, shortHttpError } from "@workshop/ui";
 import { jobStatusKind, type JobEvidence } from "../lib/jobs";
-import { timeAgo } from "../lib/time";
+
 import { shortSha } from "../lib/sha";
-import { shortHttpError } from "../lib/httpError";
 
 // Deploys panel — per-project target bindings.
 //
@@ -58,7 +53,6 @@ type ProviderCatalog = {
   target_fields: { key: string; required: boolean; description: string }[];
   source_kinds: string[];
 };
-
 
 export default function DeploysPanel({ slug }: { slug: string }) {
   const [deploys, setDeploys] = useState<Deploy[] | null>(null);
@@ -299,9 +293,7 @@ export default function DeploysPanel({ slug }: { slug: string }) {
   );
 }
 
-
 // ---------- one row ---------------------------------------------------------
-
 
 function DeployRow({
   deploy, busy, onDeploy, onToggleRuns, onDelete, runsOpen, runsLoading, runs, onRollback,
@@ -417,9 +409,7 @@ function DeployRow({
   );
 }
 
-
 // ---------- add target modal ----------------------------------------------
-
 
 function AddTargetModal({
   slug, providers, onClose, onCreated,

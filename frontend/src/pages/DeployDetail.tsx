@@ -4,15 +4,10 @@ import {
   ChevronLeft, MoreHorizontal, RefreshCw, ExternalLink, Trash2, RotateCcw, ScrollText,
   TriangleAlert, Play,
 } from "lucide-react";
-import {
-  Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot,
-  Badge, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Menu, MenuItem, type StatusKind,
-} from "@workshop/ui";
+import { Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, Notice, StatusDot, Badge, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Menu, MenuItem, type StatusKind, timeAgo, shortHttpError } from "@workshop/ui";
 import { jobStatusKind, runHref, type JobEvidence } from "../lib/jobs";
-import { timeAgo } from "../lib/time";
-import { shortSha } from "../lib/sha";
-import { shortHttpError } from "../lib/httpError";
 
+import { shortSha } from "../lib/sha";
 
 type Deploy = {
   id: string;
@@ -40,7 +35,6 @@ type Run = {
 };
 
 type Notice = { deploy_id?: string; branch?: string; remote_sha?: string; detected_at?: string; reason?: string; none?: boolean };
-
 
 export default function DeployDetail() {
   const { id = "" } = useParams();

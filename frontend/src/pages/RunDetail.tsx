@@ -1,25 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { usePoll } from "../lib/usePoll";
+import { usePoll, StatusKind, shortHttpError, timeAbsolute, Button, Card, PageHeader, Row, Stack, SectionLabel, Skeleton, StateBlock, StatusPill, StatusDot, Notice } from "@workshop/ui";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft, HelpCircle, ListChecks } from "lucide-react";
-import {
-  Button,
-  Card,
-  PageHeader,
-  Row,
-  Stack,
-  SectionLabel,
-  Skeleton,
-  StateBlock,
-  StatusPill,
-  StatusDot,
-  Notice,
-} from "@workshop/ui";
-import type { StatusKind } from "@workshop/ui";
+
 import { type Job, jobIsLive, jobStatusKind, runHref } from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
-import { shortHttpError } from "../lib/httpError";
-import { timeAbsolute } from "../lib/time";
 
 // One RUN's detail: its binding, trigger, timing, outcome, and freeform
 // evidence. Linked from Work's Runs tab, Home attention cards, and an agent's

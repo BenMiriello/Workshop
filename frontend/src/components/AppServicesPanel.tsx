@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { usePoll } from "../lib/usePoll";
+import { usePoll, shortHttpError, Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill, Badge, Modal, Skeleton, type StatusKind } from "@workshop/ui";
 import { Link } from "react-router-dom";
 import { Boxes, ExternalLink, RefreshCw, Play, Square, ScrollText, RotateCw, Eye, TriangleAlert } from "lucide-react";
-import {
-  Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill,
-  Badge, Modal, Skeleton, type StatusKind,
-} from "@workshop/ui";
-import { shortHttpError } from "../lib/httpError";
 
 // Run: the single place a project becomes a running thing on this host. Drives
 // the backend app_runner — one app made of N services (each its own process +

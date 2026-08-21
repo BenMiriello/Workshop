@@ -8,8 +8,7 @@
 
 import { useRef } from "react";
 import type { CommuteActivityState, ActivityStatus } from "@shared/native-bridge";
-import { native } from "../../../native/bridge";
-import { usePoll } from "../../../lib/usePoll";
+import { native, usePoll } from "@workshop/ui";
 
 interface Leg {
   mode?: string;

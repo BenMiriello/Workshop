@@ -20,10 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import {
-  Button, Card, Field, Input, Modal, PageActionBar, Row, Select, Skeleton, Stack,
-  StateBlock, Textarea,
-} from "@workshop/ui";
+import { Button, Card, Field, Input, Modal, PageActionBar, Row, Select, Skeleton, Stack, StateBlock, Textarea, shortHttpError } from "@workshop/ui";
 import { type Task, cleanTitle, scopeLabel, ticketHref } from "../lib/tasks";
 import {
   PAGE_SIZE, apiQuery, clampPage, defaultFilters, isNarrowed, pageCount,
@@ -39,7 +36,6 @@ import {
   TicketFilterBar, TicketFilterCompact, TicketFilterSheet, ViewSwitcher,
   type LabelCount,
 } from "../components/tickets/TicketFilters";
-import { shortHttpError } from "../lib/httpError";
 
 type TasksResp = { tasks: Task[]; count: number; total: number };
 
@@ -238,7 +234,6 @@ export default function Tickets() {
   } else {
     body = <TicketTable tasks={rows} showScope={showScope} />;
   }
-
 
   return (
     // `--footed` cancels the scroller's bottom padding so the pinned New ticket

@@ -14,7 +14,7 @@
 // missing half: nothing here is set up for a drag.
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Board, BoardCard, BoardColumn, Button, Skeleton, StatusDot } from "@workshop/ui";
+import { Board, BoardCard, BoardColumn, Button, Skeleton, StatusDot, shortHttpError } from "@workshop/ui";
 import {
   taskStatusKind, taskStatusTitle, ticketHref, title as taskTitle,
   type Task,
@@ -24,7 +24,6 @@ import {
   type TicketFilters, type TicketSort,
 } from "../../lib/ticketFilters";
 import { TagStrip, TicketKey, TicketMeta } from "./bits";
-import { shortHttpError } from "../../lib/httpError";
 
 type LaneState = {
   rows: Task[];

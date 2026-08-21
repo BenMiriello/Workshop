@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Play, Pause, AlertTriangle, AlertCircle } from "lucide-react";
-import { StatusPill } from "@workshop/ui";
+import { StatusPill, usePoll } from "@workshop/ui";
 import { API, jget } from "./ui";
-import { usePoll } from "../../../lib/usePoll";
 
 // Shared pieces for the recordings system: the storage-status hook, a homepage
 // banner that renders only when there's something to say, byte formatting, and a

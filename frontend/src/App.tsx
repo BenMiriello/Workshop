@@ -10,7 +10,7 @@ import Tickets from "./pages/Tickets";
 import Deploys from "./pages/Deploys";
 import TicketDetail from "./pages/TicketDetail";
 import FocusedChat from "./pages/FocusedChat";
-import { BreadcrumbProvider } from "./components/appNav";
+import { BreadcrumbProvider } from "@workshop/ui";
 import { Shell } from "./components/shell/Shell";
 import { AppProviders, AppSuspense, appRoutes } from "./apps/registry";
 

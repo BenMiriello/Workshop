@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isTransientSendFailure, sendFailureText } from "./sendFailure";
-import { shortHttpError } from "../../lib/httpError";
+import { shortHttpError } from "@workshop/ui";
 
 // The bug this pins: `setErr(String(e))` put "TypeError: Failed to fetch" on
 // screen as the app's explanation of what happened to a message.

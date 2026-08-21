@@ -1,13 +1,7 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
-import { NavLink, useLocation } from "react-router-dom";
-import { appCrumbs, appGroups } from "../apps/registry";
+import { useMemo } from "react";
+import { useLocation } from "react-router-dom";
+import { useBreadcrumbOverride, type Crumb } from "@workshop/ui";
+import { appCrumbs } from "../apps/registry";
 
 // What is left of the old top toolbar, which the shell replaced on 2026-08-20.
 //
@@ -18,13 +12,23 @@ import { appCrumbs, appGroups } from "../apps/registry";
 //
 // What survives is the route HIERARCHY, because a record page still needs to
 // say where it sits:
-//   • resolveCrumbs / useCrumbs — the trail for a path, read by ShellTrail.
-//   • BreadcrumbProvider / useCrumbLabel / useCrumbTrail — let a page feed a
-//     dynamic leaf label (an entity name) or a fully custom trail.
-//   • AppGroupNav — the switcher linking sibling apps, rendered inline in the
-//     PageHeader actions slot by four app pages.
+//   • resolveCrumbs / useCrumbs: the trail for a path, read by ShellTrail.
+//     `BreadcrumbProvider` / `useCrumbLabel` / `useCrumbTrail`, the generic
+//     half of this (a page feeding a dynamic leaf label or a fully custom
+//     trail), moved to `@workshop/ui` 2026-08-20 (Stage 4b): the override
+//     mechanism has nothing platform-specific in it. This file keeps the
+//     RESOLUTION half, because mapping a route to its default trail needs the
+//     platform's own route table (NODES, below, merged with every installed
+//     app's crumbs).
+//   • AppGroupNav (the switcher linking sibling apps) moved OUT of this file
+//     entirely, into `apps/registry.tsx`, which already owns `appGroups()`.
+//     `apps/registry.tsx` importing this file for it would have made a cycle
+//     (this file already imports `appCrumbs` FROM the registry to build
+//     NODES below), so the registry renders its own switcher and hands the
+//     result down to the four grouped app pages as a `groupNav` prop; those
+//     pages no longer import this file at all.
 
-export type Crumb = { label: string; to?: string };
+export type { Crumb };
 
 // ---- Route hierarchy -------------------------------------------------------
 // Each node maps its exact path to a display label + parent path. The trail for
@@ -115,53 +119,13 @@ export function resolveCrumbs(pathname: string): Crumb[] {
   return chain;
 }
 
-// ---- Dynamic-label context -------------------------------------------------
-// A page mounts and (optionally) tells the toolbar its real leaf label or a
-// fully custom trail. Only the mounted route writes; unmount clears it.
-type Override = { trail?: Crumb[]; leafLabel?: string };
-const SetCtx = createContext<(o: Override) => void>(() => {});
-const ValueCtx = createContext<Override>({});
-
-export function BreadcrumbProvider({ children }: { children: ReactNode }) {
-  const [override, setOverride] = useState<Override>({});
-  return (
-    <SetCtx.Provider value={setOverride}>
-      <ValueCtx.Provider value={override}>{children}</ValueCtx.Provider>
-    </SetCtx.Provider>
-  );
-}
-
-// Override the leaf (current-page) crumb label with an entity name. Pass a
-// falsy value while the entity is still loading — the route default shows until
-// then. Safe to call unconditionally (hooks rule).
-export function useCrumbLabel(label?: string | null) {
-  const setOverride = useContext(SetCtx);
-  useEffect(() => {
-    if (!label) return;
-    setOverride({ leafLabel: label });
-    return () => setOverride({});
-  }, [label, setOverride]);
-}
-
-// Supply a fully custom trail (everything after "Workshop"). Use when the path
-// hierarchy alone can't express the trail — e.g. a bird scoped to a location.
-export function useCrumbTrail(trail: Crumb[]) {
-  const setOverride = useContext(SetCtx);
-  const key = trail.map((c) => `${c.label}:${c.to ?? ""}`).join("|");
-  useEffect(() => {
-    setOverride({ trail });
-    return () => setOverride({});
-    // key captures the trail's content; `trail` identity changes every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, setOverride]);
-}
-
-// The route's trail with whatever the mounted page said about its own leaf
-// folded in. One reader: the shell's `ShellTrail`, which draws a trail only
-// where one goes deeper than the page column already says.
+// The route's default trail with whatever the mounted page announced through
+// `useCrumbLabel`/`useCrumbTrail` (@workshop/ui) folded in. One reader: the
+// shell's `ShellTrail`, which draws a trail only where one goes deeper than
+// the page column already says.
 export function useCrumbs(): Crumb[] {
   const { pathname } = useLocation();
-  const override = useContext(ValueCtx);
+  const override = useBreadcrumbOverride();
   return useMemo<Crumb[]>(() => {
     const base = override.trail?.length ? override.trail.slice() : resolveCrumbs(pathname);
     if (override.leafLabel && base.length) {
@@ -169,34 +133,4 @@ export function useCrumbs(): Crumb[] {
     }
     return base;
   }, [pathname, override]);
-}
-
-// ---- Linked-app switcher ---------------------------------------------------
-// Each app belongs to at most one group; the group's siblings render as the
-// switcher. Lives inline in the PageHeader `actions` slot (left of Refresh).
-type AppLink = { label: string; to: string };
-const APP_GROUPS: AppLink[][] = appGroups();
-
-function groupFor(pathname: string): AppLink[] | null {
-  return (
-    APP_GROUPS.find((g) => g.some((a) => pathname === a.to || pathname.startsWith(a.to + "/"))) ?? null
-  );
-}
-
-export function AppGroupNav() {
-  const { pathname } = useLocation();
-  const group = groupFor(pathname);
-  if (!group) return null;
-  return (
-    <nav className="ws-nav ws-appgroup" aria-label="Related apps">
-      {group.map((a) => {
-        const active = pathname === a.to || pathname.startsWith(a.to + "/");
-        return (
-          <NavLink key={a.to} to={a.to} className={active ? "is-active" : undefined}>
-            {a.label}
-          </NavLink>
-        );
-      })}
-    </nav>
-  );
 }

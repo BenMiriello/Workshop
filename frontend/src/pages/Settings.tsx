@@ -14,35 +14,13 @@ import {
   Pencil,
   Library,
 } from "lucide-react";
-import {
-  ActionBar,
-  Button,
-  ConfirmDialog,
-  PageHeader,
-  ReadOnly,
-  Segmented,
-  Select,
-  StatusDot,
-  useEditMode,
-  useTheme,
-  usePalette,
-  useResolvedMode,
-  PalettePicker,
-  PALETTE_META,
-  StatusPill,
-  Input,
-  Skeleton,
-  StateBlock,
-  Notice,
-  type SegmentedOption,
-  type ThemeMode,
-} from "@workshop/ui";
+import { ActionBar, Button, ConfirmDialog, PageHeader, ReadOnly, Segmented, Select, StatusDot, useEditMode, useTheme, usePalette, useResolvedMode, PalettePicker, PALETTE_META, StatusPill, Input, Skeleton, StateBlock, Notice, type SegmentedOption, type ThemeMode, SettingsSection as Section, SettingsRow as Row, timeAgo, native, startDeviceTracking, stopDeviceTracking, useNative, useTrackingStatus } from "@workshop/ui";
 import { chatApi, type ChatPrefs } from "../lib/chat";
 import { CHAT_MODES, chatModeDef, type ChatModeId } from "../components/chat/chatModes";
 import { effortLabel } from "../components/chat/effort";
 import { permissionModeDef } from "../components/chat/permissionModes";
 import { useAuth } from "../auth/AuthProvider";
-import { SettingsSection as Section, SettingsRow as Row } from "../components/AppSettings";
+
 import {
   getPolicy,
   setDefaults,
@@ -52,12 +30,9 @@ import {
   type ShareValue,
 } from "../lib/memoryPolicy";
 import AutonomyControls from "../components/AutonomyControls";
-import { native } from "../native/bridge";
-import { useNative, useTrackingStatus } from "../native/useNative";
-import { startDeviceTracking, stopDeviceTracking } from "../native/location";
+
 import type { PermissionState } from "@shared/native-bridge";
 import { AppSuspense, appSettingsPanels } from "../apps/registry";
-import { timeAgo } from "../lib/time";
 
 // Settings. One section per tab, ordered by how often the operator touches it.
 //
@@ -301,7 +276,8 @@ function MemorySection() {
 // bridge is absent in a plain browser, so this whole section hides there).
 // Lets the operator control background location tracking, see the offline fix
 // queue, enable notifications, and check Live Activity readiness. See
-// shared/native-bridge.ts + frontend/src/native/*.
+// shared/native-bridge.ts + @workshop/ui's native/* (promoted from
+// frontend/src/native/* 2026-08-20, Stage 4b).
 // ----------------------------------------------------------------------------
 function DeviceSection() {
   const { isShell, tier, has } = useNative();

@@ -5,12 +5,10 @@ import { Link } from "react-router-dom";
 import {
   ArrowUpRight, ChevronRight, FileDiff, Ticket as TicketGlyph,
 } from "lucide-react";
-import {
-  Button, Card, Clamp, Notice, Skeleton, StatusDot, StatusPill, Tag, catFor,
-} from "@workshop/ui";
+import { Button, Card, Clamp, Notice, Skeleton, StatusDot, StatusPill, Tag, catFor, shortHttpError } from "@workshop/ui";
 import { AgentAvatar } from "./AgentAvatar";
 import { jobIsLive, runHref } from "../../../lib/jobs";
-import { shortHttpError } from "../../../lib/httpError";
+
 import { ticketHref, type Task } from "../../../lib/tasks";
 import type { Pickup } from "../../../lib/scopePickup";
 import {

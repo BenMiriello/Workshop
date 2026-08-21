@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Radio } from "lucide-react";
 import { jget } from "./ui";
 import { specColor } from "./specColor";
-import { usePoll } from "../../../lib/usePoll";
+import { usePoll } from "@workshop/ui";
 
 // Viewer for live-broadcasting devices. Polls /live (scoped to who you can see)
 // and renders each active feed's rolling spectrogram + "now hearing". This is how

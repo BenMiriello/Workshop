@@ -6,12 +6,14 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.5.16
+Version: 0.5.17
 
 ## @workshop/ui
 
 Source: `src/index.ts`
 
+- _resetCurrentUserForTest
+- _resetDeviceScopedForTest
 - ActionBar
 - AGENCY_LABEL
 - AgencyChip
@@ -20,10 +22,13 @@ Source: `src/index.ts`
 - agencyProps
 - applyPalette
 - applyTheme
+- AppSettings
+- backgroundTrackingSupported
 - Badge
 - Board
 - BoardCard
 - BoardColumn
+- BreadcrumbProvider
 - Button
 - Card
 - CardGrid
@@ -41,12 +46,25 @@ Source: `src/index.ts`
 - DEFAULT_PALETTE
 - DetailLayout
 - Divider
+- ERROR_BODY_CAP
 - Field
 - FilterBar
 - FilterChip
+- formatBytes
+- formatDuration
+- formatMiB
+- formatVramBytes
+- getCurrentFix
 - getStoredPalette
 - getStoredTheme
+- hasCapability
+- HttpError
 - Input
+- isDeviceScoped
+- isNamespacedKey
+- isNativeShell
+- isPaidTier
+- isTransientNetworkError
 - LEGACY_PALETTES
 - Menu
 - MenuCheckItem
@@ -54,57 +72,93 @@ Source: `src/index.ts`
 - MenuLabel
 - MenuSeparator
 - Modal
+- namespacedKey
+- native
 - Notice
 - NumCell
+- onNativeEvent
 - OverlayHost
 - PageActionBar
 - PageHeader
 - PALETTE_META
 - PalettePicker
+- planMigration
+- pollShouldRun
 - Popover
 - ProgressBar
 - Prop
 - Props
 - ReadOnly
+- registerDeviceScoped
 - resolvePaletteId
 - RevealField
 - Row
 - SectionLabel
 - Segmented
 - Select
+- setCurrentUser
+- SettingsRow
+- SettingsSection
+- shortHttpError
 - Skeleton
 - Spacer
 - Stack
 - StackedBar
+- startDeviceTracking
 - Stat
 - StateBlock
 - statusClass
 - StatusDot
 - StatusPill
 - Stepper
+- stopDeviceTracking
 - Table
 - TableScroll
 - Tabs
 - Tag
 - Textarea
+- timeAbsolute
+- timeAbsoluteShort
+- timeAgo
+- timeAgoSeconds
 - TimeCell
 - Toggle
 - Toolbar
 - type AgencyTier
+- type AppChatDockOptions
+- type AppChatDockRenderer
+- type BridgeEventTopic
+- type Capability
 - type CatHue
+- type Crumb
 - type EditMode
+- type NativeInfo
 - type PaletteGroup
 - type PaletteId
 - type PaletteMeta
 - type SegmentedOption
 - type StatusKind
+- type StorageExemption
 - type TabItem
 - type ThemeMode
+- type UserId
+- type WhenHidden
+- type WorkshopNative
+- useBreadcrumbOverride
+- useCrumbLabel
+- useCrumbTrail
 - useEditMode
+- useNative
+- useNativeEvent
 - useOverlayHost
 - usePalette
+- usePoll
 - useResolvedMode
+- userStorage
 - useTheme
+- useTrackingStatus
+- VRAM_UNKNOWN
+- withTransientRetry
 
 ## @workshop/ui/map
 

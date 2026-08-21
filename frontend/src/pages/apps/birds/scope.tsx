@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { useSearchParams } from "react-router-dom";
 import { jget } from "./api";
 import { useShowNonBird, nonBirdQuery } from "./settings";
-import { usePoll } from "../../../lib/usePoll";
+import { usePoll } from "@workshop/ui";
 
 // The Birds app's single persistent scope: Location · Device · Time, applied on
 // every page (including bird detail). It replaces the per-page pickers the home

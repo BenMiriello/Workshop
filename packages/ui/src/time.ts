@@ -5,8 +5,8 @@
 // callers clamped a negative delta (a clock skew, a server timestamp a beat
 // ahead of the browser) and some did not, so a fresh record could read "-3s
 // ago"; and the six `fmtTs` copies split into five that agreed and one
-// (ProjectDetail's) that used a different format AND a different failure mode
-// — it returned the raw, unparsed string instead of "".
+// (ProjectDetail's) that used a different format AND a different failure mode:
+// it returned the raw, unparsed string instead of "".
 //
 // Three genuinely distinct jobs, not sixteen:
 //   timeAgo            relative, for a list row or a meta line

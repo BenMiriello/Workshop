@@ -1,22 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { usePoll } from "../lib/usePoll";
+import { usePoll, shortHttpError, Button, Card, ConfirmDialog, Field, Input, Select, SectionLabel, Skeleton, StateBlock, StatusPill, Stack, Row, Textarea, Toggle } from "@workshop/ui";
 import { RefreshCw, Plus, Pencil, Trash2, Check, X, CornerDownLeft, Compass } from "lucide-react";
-import {
-  Button,
-  Card,
-  ConfirmDialog,
-  Field,
-  Input,
-  Select,
-  SectionLabel,
-  Skeleton,
-  StateBlock,
-  StatusPill,
-  Stack,
-  Row,
-  Textarea,
-  Toggle,
-} from "@workshop/ui";
+
 import {
   type Task,
   type TaskStatus,
@@ -33,7 +18,6 @@ import {
   description as taskDescription,
   cleanTitle,
 } from "../lib/tasks";
-import { shortHttpError } from "../lib/httpError";
 
 // Reusable task panel over the canonical cross-scope Task API. It renders EVERY
 // shipped status (todo/doing/in_review/blocked/parked/done/cancelled) through the

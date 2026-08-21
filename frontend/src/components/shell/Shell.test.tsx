@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { AuthProvider } from "../../auth/AuthProvider";
-import { BreadcrumbProvider } from "../appNav";
+import { BreadcrumbProvider } from "@workshop/ui";
 import { Shell } from "./Shell";
 
 // The same nesting main.tsx uses: AuthProvider > Guard > App > Shell. The

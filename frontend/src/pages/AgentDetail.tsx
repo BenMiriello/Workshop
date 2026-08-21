@@ -2,35 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { Trash2, Plus, Bot, Brain, MessageSquare, Clock, StickyNote, ListChecks, Activity } from "lucide-react";
 import type { Project } from "@shared/types";
-import {
-  ActionBar,
-  Badge,
-  Button,
-  Card,
-  Checkbox,
-  ConfirmDialog,
-  Field,
-  Input,
-  Notice,
-  PageHeader,
-  Row,
-  SectionLabel,
-  Segmented,
-  Select,
-  Skeleton,
-  StateBlock,
-  StatusDot,
-  StatusPill,
-  Stack,
-  Tag,
-  Textarea,
-  catFor,
-  type SegmentedOption,
-} from "@workshop/ui";
+import { ActionBar, Badge, Button, Card, Checkbox, ConfirmDialog, Field, Input, Notice, PageHeader, Row, SectionLabel, Segmented, Select, Skeleton, StateBlock, StatusDot, StatusPill, Stack, Tag, Textarea, catFor, type SegmentedOption, useCrumbLabel, shortHttpError, timeAbsolute } from "@workshop/ui";
 import { type Job, jobStatusKind, runHref } from "../lib/jobs";
 import GrantPicker from "../components/GrantPicker";
 import TaskPanel from "../components/TaskPanel";
-import { useCrumbLabel } from "../components/appNav";
+
 import {
   EVENT_SOURCES,
   triggerSummary,
@@ -39,8 +15,6 @@ import {
   type UnifiedAgent,
 } from "../lib/agentTriggers";
 import { ticketHref } from "../lib/tasks";
-import { shortHttpError } from "../lib/httpError";
-import { timeAbsolute } from "../lib/time";
 
 // One Agent, one config surface, typed by ROLE. There is no `runtime` field.
 // This page is the definition (editable), triggers, the grant set

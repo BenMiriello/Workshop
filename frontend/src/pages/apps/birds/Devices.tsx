@@ -2,10 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Smartphone, Radio, MapPin, Trash2, X, Check, Pencil, RotateCcw, Users } from "lucide-react";
 import { useRecorder, type DeviceMode } from "./recorder";
-import { StatusPill } from "@workshop/ui";
+import { StatusPill, timeAgo, usePoll } from "@workshop/ui";
 import { API, jget, isRecording } from "./ui";
-import { timeAgo } from "../../../lib/time";
-import { usePoll } from "../../../lib/usePoll";
 
 // Devices that listen. Each is adaptive (follows its current GPS) or fixed
 // (pinned to one location, the way the Pi will be). A device is read-only until
@@ -23,7 +21,7 @@ type Dev = {
 };
 type Loc = { id: number; name: string };
 
-// Relative "last active" so a stale device reads at a glance. lib/time's
+// Relative "last active" so a stale device reads at a glance. @workshop/ui's
 // `timeAgo` is the one formatter; only the empty-input wording is local
 // (a device shows "never" for no last-seen record, not an empty string).
 function relTime(iso: string | null): string {

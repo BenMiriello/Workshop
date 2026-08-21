@@ -4,8 +4,7 @@ import {
 import { reverseGeocode } from "./geocode";
 import { specColor } from "./specColor";
 import { localizeEvents, type SpecCol, type SpeciesEvent, type Sample } from "./specLocalize";
-import { userStorage } from "../../../lib/storage";
-import { usePoll } from "../../../lib/usePoll";
+import { userStorage, usePoll } from "@workshop/ui";
 
 // App-root recorder: captures THIS device's mic and streams live BirdNET
 // detections. Lives above the router so listening keeps running while you move

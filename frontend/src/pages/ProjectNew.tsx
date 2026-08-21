@@ -1,24 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  Button,
-  Card,
-  Field,
-  Input,
-  Notice,
-  PageHeader,
-  SectionLabel,
-  Segmented,
-  Select,
-  Skeleton,
-  StateBlock,
-  Textarea,
-  type SegmentedOption,
-} from "@workshop/ui";
+import { Button, Card, Field, Input, Notice, PageHeader, SectionLabel, Segmented, Select, Skeleton, StateBlock, Textarea, type SegmentedOption, shortHttpError } from "@workshop/ui";
 import { Markdown } from "@workshop/ui/markdown";
 import type { ProjectSensitivity } from "@shared/types";
 import { slugify } from "../components/chat/uiCardActions";
-import { shortHttpError } from "../lib/httpError";
 
 // New-project flow. Single form. Submits to POST /api/projects/ which
 // scaffolds from the chosen template, writes the brief into PROJECT.md,

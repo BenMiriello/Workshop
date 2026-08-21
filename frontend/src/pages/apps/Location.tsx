@@ -1,22 +1,23 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Play, Square } from "lucide-react";
-import AppChatDock from "../../components/AppChatDock";
-import { AppGroupNav } from "../../components/appNav";
-import { AppSettings } from "../../components/AppSettings";
+import {
+  AppSettings, Button, ConfirmDialog, PageHeader, StatusDot,
+  backgroundTrackingSupported, isNativeShell, shortHttpError, startDeviceTracking,
+  stopDeviceTracking, timeAgo, usePoll, type AppChatDockRenderer,
+} from "@workshop/ui";
 import LocationSettings from "./location/LocationSettings";
-import { Button, ConfirmDialog, PageHeader, StatusDot } from "@workshop/ui";
 // Direct import (not via the ui barrel) so maplibre/pmtiles aren't pulled into
 // every page that touches the design system.
 import { Map, type LngLat } from "@workshop/ui/map";
-import { isNativeShell } from "../../native/bridge";
-import {
-  backgroundTrackingSupported,
-  startDeviceTracking,
-  stopDeviceTracking,
-} from "../../native/location";
-import { shortHttpError } from "../../lib/httpError";
-import { timeAgo } from "../../lib/time";
-import { usePoll } from "../../lib/usePoll";
+// GENERATED backend response types (frontend/CLAUDE.md "API response types
+// are GENERATED"). This is the one deliberately kept cross-boundary import in
+// this file (Stage 4b): the type is a wire contract with the platform's own
+// backend, not platform UI behaviour, and until an extracted app generates
+// its own client from its own service (stage 7+) there is exactly one
+// backend schema to describe the HTTP boundary every app talks to. Hand-
+// writing a duplicate type here is the documented worse option (see
+// frontend/CLAUDE.md, which names this file as the case that motivated
+// generating types at all).
 import type { components } from "../../api/schema.gen";
 
 // Location app page — read-only view of operator position fed by Owntracks
@@ -145,7 +146,13 @@ function DeviceTrackingCard() {
   );
 }
 
-export default function Location() {
+export default function Location({
+  groupNav,
+  renderChatDock,
+}: {
+  groupNav?: ReactNode;
+  renderChatDock?: AppChatDockRenderer;
+}) {
   const [latest, setLatest] = useState<LocationRecord | null>(null);
   const [records, setRecords] = useState<LocationRecord[]>([]);
   const [trackRecords, setTrackRecords] = useState<LocationRecord[]>([]);
@@ -264,7 +271,7 @@ export default function Location() {
 
   return (
     <div>
-      <PageHeader title="Location" actions={<AppGroupNav />} />
+      <PageHeader title="Location" actions={groupNav} />
       {err && <div className="err">{err}</div>}
 
       <div className="card">
@@ -379,7 +386,7 @@ export default function Location() {
 
       {/* In-app assistant — defaults to location scope (knows last ping + age);
           operator can swap providers from the picker inside the dock. */}
-      <AppChatDock appId="location" title="Location assistant" placeholder="Ask about latest position…" />
+      {renderChatDock?.({ title: "Location assistant", placeholder: "Ask about latest position…" })}
     </div>
   );
 }

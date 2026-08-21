@@ -1,15 +1,18 @@
 import { useState, type ComponentType, type ReactNode } from "react";
 import { SlidersHorizontal, ChevronDown, type LucideProps } from "lucide-react";
-import { Card, SectionLabel } from "@workshop/ui";
+import { Card, SectionLabel } from "./layout";
 
 // The standard app-settings slot. An app page renders <AppSettings> near the
 // bottom of its single page to host its own user-facing config, without adding
 // a second header (frontend/CLAUDE.md: one header per app). It is a collapsible
-// disclosure so an app's config stays out of the way until asked for.
+// disclosure so an app's config stays out of the way until asked for. Promoted
+// from Workshop's `components/AppSettings.tsx` 2026-08-20 (Stage 4b): it was
+// already built entirely from kit primitives and had no platform dependency,
+// so the only change here is where the file lives.
 //
 // The two shells below (SettingsSection / SettingsRow) are the same label+card
-// and label-beside-value row that the platform Settings page uses, extracted so
-// a moved app-settings section renders identically inside its app or in Settings.
+// and label-beside-value row the platform Settings page uses, extracted so a
+// moved app-settings section renders identically inside its app or in Settings.
 
 export function AppSettings({
   title = "Settings",
@@ -83,7 +86,7 @@ export function SettingsSection({
 }
 
 // Label-beside-value row. Uses the inline-field grid; a hairline separates rows.
-// `hint` is a caption under the control — for a setting whose current value
+// `hint` is a caption under the control, for a setting whose current value
 // needs a word of explanation (e.g. what a color scheme is meant to feel like).
 export function SettingsRow({
   label,

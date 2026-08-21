@@ -21,34 +21,9 @@ import {
   ExternalLink,
 } from "lucide-react";
 import type { BuildAgent, Project } from "@shared/types";
-import {
-  Button,
-  Card,
-  CardGrid,
-  ConfirmDialog,
-  Modal,
-  Notice,
-  PageHeader,
-  Row,
-  Stack,
-  SectionLabel,
-  StateBlock,
-  StatusPill,
-  StatusDot,
-  Tag,
-  Toggle,
-  Skeleton,
-  Textarea,
-  Input,
-  Select,
-  Field,
-  ActionBar,
-  Segmented,
-  catFor,
-  type StatusKind,
-} from "@workshop/ui";
+import { Button, Card, CardGrid, ConfirmDialog, Modal, Notice, PageHeader, Row, Stack, SectionLabel, StateBlock, StatusPill, StatusDot, Tag, Toggle, Skeleton, Textarea, Input, Select, Field, ActionBar, Segmented, catFor, type StatusKind, useEditMode, useCrumbLabel, timeAbsoluteShort } from "@workshop/ui";
 import { Markdown } from "@workshop/ui/markdown";
-import { useEditMode } from "@workshop/ui";
+
 import {
   type TaskStatus,
   TASK_STATUSES,
@@ -56,11 +31,9 @@ import {
   taskStatusLabel,
   title as taskTitle,
 } from "../lib/tasks";
-import { useCrumbLabel } from "../components/appNav";
 import { chatApi, type ThreadSummary } from "../lib/chat";
 import { newChatHref } from "../lib/chatSelection";
 import { marketplaceApi, type RegistryItem } from "../lib/marketplace";
-import { timeAbsoluteShort } from "../lib/time";
 import AppServicesPanel from "../components/AppServicesPanel";
 import DeploysPanel from "../components/DeploysPanel";
 import AutonomyPanel from "../components/AutonomyPanel";
@@ -118,7 +91,6 @@ type Task = {
 // One shared empty array, so a childless row does not allocate a new one on
 // every render (and does not break memoization downstream by identity).
 const EMPTY_TASKS: Task[] = [];
-
 
 // A note in the project's knowledge scope (project:<slug>). The Notes section
 // reads and writes this scope so operator notes and agent notes share the one
@@ -186,7 +158,6 @@ function freshNoteId(title: string): string {
       .slice(0, 48) || "note";
   return `${base}-${Date.now().toString(36)}`;
 }
-
 
 // Stores hosted by this project (B11). Reads /api/stores?project=<slug>
 // which routes through stores.by_host on the backend (entity-model 2026-07-18

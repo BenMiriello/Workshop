@@ -6,7 +6,7 @@
 // broadcast so every open Birds view (live mic test + station detail) reacts
 // without a reload.
 import { useEffect, useState } from "react";
-import { userStorage } from "../../../lib/storage";
+import { userStorage } from "@workshop/ui";
 
 const KEY = "birdShowNonBird";
 const EVT = "bird-settings-change";
