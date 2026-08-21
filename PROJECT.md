@@ -330,3 +330,32 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   and flag-setting are the operator's, per the design doc's own Layer-1 rule.
   Details: `docs/platform-redesign/managed-file-references-and-path-scoping-2026-08-18.md`
   section 9a.
+- 2026-08-21 — Operator: back to the core work-loop (chat identifies/files/refines/
+  executes tickets under stage-by-stage observation; confinement double-check).
+  Ground truth found and fixed. (1) The chat path IS confined and correct (host
+  tree, other scopes and other owners absent; only the scope at /workspace plus
+  named grants). (2) But the WORKER was the open hole: `ralph.sh` spawned `claude
+  -p` directly, unconfined, and S2 (b250a1c) had authorized it to WRITE without
+  wiring the flag (`PERM_FLAGS` was defined and never passed, so "AUTHORIZED" was a
+  false log) — an unconfined bypass writer. Fixed (7f9275a): the worker spawns
+  through `scoped_exec exec`, a new fail-closed shell entrypoint (die-with-parent
+  so a `timeout` kill takes the sandbox down), MCP config moved to inline JSON so
+  search survives the sandbox tmpfs, PERM_FLAGS wired. (3) The /workspace-vs-
+  ~/workshop ROOT MISMATCH was real and its cause was env, not code: `WORKSHOP_ROOT`
+  (and siblings) were inherited into the sandbox as HOST paths, so
+  `paths.workshop_root()` resolved OUTSIDE the sandbox and a confined turn's
+  knowledge/.runtime pointed at a phantom empty dir. Fixed (6267052): `turn_env`
+  now remaps env values under the scope root to /workspace, the same way `wrap()`
+  remaps argv; confirmed knowledge then resolves the real 110 notes. (4) The triager
+  (note->ticket intake) had NEVER run (died on OwnerUnset); pinned the operator as
+  owner and ran it dry over the real backlog: 20 of 109 due decided -> 2 task, 2
+  link, 1 escalate, 15 none. Conservative, deduped, batched, one note at a time
+  (not the whole-chat scan). Confinement completeness: chat done, worker done
+  (this turn), in-chat background agents confined by inheritance; VOICE is the one
+  remaining unconfined bypass writer, deliberately off-limits. OPEN and operator-
+  owned (not done): the attended S2 live write-verify (must run from the UNCONFINED
+  resident runner, cannot be tested from inside a confined chat turn); the
+  chat->loop dispatch policy (chat-filed tickets are unattended-INELIGIBLE by
+  design, `execution` unset/fail-closed — making them dispatchable is the
+  filing-vs-execution autonomy setting, not a silent default); then S3 (one
+  supervised resident driver). Model of record: `work-loop-core-design-2026-08-21.md`.
