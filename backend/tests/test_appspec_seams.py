@@ -16,10 +16,24 @@ asserts the platform picks it up WITHOUT any platform file naming it.
 """
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
-from services import app_registry
 from services.app_registry import AppSpec
+
+
+def _registry():
+    """The LIVE app_registry module, resolved per call.
+
+    Not `from services import app_registry` at import time:
+    tests/test_app_registry_tolerant.py pops the module out of sys.modules and
+    re-imports it to prove the catalog survives a missing route module, so an
+    import-time binding here would patch a stale module object while the code
+    under test imports the fresh one. That is invisible when this file runs
+    alone and fails only in a full-suite run, which is the worst way to find it.
+    """
+    return importlib.import_module("services.app_registry")
 
 
 # --------------------------------------------------------------------------- #
@@ -70,7 +84,7 @@ SEAM_SPEC = AppSpec(
 # Some catalog tests need "a built-in that is not the fake app". Taken from the
 # catalog rather than typed, so this file names no real app either.
 def _a_builtin_id() -> str:
-    ids = [app_id for app_id, _, _ in app_registry._CATALOG_FACTORIES]
+    ids = [app_id for app_id, _, _ in _registry()._CATALOG_FACTORIES]
     if not ids:
         pytest.skip("this instance ships no built-in apps")
     return ids[0]
@@ -79,7 +93,7 @@ def _a_builtin_id() -> str:
 @pytest.fixture
 def seam_installed(monkeypatch):
     """Install the fake app, by making it the entire installed set."""
-    monkeypatch.setattr(app_registry, "installed_specs", lambda: [SEAM_SPEC])
+    monkeypatch.setattr(_registry(), "installed_specs", lambda: [SEAM_SPEC])
     return SEAM_SPEC
 
 
@@ -97,7 +111,7 @@ class TestEventVerifierSeam:
     def test_an_uninstalled_apps_source_gets_the_permissive_default(self, monkeypatch):
         from routes import events
 
-        monkeypatch.setattr(app_registry, "installed_specs", lambda: [])
+        monkeypatch.setattr(_registry(), "installed_specs", lambda: [])
         v = events.verifier_for("seamsource")
         assert v({}, b"") == (True, "no_verifier_registered")
 
@@ -106,7 +120,7 @@ class TestEventVerifierSeam:
         from routes import events
 
         hijack = AppSpec(id="seamtest", event_verifiers={"github": _seam_verifier})
-        monkeypatch.setattr(app_registry, "installed_specs", lambda: [hijack])
+        monkeypatch.setattr(_registry(), "installed_specs", lambda: [hijack])
         assert events.verifier_for("github") is events._verify_github
 
 
@@ -160,7 +174,7 @@ class TestStoreAdapterSeam:
         no apps installed at all."""
         from services import stores
 
-        monkeypatch.setattr(app_registry, "installed_specs", lambda: [])
+        monkeypatch.setattr(_registry(), "installed_specs", lambda: [])
         s = stores.Store(uri="workshop://store/knowledge/workshop",
                          owner_app="knowledge", name="workshop", type="Note",
                          path="/tmp/k")
@@ -196,13 +210,13 @@ class TestIndexCollectorSeam:
 
         spec = AppSpec(id="seamtest", index_collectors={"seamkind": _seam_collector},
                        index_collectors_default=("seamkind",))
-        monkeypatch.setattr(app_registry, "installed_specs", lambda: [spec])
+        monkeypatch.setattr(_registry(), "installed_specs", lambda: [spec])
         assert "seamkind" in si.default_kinds()
 
     def test_the_platform_kinds_survive_with_no_apps(self, monkeypatch):
         from services import semantic_index as si
 
-        monkeypatch.setattr(app_registry, "installed_specs", lambda: [])
+        monkeypatch.setattr(_registry(), "installed_specs", lambda: [])
         assert si.kinds() == si.PLATFORM_KINDS
         assert si.default_kinds() == si.PLATFORM_DEFAULT_KINDS
 
@@ -283,9 +297,9 @@ class TestOutOfTreeApps:
             def load(self):
                 return lambda: SEAM_SPEC
 
-        monkeypatch.setattr(app_registry, "_entry_point_factories",
+        monkeypatch.setattr(_registry(), "_entry_point_factories",
                             lambda: [("seamtest", (), lambda: SEAM_SPEC)])
-        catalog = app_registry._build_catalog()
+        catalog = _registry()._build_catalog()
         assert catalog["seamtest"] is SEAM_SPEC
         # and it did not displace the built-ins
         assert _a_builtin_id() in catalog
@@ -295,17 +309,17 @@ class TestOutOfTreeApps:
         a distribution and takes over from the remnant still in the tree."""
         target = _a_builtin_id()
         replacement = AppSpec(id=target)
-        monkeypatch.setattr(app_registry, "_entry_point_factories",
+        monkeypatch.setattr(_registry(), "_entry_point_factories",
                             lambda: [(target, (), lambda: replacement)])
-        assert app_registry._build_catalog()[target] is replacement
+        assert _registry()._build_catalog()[target] is replacement
 
     def test_a_broken_entry_point_does_not_sink_the_catalog(self, monkeypatch):
         def _boom():
             raise RuntimeError("bad spec")
 
-        monkeypatch.setattr(app_registry, "_entry_point_factories",
+        monkeypatch.setattr(_registry(), "_entry_point_factories",
                             lambda: [("seamtest", (), _boom)])
-        assert _a_builtin_id() in app_registry._build_catalog()
+        assert _a_builtin_id() in _registry()._build_catalog()
 
     def test_a_non_appspec_return_is_rejected(self, monkeypatch):
         """An entry point that returns a dict must fail loudly at build, not
@@ -320,7 +334,7 @@ class TestOutOfTreeApps:
                 return lambda: {"id": "seamtest"}
 
         monkeypatch.setattr(md, "entry_points", lambda group=None: [_EP()])
-        (_, _, factory), = app_registry._entry_point_factories()
+        (_, _, factory), = _registry()._entry_point_factories()
         with pytest.raises(TypeError):
             factory()
 
@@ -335,6 +349,6 @@ class TestOutOfTreeApps:
                 return lambda: {"id": "seamtest"}
 
         monkeypatch.setattr(md, "entry_points", lambda group=None: [_EP()])
-        catalog = app_registry._build_catalog()
+        catalog = _registry()._build_catalog()
         assert "seamtest" not in catalog
         assert _a_builtin_id() in catalog
