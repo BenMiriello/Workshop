@@ -142,7 +142,7 @@ def test_turn_user_off_by_default(monkeypatch):
 
 def test_turn_user_missing_account_raises_rather_than_falls_back(monkeypatch):
     # Fail closed: this flag's whole point is that a broken precondition ends
-    # the turn rather than silently spawning it as clawd-a.
+    # the turn rather than silently spawning it as the host user.
     monkeypatch.setenv("WORKSHOP_TURN_USER", "no-such-workshop-turn-account")
     with pytest.raises(scoped_exec.TurnUserUnavailable):
         scoped_exec.turn_user()
@@ -228,7 +228,7 @@ def test_turn_env_swaps_home_and_drops_xdg(monkeypatch, tmp_path):
     scope.mkdir()
 
     base = {
-        "HOME": "/home/clawd-a",
+        "HOME": os.path.expanduser("~"),
         "PATH": "/usr/bin:/bin",
         "XDG_RUNTIME_DIR": "/run/user/1003",
         "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1003/bus",
@@ -246,7 +246,7 @@ def test_turn_env_noop_when_unconfined_and_uid_off(monkeypatch):
     # Neither layer active: env passes through untouched (same object).
     monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
     monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "0")  # confinement forced off
-    env = {"HOME": "/home/clawd-a", "PATH": "/usr/bin"}
+    env = {"HOME": os.path.expanduser("~"), "PATH": "/usr/bin"}
     assert scoped_exec.turn_env(env, "/tmp") is env
 
 
@@ -259,11 +259,11 @@ def test_turn_env_remaps_scope_paths_when_confined(monkeypatch):
     monkeypatch.setenv("WORKSHOP_SCOPED_EXEC", "1")  # confinement forced on
     env = {"WORKSHOP_ROOT": "/scope/root",
            "WORKSHOP_NOTIFY_FILE": "/scope/root/.runtime/n.txt",
-           "OUTSIDE": "/home/clawd-a/.claude"}
+           "OUTSIDE": "/var/run/outside/.claude"}
     out = scoped_exec.turn_env(env, "/scope/root")
     assert out["WORKSHOP_ROOT"] == scoped_exec.MOUNTPOINT
     assert out["WORKSHOP_NOTIFY_FILE"] == scoped_exec.MOUNTPOINT + "/.runtime/n.txt"
-    assert out["OUTSIDE"] == "/home/clawd-a/.claude"  # outside the root, unchanged
+    assert out["OUTSIDE"] == "/var/run/outside/.claude"  # outside the root, unchanged
 
 
 def test_grants_under_the_uid_layer_never_bind_the_real_claude_dir(monkeypatch, tmp_path):

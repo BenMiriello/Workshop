@@ -24,6 +24,6 @@ describe("extractRefs", () => {
   });
 
   it("returns nothing for text with no refs", () => {
-    expect(extractRefs("just a plain sentence about /home/x/y.py")).toEqual([]);
+    expect(extractRefs("just a plain sentence about /tmp/x/y.py")).toEqual([]);
   });
 });

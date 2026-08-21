@@ -43,7 +43,7 @@ THE UID LAYER ([SEC-A1], `spawn_argv`/`turn_env`/`signal_pg`). Composes on top o
 the bwrap view above: `sudo -n -E -u <user> -- <wrapper> run <the wrap() argv>`.
 Gated by its own flag (`WORKSHOP_TURN_USER`, unset = off) separate from
 `WORKSHOP_SCOPED_EXEC`, because a missing sudoers rule must fail the turn, never
-silently fall back to running as `clawd-a` — the opposite posture from
+silently fall back to running as the host user — the opposite posture from
 `enabled()`'s degrade-safely default. `-n` (no password prompt) is load-bearing:
 without it, a misconfigured sudoers makes sudo block on stdin, which is the
 turn's fifo (opened O_RDWR so it never EOFs) — the turn would hang forever
@@ -190,7 +190,7 @@ def _grants(root: str | None = None) -> list[tuple[str, str, str]]:
     """(mode, src, dest) binds a build/dev turn needs beyond its scope. `dest`
     equals `src` for every grant except the two `~/.claude` policy files under
     the uid layer, which land inside the turn-user's own home instead of
-    `clawd-a`'s (see below). Skipped silently when `src` is absent, so the set
+    the host user's (see below). Skipped silently when `src` is absent, so the set
     is portable across hosts.
 
       - the systemd --user socket + the session bus (NOT the whole XDG runtime
@@ -203,8 +203,8 @@ def _grants(root: str | None = None) -> list[tuple[str, str, str]]:
         anything else: the binary it's told to run isn't in its own view.
 
     THE XDG BIND WAS TOO WIDE. It bound the whole runtime dir read-write, which
-    also contains `docker.sock` (owned `clawd-a:nogroup`, mode 660, and
-    `clawd-a` is a member of `nogroup`) -- reachable from inside a turn that
+    also contains `docker.sock` (owned by the host user's group, mode 660, and
+    the host user is a member of that group) -- reachable from inside a turn that
     Layer 1's own acceptance criterion says should not reach the docker socket
     at all. `systemctl --user` needs exactly two things under there: the
     private socket at `<xdg>/systemd` and the session bus at `<xdg>/bus`
@@ -212,13 +212,13 @@ def _grants(root: str | None = None) -> list[tuple[str, str, str]]:
     only those two closes the socket without touching what apply.sh needs.
 
     ~/.claude IS NOT BOUND WHEN A UID LAYER IS RUNNING THIS TURN. A bind mount
-    does not change ownership, so binding a `clawd-a`-owned, mode-0700 home
+    does not change ownership, so binding a host-user-owned, mode-0700 home
     into a turn running as a different uid grants nothing there anyway --
     except `.credentials.json` (mode 0600), which a looser directory mode
     would have made reachable. See `turn_home()` / the design doc's uid-layer
     section for the replacement: a dedicated home for the turn-user, with only
     the two world-readable policy files (`CLAUDE.md`, `settings.json`) bound in
-    from `clawd-a`'s real `~/.claude`.
+    from the host user's real `~/.claude`.
     """
     home = os.path.expanduser("~")
     uid = os.getuid()
@@ -303,7 +303,7 @@ def wrap(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -> list
     # NOT --unshare-pid. A separate PID namespace makes systemd's D-Bus reject the
     # peer (SO_PEERCRED carries a pid from another namespace), so `systemctl
     # --user` fails with "Failed to connect to bus", and apply.sh's restarts are
-    # what a dev turn exists to run. Process/signal isolation from other clawd-a
+    # what a dev turn exists to run. Process/signal isolation from other host-user
     # procs is the job of the uid sub-user layer (SEC-A1), not this filesystem
     # view; not unsharing the PID namespace here is no worse than today's
     # un-sandboxed turn, which shares it too. The confinement this layer delivers
@@ -336,13 +336,13 @@ def wrap(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -> list
 
 
 def turn_user(root: str | None = None) -> str | None:
-    """The dedicated uid this turn should run as, or None to run as `clawd-a`.
+    """The dedicated uid this turn should run as, or None to run as the host user.
 
     Unset `WORKSHOP_TURN_USER`: None, always -- the uid layer is off.
 
     Set: validates the account, the wrapper and sudo actually exist, and
     RAISES `TurnUserUnavailable` if not, rather than falling back to running
-    as `clawd-a`. That is the opposite posture from `enabled()`'s
+    as the host user. That is the opposite posture from `enabled()`'s
     degrade-safely default, deliberately: this flag is explicit opt-in, so a
     broken precondition is the exact failure the layer exists to prevent, not
     something to paper over.
@@ -463,9 +463,9 @@ def turn_env(env: dict, workdir: str | None = None) -> dict:
        is left at its real location, matching its bind.
 
     2. UID LAYER (only when `WORKSHOP_TURN_USER` runs this turn): point HOME and
-       git identity at the turn-user's own home instead of `clawd-a`'s (no longer
+       git identity at the turn-user's own home instead of the host user's (no longer
        bound in -- see `_grants()`), and drop the XDG/D-Bus vars that named
-       `clawd-a`'s runtime dir.
+       the host user's runtime dir.
 
     A no-op for an un-confined, non-uid spawn, so callers apply it unconditionally.
     """
@@ -502,7 +502,7 @@ def signal_pg(pid: int, sig: int, *, user: str | None, pgid: int | None = None) 
     same-uid); otherwise this falls back to `pid` itself, which IS the group
     id for anything spawned with `start_new_session=True` (a new session's
     leader has pgid == pid). Same-uid: `os.killpg` directly. Cross-uid:
-    `os.killpg` from `clawd-a` onto a `workshop-turn`-owned group raises EPERM
+    `os.killpg` from the host user onto a `workshop-turn`-owned group raises EPERM
     (silently swallowed by a bare except at the call site, which is what made
     this the layer's most likely regression), so the signal is routed through
     the turn wrapper's own identity instead.

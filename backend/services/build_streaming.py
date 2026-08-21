@@ -222,8 +222,8 @@ def session_alive(session_id: str | None, cwd: str) -> bool:
     # will look; the failed-resume self-heal is the backstop, not the norm.
     from services import scoped_exec
     # Under the uid layer the CLI runs (and writes its session files) as the
-    # turn-user, HOME'd at its own directory (turn_env()), not clawd-a's -- and
-    # clawd-a's ~/.claude is not even bound in for that case (see _grants()).
+    # turn-user, HOME'd at its own directory (turn_env()), not the host user's -- and
+    # the host user's ~/.claude is not even bound in for that case (see _grants()).
     # A soft check: an unavailable turn-user here just means "no session found
     # yet" (the fresh-session path), not a hard failure -- the spawn itself is
     # what raises on a real misconfiguration.
@@ -1601,7 +1601,7 @@ def _proc_alive(pid: int | None, *, starttime: str | None = None) -> bool:
         return False
     except PermissionError:
         # The pid exists but belongs to another uid -- expected under the uid
-        # layer (WORKSHOP_TURN_USER): `clawd-a` cannot signal a
+        # layer (WORKSHOP_TURN_USER): the host user cannot signal a
         # `workshop-turn`-owned process, but "cannot signal" is not "gone".
         # `starttime` is what still tells "my turn, still running" apart from
         # "something else now holds this number": two processes never share
@@ -1697,7 +1697,7 @@ async def _retire_turn_proc(pid: int | None, proc=None, *,
     set by the time this runs). CROSS-UID, this must go through
     `scoped_exec.signal_pg` and ONLY that: `proc.terminate()` still targets the
     real pid via a plain `os.kill` under the hood and raises PermissionError
-    from `clawd-a` onto a `workshop-turn`-owned process, and the bare
+    from the host user onto a `workshop-turn`-owned process, and the bare
     `except Exception: pass` this used to fall into would swallow that and
     silently do nothing -- leaking the process and leaving Stop a no-op.
     """
