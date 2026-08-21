@@ -442,29 +442,47 @@ else
   log "irreversible-action gate: NOT APPLIED (agent_authority produced no patterns)"
 fi
 
-# --- WHY THIS LOOP HAS NEVER WRITTEN A FILE (open decision, 2026-08-14) -------
+# --- unattended write authorization (execution boundary, decided 2026-08-21) --
 #
-# `claude -p` below is invoked with NO permission mode, so it takes the CLI
-# default, which can stop and ask. There is nobody here to ask: an unattended
-# worker has no approval channel. services/model_caps states the consequence
-# exactly: "the CLI accepts the mode and then silently auto-denies every gated
-# call, which is the worst available outcome". build_streaming only escapes it
-# by wiring --permission-prompt-tool stdio and answering the request itself.
+# `claude -p` is headless: there is no approval prompt in this process and nobody
+# to answer one. A mode that can "stop and ask" (default/auto/acceptEdits) has no
+# channel here, so the CLI accepts the mode and then silently auto-denies every
+# gated call and reports success. That is the failure that left this loop unable
+# to write a single file (measured 2026-08-14: the worker tried Write three times
+# and a Bash redirect, was denied every time, and exited claiming completion; the
+# reviewer correctly rejected it). The ONLY headless mode that actually writes is
+# `bypassPermissions`.
 #
-# Measured on the first end-to-end tier-1 run of this loop: the worker was asked
-# to create a one-line file, tried Write three times and a Bash redirect once,
-# was denied every time, wrote "All write operations require user permission
-# approval ... contradicts the autonomous operation model" into the project's
-# TODO, and exited claiming completion. The reviewer correctly rejected it. No
-# file was created, on any attempt, for any task.
+# This is NOT a new posture. services/model_caps records that bypass is excluded
+# from the CHAT PICKER per the operator's 2026-08-09 instruction, but that "the
+# unattended paths still pass it explicitly (job runners, sweeps, the voice
+# worker) ... those have no operator to ask". Ralph was the one unattended worker
+# left without it, pending the SEC-A1 execution-boundary decision. The operator
+# made that call on 2026-08-21 (see
+# docs/platform-redesign/work-loop-core-design-2026-08-21.md, step S2).
 #
-# The one-line fix is `--permission-mode bypassPermissions`, because that is the
-# ONLY mode not needing an approval channel (model_caps.NEEDS_APPROVAL_CHANNEL
-# is every other mode). It is deliberately NOT applied here, because it is the
-# operator's call, not a worker's: ticket SEC-A1 records that every autonomous
-# turn already runs as the invoking user, in the docker group, unsandboxed, with full tree
-# write and the OAuth token, and this flag is what makes that reachable. Turn it
-# on together with a decision about A1's execution boundary, not before.
+# The in-run boundary is the irreversible-action deny gate built just above
+# (push/publish/merge/delete/sudo/reboot via --disallowedTools) plus
+# git-revertability — the same net every bypass turn in this system relies on.
+# Note: bwrap confinement is NON-FUNCTIONAL on this host (no user namespace;
+# scoped_exec.functional() is False), so kernel confinement is not what gates
+# writes here and is not claimed to be. On a host where userns works, chat turns
+# are confined via scoped_exec and wiring this worker through the same seam is a
+# tracked follow-up; it buys nothing on this host.
+#
+# EXPLICIT AND REVERSIBLE. Off unless WORKSHOP_UNATTENDED_WRITES is truthy, so
+# merging this changes no existing run until it is deliberately enabled. Set
+# WORKSHOP_UNATTENDED_WRITES=1 to authorize unattended writes for a run; unset or
+# =0 keeps the pre-2026-08-21 (cannot-write) behavior. The S3 resident driver is
+# where this becomes the default, after an attended verification run.
+PERM_FLAGS=()
+case "${WORKSHOP_UNATTENDED_WRITES:-0}" in
+  1|true|yes|on|TRUE|YES|ON)
+    PERM_FLAGS=(--permission-mode bypassPermissions)
+    log "unattended writes: AUTHORIZED (bypassPermissions; irreversible-action deny gate active)" ;;
+  *)
+    log "unattended writes: NOT authorized (WORKSHOP_UNATTENDED_WRITES unset/0) — worker cannot write this run" ;;
+esac
 
 
 # --- the search tool, for a worker that cannot ask anybody --------------------

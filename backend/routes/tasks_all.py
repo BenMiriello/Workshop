@@ -1568,6 +1568,18 @@ def launch_task_run(scope: str, task_id: str, *, chat_id: str | None = None) -> 
     except OSError:
         logf = subprocess.DEVNULL
     cmd = ["bash", str(script), *cmd_tail, "--force", "--job-id", job["id"], "--task-id", task_id]
+    # S2 execution boundary (2026-08-21, work-loop-core-design-2026-08-21.md).
+    # An operator-triggered run is attended by definition: this function is the
+    # single Popen behind Run-now and the chat file-and-run path, both explicit
+    # operator actions. So authorize the headless worker to write. ralph.sh reads
+    # this flag to pass --permission-mode bypassPermissions; without it the worker
+    # silently auto-denies every write (measured 2026-08-14). AUTONOMOUS background
+    # sweeps do NOT come through here -- they are launched by the shell dispatchers
+    # (dispatch_triggers.sh / queue_runner.sh) -- so they stay write-disabled until
+    # S3 enables them deliberately. The in-run boundary is ralph's irreversible-
+    # action deny gate (push/publish/delete/sudo) plus git-revertability.
+    env = dict(os.environ)
+    env["WORKSHOP_UNATTENDED_WRITES"] = "1"
     try:
         proc = subprocess.Popen(
             cmd,
@@ -1575,6 +1587,7 @@ def launch_task_run(scope: str, task_id: str, *, chat_id: str | None = None) -> 
             stdout=logf,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            env=env,
         )
     finally:
         # Popen dups the fd into the child, so the parent's copy is ours to
