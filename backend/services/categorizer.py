@@ -26,8 +26,7 @@ import json
 import logging
 import re
 
-from services import finance_cache, budget_store, budget_engine, llm_router
-from services import finance_plaid as plaid_bridge
+from services import budget_store, budget_engine, llm_router
 
 log = logging.getLogger("workshop.categorizer")
 
@@ -129,6 +128,14 @@ async def run(days: int = 30, model: str | None = None) -> dict:
     results into the override store. Returns a summary."""
     plan = budget_store.load_plan()
     existing = budget_store.load_overrides()
+    # Call-time, because categorization is budget work that reads FINANCE's
+    # cache: budget declares `needs: ["finance.read"]` and must load without it.
+    try:
+        from services import finance_cache
+        from services import finance_plaid as plaid_bridge
+    except ImportError as e:
+        log.warning("categorizer: finance app unavailable, nothing to categorize (%s)", e)
+        return {"categorized": 0, "skipped": 0, "reason": "finance app not available"}
     txns_resp, _ = await finance_cache.get_or_fetch(
         f"transactions:{days}", lambda: plaid_bridge.transactions(days=days)
     )

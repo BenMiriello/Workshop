@@ -152,7 +152,12 @@ docs/masini/
 # Plan: docs/platform-redesign/app-separation-and-github-2026-08-20.md.
 #
 # History is untouched: `git log --follow` still has all of it.
-apps/
-agents/apps/
-backend/mcp/plaid/
-commute/
+# Anchored with a leading slash, all four. A bare `commute/` matches ANY
+# directory of that name at any depth, which silently swallowed
+# `backend/services/commute/` -- still-tracked platform-side app code, so
+# nothing broke, but the next file added there would have been ignored without a
+# word. Same trap for `apps/` (frontend/src/pages/apps/) and `agents/apps/`.
+/apps/
+/agents/apps/
+/backend/mcp/plaid/
+/commute/

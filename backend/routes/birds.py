@@ -670,24 +670,19 @@ async def detection_webhook(request: Request):
     # Append to the shared Workshop event log + enqueue subscriber runs, using
     # the same record shape routes/events.py writes so /events/recent and the
     # cron consumer treat it like any other source.
-    from routes.events import EVENTS_LOG, _load_subscriptions
-    from services.event_dispatch import enqueue_event
+    # An app publishes through the platform's event API. This used to import
+    # EVENTS_LOG and the private `_load_subscriptions` from routes/events and
+    # hand-roll the record, which made one app's route module depend on another
+    # route module's internals -- exactly the edge the AppSpec seams remove.
+    from services import event_log
 
-    EVENTS_LOG.parent.mkdir(parents=True, exist_ok=True)
-    record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "source": "birdnet",
-        "known_source": True,
-        "signature": {"ok": True, "reason": "loopback"},
-        "headers": {},
-        "body": summary,
-    }
-    offset = EVENTS_LOG.stat().st_size if EVENTS_LOG.exists() else 0
-    with EVENTS_LOG.open("a") as f:
-        f.write(json.dumps(record) + "\n")
-
-    dispatch = enqueue_event("birdnet", event_offset=offset, event_summary=summary)
-    subscribers = _load_subscriptions().get("birdnet", [])
+    dispatch = event_log.publish_and_dispatch(
+        "birdnet",
+        summary,
+        signature={"ok": True, "reason": "loopback"},
+        known=True,
+    )
+    subscribers = event_log.subscribers("birdnet")
     log.info("bird detection sci=%s conf=%s first_ever=%s first_today=%s subs=%d enqueued=%d",
              sci, summary["confidence"], flags["first_ever"], flags["first_today"],
              len(subscribers), dispatch["enqueued"])

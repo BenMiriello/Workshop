@@ -153,3 +153,14 @@ def verify(plaid_verification_header: str, body_bytes: bytes) -> tuple[bool, str
         return False, "body_sha_mismatch"
 
     return True, "ok_full_crypto_verify"
+
+
+def verify_webhook(headers: dict, body: bytes) -> tuple[bool, str]:
+    """The `AppSpec.event_verifiers` signature over this module's verify().
+
+    The finance app declares this against the "plaid" source rather than the
+    platform's event receiver holding a `{"plaid": ...}` entry: whether a Plaid
+    webhook is authentic is knowledge the app that owns the Plaid integration
+    has, and it must leave the platform when the app does.
+    """
+    return verify(headers.get("plaid-verification", ""), body)

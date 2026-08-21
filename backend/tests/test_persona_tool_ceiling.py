@@ -2,7 +2,7 @@
 
 `agents/apps/<key>.md` is ordinary markdown — edited by agents as well as by
 people — and its `tools:` list was passed through to the turn verbatim
-(`app_personas.AppPersona.__init__` -> `allowed_tools`). App assistants have no
+(`app_persona.AppPersona.__init__` -> `allowed_tools`). App assistants have no
 working directory of their own: `routes/chat.py` runs them at the shared
 non-build fallback (`WORKSHOP_CHAT_CWD`, or the account's home when unset), the
 same fallback `general` ran at when it could read and edit the platform's own

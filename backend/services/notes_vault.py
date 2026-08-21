@@ -444,3 +444,24 @@ def backlinks(note_path: str, root: Path | None = None) -> list[dict]:
                     break
     out.sort(key=lambda b: (b["path"], b["line"]))
     return out
+
+
+def collect_index_chunks():
+    """AppSpec.index_collectors signature for the `vault` kind.
+
+    The platform used to hold a `collect_vault()` that imported this module to
+    find the corpus. It is inverted now: the app says where its markdown lives
+    and the platform (`semantic_index.collect_markdown_tree`) does the chunking.
+
+    Deliberately opt-in (`index_collectors_default` does not list `vault`): the
+    vault is the operator's personal notes, and a search about routing code must
+    not surface one. A missing or unconfigured vault yields nothing rather than
+    raising, because a rebuild must not fail on an app's absent data.
+    """
+    from services import semantic_index
+
+    try:
+        root = vault_root()
+    except Exception:
+        return []
+    return semantic_index.collect_markdown_tree("vault", root)

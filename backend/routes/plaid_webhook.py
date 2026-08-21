@@ -1,18 +1,15 @@
 import json
 import logging
 import os
-from datetime import datetime, timezone
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from services import event_log
 from wsplatform import paths
 
 router = APIRouter()
 log = logging.getLogger("workshop.plaid_webhook")
 
 WEBHOOK_LOG = paths.env_path("WORKSHOP_PLAID_WEBHOOK_LOG", "plaid-webhooks.jsonl")
-# Mirror events to the generic feed so the Events page in the UI shows Plaid activity.
-EVENTS_LOG = paths.env_path("WORKSHOP_EVENTS_LOG", "events.jsonl")
 
 
 @router.post("")
@@ -41,25 +38,22 @@ async def plaid_webhook(request: Request):
 
     # Fan out to the generic event feed (Phase 5b). Strip auth-ish headers; the
     # plaid-specific log above retains the full set for audit.
+    #
+    # This was the third hand-copy of the append sequence and the one that had
+    # drifted: it wrote no `signature` field at all, so a plaid row in the feed
+    # was indistinguishable from an unverified one despite this route having
+    # just done a full ES256 verify above. Publishing through the platform API
+    # records the verdict it already has.
     enqueued = 0
     try:
-        EVENTS_LOG.parent.mkdir(parents=True, exist_ok=True)
-        record = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "source": "plaid",
-            "known_source": True,
-            "headers": {k: v for k, v in request.headers.items() if k.lower() not in {"authorization", "cookie", "plaid-verification"}},
-            "body": payload,
-        }
-        offset = EVENTS_LOG.stat().st_size if EVENTS_LOG.exists() else 0
-        with EVENTS_LOG.open("a") as f:
-            f.write(json.dumps(record) + "\n")
-
-        # Phase 5b: enqueue pending-run for each event-driven plaid subscriber.
-        # Pass the full payload so dedup-key derivation has webhook_code+item_id.
-        from services.event_dispatch import enqueue_event
-        summary = payload if isinstance(payload, dict) else {"_raw": str(payload)[:512]}
-        dispatch = enqueue_event("plaid", event_offset=offset, event_summary=summary)
+        dispatch = event_log.publish_and_dispatch(
+            "plaid",
+            payload,
+            headers=dict(request.headers),
+            signature={"ok": ok, "reason": reason},
+            redact_headers=("plaid-verification",),
+            known=True,
+        )
         enqueued = dispatch["enqueued"]
     except Exception as e:
         # Don't break the webhook response if the event fanout fails; just log.

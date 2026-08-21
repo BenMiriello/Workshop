@@ -1,9 +1,30 @@
 from fastapi import APIRouter, HTTPException, Query
 
-from services import finance_cache, budget_store, budget_engine, categorizer
-from services import finance_plaid as plaid_bridge
+from services import budget_store, budget_engine, categorizer
 
 router = APIRouter()
+
+
+def _finance():
+    """The finance app's cache and Plaid bridge, imported AT CALL TIME.
+
+    Budget declares `needs: ["finance.read"]` and this is what honouring that
+    declaration looks like. It used to be a module-level import, which meant
+    budget could not load at all without finance present -- the catalog admitted
+    budget on the `budget` route module alone, so an instance with budget and
+    not finance would have crashed on import rather than degraded. It now
+    answers with the dependency named.
+    """
+    try:
+        from services import finance_cache
+        from services import finance_plaid as plaid_bridge
+    except ImportError as e:
+        raise HTTPException(
+            503,
+            "budget needs the finance app for balances and transactions, and it "
+            f"is not available on this instance ({e}).",
+        )
+    return finance_cache, plaid_bridge
 
 
 # Fields the inline editors are allowed to mutate, scoped per section. Anything
@@ -27,6 +48,7 @@ async def _live_data(days: int, refresh: bool = False):
     Returns (balances, txns, cache_meta) where cache_meta tells the UI whether
     it's looking at stale data that a background refresh is replacing, so it can
     re-poll and swap in the fresh numbers without a blocking spinner."""
+    finance_cache, plaid_bridge = _finance()
     balances, bmeta = await finance_cache.get_or_fetch(
         "balances",
         lambda: plaid_bridge.balances(realtime=refresh),

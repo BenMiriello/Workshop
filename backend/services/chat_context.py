@@ -9,7 +9,8 @@ A provider answers three questions for a given chat thread:
 
 This module is the PLATFORM chat plumbing: the ContextProvider base, the general
 + project/build providers, the role preamble, and dispatch. It
-hardcodes NO app. A built-in app's own persona lives in `services/app_personas`
+hardcodes NO app. A built-in app's own persona lives beside that app
+(`services/<app>_persona.py`, on the base in `services/app_persona`)
 and is registered through the app's AppSpec (`app_registry`: `chat_provider` /
 `chat_snapshot`), so a persona appears only when its app is installed and adding
 a new app's assistant never edits this file. Adding chat to a fresh app = write
@@ -640,7 +641,7 @@ def agent_self_preamble(
     and `workshop` are installed). It stays on the agent's page as a declared
     description, and it is not shown to the model as something it HAS. If an
     agent should genuinely reach a server, grant it: pass `mcp_servers` at
-    start_turn, as `app_personas` does.
+    start_turn, as an app persona does.
     """
     # The ACTUAL grant, not a word for it. This took the tool list rather than a
     # boolean because "TOOLS: the Claude Code toolset" was read by a triager

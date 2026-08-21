@@ -246,32 +246,68 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--write-baseline", action="store_true")
+    ap.add_argument(
+        "--because",
+        default="",
+        help="Required when a pin RAISES a count. Recorded in the baseline and "
+             "printed on every subsequent run, so an upward pin cannot be quiet.",
+    )
     args = ap.parse_args()
 
     base = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
     result = scan(roster(base))
 
     if args.write_baseline:
-        BASELINE.write_text(
-            json.dumps(
-                {
-                    "_comment": (
-                        "Ratchet baseline for check_no_app_names.py. These counts may only "
-                        "go DOWN. The target for all three is zero: content reaches it at "
-                        "extraction (stage 7), imports at the AppSpec seams (stage 4). "
-                        "`watched` is sticky on purpose, so an app that leaves the catalog "
-                        "is still scanned for leftovers."
-                    ),
-                    "watched": result["watched"],
-                    "content_files": result["content_files"],
-                    "import_sites": result["import_sites"],
-                    "literal_sites": result["literal_sites"],
-                },
-                indent=2,
-            )
-            + "\n"
-        )
+        # AN UPWARD PIN MUST SAY WHY. A ratchet you re-pin whenever it fails is
+        # not a ratchet, and that is precisely how the gate this one replaced
+        # died: it went green and nobody asked what it was measuring. There IS a
+        # legitimate upward move -- a stage that lifts an app's logic out of a
+        # platform module into an app-owned file raises `content` (more app
+        # files in the repo) while lowering `imports` and `literals` (fewer
+        # platform files that know an app exists), and that is progress. So the
+        # rise is allowed, and it is allowed only with a recorded reason that
+        # prints on every run until the count comes back down.
+        raised = {
+            k: (base.get(k), result[k])
+            for k in ("content_files", "import_sites", "literal_sites")
+            if base.get(k) is not None and result[k] > base[k]
+        }
+        if raised and not args.because:
+            for k, (was, now) in sorted(raised.items()):
+                print(f"pin would RAISE {k}: {was} -> {now}")
+            print("\nRefusing. Re-pin an increase with --because '<why>'.")
+            return 1
+        payload = {
+            "_comment": (
+                "Ratchet baseline for check_no_app_names.py. These counts may only "
+                "go DOWN. The target for all three is zero: content reaches it at "
+                "extraction (stage 7), imports at the AppSpec seams (stage 4). "
+                "`watched` is sticky on purpose, so an app that leaves the catalog "
+                "is still scanned for leftovers."
+            ),
+            "watched": result["watched"],
+            "content_files": result["content_files"],
+            "import_sites": result["import_sites"],
+            "literal_sites": result["literal_sites"],
+        }
+        if raised:
+            payload["raised"] = {
+                k: {"from": was, "to": now, "because": args.because}
+                for k, (was, now) in sorted(raised.items())
+            }
+        elif base.get("raised"):
+            # Carry a prior reason forward only for counts still above where the
+            # reason was recorded; a count that came back down has been paid off.
+            keep = {
+                k: v for k, v in base["raised"].items()
+                if result.get(k, 0) > v.get("from", 0)
+            }
+            if keep:
+                payload["raised"] = keep
+        BASELINE.write_text(json.dumps(payload, indent=2) + "\n")
         print(f"baseline written: {BASELINE.relative_to(ROOT)}")
+        for k, v in sorted(payload.get("raised", {}).items()):
+            print(f"  RAISED {k} {v['from']} -> {v['to']}: {v['because']}")
         return 0
 
     if args.json:
@@ -288,6 +324,11 @@ def main() -> int:
     if not base:
         print("\nno baseline; run --write-baseline to pin one")
         return 0
+
+    # A recorded upward pin is repeated on every run until it is paid off, so a
+    # count that went the wrong way stays visible instead of becoming the floor.
+    for key, info in sorted((base.get("raised") or {}).items()):
+        print(f"  note {key} was RAISED {info['from']} -> {info['to']}: {info['because']}")
 
     failed = False
     for key in ("content_files", "import_sites", "literal_sites"):

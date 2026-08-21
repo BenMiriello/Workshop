@@ -10,7 +10,14 @@
     "notes-app",
     "wearables"
   ],
-  "content_files": 95,
-  "import_sites": 24,
-  "literal_sites": 315
+  "content_files": 102,
+  "import_sites": 20,
+  "literal_sites": 314,
+  "raised": {
+    "content_files": {
+      "from": 95,
+      "to": 102,
+      "because": "Stage 4 (the AppSpec seams) moved 560 lines of four apps' business logic out of the platform module services/app_personas.py and the plaid branches out of routes/events.py + services/event_dispatch.py + services/stores.py, into seven app-owned modules (<app>_persona.py, finance_events.py, finance_store_adapter.py, notes_store_adapter.py). More app-source FILES in the repo, fewer platform files that know an app exists: imports 24->20 and literals 315->314 in the same change. All seven leave with their app at stage 7, which is where content goes to zero."
+    }
+  }
 }

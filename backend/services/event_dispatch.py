@@ -35,11 +35,11 @@ DEDUP_FILE = paths.env_path("WORKSHOP_EVENT_DEDUP", "event-dedup.json")
 DEDUP_WINDOW_S = int(os.environ.get("WORKSHOP_EVENT_DEDUP_WINDOW_S", "600"))  # 10 min
 
 
+# Fourth copy of this read, now the only one. See services/event_log.
 def _load_subscriptions() -> dict:
-    try:
-        return json.loads(SUBSCRIPTIONS.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+    from services import event_log
+
+    return event_log.load_subscriptions()
 
 
 def _load_meta_cache() -> dict:
@@ -55,18 +55,32 @@ def _load_meta_cache() -> dict:
 def _idempotency_key(source: str, event_summary: dict) -> str | None:
     """Derive a stable key for cross-arrival dedup.
 
-    - plaid: webhook_code + item_id (Plaid retries identical webhooks)
+    Which payload fields IDENTIFY an event, as opposed to merely varying with
+    it, is knowledge the integration's owner has -- so an app declares its own
+    deriver on `AppSpec.event_dedup` and the platform consults it first. Only
+    the platform's own sources are named here.
+
     - gmail: message_id (unique per email — exact dedup)
     - github: delivery-id from header summary (unique per delivery)
     - generic: hash of source + sorted(event_summary)
     Returns None if no stable key can be derived (then dedup is skipped)."""
     s = event_summary or {}
-    if source == "plaid":
-        code = s.get("webhook_code") or (s.get("body") or {}).get("webhook_code")
-        item_id = s.get("item_id") or (s.get("body") or {}).get("item_id")
-        if code and item_id:
-            return f"plaid:{code}:{item_id}"
-        return None
+    try:
+        from services import app_registry
+
+        app_deriver = app_registry.installed_event_dedup().get(source)
+    except Exception:
+        app_deriver = None
+    if app_deriver is not None:
+        # An app that can identify its own event wins outright, INCLUDING when
+        # it returns None: "I own this source and this payload carries no stable
+        # identity" is an answer, and falling through to the content hash would
+        # overrule it with a weaker guess.
+        try:
+            return app_deriver(s)
+        except Exception as e:
+            log.warning("event_dedup deriver failed source=%s: %s", source, e)
+            return None
     if source == "gmail":
         mid = s.get("message_id") or s.get("id")
         return f"gmail:{mid}" if mid else None

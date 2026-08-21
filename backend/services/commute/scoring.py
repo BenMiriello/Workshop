@@ -22,7 +22,6 @@ from typing import Any
 from math import asin, cos, radians, sin, sqrt
 
 from . import config, places, poller, timefmt
-from .. import location as location_svc
 
 
 # How close (meters) to home/work counts as "at destination" — generous to
@@ -72,6 +71,15 @@ def _location_status(sch: dict[str, Any], now: datetime) -> dict[str, Any]:
     dest = places.endpoint_coords(dest_name)
     if not dest:
         return {"available": False, "reason": f"no learned/known coords for {dest_name} yet (needs location history)"}
+    # Call-time, like the other three commute->location edges in this package
+    # (places.py, journeys.py, alerter.py all import it inside a function and
+    # say why). This one was the outlier: a load-time import that made the whole
+    # commute package unimportable without the location app, despite commute
+    # declaring location as a `needs` rather than assuming it.
+    try:
+        from .. import location as location_svc
+    except ImportError:
+        return {"available": False, "reason": "the location app is not installed"}
     rec = location_svc.latest()
     if not rec:
         return {"available": False, "reason": "no location pings yet (set up Owntracks)"}

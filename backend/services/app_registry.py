@@ -83,7 +83,7 @@ class AppSpec:
     mcp_provider: dict[str, dict] = field(default_factory=dict)
     on_startup: tuple[Callable[[FastAPI], Awaitable[None]], ...] = ()
     background: tuple[Callable[[], Awaitable[None]], ...] = ()
-    # Chat surface (services/chat_context, services/app_personas):
+    # Chat surface (services/chat_context, services/app_persona):
     #   chat_provider — factory returning this app's ContextProvider (its in-app
     #                   assistant persona). Exposed only when the app is installed.
     #   chat_snapshot — a compact live-state string for the GENERAL assistant's
@@ -97,6 +97,31 @@ class AppSpec:
     # Event-bus sources this app accepts webhooks from (routes/events.py unions
     # these with the platform's own over the installed set).
     event_sources: tuple[str, ...] = ()
+    # Webhook signature verifiers, keyed by the source they verify. Signature:
+    #   (headers: dict[str, str], body: bytes) -> (ok: bool, reason: str)
+    # with `headers` lowercased. A source with no verifier is accepted with
+    # reason "no_verifier_registered", which is why the platform must not be the
+    # place this lives: whether a webhook is authentic is knowledge the app that
+    # owns the integration has, and the platform's default is permissive.
+    # Declared lazily (the factory can reference an app module) and read per
+    # request, so an app can be installed without restarting the receiver.
+    event_verifiers: dict[str, Callable[[dict, bytes], tuple[bool, str]]] = field(default_factory=dict)
+    # Cross-arrival idempotency, keyed by source. Signature:
+    #   (event_summary: dict) -> str | None
+    # Return a key that is stable across redeliveries of the SAME event (Plaid
+    # retries identical webhooks), or None to fall back to the platform's
+    # content hash. Only the app knows which payload fields identify an event
+    # rather than merely varying with it.
+    event_dedup: dict[str, Callable[[dict], str | None]] = field(default_factory=dict)
+    # Store adapters this app contributes, keyed by the Store `type` string it
+    # shapes. `stores` above declares that a store of type T exists; this is the
+    # thing that knows how to select and project rows out of it.
+    store_adapters: tuple[Any, ...] = ()
+    # Semantic-index collectors this app contributes: kind -> () -> list[Chunk].
+    # `default` is False for a corpus the operator opts into rather than one
+    # indexed on every build (semantic_index.DEFAULT_KINDS).
+    index_collectors: dict[str, Callable[[], Any]] = field(default_factory=dict)
+    index_collectors_default: tuple[str, ...] = ()
     # Tool handles this app offers to agents (routes/agents.py KNOWN_TOOLS).
     tools: tuple[str, ...] = ()
     # Stores this app owns: (name, path_factory, type). The factory is called
@@ -267,11 +292,11 @@ async def _atlas_rebuild_loop() -> None:
 # every app module: an app whose modules aren't shipped is simply never built.
 def _finance_spec() -> AppSpec:
     from routes import finance, plaid_webhook
-    from services import app_personas as ap
+    from services import finance_events, finance_persona, finance_store_adapter
     return AppSpec(
         id="finance",
-        chat_provider=ap.FinanceContextProvider,
-        chat_snapshot=ap.finance_snapshot,
+        chat_provider=finance_persona.FinanceContextProvider,
+        chat_snapshot=finance_persona.finance_snapshot,
         card={
             "title": "Finance",
             "tagline": "Balances, accounts, recent transactions",
@@ -294,6 +319,8 @@ def _finance_spec() -> AppSpec:
         on_startup=(_finance_on_startup,),
         background=(_prewarm_loop, _categorize_loop),
         event_sources=("plaid",),
+        event_verifiers={"plaid": finance_events.verify_webhook},
+        event_dedup={"plaid": finance_events.dedup_key},
         tools=("plaid",),
         edge_blocked_prefixes=("/plaid/webhook",),
         secret_env=("PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV", "PLAID_ENV_URL"),
@@ -301,16 +328,17 @@ def _finance_spec() -> AppSpec:
             ("plaid-items", lambda: _owner_file("plaid-items.json"), "Finance", True),
             ("transactions", lambda: _owner_file("finance-cache.json"), "Finance", True),
         ),
+        store_adapters=(finance_store_adapter.FinanceAdapter(),),
     )
 
 
 def _budget_spec() -> AppSpec:
     from routes import budget
-    from services import app_personas as ap
+    from services import budget_persona
     return AppSpec(
         id="budget",
         chat_model_tier="sonnet",  # plan-patch needs careful path generation
-        chat_provider=ap.BudgetContextProvider,
+        chat_provider=budget_persona.BudgetContextProvider,
         card={
             "title": "Budget",
             "tagline": "Payoff plan, savings goals, projections",
@@ -335,11 +363,11 @@ def _budget_spec() -> AppSpec:
 
 def _commute_spec() -> AppSpec:
     from routes import commute
-    from services import app_personas as ap
+    from services import commute_persona
     return AppSpec(
         id="commute",
-        chat_provider=ap.CommuteContextProvider,
-        chat_snapshot=ap.commute_snapshot,
+        chat_provider=commute_persona.CommuteContextProvider,
+        chat_snapshot=commute_persona.commute_snapshot,
         card={
             "title": "Commute",
             "tagline": "Day-of departures + transit status",
@@ -361,11 +389,11 @@ def _commute_spec() -> AppSpec:
 
 def _location_spec() -> AppSpec:
     from routes import location, owntracks
-    from services import app_personas as ap
+    from services import location_persona
     return AppSpec(
         id="location",
-        chat_provider=ap.LocationContextProvider,
-        chat_snapshot=ap.location_snapshot,
+        chat_provider=location_persona.LocationContextProvider,
+        chat_snapshot=location_persona.location_snapshot,
         card={
             "title": "Location",
             "tagline": "Live position + history from OwnTracks",
@@ -470,6 +498,7 @@ def _wearables_spec() -> AppSpec:
 
 def _notes_spec() -> AppSpec:
     from routes import notes
+    from services import notes_store_adapter, notes_vault
     return AppSpec(
         id="notes-app",
         card={
@@ -487,6 +516,10 @@ def _notes_spec() -> AppSpec:
         mounts=(
             RouterMount(notes.router, deps=(Depends(require_user),)),
         ),
+        # Searchable, but only when asked for by name: `vault` is deliberately
+        # absent from index_collectors_default.
+        index_collectors={"vault": notes_vault.collect_index_chunks},
+        store_adapters=(notes_store_adapter.VaultNoteAdapter(),),
     )
 
 
@@ -506,17 +539,77 @@ _CATALOG_FACTORIES: tuple[tuple[str, tuple[str, ...], Callable[[], AppSpec]], ..
 )
 
 
+# --------------------------------------------------------------------------- #
+# Out-of-tree apps.
+#
+# `_CATALOG_FACTORIES` above is the BUILT-IN library: apps whose code ships in
+# this repo. It was also, until now, the only way into the catalog -- a literal
+# tuple, consumed once at import, with the factory required to be defined in
+# this file and the route module required to sit in `backend/routes/`. So
+# nothing outside `backend/` could be an app, which makes "an app is installed
+# content, not platform source" unachievable rather than merely undone.
+#
+# The second path is the standard Python one: a distribution declares
+#
+#     [project.entry-points."workshop.apps"]
+#     my-app = "my_app.spec:app_spec"
+#
+# and `app_spec()` returns an AppSpec exactly as a built-in factory does. No new
+# format, no manifest parser, and `pip install` is the install step.
+#
+# A discovered app SHADOWS a built-in of the same id, deliberately and loudly:
+# that is what extraction looks like from the platform's side. An app moves out
+# of this repo, ships as a distribution, and takes over from the remnant still
+# sitting in the tree, without a flag day where both are half-present.
+# --------------------------------------------------------------------------- #
+APP_ENTRY_POINT_GROUP = "workshop.apps"
+
+
+def _entry_point_factories() -> "list[tuple[str, tuple[str, ...], Callable[[], AppSpec]]]":
+    out: "list[tuple[str, tuple[str, ...], Callable[[], AppSpec]]]" = []
+    try:
+        from importlib.metadata import entry_points
+
+        found = list(entry_points(group=APP_ENTRY_POINT_GROUP))
+    except Exception as e:
+        log.warning("app discovery: could not read entry points: %s", e)
+        return out
+    for ep in found:
+        def _factory(_ep=ep) -> AppSpec:
+            spec = _ep.load()()
+            if not isinstance(spec, AppSpec):
+                raise TypeError(
+                    f"{_ep.value} returned {type(spec).__name__}, not an AppSpec"
+                )
+            return spec
+
+        # No `required` modules: an out-of-tree app's importability is its own
+        # entry point's problem, and a failure to load is caught below and
+        # skipped exactly like a built-in factory that raises.
+        out.append((ep.name, (), _factory))
+    return out
+
+
 def _build_catalog() -> dict[str, AppSpec]:
     catalog: dict[str, AppSpec] = {}
-    for app_id, required, factory in _CATALOG_FACTORIES:
+    builtin_ids = {app_id for app_id, _, _ in _CATALOG_FACTORIES}
+    discovered = _entry_point_factories()
+    for app_id, required, factory in (*_CATALOG_FACTORIES, *discovered):
         missing = [m for m in required if not _has_module(m)]
         if missing:
             log.info("app %r not in catalog: route module(s) not shipped: %s", app_id, ", ".join(missing))
             continue
         try:
-            catalog[app_id] = factory()
+            spec = factory()
         except Exception as e:  # a factory that fails to build must not sink the rest
             log.warning("app %r skipped: failed to build spec: %s", app_id, e)
+            continue
+        if app_id in catalog and app_id in builtin_ids:
+            log.info("app %r: an installed distribution supersedes the built-in", app_id)
+        catalog[app_id] = spec
+    if discovered:
+        log.info("app discovery: %d out-of-tree app(s) via %s entry points",
+                 len(discovered), APP_ENTRY_POINT_GROUP)
     return catalog
 
 
@@ -679,6 +772,39 @@ def installed_event_sources() -> set[str]:
     for spec in installed_specs():
         out.update(spec.event_sources)
     return out
+
+
+def installed_event_verifiers() -> dict[str, Callable[[dict, bytes], tuple[bool, str]]]:
+    """source -> verifier, across installed apps. An UNINSTALLED app's verifier
+    is absent, which is correct and not a hole: its source is also not a known
+    source, so its webhook is logged as unknown rather than trusted."""
+    out: dict[str, Callable[[dict, bytes], tuple[bool, str]]] = {}
+    for spec in installed_specs():
+        out.update(spec.event_verifiers)
+    return out
+
+
+def installed_event_dedup() -> dict[str, Callable[[dict], str | None]]:
+    """source -> idempotency-key deriver, across installed apps."""
+    out: dict[str, Callable[[dict], str | None]] = {}
+    for spec in installed_specs():
+        out.update(spec.event_dedup)
+    return out
+
+
+def installed_store_adapters() -> list[Any]:
+    """Store adapters contributed by installed apps, in install order."""
+    return [a for spec in installed_specs() for a in spec.store_adapters]
+
+
+def installed_index_collectors() -> tuple[dict[str, Callable[[], Any]], set[str]]:
+    """(kind -> collector, kinds indexed by default) across installed apps."""
+    collectors: dict[str, Callable[[], Any]] = {}
+    default: set[str] = set()
+    for spec in installed_specs():
+        collectors.update(spec.index_collectors)
+        default.update(spec.index_collectors_default)
+    return collectors, default
 
 
 def installed_tools() -> list[str]:

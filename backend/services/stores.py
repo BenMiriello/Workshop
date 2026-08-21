@@ -402,9 +402,25 @@ def _project(item: dict[str, Any], fields: "list[str] | None") -> dict[str, Any]
 
 
 class StoreAdapter:
-    """Per-type selector vocabulary + response shaping."""
+    """Per-type selector vocabulary, response shaping, and the write door.
+
+    An adapter is contributed either by the platform (below) or by an app
+    (`AppSpec.store_adapters`), and the two are looked up through one list. So an
+    app's data can be reachable through the Store protocol without the protocol
+    holding a line about that app.
+    """
 
     type: str = ""
+
+    def claims(self, store: Store) -> bool:
+        """Whether this adapter serves `store`. Type alone by default.
+
+        Overridable because a type is not always served by one adapter: "Note"
+        is a knowledge scope (the platform's) and a Markdown vault (an app's),
+        which is a fact `resolve` used to encode as `if store.owner_app ==
+        "knowledge"` -- the platform branching on which app it was talking to.
+        """
+        return (store.type or "") == self.type
 
     def selectors(self) -> "list[str]":
         return []
@@ -412,6 +428,16 @@ class StoreAdapter:
     def resolve(self, store: Store, path: str, selector: dict[str, Any],
                 verbs: "list[str]", verb: str) -> "list[dict[str, Any]]":
         raise NotImplementedError
+
+    def write(self, store: Store, path: str, content: str, *,
+              verb: str, selector: dict[str, Any]) -> "dict[str, Any]":
+        """Create/update/append through this store. Default is refusal: most
+        stores are read-only through this door, and a store that IS writable
+        says so by implementing this rather than by the door knowing its name."""
+        raise AccessDenied(
+            "no_adapter",
+            f"{store.uri} is type {store.type!r}; this door cannot write it.",
+        )
 
     def to_response(self, items: "list[dict[str, Any]]", *, mode: str,
                     filter_caveat: dict[str, Any] | None) -> "list[dict[str, Any]]":
@@ -427,60 +453,32 @@ class StoreAdapter:
         return out
 
 
-class NoteAdapter(StoreAdapter):
-    """Type "Note" — serves BOTH the ~/notes vault and the knowledge scopes.
+class KnowledgeNoteAdapter(StoreAdapter):
+    """Type "Note", knowledge-scope-backed: the platform's own note store, a flat
+    per-scope directory.
 
-    Separate substrate, one contract: the vault is arbitrary folders of Markdown a
-    real Obsidian opens, a knowledge scope is a flat per-scope dir, and a policy
-    record does not care which.
+    This was `NoteAdapter`, which served this AND the notes app's Markdown vault
+    and picked between them with `if store.owner_app == "knowledge"`. The vault
+    half now lives with the app that owns the folder
+    (`services/notes_store_adapter.py`) and arrives through
+    `AppSpec.store_adapters`; the platform keeps only its own substrate.
 
-    THE SEARCH LEAK RULE lives here, because here is where a snippet would be
-    produced: `search` WITHOUT `read` returns path/title/match counts and no
-    snippet, since a snippet is a body and would leak exactly what `read` was
-    withheld for. `search` WITH `read` may return snippets. Mechanical; the broker
-    is not consulted and cannot waive it."""
+    THE SEARCH LEAK RULE: `search` WITHOUT `read` returns id/title/match counts
+    and no snippet, since a hook or a body is exactly what `read` was withheld
+    for. Mechanical; the broker is not consulted and cannot waive it.
+
+    No `write`: a knowledge scope has its own write door
+    (`PUT /api/knowledge/{scope}/notes/{id}`), which owns the MEMORY.md index
+    write too, and a second writer would desynchronise that index.
+    """
 
     type = "Note"
 
+    def claims(self, store: Store) -> bool:
+        return (store.type or "") == "Note" and store.owner_app == "knowledge"
+
     def selectors(self) -> "list[str]":
         return ["query", "name", "folder"]
-
-    # -- vault ------------------------------------------------------------
-    def _vault_items(self, path: str, selector: dict[str, Any], verbs: "list[str]",
-                     verb: str) -> "list[dict[str, Any]]":
-        from services import notes_vault as vault
-        prefix = (path or selector.get("folder") or "").strip("/")
-
-        if verb == "read":
-            name = selector.get("name") or prefix
-            if not name:
-                raise ValueError("read needs selector.name (or a path-suffixed uri)")
-            note = vault.read_note(str(name))
-            return [note]
-
-        if verb == "list":
-            notes = vault.list_notes()
-            return [n for n in notes if not prefix or n["path"].startswith(prefix + "/")
-                    or n["path"] == prefix]
-
-        # search
-        query = str(selector.get("query") or "")
-        if not query:
-            raise ValueError("search needs selector.query")
-        hits = vault.search(query, limit=200)
-        if prefix:
-            hits = [h for h in hits if h["path"].startswith(prefix + "/") or h["path"] == prefix]
-        if "read" in verbs:
-            return hits
-        # THE SEARCH LEAK RULE: no snippets without `read`. Collapse to counts.
-        by_path: dict[str, int] = {}
-        for h in hits:
-            by_path[h["path"]] = by_path.get(h["path"], 0) + 1
-        titles = {n["path"]: n["title"] for n in vault.list_notes()}
-        return [
-            {"path": p, "title": titles.get(p, p), "matches": n}
-            for p, n in sorted(by_path.items())
-        ]
 
     # -- knowledge scope ---------------------------------------------------
     def _scope_key(self, store: Store) -> str:
@@ -528,79 +526,41 @@ class NoteAdapter(StoreAdapter):
         return out
 
     def resolve(self, store, path, selector, verbs, verb):
-        if store.owner_app == "knowledge":
-            return self._scope_items(store, selector, verbs, verb)
-        return self._vault_items(path, selector, verbs, verb)
+        return self._scope_items(store, selector, verbs, verb)
 
 
-class FinanceAdapter(StoreAdapter):
-    """Type "Finance" — the transaction cache, and the reason this protocol is not
-    a notes feature in a costume.
-
-    The alternative today is binary: either a bill-triage worker gets the whole
-    file, or it cannot answer a question the operator wants answered. "Filter to
-    the relevant fields" is not a nicety here, it is the only thing that makes the
-    capability grantable at all.
-
-    There is no `read` in the Finance policy's verbs_max, so a raw transaction row
-    is unreachable by construction: a caller gets the policy's declared field
-    projection or nothing. The search leak rule holds trivially as a consequence —
-    the free-text description is simply not a projectable field."""
-
-    type = "Finance"
-
-    def selectors(self) -> "list[str]":
-        return ["query", "month", "limit"]
-
-    def _transactions(self, store: Store) -> "list[dict[str, Any]]":
-        src = Path(store.path)
-        if not src.exists():
-            return []
-        try:
-            doc = json.loads(src.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return []
-        rows: "list[dict[str, Any]]" = []
-        # finance-cache.json: {"transactions:<days>": {"ts", "data": {"transactions": [...]}}}
-        for key, entry in (doc.items() if isinstance(doc, dict) else []):
-            if not str(key).startswith("transactions") or not isinstance(entry, dict):
-                continue
-            data = entry.get("data")
-            if isinstance(data, dict) and isinstance(data.get("transactions"), builtins.list):
-                rows.extend(t for t in data["transactions"] if isinstance(t, dict))
-        return rows
-
-    def resolve(self, store, path, selector, verbs, verb):
-        rows = self._transactions(store)
-        query = str(selector.get("query") or "").lower().strip()
-        month = str(selector.get("month") or "").strip()
-        if verb == "list":
-            match = rows
-        else:
-            match = [
-                t for t in rows
-                if (not query or query in f"{t.get('merchant_name') or ''} "
-                                          f"{t.get('name') or ''}".lower())
-                and (not month or str(t.get("date") or "").startswith(month))
-            ]
-        limit = selector.get("limit")
-        if isinstance(limit, int) and limit > 0:
-            match = match[:limit]
-        return match
+# The PLATFORM's adapters, for the platform's own substrates. An app's arrive
+# through AppSpec.store_adapters -- see adapter_for().
+_PLATFORM_ADAPTERS: "tuple[StoreAdapter, ...]" = (KnowledgeNoteAdapter(),)
 
 
-_ADAPTERS: "dict[str, StoreAdapter]" = {a.type: a for a in (NoteAdapter(), FinanceAdapter())}
+def _app_adapters() -> "list[StoreAdapter]":
+    try:
+        from services import app_registry
+
+        return app_registry.installed_store_adapters()
+    except Exception:
+        log.exception("stores: could not load app store adapters")
+        return []
 
 
 def adapter_for(store: Store) -> StoreAdapter:
-    a = _ADAPTERS.get(store.type or "")
-    if a is None:
-        raise AccessDenied(
-            "no_adapter",
-            f"{store.uri} is type {store.type!r}; no adapter can shape a response for "
-            "it, so it is reachable by export only.",
-        )
-    return a
+    """The adapter serving `store`: the platform's, else an installed app's.
+
+    First claim wins, platform first, because the platform's claims are the
+    narrow ones (a knowledge scope is a Note store, but only one kind of Note
+    store). Resolved per call, so an app's data becomes reachable the moment it
+    is installed and stops being reachable when it is not -- which is the honest
+    answer, not a hole: an uninstalled app's store is not declared either.
+    """
+    for a in (*_PLATFORM_ADAPTERS, *_app_adapters()):
+        if a.claims(store):
+            return a
+    raise AccessDenied(
+        "no_adapter",
+        f"{store.uri} is type {store.type!r}; no adapter can shape a response for "
+        "it, so it is reachable by export only.",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -729,20 +689,12 @@ def write(
                 "no_grant", f"{ident.grant_subject} holds no grant for {verb} on {uri}.",
             )
 
-    # Vault-backed Note stores only. A knowledge scope keeps its own write door
-    # (`PUT /api/knowledge/{scope}/notes/{id}`, which owns the MEMORY.md index
-    # write too); duplicating that here would give the index two writers.
-    if store.type != "Note" or store.owner_app == "knowledge":
-        raise AccessDenied(
-            "no_adapter",
-            f"{store.uri} is type {store.type!r}; this door writes vault-backed "
-            "Note stores only.",
-        )
-    from services import notes_vault as vault
-    existing = Path(vault.safe_path(name)).is_file()
-    if verb == "append" and existing:
-        current = vault.read_note(name)["content"]
-        return vault.update_note(name, current + content)
-    if existing:
-        return vault.update_note(name, content)
-    return vault.create_note(name, content)
+    # Whether this store is writable, and how, is the adapter's to answer. This
+    # used to be `if store.type != "Note" or store.owner_app == "knowledge"`
+    # followed by a direct call into the notes app's module: the platform's
+    # generic write door hardcoded which app it could write and reached into it.
+    # The base adapter refuses by default, so a store is writable only if
+    # something implemented it.
+    return adapter_for(store).write(
+        store, path, content, verb=verb, selector=selector
+    )

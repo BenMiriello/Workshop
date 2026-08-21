@@ -10,16 +10,28 @@ producing an assistant with no instructions and no tools that still answers.
 import pytest
 
 from services import agents_registry as reg
-from services import app_personas as ap
+from services import app_registry
 from services import llm_router as _llm
 
 
-PROVIDERS = [
-    ap.BudgetContextProvider,
-    ap.FinanceContextProvider,
-    ap.CommuteContextProvider,
-    ap.LocationContextProvider,
-]
+# DISCOVERED, not listed. These four classes used to live in one platform module
+# (`services/app_personas.py`) beside 520 lines of the same four apps' business
+# logic, and this file imported them by name. They are each beside their own app
+# now and reach the chat surface through `AppSpec.chat_provider`, so the honest
+# way to ask "is every app assistant declared" is to ask the catalog -- which
+# also means a new app is covered the day it is added, rather than the day
+# someone remembers to add a line here.
+PROVIDERS = [f for f in app_registry.installed_chat_providers()]
+
+
+def _provider(key: str):
+    """The installed provider class for `key`, or skip. Used by the handful of
+    tests below that are about ONE app's declared capabilities; those assertions
+    belong to the app and will leave with it."""
+    for cls in PROVIDERS:
+        if getattr(cls, "key", None) == key:
+            return cls
+    pytest.skip(f"the {key} app is not installed on this instance")
 
 
 class TestEveryProviderIsDeclared:
@@ -35,8 +47,13 @@ class TestEveryProviderIsDeclared:
         p = cls()
         assert p.persona() == d["persona"]
         assert p.label == d["name"]
-        assert p.allowed_tools == d["tools"]
-        assert p.mcp_servers == d["mcp_servers"]
+        # Every declared tool reaches the assistant. It is a SUPERSET, not an
+        # equality: the base class adds the workshop toolkit (orientation, and
+        # reach to the chat's own uploads) on top of the declaration, so no app
+        # assistant arrives unable to see what it has access to.
+        assert set(d["tools"]) <= set(p.allowed_tools)
+        assert set(d["mcp_servers"]) <= set(p.mcp_servers)
+        assert "workshop" in p.mcp_servers
 
     def test_no_orphan_definitions(self):
         """A file with no provider is an assistant nobody can reach."""
@@ -44,40 +61,67 @@ class TestEveryProviderIsDeclared:
 
 
 class TestDeclarationsSayWhatTheyUsedTo:
-    """The migration must not have changed any assistant's capabilities."""
+    """The migration must not have changed any assistant's capabilities.
 
-    def test_budget_keeps_its_narrow_plaid_pair(self):
-        p = ap.BudgetContextProvider()
-        assert p.allowed_tools == [
-            "mcp__plaid__search_transactions",
-            "mcp__plaid__list_transactions",
-        ]
-        assert p.mcp_servers == ["plaid"]
-        assert p.default_model == _llm.TIER_SONNET
+    THESE ARE APP TESTS, not platform tests, and they are the only place in this
+    file that names an app. They live here because the apps still live in this
+    repo; they leave with their app at extraction. The expectations are declared
+    once in the table below rather than scattered through the assertions, so
+    "which apps does the platform's test suite name" is one readable list.
+    """
 
-    def test_budget_still_carries_the_patch_protocol(self):
-        assert "plan-patch" in ap.BudgetContextProvider().persona()
+    # app id -> what that app's assistant is expected to still declare.
+    EXPECTED = {
+        "budget": {
+            # The narrow pair and nothing more. Asserted as WHICH plaid tools
+            # rather than as the whole list, because the whole list also carries
+            # the platform's workshop toolkit, which is not a capability over
+            # the operator's bank data.
+            "plaid_tools": ["mcp__plaid__search_transactions",
+                            "mcp__plaid__list_transactions"],
+            "in_persona": ["plan-patch", "TRANSFER ATTRIBUTION", "CUMULATIVE LOOKBACK"],
+            "model": "sonnet",
+        },
+        "finance": {
+            "plaid_tools_include": ["mcp__plaid__get_holdings",
+                                    "mcp__plaid__list_investment_transactions"],
+            "in_persona": ["TRANSFER ATTRIBUTION", "CUMULATIVE LOOKBACK"],
+        },
+        "commute": {"plaid_tools": []},
+        "location": {"plaid_tools": []},
+    }
 
-    def test_finance_reads_investments_too(self):
-        p = ap.FinanceContextProvider()
-        assert "mcp__plaid__get_holdings" in p.allowed_tools
-        assert "mcp__plaid__list_investment_transactions" in p.allowed_tools
+    @pytest.mark.parametrize("key", sorted(EXPECTED))
+    def test_the_plaid_surface_is_what_it_was(self, key):
+        want = self.EXPECTED[key]
+        p = _provider(key)()
+        got = [t for t in p.allowed_tools if t.startswith("mcp__plaid__")]
+        if "plaid_tools" in want:
+            assert got == want["plaid_tools"]
+        for tool in want.get("plaid_tools_include", []):
+            assert tool in got
 
-    def test_the_plaid_lookup_method_survived_the_move(self):
-        """It was a shared Python constant appended to two personas; it is now
-        written into both files, and losing it from either would silently
-        degrade transaction attribution."""
-        for cls in (ap.BudgetContextProvider, ap.FinanceContextProvider):
-            body = cls().persona()
-            assert "TRANSFER ATTRIBUTION" in body
-            assert "CUMULATIVE LOOKBACK" in body
+    @pytest.mark.parametrize("key", sorted(EXPECTED))
+    def test_the_persona_text_survived_the_move(self, key):
+        """The plaid lookup method was a shared Python constant appended to two
+        personas; it is written into both files now, and losing it from either
+        would silently degrade transaction attribution."""
+        body = _provider(key)().persona()
+        for marker in self.EXPECTED[key].get("in_persona", []):
+            assert marker in body
 
-    @pytest.mark.parametrize("cls", [ap.CommuteContextProvider, ap.LocationContextProvider],
-                             ids=lambda c: c.key)
-    def test_read_only_assistants_get_no_tools(self, cls):
-        p = cls()
-        assert p.allowed_tools == []
-        assert p.mcp_servers == []
+    @pytest.mark.parametrize("key", sorted(EXPECTED))
+    def test_the_model_tier_survived_the_move(self, key):
+        want = self.EXPECTED[key].get("model")
+        if not want:
+            pytest.skip("no tier declared for this assistant")
+        assert _provider(key)().default_model == _llm.tier(want)
+
+    @pytest.mark.parametrize("key", sorted(EXPECTED))
+    def test_every_assistant_reaches_the_workshop_toolkit(self, key):
+        """Tools or none, an app assistant can always orient itself and reach
+        its own chat's uploads."""
+        assert "workshop" in _provider(key)().mcp_servers
 
 
 class TestFailureIsLoud:

@@ -13,21 +13,21 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timezone
-from pathlib import Path
-
 from typing import Any
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
-from wsplatform import paths
+from services import event_log
 
 
 router = APIRouter(prefix="/events", tags=["events"])
 log = logging.getLogger("workshop.events")
 
-EVENTS_LOG = paths.env_path("WORKSHOP_EVENTS_LOG", "events.jsonl")
-SUBSCRIPTIONS = paths.env_path("WORKSHOP_SUBSCRIPTIONS", "agent-subscriptions.json")
+# The log and the subscription file belong to the event system, not to this
+# route. Re-exported because GET /events/recent below reads the log directly and
+# tests import EVENTS_LOG from here.
+EVENTS_LOG = event_log.EVENTS_LOG
+SUBSCRIPTIONS = event_log.SUBSCRIPTIONS
 
 # Sources we will actively accept. Unknown sources are still logged but get an
 # explicit "unknown_source" flag so we can audit untrusted callers.
@@ -45,30 +45,16 @@ def known_sources() -> set[str]:
     return PLATFORM_SOURCES | app_registry.installed_event_sources()
 
 
-def _load_subscriptions() -> dict[str, list[str]]:
-    try:
-        return json.loads(SUBSCRIPTIONS.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+# `_load_subscriptions` was a third copy of the same read, and routes/birds.py
+# imported it across route modules to publish an event. Both are gone: one
+# implementation, in services/event_log.
+_load_subscriptions = event_log.load_subscriptions
 
 
 # Webhook signature verifier registry. Each verifier returns (ok: bool, reason: str).
 # Default for unknown sources = (True, "no_verifier_registered").
 def _verify_none(headers: dict, body: bytes) -> tuple[bool, str]:
     return True, "no_verifier_registered"
-
-
-def _verify_plaid(headers: dict, body: bytes) -> tuple[bool, str]:
-    """Full Plaid JWT crypto verify — fetches per-webhook ES256 key from
-    /webhook_verification_key/get, verifies signature, checks request body
-    sha256, enforces 5-min replay window. Implementation in services/plaid_verify.
-
-    Falls back to shape-check only when PLAID_CLIENT_ID/PLAID_SECRET are not
-    set in the environment (degraded but unblocked for sandbox testing —
-    real production traffic will fail crypto until creds are wired)."""
-    jwt_header = headers.get("plaid-verification", "")
-    from services.plaid_verify import verify
-    return verify(jwt_header, body)
 
 
 def _verify_github(headers: dict, body: bytes) -> tuple[bool, str]:
@@ -89,10 +75,28 @@ def _verify_github(headers: dict, body: bytes) -> tuple[bool, str]:
     return hmac.compare_digest(expected, sig), "hmac_strict"
 
 
-VERIFIERS = {
-    "plaid": _verify_plaid,
+# The platform's own sources only. An app's verifier is declared on its
+# AppSpec.event_verifiers and is present exactly while that app is installed --
+# see verifier_for(). `github` stays here because github is a PLATFORM source.
+PLATFORM_VERIFIERS = {
     "github": _verify_github,
 }
+
+
+def verifier_for(source: str):
+    """The verifier for `source`: the platform's, else an installed app's, else
+    the permissive default.
+
+    Resolved PER REQUEST rather than frozen in a module-level dict, so
+    installing an app makes its webhook verifiable without a restart -- and
+    uninstalling one stops the platform vouching for a source it no longer
+    serves."""
+    v = PLATFORM_VERIFIERS.get(source)
+    if v is not None:
+        return v
+    from services import app_registry
+
+    return app_registry.installed_event_verifiers().get(source, _verify_none)
 
 
 
@@ -149,7 +153,7 @@ async def receive_event(source: str, request: Request):
     # Per-source signature verification. Unknown sources pass with a "no_verifier"
     # note; known sources (plaid, github) MUST validate.
     headers_lower = {k.lower(): v for k, v in request.headers.items()}
-    verifier = VERIFIERS.get(source, _verify_none)
+    verifier = verifier_for(source)
     sig_ok, sig_reason = verifier(headers_lower, body)
     if not sig_ok:
         log.warning("event signature_failed source=%s reason=%s", source, sig_reason)
@@ -161,31 +165,21 @@ async def receive_event(source: str, request: Request):
     except json.JSONDecodeError:
         payload = {"_raw": body.decode("utf-8", errors="replace")}
 
-    EVENTS_LOG.parent.mkdir(parents=True, exist_ok=True)
-    record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "source": source,
-        "known_source": source in known_sources(),
-        "signature": {"ok": sig_ok, "reason": sig_reason},
-        "headers": {k: v for k, v in request.headers.items() if k.lower() not in {"authorization", "cookie"}},
-        "body": payload,
-    }
-    # Capture byte offset BEFORE write so pending-runs can re-read the exact line.
-    offset = EVENTS_LOG.stat().st_size if EVENTS_LOG.exists() else 0
-    with EVENTS_LOG.open("a") as f:
-        f.write(json.dumps(record) + "\n")
-
-    # Phase 5b: enqueue pending-run for each event-driven subscriber. The cron
-    # loop (5a) pops these and decides whether to fire `claude -p`.
-    # Pass the full payload as event_summary so dedup-key derivation has access
-    # to per-source identifiers (gmail.message_id, plaid.webhook_code+item_id, etc.).
-    from services.event_dispatch import enqueue_event
-    summary = payload if isinstance(payload, dict) else {"_raw": str(payload)[:512]}
-    dispatch = enqueue_event(source, event_offset=offset, event_summary=summary)
-    subscribers = _load_subscriptions().get(source, [])
+    # Append + fan out. The record shape, the strip-credential-headers rule and
+    # the capture-the-offset-before-the-write rule all live in services/event_log
+    # now; this route had one of the three hand-copies of them.
+    known = source in known_sources()
+    dispatch = event_log.publish_and_dispatch(
+        source,
+        payload,
+        headers=dict(request.headers),
+        signature={"ok": sig_ok, "reason": sig_reason},
+        known=known,
+    )
+    subscribers = event_log.subscribers(source)
     log.info(
         "event source=%s known=%s subscribers=%d enqueued=%d payload_keys=%s",
-        source, source in known_sources(), len(subscribers), dispatch["enqueued"],
+        source, known, len(subscribers), dispatch["enqueued"],
         list(payload.keys())[:8] if isinstance(payload, dict) else "non-dict",
     )
 
