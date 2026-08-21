@@ -11,6 +11,9 @@
   GET    /apps/{id}/runs                                  real, from services/jobs.py
   GET    /apps/{id}/deploys                                real, from services/deploys.py
   GET    /apps/{id}/agents                                 real, roster agents linked to the app's project
+  GET    /apps/{id}/files         ?path=                    tree listing of the app's linked project tree
+  GET    /apps/{id}/files/content ?path=                    one file's content
+  PUT    /apps/{id}/files/content                            write one file's content
 
 `{id}` is the surrogate (a uuid), never the slug -- a rename is a PATCH, not a
 migration (design doc sec 5.1). Every nested route 404s on an unknown id
@@ -42,6 +45,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from services import app_files as app_files_svc
 from services import apps as apps_svc
 
 router = APIRouter(prefix="/apps", tags=["apps"])
@@ -128,6 +132,49 @@ class AppDeployList(BaseModel):
 
 class AppAgentList(BaseModel):
     agents: list[dict[str, Any]]
+
+
+class AppFileEntry(BaseModel):
+    name: str
+    path: str
+    kind: str  # "file" | "dir"
+    size: int | None = None
+    modified: str | None = None
+
+
+class AppFileTree(BaseModel):
+    path: str
+    root: str
+    entries: list[AppFileEntry]
+    # Set (root is None) exactly when this app genuinely has no file tree --
+    # never a 404, per the design instruction, and never another app's tree.
+    reason: str | None = None
+    # Additive beyond the base contract: directory names the noise filter
+    # (services/app_files.py -- .git/, node_modules/, .venv/, __pycache__/)
+    # excluded from THIS listing, so filtering is visible rather than silent.
+    # Absent/empty when nothing was filtered at this level.
+    filtered: list[str] | None = None
+
+
+class AppFileContent(BaseModel):
+    path: str
+    content: str
+    size: int
+    modified: str | None = None
+    editable: bool
+    truncated: bool
+    encoding: str  # "utf-8" | "binary"
+
+
+class AppFileWriteIn(BaseModel):
+    path: str
+    content: str
+
+
+class AppFileWriteOut(BaseModel):
+    path: str
+    size: int
+    modified: str
 
 
 # --- helpers --------------------------------------------------------------
@@ -268,3 +315,55 @@ async def app_agents(app_id: str) -> dict:
         raise HTTPException(404, f"no such app: {app_id}")
     except apps_svc.AppsUnavailable:
         raise _unavailable()
+
+
+@router.get("/{app_id}/files", response_model=AppFileTree, response_model_exclude_unset=True)
+async def app_files_tree(app_id: str, path: str = Query("")) -> dict:
+    try:
+        return apps_svc.file_tree_for_app(app_id, path)
+    except apps_svc.AppNotFound:
+        raise HTTPException(404, f"no such app: {app_id}")
+    except apps_svc.AppsUnavailable:
+        raise _unavailable()
+    except app_files_svc.AppFilePathError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError:
+        raise HTTPException(404, "path not found")
+    except NotADirectoryError:
+        raise HTTPException(400, "path is not a directory")
+
+
+@router.get("/{app_id}/files/content", response_model=AppFileContent, response_model_exclude_unset=True)
+async def app_files_read(app_id: str, path: str = Query(...)) -> dict:
+    try:
+        return apps_svc.file_content_for_app(app_id, path)
+    except apps_svc.AppNotFound:
+        raise HTTPException(404, f"no such app: {app_id}")
+    except apps_svc.AppsUnavailable:
+        raise _unavailable()
+    except apps_svc.AppFilesNoRoot as e:
+        raise HTTPException(404, str(e))
+    except app_files_svc.AppFilePathError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError:
+        raise HTTPException(404, "file not found")
+    except IsADirectoryError:
+        raise HTTPException(400, "path is a directory, not a file")
+
+
+@router.put("/{app_id}/files/content", response_model=AppFileWriteOut, response_model_exclude_unset=True)
+async def app_files_write(app_id: str, body: AppFileWriteIn) -> dict:
+    try:
+        return apps_svc.write_file_for_app(app_id, body.path, body.content)
+    except apps_svc.AppNotFound:
+        raise HTTPException(404, f"no such app: {app_id}")
+    except apps_svc.AppsUnavailable:
+        raise _unavailable()
+    except apps_svc.AppFilesNoRoot as e:
+        raise HTTPException(404, str(e))
+    except app_files_svc.AppFilePathError as e:
+        raise HTTPException(400, str(e))
+    except app_files_svc.AppFileBinaryError as e:
+        raise HTTPException(400, str(e))
+    except IsADirectoryError:
+        raise HTTPException(400, "path is a directory, not a file")

@@ -24,15 +24,17 @@ this list.
 from __future__ import annotations
 
 from datetime import timezone
+from pathlib import Path
 from typing import Any
 
 from services import tenancy
 
 __all__ = [
-    "AppsUnavailable", "AppNotFound", "SlugTaken",
+    "AppsUnavailable", "AppNotFound", "SlugTaken", "AppFilesNoRoot",
     "list_apps", "get_app", "get_app_by_slug", "create_app", "update_app",
     "delete_app", "chats_for_app", "tickets_for_app", "notes_for_app",
     "runs_for_app", "deploys_for_app", "agents_for_app",
+    "file_tree_for_app", "file_content_for_app", "write_file_for_app",
 ]
 
 
@@ -53,6 +55,13 @@ class AppNotFound(KeyError):
 
 class SlugTaken(ValueError):
     pass
+
+
+class AppFilesNoRoot(RuntimeError):
+    """Raised by the file CONTENT/write routes (never the tree listing --
+    that one reports the same fact as a 200 with `reason`, per the design
+    instruction to never 404 "this app has no tree") when an app has no file
+    root to read or write against at all."""
 
 
 def _require_db() -> tuple[Any, Any]:
@@ -270,3 +279,67 @@ def agents_for_app(app_id: str) -> list[dict]:
         return []
     return [a for a in agents_registry.list_agents()
             if a.get("project_slug") == project_slug]
+
+
+# --- files (app-is-the-entity-2026-08-20.md sec 8) ---------------------------
+#
+# Same resolution as every other nested collection above: through the app's
+# linked project (`services/app_links.linked_project_slug`), never a second
+# mapping. Unlike tickets/notes/runs/deploys/agents, a missing root here is
+# not always silently "empty" -- the tree LISTING reports it as a 200 with a
+# `reason` (never a 404, per the contract: "this app has no tree" must never
+# be confused with "this app does not exist" or fall back to another app's
+# tree), while content read/write raise `AppFilesNoRoot`, since "read this
+# file" with no file root at all is an honest 404, not an empty success.
+
+def _file_root_for_app(app: dict) -> tuple[Path | None, str, str | None]:
+    """(root, display_name, reason). `reason` is set exactly when `root` is
+    None -- the app genuinely has no file tree. Never falls back to another
+    app's or the platform's tree."""
+    from services import app_files, app_links
+
+    project_slug = app_links.linked_project_slug(app["slug"])
+    if not project_slug:
+        return None, app["slug"], "this app has no linked project, so it has no file tree"
+    root = app_files.project_root(project_slug)
+    if root is None:
+        return None, app["slug"], (
+            f"the app's linked project {project_slug!r} has no directory registered")
+    if not root.is_dir():
+        return None, app["slug"], (
+            f"the app's linked project directory does not exist on disk: {root}")
+    return root, root.name, None
+
+
+def file_tree_for_app(app_id: str, path: str) -> dict:
+    """Never 404s for "this app has no tree" -- see module note above. Can
+    still raise `AppNotFound` (no such app), `AppFilePathError` (the path
+    escapes), `FileNotFoundError`/`NotADirectoryError` (a bad subpath under a
+    real root)."""
+    from services import app_files
+
+    app = _app_or_404(app_id)
+    root, display, reason = _file_root_for_app(app)
+    if root is None:
+        return {"path": path, "root": display, "entries": [], "reason": reason}
+    return app_files.list_tree(root, display, path)
+
+
+def file_content_for_app(app_id: str, path: str) -> dict:
+    from services import app_files
+
+    app = _app_or_404(app_id)
+    root, _display, reason = _file_root_for_app(app)
+    if root is None:
+        raise AppFilesNoRoot(reason)
+    return app_files.read_file(root, path)
+
+
+def write_file_for_app(app_id: str, path: str, content: str) -> dict:
+    from services import app_files
+
+    app = _app_or_404(app_id)
+    root, _display, reason = _file_root_for_app(app)
+    if root is None:
+        raise AppFilesNoRoot(reason)
+    return app_files.write_file(root, path, content)
