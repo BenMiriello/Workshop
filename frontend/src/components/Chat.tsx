@@ -39,7 +39,7 @@ import { logPlaceholder } from "./chat/chatLogState";
 import { placementFor, type ChatProblem } from "./chat/chatProblem";
 import { scopeSwitch } from "./chat/scopeSwitch";
 import { STALE_TEXT } from "./chat/staleNotice";
-import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
+import { indicatorElapsed, turnLabel } from "./chat/turnStatus";
 import {
   committedClientIds, committedMessages, withoutCommitted,
 } from "./chat/transcriptBlocks";
@@ -867,7 +867,7 @@ export default function Chat({
     document.addEventListener("visibilitychange", onVisibility);
     return () => { stop(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [turnActive]);
-  const elapsed = elapsedSeconds(state.activeTurn?.startedMs ?? null, nowMs);
+  const elapsed = indicatorElapsed(state.activeTurn?.segments, state.activeTurn?.startedMs ?? null, nowMs);
   const workingLabel = turnLabel({
     attached: stream.attached,
     reconnecting: stream.reconnecting,

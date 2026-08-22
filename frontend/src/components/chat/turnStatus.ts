@@ -147,3 +147,25 @@ export function elapsedSeconds(startedMs: number | null | undefined, nowMs: numb
   if (!startedMs || !Number.isFinite(startedMs)) return 0;
   return Math.max(0, Math.floor((nowMs - startedMs) / 1000));
 }
+
+/** Elapsed seconds for the in-flight indicator.
+ *
+ *  When a specific step is running, counts from when THAT STEP started so the
+ *  counter resets at each step boundary and the reader sees how long the current
+ *  activity has been going, not how long the whole turn has run. Falls back to
+ *  turn elapsed when the model is thinking between steps. */
+export function indicatorElapsed(
+  segments: ChatSegment[] | undefined,
+  startedMs: number | null | undefined,
+  nowMs: number,
+): number {
+  if (segments) {
+    for (let i = segments.length - 1; i >= 0; i--) {
+      const seg = segments[i];
+      if (seg.t === "tool" && isRunning(seg) && typeof seg.at === "number") {
+        return Math.max(0, Math.floor((nowMs - seg.at * 1000) / 1000));
+      }
+    }
+  }
+  return elapsedSeconds(startedMs, nowMs);
+}
