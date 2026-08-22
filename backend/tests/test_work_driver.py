@@ -6,6 +6,7 @@ because a detached process dies with a reboot and nothing was bringing it back.
 """
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -66,6 +67,23 @@ def test_a_legacy_path_key_is_folded_onto_its_scope(store, monkeypatch):
                         lambda r: "development" if str(r) == "/workspace" else None)
     scope_execution._write({"/workspace": "supervised"})
     assert scope_execution.armed_scopes() == [("development", "supervised")]
+    # And it is PERSISTED, so a reader in another namespace (where "/workspace"
+    # resolves to nothing) still sees the scope armed instead of an empty set.
+    # A read-only fold silently disarmed the scope for the backend; measured.
+    assert json.loads(scope_execution._store_path().read_text()) == {
+        "development": "supervised"}
+
+
+def test_a_partial_fold_is_not_written_back(store, monkeypatch):
+    """Writing away a key THIS namespace cannot translate would destroy the one
+    another namespace still can. Fold in memory, leave the file alone."""
+    from services import task_scope
+
+    monkeypatch.setattr(task_scope, "key_for_root", lambda r: None)
+    scope_execution._write({"/workspace": "supervised"})
+    assert scope_execution.armed_scopes() == []
+    assert json.loads(scope_execution._store_path().read_text()) == {
+        "/workspace": "supervised"}
 
 
 def test_supervision_flag_follows_the_stage_ceiling():

@@ -64,7 +64,26 @@ def _read() -> dict[str, Any]:
         data = json.loads(p.read_text())
     except (FileNotFoundError, ValueError):
         return {}
-    return _migrate_paths(data) if any(k.startswith("/") for k in data) else data
+    if not any(k.startswith("/") for k in data):
+        return data
+    migrated = _migrate_paths(data)
+    # PERSIST IT, once, from the namespace that can still resolve the old key.
+    # A read-only migration is namespace-dependent in the worst way: the path
+    # "/workspace" maps to `development` inside a confined turn and to nothing
+    # outside it, so the same file read from the backend silently yielded an
+    # EMPTY armed set and disarmed the scope. Measured 2026-08-22: the runner
+    # swept, found the scope unarmed, reported "no ready tasks" and exited 0.
+    # Writing it back the moment a namespace can translate it means every later
+    # reader, in any namespace, sees the scope key.
+    #
+    # Only when nothing was lost in translation: a partial fold would write away
+    # the very key another namespace might still resolve.
+    if len(migrated) == len(data):
+        try:
+            _write(migrated)
+        except OSError:
+            pass  # read-only or racing writer; the fold still applies in memory
+    return migrated
 
 
 def _migrate_paths(data: dict[str, Any]) -> dict[str, Any]:
