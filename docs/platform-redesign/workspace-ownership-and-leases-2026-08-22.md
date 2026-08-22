@@ -1,278 +1,452 @@
-# Who is working here: workspace ownership, leases, and takeover
+# Who is working here: branch ownership, leases, and takeover
 
 - Date: 2026-08-22
-- Status: **design, nothing built.** Proposal for operator review.
-- Answers the question left open by
-  [`branches-worktrees-and-environments-2026-08-20.md`](branches-worktrees-and-environments-2026-08-20.md)
-  §14: that doc decided a workspace is created when work first needs to write, and
-  said nothing about what happens when a second participant wants to write to the
-  same one.
+- Status: **design, nothing built.** Revision 2, after an adversarial review pass
+  (§16). Revision 1's central mechanism was wrong and is replaced.
+- Answers what [`branches-worktrees-and-environments-2026-08-20.md`](branches-worktrees-and-environments-2026-08-20.md)
+  §14 left open: that doc decided a worktree is created when work first needs to
+  write, and said nothing about what happens when a second participant wants to
+  write to one that is busy.
 - Designed for the production target: any number of users, apps and participants.
-  Nothing here is sized to a particular machine.
 
 ---
 
 ## 1. What was asked
 
-> Does the worktree/branch management need to be its own thing, decoupled from the
-> chat? The ticket is coupled with it but can change. An agent, or an instance of
-> an agent, can be coupled with a worktree. Have rules for not overlapping or
-> duplicating ownership, but do not be overly strict: warn when appropriate, error
-> when appropriate, default to new or existing as appropriate. For agents there
-> should be one main one doing actual WORK at a time, and it should be the right
-> kind of agent; others can communicate and coordinate with it. For chats, how do
-> we coordinate if another chat or agent is already there? What if it is old or
-> stopped? How do we determine if it is still working or relevant? Who has
-> ownership, or the lease? When can it be swapped? If a chat wants to work while an
-> agent is working, can it inject the request into the agent's workflow with
-> priority, or add it to the ticket and notify the agent? Show that in the chat as
-> a card, with options: do nothing, implement directly then hand back the lease, or
-> implement directly and take over. If we take over, what happens to the agent's
-> work? Stop it in its tracks, but keep a record that is not just text buried in a
-> log. When should a new chat take over from another chat? When we make a new chat,
-> how do we know which branch to put it in, and what to default to?
+> Does branch management need to be its own thing, decoupled from the chat? The
+> ticket is coupled to it but can change. An agent can be coupled to a branch. Have
+> rules against overlapping ownership, but do not be overly strict: warn, error, or
+> default to new or existing as appropriate. One agent does the actual work at a
+> time; others coordinate with it. If another chat or agent is already there, how do
+> we coordinate? What if it is old or stopped? How do we tell if it is still
+> working? Who has the lease, and when can it be swapped? If a chat wants to work
+> while an agent is working, can it inject the request with priority, or add it to
+> the ticket and notify the agent? Show that in the chat with options: do nothing,
+> implement then hand back, or implement and take over. If we take over, what
+> happens to the agent's work? Stop it, but keep a record that is not buried text.
+> When we make a new chat, how do we know which branch to put it in, and what to
+> default to? Everything that needs to know must be able to see or query the others'
+> state and who is current.
 
 ---
 
-## 2. The correction that reframes all of it
+## 2. Ground truth: what exists, verified
 
-**The lease already exists, is correctly built, and is invisible.**
+Revision 1 asserted several things about this codebase that are false, and built on
+them. Everything below was checked against the source on 2026-08-22.
 
-`services/tasks.py` carries a complete lease on every ticket: `claim_token` (a
-monotonic fencing generation), `lease_until`, `last_heartbeat`, `claim_pid`, a
-`reclaim()` sweep, and a `LEASE_TTL_SEC`. `_is_stale_claim` already implements the
-two-tier liveness test the question asks for (a dead recorded pid is reclaimed at
-once; a live-but-silent worker is reclaimed only when its heartbeat lapses). And
-`update(..., expect_claim_token=...)` already implements takeover: an operator write
-bumps the generation so the displaced worker's next write is **fenced out** rather
-than the operator being blocked.
+**The ticket lease exists and is real, but is weaker than claimed.**
+`services/tasks.py` has `claim_token` (fencing generation, `:2294`), `lease_until`,
+`last_heartbeat`, `claim_pid`, `heartbeat()` fenced by token (`:2479`), `reclaim()`
+(`:1770`), `LEASE_TTL_SEC = 3600` (`:222`). But:
 
-That is the textbook design (Kubernetes `Lease` + fencing tokens, §11.1), and it is
-already here.
+- Its atomicity is a same-filesystem `flock` (`:350-364`). The relational write is an
+  unconditional `UPDATE ... SET claim_token = :ct` (`db/ticket_sync.py:720-739`) with
+  no compare-and-set, so two processes not sharing that lock have no mutual exclusion.
+- `reclaim()` deliberately leaves `claim_token` intact (`:1797`), so between reclaim
+  and re-claim a zombie's token still matches. It is not fenced in that window.
+- `_pid_alive` is `os.kill(pid, 0)` (`:266-284`), which is single-node and also
+  reports a **zombie as alive**.
 
-**Two cautions on reusing it, both important.**
+**It is NOT "entirely internal", and revision 1's "delete it outright" rested on
+that.** `claim_token` is on the wire (`routes/api_models.py:375` and `:422`, whose own
+comment says dropping a concurrency primitive from the wire is not a change to make
+silently), in the generated client (4 occurrences in `frontend/src/api/schema.gen.ts`,
+gated absolutely by `scripts/reviewer.sh`), a NOT-NULL Postgres column
+(`db/models.py:512`) in scopes where Postgres is authoritative, and in
+`scripts/field_occupancy_baseline.json`. Plus 14 `--expect-claim-token` call sites in
+`project_ralph.sh` and 5 test files asserting the shape.
 
-*It is a different concept from workspace ownership.* The ticket claim answers
-"which worker has taken this work" and prevents duplicated effort. A workspace lease
-answers "who may write to this tree" and prevents a corrupted checkout. They are not
-the same question and one does not imply the other. What carries over is the
-**pattern** (single holder, fencing generation, TTL, heartbeat renewal, expiry
-without a negotiation), not the queue semantics.
+**Worktree mode has never run.** `WT_ENABLED` requires `CONCURRENT_WT == 1 && -n
+"$SLUG"` (`project_ralph.sh:632-633`), and `queue_runner.sh:214` invokes the sweep as
+`--dir "$DIR"` with no slug. So `SLUG` is always empty and the gate is always 0,
+regardless of the flag.
 
-*Part of it does not generalize past a single node.* `_is_stale_claim`'s fast path
-calls `_pid_alive`, which is `os.kill(pid, 0)`: a same-host signal probe. On one
-machine that is a good optimization, because a crashed worker is reclaimed instantly
-rather than after a TTL. Across hosts it is wrong in both directions, since a pid
-recorded on one host and probed on another is either absent (reported dead while the
-worker is running) or coincidentally reused by something unrelated (reported alive
-after the worker died). So the general form of liveness is **heartbeat and expiry
-only**, with process-probing kept as an optional single-node accelerator that a
-multi-host profile turns off. Any design that treats the pid check as part of the
-model has smuggled one deployment's implementation into the architecture.
+**Provisioning is written and tested but not wired.** `provision_worktree`
+(`worktrees.py:594`) has **only test callers**; the live path is
+`allocate_task_worktree` with no dependency provisioning at all.
 
-So this is not a new subsystem, but it is also not a free one. Three things are
-genuinely missing:
+**Steer does not do what revision 1 said.** `build_streaming.inject()` (`:3707`) really
+does write into the running turn's stdin FIFO. But its docstring (`:3714-3720`),
+citing a measurement in `chat-message-ordering-audit-2026-08-05.md §2`, states that
+the model **addresses the message at the end of its current plan, skipping the step
+boundaries in between**. Revision 1 sold steer as "delivered at the next safe
+boundary... in seconds". That is the behaviour this repo measured and found false.
 
-1. The lease protects **the work item**, not **the working tree**. Two participants
-   on different tickets in the same tree still corrupt each other.
-2. Nothing **shows** it. There is no answer on screen to "who is working here."
-3. There is no **negotiation**: the only outcomes today are wait, or take by force.
+**Several things this design would have rebuilt already exist:**
 
-## 3. Three nouns, and only one of them is durable
+- `services/work_driver.py` is already a **per-tree single-writer lock**
+  (`queue-runner-<md5(dir)>.lock` + pidfile, `:80-107`), probed live rather than
+  trusted. Agent sweeps are already serialized per tree
+  (`services/agent_slots.py:34-37`).
+- `port_registry.process_alive` (`:90-119`) is a **better pid probe** than
+  `tasks._pid_alive`: it reads `/proc/<pid>/stat` and treats `Z`/`X` as dead, for
+  exactly the zombie reason above.
+- `.runtime/heartbeats/<id>.json` (written by `scripts/heartbeat.sh`, read by
+  `routes/agents.py:1445-1450` into `heartbeat_age_s` + `liveness`) is already an
+  ephemeral presence channel with the right lifetime split.
+- `chat_queue` + `chat_drain` (`routes/chat.py:3786-3852`) already implement the
+  **Queue** verb: a message recorded against a busy turn, restart-surviving,
+  re-entering through the same door a live message does.
+- `allocate_task_worktree` already `git worktree lock`s the tree (`:255-258`).
+- The **Tickets panel already has one host**; the popover was retired in `19e8aae`
+  earlier the same day. Revision 1's only cross-track ordering constraint was
+  therefore vacuous.
 
-The whole model needs three records, and the discipline is about which ones are
-allowed to be cheap.
+---
 
-- **Workspace** — a working tree at a branch. The *resource*. Durable, reapable,
-  independent of who is looking at it. This is the thing that gets a lease.
-- **Work** — a ticket. What the workspace is *for*. Durable. May move between
-  workspaces; a workspace may carry more than one (§7.3).
-- **Session** — one participant: an agent run, or a chat. **Cheap, disposable,
-  never an owner.** A session may *hold* a lease; it never *owns* a workspace.
+## 3. Vocabulary
 
-The load-bearing decision, and the direct answer to "can people keep spinning up new
-chats without worrying":
+Ticket keeps its one meaning; nothing here reuses it.
 
-> **A chat never owns a workspace. Sessions are disposable; workspaces are not.**
+- **Ticket** — a unit of work. Unchanged.
+- **Branch** — the user-facing name for an isolated line of work and its tree. This
+  is not a new word: `branches-worktrees-and-environments` §3.2 already ruled that
+  "the disk concept stays worktree (git's term)... the user-facing concept is the
+  branch." Revision 1 coined "workspace" for this, which was a mistake: `/workspace`
+  is literally the bwrap mountpoint every agent sees (`scoped_exec.py:72`), and
+  `workspace_inputs` already means an app's heavy dependency directories
+  (`worktrees.py:657`). Three meanings for one word, in a document whose own
+  vocabulary section forbids exactly that.
+- **Worktree** — the implementation and the record. Not shown in the UI.
+- **Session** — one live participant: a chat, or an agent run. Cheap, disposable.
+- **Lease** — the durable, exclusive right to write to a subject.
+- **Presence** — the expiring fact that a session is here and what it is doing.
+- **Directory** — the queryable index of sessions. A read-time join, never a store.
 
-Closing a chat, abandoning it, or opening six about the same thing must cost
-nothing and orphan nothing. That is only true if the durable things (the tree, the
-branch, the work) are attached to the workspace and the ticket, and the chat is a
-view. This is also why a workspace is **not** created per chat: it is created per
-unit of work.
+"Claim" retires as a second word for lease.
 
-## 4. One lease, one writer, one typed subject
+---
 
-**At most one session may write to a workspace at a time.** Everyone else is a
-reader. This is single-writer, the same answer every collaborative system reaches
-(§11.2), and the instinct that one agent should be doing the actual work is correct.
+## 4. Exclusivity is enforced by the mount, not by a token
 
-There is **one lease record**, and it names what it protects:
+This is the correction that reorganizes the whole design.
 
-- On a **workspace**, it answers *may I write to this tree* and stops two
-  participants corrupting one checkout.
-- On a **ticket**, it answers *may I take on this work* and stops two sweeps
-  working the same item. This is only needed for work that touches no tree
-  (`execution: judgement | external`); a code ticket is worked *in* a workspace, so
-  holding that workspace's lease is already the admission.
+A fencing token works because a **storage layer validates it**. For the ticket lease
+that layer is `tasks.update()`, which really does check (`tasks.py:2093`). For a
+working tree the storage layer is the filesystem and git, and **nothing validates a
+generation there**. A holder whose lease expired mid-test, whose replacement has
+already started, will `git add -A && git commit` into the same tree and no check
+anywhere stops it. Revision 1 transplanted a pattern whose load-bearing half does not
+transplant.
 
-That collapse matters: the ticket store's existing `claim_*` fields are today a
-second, separate implementation of a lease, and they are removed rather than kept
-alongside (§13). The word "claim" retires with them (§12).
+The enforcement mechanism already exists in this tree. `scoped_exec` mounts a
+session's root at a fixed mountpoint and already fails closed when confinement is
+unavailable. So:
 
-## 5. Liveness: answering "is it still working?" mechanically
+> **Holding the lease means getting the tree mounted read-write. Not holding it means
+> getting the same tree mounted read-only.**
 
-The question "what if the other one is old or stopped" must never be answered by
-judgement. Three states, all computed:
+That is Perforce-style exclusive checkout enforced by the OS instead of by
+cooperation, and it buys three things at once:
 
-- **Live** — heartbeat within TTL *and* the recorded process alive. Already built.
-- **Idle** — process alive, no *work event* within a shorter soft window. Takeable
-  with a notice, not a negotiation.
-- **Expired** — heartbeat lapsed or process dead. The lease is simply gone. Taking
-  it needs no permission and no prompt, because there is nobody to ask.
+1. **Exclusion that survives a misbehaving holder.** Revocation is simply that the
+   next turn does not get a read-write mount.
+2. **A write-detection mechanism**, which §14.1 of the sibling doc needed and did not
+   have. "Branch on write" was unbuildable as written: a turn is a detached process
+   inside bwrap and the backend cannot observe individual writes, and "first write" is
+   not even classifiable because the harness writes session and temp files constantly.
+   With a read-only mount the first genuine write fails `EROFS`, which is an exact,
+   cheap, observable event. The platform catches it and offers to branch.
+3. **A safe default reader state.** A session with no lease physically cannot damage
+   the tree it is reading.
 
-Two rules that are easy to get wrong, both learned from other systems:
+The lease record remains the *bookkeeping* (who holds it, since when, until when).
+The mount is the *enforcement*. Do not claim the token protects the tree.
 
-- **Heartbeat on work, not on presence.** A session with a window open is not
-  working. The heartbeat must be driven by actual events (a tool call, a write, a
-  commit), which is what `ralph.sh` already does from inside its loop. Gitpod's
-  well-documented failure is the inverse: workspaces timed out because the nominal
-  *owner* was idle while other participants were actively working (§11.3). Liveness
-  is a property of the work, not of the owner's keyboard.
-- **A held lease is not a running turn.** A chat can hold the lease while thinking.
-  Preempting a *lease* and interrupting a *turn* are different acts (§6).
+---
 
-## 6. The three verbs, and why there is no priority number
+## 5. Two leases, one mechanism
 
-When a session wants to write and someone else holds the lease, there are exactly
-three things it can do. These are the names the field has converged on (§11.4), and
-using the standard names is most of the design:
+Revision 1 collapsed the ticket lease into the tree lease, arguing a code ticket needs
+no ticket lease because holding the tree admits you to the work. **That is wrong at
+the only moment that matters.** A `todo` ticket has no tree yet. Two sweeps both see
+`todo`, both create a worktree, both hold a lease on *different* trees, and both work
+the same ticket. What prevents that today is the `status == "todo"` compare-and-set
+inside `claim()` (`tasks.py:2290-2301`), which revision 1 proposed to delete.
 
-- **Queue** — record the request against the ticket. The holder picks it up when it
-  finishes. Nothing is interrupted. *The default.*
-- **Steer** — inject the request into the holder's **running turn**, delivered at
-  the next safe boundary (between tool calls). The holder changes direction and
-  keeps its context and its work. Nothing is lost, nothing restarts.
+So there are two subjects and both are needed:
+
+- **Ticket lease** — who took this work. Needed for every ticket, including code
+  ones, because it is acquired before a tree exists.
+- **Worktree lease** — who may write to this tree.
+
+One mechanism, one table, a typed subject:
+
+```
+lease
+  id
+  org_id                                  -- RLS, per the Ticket model
+  subject_kind   enum(worktree, ticket)
+  subject_id     uuid
+  holder_kind    enum(chat, run)          -- a session kind
+  holder_id      uuid
+  principal_user_id                       -- WHO it acts for; separate from kind
+  generation     int                      -- fencing, bumped on every acquire
+  expires_at     timestamptz              -- server-computed, never a caller's clock
+  acquired_at, last_renewed_at
+  UNIQUE (subject_kind, subject_id)
+```
+
+Acquire is **one atomic statement**, not an application lock:
+
+```sql
+INSERT INTO lease (...) VALUES (...)
+ON CONFLICT (subject_kind, subject_id) DO UPDATE
+   SET holder_id = EXCLUDED.holder_id,
+       generation = lease.generation + 1,
+       expires_at = now() + :ttl
+ WHERE lease.expires_at < now()
+```
+
+Renew and release are `UPDATE ... WHERE generation = :g`. `expires_at` is compared
+server-side, which is also the answer to clock skew. This is what lets the `flock`
+actually be deleted rather than silently inherited.
+
+The boring alternative worth naming for the ticket subject: Postgres
+`SELECT ... FOR UPDATE SKIP LOCKED` is the standard queue-claim primitive, and using
+it would make this a genuine simplification rather than a re-implementation.
+
+**Windows, with values.** A tree lease must not inherit the ticket lease's one-hour
+TTL: an hour of write-exclusivity for a crashed chat is unusable.
+
+- Lease TTL **90s**, heartbeat every **30s**.
+- Idle after **10 minutes** with no work event (a timestamp, not a state, see §6).
+- Preempt grace **30s**.
+
+---
+
+## 6. Liveness and presence
+
+**Two lease states, not three.** Held, or expired. "Idle" is an `idle_since`
+timestamp rendered as a `warn`, not a fourth thing with its own verb.
+
+Liveness is **heartbeat and expiry only**. Process-probing is an optional per-profile
+accelerator that may only ever *shorten* time-to-expiry, never extend it and never
+gate a state. Where a profile does use it, it must use
+`port_registry.process_alive`, not `tasks._pid_alive`, because the former already
+handles the zombie case the latter gets wrong. Removing the fast path entirely without
+replacing it would strand a crashed sweep's ticket for the full TTL, so the
+accelerator is kept, made pluggable, and pointed at the correct implementation.
+
+**Presence must be a shared, expiring store, not in-process memory.** Revision 1 said
+presence lives in RAM and never touches a database. That cannot work here: the
+participants that actually hold trees are `project_ralph.sh`, `ralph.sh` and
+`queue_runner.sh`, separate OS processes that heartbeat by shelling into the task
+store. An in-memory map in the backend cannot see any of them, would go empty on every
+backend restart while every participant kept working, and would not survive a second
+worker process.
+
+The lesson from the 753-row inbox was **do not keep a derived duplicate of a fact
+another record owns**, not "never persist a fast-changing fact". Presence is not
+derived from anything; it is a primary observation with a natural expiry. Kubernetes
+`Lease`, the model cited throughout, is itself persisted.
+
+So: presence is a **TTL'd row any process can write** and nobody reconciles on read.
+The existing `.runtime/heartbeats/<id>.json` channel is already this shape and is the
+thing to generalize rather than replace.
+
+**The join rule, which revision 1 declared the split and then never supplied:**
+
+> An interactive holder's lease is renewed by its **presence**. A non-interactive
+> holder's is renewed by its **work events**. Presence expiry for an interactive
+> holder releases its lease immediately.
+
+Without that rule, closing a chat tab orphans a tree for a full TTL, which is exactly
+the cost §7 promises is zero, and structurally the Gitpod failure (§15.3) with the
+roles swapped.
+
+**The directory** is a read-time join over presence, leases, tickets and worktrees. It
+stores nothing. It is a function on the presence module, not a module of its own.
+
+---
+
+## 7. Three nouns, one of them disposable
+
+- **Worktree** — durable resource, gets the lease.
+- **Ticket** — durable, says what the work is.
+- **Session** — a chat or an agent run. Cheap, disposable, **never an owner**.
+
+> A chat never owns a tree. Sessions are disposable; trees are not.
+
+Closing a chat, abandoning it, or opening six about the same thing must cost nothing
+and orphan nothing, which is true only because of the presence-releases-lease rule in
+§6.
+
+---
+
+## 8. The verbs
+
+- **Queue** (default) — record the request against the ticket; the holder takes it
+  when it finishes. **Already built** as `chat_queue` + `chat_drain`; do not write a
+  second one.
+- **Steer** — deliver the request into the holder's running turn. **Best-effort with
+  unbounded latency**: measured behaviour is that the model addresses it at the end
+  of its current plan, not at the next tool boundary. The UI must not label this
+  "now".
 - **Preempt** — stop the holder, take the lease.
 
-**Steer is the answer to "the user wants this now", not preempt.** That is the
-insight the question was circling: immediacy does not require destroying work. Steer
-gets the operator what he wants in seconds while keeping the run alive. Preempt
-should be rare and should feel heavy.
+**No priority numbers.** The verb is the urgency. Queued requests are **FIFO** and
+cancellable. The closer precedent is GitHub Actions concurrency groups (queue versus
+cancel-in-progress, no scalar) rather than Kubernetes PriorityClasses.
 
-And a deliberate omission: **no priority numbers.** A numeric priority is a knob
-nobody can calibrate and every participant inflates. The verb *is* the priority:
-later (queue), now (steer), or instead (preempt). Two of the three are already
-half-built here, since a chat message that arrives mid-turn already joins the
-running turn rather than starting a new one.
+**Authority is bound to a live human action, not to a session kind.** Revision 1 said
+the operator "and any chat acting on his behalf" may preempt, which swallows the rule
+it was next to, because every chat is acting on his behalf. Preempt requires an
+explicit human interaction in the request that carries it. An agent may never preempt
+another agent; it queues or asks.
 
-Who may use which:
+**The sweep needs a control channel, because it has no FIFO.** `project_ralph.sh` is a
+bash loop with no stdin to inject into, so both steer and yield are currently
+undefined for the participant that most needs them. It already loops, so it reads
+`.runtime/control/<run-id>.json` at the top of each iteration: `steer` becomes "fold
+this into the next iteration's prompt", which for a sweep is a *better* boundary than
+mid-turn injection, and `yield` becomes "snapshot, release, exit cleanly" through the
+normal finalize path.
 
-- **The operator may always preempt.** He is the principal; there is no case where
-  the system should tell him to wait.
-- **An agent may never preempt another agent.** It queues, or it steers if it has a
-  channel. This single rule removes an entire class of thrash and needs no policy
-  engine to enforce.
+---
 
-## 7. Preemption: how work survives being stopped
+## 9. Yield is a snapshot, and force-stop must quiesce
 
-The worry that stopping an agent loses its work is right, and the answer is not a
-better log. It is the Kubernetes preemption shape (§11.5): a preempted holder gets a
-**grace window whose only job is to make its work durable**, then it is force-stopped.
+Revision 1 said a preempted holder commits its work to the branch. That puts a
+half-applied, possibly non-compiling commit permanently into the merge set, and the
+next holder starts from a HEAD it did not choose.
 
-> **Yield means commit.** On preemption the holder commits whatever it has to its
-> own branch as a work-in-progress commit and releases the lease.
+> **Yield means snapshot to a dangling ref** (`git stash create`, or
+> `git commit-tree` into `refs/wip/<session-id>`), not commit to the branch.
 
-That turns "what happened to its work" from a text-recovery problem into a **SHA**.
-It is diffable, revertable, resumable, and it needs no special storage. If the grace
-window lapses, the holder is killed and the uncommitted diff simply stays in the
-workspace, which is the ordinary state any developer leaves a machine in; nothing is
-destroyed either way.
+That still produces the SHA the design wants (diffable, revertable, resumable,
+linkable from the timeline) without touching the branch or moving HEAD.
 
-The record then belongs on the **workspace timeline** as structured events, not
-buried in a transcript: `lease acquired by <session>`, `steered by <session>`,
-`preempted by <operator>, holder committed <sha>, N files`. That timeline is the
-thing the chat card links to. This is the "not just textual info lost somewhere
-deep" requirement, met by giving the event a record of its own.
+And the lapsed-grace path is not "nothing is destroyed". A different participant is
+about to take the tree and will find someone else's half-applied edits
+indistinguishable from its own, which is precisely the scar that motivated this whole
+effort. So force-stop is followed by a **quiesce**: snapshot to the dangling ref,
+restore the tree to a known state, clear a stale `.git/index.lock` left by a killed
+git, and only then grant the lease. Handing over a dirty tree is never acceptable; the
+snapshot is what makes cleaning it safe.
 
-## 8. Defaults: what a new chat gets
+The record goes on the **worktree timeline** as structured events (acquired, steered,
+preempted by whom, snapshot `<sha>`, merged), not as prose in a transcript.
 
-The rule, in order, with no prompt in the common case:
+---
 
-1. **Opened from a ticket, run, or workspace** → that workspace. Inherited, shown,
-   changeable.
-2. **Otherwise** → the app's default ref, as a **reader**. No workspace, nothing
-   provisioned. Most chats never leave this state.
-3. **On its first write**, in order: if the work it is doing already has an open
-   workspace, join it (and take the lease if free); if the lease is held, §6; if
-   there is no workspace, create one.
-4. **Writing with no ticket at all** is common and must not be second-class. It gets
-   a scratch workspace, which a ticket can adopt later. The alternative (forcing a
-   ticket before any edit) is bureaucracy the working agreement forbids.
+## 10. Defaults
 
-So "which branch does a new chat go in" is not a question the operator answers. He
-picks the *work*; the branch follows. The ref pill shows what was picked and lets
-him change it, which satisfies "give option or insight while a chat is starting or
-going" without a modal.
+1. **Opened from a ticket, run or branch** → that one. Inherited, shown, changeable.
+2. **Otherwise** → the app's default ref, **read-only** (§4), with a staleness banner.
+   Most sessions never leave this state. Read-only matters here: the default ref is
+   the most-written tree in the system.
+3. **On first write** (an `EROFS`, §4) → **create a new branch by default.** Joining an
+   existing one is offered, not automatic. Revision 1 defaulted to joining, which
+   silently couples unrelated work to another ticket's fate given that a branch merges
+   as one unit. Branches are cheap (0.27s, sibling doc §13.2), which is exactly what
+   makes defaulting to new affordable.
+4. **Writing with no ticket** is common and not second-class: it gets a branch a
+   ticket can adopt later.
 
-### 8.1 Two smaller rules worth stating now
+So "which branch does a new chat go in" is never asked. You pick the work; the branch
+follows; the ref pill shows what was picked and lets you change it.
 
-- **A workspace merges as one unit.** If it carries several tickets, they land
-  together. Otherwise the first merge strands the others' commits mid-branch.
-- **Two of the operator's own chats do not contend.** One person is not two
-  principals. The newest surface simply wins, silently. Arbitration is only needed
-  when the other holder is a *running turn*, and that is §6, not a chat-versus-chat
-  policy. Building a takeover negotiation between a person and themselves is exactly
-  the multi-user guardrail cruft this system forbids.
+---
 
-## 9. Assessment of the proposed reasoning
+## 11. Reader staleness
 
-Asked for directly, so answered directly.
+A session reading a tree another session is writing will confidently describe a file
+that changed two minutes ago. Contention is loud; staleness is silent.
 
-**Right, and I would not change it:** decoupling workspace management from the chat;
-a lease as the primitive; one agent doing the actual work at a time with others
-coordinating; stopping a preempted agent immediately rather than letting it finish;
-insisting on a record; and refusing to be overly strict.
+Half of this is already handled: for *edits*, the harness enforces read-before-write
+and errors when a file changed since it was read. The unhandled residual is the model
+**reasoning** from a stale read it will never re-take, which no invalidation protocol
+fixes because the read is already in the context window. The only real remedy is a
+message into the session ("the tree moved: N files changed since your last read"),
+which is a presence-driven steer, not a new protocol.
 
-**Four things I would change:**
+---
 
-1. **No priority numbers** (§6). The verb carries the urgency. A priority scalar is
-   uncalibratable and gets inflated by every caller.
-2. **Steer, not take-over, as the default for "I want this now"** (§6). The listed
-   options went straight from "do nothing" to "take the lease", skipping the cheap
-   middle that every agent harness has converged on.
-3. **The record should be a commit, not a log entry** (§7). "Keep a record in the
-   agent log" accepts that the work is lost and only the story survives. Committing
-   on yield keeps the work.
-4. **Do not arbitrate between two of the operator's own chats** (§7.3). That
-   question dissolves rather than needing an answer.
+## 12. The open question that gates the rest
 
-**One thing under-weighted, and it is the biggest correctness risk here:** readers
-go stale. A chat that is *watching* a workspace someone else is writing is reading a
-tree that changes underneath it. It will confidently describe a file that was
-rewritten two minutes ago, and unlike a merge conflict nothing will flag it. Every
-non-holder needs a "the tree moved since you read it" signal, and any read the
-holder's writes invalidate must be re-taken before it is acted on. This is a bigger
-practical hazard than contention, because contention is loud and staleness is
-silent.
+`one-fact-one-place-2026-08-22.md` §8 ends on a product decision that this design is
+the thing that makes answerable: **does accepting finished work merge it?**
 
-## 10. What else this needs that was not asked
+Today accept does nothing to the code, because the worker already committed to the
+shared tree. With per-branch isolation, accept *can* mean merge. Everything downstream
+depends on the answer: whether a snapshot ref is dangerous, what "a branch merges as
+one unit" costs, and whether the reaper may destroy unmerged work.
 
-- **Drift from base.** A workspace that lives for days diverges from the trunk. It
-  needs a visible ahead/behind count and a rebase prompt, or merges get expensive
-  exactly when the work is most valuable.
-- **Restart survival.** This backend restarts often. TTL plus heartbeat covers a
-  crash, but the *grace window* must also survive one: a preempt interrupted by a
-  restart must resume and complete rather than leaving a half-yielded lease.
-- **Visible holder.** "Who is working here" must be answerable without opening
-  anything: a holder shown on the ref pill, the way presence works everywhere else.
-- **Reaping unmerged work.** The existing sweep reaps *merged* workspaces. The hard
-  case is an abandoned workspace with unmerged commits, which must be surfaced
-  before it is destroyed.
+Recommendation: **accept merges.** It is what makes the isolation layer pay for
+itself, and park-on-conflict already exists as the failure path. But this is the
+operator's call, and it should be made before B6.
 
-## 11. Research appendix
+---
 
-### 11.1 Leases, fencing, liveness
+## 13. UI
+
+To the Workshop Design System: kit primitives, tokens, lucide, five status kinds.
+
+- **Ref pill** (chat toolbar, app header): current branch, plus the holder's avatar
+  when someone else holds it. Tap for the branch menu: default ref first, then this
+  app's branches with holder and status.
+- **Directory sheet**: who is working where. Renders into the Tickets panel's
+  existing single sheet host, which already exists (`19e8aae`).
+- **Lease card, in the log**, under the message that caused it (the rule
+  `ApprovalBlock` and `TicketDecision` already follow): **Add to the queue**,
+  **Send to the agent** (steer, and the copy must not promise immediacy), **Take
+  over** (`danger`, behind `ConfirmDialog`, naming what will be stopped).
+- **Worktree timeline**: the structured event record from §9.
+- **Status kinds**: `ok` free or yours, `running` someone working, `warn` holder
+  idle, `danger` preempted or conflicted, `stopped` expired or reaped. Staleness is a
+  banner on the reader's own view, not a status kind.
+
+---
+
+## 14. The plan
+
+**B0. Ungate worktree mode for the self-repo and wire the provisioner.** This is the
+highest-value step and revision 1 did not contain it. The motivating scar is agents
+wiping each other's uncommitted work in the shared tree. Fixing it needs **no lease,
+no presence, no directory**: pass a slug so `WT_ENABLED` can be true, and call
+`provision_worktree` where the sweep currently calls `allocate_task_worktree`. Ends
+the collisions outright.
+
+**B1. Read-only mounts for sessions without a lease** (§4). The enforcement primitive
+everything else assumes, and on its own it makes the shared tree safe to read.
+
+**B2. The worktree record and lifecycle**, with `worktrees.py` as its git plumbing.
+Fold in `work_driver`'s existing per-tree lock rather than adding a third.
+
+**B3. The lease table and module** (§5), with the ticket lease **kept**, the atomic
+upsert, and `tasks` calling it. Not behaviour-preserving and not free: it needs an
+alembic migration on a NOT-NULL column, a `schema.gen.ts` regeneration that
+`reviewer.sh` gates absolutely, a `field_occupancy_baseline.json` edit, 14
+`--expect-claim-token` shell call sites, and 5 test files rewritten. It also needs a
+CLI surface, because its most important caller is bash.
+
+**B4. Presence as a shared TTL'd store** (§6), generalizing `.runtime/heartbeats/`,
+plus the presence-releases-lease join rule.
+
+**B5. Show the holder**: ref pill and directory sheet, into the existing host.
+
+**B6. Queue and steer**: wire the existing `chat_queue`, add the sweep control file,
+and write honest copy. Answer §12 first.
+
+**B7. Preempt with snapshot-and-quiesce** (§9) and the timeline.
+
+**B8. Session defaults** (§10), then reader staleness (§11).
+
+**Track A** (from `one-fact-one-place-2026-08-22.md` §6): A1 read needs-you from
+tickets and delete `run_inbox`; A2 retire the dead run notifications. A3 (one panel
+host) **already shipped**.
+
+**Dependencies**, stated because revision 1 wrongly called the tracks independent:
+B5 needs B4; B7 needs B2; B8 needs B2 and B1; B6's steer half needs §12 answered.
+Track A is genuinely independent of Track B.
+
+---
+
+## 15. Research appendix
+
+### 15.1 Leases, fencing, liveness
 Kubernetes `coordination.k8s.io/Lease`: a time-bound grant to one identity, renewed
 by heartbeat, expiring silently when the holder dies. Paired with a monotonically
 increasing fencing token validated at the storage layer, because a paused holder
@@ -281,14 +455,14 @@ exactly the shape `tasks.py` already implements.
 - kubernetes.io/docs/concepts/architecture/leases/
 - singhajit.com/distributed-systems/lease/ ; acritelli.com/blog/kubernetes-leases/
 
-### 11.2 Single-writer and presence
+### 15.2 Single-writer and presence
 Figma's multiplayer is server-authoritative with presence (cursors, selection,
 follow), and permission is a separate axis from presence. The generalizable part is
 that *who is here* and *who may write* are two different questions, both of which
 must be visible.
 - figma.com/blog/how-figmas-multiplayer-technology-works/
 
-### 11.3 Session-to-workspace binding
+### 15.3 Session-to-workspace binding
 Gitpod and Codespaces bind many client sessions to one workspace with an idle
 timeout reset by real activity. Their documented failure modes are the design
 lessons: a workspace timed out while collaborators were active because only the
@@ -297,7 +471,7 @@ connection per workspace.
 - gitpod.io/docs/configure/workspaces/workspace-lifecycle
 - github.com/gitpod-io/gitpod issues 7350, 10373 ; docs.github.com Codespaces timeout
 
-### 11.4 Steer vs queue vs preempt
+### 15.4 Steer vs queue vs preempt
 The agent-harness field has converged on distinct delivery semantics: *steering*
 injects into the in-flight turn at a safe boundary between tool calls; *queue*
 delivers when the current work finishes; a *priority interrupt* channel stops the
@@ -305,7 +479,7 @@ tool chain outright. Naming these separately is what makes the behaviour predict
 - github.com/anthropics/claude-code issues 30492, 64624, 71726
 - github.com/langchain-ai/deepagents issue 1390 ; ably.com/blog/ai-transport-redirect-steering
 
-### 11.5 Preemption with a grace window
+### 15.5 Preemption with a grace window
 Kubernetes preemption evicts a lower-priority pod and gives it its graceful
 termination period before force-kill; GitHub Actions concurrency groups cancel a
 superseded in-progress run, and deployments opt out of cancellation instead of
@@ -314,7 +488,7 @@ shape.
 - kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/
 - docs.github.com Actions concurrency ; starsling.dev/best-practices/github-actions/cancel-superseded-runs
 
-### 11.6 Ephemeral presence (awareness protocols)
+### 15.6 Ephemeral presence (awareness protocols)
 Yjs's awareness protocol is the reference design for presence that is deliberately
 NOT part of the persisted document: a separate ephemeral channel carrying who is
 online and what they are pointing at, re-broadcast on an interval (~15s), with any
@@ -323,7 +497,7 @@ transferable rule is the lifetime split, not the CRDT: observations expire, deci
 persist.
 - docs.yjs.dev/api/about-awareness ; docs.yjs.dev/getting-started/adding-awareness
 
-### 11.7 Agent directories and capability cards
+### 15.7 Agent directories and capability cards
 The agent-interop ecosystem converged on a small published card per agent (identity,
 capabilities, endpoint, auth) plus a registry other agents query at runtime, rather
 than hardcoded knowledge of peers: A2A's Agent Card and its discovery/registry model,
@@ -333,7 +507,7 @@ the protocol, since this is one system with one principal rather than a cross-ve
 market.
 - a2a-protocol.org/latest/topics/agent-discovery/ ; tyk.io/learning-center/a2a-protocol-architecture-and-technical-specification/
 
-### 11.8 Coordination models we did not take
+### 15.8 Coordination models we did not take
 Contract Net (announce, bid, award), auctions, and consensus/voting protocols are the
 classic answers to allocating work among self-interested peers, and blackboard
 architectures are the classic answer to shared-state collaboration. With one
@@ -343,235 +517,23 @@ state everyone reads and writes) is what §14 actually implements.
 - sce.carleton.ca/faculty/weiss/papers/1992/weiss-seke-1992.pdf (hierarchical blackboard)
 - gki.informatik.uni-freiburg.de/teaching/ss14/multiagent-systems/mas07-handout4.pdf (coordination methods)
 
-## 12. Vocabulary: one word per concept
 
-Recorded first because the last redesign's worst failures were two words for one
-thing and one word for two things. Nothing here overloads **ticket**, which keeps
-its existing and only meaning.
+## 16. What the adversarial review changed
 
-- **Ticket** — a unit of work. Unchanged. Not reused for anything below.
-- **Workspace** — a working tree at a branch. The user-facing name for what git
-  calls a worktree; "worktree" stays the implementation word and does not appear in
-  the UI, exactly as `scope` already does not.
-- **Session** — one live participant: a chat, or an agent run. Cheap, disposable.
-- **Lease** — the durable, exclusive right to write to a resource. Held by a session.
-- **Presence** — the ephemeral fact that a session is here and what it is doing.
-  Deliberately a different word from lease, because they have opposite lifetimes
-  (§14).
-- **Directory** — the queryable index of sessions, their presence, and who holds
-  what. A view, never a store (§14.2).
+Recorded so the reasoning is not lost and the same ground is not re-argued.
 
-"Claim" is retired. It was the ticket store's word for a lease and having both is
-the two-words-one-concept failure. See §13.
+**Replaced outright:** fencing tokens as tree protection (§4, now the mount);
+"branch on write" as an unspecified trigger (§4, now `EROFS`); the collapse of the
+ticket lease into the tree lease (§5, restored); in-process presence (§6, now a
+shared TTL'd store); yield-as-commit (§9, now a dangling ref); "workspace" as the
+user-facing word (§3, now "branch", which the sibling doc had already decided).
 
-## 13. Replace the existing implementation, do not wrap it
+**Corrected as factually wrong:** "entirely internal" (four external surfaces);
+steer's latency; "provisioning is already shipped" (test callers only); the A3
+ordering constraint (already shipped); "behaviour-preserving" for the lease refactor.
 
-Operator direction, 2026-08-22: adapt the old mechanism to whatever we design now,
-and do not leave the old implementation in place. No deprecation window, no
-compatibility shim.
-
-**Ground truth first, because "nobody is using it yet" is not quite right.** The
-ticket lease *is* live: `project_ralph.sh:918` reads `claim_token` and passes it to
-`ralph.sh`, which heartbeats the lease from inside its loop. So this is a refactor
-of a running mechanism rather than a greenfield write. It is still entirely
-internal (no external consumer, no stored format anyone else reads), so it can be
-replaced outright rather than versioned.
-
-**The consolidation.** A lease has a *subject*. Today the subject is implicit and
-the fields live on the ticket row (`claim_token`, `lease_until`, `last_heartbeat`,
-`claim_pid`). Instead:
-
-```
-lease
-  subject_kind   enum(workspace, ticket)
-  subject_id     uuid
-  holder_kind    enum(chat, run, operator)
-  holder_id      uuid
-  generation     int          -- monotonic fencing token, bumped on every (re)acquire
-  expires_at     timestamptz  -- renewed by heartbeat
-  acquired_at, last_renewed_at
-```
-
-One record, one module, one set of verbs, two subjects. A **code** ticket is worked
-*in* a workspace, so taking the workspace lease is what admits a worker to the
-ticket, and two sweeps cannot pick the same ticket because they cannot both hold its
-workspace. A **judgement** or **external** ticket touches no tree, so it takes a
-ticket-subject lease and no workspace exists. That is why the subject is typed
-rather than the model pretending everything is a tree.
-
-**What is deleted, not deprecated:** the four `claim_*` / `lease_*` columns on the
-ticket record and their normalization; `tasks.claim()` and `tasks.heartbeat()` as
-independent implementations; `_is_stale_claim`'s pid fast path (§2); and the
-`--expect-claim-token` plumbing threaded through the shell, which becomes a
-generation on the lease. `reclaim()` survives as a policy (what to do with work
-whose lease expired: retry under the cap, park at it) but stops owning the
-mechanism.
-
-**What is kept because it is right:** the fencing generation, TTL plus heartbeat
-renewal, expiry without negotiation, and the rule that an operator write bumps the
-generation so the displaced holder is fenced rather than the operator blocked.
-
-## 14. Everyone can see everyone: presence, and the directory
-
-Operator requirement: every chat, agent, and anything else that needs to know must
-be able to see or query the others' state and who is current.
-
-### 14.1 Presence is ephemeral and must never become a store
-
-The single most important constraint here comes from this system's own scar. The
-previous effort measured **753 open inbox rows, 746 of them notifications nobody had
-ever read**, because a derived fact was written into a durable store and then needed
-reconciling on every read
-([`one-fact-one-place-2026-08-22.md`](one-fact-one-place-2026-08-22.md) §2). A
-presence table would be that mistake again, with a faster clock.
-
-So presence follows the awareness-protocol shape (§11.6): a **separate ephemeral
-channel**, state re-broadcast on an interval, entries not refreshed within a window
-marked gone and dropped. It is never persisted, never migrated, and losing it costs
-nothing because it is re-derived within one interval.
-
-The division of labour, and it is the whole design:
-
-- **Lease is durable** because it is a *decision*: someone was granted the right to
-  write. It must survive a restart or two writers appear.
-- **Presence is ephemeral** because it is an *observation*: someone is here right
-  now. Persisting an observation is how you get a store full of stale facts.
-
-### 14.2 The directory is a view, not a table
-
-The queryable index is a **join at read time** over live sessions (presence), leases
-(durable), and the tickets and workspaces they point at. It stores nothing of its
-own. Each entry is a small card, which is the shape agent ecosystems converged on
-for exactly this problem (§11.7):
-
-```
-session card
-  id, kind (chat | run | operator), display name
-  scope, workspace (or none, if reading the default ref)
-  holds_lease: bool, on what subject
-  state: reading | working | waiting-on-you | idle | gone
-  current activity (one short line), last event at
-  ticket, if it is working one
-```
-
-Exposed one way for everyone: `GET /directory?scope=&workspace=`, plus the same
-payload pushed over the existing events stream so the UI never polls. An agent reads
-it with the same query the UI uses. There is no second, agent-only channel, because
-two channels is how the two surfaces drift apart.
-
-### 14.3 Coordination between agents, and what we deliberately are not building
-
-With a directory and a lease, coordination needs very little on top:
-
-- **Queue / steer / preempt** (§6) are how a session acts on a *busy* resource.
-- **Ask** — a session poses a question to another session (or to the operator)
-  through the ticket, which is already the escalation primitive. Not a new channel.
-- **Yield** — a holder voluntarily releases, committing first (§7).
-
-The operator, **and any chat acting on the operator's behalf**, may always take
-precedence: preempt, redirect, or reassign, at any moment, without justifying it to
-the system. An agent may never preempt another agent; it queues or asks.
-
-**Rejected deliberately: bidding and voting.** Contract Net, auctions and consensus
-protocols (§11.8) are the standard answers to task allocation among *self-interested
-peers with no shared principal*. That is not this system. There is one principal, one
-queue, and a scheduler that already decides readiness. Adding negotiation would buy
-nothing and would add a failure mode (deadlock, thrash) that a lease plus a queue
-does not have. The coordination substrate here is the shared directory plus the
-lease, which is the blackboard pattern, and that is sufficient.
-
-## 15. Code design
-
-Modules, each with one job:
-
-- **`services/leases.py`** — the mechanism. `acquire`, `renew`, `release`,
-  `preempt`, `status`, `expired()`. Durable. No knowledge of tickets or trees.
-- **`services/presence.py`** — ephemeral session state, TTL-expired, in memory and
-  broadcast. Never touches the database.
-- **`services/workspaces.py`** — the workspace record and lifecycle (open, provision,
-  merge, reap), absorbing the branch lifecycle that lives in `worktrees.py` today.
-- **`services/directory.py`** — the read-time join. Pure function of the three above.
-- **`services/tasks.py`** — loses its lease columns and calls `leases` instead.
-
-Routes, following the existing REST shape:
-
-```
-GET    /workspaces                    list, filterable by app and scope
-POST   /workspaces                    open one (allocates + provisions)
-GET    /workspaces/{id}               detail incl. holder and timeline
-POST   /workspaces/{id}/lease         acquire | renew | release | preempt
-DELETE /workspaces/{id}               discard (reap)
-GET    /directory                     the session index (§14.2)
-```
-
-Two invariants worth pinning with tests, because both are the kind that rot
-silently: a lease write is refused when the presented generation is stale, and the
-directory never writes.
-
-## 16. UI design
-
-To the Workshop Design System: kit primitives, tokens, lucide icons, the five status
-kinds, no new bespoke chat rules.
-
-- **Ref pill** (chat toolbar and app header). Shows the workspace name and, when
-  someone else holds the lease, their avatar. Tap opens the workspace menu: the
-  default ref first, then this app's workspaces with holder and status. This is
-  where you see and change what you are looking at, which answers "give option or
-  insight as to which project or workspace we are in", without a modal on chat
-  start.
-- **Directory sheet.** Who is working where, across the scope. It reuses the Tickets
-  panel's sheet host, which is the same component
-  [`one-fact-one-place-2026-08-22.md`](one-fact-one-place-2026-08-22.md) §6 step 6
-  already says should be the *only* host at every width. The two efforts converge on
-  one surface rather than adding a second panel.
-- **Lease card, in the log.** When your chat wants to write and someone holds the
-  lease, a card appears under the message that caused it (the rule `ApprovalBlock`
-  and `TicketDecision` already follow) with the three verbs as buttons: **Add to the
-  queue**, **Send it now** (steer), **Take over**. Take over is `danger` and goes
-  through `ConfirmDialog`, naming what will be stopped.
-- **Workspace timeline.** Lease acquired, steered, preempted, committed `<sha>`,
-  merged. Linked from the pill. This is the record that is not buried prose (§7).
-- **Status kinds:** `ok` free or held by you, `running` someone is working,
-  `warn` holder idle or your view is stale, `danger` preempted or conflicted,
-  `stopped` expired or reaped.
-
-Copy rule, per the design system: the card says what will happen, not what the state
-is called. "Take over: stops the run in progress after it saves its work" beats
-"Preempt lease".
-
-## 17. The plan, both tracks, sequenced
-
-Two efforts land on the same surfaces, so they are sequenced together rather than as
-two lists. Nothing here is filed; this round is planning only.
-
-**Track A, the chat work surface** (from
-[`one-fact-one-place-2026-08-22.md`](one-fact-one-place-2026-08-22.md) §6; steps 1
-and 2 already shipped).
-
-- A1. Read "needs you" from tickets, delete `run_inbox.sync`, the task-derived inbox
-  path, and reconcile-on-read. Fixes the "operator asks" attribution for free.
-- A2. Retire the 744 dead run notifications and decide whether `notify` survives.
-- A3. One host for the panel: delete the popover, sheet at every width, width
-  following the chat column.
-
-**Track B, workspaces and ownership** (this doc).
-
-- B1. Extract `leases` and delete the ticket's `claim_*` columns and their shell
-  plumbing (§13). Behaviour-preserving for the queue, provable by existing tests.
-- B2. Workspace record and lifecycle; `worktrees.py` becomes its git plumbing.
-- B3. Presence and the directory (§14), read-only, over the existing events stream.
-- B4. Show the holder: the ref pill and the directory sheet, on A3's single host.
-- B5. Queue and steer (§6), reusing the mid-turn join a chat message already uses.
-- B6. Preempt with commit-on-yield and the workspace timeline (§7).
-- B7. Chat defaults: inherit, read-only until first write, join-or-create (§8).
-- B8. Staleness for readers, and drift-from-base (§9, §10).
-
-**Ordering constraint.** A3 before B4, because B4 renders into the host A3 leaves
-behind; building B4 first would put the directory in the popover that A3 deletes.
-Everything else in the two tracks is independent.
-
-**What is already shipped and should not be rebuilt:** provisioning
-(`provision_worktree`, commits 4ca1b7b and caf7ced), the local merge path
-(`publish_or_park`, ticket C3), merged-workspace reaping (`gc.reap_merged_worktrees`),
-port allocation (`port_registry`), and the post-commit hook's refusal to build from a
-linked worktree.
+**Kept because the review confirmed them:** the three nouns and the disposable
+session; queue/steer/preempt with no priority scalar; steer rather than preempt as
+the answer to urgency; a SHA rather than a log entry as the record; refusing to
+arbitrate between two of one person's chats; rejecting Contract Net and voting with
+the reason stated; and the reader-staleness observation.
