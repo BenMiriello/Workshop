@@ -13,36 +13,36 @@ def store(monkeypatch, tmp_path):
 
 
 def test_default_is_reactive_and_fail_closed(store):
-    root = "/some/scope"
-    assert store.get_mode(root) == "reactive"
-    assert store.is_armed(root) is False
-    assert store.stage_ceiling(root) is None
+    scope = "project:some-scope"
+    assert store.get_mode(scope) == "reactive"
+    assert store.is_armed(scope) is False
+    assert store.stage_ceiling(scope) is None
 
 
 def test_set_and_read_modes(store):
-    root = "/some/scope"
-    assert store.set_mode(root, "supervised") == "supervised"
-    assert store.get_mode(root) == "supervised"
-    assert store.is_armed(root) is True
-    assert store.stage_ceiling(root) == "in_review"
+    scope = "project:some-scope"
+    assert store.set_mode(scope, "supervised") == "supervised"
+    assert store.get_mode(scope) == "supervised"
+    assert store.is_armed(scope) is True
+    assert store.stage_ceiling(scope) == "in_review"
 
-    store.set_mode(root, "autonomous")
-    assert store.stage_ceiling(root) == "done"
+    store.set_mode(scope, "autonomous")
+    assert store.stage_ceiling(scope) == "done"
 
 
 def test_reactive_is_stored_as_absence(store):
-    root = "/some/scope"
-    store.set_mode(root, "supervised")
-    store.set_mode(root, "reactive")  # back to default
+    scope = "project:some-scope"
+    store.set_mode(scope, "supervised")
+    store.set_mode(scope, "reactive")  # back to default
     # The default is represented by absence, so the file does not accumulate keys
     # for scopes the operator has not deliberately armed.
     assert store._read() == {}
-    assert store.is_armed(root) is False
+    assert store.is_armed(scope) is False
 
 
 def test_unknown_mode_rejected(store):
     with pytest.raises(ValueError):
-        store.set_mode("/s", "yolo")
+        store.set_mode("project:s", "yolo")
 
 
 def test_unattended_is_gated_by_scope_mode(monkeypatch, tmp_path):
@@ -57,12 +57,12 @@ def test_unattended_is_gated_by_scope_mode(monkeypatch, tmp_path):
     monkeypatch.setattr(tasks, "_load", lambda root: [])
 
     # reactive (default): returns None and never reaches reconcile/_load.
-    monkeypatch.setattr(scope_execution, "is_armed", lambda root: False)
+    monkeypatch.setattr(scope_execution, "is_armed_root", lambda root: False)
     assert tasks.next_ready(tmp_path, unattended=True) is None
     assert reached["reconcile"] is False
 
     # armed: proceeds past the gate (reconcile runs); None only because no tasks.
-    monkeypatch.setattr(scope_execution, "is_armed", lambda root: True)
+    monkeypatch.setattr(scope_execution, "is_armed_root", lambda root: True)
     assert tasks.next_ready(tmp_path, unattended=True) is None
     assert reached["reconcile"] is True
 
@@ -77,7 +77,7 @@ def test_attended_path_is_never_gated(monkeypatch, tmp_path):
     monkeypatch.setattr(tasks, "reconcile", lambda root: reached.__setitem__("reconcile", True))
     monkeypatch.setattr(tasks, "reclaim", lambda root: None)
     monkeypatch.setattr(tasks, "_load", lambda root: [])
-    monkeypatch.setattr(scope_execution, "is_armed", lambda root: False)  # reactive
+    monkeypatch.setattr(scope_execution, "is_armed_root", lambda root: False)  # reactive
 
     assert tasks.next_ready(tmp_path, unattended=False) is None
     assert reached["reconcile"] is True  # the human path was not short-circuited

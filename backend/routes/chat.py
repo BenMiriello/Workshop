@@ -1319,7 +1319,7 @@ async def spawn_task(thread_id: str, body: SpawnTask):
     if _filed_id and result.get("decision") not in ("exact", "merge"):
         try:
             from services import scope_execution
-            if scope_execution.is_armed(root) and (result.get("task") or {}).get("execution") is None:
+            if scope_execution.is_armed_root(root) and (result.get("task") or {}).get("execution") is None:
                 tasks.update(root, _filed_id, execution="code")
                 result["task"]["execution"] = "code"
         except Exception:

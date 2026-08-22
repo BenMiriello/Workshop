@@ -23,22 +23,49 @@ def store(tmp_path, monkeypatch):
     work_driver._failed_at.clear()
 
 
-def test_armed_roots_is_empty_by_default(store):
+def test_armed_set_is_empty_by_default(store):
     """Fail-closed: absent file => nothing armed => the driver starts nothing."""
+    assert scope_execution.armed_scopes() == []
     assert scope_execution.armed_roots() == []
 
 
-def test_armed_roots_reports_mode_and_drops_disarmed(store, tmp_path):
-    a, b = tmp_path / "a", tmp_path / "b"
-    a.mkdir(); b.mkdir()
-    scope_execution.set_mode(a, "supervised")
-    scope_execution.set_mode(b, "autonomous")
-    assert dict(scope_execution.armed_roots()) == {
-        os.path.realpath(a): "supervised",
-        os.path.realpath(b): "autonomous",
+def test_armed_scopes_reports_mode_and_drops_disarmed(store):
+    scope_execution.set_mode("project:a", "supervised")
+    scope_execution.set_mode("project:b", "autonomous")
+    assert dict(scope_execution.armed_scopes()) == {
+        "project:a": "supervised", "project:b": "autonomous",
     }
-    scope_execution.set_mode(a, "reactive")
-    assert dict(scope_execution.armed_roots()) == {os.path.realpath(b): "autonomous"}
+    scope_execution.set_mode("project:a", "reactive")
+    assert dict(scope_execution.armed_scopes()) == {"project:b": "autonomous"}
+
+
+def test_armed_roots_resolves_each_scope_in_THIS_namespace(store, tmp_path, monkeypatch):
+    """THE BUG THIS REPLACES. The intent used to be keyed by the scope's root
+    path, but a confined chat turn sees its scope root at the mountpoint
+    (/workspace) while the backend sees the real location. Arming `development`
+    from a turn wrote "/workspace", and the runner the backend then started for
+    it logged `project not found or no dir: /workspace`. The scope name is the
+    stable identity; the root is resolved per namespace, here."""
+    from services import task_scope
+
+    here = tmp_path / "here"; here.mkdir()
+    monkeypatch.setattr(task_scope, "root_for_context",
+                        lambda k: here if k == "project:a" else None)
+    scope_execution.set_mode("project:a", "supervised")
+    scope_execution.set_mode("project:gone", "autonomous")
+
+    # project:gone does not resolve HERE, so it is skipped rather than guessed at.
+    assert scope_execution.armed_roots() == [(str(here), "supervised")]
+
+
+def test_a_legacy_path_key_is_folded_onto_its_scope(store, monkeypatch):
+    """The store on disk had "/workspace": the read-time migration maps it."""
+    from services import task_scope
+
+    monkeypatch.setattr(task_scope, "key_for_root",
+                        lambda r: "development" if str(r) == "/workspace" else None)
+    scope_execution._write({"/workspace": "supervised"})
+    assert scope_execution.armed_scopes() == [("development", "supervised")]
 
 
 def test_supervision_flag_follows_the_stage_ceiling():
@@ -51,8 +78,8 @@ def test_supervision_flag_follows_the_stage_ceiling():
 def test_reconcile_starts_a_runner_for_each_armed_scope(store, tmp_path, monkeypatch):
     a, b = tmp_path / "a", tmp_path / "b"
     a.mkdir(); b.mkdir()
-    scope_execution.set_mode(a, "supervised")
-    scope_execution.set_mode(b, "autonomous")
+    monkeypatch.setattr(scope_execution, "armed_roots",
+                        lambda: [(str(a), "supervised"), (str(b), "autonomous")])
 
     started: list[tuple[str, str]] = []
     monkeypatch.setattr(work_driver, "is_resident", lambda d: False)
@@ -72,7 +99,7 @@ def test_reconcile_starts_a_runner_for_each_armed_scope(store, tmp_path, monkeyp
 def test_reconcile_is_idempotent_when_the_runner_is_already_resident(store, tmp_path,
                                                                     monkeypatch):
     a = tmp_path / "a"; a.mkdir()
-    scope_execution.set_mode(a, "supervised")
+    monkeypatch.setattr(scope_execution, "armed_roots", lambda: [(str(a), "supervised")])
     calls: list[str] = []
     monkeypatch.setattr(work_driver, "is_resident", lambda d: True)
     monkeypatch.setattr(work_driver, "ensure",
@@ -89,7 +116,7 @@ def test_the_global_brake_stops_the_driver_starting_anything(store, tmp_path,
     queue_runner.sh re-reads the brake each iteration and idles, so releasing it
     must not require a restart."""
     a = tmp_path / "a"; a.mkdir()
-    scope_execution.set_mode(a, "supervised")
+    monkeypatch.setattr(scope_execution, "armed_roots", lambda: [(str(a), "supervised")])
     calls: list[str] = []
     monkeypatch.setattr(work_driver, "is_resident", lambda d: False)
     monkeypatch.setattr(work_driver, "ensure",

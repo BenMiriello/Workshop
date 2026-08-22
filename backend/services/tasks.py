@@ -1876,7 +1876,7 @@ def next_ready(root: Path, *, assignee: str | None = None,
     # human, only the background sweep. Composes under the global override.
     if unattended:
         from services import scope_execution
-        if not scope_execution.is_armed(root):
+        if not scope_execution.is_armed_root(root):
             return None
     reconcile(root)
     reclaim(root)

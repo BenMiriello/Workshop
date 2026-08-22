@@ -315,9 +315,17 @@ async def queue_runner_start(body: RunnerStart):
     # An already-`autonomous` scope is NOT downgraded: pressing Start on a scope
     # the operator has taken all the way to run-to-done should not quietly move
     # the stage ceiling back to in_review.
-    if not scope_execution.is_armed(target):
-        scope_execution.set_mode(target, "supervised")
-    mode = scope_execution.get_mode(target)
+    # The target is a DIRECTORY here (the UI names a tree), and the intent is
+    # keyed by scope, so map it. A tree that is not a known scope can still be
+    # swept on demand; it just has no intent to record, and the reconciler will
+    # not keep it alive.
+    scope = task_scope.key_for_root(target)
+    if scope:
+        if not scope_execution.is_armed(scope):
+            scope_execution.set_mode(scope, "supervised")
+        mode = scope_execution.get_mode(scope)
+    else:
+        mode = "supervised"
     await asyncio.to_thread(work_driver.ensure, target, mode)
     return _queue_runner_state(target)
 
@@ -352,7 +360,9 @@ async def queue_runner_stop(dir: str | None = None):
     # that lies. Clearing the intent is the stop; the SIGTERM is how it takes
     # effect now rather than at the end of the current sweep.
     target = os.path.realpath(dir.strip())
-    scope_execution.set_mode(target, "reactive")
+    scope = task_scope.key_for_root(target)
+    if scope:
+        scope_execution.set_mode(scope, "reactive")
     await asyncio.to_thread(work_driver.stop, target)
     await asyncio.sleep(1.5)
     return _queue_runner_state(target)
@@ -394,12 +404,16 @@ def _scope_root(scope_key: str):
 @router.get("/agents/autonomy/scope-execution")
 async def get_scope_execution(scope: str):
     """The execution mode for one scope: does its filed work auto-run, how far."""
-    root = _scope_root(scope)
+    # `_scope_root` still runs: it is the validation that the scope EXISTS (and
+    # the developer-mode gate), and a mode reported for a scope that resolves to
+    # nothing would be a setting for nowhere. The mode itself is keyed by the
+    # scope, not the path -- see services/scope_execution.
+    _scope_root(scope)
     return {
         "scope": scope,
-        "mode": scope_execution.get_mode(root),
-        "armed": scope_execution.is_armed(root),
-        "ceiling": scope_execution.stage_ceiling(root),
+        "mode": scope_execution.get_mode(scope),
+        "armed": scope_execution.is_armed(scope),
+        "ceiling": scope_execution.stage_ceiling(scope),
         "global_override_engaged": autonomy_override.is_engaged(),
     }
 
@@ -410,7 +424,7 @@ async def set_scope_execution(body: ScopeExecutionMode):
         raise HTTPException(status_code=422,
                             detail=f"mode must be one of {scope_execution.MODES}")
     root = _scope_root(body.scope)
-    mode = scope_execution.set_mode(root, body.mode)
+    mode = scope_execution.set_mode(body.scope, body.mode)
     # ACT ON IT NOW. Arming a scope used to be a pure store write, so the setting
     # the operator flipped in the chat's Work settings did precisely nothing
     # until something else happened to start a runner for that tree. The work
@@ -418,7 +432,7 @@ async def set_scope_execution(body: ScopeExecutionMode):
     # response already reflects a running loop, and disarming stops immediately
     # instead of at the end of the current sweep.
     try:
-        if scope_execution.is_armed(root):
+        if scope_execution.is_armed(body.scope):
             await asyncio.to_thread(work_driver.ensure, root, mode)
         else:
             await asyncio.to_thread(work_driver.stop, root)
@@ -430,6 +444,6 @@ async def set_scope_execution(body: ScopeExecutionMode):
     return {
         "scope": body.scope,
         "mode": mode,
-        "armed": scope_execution.is_armed(root),
-        "ceiling": scope_execution.stage_ceiling(root),
+        "armed": scope_execution.is_armed(body.scope),
+        "ceiling": scope_execution.stage_ceiling(body.scope),
     }

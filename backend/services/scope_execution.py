@@ -20,11 +20,20 @@ Modes (the ratified autonomy enum, ADR 0008):
               final gate before done.
   autonomous  filed executable work auto-runs to done.
 
-Keyed by the scope's ROOT path (the tree the sweep works on), because that is what
-next_ready() and the sweep already hold; the API/UI translate a scope key to its
-root when they set it. The store is a single JSON under .runtime, the same shape
-and home as autonomy_override, so a fresh deploy is fail-closed (absent file =>
-every scope reactive) with nothing to migrate.
+Keyed by the SCOPE (development, project:<slug>, agent:<slug>), not by the
+scope's root path. The root is only how a scope renders in one namespace: a
+confined chat turn sees its scope root at the mountpoint (/workspace) while the
+backend sees it at its real location, so a path key written from inside a turn
+was unresolvable outside it. Measured 2026-08-22: arming `development` from a
+chat turn stored "/workspace", and the runner the backend then started for it
+logged `project not found or no dir: /workspace`. A scope is the logical thing
+and every namespace agrees on its name; `is_armed_root` and `armed_roots` do the
+translation, in whichever namespace is asking. Legacy path keys are folded on
+read (see _migrate_paths).
+
+The store is a single JSON under .runtime, the same shape and home as
+autonomy_override, so a fresh deploy is fail-closed (absent file => every scope
+reactive).
 """
 from __future__ import annotations
 
@@ -49,16 +58,42 @@ def _store_path() -> Path:
     return root / ".runtime" / "scope-execution.json"
 
 
-def _key(root: str | Path) -> str:
-    return os.path.realpath(str(root))
-
-
 def _read() -> dict[str, Any]:
     p = _store_path()
     try:
-        return json.loads(p.read_text())
+        data = json.loads(p.read_text())
     except (FileNotFoundError, ValueError):
         return {}
+    return _migrate_paths(data) if any(k.startswith("/") for k in data) else data
+
+
+def _migrate_paths(data: dict[str, Any]) -> dict[str, Any]:
+    """Fold legacy PATH keys onto scope keys.
+
+    The store used to be keyed by the scope's root path. That is not a stable
+    identity: a confined turn sees its scope root at the mountpoint (/workspace)
+    while the backend sees it at its real location, so a scope armed from inside
+    a chat turn wrote a key the backend could not resolve, and the runner it
+    started was handed a directory that does not exist in its own namespace.
+    Measured 2026-08-22: `project_ralph: project not found or no dir: /workspace`.
+
+    Read-time only, and it drops a path that no longer maps to a scope rather
+    than guessing.
+    """
+    from services import task_scope
+
+    out: dict[str, Any] = {}
+    for k, v in data.items():
+        if not k.startswith("/"):
+            out[k] = v
+            continue
+        try:
+            key = task_scope.key_for_root(k)
+        except Exception:
+            key = None
+        if key:
+            out.setdefault(key, v)
+    return out
 
 
 def _write(data: dict[str, Any]) -> None:
@@ -69,43 +104,81 @@ def _write(data: dict[str, Any]) -> None:
     os.replace(tmp, p)  # atomic
 
 
-def get_mode(root: str | Path) -> str:
+def _scope_of(root: str | Path) -> str | None:
+    """Which scope this task store belongs to, resolved in THIS namespace."""
+    from services import task_scope
+
+    try:
+        return task_scope.key_for_root(str(root))
+    except Exception:
+        return None
+
+
+def get_mode(scope: str) -> str:
     """The scope's execution mode, DEFAULT reactive (fail-closed) when unset."""
-    mode = _read().get(_key(root))
+    mode = _read().get(scope)
     return mode if mode in MODES else DEFAULT_MODE
 
 
-def set_mode(root: str | Path, mode: str) -> str:
+def set_mode(scope: str, mode: str) -> str:
     if mode not in MODES:
         raise ValueError(f"unknown execution mode {mode!r}; one of {MODES}")
     data = _read()
     if mode == DEFAULT_MODE:
         # Storing the default is noise: absence already means reactive. Drop the
         # key so the file stays a list of scopes the operator deliberately armed.
-        data.pop(_key(root), None)
+        data.pop(scope, None)
     else:
-        data[_key(root)] = mode
+        data[scope] = mode
     _write(data)
     return mode
 
 
-def is_armed(root: str | Path) -> bool:
+def is_armed(scope: str) -> bool:
     """True when this scope's ready work may be auto-executed at all."""
-    return get_mode(root) != "reactive"
+    return get_mode(scope) != "reactive"
 
 
-def stage_ceiling(root: str | Path) -> str | None:
+def is_armed_root(root: str | Path) -> bool:
+    """The same question asked by a caller holding a task-store ROOT rather than
+    a scope key (next_ready and the chat filing path both do). The root is
+    mapped to its scope in the CURRENT namespace, which is what makes the answer
+    the same inside a confined turn and outside it."""
+    scope = _scope_of(root)
+    return bool(scope) and is_armed(scope)
+
+
+def stage_ceiling(scope: str) -> str | None:
     """How far auto-execution may advance: in_review (supervised) or done
     (autonomous). None when reactive. The driver reads this to know where to stop."""
-    return _CEILING[get_mode(root)]
+    return _CEILING[get_mode(scope)]
+
+
+def armed_scopes() -> list[tuple[str, str]]:
+    """Every scope the operator has deliberately armed, as (scope, mode) pairs.
+
+    The store only ever holds non-default entries (set_mode drops a key set back
+    to reactive), so this is exactly the armed set with no filtering needed.
+    """
+    return [(k, v) for k, v in sorted(_read().items())
+            if v in MODES and v != DEFAULT_MODE]
 
 
 def armed_roots() -> list[tuple[str, str]]:
-    """Every scope the operator has deliberately armed, as (root, mode) pairs.
+    """The armed set as (root, mode), each root resolved in THIS namespace.
 
-    The store only ever holds non-default entries (set_mode drops a key set back
-    to reactive), so this is exactly the armed set with no filtering needed. It
-    is what the work driver reconciles the resident runners against.
+    A scope that does not resolve here is skipped rather than guessed at: that
+    is how the work driver avoids starting a runner against a directory the
+    backend cannot see.
     """
-    return [(root, mode) for root, mode in sorted(_read().items()) if mode in MODES
-            and mode != DEFAULT_MODE]
+    from services import task_scope
+
+    out: list[tuple[str, str]] = []
+    for scope, mode in armed_scopes():
+        try:
+            root = task_scope.root_for_context(scope)
+        except Exception:
+            root = None
+        if root is not None:
+            out.append((str(root), mode))
+    return out
