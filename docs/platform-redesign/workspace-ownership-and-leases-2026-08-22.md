@@ -101,27 +101,24 @@ branch, the work) are attached to the workspace and the ticket, and the chat is 
 view. This is also why a workspace is **not** created per chat: it is created per
 unit of work.
 
-## 4. One lease, one writer, two admissions
+## 4. One lease, one writer, one typed subject
 
 **At most one session may write to a workspace at a time.** Everyone else is a
 reader. This is single-writer, the same answer every collaborative system reaches
-(§11.2), and the operator's instinct that one agent should be doing the actual work
-is correct.
+(§11.2), and the instinct that one agent should be doing the actual work is correct.
 
-There are two distinct admissions and they must not be merged:
+There is **one lease record**, and it names what it protects:
 
-- The **ticket claim** (exists) answers *may I take on this work* and stops two
-  sweeps working one ticket.
-- The **workspace lease** (new) answers *may I write to this tree* and stops two
+- On a **workspace**, it answers *may I write to this tree* and stops two
   participants corrupting one checkout.
+- On a **ticket**, it answers *may I take on this work* and stops two sweeps
+  working the same item. This is only needed for work that touches no tree
+  (`execution: judgement | external`); a code ticket is worked *in* a workspace, so
+  holding that workspace's lease is already the admission.
 
-They are different resources and can legitimately be held by different parties: an
-operator can hold the tree while a worker still holds the ticket. But they must be
-**one mechanism with two subjects**, not two implementations. So the concrete build
-is: extract the lease machinery already inside `tasks.py` into a `leases` module
-(holder, fencing generation, TTL, heartbeat, stale detection, reclaim), and make the
-ticket claim its first caller and the workspace lease its second. Mechanism count
-goes from one-buried-in-tasks to one-shared. It is a refactor, not an addition.
+That collapse matters: the ticket store's existing `claim_*` fields are today a
+second, separate implementation of a lease, and they are removed rather than kept
+alongside (§13). The word "claim" retires with them (§12).
 
 ## 5. Liveness: answering "is it still working?" mechanically
 
@@ -317,17 +314,264 @@ shape.
 - kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/
 - docs.github.com Actions concurrency ; starsling.dev/best-practices/github-actions/cancel-superseded-runs
 
-## 12. Build sequence, if this is accepted
+### 11.6 Ephemeral presence (awareness protocols)
+Yjs's awareness protocol is the reference design for presence that is deliberately
+NOT part of the persisted document: a separate ephemeral channel carrying who is
+online and what they are pointing at, re-broadcast on an interval (~15s), with any
+entry not refreshed inside a window (~30s) marked offline and dropped locally. The
+transferable rule is the lifetime split, not the CRDT: observations expire, decisions
+persist.
+- docs.yjs.dev/api/about-awareness ; docs.yjs.dev/getting-started/adding-awareness
 
-Ordered so each stage is usable alone. Not filed: the model wants review first.
+### 11.7 Agent directories and capability cards
+The agent-interop ecosystem converged on a small published card per agent (identity,
+capabilities, endpoint, auth) plus a registry other agents query at runtime, rather
+than hardcoded knowledge of peers: A2A's Agent Card and its discovery/registry model,
+which reached v1.0 under the Linux Foundation in 2026. We borrow the SHAPE (a small
+queryable card per participant, one index, discovered rather than configured) and not
+the protocol, since this is one system with one principal rather than a cross-vendor
+market.
+- a2a-protocol.org/latest/topics/agent-discovery/ ; tyk.io/learning-center/a2a-protocol-architecture-and-technical-specification/
 
-1. **Extract `leases`** from `tasks.py` and make the ticket claim its first caller.
-   Pure refactor, no behaviour change, provable by the existing tests.
-2. **Workspace record + lease** (§4) with the three liveness states (§5).
-3. **Show the holder** (§10) on the ref pill. Read-only, and it is what makes every
-   later stage debuggable.
-4. **Queue and steer** (§6), reusing the mid-turn join that chat messages already
-   use, plus the ticket note path.
-5. **Preempt with commit-on-yield** (§7) and the workspace timeline.
-6. **Chat defaults** (§8): inherit, read-only until first write, join-or-create.
-7. **Staleness signals** (§9) for readers, and drift-from-base (§10).
+### 11.8 Coordination models we did not take
+Contract Net (announce, bid, award), auctions, and consensus/voting protocols are the
+classic answers to allocating work among self-interested peers, and blackboard
+architectures are the classic answer to shared-state collaboration. With one
+principal, one queue and an existing readiness scheduler, the negotiation family buys
+nothing and adds deadlock and thrash modes; the blackboard half (a shared, queryable
+state everyone reads and writes) is what §14 actually implements.
+- sce.carleton.ca/faculty/weiss/papers/1992/weiss-seke-1992.pdf (hierarchical blackboard)
+- gki.informatik.uni-freiburg.de/teaching/ss14/multiagent-systems/mas07-handout4.pdf (coordination methods)
+
+## 12. Vocabulary: one word per concept
+
+Recorded first because the last redesign's worst failures were two words for one
+thing and one word for two things. Nothing here overloads **ticket**, which keeps
+its existing and only meaning.
+
+- **Ticket** — a unit of work. Unchanged. Not reused for anything below.
+- **Workspace** — a working tree at a branch. The user-facing name for what git
+  calls a worktree; "worktree" stays the implementation word and does not appear in
+  the UI, exactly as `scope` already does not.
+- **Session** — one live participant: a chat, or an agent run. Cheap, disposable.
+- **Lease** — the durable, exclusive right to write to a resource. Held by a session.
+- **Presence** — the ephemeral fact that a session is here and what it is doing.
+  Deliberately a different word from lease, because they have opposite lifetimes
+  (§14).
+- **Directory** — the queryable index of sessions, their presence, and who holds
+  what. A view, never a store (§14.2).
+
+"Claim" is retired. It was the ticket store's word for a lease and having both is
+the two-words-one-concept failure. See §13.
+
+## 13. Replace the existing implementation, do not wrap it
+
+Operator direction, 2026-08-22: adapt the old mechanism to whatever we design now,
+and do not leave the old implementation in place. No deprecation window, no
+compatibility shim.
+
+**Ground truth first, because "nobody is using it yet" is not quite right.** The
+ticket lease *is* live: `project_ralph.sh:918` reads `claim_token` and passes it to
+`ralph.sh`, which heartbeats the lease from inside its loop. So this is a refactor
+of a running mechanism rather than a greenfield write. It is still entirely
+internal (no external consumer, no stored format anyone else reads), so it can be
+replaced outright rather than versioned.
+
+**The consolidation.** A lease has a *subject*. Today the subject is implicit and
+the fields live on the ticket row (`claim_token`, `lease_until`, `last_heartbeat`,
+`claim_pid`). Instead:
+
+```
+lease
+  subject_kind   enum(workspace, ticket)
+  subject_id     uuid
+  holder_kind    enum(chat, run, operator)
+  holder_id      uuid
+  generation     int          -- monotonic fencing token, bumped on every (re)acquire
+  expires_at     timestamptz  -- renewed by heartbeat
+  acquired_at, last_renewed_at
+```
+
+One record, one module, one set of verbs, two subjects. A **code** ticket is worked
+*in* a workspace, so taking the workspace lease is what admits a worker to the
+ticket, and two sweeps cannot pick the same ticket because they cannot both hold its
+workspace. A **judgement** or **external** ticket touches no tree, so it takes a
+ticket-subject lease and no workspace exists. That is why the subject is typed
+rather than the model pretending everything is a tree.
+
+**What is deleted, not deprecated:** the four `claim_*` / `lease_*` columns on the
+ticket record and their normalization; `tasks.claim()` and `tasks.heartbeat()` as
+independent implementations; `_is_stale_claim`'s pid fast path (§2); and the
+`--expect-claim-token` plumbing threaded through the shell, which becomes a
+generation on the lease. `reclaim()` survives as a policy (what to do with work
+whose lease expired: retry under the cap, park at it) but stops owning the
+mechanism.
+
+**What is kept because it is right:** the fencing generation, TTL plus heartbeat
+renewal, expiry without negotiation, and the rule that an operator write bumps the
+generation so the displaced holder is fenced rather than the operator blocked.
+
+## 14. Everyone can see everyone: presence, and the directory
+
+Operator requirement: every chat, agent, and anything else that needs to know must
+be able to see or query the others' state and who is current.
+
+### 14.1 Presence is ephemeral and must never become a store
+
+The single most important constraint here comes from this system's own scar. The
+previous effort measured **753 open inbox rows, 746 of them notifications nobody had
+ever read**, because a derived fact was written into a durable store and then needed
+reconciling on every read
+([`one-fact-one-place-2026-08-22.md`](one-fact-one-place-2026-08-22.md) §2). A
+presence table would be that mistake again, with a faster clock.
+
+So presence follows the awareness-protocol shape (§11.6): a **separate ephemeral
+channel**, state re-broadcast on an interval, entries not refreshed within a window
+marked gone and dropped. It is never persisted, never migrated, and losing it costs
+nothing because it is re-derived within one interval.
+
+The division of labour, and it is the whole design:
+
+- **Lease is durable** because it is a *decision*: someone was granted the right to
+  write. It must survive a restart or two writers appear.
+- **Presence is ephemeral** because it is an *observation*: someone is here right
+  now. Persisting an observation is how you get a store full of stale facts.
+
+### 14.2 The directory is a view, not a table
+
+The queryable index is a **join at read time** over live sessions (presence), leases
+(durable), and the tickets and workspaces they point at. It stores nothing of its
+own. Each entry is a small card, which is the shape agent ecosystems converged on
+for exactly this problem (§11.7):
+
+```
+session card
+  id, kind (chat | run | operator), display name
+  scope, workspace (or none, if reading the default ref)
+  holds_lease: bool, on what subject
+  state: reading | working | waiting-on-you | idle | gone
+  current activity (one short line), last event at
+  ticket, if it is working one
+```
+
+Exposed one way for everyone: `GET /directory?scope=&workspace=`, plus the same
+payload pushed over the existing events stream so the UI never polls. An agent reads
+it with the same query the UI uses. There is no second, agent-only channel, because
+two channels is how the two surfaces drift apart.
+
+### 14.3 Coordination between agents, and what we deliberately are not building
+
+With a directory and a lease, coordination needs very little on top:
+
+- **Queue / steer / preempt** (§6) are how a session acts on a *busy* resource.
+- **Ask** — a session poses a question to another session (or to the operator)
+  through the ticket, which is already the escalation primitive. Not a new channel.
+- **Yield** — a holder voluntarily releases, committing first (§7).
+
+The operator, **and any chat acting on the operator's behalf**, may always take
+precedence: preempt, redirect, or reassign, at any moment, without justifying it to
+the system. An agent may never preempt another agent; it queues or asks.
+
+**Rejected deliberately: bidding and voting.** Contract Net, auctions and consensus
+protocols (§11.8) are the standard answers to task allocation among *self-interested
+peers with no shared principal*. That is not this system. There is one principal, one
+queue, and a scheduler that already decides readiness. Adding negotiation would buy
+nothing and would add a failure mode (deadlock, thrash) that a lease plus a queue
+does not have. The coordination substrate here is the shared directory plus the
+lease, which is the blackboard pattern, and that is sufficient.
+
+## 15. Code design
+
+Modules, each with one job:
+
+- **`services/leases.py`** — the mechanism. `acquire`, `renew`, `release`,
+  `preempt`, `status`, `expired()`. Durable. No knowledge of tickets or trees.
+- **`services/presence.py`** — ephemeral session state, TTL-expired, in memory and
+  broadcast. Never touches the database.
+- **`services/workspaces.py`** — the workspace record and lifecycle (open, provision,
+  merge, reap), absorbing the branch lifecycle that lives in `worktrees.py` today.
+- **`services/directory.py`** — the read-time join. Pure function of the three above.
+- **`services/tasks.py`** — loses its lease columns and calls `leases` instead.
+
+Routes, following the existing REST shape:
+
+```
+GET    /workspaces                    list, filterable by app and scope
+POST   /workspaces                    open one (allocates + provisions)
+GET    /workspaces/{id}               detail incl. holder and timeline
+POST   /workspaces/{id}/lease         acquire | renew | release | preempt
+DELETE /workspaces/{id}               discard (reap)
+GET    /directory                     the session index (§14.2)
+```
+
+Two invariants worth pinning with tests, because both are the kind that rot
+silently: a lease write is refused when the presented generation is stale, and the
+directory never writes.
+
+## 16. UI design
+
+To the Workshop Design System: kit primitives, tokens, lucide icons, the five status
+kinds, no new bespoke chat rules.
+
+- **Ref pill** (chat toolbar and app header). Shows the workspace name and, when
+  someone else holds the lease, their avatar. Tap opens the workspace menu: the
+  default ref first, then this app's workspaces with holder and status. This is
+  where you see and change what you are looking at, which answers "give option or
+  insight as to which project or workspace we are in", without a modal on chat
+  start.
+- **Directory sheet.** Who is working where, across the scope. It reuses the Tickets
+  panel's sheet host, which is the same component
+  [`one-fact-one-place-2026-08-22.md`](one-fact-one-place-2026-08-22.md) §6 step 6
+  already says should be the *only* host at every width. The two efforts converge on
+  one surface rather than adding a second panel.
+- **Lease card, in the log.** When your chat wants to write and someone holds the
+  lease, a card appears under the message that caused it (the rule `ApprovalBlock`
+  and `TicketDecision` already follow) with the three verbs as buttons: **Add to the
+  queue**, **Send it now** (steer), **Take over**. Take over is `danger` and goes
+  through `ConfirmDialog`, naming what will be stopped.
+- **Workspace timeline.** Lease acquired, steered, preempted, committed `<sha>`,
+  merged. Linked from the pill. This is the record that is not buried prose (§7).
+- **Status kinds:** `ok` free or held by you, `running` someone is working,
+  `warn` holder idle or your view is stale, `danger` preempted or conflicted,
+  `stopped` expired or reaped.
+
+Copy rule, per the design system: the card says what will happen, not what the state
+is called. "Take over: stops the run in progress after it saves its work" beats
+"Preempt lease".
+
+## 17. The plan, both tracks, sequenced
+
+Two efforts land on the same surfaces, so they are sequenced together rather than as
+two lists. Nothing here is filed; this round is planning only.
+
+**Track A, the chat work surface** (from
+[`one-fact-one-place-2026-08-22.md`](one-fact-one-place-2026-08-22.md) §6; steps 1
+and 2 already shipped).
+
+- A1. Read "needs you" from tickets, delete `run_inbox.sync`, the task-derived inbox
+  path, and reconcile-on-read. Fixes the "operator asks" attribution for free.
+- A2. Retire the 744 dead run notifications and decide whether `notify` survives.
+- A3. One host for the panel: delete the popover, sheet at every width, width
+  following the chat column.
+
+**Track B, workspaces and ownership** (this doc).
+
+- B1. Extract `leases` and delete the ticket's `claim_*` columns and their shell
+  plumbing (§13). Behaviour-preserving for the queue, provable by existing tests.
+- B2. Workspace record and lifecycle; `worktrees.py` becomes its git plumbing.
+- B3. Presence and the directory (§14), read-only, over the existing events stream.
+- B4. Show the holder: the ref pill and the directory sheet, on A3's single host.
+- B5. Queue and steer (§6), reusing the mid-turn join a chat message already uses.
+- B6. Preempt with commit-on-yield and the workspace timeline (§7).
+- B7. Chat defaults: inherit, read-only until first write, join-or-create (§8).
+- B8. Staleness for readers, and drift-from-base (§9, §10).
+
+**Ordering constraint.** A3 before B4, because B4 renders into the host A3 leaves
+behind; building B4 first would put the directory in the popover that A3 deletes.
+Everything else in the two tracks is independent.
+
+**What is already shipped and should not be rebuilt:** provisioning
+(`provision_worktree`, commits 4ca1b7b and caf7ced), the local merge path
+(`publish_or_park`, ticket C3), merged-workspace reaping (`gc.reap_merged_worktrees`),
+port allocation (`port_registry`), and the post-commit hook's refusal to build from a
+linked worktree.
