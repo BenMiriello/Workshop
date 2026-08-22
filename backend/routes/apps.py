@@ -45,6 +45,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from routes.agents import RosterAgent
+from routes.api_models import Job, Task
+from routes.deploys import Deploy
+from routes.knowledge import NoteSummary
 from services import app_files as app_files_svc
 from services import apps as apps_svc
 
@@ -115,23 +119,23 @@ class AppChatList(BaseModel):
 
 
 class AppTicketList(BaseModel):
-    tickets: list[dict[str, Any]]
+    tickets: list[Task]
 
 
 class AppNoteList(BaseModel):
-    notes: list[dict[str, Any]]
+    notes: list[NoteSummary]
 
 
 class AppRunList(BaseModel):
-    runs: list[dict[str, Any]]
+    runs: list[Job]
 
 
 class AppDeployList(BaseModel):
-    deploys: list[dict[str, Any]]
+    deploys: list[Deploy]
 
 
 class AppAgentList(BaseModel):
-    agents: list[dict[str, Any]]
+    agents: list[RosterAgent]
 
 
 class AppFileEntry(BaseModel):

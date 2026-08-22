@@ -8079,7 +8079,7 @@ export interface components {
         /** AppAgentList */
         AppAgentList: {
             /** Agents */
-            agents: Record<string, never>[];
+            agents: components["schemas"]["RosterAgent"][];
         };
         /** AppChat */
         AppChat: {
@@ -8140,7 +8140,7 @@ export interface components {
         /** AppDeployList */
         AppDeployList: {
             /** Deploys */
-            deploys: Record<string, never>[];
+            deploys: components["schemas"]["Deploy"][];
         };
         /** AppFileContent */
         AppFileContent: {
@@ -8279,7 +8279,7 @@ export interface components {
         /** AppNoteList */
         AppNoteList: {
             /** Notes */
-            notes: Record<string, never>[];
+            notes: components["schemas"]["NoteSummary"][];
         };
         /** AppPatchIn */
         AppPatchIn: {
@@ -8318,7 +8318,7 @@ export interface components {
         /** AppRunList */
         AppRunList: {
             /** Runs */
-            runs: Record<string, never>[];
+            runs: components["schemas"]["Job"][];
         };
         /**
          * AppRunManifest
@@ -8370,7 +8370,7 @@ export interface components {
         /** AppTicketList */
         AppTicketList: {
             /** Tickets */
-            tickets: Record<string, never>[];
+            tickets: components["schemas"]["Task"][];
         };
         /** AppUiIn */
         AppUiIn: {
