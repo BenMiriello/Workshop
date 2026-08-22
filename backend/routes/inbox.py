@@ -17,7 +17,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from services import inbox
+from routes.tasks_all import _require_root
+from services import inbox, task_decision, tasks
 
 log = logging.getLogger(__name__)
 # Bare prefix, NOT "/api/inbox". The edge proxy strips the leading `/api`
@@ -139,9 +140,6 @@ async def _answer_the_task(item: dict, *, answer: str | None, dismissed: bool) -
     # "release the block" — so the operator's "Approve" un-accepted committed
     # work, put it back in the queue and refunded an attempt (2026-08-22).
     # The status decides; nothing is assumed.
-    from routes.tasks_all import _require_root
-    from services import task_decision, tasks
-
     status = None
     try:
         found = tasks.get_task(_require_root(scope), task_id)
