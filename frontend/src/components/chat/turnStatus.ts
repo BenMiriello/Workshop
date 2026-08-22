@@ -25,6 +25,9 @@
 // phase and the word was unreachable. It said the thing the operator was owed
 // while apparently still saying it. The fold announces itself at the foot of the
 // log instead, for as long as it runs. See FoldingNote.
+import type { ChatSegment } from "../../lib/chat";
+import { isRunning } from "./grouping";
+
 export type TurnPhase = "working" | "reconnecting" | "detached" | "stopping";
 
 export const TURN_LABEL: Record<TurnPhase, string> = {
@@ -41,6 +44,70 @@ export const TURN_LABEL: Record<TurnPhase, string> = {
   // it's been clicked or what's happening."
   stopping: "Stopping",
 };
+
+// Maps a tool call name to a short active-verb phrase for the indicator.
+//
+// VERBS, NOT TOOL NAMES. The indicator is the live read on "what is happening
+// right now" — a verb phrase fits that register; a raw identifier ("Bash", "mcp__workshop__search")
+// fits the settled transcript. Unknown names fall back to the name itself so the
+// label is never blank, even for a tool added after this table was written.
+const TOOL_VERB: Record<string, string> = {
+  Read: "Reading",
+  Write: "Writing",
+  Edit: "Editing",
+  Bash: "Running",
+  Grep: "Searching",
+  Glob: "Scanning",
+  WebFetch: "Fetching",
+  WebSearch: "Searching",
+  Agent: "Delegating",
+  NotebookEdit: "Editing",
+  EnterPlanMode: "Planning",
+  ExitPlanMode: "Planning",
+  EnterWorktree: "Setting up",
+  ExitWorktree: "Wrapping up",
+  TaskCreate: "Tracking",
+  TaskUpdate: "Tracking",
+  TaskGet: "Tracking",
+  TaskList: "Tracking",
+  TaskStop: "Tracking",
+  TaskOutput: "Tracking",
+  CronCreate: "Scheduling",
+  CronDelete: "Scheduling",
+  CronList: "Scheduling",
+  RemoteTrigger: "Triggering",
+  PushNotification: "Notifying",
+  ScheduleWakeup: "Scheduling",
+  Monitor: "Monitoring",
+};
+
+function toolVerb(name: string): string {
+  if (TOOL_VERB[name]) return TOOL_VERB[name];
+  // mcp__server__function → capitalize the function part
+  if (name.startsWith("mcp__")) {
+    const parts = name.split("__");
+    const fn = parts[parts.length - 1].replace(/_/g, " ");
+    return fn.charAt(0).toUpperCase() + fn.slice(1);
+  }
+  return name;
+}
+
+/** What a live turn is doing right now, based on its current segments.
+ *
+ *  Scans backwards to find the most recently issued step that is still in
+ *  flight — a tool with `at` set but no result yet, or a subagent that has not
+ *  reported back. Falls back to "Working" when the model is thinking between
+ *  steps, which is the case where there is genuinely nothing more specific to
+ *  say. */
+export function currentActivity(segments: ChatSegment[]): string {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i];
+    if (seg.t === "tool" && isRunning(seg)) return toolVerb(seg.name);
+    if (seg.t === "agent" && !seg.done) return "Delegating";
+    if (seg.t === "approval" && seg.state === "pending") return "Waiting";
+  }
+  return "Working";
+}
 
 export function turnPhase(o: {
   // An SSE socket for this run is open here.
@@ -59,8 +126,16 @@ export function turnPhase(o: {
   return "working";
 }
 
-export function turnLabel(o: Parameters<typeof turnPhase>[0]): string {
-  return TURN_LABEL[turnPhase(o)];
+/** Label for the working indicator.
+ *
+ *  When the phase is "working" and segments are provided, uses `currentActivity`
+ *  to reflect what the turn is doing right now rather than the flat "Working".
+ *  Non-working phases (stopping, reconnecting, detached) always use their own
+ *  fixed label because those describe the CONNECTION state, not the work. */
+export function turnLabel(o: Parameters<typeof turnPhase>[0] & { segments?: ChatSegment[] }): string {
+  const phase = turnPhase(o);
+  if (phase === "working" && o.segments) return currentActivity(o.segments);
+  return TURN_LABEL[phase];
 }
 
 /** Seconds a run has been going, from the epoch ms it started.

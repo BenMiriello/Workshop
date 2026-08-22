@@ -872,6 +872,7 @@ export default function Chat({
     attached: stream.attached,
     reconnecting: stream.reconnecting,
     stopping,
+    segments: state.activeTurn?.segments,
   });
 
   // ---- Egress banner (build only) -----------------------------------------
