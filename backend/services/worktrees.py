@@ -13,6 +13,7 @@ The disk concept stays "worktree" (git's term); the URL path stays
 Public surface:
   create_branch(project_slug, branch_slug) -> dict
   allocate_task_worktree(project_slug, task_id) -> dict
+  provision_worktree(scope, owner) -> dict
   list_branches(project_slug) -> list[dict]
   merge_branch(project_slug, branch_slug, *, message="") -> dict
   discard_branch(project_slug, branch_slug) -> dict
@@ -24,6 +25,7 @@ Public surface:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -45,6 +47,21 @@ PROJECTS_REGISTRY = Path(os.environ.get(
 ))
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
+
+# Minimum free bytes on the worktree volume before provisioning is allowed.
+# Measured 2026-08-22: /workspace is 98% full with 50 GB free; each worktree
+# costs ~100 MB, so hundreds are affordable — but the floor refuses if space
+# has been exhausted by other means before we can measure the cost.
+MIN_FREE_BYTES: int = 2 * 1024 * 1024 * 1024  # 2 GiB
+
+# (lockfile path relative to project root, dep directory relative to project root)
+# Each dep dir is hardlink-cloned from the canonical project tree into the fresh
+# worktree; the lockfile hash keys the contract written beside it.
+_DEP_SPECS: list[tuple[str, str]] = [
+    ("package-lock.json", "node_modules"),
+    ("backend/requirements.txt", "backend/.venv"),
+    ("requirements.txt", ".venv"),
+]
 
 
 def _now() -> str:
@@ -568,3 +585,118 @@ def branch_dir(project_slug: str, branch_slug: str) -> Path:
     project_slug = _validate_slug(project_slug, "project_slug")
     branch_slug = _validate_slug(branch_slug, "branch_slug")
     return _branch_path(project_slug, branch_slug)
+
+
+# ---------------------------------------------------------------------------
+# Provisioning — §13.2 of branches-worktrees-and-environments-2026-08-20.md
+# ---------------------------------------------------------------------------
+
+def provision_worktree(scope: str, owner: str) -> dict:
+    """Allocate and provision an isolated worktree for a unit of work.
+
+    Given a scope (``project:<slug>`` or bare slug) and an owner id, creates
+    a git worktree via ``allocate_task_worktree`` then hardlink-clones each
+    dependency directory from the canonical project tree into the new worktree.
+    The clone is keyed by the hash of the lockfile that produced it; a
+    ``.dep-contract.json`` sibling records the read-only contract so any
+    reinstall path knows to ``rm -rf`` before writing, never writing into shared
+    inodes.
+
+    Raises ``ValueError`` with a clear message if free disk on the project
+    volume is below ``MIN_FREE_BYTES`` (2 GiB) before any work is done.
+
+    Returns the ``allocate_task_worktree`` dict extended with::
+
+        provisioned: list[str]  # dep dirs successfully cloned (relative paths)
+        skipped: list[str]      # dep dirs absent from canonical tree (not an error)
+    """
+    project_slug = _scope_to_project_slug(scope)
+    project_dir = _project_dir(project_slug)
+
+    free = _free_bytes(project_dir)
+    if free < MIN_FREE_BYTES:
+        raise ValueError(
+            f"preflight failed: {free / (1024 ** 3):.1f} GiB free on "
+            f"{project_dir} — need ≥{MIN_FREE_BYTES // (1024 ** 3)} GiB"
+        )
+
+    result = allocate_task_worktree(project_slug, owner)
+    worktree_dir = Path(result["dir"])
+
+    provisioned: list[str] = []
+    skipped: list[str] = []
+    for lockfile_rel, dep_rel in _DEP_SPECS:
+        src = project_dir / dep_rel
+        if not src.exists() or not src.is_dir():
+            skipped.append(dep_rel)
+            continue
+        lhash = _lockfile_hash(project_dir / lockfile_rel)
+        dst = worktree_dir / dep_rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        _hardlink_clone(src, dst)
+        _write_dep_contract(dst, lockfile_hash=lhash, cloned_from=str(src))
+        provisioned.append(dep_rel)
+
+    result["provisioned"] = provisioned
+    result["skipped"] = skipped
+    return result
+
+
+def _scope_to_project_slug(scope: str) -> str:
+    """``project:<slug>`` or bare slug → slug."""
+    if ":" in scope:
+        kind, _, slug = scope.partition(":")
+        if kind != "project":
+            raise ValueError(
+                f"provision_worktree only supports project scopes, got {scope!r}"
+            )
+        return slug
+    return scope
+
+
+def _free_bytes(path: Path) -> int:
+    """Available bytes on the volume containing *path*."""
+    st = os.statvfs(path)
+    return st.f_frsize * st.f_bavail
+
+
+def _lockfile_hash(lockfile: Path) -> str | None:
+    """First 16 hex chars of the SHA-256 of *lockfile*; None if absent."""
+    if not lockfile.exists():
+        return None
+    return hashlib.sha256(lockfile.read_bytes()).hexdigest()[:16]
+
+
+def _hardlink_clone(src: Path, dst: Path) -> None:
+    """``cp -al src dst`` — hardlink-clone *src* tree to *dst* (must not exist)."""
+    if dst.exists():
+        shutil.rmtree(dst)
+    r = subprocess.run(
+        ["cp", "-al", str(src), str(dst)],
+        capture_output=True, text=True, timeout=120,
+    )
+    if r.returncode != 0:
+        raise ValueError(
+            f"hardlink-clone failed ({src} → {dst}): "
+            f"{(r.stderr or r.stdout or '').strip()[:300]}"
+        )
+
+
+def _write_dep_contract(dep_dir: Path, *, lockfile_hash: str | None,
+                        cloned_from: str) -> None:
+    """Write ``<dep_dir>.dep-contract.json`` recording the read-only contract.
+
+    The contract states that this directory is a hardlink-clone whose inodes
+    are shared with *cloned_from*.  Any tool that needs to reinstall must
+    ``rm -rf`` the directory first so it never writes into the shared inodes.
+    """
+    contract_path = dep_dir.parent / (dep_dir.name + ".dep-contract.json")
+    contract_path.write_text(
+        json.dumps({
+            "readonly": True,
+            "lockfile_hash": lockfile_hash,
+            "cloned_from": cloned_from,
+            "reinstall": "rm -rf this directory, then run the real install command",
+        }, indent=2) + "\n",
+        encoding="utf-8",
+    )
