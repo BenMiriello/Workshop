@@ -82,6 +82,16 @@ async def lifespan(app: FastAPI):
     from services import task_dedup as _task_dedup
     app.state._bg_dedup_warm = asyncio.create_task(
         asyncio.to_thread(_task_dedup.warm_vectors))
+    # Semantic index: keep it fresh from HERE, the long-lived process, and
+    # declare this process the owner of that job. The rebuild used to start in
+    # whichever process called search() first, which is nearly always a chat
+    # turn's own MCP server child: an 8-minute multi-GB batch job inside a
+    # turn's process group, charged to that turn. On 2026-08-22 a turn was
+    # killed at the 6 GB ceiling for calling search on a cold index. A search
+    # now degrades to what is on disk while this loop catches it up.
+    from services import semantic_index as _semantic_index
+    app.state._bg_index_maintenance = asyncio.create_task(
+        _semantic_index.maintenance_loop())
     # Crash/restart resilience: re-attach to any build turn that was still running
     # when the backend went down. Detached claude subprocesses keep working across
     # a restart; this tails their on-disk journals to completion (or finalizes a

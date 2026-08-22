@@ -1761,12 +1761,29 @@ def _kill_turn_proc(pid: int | None, proc=None, *,
             except Exception:
                 pass
         return
+    # THE GROUP FIRST, exactly as `_retire_turn_proc` does, and for the reason
+    # its docstring gives: the CLI owns children (MCP servers, tool
+    # subprocesses) and killing only the direct child orphans them.
+    #
+    # This used to call `proc.kill()` and RETURN, which made the killpg below
+    # unreachable in precisely the case that matters — a live `proc` is the
+    # normal state when the timeout or the memory ceiling fires. The direct
+    # child is the group LEADER (bwrap/timeout), so killing it alone left the
+    # `claude` process and its MCP server running, reparented to systemd.
+    #
+    # Measured 2026-08-22: a turn killed at the 6 GB ceiling left an orphaned
+    # pair holding 9.0 GB for over seven hours. The guard fired, reported the
+    # turn stopped, and reclaimed none of the memory it fired over — so the
+    # ceiling did not do the one thing it exists to do.
     try:
-        if proc is not None and proc.returncode is None:
+        pgid = os.getpgid(pid) if pid else None
+    except OSError:
+        pgid = None
+    try:
+        if pgid is not None:
+            os.killpg(pgid, signal.SIGKILL)
+        elif proc is not None and proc.returncode is None:
             proc.kill()
-            return
-        if pid:
-            os.killpg(os.getpgid(pid), signal.SIGKILL)
     except Exception:
         pass
 

@@ -40,6 +40,7 @@ for this specifically: the write side of memory is being redesigned (ticket
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -801,6 +802,71 @@ def rebuild_if_stale() -> dict | None:
 _rebuild_state_lock = threading.Lock()
 _rebuild_threads: dict[str, threading.Thread] = {}
 
+# WHICH PROCESS OWNS THE REBUILD. Off by default, and the backend turns it on
+# for itself in its lifespan.
+#
+# The rebuild used to start in whatever process happened to call `search()`
+# first, and the process that calls `search()` is almost always a per-turn MCP
+# server (backend/mcp/workshop_query_server.py) — a short-lived child of the
+# chat turn's `claude`. So an 8-minute, multi-gigabyte batch job ran inside a
+# turn's process group and was charged to that turn.
+#
+# Measured 2026-08-22: a chat turn called `search`, found the index empty,
+# started the rebuild in-process, and was KILLED by the turn memory ceiling at
+# 9.2 GB for the crime of searching. fastembed runs ONNX Runtime in-process, and
+# its arena over the whole corpus is the balloon; a healthy query server is
+# 11 MB. The index is platform state and rebuilding it is a platform background
+# job, so it belongs in the long-lived process that already runs the other
+# maintenance loops, not in a turn's child.
+#
+# A process that does not own maintenance still SEES that a rebuild is needed
+# and says so; it just does not do the work. That is why `search` keeps
+# answering from what is on disk with `rebuilding` set, which is what it did
+# before.
+_owns_maintenance = False
+
+
+def enable_maintenance() -> None:
+    """Declare THIS process the owner of index rebuilds. Called once from the
+    backend lifespan. Idempotent."""
+    global _owns_maintenance
+    _owns_maintenance = True
+
+
+def owns_maintenance() -> bool:
+    return _owns_maintenance
+
+
+async def maintenance_loop(interval: float = 300.0) -> None:
+    """Keep the index fresh from the long-lived process, forever.
+
+    This is the whole reason a rebuild no longer has to happen on the request
+    path: something else is already keeping it current, so a search that finds
+    a stale index degrades for a few minutes instead of paying for the rebuild.
+
+    A failed pass is logged and the loop continues; a rebuild that fails leaves
+    the stale marker in place, so the next pass retries rather than accepting a
+    stale index forever.
+    """
+    enable_maintenance()
+    pin_owner()
+    log.info("semantic index maintenance loop started (interval=%ss)", interval)
+    while True:
+        try:
+            await asyncio.to_thread(_maintenance_pass)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("semantic index maintenance pass failed")
+        await asyncio.sleep(interval)
+
+
+def _maintenance_pass() -> None:
+    pin_owner()
+    res = rebuild_if_stale()
+    if res is not None:
+        log.info("semantic index rebuilt: %s", res)
+
 
 def _background_rebuild_if_stale() -> bool:
     """Kick off a background rebuild if the index is stale and none is already
@@ -808,6 +874,12 @@ def _background_rebuild_if_stale() -> bool:
     started, or already running) so the caller can say so. Never blocks."""
     if not is_stale():
         return False
+    if not _owns_maintenance:
+        # Not this process's job. Report that the index needs catching up so the
+        # caller still labels its hits "from what is on disk right now", and
+        # leave the work to whoever owns maintenance. See `_owns_maintenance`:
+        # doing it here is what got a chat turn killed at a 9.2 GB peak.
+        return True
     key = str(index_dir())
     with _rebuild_state_lock:
         existing = _rebuild_threads.get(key)

@@ -142,11 +142,21 @@ class TestStaleness:
         assert si.rebuild_if_stale() is None
         assert called == []
 
-    def test_a_stale_index_rebuilds_on_the_next_search(self, tree, monkeypatch):
-        """The rebuild is now BACKGROUND (design doc sec 7.2/D): a search must
-        not block on an ~8-minute cold build, so this waits on the background
-        thread rather than asserting the rebuild already happened by the time
-        `search` returns."""
+    def test_a_stale_index_rebuilds_on_the_next_search_in_the_owner(
+            self, tree, monkeypatch):
+        """The rebuild is BACKGROUND (design doc sec 7.2/D): a search must not
+        block on an ~8-minute cold build, so this waits on the background thread
+        rather than asserting the rebuild already happened by the time `search`
+        returns.
+
+        IN THE MAINTENANCE OWNER. Since 2026-08-22 only the process that claimed
+        maintenance (the backend, from its lifespan) does the work; a search
+        anywhere else reports `rebuilding` and leaves it alone, because the
+        process calling search is usually a chat turn's own MCP server child and
+        an 8-minute multi-GB job there gets the TURN killed at the memory
+        ceiling. The non-owner half is
+        tests/test_index_maintenance_owner.py."""
+        monkeypatch.setattr(si, "_owns_maintenance", True)
         si.mark_stale("a note landed")
         called = []
         done = threading.Event()
