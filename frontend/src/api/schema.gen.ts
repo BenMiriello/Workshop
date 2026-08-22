@@ -177,6 +177,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/autonomy/scope-execution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Scope Execution
+         * @description The execution mode for one scope: does its filed work auto-run, how far.
+         */
+        get: operations["get_scope_execution_agents_autonomy_scope_execution_get"];
+        put?: never;
+        /** Set Scope Execution */
+        post: operations["set_scope_execution_agents_autonomy_scope_execution_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/autonomy/status": {
         parameters: {
             query?: never;
@@ -12655,6 +12676,16 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** ScopeExecutionMode */
+        ScopeExecutionMode: {
+            /**
+             * Mode
+             * @description reactive | supervised | autonomous
+             */
+            mode: string;
+            /** Scope */
+            scope: string;
+        };
         /**
          * ScopeList
          * @description Only scopes that already HAVE a knowledge directory, so enumerating never
@@ -15331,6 +15362,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OverrideCleared"];
+                };
+            };
+        };
+    };
+    get_scope_execution_agents_autonomy_scope_execution_get: {
+        parameters: {
+            query: {
+                scope: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_scope_execution_agents_autonomy_scope_execution_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScopeExecutionMode"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
