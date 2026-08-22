@@ -441,3 +441,46 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   worker cannot be launched from inside a confined chat turn (its own bwrap cannot
   bind host paths), which is exactly why the backend must be the thing that
   spawns it -- the reconciler.
+- 2026-08-22 (2) — Operator: keep going and testing, and plan/build the next phase
+  of search, embedding search and context discovery for chats and agents.
+  OVERNIGHT RESULT FIRST: the loop worked THREE real backlog tickets unattended
+  and committed all three (d6ec10a contract test, f6b430e sent-message dim,
+  d2c894c working indicator), then marked all three PARKED "no progress". The
+  worker was fine; the REVIEWER was wrong. Every one was rejected for the same
+  reason, `raw_browser_storage`, on three unrelated tickets that never opened a
+  storage file. All 8 remaining violations were in packages/ui/src/storage.ts,
+  which is not a violation: it is the namespacing engine itself, promoted there
+  from frontend/src/lib/storage.ts on 2026-08-17 while the allowlist stayed
+  behind. Because the check is repo-wide, NO ticket touching any frontend .tsx
+  could ever pass the gate again. Fixed the allowlist (and made it print its
+  owners from _ALLOWED rather than hardcoding one, which is how the claim and
+  the list drifted apart); verified a planted violation is still caught. The
+  three tickets were unparked to `todo` with a note recording the false
+  rejection, so the gate judges the committed work rather than me asserting a
+  pass I did not get. typecheck clean, 1037 frontend tests (up 5: the loop's own
+  new contract test).
+  SEARCH, MEASURED BEFORE DESIGNED: docs are 66% of the index (3,834 of 5,773
+  chunks) and this tree keeps several design generations. "is an app the same
+  thing as a project" returned docs/workshop-v1/00-overview.md FIRST -- a doc
+  whose banner says historical and which CLAUDE.md says not to follow -- beating
+  the model of record by 0.001, with two of five hits from that one file. So
+  search was actively teaching agents the retired model, which is the operator's
+  recurring complaint made mechanical. Built: chunks carry a `status` parsed
+  from the doc's OWN banner (the corpus keeps declaring its own state, no list
+  in code), a historical doc SET declares itself once with `.index-status`
+  rather than platform source naming paths, superseded chunks are DEMOTED in
+  rank but never hidden (the floor still tests the real score, because sometimes
+  the history is the question), they arrive LABELLED so the model knows what it
+  is quoting, and at most 2 chunks per document so one plan cannot take three of
+  five slots. TWO TRAPS, both hit and both now pinned by tests, either of which
+  silently INVERTS the ranking: 34 docs open by saying what they REPLACE
+  ("Supersedes nothing") and a naive /supersede/ match demotes exactly the
+  current files; and entity-model-2026-07-18.md says "PARTLY SUPERSEDED" three
+  lines from its claim, so status is judged per BLOCK (per line splits the
+  banner, a whole-header blob lets an unrelated qualifier suppress a real one).
+  Result: model of record now first, historical doc out of the top five, five
+  distinct sources instead of duplicates; rebuild re-embedded 0 of 5,708 because
+  the digest is content-keyed. NOT DONE: staleness that is not declared anywhere
+  (a current doc discussing a retired field) is untouched, and deliberately so —
+  a recency prior is not the same as correctness and was not justifiable on the
+  measurements.
