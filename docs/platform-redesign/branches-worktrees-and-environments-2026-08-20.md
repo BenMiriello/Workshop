@@ -1,7 +1,7 @@
 # Branches, worktrees, and environments: an operational model
 
 - Date: 2026-08-20
-- Status: **research + design, nothing built.** This is the "own discussion about
+- Status: **research + design, nothing built.** Revised 2026-08-22 (§13, §14) with measured provisioning costs, the two unprivileged CoW driver rungs, and the chat-addressing rule. This is the "own discussion about
   branches and worktrees" that
   [`app-is-the-entity-2026-08-20.md`](app-is-the-entity-2026-08-20.md) §8 deferred
   the ref/branch pill until.
@@ -734,3 +734,152 @@ above the interface.
 
 Deployments-proper (public, versioned, staged) branch off this per the operator and
 per ADR 0013's exit condition; not in scope here.
+
+---
+
+# Revision, 2026-08-22: measurements, the local driver rungs, and the addressing rule
+
+Added after the operator asked the two questions §1 did not cover: **how do
+worktrees stay cheap at tens-to-hundreds**, and **what is a chat looking at**. The
+model above is unchanged and still the model of record. This revision corrects one
+factual assumption in §5, adds two measured driver rungs to §7a, and fills the
+addressing gap. Every number below was measured on this box on 2026-08-22, not
+estimated.
+
+## 13. What the tree actually costs (measured)
+
+The design above reasons about worktree cost in the abstract. The real numbers
+invert which part of the problem is hard:
+
+- **Tracked source: 22 MB**, 1,437 files. `git worktree add` completes in **0.20 s**.
+- **Untracked dependencies: 1,019 MB** — `node_modules` 305 MB, `backend/.venv`
+  658 MB, root `.venv` 57 MB.
+- Working tree total 6.1 GB, of which `apps/` 2.2 GB and `projects/` 1.2 GB are
+  untracked trees that a worktree does not copy at all.
+
+So **source isolation is free and dependency isolation is the entire cost**, by a
+factor of 46. The fear that worktrees "duplicate everything" is misplaced for the
+repository and exactly right for `node_modules`. Every decision below follows from
+that one ratio.
+
+### 13.1 Correction to §5: npm does not hard-link from its cache
+
+§5 rules "reinstall dependencies, do not copy or symlink" and justifies the cost as
+near-zero because "npm/pnpm/bun all hard-link from a shared global store." **That is
+true of pnpm and bun and false of npm**, which is the package manager this repo
+uses (`package-lock.json`, npm 9.2.0; neither pnpm nor bun is installed). npm's
+`_cacache` is content-addressed but `npm ci` *extracts* tarballs into each tree. The
+rule as written therefore costs ~1 GB and minutes of install per worktree here, and
+50 worktrees would want ~50 GB — more than this box has free (§13.3).
+
+The rule is right about *why* (symlinking a dependency tree between worktrees
+reintroduces the version coupling worktrees exist to remove). It is wrong about the
+mechanism being free by default. Restate it as: **share dependency trees by
+copy-on-write, never by symlink, and never by full copy.** Symlink is the thing to
+avoid; a CoW clone is not a symlink.
+
+### 13.2 Two driver rungs missing from §7a, both measured working here
+
+§7a lists six workspace/DB drivers and concludes there is no "we are on ext4 so we
+cannot." Correct, but the two rungs that actually apply to a plain unprivileged ext4
+host are absent from the list, and both work on this box today with no root, no
+spare block device, and no new filesystem:
+
+- **`overlayfs-userns`** — `mount -t overlay` inside an unprivileged user namespace,
+  with the shared base tree as `lowerdir` and a per-worktree `upperdir`. Verified:
+  mounts, reads through to the lower tree, and writes land only in the upper delta.
+  Requires kernel ≥ 5.11 (this box is 6.1) and unprivileged userns (enabled,
+  `max_user_namespaces` unbounded). True CoW, per-file granularity, zero copy.
+  Caveat: the mount lives inside the namespace, so it is visible to the turn and not
+  to the backend or an editor. That suits a *turn*, not a durable workspace.
+- **`hardlink-clone`** — `cp -al` of the dependency directories into the fresh
+  worktree. Not true CoW (an in-place write corrupts the shared copy), but every
+  package manager and build tool in this stack replaces files by write-temp-then-
+  rename, which breaks the link safely. Verified: `node_modules` clones in **0.10 s**
+  for **5 MB** of new blocks instead of 305 MB.
+
+Measured end to end, a fully provisioned worktree — `git worktree add` plus
+hardlink-cloned `node_modules`, `backend/.venv` and `.venv` — costs **0.27 seconds
+and ~100 MB** of real new blocks, against ~1 GB and minutes for the reinstall rule.
+That is the difference between 50 worktrees costing 5 GB and costing 50 GB.
+
+Neither rung replaces the driver interface; they slot into it as workspace-plane
+implementations between `reflink` and `lvm-thin`, and they are what the self-hosted
+profile selects on this host. `cp --reflink` is confirmed **unsupported** here
+(ext4), so the `reflink` rung does not apply.
+
+The operating rule that makes hardlinking safe: **a cloned dependency tree is
+read-only.** Any command that installs re-materializes the directory first
+(`rm -rf` then a real install, or a fresh clone from an updated base), so a write
+never lands in a shared inode. Because dependencies are a pure function of the
+lockfile, the base to clone from is cacheable by `hash(package-lock.json)` and
+shared by every worktree on the same lockfile.
+
+### 13.3 The hard constraint nobody has stated: this box is 98% full
+
+`/workspace` is 1.8 TB, **98% used, 50 GB free**. At the corrected ~100 MB per
+worktree, hundreds are affordable; at the §5 reinstall cost they are not possible at
+all. Provisioning must therefore **preflight free space and refuse** rather than
+fill the disk, and the TTL reaper of §6.3 is a capacity control here, not just
+hygiene. This is a real precondition for any worktree fleet on this host.
+
+## 14. The addressing rule: what a chat is looking at
+
+§3.2 gives a worktree an `owner_kind` of `chat | run | agent | manual` and §9.3
+shows a chat displaying its branch, but the model never states the **default**: does
+every chat get its own tree? Today the answer is accidental and wrong.
+
+**Measured today:** a turn's working directory comes from `paths.scope_root(scope)`
+(`project:<slug>` → `projects/<slug>`, `app:<name>` → `apps/<name>`, `agent:<slug>`
+→ `.runtime/agents/<slug>`) or `paths.chat_cwd()` for a scope with no tree. That is
+**one directory per scope**, so *every chat in a scope shares one working tree* and
+two chats in the same scope are the exact collision worktrees exist to prevent.
+Meanwhile the binding that would fix it is already built and unused:
+`build_agents.create(..., branch_slug=...)` resolves `cwd` through
+`worktrees.branch_dir()`, and `branch_slug` is `null` for every agent on record.
+
+### 14.1 The rule: branch on write
+
+A chat should **not** get a worktree by default. Most chats read, ask, plan, or
+review; allocating a tree for each would be the layering the operator objects to,
+and would make the common case slower and more confusing for no benefit.
+
+> **A scope's canonical tree is the shared read view. A worktree is a write view,
+> created at the moment work first needs to write, and owned by whatever asked.**
+
+This is not a new policy. It is **the same rule §7.1 already applies to the
+database** ("share until a branch needs to mutate, then give it a CoW branch"),
+extended to the filesystem plane. One rule, two planes, which is why this is a
+consolidation rather than an addition.
+
+Consequences, in order:
+
+- A chat carries `scope` (what the work is *about*) and an optional `workspace`
+  (which materialization it is *looking at*). Unset means the canonical tree.
+- The first write in a chat with no workspace allocates one and rebinds the chat.
+  Dispatching a ticket does the same for the run. Both then show a ref pill (§9.1).
+- Two chats in one scope stop sharing a tree the moment either writes, which is the
+  collision the operator predicted and the current model does not prevent.
+- `scope_root()` stays the one mapping and gains no branch logic: the workspace
+  resolves to a directory, and an unset workspace resolves to `scope_root()`. The
+  confinement layer keeps mounting exactly one directory at `/workspace` and does
+  not learn a second concept.
+
+### 14.2 What this retires
+
+Stated because the working agreement requires an addition to pay for itself:
+`build_agents.branch_slug` + its `cwd` derivation, `project_ralph.sh`'s
+`WT_ENABLED`/`CONCURRENT_WT` gate (dead: `concurrent_worktrees` is `None` for all
+seven registered projects, so worktree mode has never once run), and the ad-hoc
+`cwd` field on the build-agent record all collapse into one workspace lookup. Four
+half-built answers to "which tree" become one.
+
+### 14.3 The self-repo case, stated explicitly
+
+The platform repo is its own scope (`development`, ADR 0014) and is where agents
+collide most: this session alone measured a concurrent worker resetting the shared
+tree and discarding another agent's uncommitted edits. It is also the case §10's
+post-commit hook already protects, since that hook refuses to build or publish from
+a linked worktree under `branches/`. So the self-repo is both the highest-value
+target for branch-on-write and the one where the guardrail already exists. It should
+be first, not last.
