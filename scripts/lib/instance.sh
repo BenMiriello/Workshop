@@ -39,6 +39,33 @@ if [ -f "$_INSTANCE_ENV" ]; then
 fi
 unset _k _v _INSTANCE_ENV
 
+# THE INTERPRETER, resolved rather than inherited.
+#
+# Every shell entrypoint calls a bare `python3` and expects the backend's venv,
+# which holds psycopg, numpy and the rest. That worked only because the callers
+# that mattered were spawned BY the backend, whose PATH already had the venv on
+# it. Started the documented way instead -- cron, or the `setsid nohup` line in
+# queue_runner.sh's own header -- `python3` is the system one, and the very
+# first thing the sweep does is read the ticket store, which then fails as:
+#
+#   RelationalStoreUnavailable: a database is configured but did not answer
+#
+# That message blames Postgres for a missing import. Measured 2026-08-22: a
+# sweep launched from a plain shell could not read a single ticket, while the
+# same sweep launched from the backend worked, which is the worst shape a bug
+# can have.
+#
+# Prepending it here fixes every `python3` in every script that sources this,
+# rather than editing forty call sites into disagreement.
+_WS_ROOT="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+if [ -x "$_WS_ROOT/backend/.venv/bin/python" ]; then
+  case ":$PATH:" in
+    *":$_WS_ROOT/backend/.venv/bin:"*) ;;
+    *) PATH="$_WS_ROOT/backend/.venv/bin:$PATH"; export PATH ;;
+  esac
+fi
+unset _WS_ROOT
+
 # require_instance <VAR> [hint] — fail loudly rather than half-configured.
 require_instance() {
   local var="$1" hint="${2:-}"

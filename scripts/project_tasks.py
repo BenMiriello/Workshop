@@ -98,6 +98,11 @@ def _pin_owner() -> None:
     other automation set-point (db/shadow.py, db/chat_list_parity.py) pins an
     owner for exactly this reason; this is the one that had not.
 
+    The rule now lives in `services/ownership.pin_operator` rather than in this
+    comment, because it was true a second time of a different caller: the inline
+    python in scripts/project_ralph.sh had no pin either, and a sweep launched
+    outside the backend died on OwnerUnset.
+
     The id is LOOKED UP, never hardcoded: `auth_store.operator_id()` is the same
     data lookup the bootstrap migration uses, so a fresh install with a
     different id works and nothing machine-specific enters the source. Missing
@@ -105,10 +110,8 @@ def _pin_owner() -> None:
     the file-backed behaviour exactly as it was.
     """
     try:
-        from services import auth_store, ownership
-        oid = auth_store.operator_id()
-        if oid is not None:
-            ownership.set_current_owner(oid)
+        from services import ownership
+        ownership.pin_operator()
     except Exception:
         pass  # no auth store: file-backed scopes still work unchanged
 

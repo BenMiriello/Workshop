@@ -65,6 +65,33 @@ def current_owner() -> int:
     return uid
 
 
+def pin_operator() -> int | None:
+    """Pin the single operator as the data owner for a call with no request
+    behind it, and return the id. Returns None (pinning nothing) when there is
+    no operator account yet, so a fresh install fails at the store with
+    OwnerUnset rather than silently reading someone else's data.
+
+    THE ONE SET-POINT FOR AUTOMATION. A shell entrypoint, a background loop, a
+    CLI and an MCP server all need this and all wrote their own: project_tasks
+    had `_pin_owner`, semantic_index had `pin_owner`, the query server had its
+    own, and scripts/project_ralph.sh's inline python had NONE, which is how a
+    sweep launched outside the backend died on OwnerUnset while the same sweep
+    launched by the backend worked. project_tasks' own docstring already said
+    "every other automation set-point pins an owner for exactly this reason;
+    this is the one that had not" -- it was true again, of a different caller,
+    because the rule lived in a comment instead of in a function.
+
+    The id is LOOKED UP, never hardcoded, so a fresh install with a different
+    id works and nothing machine-specific enters the source.
+    """
+    from services import auth_store
+
+    oid = auth_store.operator_id()
+    if oid is not None:
+        set_current_owner(oid)
+    return oid
+
+
 def owner_or_none() -> int | None:
     """The pinned owner id without raising — for the birds viewer bridge and any
     caller that legitimately tolerates 'no owner' (e.g. a public, non-personal

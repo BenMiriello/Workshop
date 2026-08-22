@@ -1290,10 +1290,12 @@ def pin_owner(owner_id: int | None = None) -> None:
     build or a background pass has to say whose data it is. Defaulting to the
     operator matches `ownership`'s own rule for background loops, and mirrors
     `workshop_query_server._pin_owner`."""
-    from services import auth_store, ownership
-    oid = owner_id if owner_id is not None else auth_store.operator_id()
-    if oid is not None:
-        ownership.set_current_owner(oid)
+    from services import ownership
+
+    if owner_id is not None:
+        ownership.set_current_owner(owner_id)
+    else:
+        ownership.pin_operator()
 
 
 def _main(argv: list[str]) -> int:

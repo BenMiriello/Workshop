@@ -1182,7 +1182,12 @@ OUT=$(cd "$WORKSHOP" && python3 - "$DIR" "$ASSIGNEE" "${SLUG:-$DIR}" "$UNATTENDE
 import json, os, sys
 from pathlib import Path
 sys.path.insert(0, os.environ["WORKSHOP"] + "/backend")
-from services import tasks
+from services import ownership, tasks
+# The ticket store is owner-scoped, and inline python has no request behind it.
+# Without this the sweep's final status pass died on OwnerUnset whenever it was
+# launched outside the backend. One set-point, shared with every other
+# automation entry (services/ownership.pin_operator).
+ownership.pin_operator()
 root = Path(sys.argv[1]); assignee = sys.argv[2] or None; scope = sys.argv[3]
 # Same predicate the sweep just selected with. If this said "ready" while the
 # sweep could not pick anything up, the scope would never report awaiting_input

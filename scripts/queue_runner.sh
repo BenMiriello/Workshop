@@ -88,6 +88,15 @@ LOG="$WORKSHOP/.runtime/queue-runner.log"
 # global Stop is worse than either.
 RUNNER_KEY="$(printf '%s\n' "$DIR" | md5sum | cut -c1-12)"
 PIDFILE="$WORKSHOP/.runtime/queue-runner-$RUNNER_KEY.pid"
+# Deployment config (WORKSHOP_DEV_MODE, the database URL, and the venv on PATH).
+# Sourced HERE rather than relied upon from the caller: this script is
+# documented to be started with `setsid nohup`, and by cron through the
+# watchdog. The watchdog sources it, so a runner it spawned inherited a correct
+# environment and a runner started any other way did not -- the same "works one
+# way, silently fails another" split the watchdog's own comment warns about.
+# Existing environment wins, so nothing the caller set is overridden.
+source "$WORKSHOP/scripts/lib/instance.sh"
+
 # One switch, read through services/autonomy_override. Fails closed.
 source "$WORKSHOP/scripts/autonomy_gate.sh"
 AUTONOMY_OVERRIDE="$WORKSHOP/.runtime/autonomy-override.json"
@@ -158,6 +167,30 @@ while :; do
       # cap of 3. Trivial tasks hid it (3 drained in one 97s sweep); real tickets
       # take minutes and did not.
       local_wall=$(( MAX_TASKS * PER_TASK_WALL + 120 ))
+      # S2 EXECUTION BOUNDARY, crossed here deliberately (2026-08-22).
+      #
+      # ralph.sh runs the worker without --permission-mode bypassPermissions
+      # unless WORKSHOP_UNATTENDED_WRITES is set, which means it silently
+      # auto-denies every write. It was set in exactly ONE place --
+      # routes/tasks_all.launch_task_run, behind the operator's own Run-now
+      # button -- so the entire resident loop started a worker that could not
+      # write a single file and could never finish a ticket. Both comments that
+      # own this flag name this exact spot as where it changes: ralph.sh's ("the
+      # S3 resident driver is where this becomes the default, after an attended
+      # verification run") and launch_task_run's ("they stay write-disabled
+      # until S3 enables them deliberately").
+      #
+      # The attended verification is done: on 2026-08-21 a real confined
+      # `claude -p` worker wrote a file and committed it unattended (4c5010d).
+      #
+      # WHAT BOUNDS IT, all pre-existing and unchanged: the scope must be ARMED
+      # or no work is selected at all (next_ready(unattended) refuses
+      # otherwise); the sweep is SUPERVISED by default, so a passing ticket
+      # lands `in_review` with the operator as the final gate; the worker runs
+      # confined under bwrap; ralph's irreversible-action deny gate blocks
+      # push/publish/merge/sudo/reboot; and every write is a git-revertable
+      # commit that still has to pass the reviewer gate.
+      WORKSHOP_UNATTENDED_WRITES=1 \
       RALPH_MAX_WALL="$PER_TASK_WALL" \
         bash "$RALPH" --dir "$DIR" --max-tasks "$MAX_TASKS" --max-wall "$local_wall" \
              "${SUPERVISED_FLAG[@]}" >> "$LOG" 2>&1 || true
