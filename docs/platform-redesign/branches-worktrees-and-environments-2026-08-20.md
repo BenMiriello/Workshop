@@ -897,6 +897,14 @@ seven registered projects, so worktree mode has never once run), and the ad-hoc
 `cwd` field on the build-agent record all collapse into one workspace lookup. Four
 half-built answers to "which tree" become one.
 
+### 14.2a Who writes, when two want to
+
+§14 settles *when* a workspace exists. It does not settle what happens when a second
+participant wants to write to one that is already busy: the lease, liveness, steer
+vs queue vs preempt, and what a new chat defaults to. That is
+[`workspace-ownership-and-leases-2026-08-22.md`](workspace-ownership-and-leases-2026-08-22.md),
+which depends on this section and does not change it.
+
 ### 14.3 The self-repo case, stated explicitly
 
 The platform repo is its own scope (`development`, ADR 0014) and is where agents
