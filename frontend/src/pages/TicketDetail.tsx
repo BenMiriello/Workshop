@@ -247,6 +247,32 @@ export default function TicketDetail() {
     }
   }, [scope, id, answer, load, say, fail]);
 
+  // Deciding on FINISHED work. Two verbs, named for what they do, because one
+  // word used to mean both: `approve` on this endpoint releases a BLOCKED ticket
+  // back to the queue, and sending it here for a finished one un-accepted
+  // committed work. See services/task_decision.
+  const decide = useCallback(async (action: "accept" | "send-back") => {
+    setAnswerBusy(true);
+    setBanner(null);
+    try {
+      const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, note: answer.trim() || null }),
+      });
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      setAnswer("");
+      say(action === "accept"
+        ? "Accepted. The ticket is done."
+        : "Sent back. The next attempt reads your note in the ticket body.");
+      await load();
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAnswerBusy(false);
+    }
+  }, [scope, id, answer, load, say, fail]);
+
   const postComment = useCallback(async () => {
     const text = commentDraft.trim();
     if (!text) return;
@@ -272,6 +298,13 @@ export default function TicketDetail() {
   const dependsOn = links?.depends_on ?? [];
   const comments = task?.comments ?? [];
   const blocked = task?.status === "blocked";
+  // A FINISHED ticket is waiting on a person too, and this page used to offer it
+  // nothing: the answer box below was gated on `blocked` alone, so a ticket in
+  // `in_review` rendered as an ordinary record with no control anywhere on it.
+  // Reported 2026-08-22: "it was unclear if it was actually blocked or needed
+  // anything ... I came to infer that maybe this isnt actually blocked since it
+  // has a commit and somewhere in there implied it was done? Couldn't tell."
+  const finished = task?.status === "in_review";
   const originKey = task?.origin?.context_key ?? null;
   const scopeLink = scopeHref(scope);
   const workHref = `/work?${nextWorkParams(new URLSearchParams(), { scope })}`;
@@ -316,6 +349,36 @@ export default function TicketDetail() {
           error={fieldErr}
           onSave={(next) => { void patch({ body: next }); }}
         />
+      </Card>
+    </section>
+  ) : null;
+
+  const finishedCard = finished && task ? (
+    <section>
+      <SectionLabel>Waiting on you</SectionLabel>
+      <Card compact>
+        <Stack>
+          <Notice tone="warn">
+            The work on this ticket is finished. Accept it to mark it done, or
+            send it back with a note saying what to change.
+          </Notice>
+          <Textarea
+            rows={3}
+            value={answer}
+            aria-label="What should change"
+            placeholder="Only needed if you are sending it back. It is written into the ticket, so the next attempt reads it."
+            onChange={(e) => setAnswer(e.target.value)}
+          />
+          <Row>
+            <Button size="sm" variant="primary" loading={answerBusy}
+                    onClick={() => void decide("accept")}>
+              <CheckCheck aria-hidden /> Accept
+            </Button>
+            <Button size="sm" loading={answerBusy} onClick={() => void decide("send-back")}>
+              Send it back
+            </Button>
+          </Row>
+        </Stack>
       </Card>
     </section>
   ) : null;
@@ -761,6 +824,7 @@ export default function TicketDetail() {
           main={
             <Stack>
               {descriptionCard}
+              {finishedCard}
               {blockCard}
               {runsCard}
               {chatsCard}
