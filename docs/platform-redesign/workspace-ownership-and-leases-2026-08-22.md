@@ -364,23 +364,103 @@ which is a presence-driven steer, not a new protocol.
 
 ---
 
-## 12. The open question that gates the rest
+## 12. What "done" means: answered elsewhere
 
-`one-fact-one-place-2026-08-22.md` §8 ends on a product decision that this design is
-the thing that makes answerable: **does accepting finished work merge it?**
+Revision 2 posed this as a yes/no ("does accepting merge?"). It is the wrong shape of
+question, and the answer has its own doc:
+[`changes-and-review-2026-08-22.md`](changes-and-review-2026-08-22.md).
 
-Today accept does nothing to the code, because the worker already committed to the
-shared tree. With per-branch isolation, accept *can* mean merge. Everything downstream
-depends on the answer: whether a snapshot ref is dangerous, what "a branch merges as
-one unit" costs, and whether the reaper may destroy unmerged work.
+The short version. `accept` is a legitimate, pre-existing transition
+(`entity-model-2026-07-18.md:126`), but the thing being accepted today is a **status,
+not an artifact**: the operator is asked to accept work he cannot see. Every mature
+system separates intent from change, and derives the intent's status from the change
+rather than from a self-report. So a branch produces a **Change** (local-first,
+mirrored to a GitHub PR only when the app is bound to a remote), the Change is what is
+reviewed and merged, and the ticket becomes `in_review` when a change opens and `done`
+when it merges. Yes, accepting merges, but the merge is a consequence of approving an
+artifact rather than the meaning of a status flip.
 
-Recommendation: **accept merges.** It is what makes the isolation layer pay for
-itself, and park-on-conflict already exists as the failure path. But this is the
-operator's call, and it should be made before B6.
+That doc also answers pre-approval: it is **auto-merge**, the standard mechanism, per
+change plus an optional per-scope `merge_policy` beside the existing
+`scope_execution` setting.
 
----
+## 13. Service boundaries: git is its own service, and every entity is its own resource
 
-## 13. UI
+Operator direction, 2026-08-22: if we are going to have git and version-management
+tooling, it must be its own dedicated thing, and every service, API and endpoint must
+be designed as a standalone RESTful resource usable for whatever is needed. Same for
+every other table, entity and system.
+
+**This design does not currently satisfy that, and neither does the code it builds on.**
+`services/worktrees.py` mixes four concerns in one module: git plumbing (`_run`,
+`_git_env`, raw subprocess), project-registry lookup (`PROJECTS_REGISTRY`,
+`_project_record`, `_project_dir`, `_project_repo`), branch-naming and path policy
+(`_kebab_branch_slug`, `_branch_name`, `_branch_path`), and merge/publish policy
+(`merge_branch`, `publish_branch`). It is reachable only by passing a `project_slug`
+it resolves itself, so nothing can use it to operate on an arbitrary repository. The
+drift is visible at the HTTP layer too: several routers are declared as bare
+`APIRouter()` with no prefix and no tag (`agents.py`, `chat.py`, `base_apps.py`), so
+their paths are not a resource, they are wherever `main.py` happened to mount them.
+
+### 13.1 The git service
+
+**`services/git_service.py` speaks git and knows nothing else.** It takes a repository
+path and arguments. It does not know what a project, an app, a ticket, a lease, a
+chat, or a scope is, and it never reads a registry.
+
+Verbs, all of them repo-path-first: `status`, `log`, `diff` (ref-to-ref, name-status
+and unified), `ahead_behind`, `branch_list / create / delete`, `worktree
+list / add / lock / remove / prune`, `commit`, `merge` (with fast-forward preference and
+a structured conflict result), `snapshot` (the dangling-ref stash of §9), `checkout`,
+`clean`, `rev_parse`, `is_ancestor`.
+
+Its REST surface is its own: `/git/...`, taking an explicit repo reference. That is
+what makes it usable "for whatever is needed" later: a CLI, a different app, an agent
+tool, a future desktop client. Everything that shells out to git in this repo today
+(`worktrees.py`, `project_ralph.sh`, `apply.sh`, `gc.py`, `github.py`) becomes a
+caller instead of a re-implementation.
+
+The remote half stays separate: `services/github.py` already owns the GitHub-specific
+surface and keeps it. A change mirrors to a PR through that service; local merging goes
+through the git service. Two services, one per system, not one module that branches on
+whether a remote exists.
+
+### 13.2 The layering, and the rule that keeps it
+
+```
+tickets ─┐
+changes ─┼─→ branches (worktree records + naming/merge policy) ─→ git service ─→ git
+leases  ─┘                                                        github service ─→ GitHub
+presence
+```
+
+Each layer may call the one below it through its published interface. **No service
+imports another service's policy**, and nothing below knows anything about the layer
+above it: the git service must never learn what a ticket is.
+
+Rules, all mechanically checkable:
+
+- Every router declares a `prefix` and a `tag`. A bare `APIRouter()` is a bug.
+- Every entity is addressable on its own: `/git`, `/branches`, `/leases`, `/presence`,
+  `/changes`, `/tickets`, `/apps`, `/deployments`. A resource is never reachable only
+  as a side effect of another resource's endpoint.
+- Standard verbs on standard paths; a sub-resource for a state change that is not a
+  plain update (`POST /branches/{id}/lease`, `POST /changes/{id}/merge`).
+- Every resource appears in the generated client, so any of them can be driven from
+  the frontend, a script, or an agent without a bespoke path.
+- Composition happens in a thin orchestration layer or in the caller, never by one
+  service reaching into another's internals.
+
+### 13.3 What this adds to the plan
+
+An extraction step, ahead of the records that depend on it: **B2a. Extract
+`git_service` out of `worktrees.py`**, leaving `worktrees.py` as branch records plus
+naming and merge policy, and repointing every other git caller at the new service. It
+is a pure refactor with no behaviour change, it is provable by the existing worktree
+tests, and doing it before B2 means the worktree record is built on a clean boundary
+rather than having one retrofitted underneath it.
+
+## 14. UI
 
 To the Workshop Design System: kit primitives, tokens, lucide, five status kinds.
 
@@ -400,7 +480,7 @@ To the Workshop Design System: kit primitives, tokens, lucide, five status kinds
 
 ---
 
-## 14. The plan
+## 15. The plan
 
 **B0. Ungate worktree mode for the self-repo and wire the provisioner.** This is the
 highest-value step and revision 1 did not contain it. The motivating scar is agents
@@ -411,6 +491,12 @@ the collisions outright.
 
 **B1. Read-only mounts for sessions without a lease** (§4). The enforcement primitive
 everything else assumes, and on its own it makes the shared tree safe to read.
+
+**B2a. Extract the git service** (§13.1). Pure refactor: `services/git_service.py`
+takes a repo path and speaks git, knowing nothing about projects, tickets or scopes;
+`worktrees.py` keeps only branch records and naming/merge policy; every other git
+caller is repointed at it. Ahead of B2 so the worktree record is built on a clean
+boundary instead of having one retrofitted under it.
 
 **B2. The worktree record and lifecycle**, with `worktrees.py` as its git plumbing.
 Fold in `work_driver`'s existing per-tree lock rather than adding a third.
@@ -444,9 +530,9 @@ Track A is genuinely independent of Track B.
 
 ---
 
-## 15. Research appendix
+## 16. Research appendix
 
-### 15.1 Leases, fencing, liveness
+### 16.1 Leases, fencing, liveness
 Kubernetes `coordination.k8s.io/Lease`: a time-bound grant to one identity, renewed
 by heartbeat, expiring silently when the holder dies. Paired with a monotonically
 increasing fencing token validated at the storage layer, because a paused holder
@@ -455,14 +541,14 @@ exactly the shape `tasks.py` already implements.
 - kubernetes.io/docs/concepts/architecture/leases/
 - singhajit.com/distributed-systems/lease/ ; acritelli.com/blog/kubernetes-leases/
 
-### 15.2 Single-writer and presence
+### 16.2 Single-writer and presence
 Figma's multiplayer is server-authoritative with presence (cursors, selection,
 follow), and permission is a separate axis from presence. The generalizable part is
 that *who is here* and *who may write* are two different questions, both of which
 must be visible.
 - figma.com/blog/how-figmas-multiplayer-technology-works/
 
-### 15.3 Session-to-workspace binding
+### 16.3 Session-to-workspace binding
 Gitpod and Codespaces bind many client sessions to one workspace with an idle
 timeout reset by real activity. Their documented failure modes are the design
 lessons: a workspace timed out while collaborators were active because only the
@@ -471,7 +557,7 @@ connection per workspace.
 - gitpod.io/docs/configure/workspaces/workspace-lifecycle
 - github.com/gitpod-io/gitpod issues 7350, 10373 ; docs.github.com Codespaces timeout
 
-### 15.4 Steer vs queue vs preempt
+### 16.4 Steer vs queue vs preempt
 The agent-harness field has converged on distinct delivery semantics: *steering*
 injects into the in-flight turn at a safe boundary between tool calls; *queue*
 delivers when the current work finishes; a *priority interrupt* channel stops the
@@ -479,7 +565,7 @@ tool chain outright. Naming these separately is what makes the behaviour predict
 - github.com/anthropics/claude-code issues 30492, 64624, 71726
 - github.com/langchain-ai/deepagents issue 1390 ; ably.com/blog/ai-transport-redirect-steering
 
-### 15.5 Preemption with a grace window
+### 16.5 Preemption with a grace window
 Kubernetes preemption evicts a lower-priority pod and gives it its graceful
 termination period before force-kill; GitHub Actions concurrency groups cancel a
 superseded in-progress run, and deployments opt out of cancellation instead of
@@ -488,7 +574,7 @@ shape.
 - kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/
 - docs.github.com Actions concurrency ; starsling.dev/best-practices/github-actions/cancel-superseded-runs
 
-### 15.6 Ephemeral presence (awareness protocols)
+### 16.6 Ephemeral presence (awareness protocols)
 Yjs's awareness protocol is the reference design for presence that is deliberately
 NOT part of the persisted document: a separate ephemeral channel carrying who is
 online and what they are pointing at, re-broadcast on an interval (~15s), with any
@@ -497,7 +583,7 @@ transferable rule is the lifetime split, not the CRDT: observations expire, deci
 persist.
 - docs.yjs.dev/api/about-awareness ; docs.yjs.dev/getting-started/adding-awareness
 
-### 15.7 Agent directories and capability cards
+### 16.7 Agent directories and capability cards
 The agent-interop ecosystem converged on a small published card per agent (identity,
 capabilities, endpoint, auth) plus a registry other agents query at runtime, rather
 than hardcoded knowledge of peers: A2A's Agent Card and its discovery/registry model,
@@ -507,7 +593,7 @@ the protocol, since this is one system with one principal rather than a cross-ve
 market.
 - a2a-protocol.org/latest/topics/agent-discovery/ ; tyk.io/learning-center/a2a-protocol-architecture-and-technical-specification/
 
-### 15.8 Coordination models we did not take
+### 16.8 Coordination models we did not take
 Contract Net (announce, bid, award), auctions, and consensus/voting protocols are the
 classic answers to allocating work among self-interested peers, and blackboard
 architectures are the classic answer to shared-state collaboration. With one
@@ -518,7 +604,7 @@ state everyone reads and writes) is what §14 actually implements.
 - gki.informatik.uni-freiburg.de/teaching/ss14/multiagent-systems/mas07-handout4.pdf (coordination methods)
 
 
-## 16. What the adversarial review changed
+## 17. What the adversarial review changed
 
 Recorded so the reasoning is not lost and the same ground is not re-argued.
 

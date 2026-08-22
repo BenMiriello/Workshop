@@ -112,6 +112,25 @@ the grant set or the confinement default.
 **Why second:** it is the enforcement primitive §4 rests on, and on its own it makes
 the shared tree safe to read.
 
+### B2a. Extract the git service
+**Objective:** all git operations live in one service that knows nothing about
+projects, tickets, leases or scopes, so anything can use it against any repository.
+**Output:** `services/git_service.py` taking a repo path plus arguments, covering
+status, log, diff, ahead/behind, branch and worktree operations, commit, merge,
+snapshot, checkout, clean, rev-parse and is-ancestor. Its own router with a prefix and
+a tag under `/git`. `worktrees.py` keeps only branch records and naming/merge policy
+and calls the service for everything else. Every other place that shells out to git is
+repointed. No behaviour change; the existing worktree tests prove it.
+**Start from:** `backend/services/worktrees.py` — it currently mixes four concerns:
+git subprocess (`_run`, `_git_env`), registry lookup (`PROJECTS_REGISTRY`,
+`_project_record`, `_project_dir`, `_project_repo`), branch naming and paths
+(`_kebab_branch_slug`, `_branch_name`, `_branch_path`), and merge/publish policy. Other
+git callers: `scripts/project_ralph.sh`, `scripts/apply.sh`, `backend/services/gc.py`,
+`backend/services/github.py`.
+**Boundaries:** the git service must never learn what a ticket, a project or a scope
+is. Do not fold GitHub into it: `services/github.py` keeps the remote surface. No
+behaviour change in this step. Regenerate the client if any response model moves.
+
 ### B2. The worktree record and lifecycle
 **Objective:** a worktree is a first-class record with an owner, a status and a
 timeline, not just a directory git happens to know about.
@@ -194,14 +213,40 @@ into a reading session.
   origin. A UI change is not delivered until the built origin serves it.
 - Any change to a backend response model requires `npm run gen:api-types` in the same
   commit.
+- Every new router declares a `prefix` and a `tag`; a bare `APIRouter()` is a bug. Every
+  entity is independently addressable and appears in the generated client. No service
+  imports another service's policy. (Design of record: the ownership doc §13.)
 - No new `TODO`/`FIXME`/`NotImplementedError`/stub bodies. Too big for one tick means
   the ticket is `[~] BLOCKED` with proposed sub-tasks.
 
-## 6. The one decision that is the operator's
+## 6. Track C: what "done" means
 
-**Does accepting finished work merge it?** Today accept does nothing to the code
-because the worker already committed to the shared tree. With isolation, accept can
-mean merge. B6 and B7 both depend on the answer, and so does whether the reaper may
-destroy unmerged work. The recommendation on the record is yes, accept merges, because
-that is what makes isolation pay for itself and park-on-conflict already exists as the
-failure path. Do not guess: ask through the ticket.
+Do not build a review or merge step from scratch. It has its own design:
+[`changes-and-review-2026-08-22.md`](changes-and-review-2026-08-22.md). Summary of
+what it changes for you:
+
+- A branch produces a **Change** (the reviewable artifact), local-first, mirrored to a
+  GitHub PR only when the app is bound to a remote. `worktrees.diff_branch`,
+  `merge_branch`, `publish_branch` and `discard_branch` already exist and are its
+  plumbing; what is missing is the record and the surface.
+- **Ticket status is derived from its change**, not set by the worker. A change opening
+  makes the ticket `in_review`; a merge makes it `done`. C2 in that doc is the step
+  that removes self-reported completion, and it is the highest-value one.
+- The review surface distrusts the summary on purpose: diff first, summary labelled as
+  the author's claim, machine gate results attached, intent beside outcome. The
+  measured top defect in agent-authored changes is a description claiming things the
+  diff does not do.
+- Pre-approval is **auto-merge**: per change, plus an optional per-scope
+  `merge_policy` beside the existing `scope_execution` setting.
+
+Sequence it after B2 (the worktree record). B6's steer half and B7 both assume it.
+
+## 7. The one decision that is the operator's
+
+
+**Should a scope be able to auto-merge low-risk changes nobody looked at?** Per-change
+auto-merge is uncontroversial: the operator read it and chose not to babysit the gates.
+A standing per-scope `auto_when_green_and_low_risk` is the one place in this design
+where code merges without a human ever seeing it. The argument for it is that it is
+what makes a long unattended run useful overnight; the argument against is exactly
+what it says. Do not guess: ask through the ticket.
