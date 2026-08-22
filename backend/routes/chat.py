@@ -18,6 +18,8 @@ import json as _json
 import logging
 import os
 import re
+import unicodedata
+import urllib.parse
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
@@ -3306,6 +3308,33 @@ async def delete_attachment(att_id: str):
     return {"deleted": att_id}
 
 
+
+def _content_disposition(kind: str, filename: str) -> str:
+    """A Content-Disposition value that survives a non-latin-1 filename.
+
+    HTTP header values are latin-1, and a bare f-string interpolation of the
+    stored name raises UnicodeEncodeError inside Starlette rather than in this
+    handler -- so the route answers 500 with no obvious culprit. macOS names
+    every screenshot with U+202F (a narrow no-break space) before AM/PM, which
+    is exactly such a character: measured 2026-08-22, 4 of 33 stored
+    attachments could not be opened at all, and check_routes_answer had been
+    reporting both attachment routes as 5xx since 2026-08-17.
+
+    RFC 6266: send both parameters. `filename` carries an ASCII fallback for
+    anything that only understands the original form, and `filename*` carries
+    the real name percent-encoded as UTF-8, which every current browser
+    prefers. NFKD is what folds U+202F back to a plain space rather than
+    dropping it, so the fallback stays readable instead of losing a character.
+    """
+    ascii_name = (unicodedata.normalize("NFKD", filename)
+                  .encode("ascii", "ignore").decode("ascii"))
+    # A quote or a backslash would terminate the quoted-string early, and a
+    # control character is not legal in a header at all.
+    ascii_name = re.sub(r'[\\"\x00-\x1f\x7f]', "", ascii_name).strip() or "download"
+    encoded = urllib.parse.quote(filename, safe="")
+    return f'{kind}; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded}'
+
+
 @router.get("/attachments/{att_id}")
 async def get_attachment(att_id: str):
     """The stored bytes, for the composer's thumbnail and the transcript's.
@@ -3327,7 +3356,7 @@ async def get_attachment(att_id: str):
             return PlainTextResponse(f"This file {note}. Download the original to open it.")
         return FileResponse(dpath, media_type="text/plain; charset=utf-8",
                             headers={"Content-Disposition":
-                                     f'inline; filename="{rec["name"]}.txt"'})
+                                     _content_disposition("inline", f'{rec["name"]}.txt')})
     path = chat_attachments.blob_for(rec)
     if not path:
         raise HTTPException(404, "attachment not found")
@@ -3336,7 +3365,7 @@ async def get_attachment(att_id: str):
         media = "text/plain; charset=utf-8"
     return FileResponse(path, media_type=media,
                         headers={"Content-Disposition":
-                                 f'inline; filename="{rec["name"]}"'})
+                                 _content_disposition("inline", rec["name"])})
 
 
 @router.get("/attachments/{att_id}/original")
@@ -3350,7 +3379,7 @@ async def get_attachment_original(att_id: str):
     media = rec.get("media_type") or "application/octet-stream"
     return FileResponse(path, media_type=media,
                         headers={"Content-Disposition":
-                                 f'attachment; filename="{rec["name"]}"'})
+                                 _content_disposition("attachment", rec["name"])})
 
 
 @router.get("/threads/{thread_id}/mentionable", response_model=crm.MentionableAgents, response_model_exclude_unset=True)
