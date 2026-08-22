@@ -7260,6 +7260,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/usage/chat-timeseries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Chat Timeseries
+         * @description Per-interval per-chat token usage for the last 5h, for the By Chat view.
+         *     Always the standard 5h window; no budget cap applies here.
+         */
+        get: operations["get_chat_timeseries_usage_chat_timeseries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/usage/timeseries": {
         parameters: {
             query?: never;
@@ -9271,6 +9292,22 @@ export interface components {
             permission_modes: string[];
             /** Platform Permission Mode */
             platform_permission_mode: string;
+        };
+        /**
+         * ChatTimeseries
+         * @description Per-interval per-chat tokens over the last 5h. Same shape as
+         *     UsageTimeseries but grouped by the originating chat thread ID rather than
+         *     project slug. Entries without a chat field are grouped under '_unbound'.
+         */
+        ChatTimeseries: {
+            /** Bin S */
+            bin_s: number;
+            /** Chats */
+            chats: string[];
+            /** Points */
+            points: components["schemas"]["UsagePoint"][];
+            /** Window S */
+            window_s: number;
         };
         /**
          * CheckpointReport
@@ -27686,6 +27723,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chat_timeseries_usage_chat_timeseries_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatTimeseries"];
                 };
             };
         };
