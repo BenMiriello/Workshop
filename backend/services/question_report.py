@@ -32,8 +32,12 @@ log = logging.getLogger("workshop.question_report")
 def _compose(task: dict, request: dict, scope: str | None) -> str:
     """The message body. Short, and it leads with the question."""
     ask = str(request.get("ask") or request.get("question") or "").strip()
-    lines = [f"**{task.get('title') or 'A ticket'}** needs an answer.",
-             "", f"> {ask}"]
+    # THE TITLE IS THE LINK. It used to be bold text with a separate closing
+    # paragraph carrying the ref, which meant the one useful noun on screen was
+    # not clickable and the ref was a second mention of the same ticket.
+    ref = f"workshop:ticket/{task.get('id')}"
+    label = str(task.get("title") or "A ticket").strip()
+    lines = [f"[{label}]({ref}) needs an answer.", "", f"> {ask}"]
 
     why = str(request.get("why") or "").strip()
     if why:
@@ -51,19 +55,20 @@ def _compose(task: dict, request: dict, scope: str | None) -> str:
     if unblocks:
         lines += ["", f"Unblocks if: {unblocks}"]
 
-    # WHERE TO ANSWER, TRUTHFULLY AND AS A LINK.
+    # NO "WHERE TO ANSWER" LINE. There used to be one, and it has now been wrong
+    # in two different ways on the same day.
     #
-    # This line used to read "Answer here, or on the ticket: /tickets/<scope>/<id>"
-    # and both halves were wrong (2026-08-22). Nothing routes a chat reply back to
-    # a ticket's `awaiting` record, so "answer here" was false; and a bare path is
-    # not a link at all, which on a phone means it cannot be followed. `ticket` has
-    # been a managed ref kind since managed links shipped (`services/refs.py`
-    # VALID_KINDS, `_resolve_ticket`), so the chip renders with the ticket's own
-    # title and status instead of a path the reader has to parse.
-    ref = f"workshop:ticket/{task.get('id')}"
-    label = str(task.get("title") or "the ticket").strip()
-    lines += ["", f"Answer it in the Tickets panel in the chat toolbar, "
-                  f"or open [{label}]({ref})."]
+    # It first read "Answer here, or on the ticket: /tickets/<scope>/<id>":
+    # nothing routes a chat reply back to a ticket's `awaiting` record, so
+    # "answer here" was false, and a bare path is not a link at all. Rewritten to
+    # point at the Tickets panel with a managed ref, it became false again the
+    # moment `TicketDecision` shipped, because the buttons are now rendered
+    # directly beneath this message. Telling the reader to go to another surface
+    # while the control sits under the sentence is worse than saying nothing.
+    #
+    # The rule this now follows: this message is the permanent record of WHAT was
+    # asked, and the block below it is the control. Neither restates the other.
+    # See docs/platform-redesign/one-fact-one-place-2026-08-22.md.
     return "\n".join(lines)
 
 

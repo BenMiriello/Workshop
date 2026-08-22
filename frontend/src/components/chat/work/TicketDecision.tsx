@@ -1,5 +1,5 @@
 import { useContext, useState } from "react";
-import { Check, ClipboardCheck, Undo2 } from "lucide-react";
+import { Check, Undo2 } from "lucide-react";
 import { Button, Textarea } from "@workshop/ui";
 import { ChatWorkContext } from "./TicketCard";
 import { decisionView } from "./ticketDecision";
@@ -62,13 +62,15 @@ export default function TicketDecision({ ticketId }: { ticketId: string | null |
   // A stuck ticket wants prose, and may want a grant or a standing rule with it.
   // The panel already knows how to offer those, so this hands over rather than
   // building a second, thinner version of the same surface.
+  // NO HEADING. The message this block sits under already names the ticket and
+  // quotes what is being asked; a heading here restated it word for word, so one
+  // fact was on screen three times (label, message, heading) with the buttons
+  // explained a fourth time underneath. The message is the permanent record of
+  // WHAT was asked; this is the control. Neither restates the other.
+  // docs/platform-redesign/one-fact-one-place-2026-08-22.md
   if (!view.finished) {
     return (
       <div className="chat-approval">
-        <div className="chat-approval__head">
-          <ClipboardCheck size={14} aria-hidden className="chat-approval__icon" />
-          <span className="chat-approval__title">This ticket stopped and needs you</span>
-        </div>
         <div className="chat-approval__actions">
           <Button size="sm" variant="primary" onClick={() => access.openQuestion(view.itemId)}>
             Answer it
@@ -80,11 +82,6 @@ export default function TicketDecision({ ticketId }: { ticketId: string | null |
 
   return (
     <div className="chat-approval">
-      <div className="chat-approval__head">
-        <ClipboardCheck size={14} aria-hidden className="chat-approval__icon" />
-        <span className="chat-approval__title">The work is finished and waiting on you</span>
-      </div>
-
       {writingNote && (
         <Textarea
           className="chat-approval__reason"
@@ -124,8 +121,17 @@ export default function TicketDecision({ ticketId }: { ticketId: string | null |
           </Button>
         )}
       </div>
+      {/* The ONE thing the buttons do not already say, and the thing the
+          operator asked outright: what does accepting DO to the code. Nothing.
+          The worker commits before a ticket ever reaches `in_review`, so review
+          here is a record, not a gate, and the run's commit count on the card
+          otherwise implies a merge step that does not exist. This line used to
+          read "Accept marks it done. Sending it back returns it to the queue
+          with your note", which is a sentence spent restating two button
+          labels. Whether review SHOULD gate the code is an open product
+          decision (one-fact-one-place-2026-08-22.md section 8). */}
       <p className="chat-approval__detail">
-        Accept marks it done. Sending it back returns it to the queue with your note.
+        The change is already committed. Accepting closes the ticket.
       </p>
     </div>
   );

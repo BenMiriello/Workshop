@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { chatApi } from "../../lib/chat";
 import {
-  admit, rejectionNotice, sendableRefs,
+  admit, rejectionNotice, sendableRefs, undeliveredNotice,
   type Attachment, type AttachmentRef,
 } from "./attachments";
 
@@ -28,7 +28,8 @@ export type AttachmentsState = {
   /** Judge these files, then upload the ones that pass. */
   add: (files: File[]) => void;
   remove: (localId: string) => void;
-  /** Everything the next turn should carry, then clear. Called by send. */
+  /** What the next turn carries, removed from the box in the same step. Called
+   *  by send. Anything that could NOT be carried stays, with a notice. */
   take: () => AttachmentRef[];
   clear: () => void;
   /** True while a drag carrying files is over the chat. */
@@ -155,13 +156,32 @@ export function useAttachments(
 
   // Read off the ref, not off `items`: send is called from a callback that may
   // have closed over an older render, and the turn must carry what is attached
-  // NOW. Clearing here rather than in the caller keeps "sent" and "cleared" from
-  // ever being two separate decisions that can disagree.
+  // NOW.
+  //
+  // WHAT IT CARRIES IS WHAT IT REMOVES, and that is the whole fix. This used to
+  // call `clear()`, so it took only the `ready` items and wiped ALL of them: an
+  // attachment in the third state (`failed`) was dropped from the payload and
+  // erased from the composer in the same step, with nothing said. The send gate
+  // could not catch it either, because `canSendWith` returns true on any
+  // non-empty text, so a failed upload sailed through on the strength of the
+  // message beside it. Two pieces of code decided one thing and disagreed.
+  //
+  // Now there is one decision. Anything that could not go stays in the box with
+  // a notice naming it, so it is retried or removed deliberately rather than
+  // lost. Reported 2026-08-22.
   const take = useCallback((): AttachmentRef[] => {
     const refs = sendableRefs(itemsRef.current);
-    clear();
+    const sent = new Set(refs.map((r) => r.id));
+    const kept = itemsRef.current.filter(
+      (a) => !(a.status === "ready" && a.id && sent.has(a.id)),
+    );
+    itemsRef.current = kept;
+    setItems(kept);
+    setNotice(undeliveredNotice(kept));
+    setDragging(false);
+    report();
     return refs;
-  }, [clear]);
+  }, [report]);
 
   return {
     items, notice, dismissNotice: () => setNotice(null),

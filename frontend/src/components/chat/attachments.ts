@@ -187,6 +187,21 @@ export function sendableRefs(attachments: Attachment[]): AttachmentRef[] {
   return out;
 }
 
+/** One line naming what a send could NOT carry, for the composer's notice.
+ *
+ *  A file that failed to upload has no server id, so it can never ride a
+ *  message. It used to be cleared anyway: `take()` returned `sendableRefs` and
+ *  then wiped the whole list, so the chip vanished into a message that did not
+ *  carry it. Reported 2026-08-22 ("it showed that they were loaded as though it
+ *  was going to send them, but then once I sent it they weren't included"). It
+ *  now stays in the box and says so. */
+export function undeliveredNotice(kept: Attachment[]): string | null {
+  const names = kept.map((a) => a.name).filter(Boolean);
+  if (!names.length) return null;
+  if (names.length === 1) return `${names[0]} did not upload and was not sent.`;
+  return `${names.length} files did not upload and were not sent.`;
+}
+
 /** One line naming what was refused, for the composer's notice. Grouped by
  *  reason so dropping twelve `.zip`s says one thing rather than twelve. */
 export function rejectionNotice(rejected: Rejection[]): string | null {

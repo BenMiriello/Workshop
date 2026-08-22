@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   admit, attachmentKind, canSendWith, formatSize, rejectionNotice, sendableRefs,
-  MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES,
+  undeliveredNotice, MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES,
   type Attachment,
 } from "./attachments";
 
@@ -149,6 +149,58 @@ describe("sendableRefs", () => {
       att({ localId: "d", id: undefined, status: "ready" }),
     ]);
     expect(refs).toEqual([{ id: "srv-1", name: "one.png", kind: "image" }]);
+  });
+});
+
+describe("undeliveredNotice", () => {
+  // THE BUG. `take()` returned `sendableRefs` and then cleared the WHOLE list,
+  // so a `failed` attachment was dropped from the message and erased from the
+  // composer in one step, silently. `canSendWith` could not catch it: it returns
+  // true on any non-empty text, so a failed upload rode through on the strength
+  // of the message beside it. Reported 2026-08-22, verbatim: "it showed that
+  // they were loaded as though it was going to send them. But then once I sent
+  // it, then they weren't included anymore."
+  it("says nothing when the send carried everything", () => {
+    expect(undeliveredNotice([])).toBe(null);
+  });
+
+  it("names the one file that could not go", () => {
+    expect(undeliveredNotice([att({ name: "shot.png", status: "failed" })]))
+      .toBe("shot.png did not upload and was not sent.");
+  });
+
+  it("counts rather than listing when several could not go", () => {
+    expect(undeliveredNotice([
+      att({ localId: "a", name: "one.png", status: "failed" }),
+      att({ localId: "b", name: "two.png", status: "failed" }),
+      att({ localId: "c", name: "three.png", status: "failed" }),
+    ])).toBe("3 files did not upload and were not sent.");
+  });
+});
+
+describe("a send takes exactly what it carries", () => {
+  // The rule `take()` now implements, asserted on the pure pieces it is built
+  // from: what `sendableRefs` returns is what may be removed, and nothing else.
+  it("leaves a failed upload behind instead of clearing it", () => {
+    const list = [
+      att({ localId: "a", id: "srv-1", name: "ok.png", status: "ready" }),
+      att({ localId: "b", name: "bad.png", status: "failed" }),
+    ];
+    const refs = sendableRefs(list);
+    const sent = new Set(refs.map((r) => r.id));
+    const kept = list.filter((a) => !(a.status === "ready" && a.id && sent.has(a.id)));
+
+    expect(refs).toEqual([{ id: "srv-1", name: "ok.png", kind: "image" }]);
+    expect(kept.map((a) => a.localId)).toEqual(["b"]);
+    expect(undeliveredNotice(kept)).toBe("bad.png did not upload and was not sent.");
+  });
+
+  it("empties the box when everything was carried", () => {
+    const list = [att({ localId: "a", id: "srv-1", status: "ready" })];
+    const sent = new Set(sendableRefs(list).map((r) => r.id));
+    const kept = list.filter((a) => !(a.status === "ready" && a.id && sent.has(a.id)));
+    expect(kept).toEqual([]);
+    expect(undeliveredNotice(kept)).toBe(null);
   });
 });
 
