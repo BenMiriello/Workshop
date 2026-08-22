@@ -815,13 +815,36 @@ never lands in a shared inode. Because dependencies are a pure function of the
 lockfile, the base to clone from is cacheable by `hash(package-lock.json)` and
 shared by every worktree on the same lockfile.
 
-### 13.3 The hard constraint nobody has stated: this box is 98% full
+### 13.3 Capacity is a policy, not a property of one host
 
-`/workspace` is 1.8 TB, **98% used, 50 GB free**. At the corrected ~100 MB per
-worktree, hundreds are affordable; at the §5 reinstall cost they are not possible at
-all. Provisioning must therefore **preflight free space and refuse** rather than
-fill the disk, and the TTL reaper of §6.3 is a capacity control here, not just
-hygiene. This is a real precondition for any worktree fleet on this host.
+The numbers above are measurements of **one runtime profile**, taken to settle a
+mechanism question (does hardlink-cloning beat reinstalling: yes, by an order of
+magnitude). They are not a design input, and an earlier draft of this section wrongly
+treated one machine's free disk as a constraint on the model. It is not. The platform
+targets production, any number of users, any number of apps, of any size, on storage
+the platform provisions.
+
+What generalizes is the shape, not the figures:
+
+- **Source and dependencies scale differently.** A repository's tracked source is
+  small and its untracked build inputs are large, usually by one to two orders of
+  magnitude. Which directories are large varies by stack: a Node app's are
+  `node_modules`, a Python app's a virtualenv, a media or ML app's are model weights,
+  fixtures or asset bundles that may dwarf both. So the provisioner must not hardcode
+  a list of directories to clone. It clones **whatever the app declares as its heavy
+  untracked inputs**, defaulting to what the detected stack implies, exactly as §5's
+  `setup` and `worktree_include` are already declared on the app manifest rather than
+  in platform code.
+- **Every profile has a finite budget**, so provisioning is admitted against a
+  **capacity policy** the profile configures (a storage quota per user or per app,
+  the same multi-ceiling admission §6.4 already defines for compute). A profile on
+  elastic cloud storage sets a generous ceiling; a small self-hosted box sets a
+  tight one. Neither number belongs in the design.
+- **The reaper is therefore load-bearing everywhere**, not a nicety for cramped
+  hosts: unmerged, idle workspaces are reclaimed on TTL under the same policy.
+
+The rule to carry forward: measure mechanisms, configure capacities, and never let a
+number from one machine become a rule in the model.
 
 ## 14. The addressing rule: what a chat is looking at
 
