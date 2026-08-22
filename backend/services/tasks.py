@@ -2487,6 +2487,112 @@ def heartbeat(root: Path, task_id: str, claim_token: int | None, *,
         return found
 
 
+# ---- Operator decisions on waiting tickets ---------------------------------
+#
+# These live here (rather than in services/task_decision.py) because the logic
+# directly reads and mutates the task store. `task_decision.py` owns the pure
+# vocabulary (verb names, approval-word sets, verb_for / reads_as_approval /
+# is_bare_verb), which has no storage dependency and can be imported by anything.
+# Keeping the stateful half here avoids a cycle: task_decision -> tasks -> (SCC)
+# -> task_decision that would add task_decision to the large SCC unnecessarily.
+
+class DecisionRefused(Exception):
+    """The verb does not apply to the ticket in its current state."""
+
+    def __init__(self, verb: str, status: str | None, wanted: str | None):
+        self.verb = verb
+        self.status = status
+        self.wanted = wanted
+        super().__init__(
+            f"cannot {verb} a ticket that is {status or 'in no state'}; "
+            f"{verb} answers a ticket that is {wanted}"
+        )
+
+
+_DECISION_VERBS = ("accept", "send_back", "answer", "cancel", "dismiss")
+_DECISION_TERMINAL = ("done", "cancelled")
+_DECISION_ANSWERS_STATUS: dict[str, str | None] = {
+    "accept": "in_review",
+    "send_back": "in_review",
+    "answer": "blocked",
+    "cancel": None,
+    "dismiss": None,
+}
+_DECISION_WRITES_TO_BODY = ("send_back", "answer")
+
+
+def _decision_evidence_ref(verb: str, note: str) -> str:
+    if verb == "accept":
+        return f"accepted by the operator: {note}" if note else "accepted by the operator"
+    if verb == "send_back":
+        return f"sent back for rework: {note}" if note else "sent back for rework"
+    if verb == "answer":
+        return f"answered: {note}" if note else "answered"
+    if verb == "cancel":
+        return f"cancelled: {note}" if note else "cancelled in review"
+    return f"dismissed: {note}" if note else "dismissed"
+
+
+def apply_decision(
+    root: Path,
+    task_id: str,
+    verb: str,
+    *,
+    note: str = "",
+    question: str = "",
+    restore_attempt: bool = False,
+) -> dict | None:
+    """Apply one operator decision to a waiting ticket.
+
+    `verb` is one of the _DECISION_VERBS constants (the canonical names, not
+    the wire action names). Returns the updated ticket, or None if it is gone.
+    `restore_attempt` refunds the attempt a blocked ticket spent stopping to
+    ask; it is only legal on the `answer` verb."""
+    if verb not in _DECISION_VERBS:
+        raise ValueError(f"unknown verb: {verb}")
+
+    task = get_task(root, task_id)
+    if task is None:
+        return None
+    status = task.get("status")
+
+    wanted = _DECISION_ANSWERS_STATUS[verb]
+    if wanted is not None and status != wanted:
+        if status in _DECISION_TERMINAL:
+            return task
+        raise DecisionRefused(verb, status, wanted)
+
+    note = str(note or "").strip()
+
+    if verb == "dismiss":
+        request = task.get("awaiting") or {}
+        if not request:
+            raise DecisionRefused(verb, status, "waiting on an answer")
+        updated = update(root, task_id,
+                         blocked_request={**request, "dismissed": True})
+        if note:
+            updated = update(root, task_id,
+                             evidence={"kind": "review",
+                                       "ref": _decision_evidence_ref(verb, note)})
+        return updated
+
+    update(root, task_id, evidence={"kind": "review",
+                                     "ref": _decision_evidence_ref(verb, note)})
+
+    if note and verb in _DECISION_WRITES_TO_BODY:
+        append_clarification(root, task_id, question=question or "", answer=note)
+
+    if verb == "cancel":
+        return update(root, task_id, status="cancelled",
+                      blocked_reason=note or "cancelled in review")
+
+    if verb == "accept":
+        return update(root, task_id, status="done", blocked_reason="")
+
+    return update(root, task_id, status="todo", blocked_reason="",
+                  restore_attempt=bool(restore_attempt) and verb == "answer")
+
+
 def remove(root: Path, task_id: str, *, owner: str | None = None) -> bool:
     with _locked(root):
         tasks = _load(root)

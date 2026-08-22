@@ -339,12 +339,12 @@ async def act_on_job_task(job_id: str, task_id: str, body: JobTaskAction) -> dic
     # instead of 409-ing forever.
     request = task.get("awaiting") or {}
     try:
-        updated = task_decision.apply(
+        updated = tasks.apply_decision(
             root, task_id, _ACTIONS[body.action],
             note=str(body.note or ""),
             question=str(request.get("ask") or request.get("question") or ""),
         ) or task
-    except task_decision.DecisionRefused as e:
+    except tasks.DecisionRefused as e:
         raise HTTPException(409, str(e))
 
     # If the operator has now answered every task this job was waiting on, the

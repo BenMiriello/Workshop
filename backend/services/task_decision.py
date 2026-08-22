@@ -30,10 +30,6 @@ See `docs/platform-redesign/deciding-on-work-from-a-chat-2026-08-22.md`.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
-from services import tasks
-
 # Named for the outcome. `approve` is deliberately absent: it is the word that
 # broke, and no verb here may be readable two ways.
 ACCEPT = "accept"
@@ -64,23 +60,6 @@ TERMINAL = ("done", "cancelled")
 # into the ticket body. An acceptance is a fact about the past; putting it in the
 # body leaves the next reader an answer with no question.
 WRITES_TO_BODY = (SEND_BACK, ANSWER)
-
-
-class DecisionRefused(Exception):
-    """The verb does not apply to the ticket in its current state.
-
-    Carries `status` so a router can render its own error without re-reading the
-    ticket, and so the message names both halves of the mismatch.
-    """
-
-    def __init__(self, verb: str, status: str | None, wanted: str | None):
-        self.verb = verb
-        self.status = status
-        self.wanted = wanted
-        super().__init__(
-            f"cannot {verb} a ticket that is {status or 'in no state'}; "
-            f"{verb} answers a ticket that is {wanted}"
-        )
 
 
 def verb_for(status: str | None, *, approved: bool) -> str:
@@ -132,85 +111,3 @@ def is_bare_verb(answer: str | None) -> bool:
     """
     text = _bare(answer)
     return bool(text) and (text in _APPROVAL_WORDS or text in _SEND_BACK_WORDS)
-
-
-def _evidence_ref(verb: str, note: str) -> str:
-    if verb == ACCEPT:
-        return f"accepted by the operator: {note}" if note else "accepted by the operator"
-    if verb == SEND_BACK:
-        return f"sent back for rework: {note}" if note else "sent back for rework"
-    if verb == ANSWER:
-        return f"answered: {note}" if note else "answered"
-    if verb == CANCEL:
-        return f"cancelled: {note}" if note else "cancelled in review"
-    return f"dismissed: {note}" if note else "dismissed"
-
-
-def apply(
-    root: Path,
-    task_id: str,
-    verb: str,
-    *,
-    note: str = "",
-    question: str = "",
-    restore_attempt: bool = False,
-) -> dict | None:
-    """Apply one decision. Returns the updated ticket, or None if it is gone.
-
-    `restore_attempt` refunds the attempt a ticket spent stopping to ask. It is
-    only ever legal on `answer`: a ticket that stopped to ask a good question
-    must not be parked as though it had failed, but a ticket that FINISHED and
-    was sent back spent a real attempt producing work that needs redoing, and
-    refunding that one quietly makes the park cap stop meaning what it says.
-    """
-    if verb not in VERBS:
-        raise ValueError(f"unknown verb: {verb}")
-
-    task = tasks.get_task(root, task_id)
-    if task is None:
-        return None
-    status = task.get("status")
-
-    wanted = ANSWERS_STATUS[verb]
-    if wanted is not None and status != wanted:
-        # Already where the verb was taking it: nothing to do, and saying so
-        # beats refusing an operator whose intent is already satisfied.
-        if status in TERMINAL:
-            return task
-        raise DecisionRefused(verb, status, wanted)
-
-    note = str(note or "").strip()
-
-    if verb == DISMISS:
-        request = task.get("awaiting") or {}
-        if not request:
-            raise DecisionRefused(verb, status, "waiting on an answer")
-        updated = tasks.update(root, task_id,
-                               blocked_request={**request, "dismissed": True})
-        if note:
-            updated = tasks.update(root, task_id,
-                                   evidence={"kind": "review", "ref": _evidence_ref(verb, note)})
-        return updated
-
-    # Durable record first, so a status change never lands on a promise the
-    # trail does not keep.
-    tasks.update(root, task_id, evidence={"kind": "review", "ref": _evidence_ref(verb, note)})
-
-    # The answer goes into the BODY only when it instructs a future attempt. A
-    # worker is handed the ticket text and nothing else, so a rework note
-    # recorded anywhere else is invisible to the attempt it was meant to steer.
-    if note and verb in WRITES_TO_BODY:
-        tasks.append_clarification(root, task_id, question=question or "", answer=note)
-
-    if verb == CANCEL:
-        return tasks.update(root, task_id, status="cancelled",
-                            blocked_reason=note or "cancelled in review")
-
-    if verb == ACCEPT:
-        return tasks.update(root, task_id, status="done", blocked_reason="")
-
-    # send_back and answer both return the ticket to the queue. Clearing
-    # `blocked_reason` and the awaiting record is what `status="todo"` already
-    # does inside `tasks.update`.
-    return tasks.update(root, task_id, status="todo", blocked_reason="",
-                        restore_attempt=bool(restore_attempt) and verb == ANSWER)

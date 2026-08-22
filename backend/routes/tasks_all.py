@@ -1162,8 +1162,8 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
 
     if action in ("dismiss", "deny", "accept", "send-back"):
         try:
-            updated = task_decision.apply(root, task_id, verb, note=note, question=question)
-        except task_decision.DecisionRefused as e:
+            updated = tasks.apply_decision(root, task_id, verb, note=note, question=question)
+        except tasks.DecisionRefused as e:
             raise HTTPException(409, str(e))
 
     else:
@@ -1248,10 +1248,10 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
         # against its park cap — the cap silently stops meaning what it says.
         raised_by = str((request or {}).get("raised_by") or "")
         try:
-            updated = task_decision.apply(
+            updated = tasks.apply_decision(
                 root, task_id, verb, note=answer, question=question,
                 restore_attempt=not raised_by.startswith("agent:queue-triager"))
-        except task_decision.DecisionRefused as e:
+        except tasks.DecisionRefused as e:
             raise HTTPException(409, str(e))
 
     if updated is None:
