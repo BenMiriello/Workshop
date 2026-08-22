@@ -77,7 +77,7 @@ def queue_key(dir_str: str) -> str:
 
 
 def lock_path(dir_str: str) -> Path:
-    return Path(f"/tmp/workshop-queue-runner-{queue_key(dir_str)}.lock")
+    return WORKSHOP_ROOT / ".runtime" / f"queue-runner-{queue_key(dir_str)}.lock"
 
 
 def pid_path(dir_str: str) -> Path:

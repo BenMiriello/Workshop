@@ -46,7 +46,8 @@ if ! assert_run_target "$DIR" "queue_runner_watchdog.sh" 2>>"$LOG"; then
   exit 2
 fi
 
-LOCK="/tmp/workshop-queue-runner-$(printf '%s\n' "$DIR" | md5sum | cut -c1-12).lock"
+mkdir -p "$WORKSHOP/.runtime"
+LOCK="$WORKSHOP/.runtime/queue-runner-$(printf '%s\n' "$DIR" | md5sum | cut -c1-12).lock"
 
 # Probe the lock without blocking. Held => a runner is alive; nothing to do.
 if exec 9>"$LOCK" && flock -n 9; then

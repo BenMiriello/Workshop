@@ -145,7 +145,7 @@ log() { echo "[$(ts)] [queue-runner] $*" >> "$LOG"; }
 
 # Single runner per tree. Keyed on DIR so a per-project runner can coexist with
 # the root one. Non-blocking: losing the lock means one is already up.
-LOCK="/tmp/workshop-queue-runner-$RUNNER_KEY.lock"
+LOCK="$WORKSHOP/.runtime/queue-runner-$RUNNER_KEY.lock"
 exec 9>"$LOCK"
 if ! flock -n 9; then
   echo "[$(ts)] [queue-runner] already running for $DIR; nothing to do" >> "$LOG"

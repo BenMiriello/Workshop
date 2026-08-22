@@ -182,10 +182,51 @@ def test_a_start_that_does_not_take_backs_off(store, tmp_path, monkeypatch):
 def test_lock_and_pid_keys_match_the_shell_derivation(tmp_path):
     """The runner's flock is the ONLY authority on residency, so the Python and
     shell derivations must agree byte for byte or the API reports a loop that
-    isn't there. Shell: md5 of `printf '%s\\n' "$DIR"`, first 12 hex chars."""
+    isn't there. Shell: md5 of `printf '%s\\n' "$DIR"`, first 12 hex chars.
+
+    The lock MUST live under .runtime (bind-mounted into confined bwrap turns),
+    not /tmp (private tmpfs per namespace). The shell derivation uses
+    $WORKSHOP/.runtime/queue-runner-$KEY.lock; Python must match exactly."""
     import hashlib
     d = "/some/tree"
     expect = hashlib.md5((d + "\n").encode()).hexdigest()[:12]
     assert work_driver.queue_key(d) == expect
-    assert str(work_driver.lock_path(d)).endswith(f"queue-runner-{expect}.lock")
+    lock = work_driver.lock_path(d)
+    assert str(lock).endswith(f"queue-runner-{expect}.lock")
+    assert lock.parent.name == ".runtime", "lock must be in .runtime, not /tmp"
     assert str(work_driver.pid_path(d)).endswith(f"queue-runner-{expect}.pid")
+
+
+def test_is_resident_reads_runtime_lock(tmp_path, monkeypatch):
+    """Lock in .runtime (bind-mounted into confined turns) is visible across
+    bwrap namespace boundaries. /tmp is a private tmpfs — a runner started in
+    one namespace and the backend in another would both acquire their own /tmp
+    lock and both sweep. Moving to .runtime makes one holder block the other.
+
+    Demonstrated: hold the lock here (simulating the backend runner), then call
+    is_resident (simulating a chat turn in a different namespace) — it returns
+    True, so the chat-turn driver would NOT start a duplicate."""
+    import fcntl as _fcntl
+
+    runtime = tmp_path / ".runtime"
+    runtime.mkdir()
+    monkeypatch.setattr(work_driver, "WORKSHOP_ROOT", tmp_path)
+
+    d = str(tmp_path / "tree")
+    lock = work_driver.lock_path(d)
+
+    # Lock is under .runtime, visible across namespaces that share the mount.
+    assert lock.parent == runtime
+    assert lock.parent.name == ".runtime"
+
+    fd = os.open(str(lock), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        # is_resident probes the same path; lock held here => returns True
+        assert work_driver.is_resident(d)
+    finally:
+        _fcntl.flock(fd, _fcntl.LOCK_UN)
+        os.close(fd)
+
+    # After release, available again.
+    assert not work_driver.is_resident(d)
