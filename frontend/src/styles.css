@@ -2286,11 +2286,8 @@ button.chat-attach {
 
 
 /* ---- Work panel: what is waiting, running, or was filed from this chat ----
-   ONE PANEL, TWO HOSTS (components/chat/work/WorkPanel). Wide: the kit's
-   Popover, anchored to the toolbar's Tickets button, where .ws-popover__surface
-   supplies the card, the padding and the height cap and nothing below does.
-   Narrow: the sheet, which is the geometry the inbox drawer already had and
-   which is kept deliberately.
+   ONE HOST: the sheet, mounted inside .chat-log-wrap, at every width. It used
+   to also render as a Popover on wide screens; that host was retired 2026-08-22.
 
    TOP-ANCHORED, FLOATING OVER THE LOG rather than pushing it down —
    .chat-log-wrap (see .chat-log-wrap) is its positioned ancestor, which is why
@@ -2318,29 +2315,14 @@ button.chat-attach {
    one removed on 2026-08-14 because a collapsed turn paid 4px for a panel that
    was not there and the copy and branch buttons sat 4px low. The operator
    reported it. Do not name anything in this block `.chat-work*`. */
-/* `min-width: 0` is load-bearing, not tidiness. The popover surface is a flex
-   container (below) and this panel is its item, so it inherits the flex default
-   `min-width: auto`, which refuses to shrink below its own max-content width.
-   A long ticket title therefore sized THIS box past the surface's 24rem cap:
-   measured 2026-08-16, a title box 411px wide inside a 384px surface, its right
-   edge 106.5px beyond the clip. `overflow: hidden` on the surface then cut the
-   text mid-word, and because the title had all the room it asked for
-   (scrollWidth === clientWidth) `.ws-truncate` never fired, so there was not
-   even an ellipsis to say text was missing. The phone sheet was always fine:
-   `left: 0; right: 0` gives it a definite width, so nothing shrink-wraps. */
+/* `min-width: 0` is load-bearing, not tidiness. The sheet uses `left: 0;
+   right: 0` which gives it a definite width, but without min-width: 0 a flex
+   parent could still shrink-wrap the panel past the title's max-content width.
+   Measured 2026-08-16 in the old popover host: title box 411px inside a 384px
+   surface, right edge 106.5px beyond the clip. */
 .chat-workpanel { display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; min-width: 0; }
-/* THE CHROME STAYS, THE LIST SCROLLS. The panel used to be one scrolling box,
-   so on a scope with real work in it (21 tickets on the day this shipped) the
-   footer that carries the policy and its Change link sat below the fold of a
-   popover. Nothing announces a scrollbar in a 360px surface, so that footer was
-   effectively unreachable. The head, the chips and the footer are chrome; only
-   the rows between them move.
-
-   The popover's own cap is what bounds this, so it is read from the surface
-   rather than repeated here: repeating it is how the two drift and the footer
-   ends up clipped instead of pinned. */
-.ws-popover__surface:has(> .chat-workpanel) { overflow: hidden; display: flex; }
-.ws-popover__surface:has(> .chat-workpanel) > .chat-workpanel { flex: 1 1 auto; }
+/* THE CHROME STAYS, THE LIST SCROLLS. Only __scroll overflows; the head, chips
+   and footer are pinned so the footer's Change link is always reachable. */
 .chat-workpanel__scroll {
   flex: 1 1 auto; min-height: 0; min-width: 0;
   display: flex; flex-direction: column; gap: var(--space-1);
@@ -2353,14 +2335,12 @@ button.chat-attach {
      while it was showing. It is in-chat overlay content, not a top-level popover:
      --z-sticky keeps it over the transcript (base) and lets those menus open on
      top of it. */
-  /* THE SHEET 4a DRAWS: it hangs from the toolbar, inset from both edges, with
-     its bottom corners rounded and a border on the three sides that are not
-     against the toolbar. It read as a full-bleed grey slab before, because it
-     spanned edge to edge on `--bg-inset` with no border and square corners, so
-     the one surface the operator opens from the top looked like part of the
-     chrome rather than a panel over the conversation. `--card` is the surface
-     the desktop popover already uses, which is what makes the two hosts one
-     panel seen two ways. */
+  /* THE SHEET: it hangs from the toolbar, inset from both edges, with its
+     bottom corners rounded and a border on the three sides that are not against
+     the toolbar. It read as a full-bleed grey slab before, because it spanned
+     edge to edge on `--bg-inset` with no border and square corners, so the
+     surface the operator opens from the top looked like part of the chrome
+     rather than a panel over the conversation. */
   position: absolute; top: 0; left: var(--space-2); right: var(--space-2);
   z-index: var(--z-sticky);
   max-height: 40vh;
@@ -2377,10 +2357,7 @@ button.chat-attach {
   /* Tighter on a phone: the log is the point of the screen, not the panel. */
   .chat-workpanel--sheet { max-height: 34vh; }
 }
-/* Between the log and the sheet. A press anywhere outside the sheet dismisses,
-   which is what the wide host gets for free from the popover's own
-   outside-pointerdown rule.
-
+/* Between the log and the sheet. A press anywhere outside the sheet dismisses.
    FIXED, NOT ABSOLUTE, and that is the whole point of it. As `absolute` its
    positioned ancestor was `.chat-log-wrap`, which holds the sheet and the
    transcript and STOPS ABOVE THE COMPOSER — the composer is its sibling. So on

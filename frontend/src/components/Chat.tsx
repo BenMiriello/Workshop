@@ -690,10 +690,8 @@ export default function Chat({
   }, []);
   const taskScope = taskScopeFor(contextKey, linkedApps);
 
-  // ONE PANEL, TWO MOUNT POINTS, one set of props. The toolbar hosts it as a
-  // popover anchored to the Tickets button on a wide screen; the log wrap hosts
-  // it as the top sheet on a narrow one. WorkPanel decides which of the two
-  // renders (`useIsWide`), so exactly one ever does.
+  // The sheet panel's props. The toolbar button calls onWorkClick; the sheet
+  // itself is mounted inside .chat-log-wrap and renders when open.
   const workProps = {
     open: drawer === "work",
     onOpenChange: setWorkOpen,
@@ -1046,7 +1044,7 @@ export default function Chat({
       turnActive={turnActive}
       drawer={drawer}
       needsYouCount={work.data.counts.needs_you}
-      workAnchor={(trigger) => <WorkPanel host="anchor" trigger={trigger} {...workProps} />}
+      onWorkClick={() => requestAnimationFrame(() => setWorkOpen(drawer !== "work"))}
       onBack={back}
       onOpenWorkbench={() => navigate(`/agents/${slug}/chat`)}
       onEditTitle={() => thread.setRenameOpen(true)}
@@ -1393,17 +1391,11 @@ export default function Chat({
       ) : (
       <>
       <div className="chat-log-wrap">
-        {/* The NARROW host: a sheet that floats over the top of the log instead
-            of pushing it down. It used to sit in flow and shove the whole
-            transcript downward every time an agent raised something, which
-            moved the log out from under wherever the operator was reading right
-            as a new item arrived. This wrap is its positioned ancestor, which is
-            why it is mounted here and not beside the toolbar.
-
-            It unmounts when closed, which the drawer it replaces could not do:
-            the drawer owned the inbox poll that fed the badge, and that poll is
-            `useChatWork` above now. */}
-        <WorkPanel host="sheet" {...workProps} />
+        {/* The sheet floats over the log, top-anchored. It does not push the
+            transcript down. This wrap is its positioned ancestor, which is why
+            it is mounted here and not beside the toolbar.
+            It unmounts when closed; the inbox poll lives in useChatWork above. */}
+        <WorkPanel {...workProps} />
         {logView}
         {jumpToLatest}
       </div>

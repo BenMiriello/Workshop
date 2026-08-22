@@ -1,14 +1,12 @@
 import {
-  cloneElement, isValidElement, useCallback, useEffect, useRef, useState,
-  type ReactElement,
+  useCallback, useEffect, useRef, useState,
 } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, ListPlus, Settings2 } from "lucide-react";
 import {
-  FilterChip, Popover, Skeleton, Tag, catFor,
+  FilterChip, Skeleton, Tag, catFor,
 } from "@workshop/ui";
 import { jobIsLive } from "../../../lib/jobs";
-import { useIsWide } from "../../../lib/useMediaQuery";
 import { scopeName } from "../chatScope";
 import { chatModeDef, type ChatModeId } from "../chatModes";
 import ChatProblemBlock from "../ChatProblemBlock";
@@ -37,33 +35,25 @@ import {
 //
 //   AN INTERRUPT SURFACE IS BOUNDED IN EVERY DIRECTION, or it stops being a
 //   signal and becomes the page. Count (see MAX_ROWS in workRows), height (the
-//   popover's own cap, or 40vh of sheet), and row height: a row is one line
+//   sheet caps at 40vh), and row height: a row is one line
 //   plus one line of meta, never more.
 //
 //   A HALF-TYPED ANSWER SURVIVES CLOSING, because it lives in the hook keyed by
 //   item id. That is what lets this close on an outside click with no confirm.
 //
-// ONE PANEL, TWO HOSTS. Wide (the app's existing 900px line, `useIsWide`): the
-// kit's Popover, anchored to the toolbar's Tickets button. Narrow: the top sheet
-// over the log that the drawer already was, with a scrim.
+// ONE HOST: the sheet over the log, mounted inside .chat-log-wrap, at every
+// width. It used to also render as a Popover anchored to the toolbar button on
+// wide screens; that second host was retired 2026-08-22 because the mobile
+// drawer is the correct design and the desktop dropdown off the right edge was
+// a degradation.
 //
 // TOP-ANCHORED IS DELIBERATE AND MUST NOT BECOME A BOTTOM SHEET. This panel
 // contains a text field, and an on-screen keyboard shrinks the viewport from the
 // bottom: a bottom sheet with a field in it spends its life being pushed around
 // by the keyboard it raises. It also floats OVER the log rather than pushing it
 // down, which is the older half of the same rule.
-//
-// The two hosts are two mount points because they have to be: the popover is
-// anchored inside the toolbar and the sheet is positioned inside the log wrap.
-// `host` names which slot this instance is in; `useIsWide` decides which one
-// actually renders, so exactly one of them ever does.
 
 export type WorkPanelProps = {
-  host: "anchor" | "sheet";
-  /** The toolbar's Tickets button, UNWIRED. Only the anchor host renders it:
-   *  the click belongs to whichever host is live, so the toolbar does not own
-   *  it and the two cannot disagree about whether the panel is open. */
-  trigger?: ReactElement<Record<string, unknown>>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Open ON this inbox item rather than on the list. Set when something
@@ -82,15 +72,13 @@ export type WorkPanelProps = {
 };
 
 export default function WorkPanel(props: WorkPanelProps) {
-  const { host, trigger, open, onOpenChange } = props;
-  const wide = useIsWide();
+  const { open, onOpenChange } = props;
   const sheetRef = useRef<HTMLDivElement>(null);
 
-  // Escape closes and hands focus back to the button that opened it. The wide
-  // host gets this from Popover; the sheet has to say it itself. Capture, so it
-  // still fires from inside the answer field.
+  // Escape closes and hands focus back to the button that opened it. Capture,
+  // so it still fires from inside the answer field.
   useEffect(() => {
-    if (host !== "sheet" || wide || !open) return;
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.stopPropagation();
@@ -104,43 +92,12 @@ export default function WorkPanel(props: WorkPanelProps) {
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
-  }, [host, wide, open, onOpenChange]);
+  }, [open, onOpenChange]);
 
-  const toggle = useCallback(() => {
-    // NOT INSIDE THE TAP. Mounting the sheet resizes nothing the finger is
-    // still on, but this app has lost taps to its own reflow before, and the
-    // cost of waiting one frame is nothing.
-    requestAnimationFrame(() => onOpenChange(!open));
-  }, [onOpenChange, open]);
-
-  if (host === "anchor") {
-    if (!isValidElement(trigger)) return null;
-    if (!wide) {
-      return cloneElement(trigger, {
-        "aria-haspopup": "dialog",
-        "aria-expanded": open,
-        onClick: toggle,
-      });
-    }
-    return (
-      <Popover
-        trigger={trigger}
-        open={open}
-        onOpenChange={onOpenChange}
-        label="Tickets"
-      >
-        <div className="chat-workpanel">
-          <WorkBody {...props} />
-        </div>
-      </Popover>
-    );
-  }
-
-  if (wide || !open) return null;
+  if (!open) return null;
   return (
     <>
-      {/* Behind the panel, over the log. Dismisses on a press, like the
-          popover's outside-pointerdown does on a wide screen. */}
+      {/* Behind the panel, over the log. Dismisses on a press. */}
       <div
         className="chat-workpanel__scrim"
         aria-hidden

@@ -2,7 +2,7 @@ import {
   Archive, ChevronLeft, Maximize2, MessagesSquare,
   MoreVertical, PanelsTopLeft, Pencil, Plus, Ticket,
 } from "lucide-react";
-import type { ReactElement, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@workshop/ui";
 import type { Provider, ThreadSummary } from "../../lib/chat";
 import {
@@ -56,12 +56,10 @@ import ScopeIcon from "./ScopeIcon";
 //      action now. The dialog it opens (TicketDraftsDialog) is unchanged: only
 //      the entry point moved.
 //
-// So the Tickets button is the ONLY work affordance on this bar, and it is now
-// the panel's own trigger rather than a toggle the toolbar owns: it is handed
-// UNWIRED to WorkPanel (see `workAnchor`), which is a Popover on a wide screen
-// and a top sheet on a narrow one and attaches the click that fits. The toolbar
-// keeps the badge, and the badge rule is unchanged and load-bearing: needs-you
-// only, never an open-ticket count.
+// So the Tickets button is the ONLY work affordance on this bar. It opens the
+// sheet (WorkPanel, mounted in the log-wrap) at every width via `onWorkClick`.
+// The toolbar keeps the badge, and the badge rule is unchanged and load-bearing:
+// needs-you only, never an open-ticket count.
 //
 // The overflow menu now holds only what is genuinely rare or destructive:
 // All chats, Open full screen, Archive chat. Actions you take ON a conversation
@@ -71,7 +69,7 @@ export default function ChatToolbar({
   variant, mode, slug, hideExpand,
   activeId, activeThreadTitle, branchPicker,
   showProviderPicker, providers, activeProvider, onChooseProvider, turnActive,
-  drawer, needsYouCount, workAnchor,
+  drawer, needsYouCount, onWorkClick,
   onBack, onOpenWorkbench, onEditTitle, onOpenThread,
   onNewChat, onArchive, onPopOut, onNavigate,
 }: {
@@ -103,7 +101,9 @@ export default function ChatToolbar({
   /** Wraps the Tickets button in the Work panel. A render prop rather than
    *  eight forwarded props, because the toolbar's business is the BUTTON: it
    *  builds the trigger and knows nothing about what hangs off it. */
-  workAnchor?: (trigger: ReactElement<Record<string, unknown>>) => ReactNode;
+  /** Opens the sheet panel. Passed through rather than held here so Chat.tsx
+   *  can apply requestAnimationFrame to avoid layout thrash on tap. */
+  onWorkClick?: () => void;
   onBack: () => void;
   onOpenWorkbench: () => void;
   onEditTitle: () => void;
@@ -240,32 +240,24 @@ export default function ChatToolbar({
           just left of it has already given up the room instead. */}
       <span className="chat-tb__spacer" />
 
-      {/* ONE work button, and it stays exactly where it has been. It carries no
-          onClick: WorkPanel attaches the one that fits its host, so the panel
-          and the button can never hold two opinions about whether it is open.
-          `data-chat-workpanel-trigger` is how the narrow sheet finds its way back
-          here on Escape.
-
-          ALWAYS SHOWN, including on a blank chat with no thread and no queue.
-          It used to appear only once there was `activeId || taskScope`, which
-          was right when the panel was a list of work and a blank chat had no
-          work to list. It is wrong now that the panel also holds the policy:
-          the mode decides where the FIRST message's work goes, so gating the
-          only way to it on a thread existing hides it until after that decision
-          has been made. That is exactly why the Toggle this replaced was
-          deliberately ungated, and the property has to survive the move. On a
-          blank chat the panel opens on empty zones and its footer, which is the
-          honest picture. */}
-      {workAnchor?.(
+      {/* ONE work button. `data-chat-workpanel-trigger` is how the sheet finds
+          its way back here on Escape. ALWAYS SHOWN, including on a blank chat
+          with no thread and no queue: the panel also holds the policy (where the
+          first message's work goes), so gating it on thread existence hides it
+          until after that decision has been made. */}
+      {onWorkClick && (
         <button
           data-chat-workpanel-trigger=""
           className={`chat-tb__btn${workOpen ? " is-active" : ""}`}
           title={needsYouCount ? `Tickets. ${needsYouCount} waiting on you` : "Tickets"}
           aria-label="Tickets"
+          aria-haspopup="dialog"
+          aria-expanded={workOpen}
+          onClick={onWorkClick}
         >
           <Ticket size={16} aria-hidden />
           {needsYouCount > 0 && <span className="chat-tb__badge">{needsYouCount}</span>}
-        </button>,
+        </button>
       )}
       <button className="chat-tb__btn" onClick={onNewChat} title="Start a new chat" aria-label="New chat">
         <Plus size={16} aria-hidden />
