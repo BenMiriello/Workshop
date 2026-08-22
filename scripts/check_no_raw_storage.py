@@ -66,8 +66,30 @@ _ROOTS = [
 # Single files outside any root that still ship storage access.
 _EXTRA_FILES = [_WORKSHOP / "frontend" / "index.html"]
 
-# The one file allowed to call the native API. Relative to _WORKSHOP, posix form.
-_ALLOWED = {"frontend/src/lib/storage.ts"}
+# The files allowed to call the native API. Relative to _WORKSHOP, posix form.
+#
+# THERE ARE TWO, because the engine MOVED. `packages/ui/src/storage.ts` says so
+# in its own first line: "Originated as Workshop's lib/storage.ts ... promoted
+# here because the mechanism itself ... is general". The namespacing engine (the
+# per-user prefix, the legacy-key migration, the lazy globalThis lookup) now
+# lives in the kit; `frontend/src/lib/storage.ts` is the Workshop-side wrapper
+# that registers the device-scoped exemptions. A module that namespaces browser
+# storage has to touch browser storage, which is exactly why the old home was
+# allowed, and the allowlist was simply never updated to follow the move.
+#
+# That is the failure shape this file's own header names: "the SOURCE of the
+# centralisation was measured and its DESTINATION was not."
+#
+# MEASURED COST OF NOT FIXING IT, 2026-08-22: all 8 remaining violations were
+# these implementation lines, so the check failed on every diff touching any
+# frontend .tsx. Three unattended tickets did their work, committed it, and were
+# then PARKED by the reviewer for a violation in a file they never opened
+# (86f58aea, d73229b4, d2012fdc). A repo-wide gate that no ticket can ever pass
+# does not protect the invariant, it just stops the queue.
+_ALLOWED = {
+    "frontend/src/lib/storage.ts",
+    "packages/ui/src/storage.ts",
+}
 
 # ADR 0025 clause 4: "Keys that genuinely describe the device rather than the
 # person (a station label on a shared kiosk, A THEME PREFERENCE ...) may stay
@@ -239,7 +261,12 @@ def main() -> int:
         # stops anyone looking further.
         print(f"check_no_raw_storage: clean over {len(scanned)} file(s) in "
               "frontend/src, mobile, packages/ui/src and frontend/index.html")
-        print("    sole namespaced caller: frontend/src/lib/storage.ts")
+        # Printed from _ALLOWED rather than hardcoded: this script's whole
+        # argument is that a gate must not assert a fact it has not checked,
+        # and naming one owner while enforcing two was how the list and the
+        # claim drifted apart in the first place.
+        for _owner in sorted(_ALLOWED):
+            print(f"    namespaced caller: {_owner}")
         for rel, why in sorted(_DEVICE_SCOPED_FILES.items()):
             print(f"    device-scoped, exempt: {rel}")
             print(f"        {why}")
