@@ -191,10 +191,29 @@ class TestRalphPassesIt:
 
     def test_a_failed_emit_leaves_the_run_unflagged_rather_than_broken(self):
         assert "MCP_FLAGS=()" in self.SRC
-        assert "NOT APPLIED (llm_router emitted no mcp-config)" in self.SRC
+        assert "NOT APPLIED" in self.SRC
 
-    def test_the_temp_config_is_cleaned_up(self):
-        assert re.search(r"trap\s+'rm -f \"\$MCP_CFG\"'\s+EXIT", self.SRC)
+    def test_the_config_is_passed_INLINE_and_not_as_a_temp_file(self):
+        """UPDATED 2026-08-22 to the mechanism the tree actually uses.
+
+        These two tests were pinning a temp file (`--mcp-config /tmp/....json`
+        plus a `trap 'rm -f "$MCP_CFG"' EXIT`) that commit 7f9275a deleted on
+        2026-08-21, when the worker moved inside bwrap: the sandbox gets its own
+        tmpfs /tmp, so a host path written there is simply ABSENT to the worker
+        and the search tool vanished silently. The spec is now passed inline as
+        JSON, which is what the chat path already did.
+
+        The tests were last touched 2026-08-13 and had been failing since, which
+        is why this asserts the new shape rather than deleting the coverage: the
+        property worth protecting (the worker really receives a config) did not
+        change, only how it is delivered."""
+        assert "mcp-config --server workshop --stdout" in self.SRC
+        assert 'MCP_FLAGS=(--mcp-config "$MCP_JSON")' in self.SRC
+        # It must be a JSON DOCUMENT, not a path: the guard checks it opens with
+        # a brace, which is the thing that distinguishes the two mechanisms.
+        assert '"${MCP_JSON:0:1}" == "{"' in self.SRC
+        # And no temp-file remnant survives to be cleaned up.
+        assert "MCP_CFG" not in self.SRC
 
     def test_the_prompt_only_describes_the_tool_when_it_is_there(self):
         """A prompt describing a tool the CLI was never given costs a turn and

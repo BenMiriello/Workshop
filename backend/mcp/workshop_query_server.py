@@ -315,8 +315,15 @@ def _run_search(args: dict) -> str:
             where = f"chat {h['ref']}"
         stamp = (h["ts"] or "")[:10]
         scope = f" · scope {h['scope']}" if h.get("scope") else ""
+        # SUPERSEDED IS SAID OUT LOUD. These passages are already demoted in the
+        # ranking, but a demotion the reader cannot see is only a reordering: a
+        # historical doc that still makes the cut has to ARRIVE labelled, or the
+        # model quotes a retired design as current. That is the exact failure
+        # this repo keeps hitting, agents rediscovering superseded plans and
+        # building against them.
+        flag = " · SUPERSEDED, historical" if h.get("status") == "superseded" else ""
         out.append(f"--- [{h['score']:.2f}] {h['kind']}: {h['title']} ({where}{scope}"
-                   + (f" · {stamp}" if stamp else "") + ")")
+                   + (f" · {stamp}" if stamp else "") + flag + ")")
         out.append(h["text"])
         out.append("")
     return "\n".join(out)

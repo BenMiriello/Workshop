@@ -150,6 +150,24 @@ def __getattr__(name):
 # re-embed.
 MIN_SCORE = 0.58
 
+# How far a superseded doc drops in the RANKING (never in admission; see
+# `search`). Sized against the measured spread, not picked round: real answers
+# to real questions score 0.637-0.726 and nonsense scores 0.443-0.516, so the
+# informative band is about 0.09 wide. 0.05 is enough to put a superseded chunk
+# behind any current chunk that answered the same question comparably well,
+# while leaving a clearly-better historical passage ahead of a weak current one
+# -- which is right, because sometimes the history IS the answer.
+_SUPERSEDED_PENALTY = 0.05
+
+# At most this many chunks from one document in a single answer. Adjacent
+# chunks of a file are near-identical in embedding space, so without a cap one
+# plan can take three of five slots (measured 2026-08-22).
+_MAX_PER_REF = 2
+
+# Candidates to consider per requested hit, so the per-ref cap has something to
+# promote in place of what it skips.
+_OVERSCAN = 6
+
 
 @dataclass
 class Chunk:
@@ -159,6 +177,10 @@ class Chunk:
     scope: str    # knowledge scope or chat context_key; "" where there is none
     ts: str       # ISO8601, best effort
     text: str
+    # "" (nothing known) or "superseded". Set for docs from their own banner.
+    # A default, so no collector has to change and an index written before this
+    # field existed still loads (a missing key reads as "").
+    status: str = ""
 
     def digest(self) -> str:
         """Identity of the CONTENT, which is what lets a rebuild skip work.
@@ -323,17 +345,112 @@ def collect_notes() -> list[Chunk]:
     return out
 
 
+# A doc that says it has been replaced. MEASURED against the real corpus
+# (2026-08-22) rather than guessed, and the discrimination below is the whole
+# point of the pattern.
+#
+# THE TRAP: 34 docs in this tree contain the word "supersedes" in their opening
+# because they REPLACE something else ("Supersedes the architecture in
+# design.md", "Supersedes nothing"). Those are the CURRENT documents. A naive
+# /supersede/ match demotes exactly the docs a search should surface first, and
+# inverts the ranking it was added to fix. So this matches the PASSIVE forms
+# only -- "superseded by", "superseded on <date> by", "Status: superseded",
+# "historical reference" -- and never the active "supersedes".
+# Judged PER LINE, because whether a sentence is this document's status or a
+# remark about some other document is a property of the sentence.
+_SUPERSEDED_LINE_RE = re.compile(
+    r"superseded\s+(?:on\s+\S+\s+)?(?:for\s+reading\s+purposes\s+)?by"
+    r"|status\s*:\s*\**\s*superseded"
+    r"|superseded\s*\(historical\s+reference\)",
+    re.IGNORECASE,
+)
+
+# Lines that LOOK like a supersession banner and are not one. Each was a real
+# false positive on this corpus (2026-08-22), and each would have demoted a
+# document a search should surface:
+#
+#   partly/partially  entity-model-2026-07-18.md says "PARTLY SUPERSEDED": one
+#                     SECTION was replaced. CLAUDE.md still calls the document
+#                     the authoritative model and says "start there". A doc
+#                     that is partly superseded is current.
+#   section/§         same shape, scoped to a part rather than the whole.
+#   supersedes /      docs/decisions/0000-template.md matched its own FIELD
+#   "/ superseded by" LABEL, "Supersedes / superseded by: (optional, ...)".
+#                     A template is describing the field, not filling it in.
+_NOT_SUPERSEDED_RE = re.compile(
+    r"partly|partially|section|§|supersedes\s*/|/\s*superseded\s+by\s*:",
+    re.IGNORECASE,
+)
+# How far into a file a banner counts. Supersession is declared up top, next to
+# the title; a "superseded by" deep in the body is usually a sentence ABOUT some
+# other document's fate, not this one's.
+_BANNER_LINES = 20
+
+# A whole doc SET can be historical without every file repeating the banner:
+# docs/workshop-v1 and docs/agent-chat-redesign are both declared historical in
+# CLAUDE.md, and only their overview files carry the banner. Rather than name
+# those paths in platform source (the rule this repo enforces elsewhere: a thing
+# declares what it is and the platform reads the declaration), a directory
+# declares itself by containing this file, and it applies to everything beneath.
+_DIR_STATUS_FILE = ".index-status"
+
+
+def _dir_status(d: Path, root: Path, cache: dict[Path, str]) -> str:
+    """The status a directory declares over its subtree, nearest wins."""
+    if d in cache:
+        return cache[d]
+    marker = d / _DIR_STATUS_FILE
+    try:
+        if marker.is_file():
+            val = marker.read_text().strip().lower().split()[0] if marker.read_text().strip() else ""
+            cache[d] = val
+            return val
+    except OSError:
+        pass
+    val = "" if d == root or d.parent == d else _dir_status(d.parent, root, cache)
+    cache[d] = val
+    return val
+
+
+def doc_status(body: str) -> str:
+    """"superseded" when the doc's own banner says it has been replaced, else "".
+
+    Judged per BLOCK (a run of non-blank lines), which is the unit a banner is
+    actually written in. Matching the whole header as one blob let a qualifier
+    from an unrelated paragraph suppress a real banner, and matching one line at
+    a time split banners that wrap:
+
+        > **PARTLY SUPERSEDED, 2026-08-20.** The App-vs-Project split this
+        > document defines ... is superseded by app-is-the-entity...
+
+    "PARTLY" and "is superseded by" are three lines apart in
+    entity-model-2026-07-18.md, so per-line demoted the document CLAUDE.md calls
+    the authoritative model and says to start from. A block keeps a claim and
+    its qualifier together, which is the only unit where the question has an
+    answer.
+    """
+    for block in re.split(r"\n\s*\n", "\n".join(body.splitlines()[:_BANNER_LINES])):
+        flat = " ".join(block.split())
+        if _SUPERSEDED_LINE_RE.search(flat) and not _NOT_SUPERSEDED_RE.search(flat):
+            return "superseded"
+    return ""
+
+
 def collect_docs() -> list[Chunk]:
     root = paths.workshop_root() / "docs"
     out: list[Chunk] = []
+    dir_cache: dict[Path, str] = {}
     for f in sorted(root.rglob("*.md")):
         try:
             body = f.read_text()
         except Exception:
             continue
         title = _first_heading(body, f.stem)
+        # The file's own banner wins; otherwise inherit whatever its directory
+        # declares, so a historical doc SET is marked once at its root.
+        status = doc_status(body) or _dir_status(f.parent, root, dir_cache)
         for c in _split(body):
-            out.append(Chunk("doc", _rel(f), title, "", _iso(f), c))
+            out.append(Chunk("doc", _rel(f), title, "", _iso(f), c, status))
     return out
 
 
@@ -1251,21 +1368,62 @@ def search(query: str, *, limit: int = 8,
         is_semantic = True
 
     masked = np.where(mask, scores, -np.inf)
-    order = np.argsort(-masked)[:limit]
+
+    # RANK on an adjusted score, ADMIT on the real one. Two corrections, both
+    # measured against this corpus on 2026-08-22 (docs are 66% of the index):
+    #
+    # 1. SUPERSEDED DOCS OUTRANKED THE MODEL OF RECORD. "is an app the same
+    #    thing as a project" returned docs/workshop-v1/00-overview.md first --
+    #    a doc whose own banner says it is historical and which CLAUDE.md says
+    #    not to follow -- beating app-is-the-entity-2026-08-20.md by 0.001.
+    #    "how do agents get typed, what is the runtime field" gave three of its
+    #    five slots to a July migration plan describing a field that no longer
+    #    exists. Search was teaching agents the retired model, which is the
+    #    single most expensive thing this corpus can do.
+    #
+    #    Demoted, NOT hidden: the penalty moves a superseded chunk below any
+    #    current one that also matched, while the floor test below still runs
+    #    on the RAW score, so a question whose only answer is historical still
+    #    gets answered. History is often exactly what is being asked for.
+    #
+    # 2. ONE DOCUMENT ATE THE ANSWER. Adjacent chunks of the same file are
+    #    near-identical in embedding space, so a five-hit answer could be three
+    #    chunks of one plan. Capping chunks per ref spends the budget on
+    #    distinct sources instead. The cap applies to ORDER, never to the
+    #    floor, so it can only ever change which passages are shown.
+    adjusted = masked.copy()
+    if is_semantic:
+        sup = np.array([bool(m.get("status") == "superseded") for m in meta])
+        adjusted = np.where(sup & np.isfinite(adjusted),
+                            adjusted - _SUPERSEDED_PENALTY, adjusted)
+
+    # Scan deeper than `limit` so the per-ref cap has replacements to promote.
+    order = np.argsort(-adjusted)[:max(limit * _OVERSCAN, limit)]
     hits = []
+    per_ref: dict[str, int] = {}
     for j in order:
-        score = float(masked[int(j)])
-        # Ordered descending, so the first miss (or the mask's -inf) ends it.
-        if (score < floor) if is_semantic else (score <= floor):
-            break
         i = int(j)
+        score = float(masked[i])          # the REAL score decides admission
+        if not np.isfinite(adjusted[i]):
+            break                          # masked out; nothing below matches
+        if (score < floor) if is_semantic else (score <= floor):
+            continue                       # ordering is by adjusted, so keep scanning
         m = meta[i]
+        ref = str(m.get("ref") or "")
+        if per_ref.get(ref, 0) >= _MAX_PER_REF:
+            continue
+        per_ref[ref] = per_ref.get(ref, 0) + 1
         hits.append({
             "score": round(score, 4),
             "kind": m.get("kind"), "ref": m.get("ref"),
             "title": m.get("title"), "scope": m.get("scope"),
             "ts": m.get("ts"), "text": m.get("text"),
+            # Carried into the answer so the READER can see it too. A demotion
+            # the agent cannot observe would just be a silent reordering.
+            "status": m.get("status") or "",
         })
+        if len(hits) >= limit:
+            break
     return {"hits": hits, "mode": mode, "rebuilding": rebuilding}
 
 

@@ -1,0 +1,8 @@
+superseded
+
+# Declared historical by CLAUDE.md: "The earlier v1 design set at
+# docs/workshop-v1/ ... are HISTORICAL. Both carry supersession banners; do not
+# update them and do not treat their assistant/builder axis as current."
+# Only 00-overview.md carries the banner in its own text, so the SET declares
+# itself here and semantic_index applies it to every file beneath. Demotes
+# these passages in search ranking; it never hides them.
