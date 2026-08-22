@@ -2970,22 +2970,34 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         text = "Compacted. Earlier messages are now a summary."
         is_error = False
     elif rc == 0 and is_command:
-        # rc 0 WITH NOTHING TO SHOW IS NOT "it ran". Headless mode parses a
-        # leading slash into a local-command block and executes nothing, so a
-        # command the CLI only implements in its own terminal exits clean,
-        # silent, and in about a second. "Command ran." over that is the chat
-        # asserting an effect that did not happen: /compact reported it for
-        # months while the live window it was supposed to empty stayed exactly
-        # as full (2026-08-12T05:10:18Z, two seconds, no compact_boundary).
+        # TWO DIFFERENT SLASH-COMMAND CASES share this branch.
         #
-        # /compact and /clear no longer come through here at all — they are
-        # server-side commands now, see routes/chat.py:compact_thread. This is
-        # for every other slash the operator can still type.
-        text = "Command ran." if turn.segments else (
-            "Nothing ran. In this mode the CLI records a leading slash as one of "
-            "its own commands and executes it only in its own terminal. Send it "
-            "without the slash if you meant it as a message."
-        )
+        # INJECTED: a slash command was delivered INTO a running turn whose
+        # original prompt was NOT a slash command (turn.injected_command = True
+        # and prompt does not start with "/"). The CLI handles the injected
+        # command locally. Any segments are from the original prompt's model
+        # work, not from the slash command. "Command ran." is correct — the
+        # command did run — and "send it without the slash" is wrong because
+        # the original prompt was not a slash command.
+        #
+        # NON-INJECTED: the prompt itself started with a slash. Headless mode
+        # parses a leading slash into a local-command block and executes the
+        # command only in its own terminal. rc 0 WITH NOTHING TO SHOW is not
+        # "it ran in this chat": /compact reported "Command ran." for months
+        # while the live window it was supposed to empty stayed exactly as full
+        # (2026-08-12T05:10:18Z, two seconds, no compact_boundary).
+        # /compact and /clear no longer come through here — they are
+        # server-side now (routes/chat.py:compact_thread). This handles every
+        # other slash the operator can still type.
+        injected_only = turn.injected_command and not prompt.strip().startswith("/")
+        if turn.segments or injected_only:
+            text = "Command ran."
+        else:
+            text = (
+                "Nothing ran. In this mode the CLI runs slash commands locally "
+                "in its own terminal. Send it without the slash if you meant it "
+                "as a message."
+            )
         is_error = False
     elif rc == 0:
         text = _clean_exit_text(turn.segments, unread=unread)

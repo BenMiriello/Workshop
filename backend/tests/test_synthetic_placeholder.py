@@ -319,3 +319,67 @@ class TestAnInjectedSlashCommandStillCounts:
             assert t.injected_command is False
         finally:
             bs.TURNS.pop("t-msg", None)
+
+
+class TestIsCommandTextSelection:
+    """The right copy for each slash-command path.
+
+    Two cases share the same `is_command` flag but need different copy:
+
+    NON-INJECTED: the operator's own prompt started with "/". The CLI ran it
+    locally and produced nothing visible in this chat. Explaining why and how
+    to send it as a regular message is useful.
+
+    INJECTED: a slash command was delivered INTO a running turn whose original
+    prompt was NOT a slash command. Saying "send it without the slash" is wrong
+    because the original prompt was not a slash command. "Command ran." is the
+    accurate, non-misleading answer.
+    """
+
+    def _text(self, *, prompt: str, injected_command: bool, segments: list) -> str:
+        """Mirrors the is_command branch in _commit_turn."""
+        is_command = prompt.strip().startswith("/") or injected_command
+        if not is_command:
+            return "(not a command turn)"
+        injected_only = injected_command and not prompt.strip().startswith("/")
+        if segments or injected_only:
+            return "Command ran."
+        return ("Nothing ran. In this mode the CLI runs slash commands locally "
+                "in its own terminal. Send it without the slash if you meant it "
+                "as a message.")
+
+    def test_non_injected_with_no_segments_explains(self):
+        """User typed /context: CLI ran locally, nothing to show here."""
+        t = self._text(prompt="/context", injected_command=False, segments=[])
+        assert t.startswith("Nothing ran.")
+        assert "terminal" in t
+
+    def test_non_injected_with_segments_says_command_ran(self):
+        t = self._text(prompt="/context", injected_command=False,
+                       segments=[{"t": "tool", "name": "Read", "input": "a"}])
+        assert t == "Command ran."
+
+    def test_injected_with_no_segments_says_command_ran(self):
+        """Injected /context into a turn whose original prompt was 'do work'.
+        The old copy said 'send it without the slash' which is wrong: the
+        original prompt was not a slash command."""
+        t = self._text(prompt="do work", injected_command=True, segments=[])
+        assert t == "Command ran."
+
+    def test_injected_with_no_segments_does_not_give_wrong_advice(self):
+        t = self._text(prompt="do work", injected_command=True, segments=[])
+        assert "without the slash" not in t
+
+    def test_injected_with_segments_says_command_ran(self):
+        t = self._text(prompt="do work", injected_command=True,
+                       segments=[{"t": "tool", "name": "Read", "input": "a"}])
+        assert t == "Command ran."
+
+    def test_no_em_dash_in_any_copy(self):
+        cases = [
+            ("do work", True, []),
+            ("/context", False, []),
+            ("/context", False, [{"t": "tool", "name": "Read", "input": "a"}]),
+        ]
+        for prompt, injected, segs in cases:
+            assert "—" not in self._text(prompt=prompt, injected_command=injected, segments=segs)
