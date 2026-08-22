@@ -47,8 +47,31 @@ once; a live-but-silent worker is reclaimed only when its heartbeat lapses). And
 bumps the generation so the displaced worker's next write is **fenced out** rather
 than the operator being blocked.
 
-That is the textbook design (Kubernetes `Lease` + fencing tokens, §9.1), and it is
-already here. So this is not a new subsystem. Three things are genuinely missing:
+That is the textbook design (Kubernetes `Lease` + fencing tokens, §11.1), and it is
+already here.
+
+**Two cautions on reusing it, both important.**
+
+*It is a different concept from workspace ownership.* The ticket claim answers
+"which worker has taken this work" and prevents duplicated effort. A workspace lease
+answers "who may write to this tree" and prevents a corrupted checkout. They are not
+the same question and one does not imply the other. What carries over is the
+**pattern** (single holder, fencing generation, TTL, heartbeat renewal, expiry
+without a negotiation), not the queue semantics.
+
+*Part of it does not generalize past a single node.* `_is_stale_claim`'s fast path
+calls `_pid_alive`, which is `os.kill(pid, 0)`: a same-host signal probe. On one
+machine that is a good optimization, because a crashed worker is reclaimed instantly
+rather than after a TTL. Across hosts it is wrong in both directions, since a pid
+recorded on one host and probed on another is either absent (reported dead while the
+worker is running) or coincidentally reused by something unrelated (reported alive
+after the worker died). So the general form of liveness is **heartbeat and expiry
+only**, with process-probing kept as an optional single-node accelerator that a
+multi-host profile turns off. Any design that treats the pid check as part of the
+model has smuggled one deployment's implementation into the architecture.
+
+So this is not a new subsystem, but it is also not a free one. Three things are
+genuinely missing:
 
 1. The lease protects **the work item**, not **the working tree**. Two participants
    on different tickets in the same tree still corrupt each other.
