@@ -2993,10 +2993,10 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         if turn.segments or injected_only:
             text = "Command ran."
         else:
-            text = (
-                "Nothing ran. The CLI ran this as a local command in its own "
-                "terminal. Send it without the slash if you meant it as a message."
-            )
+            # Non-injected slash: the CLI executed the command in its own
+            # terminal and never called the model. "Nothing ran" was wrong
+            # (the command did run) and "send without slash" was wrong advice.
+            text = "The CLI ran this as a local command. Output went to your terminal, not here."
         is_error = False
     elif rc == 0:
         text = _clean_exit_text(turn.segments, unread=unread)
