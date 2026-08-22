@@ -13,10 +13,8 @@ endpoints feeding the Settings UI.
 from __future__ import annotations
 
 import asyncio
-import fcntl
-import hashlib
+import logging
 import os
-import signal
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,11 +22,13 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from routes import autonomy_models as am
-from services import agent_slots, autonomy_override, jobs, scope_execution, task_scope
+from services import (agent_slots, autonomy_override, jobs, scope_execution,
+                      task_scope, work_driver)
 from pydantic import BaseModel, Field
 from wsplatform import paths
 
 
+log = logging.getLogger(__name__)
 router = APIRouter(tags=["autonomy"])
 
 
@@ -44,85 +44,13 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _queue_lock_path(dir_str: str) -> Path:
-    """The lock queue_runner.sh holds for a tree. Mirrors the shell derivation
-    exactly: md5 of `printf '%s\\n' "$DIR"`, first 12 hex chars."""
-    return Path(f"/tmp/workshop-queue-runner-{_queue_key(dir_str)}.lock")
-
-
-def _queue_key(dir_str: str) -> str:
-    """The per-tree key both the lock and the pidfile are named after. Mirrors
-    the shell derivation exactly: md5 of `printf '%s\\n' "$DIR"`, first 12 hex."""
-    return hashlib.md5((dir_str + "\n").encode()).hexdigest()[:12]
-
-
-def _queue_pid_path(dir_str: str) -> Path:
-    """The pidfile for a tree's runner.
-
-    PER TREE, like the lock. It used to be one shared file while the lock was
-    already per-tree, so two runners on two trees both ran but the second
-    clobbered the first's pid: Stop then killed whichever started last, whatever
-    tree it was asked about, and left the other one unstoppable from the UI."""
-    return WORKSHOP_ROOT / ".runtime" / f"queue-runner-{_queue_key(dir_str)}.pid"
-
-
-def _queue_runner_state(dir_str: str | None = None) -> dict:
-    """Whether a worker loop is ACTUALLY resident, by probing the runner's flock
-    rather than trusting a flag file. This is the distinction the old status
-    endpoint missed: the AUTONOMY_DISABLED flag being absent says only that work
-    is *permitted*, not that anything is *running* — which is how the UI came to
-    report "enabled (Ralph fires every 20m)" while no worker existed at all.
-
-    `running` = a live process holds the lock. `enabled` = the off-switch is
-    clear. Work only happens when BOTH are true, so the UI reports them
-    separately instead of collapsing them into one misleading label.
-
-    The lock is PER TREE (`queue_runner.sh` derives it from `$DIR`), so the
-    answer is always about one named tree. `dir` says which one, because
-    "running" with no tree named is the same kind of lie this phase is deleting.
-    """
-    target = str(dir_str or WORKSHOP_ROOT)
-    lock = _queue_lock_path(target)
-    running = False
-    try:
-        fd = os.open(str(lock), os.O_CREAT | os.O_RDWR, 0o644)
-    except OSError:
-        fd = None
-    if fd is not None:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fcntl.flock(fd, fcntl.LOCK_UN)  # we got it => nobody home
-        except OSError:
-            running = True
-        finally:
-            os.close(fd)
-
-    pid = None
-    try:
-        pid = int(_queue_pid_path(target).read_text().strip())
-    except (OSError, ValueError):
-        pid = None
-    # A pidfile outlives a SIGKILLed runner (the EXIT trap never fires), so it is
-    # only reported when the lock says someone is actually there.
-    if not running:
-        pid = None
-
-    last_line = None
-    try:
-        lines = [ln for ln in QUEUE_RUNNER_LOG.read_text(errors="replace").splitlines() if ln.strip()]
-        last_line = lines[-1] if lines else None
-    except OSError:
-        last_line = None
-
-    return {
-        "running": running,
-        "pid": pid,
-        "enabled": not autonomy_override.is_engaged(),
-        "dir": target,
-        "lock_path": str(lock),
-        "log_path": str(QUEUE_RUNNER_LOG),
-        "last_line": last_line,
-    }
+# Runner PROCESS FACTS live in services/work_driver: a route module should not
+# own process management, and the reconciler needs the same lock/pid derivation.
+# These thin aliases keep the existing call sites readable.
+_queue_lock_path = work_driver.lock_path
+_queue_key = work_driver.queue_key
+_queue_pid_path = work_driver.pid_path
+_queue_runner_state = work_driver.runner_state
 
 
 # ============================================================
@@ -378,16 +306,19 @@ async def queue_runner_start(body: RunnerStart):
     target = _validated_run_target(body.dir)
     if not QUEUE_WATCHDOG.exists():
         raise HTTPException(500, f"watchdog missing: {QUEUE_WATCHDOG}")
-    subprocess.Popen(
-        ["bash", str(QUEUE_WATCHDOG), target],
-        cwd=str(WORKSHOP_ROOT),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    # The watchdog spawns detached; give it a beat so the response reflects the
-    # started runner rather than the pre-start state.
-    await asyncio.sleep(1.5)
+    # STARTING A RUNNER IS SETTING AN INTENT, not poking a process. The runner is
+    # derived from `scope_execution` by the work driver, so a start that only
+    # spawned would be undone by the next reconcile pass (and, before the driver
+    # existed, silently died at the next reboot with nothing to bring it back).
+    # Arm the scope, then let the same code path the reconciler uses make it so.
+    #
+    # An already-`autonomous` scope is NOT downgraded: pressing Start on a scope
+    # the operator has taken all the way to run-to-done should not quietly move
+    # the stage ceiling back to in_review.
+    if not scope_execution.is_armed(target):
+        scope_execution.set_mode(target, "supervised")
+    mode = scope_execution.get_mode(target)
+    await asyncio.to_thread(work_driver.ensure, target, mode)
     return _queue_runner_state(target)
 
 
@@ -415,18 +346,16 @@ async def queue_runner_stop(dir: str | None = None):
             400, "name the tree to stop: runners are per tree, and stopping "
                  "an unnamed one would target whichever tree happens to be the "
                  "default rather than the one you started")
-    state = _queue_runner_state(dir)
-    pid = state.get("pid")
-    if pid:
-        try:
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
+    # DISARM FIRST, then kill. The work driver re-ensures a runner for every
+    # armed scope once a minute, so killing without clearing the intent would
+    # have the loop back within the poll interval and Stop would be a button
+    # that lies. Clearing the intent is the stop; the SIGTERM is how it takes
+    # effect now rather than at the end of the current sweep.
+    target = os.path.realpath(dir.strip())
+    scope_execution.set_mode(target, "reactive")
+    await asyncio.to_thread(work_driver.stop, target)
     await asyncio.sleep(1.5)
-    return _queue_runner_state(dir)
+    return _queue_runner_state(target)
 
 
 def _jobs_summary(limit: int = 200) -> dict:
@@ -482,6 +411,22 @@ async def set_scope_execution(body: ScopeExecutionMode):
                             detail=f"mode must be one of {scope_execution.MODES}")
     root = _scope_root(body.scope)
     mode = scope_execution.set_mode(root, body.mode)
+    # ACT ON IT NOW. Arming a scope used to be a pure store write, so the setting
+    # the operator flipped in the chat's Work settings did precisely nothing
+    # until something else happened to start a runner for that tree. The work
+    # driver would pick it up within a minute anyway; doing it here means the
+    # response already reflects a running loop, and disarming stops immediately
+    # instead of at the end of the current sweep.
+    try:
+        if scope_execution.is_armed(root):
+            await asyncio.to_thread(work_driver.ensure, root, mode)
+        else:
+            await asyncio.to_thread(work_driver.stop, root)
+    except Exception:
+        # The setting is the source of truth and it is written; the reconciler
+        # will converge the mechanism on its next pass.
+        log.warning("work driver could not follow scope-execution change for %s",
+                    root, exc_info=True)
     return {
         "scope": body.scope,
         "mode": mode,

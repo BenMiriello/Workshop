@@ -1344,6 +1344,15 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         "message": result["message"],
     }
 
+    # Signal the resident queue runner so an armed scope starts on this ticket
+    # now instead of waiting out the poll. The /tasks POST path has always done
+    # this; the chat filing path never did, which is the path that matters most
+    # here because it is the one the operator files from.
+    try:
+        (paths.workshop_root() / ".runtime" / "queue-runner.wake").touch()
+    except OSError:
+        pass
+
     # File AND run: launch a worker now for a freshly filed task. Never run a
     # merge/exact (it folded into an existing task; running that would be a
     # surprise re-run of unrelated work). C12 (2026-07-18): the server used

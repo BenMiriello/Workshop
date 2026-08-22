@@ -22,6 +22,13 @@ set -u
 WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 LOG="$WORKSHOP/.runtime/queue-runner.log"
 DIR="${1:-}"
+# Anything after the tree is forwarded verbatim to queue_runner.sh. The only
+# caller that uses it is the work driver passing --unsupervised for a scope the
+# operator set to `autonomous`, where a passing ticket may reach `done` rather
+# than stopping at `in_review`. No argument = supervised, which is the default
+# on both sides.
+shift || true
+RUNNER_ARGS=("$@")
 
 ts() { date -Iseconds; }
 
@@ -46,7 +53,8 @@ if exec 9>"$LOCK" && flock -n 9; then
   flock -u 9
   exec 9>&-
   echo "[$(ts)] [watchdog] no runner for $DIR — starting one" >> "$LOG"
-  setsid nohup bash "$WORKSHOP/scripts/queue_runner.sh" --dir "$DIR" >/dev/null 2>&1 &
+  setsid nohup bash "$WORKSHOP/scripts/queue_runner.sh" --dir "$DIR" \
+    ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} >/dev/null 2>&1 &
 else
   exec 9>&- 2>/dev/null || true
 fi

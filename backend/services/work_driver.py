@@ -1,0 +1,259 @@
+"""The reconciler between execution INTENT and the worker MECHANISM.
+
+WHY THIS EXISTS. Everything the background work loop needs was already built and
+none of it was connected:
+
+  intent      services/scope_execution  — "this scope's filed work may auto-run"
+              (per scope, reactive/supervised/autonomous, fail-closed)
+  mechanism   scripts/queue_runner.sh   — a resident loop that sweeps ONE TREE,
+              claiming ready tickets and running the worker
+  gate        tasks.next_ready(unattended=True) — refuses to hand out work for a
+              scope that is not armed
+  brake       services/autonomy_override — the one global off-switch, above both
+
+The chain is complete: an armed scope + a resident runner = work gets done. The
+defect was that arming a scope and having a runner resident were two INDEPENDENT
+controls and neither implied the other. Arming a scope from the chat's Work
+settings therefore did exactly nothing, and starting a runner by hand ran a loop
+that `next_ready` refused to feed. Two controls for one intent, silently
+disagreeing in both directions, is the "built but not wired up" failure mode.
+
+So: intent is the only thing anyone sets, and the runner is DERIVED from it.
+This module is the control loop that makes the mechanism follow the intent, in
+the same shape as the other reconcilers the lifespan owns (port_registry,
+deploy_watcher, jobs). It is deliberately ADDITIVE: it only ever ENSURES a runner
+for an armed scope. It never kills a runner it did not ask for, so a hand-started
+sweep for debugging is left alone. Disarming stops the runner at the moment of
+disarming (routes/autonomy), which is a direct consequence of an operator action
+rather than a policing loop.
+
+It also owns the runner's PROCESS FACTS (lock, pidfile, residency probe), which
+lived in routes/autonomy.py. A route module should not own process management,
+and two callers needed it.
+
+Composition with the global brake: an engaged override means no new runner is
+started here. Running ones are NOT killed, because queue_runner.sh re-reads the
+brake every iteration and idles on its own — that is the existing contract and
+duplicating it as a kill would make releasing the brake require a restart.
+"""
+from __future__ import annotations
+
+import asyncio
+import fcntl
+import hashlib
+import logging
+import os
+import signal
+import subprocess
+import time
+from pathlib import Path
+
+from services import autonomy_override, scope_execution
+from wsplatform import paths
+
+log = logging.getLogger(__name__)
+
+WORKSHOP_ROOT = paths.workshop_root()
+QUEUE_WATCHDOG = WORKSHOP_ROOT / "scripts" / "queue_runner_watchdog.sh"
+QUEUE_RUNNER_LOG = WORKSHOP_ROOT / ".runtime" / "queue-runner.log"
+
+RECONCILE_INTERVAL = 60.0
+# How long to wait before re-attempting a start that did not produce a resident
+# runner. The watchdog refuses a tree the developer-mode gate rejects (ADR 0014)
+# and logs the refusal, so retrying every tick would write a line a minute
+# forever for a scope that can never run.
+RETRY_AFTER = 600.0
+
+# root -> monotonic timestamp of the last start attempt that did not take.
+_failed_at: dict[str, float] = {}
+
+
+# ---- process facts ---------------------------------------------------------
+
+def queue_key(dir_str: str) -> str:
+    """The per-tree key both the lock and the pidfile are named after. Mirrors
+    the shell derivation exactly: md5 of `printf '%s\\n' "$DIR"`, first 12 hex."""
+    return hashlib.md5((dir_str + "\n").encode()).hexdigest()[:12]
+
+
+def lock_path(dir_str: str) -> Path:
+    return Path(f"/tmp/workshop-queue-runner-{queue_key(dir_str)}.lock")
+
+
+def pid_path(dir_str: str) -> Path:
+    return WORKSHOP_ROOT / ".runtime" / f"queue-runner-{queue_key(dir_str)}.pid"
+
+
+def is_resident(dir_str: str) -> bool:
+    """Whether a worker loop actually holds this tree's lock.
+
+    Probing the flock rather than trusting a flag file is the point: the absence
+    of the off-switch says work is PERMITTED, not that anything is RUNNING, and
+    collapsing the two is how the UI came to report a loop that did not exist.
+    """
+    lock = lock_path(dir_str)
+    try:
+        fd = os.open(str(lock), os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)  # we got it => nobody home
+        return False
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+
+
+def runner_pid(dir_str: str) -> int | None:
+    """The runner's pid, reported only when the lock says someone is there: a
+    pidfile outlives a SIGKILLed runner because the EXIT trap never fires."""
+    if not is_resident(dir_str):
+        return None
+    try:
+        return int(pid_path(dir_str).read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def runner_state(dir_str: str | None = None) -> dict:
+    """Real loop state for one tree: is a worker resident, and is work permitted.
+
+    `running` and `enabled` are reported separately and never collapsed, because
+    work only happens when both are true.
+    """
+    target = str(dir_str or WORKSHOP_ROOT)
+    last_line = None
+    try:
+        lines = [ln for ln in QUEUE_RUNNER_LOG.read_text(errors="replace").splitlines()
+                 if ln.strip()]
+        last_line = lines[-1] if lines else None
+    except OSError:
+        last_line = None
+    return {
+        "running": is_resident(target),
+        "pid": runner_pid(target),
+        "enabled": not autonomy_override.is_engaged(),
+        "dir": target,
+        "lock_path": str(lock_path(target)),
+        "log_path": str(QUEUE_RUNNER_LOG),
+        "last_line": last_line,
+    }
+
+
+# ---- mechanism -------------------------------------------------------------
+
+def _runner_flags(mode: str) -> list[str]:
+    """Map the scope's execution mode onto the runner's supervision flag.
+
+    supervised (the default) lands a passing ticket at `in_review` with the
+    operator as the final gate; autonomous lets it reach `done`. This is the one
+    place `scope_execution`'s stage ceiling becomes a process argument.
+    """
+    return ["--unsupervised"] if mode == "autonomous" else []
+
+
+def ensure(root: str | Path, mode: str = "supervised") -> bool:
+    """Make a runner resident for `root`. Idempotent and race-free: the watchdog
+    probes the same flock the runner holds, so a blind call is safe.
+
+    Returns True when a runner is resident afterwards.
+    """
+    target = os.path.realpath(str(root))
+    if is_resident(target):
+        _failed_at.pop(target, None)
+        return True
+    if not QUEUE_WATCHDOG.exists():
+        log.warning("work driver: watchdog missing at %s", QUEUE_WATCHDOG)
+        return False
+    last = _failed_at.get(target)
+    if last is not None and (time.monotonic() - last) < RETRY_AFTER:
+        return False
+    try:
+        subprocess.Popen(
+            ["bash", str(QUEUE_WATCHDOG), target, *_runner_flags(mode)],
+            cwd=str(WORKSHOP_ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    except OSError:
+        log.exception("work driver: could not spawn watchdog for %s", target)
+        _failed_at[target] = time.monotonic()
+        return False
+    # The watchdog spawns the runner detached; give it a beat before deciding
+    # whether the start took, so a slow fork is not recorded as a refusal.
+    time.sleep(2.0)
+    if is_resident(target):
+        _failed_at.pop(target, None)
+        log.info("work driver: runner now resident for %s (%s)", target, mode)
+        return True
+    # Most likely the developer-mode gate refused the tree; the watchdog has
+    # already written why into queue-runner.log. Back off rather than retry
+    # every tick forever.
+    _failed_at[target] = time.monotonic()
+    log.warning("work driver: runner did not come up for %s; see %s",
+                target, QUEUE_RUNNER_LOG)
+    return False
+
+
+def stop(root: str | Path) -> bool:
+    """Stop the resident runner for `root`. The sweep's own lease/reclaim path
+    returns a half-worked ticket to the queue, so this loses no tickets."""
+    target = os.path.realpath(str(root))
+    pid = runner_pid(target)
+    if not pid:
+        return False
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            return False
+    _failed_at.pop(target, None)
+    return True
+
+
+# ---- the control loop ------------------------------------------------------
+
+def reconcile() -> dict:
+    """One pass: every armed scope gets a resident runner.
+
+    Additive only. A tree with a runner but no arming is left alone: it is
+    either an operator's hand-started sweep, or a scope disarmed a moment ago,
+    and `next_ready(unattended=True)` already refuses to feed it work.
+    """
+    if autonomy_override.is_engaged():
+        return {"armed": 0, "started": 0, "skipped": "autonomy override engaged"}
+    armed = scope_execution.armed_roots()
+    started = 0
+    for root, mode in armed:
+        if not is_resident(os.path.realpath(root)) and ensure(root, mode):
+            started += 1
+    return {"armed": len(armed), "started": started}
+
+
+async def reconcile_loop(interval: float = RECONCILE_INTERVAL) -> None:
+    """Run reconcile() forever on `interval`. Started from the backend lifespan.
+
+    This is what makes background execution SURVIVE: the runner is a detached
+    process that dies with a reboot, an OOM kill or a stray `kill`, and the only
+    thing that ever restarted it was a cron entry that is not installed. The
+    backend is a systemd unit that outlives every run, so it reconciles.
+
+    A failed pass is logged and the loop continues; reconciliation must not die
+    quietly or an armed scope silently stops working.
+    """
+    log.info("work driver reconcile loop started (interval=%ss)", interval)
+    while True:
+        try:
+            out = await asyncio.to_thread(reconcile)
+            if out.get("started"):
+                log.info("work driver: started %s runner(s)", out["started"])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("work driver reconcile pass failed")
+        await asyncio.sleep(interval)

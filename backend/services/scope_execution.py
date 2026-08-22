@@ -98,3 +98,14 @@ def stage_ceiling(root: str | Path) -> str | None:
     """How far auto-execution may advance: in_review (supervised) or done
     (autonomous). None when reactive. The driver reads this to know where to stop."""
     return _CEILING[get_mode(root)]
+
+
+def armed_roots() -> list[tuple[str, str]]:
+    """Every scope the operator has deliberately armed, as (root, mode) pairs.
+
+    The store only ever holds non-default entries (set_mode drops a key set back
+    to reactive), so this is exactly the armed set with no filtering needed. It
+    is what the work driver reconciles the resident runners against.
+    """
+    return [(root, mode) for root, mode in sorted(_read().items()) if mode in MODES
+            and mode != DEFAULT_MODE]

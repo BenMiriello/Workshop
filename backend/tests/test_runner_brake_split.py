@@ -40,8 +40,16 @@ def spawned(monkeypatch):
     A SHIM over the module's `subprocess` reference, not a patch of
     `subprocess.Popen` itself: `subprocess.run` is built on Popen, and the gate
     check is a real `run`. Patching the global broke the gate along with the
-    spawn and every refusal test passed for the wrong reason."""
+    spawn and every refusal test passed for the wrong reason.
+
+    BOTH modules are shimmed. The route still runs the developer-mode gate with
+    a real `subprocess.run`, but the watchdog SPAWN now lives in
+    services/work_driver, which owns the runner's process facts: a route module
+    should not manage processes, and the reconciler needs the same code path.
+    The assertions below are unchanged — only the seam moved."""
     import subprocess as real_subprocess
+
+    from services import work_driver
 
     calls: list[list[str]] = []
 
@@ -56,6 +64,12 @@ def spawned(monkeypatch):
         STDOUT = real_subprocess.STDOUT
 
     monkeypatch.setattr(autonomy_routes, "subprocess", Shim)
+    monkeypatch.setattr(work_driver, "subprocess", Shim)
+    # `ensure` waits for the detached runner to take the lock before deciding
+    # whether the start worked. Nothing real is spawned here, so skip the wait
+    # and the backoff it would record.
+    monkeypatch.setattr(work_driver.time, "sleep", lambda s: None)
+    monkeypatch.setattr(work_driver, "_failed_at", {})
     return calls
 
 
@@ -68,6 +82,13 @@ def client(tmp_path, monkeypatch):
     rt.mkdir()
     monkeypatch.setattr(ao, "OVERRIDE_PATH", rt / "autonomy-override.json")
     monkeypatch.setattr(ao, "LEGACY_FLAG", rt / "AUTONOMY_DISABLED")
+    # Start now ARMS the scope rather than only poking a process (the runner is
+    # derived from the intent store, so a start that only spawned would be
+    # undone by the next reconcile pass). That is a persistent write, so the
+    # intent store is sandboxed here too or a test would arm a real scope.
+    from services import scope_execution
+    monkeypatch.setattr(scope_execution, "_store_path",
+                        lambda: rt / "scope-execution.json")
     app = FastAPI()
     app.include_router(autonomy_routes.router, prefix="/api")
     return TestClient(app)

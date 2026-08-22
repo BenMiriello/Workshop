@@ -58,6 +58,14 @@ async def lifespan(app: FastAPI):
     # outlives every run, so it reaps.
     from services import jobs as jobs_svc
     app.state._bg_job_reconcile = asyncio.create_task(jobs_svc.reconcile_loop())
+    # Background work loop: make the worker MECHANISM follow the execution
+    # INTENT. Arming a scope (services/scope_execution) is the only control;
+    # this ensures a resident queue runner exists for every armed scope and
+    # brings one back after a reboot, an OOM kill or a stray kill. Nothing runs
+    # for a scope left at its reactive default, and the global autonomy override
+    # sits above it.
+    from services import work_driver
+    app.state._bg_work_driver = asyncio.create_task(work_driver.reconcile_loop())
     # Fire-and-continue: a finished background run leaves a continuation seed on
     # the originating thread's queue (services/run_report -> chat_drain), written
     # from the detached worker process that cannot reach this event loop. This is
