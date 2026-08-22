@@ -2994,9 +2994,8 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
             text = "Command ran."
         else:
             text = (
-                "Nothing ran. In this mode the CLI runs slash commands locally "
-                "in its own terminal. Send it without the slash if you meant it "
-                "as a message."
+                "Nothing ran. The CLI ran this as a local command in its own "
+                "terminal. Send it without the slash if you meant it as a message."
             )
         is_error = False
     elif rc == 0:

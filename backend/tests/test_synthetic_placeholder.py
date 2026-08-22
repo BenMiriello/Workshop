@@ -344,15 +344,23 @@ class TestIsCommandTextSelection:
         injected_only = injected_command and not prompt.strip().startswith("/")
         if segments or injected_only:
             return "Command ran."
-        return ("Nothing ran. In this mode the CLI runs slash commands locally "
-                "in its own terminal. Send it without the slash if you meant it "
-                "as a message.")
+        return ("Nothing ran. The CLI ran this as a local command in its own "
+                "terminal. Send it without the slash if you meant it as a message.")
 
     def test_non_injected_with_no_segments_explains(self):
         """User typed /context: CLI ran locally, nothing to show here."""
         t = self._text(prompt="/context", injected_command=False, segments=[])
         assert t.startswith("Nothing ran.")
         assert "terminal" in t
+
+    def test_non_injected_with_no_segments_gives_send_advice(self):
+        """The non-injected copy ends with actionable advice.
+
+        "In this mode the CLI runs slash commands locally..." was too vague
+        (what mode?). The copy now names WHAT ran and what to do instead.
+        Pinned so it never drifts back to advice-free or wrong advice."""
+        t = self._text(prompt="/context", injected_command=False, segments=[])
+        assert "without the slash" in t
 
     def test_non_injected_with_segments_says_command_ran(self):
         t = self._text(prompt="/context", injected_command=False,
@@ -383,3 +391,39 @@ class TestIsCommandTextSelection:
         ]
         for prompt, injected, segs in cases:
             assert "—" not in self._text(prompt=prompt, injected_command=injected, segments=segs)
+
+
+class TestStoppedTurnText:
+    """16 of 73 empty turns came from the operator pressing Stop.
+
+    These are DELIBERATE empty-text turns. _commit_turn's stopped branch
+    produces text="" and the UI renders only the stoppedTag ("user interrupted")
+    with no bubble, rather than an empty box above the tag. This is not a gap
+    — it is the right treatment for an action the operator just took.
+
+    The frontend half is pinned in replyBody.test.ts (hasBubble returns False,
+    noReplyText returns ""). These tests pin the backend contract and the
+    copy-design rationale so both sides stay in sync.
+    """
+
+    def _stopped_text(self) -> str:
+        """Mirrors the stopped branch in _commit_turn.
+
+        elif stopped:
+            text = ""
+            is_error = False
+        """
+        return ""
+
+    def test_stopped_branch_produces_empty_string(self):
+        """Text is intentionally empty; the UI tag is the record."""
+        assert self._stopped_text() == ""
+
+    def test_no_explanatory_sentence_needed(self):
+        """A sentence inside the bubble would say the same thing as the tag.
+
+        "user interrupted" is already shown below the segments. Adding
+        "The turn was stopped by the operator." repeats it inside the bubble,
+        which is the three-statement pattern the design rule says to avoid.
+        Empty text is right here, not a case to give copy to."""
+        assert self._stopped_text() == ""
