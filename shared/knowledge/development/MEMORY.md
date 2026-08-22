@@ -13,6 +13,7 @@
 - [Empirical testing required to verify fixes](empirical-testing-required-to-verify-fixes-1a0028fb2d8.md)
 - [Kanban-style status columns wanted for ticket views](kanban-style-status-columns-wanted-for-ticket-vi-1a0028fb2c9.md)
 - [Mobile support needed for ticket views](mobile-support-needed-for-ticket-views-1a0028fb2ca.md)
+- [Never leave work uncommitted in the shared tree while the loop runs](never-leave-work-uncommitted-in-the-shared-tree-1a02802a08d.md)
 - [Operator removed automatic compaction and folding](operator-removed-automatic-compaction-and-foldin-1a0028fb2d4.md)
 - [Proposed: record vs file test, and tree-as-homes-plus-filter (nav redesign)](proposed-record-vs-file-test-and-tree-as-homes-p-1a0179df5e3.md)
 - [Silence-threshold tuning cannot fix voice fragmentation](silence-threshold-tuning-cannot-fix-voice-fragme-1a0028fb2d7.md)
