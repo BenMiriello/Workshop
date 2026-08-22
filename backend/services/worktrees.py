@@ -33,6 +33,7 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from services.app_runner import _read_manifest_file as _read_app_manifest, AppError as _AppError
 from wsplatform import paths
 
 BRANCHES_ROOT = paths.env_path("WORKSHOP_BRANCHES_ROOT", "branches", base="root")
@@ -48,16 +49,15 @@ PROJECTS_REGISTRY = Path(os.environ.get(
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 
-# Minimum free bytes on the worktree volume before provisioning is allowed.
-# Measured 2026-08-22: /workspace is 98% full with 50 GB free; each worktree
-# costs ~100 MB, so hundreds are affordable — but the floor refuses if space
-# has been exhausted by other means before we can measure the cost.
-MIN_FREE_BYTES: int = 2 * 1024 * 1024 * 1024  # 2 GiB
+# Guard against exhausting the volume mid-clone. Override with
+# WORKSHOP_MIN_WORKTREE_FREE_BYTES if running on a smaller disk.
+MIN_FREE_BYTES: int = int(
+    os.environ.get("WORKSHOP_MIN_WORKTREE_FREE_BYTES", str(2 * 1024 * 1024 * 1024))
+)
 
-# (lockfile path relative to project root, dep directory relative to project root)
-# Each dep dir is hardlink-cloned from the canonical project tree into the fresh
-# worktree; the lockfile hash keys the contract written beside it.
-_DEP_SPECS: list[tuple[str, str]] = [
+# Fallback (lockfile, dep-dir) pairs used when the app manifest declares none.
+# Only pairs whose lockfile is actually present in the project tree are offered.
+_PLATFORM_DEFAULT_INPUTS: list[tuple[str, str]] = [
     ("package-lock.json", "node_modules"),
     ("backend/requirements.txt", "backend/.venv"),
     ("requirements.txt", ".venv"),
@@ -603,7 +603,7 @@ def provision_worktree(scope: str, owner: str) -> dict:
     inodes.
 
     Raises ``ValueError`` with a clear message if free disk on the project
-    volume is below ``MIN_FREE_BYTES`` (2 GiB) before any work is done.
+    volume is below ``MIN_FREE_BYTES`` before any work is done.
 
     Returns the ``allocate_task_worktree`` dict extended with::
 
@@ -625,12 +625,12 @@ def provision_worktree(scope: str, owner: str) -> dict:
 
     provisioned: list[str] = []
     skipped: list[str] = []
-    for lockfile_rel, dep_rel in _DEP_SPECS:
+    for lockfile_rel, dep_rel in _workspace_inputs(project_dir):
         src = project_dir / dep_rel
         if not src.exists() or not src.is_dir():
             skipped.append(dep_rel)
             continue
-        lhash = _lockfile_hash(project_dir / lockfile_rel)
+        lhash = _lockfile_hash(project_dir / lockfile_rel) if lockfile_rel else None
         dst = worktree_dir / dep_rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         _hardlink_clone(src, dst)
@@ -652,6 +652,37 @@ def _scope_to_project_slug(scope: str) -> str:
             )
         return slug
     return scope
+
+
+def _workspace_inputs(project_dir: Path) -> list[tuple[str | None, str]]:
+    """Return (lockfile_rel_or_None, dep_dir_rel) pairs to clone into a worktree.
+
+    Reads ``workspace_inputs`` from the app manifest (workshop.app.json) if
+    declared; otherwise falls back to ``_PLATFORM_DEFAULT_INPUTS`` filtered to
+    entries whose lockfile is actually present in the project tree.
+
+    An entry without a ``lockfile`` key produces ``(None, dir)``; the clone
+    contract is written with a null hash (asset and model-weight dirs are
+    supported, not only dependency installs).
+    """
+    try:
+        raw = _read_app_manifest(project_dir)
+    except _AppError as e:
+        raise ValueError(str(e)) from e
+
+    declared = (raw or {}).get("workspace_inputs")
+    if declared is not None:
+        result: list[tuple[str | None, str]] = []
+        for entry in declared:
+            if isinstance(entry, dict) and entry.get("dir"):
+                result.append((entry.get("lockfile") or None, str(entry["dir"])))
+        return result
+
+    return [
+        (lockfile, dep)
+        for lockfile, dep in _PLATFORM_DEFAULT_INPUTS
+        if (project_dir / lockfile).exists()
+    ]
 
 
 def _free_bytes(path: Path) -> int:

@@ -26,7 +26,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.worktrees import (  # noqa: E402
     MIN_FREE_BYTES,
-    _DEP_SPECS,
     _free_bytes,
     _hardlink_clone,
     _lockfile_hash,
@@ -232,11 +231,15 @@ def test_provision_writes_dep_contract(project_with_deps):
 
 
 def test_provision_skips_absent_dep_dirs(project_with_deps):
-    """Dep dirs not present in the canonical tree appear in skipped, not provisioned."""
+    """Dep dirs whose lockfiles are absent are not attempted (not in provisioned or skipped)."""
     result = provision_worktree("project:myproj", "task-skip")
-    # backend/.venv and .venv don't exist in the fake project
-    assert "backend/.venv" in result["skipped"]
-    assert ".venv" in result["skipped"]
+    # project_with_deps has package-lock.json but not requirements.txt files,
+    # so backend/.venv and .venv lockfiles are absent → those pairs are not even
+    # considered by the fallback (filtered before building the work list).
+    assert "backend/.venv" not in result["provisioned"]
+    assert ".venv" not in result["provisioned"]
+    assert "backend/.venv" not in result["skipped"]
+    assert ".venv" not in result["skipped"]
 
 
 def test_two_provisions_share_inodes(project_with_deps):
@@ -260,3 +263,79 @@ def test_two_provisions_share_inodes(project_with_deps):
 
     assert wt1_inodes == base_inodes, "worktree1 files do not share inodes with canonical"
     assert wt2_inodes == base_inodes, "worktree2 files do not share inodes with canonical"
+
+
+# ---------------------------------------------------------------------------
+# _workspace_inputs: manifest-declared inputs vs platform-default fallback
+# ---------------------------------------------------------------------------
+
+def _make_project_fixture(tmp_path, monkeypatch, project_slug: str, proj_dir: Path):
+    """Wire up branches root, registry, and disk-check for a test project."""
+    import services.worktrees as wt_mod
+    branches = tmp_path / "branches"
+    branches.mkdir(exist_ok=True)
+    monkeypatch.setattr(wt_mod, "BRANCHES_ROOT", branches)
+    registry = tmp_path / "projects.json"
+    registry.write_text(json.dumps({"projects": {project_slug: {"dir": str(proj_dir)}}}))
+    monkeypatch.setattr(wt_mod, "PROJECTS_REGISTRY", registry)
+    monkeypatch.setattr(wt_mod, "_free_bytes", lambda _: wt_mod.MIN_FREE_BYTES * 10)
+
+
+def test_declared_input_is_cloned(tmp_path, monkeypatch):
+    """A manifest workspace_inputs entry causes that directory to be cloned."""
+    proj_dir = tmp_path / "proj"
+    proj_dir.mkdir()
+    _init_git_repo(proj_dir)
+
+    assets = proj_dir / "assets"
+    assets.mkdir()
+    (assets / "model.bin").write_text("weights")
+
+    (proj_dir / "workshop.app.json").write_text(json.dumps({
+        "name": "test-app",
+        "services": [{"name": "svc", "start": "echo hi"}],
+        "workspace_inputs": [{"dir": "assets"}],
+    }))
+
+    _make_project_fixture(tmp_path, monkeypatch, "testproj", proj_dir)
+
+    result = provision_worktree("project:testproj", "task-declared")
+    wt_dir = Path(result["dir"])
+
+    assert "assets" in result["provisioned"]
+    assert (wt_dir / "assets" / "model.bin").exists()
+
+
+def test_undeclared_platform_favourite_not_cloned(tmp_path, monkeypatch):
+    """When manifest declares workspace_inputs, platform-default dirs not listed are skipped."""
+    proj_dir = tmp_path / "proj"
+    proj_dir.mkdir()
+    _init_git_repo(proj_dir)
+
+    # node_modules + lockfile present (would be auto-included by the fallback)
+    nm = proj_dir / "node_modules"
+    nm.mkdir()
+    (nm / "lib.js").write_text("fake")
+    (proj_dir / "package-lock.json").write_text('{"lockfileVersion":2}')
+
+    # Custom dir the manifest declares instead
+    weights = proj_dir / "model-weights"
+    weights.mkdir()
+    (weights / "weights.bin").write_text("weights")
+
+    # Manifest declares only model-weights — not node_modules
+    (proj_dir / "workshop.app.json").write_text(json.dumps({
+        "name": "test-app",
+        "services": [{"name": "svc", "start": "echo hi"}],
+        "workspace_inputs": [{"dir": "model-weights"}],
+    }))
+
+    _make_project_fixture(tmp_path, monkeypatch, "testproj2", proj_dir)
+
+    result = provision_worktree("project:testproj2", "task-undeclared")
+    wt_dir = Path(result["dir"])
+
+    assert "model-weights" in result["provisioned"]
+    assert "node_modules" not in result["provisioned"]
+    assert "node_modules" not in result["skipped"]
+    assert not (wt_dir / "node_modules").exists()
