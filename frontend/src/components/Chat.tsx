@@ -993,8 +993,9 @@ export default function Chat({
       cold: work.cold,
       reload: work.reload,
       openQuestion,
+      answer: work.answer,
     }),
-    [work.ticket, work.data.inbox, work.cold, work.reload, openQuestion],
+    [work.ticket, work.data.inbox, work.cold, work.reload, openQuestion, work.answer],
   );
 
   // Going back to a point in the conversation (ADR 0020).

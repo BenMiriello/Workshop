@@ -18,6 +18,12 @@ stated its acceptance. A format and its checker cannot live in two files.
 
 So: producers compose with `compose()`, the checker matches with `LABEL_RE`, and
 both read the same table below. Adding a recognized synonym is one edit.
+
+THIS MODULE OWNS THE SHAPE, NOT THE WORDS. What to actually write in each field,
+how a title should read, and the plain-language rule are in `docs/ticket-writing.md`.
+That page exists because this one was the whole convention for months: the labels
+were enforced and nothing said how to fill them, so tickets drifted into insider
+shorthand the operator could not read on his own queue.
 """
 from __future__ import annotations
 

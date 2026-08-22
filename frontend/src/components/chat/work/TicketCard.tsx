@@ -63,9 +63,16 @@ export type ChatWorkAccess = {
   reload: () => void;
   /** Opens the Work panel on one inbox item. */
   openQuestion: (itemId: string) => void;
+  /** Answer one inbox item in place, without opening the panel.
+   *
+   *  Stable (a `useCallback` over the thread's fetcher), so it costs no extra
+   *  renders. `busy` is deliberately NOT here: it changes during a request and
+   *  would re-render every card in the transcript mid-answer, so the control
+   *  that is answering keeps that state locally. */
+  answer: (itemId: string, text: string) => Promise<void>;
 };
 
-const ChatWorkContext = createContext<ChatWorkAccess | null>(null);
+export const ChatWorkContext = createContext<ChatWorkAccess | null>(null);
 export const ChatWorkProvider = ChatWorkContext.Provider;
 
 /** One second, and only while this card's run is actually going. A card with a

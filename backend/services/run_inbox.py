@@ -49,6 +49,22 @@ def _title_of(task: dict) -> str:
     return text.split("\n")[0][:120] or f"Task {task.get('id', '')[:8]}"
 
 
+def _options_for(task: dict) -> list[str]:
+    """The taps this question offers, named for what they do.
+
+    `Approve`/`Decline` is reserved for a block carrying a structured proposal,
+    because `routes/inbox` keys the grant-minting path off that exact literal.
+    A finished ticket gets its own pair so the two are never confused: the words
+    on the buttons are the verbs in `services/task_decision`.
+    """
+    aw = task.get("awaiting") or {}
+    if aw.get("proposal"):
+        return ["Approve", "Decline"]
+    if task.get("status") == "in_review":
+        return ["Accept", "Send back"]
+    return []
+
+
 def sync(scope_roots: list[tuple[str, Path]]) -> dict:
     """Raise an inbox question for every blocked task, and close the ones whose
     task has since moved on. Returns a small tally for logging.
@@ -95,10 +111,15 @@ def sync(scope_roots: list[tuple[str, Path]]) -> dict:
                     scope=skey,
                     title=_title_of(t),
                     body=ask,
+                    # OPTIONS ARE THE ANSWER, AS BUTTONS. Free prose has to be
+                    # read to work out which verb it means, and reading it wrong
+                    # is how an acceptance became a rework request (2026-08-22).
                     # A structured proposal (grant this uri/verb) is the
-                    # machine-checkable half of the ask; offering it as options
-                    # is what makes the answer one tap instead of prose.
-                    options=["Approve", "Decline"] if aw.get("proposal") else [],
+                    # machine-checkable half of a block's ask; a finished ticket
+                    # has exactly two answers and both are named here, so the
+                    # common case is one tap and prose is only ever the note that
+                    # rides along with sending it back.
+                    options=_options_for(t),
                     ticket_id=str(t.get("id") or "") or None,
                     run_id=(t.get("job_ids") or [None])[-1],
                     dedupe_key=key,

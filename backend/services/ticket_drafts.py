@@ -66,6 +66,12 @@ reading it months from now. Therefore:
     prerequisite.
   - State the goal so that someone who has never seen the conversation could
     act on it.
+  - The TITLE is one imperative line under 80 characters saying what changes and
+    where, in ordinary words. It has to be skimmable in a list without being
+    opened: if the body is needed to know what the ticket is about, the title has
+    failed. No metaphors for code structure ("seam", "spine", "surface") unless
+    that is literally the name of the thing. The convention is
+    docs/ticket-writing.md.
 
 Return STRICT JSON, no prose, no code fence:
 

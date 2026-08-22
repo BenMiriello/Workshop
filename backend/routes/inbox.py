@@ -133,6 +133,22 @@ async def _answer_the_task(item: dict, *, answer: str | None, dismissed: bool) -
     from routes.tasks_all import TaskReviewIn, review_task
 
     ans = str(answer or "").strip()
+    # WHICH QUESTION IS THIS. A finished ticket and a stuck one ask different
+    # things, and the answer to one is the wrong verb for the other. This used
+    # to send every answer to `approve`, which on a FINISHED ticket meant
+    # "release the block" — so the operator's "Approve" un-accepted committed
+    # work, put it back in the queue and refunded an attempt (2026-08-22).
+    # The status decides; nothing is assumed.
+    from routes.tasks_all import _require_root
+    from services import task_decision, tasks
+
+    status = None
+    try:
+        found = tasks.get_task(_require_root(scope), task_id)
+        status = (found or {}).get("status")
+    except Exception as e:  # an unreadable scope must not swallow the answer
+        log.warning("inbox: cannot read %s/%s to route its answer: %s", scope, task_id, e)
+
     if dismissed:
         action, note = "dismiss", ""
     elif _is_approval(ans) and any(
@@ -142,6 +158,15 @@ async def _answer_the_task(item: dict, *, answer: str | None, dismissed: bool) -
         # structured proposal, so an Approve here is an approval of that
         # proposal and has to mint it. Defaults come from the block itself.
         action, note = "grant-and-continue", ""
+    elif status == "in_review":
+        # The work is finished. Taking it and sending it back are both real
+        # answers, so the words decide which — and both surfaces now offer them
+        # as buttons (`run_inbox` options) so the words rarely have to.
+        action = "accept" if task_decision.reads_as_approval(ans) else "send-back"
+        # A tapped button posts its own label. That is the decision, not a note:
+        # writing it into the ticket body would leave the next attempt an answer
+        # with no content, which is the noise this whole change removes.
+        note = "" if task_decision.is_bare_verb(ans) else ans
     else:
         action, note = "approve", ans
     try:

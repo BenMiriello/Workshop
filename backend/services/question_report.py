@@ -51,8 +51,19 @@ def _compose(task: dict, request: dict, scope: str | None) -> str:
     if unblocks:
         lines += ["", f"Unblocks if: {unblocks}"]
 
-    where = f"/tickets/{scope}/{task.get('id')}" if scope else f"ticket {task.get('id')}"
-    lines += ["", f"Answer here, or on the ticket: {where}"]
+    # WHERE TO ANSWER, TRUTHFULLY AND AS A LINK.
+    #
+    # This line used to read "Answer here, or on the ticket: /tickets/<scope>/<id>"
+    # and both halves were wrong (2026-08-22). Nothing routes a chat reply back to
+    # a ticket's `awaiting` record, so "answer here" was false; and a bare path is
+    # not a link at all, which on a phone means it cannot be followed. `ticket` has
+    # been a managed ref kind since managed links shipped (`services/refs.py`
+    # VALID_KINDS, `_resolve_ticket`), so the chip renders with the ticket's own
+    # title and status instead of a path the reader has to parse.
+    ref = f"workshop:ticket/{task.get('id')}"
+    label = str(task.get("title") or "the ticket").strip()
+    lines += ["", f"Answer it in the Tickets panel in the chat toolbar, "
+                  f"or open [{label}]({ref})."]
     return "\n".join(lines)
 
 

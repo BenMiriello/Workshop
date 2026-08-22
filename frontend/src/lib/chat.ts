@@ -248,6 +248,13 @@ export type ChatMsg = {
     // for the label; `autonomous` alone decides the treatment, so a new kind of
     // background post gets it right by setting that flag and nothing else.
     kind?: string;
+    // WHICH ticket a `ticket_question` post is about. Written by
+    // question_report.py since it shipped, and read by nothing until the inline
+    // decision (`work/TicketDecision.tsx`) needed it: the message used to end in
+    // a bare `/tickets/<scope>/<id>` path and expect the reader to follow it by
+    // hand, which on a phone meant it could not be followed at all.
+    ticket?: string;
+    scope?: string;
   };
 };
 

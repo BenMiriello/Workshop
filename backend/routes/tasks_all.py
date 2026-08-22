@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 
 from routes.api_models import (DeletedOut, Job, LabelCount, Readiness, Task,
                                TaskLink)
-from services import (tasks, task_scope, task_dedup, jobs, ownership,
+from services import (tasks, task_scope, task_dedup, task_decision, jobs, ownership,
                       knowledge, learnings, permissions, ticket_readiness,
                       latitude as latitude_svc)
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE, Page, PageMeta
@@ -1058,7 +1058,23 @@ class TaskReviewIn(BaseModel):
     rule_scope: str | None = None
 
 
-_REVIEW_ACTIONS = ("approve", "deny", "grant-and-continue", "mint-rule", "dismiss")
+_REVIEW_ACTIONS = ("accept", "send-back", "approve", "deny", "grant-and-continue",
+                   "mint-rule", "dismiss")
+
+# Wire name -> the verb in `services/task_decision`, which owns what each one
+# does. `approve` is kept as the wire name for releasing a BLOCKED ticket
+# because two correct callers already send it (TaskPanel labels its button
+# "Release"; TicketDetail only shows the box when the ticket is blocked), and
+# it is refused outright on a finished one — see `review_task`.
+_DECISION_VERB = {
+    "accept": task_decision.ACCEPT,
+    "send-back": task_decision.SEND_BACK,
+    "approve": task_decision.ANSWER,
+    "grant-and-continue": task_decision.ANSWER,
+    "mint-rule": task_decision.ANSWER,
+    "deny": task_decision.CANCEL,
+    "dismiss": task_decision.DISMISS,
+}
 
 
 def _learnings_scope(scope: str) -> str:
@@ -1095,14 +1111,29 @@ class TaskReviewOut(BaseModel):
 
 @router.post("/{scope}/{task_id}/review", response_model=TaskReviewOut, response_model_exclude_unset=True)
 async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
-    """Answer a blocked task. Returns {action, task, grant?, learning?, promotion?}.
+    """Answer a waiting task. Returns {action, task, grant?, learning?, promotion?}.
 
-    approve            release the block; the task is `todo` and runs again.
-    deny               the work should not happen; the task is cancelled.
-    grant-and-continue mint the standing grant the block asked for, then release.
-    mint-rule          record the standing answer as a learning IN THE TASK'S
-                       SCOPE, then release (the rule IS the answer).
-    dismiss            leave the block in place, off the review queue.
+    A ticket waits in one of two states and they ask different questions, so the
+    verbs are split by which one they answer. `services/task_decision` owns what
+    each does; this route owns the side effects that only a review can produce.
+
+    FINISHED (`in_review`) — the work is done, is it right?
+      accept             take the work; the task is `done`.
+      send-back          return it for rework; the note becomes the instruction.
+
+    STUCK (`blocked`) — the worker cannot proceed.
+      approve            release the block; the task is `todo` and runs again.
+      grant-and-continue mint the standing grant the block asked for, then release.
+      mint-rule          record the standing answer as a learning IN THE TASK'S
+                         SCOPE, then release (the rule IS the answer).
+
+    EITHER
+      deny               the work should not happen; the task is cancelled.
+      dismiss            leave the block in place, off the review queue.
+
+    `approve` is REFUSED on a finished ticket. It used to be accepted there and
+    released it back to `todo`, which un-accepted committed work and refunded an
+    attempt; the caller has to say which of accept/send-back it meant.
     """
     action = (body.action or "").strip()
     if action not in _REVIEW_ACTIONS:
@@ -1115,20 +1146,25 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
     request = task.get("awaiting") or {}
     note = (body.note or "").strip()
     out: dict = {"action": action}
+    verb = _DECISION_VERB[action]
+    question = str(request.get("ask") or request.get("question") or "")
 
-    if action == "dismiss":
-        # Not a status: the task stays blocked. It just stops being asked about.
-        if not request:
-            raise HTTPException(400, "nothing to dismiss: this task carries no block request")
-        updated = tasks.update(root, task_id, blocked_request={**request, "dismissed": True})
-        if note:
-            updated = tasks.update(root, task_id,
-                                   evidence={"kind": "review", "ref": f"dismissed: {note}"})
+    # The refusal that stops the 2026-08-22 defect returning. `approve` on a
+    # finished ticket is ambiguous between "take it" and "release it", and the
+    # release reading silently un-accepted committed work. Neither reading is
+    # guessed at: the caller says which.
+    if action == "approve" and task.get("status") == "in_review":
+        raise HTTPException(
+            409,
+            "this ticket is finished and waiting on a decision, not blocked. "
+            "Use action=accept to take the work, or action=send-back with a note "
+            "to return it for rework.")
 
-    elif action == "deny":
-        reason = note or "denied in review"
-        tasks.update(root, task_id, evidence={"kind": "review", "ref": f"denied: {reason}"})
-        updated = tasks.update(root, task_id, status="cancelled", blocked_reason=reason)
+    if action in ("dismiss", "deny", "accept", "send-back"):
+        try:
+            updated = task_decision.apply(root, task_id, verb, note=note, question=question)
+        except task_decision.DecisionRefused as e:
+            raise HTTPException(409, str(e))
 
     else:
         # approve / grant-and-continue / mint-rule all RELEASE. Everything durable
@@ -1186,14 +1222,12 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
                 "ref": f"rule ({lscope}): {rule}",
             })
 
-        elif note:
-            tasks.update(root, task_id, evidence={"kind": "review", "ref": f"approved: {note}"})
-
-        # The answer goes into the BODY, not only into evidence. A worker is handed
-        # the ticket's text and nothing else, so an answer recorded anywhere else is
-        # invisible to the attempt it was meant to unblock — the task would stop and
-        # ask the same question again. Every releasing action writes it, because
-        # every one of them is an answer: a note, a granted permission, or a rule.
+        # What the operator actually said, for the body. A worker is handed the
+        # ticket's text and nothing else, so an answer recorded anywhere else is
+        # invisible to the attempt it was meant to unblock — the task would stop
+        # and ask the same question again. Every releasing action produces one,
+        # because every one of them IS an answer: a note, a granted permission,
+        # or a rule.
         answer = note
         if action == "grant-and-continue" and out.get("grant"):
             g = out["grant"]
@@ -1201,17 +1235,10 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
             answer = f"{granted}. {note}" if note else granted
         elif action == "mint-rule":
             answer = (body.rule or note).strip()
-        if answer:
-            tasks.append_clarification(
-                root, task_id,
-                question=str(request.get("ask") or request.get("question") or ""),
-                answer=answer,
-            )
 
-        # Release. `restore_attempt`: the block was ANSWERED, not failed — a task
-        # that stopped to ask a good question twice must not be parked as though it
-        # had failed twice. Clearing `blocked_reason` and the request is what
-        # `status=todo` already does (tasks.update).
+        # `restore_attempt`: the block was ANSWERED, not failed — a task that
+        # stopped to ask a good question twice must not be parked as though it
+        # had failed twice.
         #
         # EXCEPT when no attempt was ever spent. The queue triager raises an
         # `underspecified` block from a review pass, with no run claimed and no
@@ -1220,9 +1247,12 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
         # ticket triaged and answered twice quietly earns back two real attempts
         # against its park cap — the cap silently stops meaning what it says.
         raised_by = str((request or {}).get("raised_by") or "")
-        updated = tasks.update(
-            root, task_id, status="todo", blocked_reason="",
-            restore_attempt=not raised_by.startswith("agent:queue-triager"))
+        try:
+            updated = task_decision.apply(
+                root, task_id, verb, note=answer, question=question,
+                restore_attempt=not raised_by.startswith("agent:queue-triager"))
+        except task_decision.DecisionRefused as e:
+            raise HTTPException(409, str(e))
 
     if updated is None:
         raise HTTPException(404, f"task not found: {task_id}")

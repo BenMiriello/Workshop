@@ -208,7 +208,14 @@ def test_the_composed_question_leads_with_the_ask(scope_root):
     assert "> Which store should the token live in?" in msg
     assert "- secrets_store" in msg and "- the binding record" in msg
     assert "Two stores both look right." in msg
-    assert f"/tickets/workshop/{t['id']}" in msg
+    # A MANAGED LINK, NOT A PATH. This used to assert the bare
+    # `/tickets/<scope>/<id>` string, which is what the message actually printed
+    # and what the operator could not follow on a phone (2026-08-22). `ticket` is
+    # a real ref kind, so the chip renders with the ticket's own title.
+    assert f"](workshop:ticket/{t['id']})" in msg
+    assert "Bind a scope to a tracker](" in msg
+    # "Answer here" was false: nothing routes a chat reply back to `awaiting`.
+    assert "Answer here" not in msg
 
 
 def test_the_question_really_lands_in_the_thread(scope_root, tmp_path, monkeypatch):

@@ -17,6 +17,7 @@ import type { TranscriptBlock } from "./transcriptBlocks";
 import AttachmentViewer, { type ViewableAttachment } from "./AttachmentViewer";
 import { receiptHref, receiptItems, receiptLabel } from "./receipts";
 import { branchTargets } from "./branchable";
+import TicketDecision from "./work/TicketDecision";
 
 // The transcript body: one rendered block per entry the selector produced.
 //
@@ -324,6 +325,15 @@ const MessageBubble = memo(function MessageBubble({
           turn that ended early. No border, no tag above the body, no icon. */}
       {msg.meta?.stopped && (
         <div className="chat-status-line">{stoppedTag(msg.meta.stopped)}</div>
+      )}
+      {/* DECIDE IT HERE. A ticket this chat filed that is waiting on an answer
+          gets its control under the message that raised it, the way a permission
+          request does (`ApprovalBlock`). The message used to end in a bare
+          `/tickets/<scope>/<id>` path instead, which is not a link and cannot be
+          followed on a phone. Renders nothing unless there is something to
+          decide; the rule is `work/ticketDecision.ts`. */}
+      {msg.meta?.kind === "ticket_question" && (
+        <TicketDecision ticketId={msg.meta.ticket} />
       )}
       {/* A turn stopped before it wrote anything has no bubble to sit in, and a
           receipt must never be dropped just because the reply was empty. */}

@@ -15,7 +15,8 @@ from pydantic import BaseModel
 import logging
 
 from routes.api_models import Job, Task
-from services import jobs, tasks, task_scope, agents_registry, usage_ledger
+from services import (jobs, tasks, task_scope, task_decision, agents_registry,
+                      usage_ledger)
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE, Page, PageMeta
 
 log = logging.getLogger("workshop.routes.jobs")
@@ -214,11 +215,15 @@ def _enrich(job: dict, names: dict[str, str], cache: dict | None = None) -> dict
 # Operator responses to an awaiting_input job, expressed as a task transition.
 # Acting changes the scope store's mtime, so the dispatcher's skip-unchanged
 # guard releases the scope on the next tick and the sweep resumes on its own.
+# These are WIRE names the frontend already sends; what each one does lives in
+# `services/task_decision`, which is also what the task-review router calls, so
+# there is one implementation of "what does answering this mean" rather than the
+# two that disagreed about the word `approve` (2026-08-22).
 _ACTIONS = {
-    "approve": ("done", "in_review"),    # accept the worker's completion
-    "reject": ("todo", "in_review"),     # send an in_review task back for rework
-    "unblock": ("todo", "blocked"),      # blocker resolved: return to the queue
-    "cancel": ("cancelled", None),       # drop the task (any state)
+    "approve": task_decision.ACCEPT,     # accept the worker's completion
+    "reject": task_decision.SEND_BACK,   # send an in_review task back for rework
+    "unblock": task_decision.ANSWER,     # blocker resolved: return to the queue
+    "cancel": task_decision.CANCEL,      # drop the task (any state)
 }
 
 
@@ -321,7 +326,6 @@ async def act_on_job_task(job_id: str, task_id: str, body: JobTaskAction) -> dic
     root = task_scope.root_for_job(job)
     if root is None:
         raise HTTPException(400, "this job has no resolvable task scope")
-    new_status, require_from = _ACTIONS[body.action]
     task = tasks.get_task(root, task_id)
     if task is None:
         raise HTTPException(404, f"task not found in scope: {task_id}")
@@ -329,25 +333,19 @@ async def act_on_job_task(job_id: str, task_id: str, body: JobTaskAction) -> dic
     # the task's status can be changed elsewhere (a /review verb, a direct
     # tasks.update, another chat) without knowing which jobs are waiting on it. If
     # the task landed in a TERMINAL state (done or cancelled) before the operator
-    # got here, the intended verb is already satisfied (or moot). Treat it as an
-    # idempotent no-op and fall through to the job-clear pass below, so Home's
-    # attention strip drops the ghost card instead of 409-ing forever.
-    current_status = task.get("status")
-    terminal = {"done", "cancelled"}
-    updated = task
-    if require_from and current_status != require_from:
-        if current_status in terminal:
-            # No transition needed; the operator's intent is already realized.
-            pass
-        else:
-            raise HTTPException(
-                409, f"task is {current_status}, not {require_from}; cannot {body.action}")
-    else:
-        # Status change auto-clears the awaiting payload (update() drops it on
-        # exit from a waiting state). The operator note rides along as evidence.
-        updated = tasks.update(
-            root, task_id, status=new_status,
-            evidence={"kind": "operator", "ref": body.note} if body.note else None)
+    # got here, the intended verb is already satisfied (or moot). `task_decision`
+    # treats that as an idempotent no-op and returns the task unchanged, so the
+    # job-clear pass below still drops the ghost card from Home's attention strip
+    # instead of 409-ing forever.
+    request = task.get("awaiting") or {}
+    try:
+        updated = task_decision.apply(
+            root, task_id, _ACTIONS[body.action],
+            note=str(body.note or ""),
+            question=str(request.get("ask") or request.get("question") or ""),
+        ) or task
+    except task_decision.DecisionRefused as e:
+        raise HTTPException(409, str(e))
 
     # If the operator has now answered every task this job was waiting on, the
     # job is no longer awaiting input: flip it to done so it drops off Home's

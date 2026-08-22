@@ -1244,10 +1244,18 @@ open_tasks = tasks.list_tasks(root, include_done=False)
 waiting = [t for t in open_tasks if t["status"] in ("blocked", "in_review")]
 
 def question_for(t: dict) -> str:
+    # SAY WHICH QUESTION IT IS AND WHAT EACH ANSWER DOES. Every in_review ticket
+    # used to carry one generic sentence, so a list of them said the same thing
+    # under four titles and the operator could not tell whether any of them was
+    # blocked, finished, or waiting on words (2026-08-22).
     if t["status"] == "in_review":
-        return "Worker finished this task. Review the change and approve it, or send it back with a note."
+        return ("The work on this ticket is finished and waiting on you. "
+                "Accept it to mark it done, or send it back with a note saying "
+                "what to change.")
     reason = (t.get("blocked_reason") or "").strip()
-    return f"Blocked: {reason}" if reason else "Blocked; needs your input to proceed."
+    if reason:
+        return f"This ticket stopped: {reason}. Answer, and it goes back in the queue."
+    return "This ticket stopped and did not say why. Answer, and it goes back in the queue."
 
 # Write the per-task awaiting payload so the task carries its own question (the
 # store is the source of truth; JobDetail + TaskPanel read it from there).
