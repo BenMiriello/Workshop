@@ -236,11 +236,15 @@ build_receipt_evidence() {  # $1=receipt_file $2=baseline $3=head $4=commits(new
 # Allocate an isolated, locked worktree for one task. Echoes "<dir>\t<branch_slug>"
 # on success, nothing on failure (caller falls back to the project dir).
 alloc_task_worktree() {  # $1=task_id
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$SLUG" "$1" <<'PYEOF' 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import worktrees
 try:
-    r = worktrees.allocate_task_worktree(sys.argv[1], sys.argv[2])
+    # provision_worktree, not allocate_task_worktree: it allocates the same
+    # worktree and then hardlink-clones the heavy inputs the app DECLARES
+    # (workspace_inputs in its manifest) so the tree is usable rather than a
+    # source checkout with no dependencies. It had only test callers until now.
+    r = worktrees.provision_worktree(sys.argv[1], sys.argv[2])
     print(f"{r['dir']}\t{r['branch_slug']}")
 except Exception as e:
     print(f"[alloc_task_worktree] {e}", file=sys.stderr)
@@ -254,7 +258,7 @@ PYEOF
 #   ok\t<pr_url>\t<pr_number> -> published
 #   error: <msg>             -> transient/other failure; caller logs, still done
 publish_task_worktree() {  # $1=branch_slug $2=title $3=body
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import worktrees
 slug, branch_slug, title, body = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
@@ -281,7 +285,7 @@ PYEOF
 #   ok\t<commit>             -> merged successfully
 #   error: <msg>             -> other failure; caller logs, still done
 merge_task_worktree_local() {  # $1=branch_slug
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$SLUG" "$1" <<'PYEOF' 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" <<'PYEOF' 2>>"$LOG"
 import sys
 from services import worktrees
 slug, branch_slug = sys.argv[1], sys.argv[2]
@@ -304,7 +308,7 @@ PYEOF
 
 # Reap worktrees whose branch already merged into the canonical base. Best-effort.
 cleanup_merged_worktrees() {
-  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
 import sys
 from services import worktrees
 try:
@@ -338,10 +342,10 @@ publish_or_park() {  # $1=branch_slug $2=title $3=body
     if [[ "$out" == ok* ]]; then
       local commit; commit=$(printf '%s' "$out" | cut -f2)
       local aug; aug=$(printf '%s' "$EVIDENCE" | jq -c \
-        --arg branch "wt/$SLUG/$1" --arg commit "$commit" \
+        --arg branch "wt/$WT_SLUG/$1" --arg commit "$commit" \
         '. + {branch: $branch, commit: $commit}' 2>/dev/null)
       [[ -n "$aug" ]] && EVIDENCE="$aug"
-      log "task=$TASK_ID merged branch wt/$SLUG/$1 locally commit=$commit"
+      log "task=$TASK_ID merged branch wt/$WT_SLUG/$1 locally commit=$commit"
     else
       log "task=$TASK_ID local merge did not complete: ${out#error: }"
     fi
@@ -360,10 +364,10 @@ publish_or_park() {  # $1=branch_slug $2=title $3=body
   if [[ "$out" == ok* ]]; then
     local url num; url=$(printf '%s' "$out" | cut -f2); num=$(printf '%s' "$out" | cut -f3)
     local aug; aug=$(printf '%s' "$EVIDENCE" | jq -c \
-      --arg branch "wt/$SLUG/$1" --arg url "$url" --arg num "$num" \
+      --arg branch "wt/$WT_SLUG/$1" --arg url "$url" --arg num "$num" \
       '. + {branch: $branch, pr: {url: $url, number: $num}}' 2>/dev/null)
     [[ -n "$aug" ]] && EVIDENCE="$aug"
-    log "task=$TASK_ID published branch wt/$SLUG/$1 pr=$url"
+    log "task=$TASK_ID published branch wt/$WT_SLUG/$1 pr=$url"
   else
     log "task=$TASK_ID publish did not open a PR: ${out#error: }"
   fi
@@ -597,11 +601,53 @@ terminal_label()  { if [[ "$SUPERVISED" == "1" ]]; then echo "IN_REVIEW (supervi
 # unbound project, a --dir sweep, or the flag left false keeps the single-DIR
 # behavior below unchanged. WORK_DIR is the tree the current task actually runs
 # in: the project DIR by default, an isolated worktree only in WT mode.
+# WT_SLUG is the PROJECT REGISTRY identity of the tree being swept, and it is a
+# different question from SLUG. SLUG is "did the caller name a project on the
+# command line"; the resident runner never does (queue_runner.sh invokes this as
+# `--dir "$DIR"`), so SLUG is empty on every unattended sweep. The worktree path
+# gated itself on SLUG, which is why worktree mode has NEVER ONCE EXECUTED
+# despite being fully built: the gate asked whether the caller typed a name, not
+# whether the tree has one. Ask the registry which project owns this directory
+# instead — same correction as the billing key and the execution-intent key
+# (2026-08-22): derive identity from the registry, never from what a path or an
+# argv happened to carry.
+#
+# Kept SEPARATE from SLUG on purpose. SLUG also feeds BILL_SCOPE and
+# learn_scope_for, both of which were fixed on 2026-08-22 to resolve an unnamed
+# sweep through task_scope.key_for_root; assigning SLUG here would silently route
+# the platform repo's learnings to `project:development` instead of
+# `development` and undo that fix. WT_SLUG is read by the worktree path only.
+WT_SLUG="$SLUG"
+if [[ -z "$WT_SLUG" ]]; then
+  WT_SLUG=$(python3 - "$DIR" <<'PYEOF' 2>/dev/null
+import json, os, sys
+from pathlib import Path
+target = Path(sys.argv[1]).resolve()
+reg = Path(os.environ.get("WORKSHOP_PROJECTS_REGISTRY",
+                          str(Path(os.environ["WORKSHOP"]) / ".runtime" / "projects.json")))
+try:
+    data = json.loads(reg.read_text())
+except Exception:
+    raise SystemExit(0)
+for slug, rec in (data.get("projects") or {}).items():
+    d = rec.get("dir")
+    if not d:
+        continue
+    try:
+        if Path(d).resolve() == target:
+            print(slug)
+            break
+    except Exception:
+        continue
+PYEOF
+  )
+fi
+
 REPO_BOUND=0
 DEFAULT_BRANCH=""
 CONCURRENT_WT=0
-if [[ -n "$SLUG" ]]; then
-  read -r REPO_BOUND DEFAULT_BRANCH CONCURRENT_WT < <(python3 - "$SLUG" <<'PYEOF'
+if [[ -n "$WT_SLUG" ]]; then
+  read -r REPO_BOUND DEFAULT_BRANCH CONCURRENT_WT < <(python3 - "$WT_SLUG" <<'PYEOF'
 import json, os, sys
 from pathlib import Path
 slug = sys.argv[1]
@@ -630,7 +676,7 @@ source "$WORKSHOP/scripts/dev_mode_gate.sh"
 assert_run_target "$DIR" "project_ralph.sh" || exit 2
 
 WT_ENABLED=0
-[[ "$CONCURRENT_WT" == "1" && -n "$SLUG" ]] && WT_ENABLED=1
+[[ "$CONCURRENT_WT" == "1" && -n "$WT_SLUG" ]] && WT_ENABLED=1
 WORK_DIR="$DIR"
 
 RUNTIME="$DIR/.runtime"
@@ -764,7 +810,7 @@ LEARN_SCOPE="$(learn_scope_for)"
 
 
 START_EPOCH=$(date +%s)
-log "=== sweep start slug=$SLUG dir=$DIR autonomy=$PRESET job=$JOB_ID scope=$BILL_SCOPE learn_scope=$LEARN_SCOPE grant=${GRANT_TOKEN:0:8} max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS bound=$REPO_BOUND worktrees=$WT_ENABLED ==="
+log "=== sweep start slug=$SLUG wt_slug=$WT_SLUG dir=$DIR autonomy=$PRESET job=$JOB_ID scope=$BILL_SCOPE learn_scope=$LEARN_SCOPE grant=${GRANT_TOKEN:0:8} max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS bound=$REPO_BOUND worktrees=$WT_ENABLED ==="
 
 # The canonical branch for a bound project: the tracked default_branch, else the
 # same main/master/HEAD detection worktrees.py falls back to. Used by
@@ -933,8 +979,8 @@ while (( n < MAX_TASKS )); do
     if [[ -n "$WT_DIR" && -d "$WT_DIR" ]]; then
       WORK_DIR="$WT_DIR"; WT_MODE=1
       PR_TITLE="$(echo "$TASK_TEXT" | head -c 72 | tr '\n' ' ')"
-      PR_BODY="Automated change for task $TASK_ID in project $SLUG."
-      log "task=$TASK_ID allocated worktree $WT_DIR (branch wt/$SLUG/$WT_BRANCH_SLUG)"
+      PR_BODY="Automated change for task $TASK_ID in project $WT_SLUG."
+      log "task=$TASK_ID provisioned worktree $WT_DIR (branch wt/$WT_SLUG/$WT_BRANCH_SLUG)"
     else
       log "task=$TASK_ID worktree allocation failed; running in project dir (no isolation, no PR)"
     fi
@@ -1215,7 +1261,7 @@ done
 # canonical base so branches/<slug>/ does not accumulate stale trees. Best-effort.
 if [[ "$WT_ENABLED" == "1" ]]; then
   cleanup_merged_worktrees
-  log "cleanup: reaped merged task worktrees for $SLUG"
+  log "cleanup: reaped merged task worktrees for $WT_SLUG"
 fi
 
 DURATION=$(( $(date +%s) - START_EPOCH ))

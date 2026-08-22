@@ -264,6 +264,68 @@ def _remap(arg: str, root: str) -> str:
     return arg
 
 
+def _git_worktree_binds(root: str) -> list[tuple[str, str]]:
+    """Extra read-write binds a LINKED GIT WORKTREE needs to be a git repo at all.
+
+    A worktree created by `git worktree add` does not contain a `.git`
+    DIRECTORY. It contains a `.git` FILE holding one line, `gitdir: <abspath>`,
+    pointing at `<parent-repo>/.git/worktrees/<name>`, and that directory's
+    `commondir` points on to the parent's `.git`, which is where the object
+    database and the refs actually live. Both paths are ABSOLUTE and both are
+    outside the worktree.
+
+    So a worktree bind-mounted alone at MOUNTPOINT is not a repository. Measured
+    2026-08-22: `git status` inside such a sandbox fails with
+    `fatal: not a git repository: <abspath>`, and so does every other git
+    command. A worker confined that way could not commit, diff, or read its own
+    baseline -- which is the entire job. Binding the parent `.git` at its real
+    path fixes it, verified in the same probe, and the host WORKING tree stays
+    absent: only the git metadata directory appears, not the checkout beside it.
+
+    Read-write because committing from a linked worktree writes objects and refs
+    into the shared `.git`; that sharing is what a worktree IS, and is not a
+    weakening of the isolation, which is of the working tree.
+
+    Returns [] for a normal repository or a non-repository, where the `.git`
+    directory is already inside the root and comes along with it.
+    """
+    dotgit = os.path.join(root, ".git")
+    if os.path.isdir(dotgit) or not os.path.isfile(dotgit):
+        return []
+    try:
+        line = open(dotgit, encoding="utf-8").read().strip()
+    except OSError:
+        return []
+    if not line.startswith("gitdir:"):
+        return []
+    gitdir = os.path.realpath(line.split(":", 1)[1].strip())
+    if not os.path.isdir(gitdir):
+        return []
+
+    common = gitdir
+    try:
+        rel = open(os.path.join(gitdir, "commondir"), encoding="utf-8").read().strip()
+        if rel:
+            common = os.path.realpath(os.path.join(gitdir, rel))
+    except OSError:
+        pass
+
+    # A path that is already inside the scope needs no bind and must not get
+    # one: MOUNTPOINT is mounted over, so a bind beneath it would either be
+    # shadowed or, worse, be created inside the scope itself.
+    def _outside(p: str) -> bool:
+        return not (p == MOUNTPOINT or p.startswith(MOUNTPOINT + os.sep)) \
+            and not (p == root or p.startswith(root + os.sep))
+
+    binds = [(common, common)] if os.path.isdir(common) and _outside(common) else []
+    # Normally gitdir lives under commondir (`commondir` is `../..`), so the one
+    # bind covers both. --separate-git-dir and hand-made layouts can put it
+    # elsewhere; bind it too rather than assume.
+    if not (gitdir == common or gitdir.startswith(common + os.sep)) and _outside(gitdir):
+        binds.append((gitdir, gitdir))
+    return binds
+
+
 def wrap(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -> list[str]:
     """The command to actually spawn for a turn whose scope root is `workdir`.
 
@@ -328,7 +390,18 @@ def wrap(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -> list
         args += (["--bind", src, dest] if mode == "rw" else ["--ro-bind", src, dest])
     # The scope, writable, at the fixed managed mountpoint. Bound AFTER the tmpfs
     # so a scope that happens to live under /tmp is still present.
-    args += ["--bind", root, MOUNTPOINT, "--chdir", MOUNTPOINT, "--"]
+    args += ["--bind", root, MOUNTPOINT]
+    # A linked git worktree keeps its object store and refs in the parent repo,
+    # at an absolute path outside itself. Without this the sandbox contains a
+    # directory that is not a git repository. See _git_worktree_binds.
+    #
+    # AFTER the mountpoint bind, not before: bwrap applies mounts in order, so a
+    # bind whose target sits under a path mounted later is hidden by it. Binding
+    # these first worked for a parent repo under /home and silently vanished when
+    # the parent repo was itself at MOUNTPOINT (measured while building this).
+    for src, dest in _git_worktree_binds(root):
+        args += ["--bind", src, dest]
+    args += ["--chdir", MOUNTPOINT, "--"]
     return args + cmd
 
 

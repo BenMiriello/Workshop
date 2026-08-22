@@ -293,3 +293,102 @@ def test_grants_no_longer_bind_the_whole_xdg_runtime_dir(monkeypatch):
     xdg = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/0"
     for mode, src, dest in grants:
         assert src != xdg, "the bare XDG runtime dir must not be a whole-directory grant"
+
+
+# --- linked git worktrees -------------------------------------------------
+#
+# A worktree confined alone is not a git repository: its `.git` is a FILE
+# pointing at an absolute path in the parent repo. Measured 2026-08-22, every
+# git command inside such a sandbox failed with "not a git repository", which
+# would have left an unattended worker unable to commit its own work.
+
+def _make_repo_with_worktree(tmp_path):
+    """A real parent repo plus a linked worktree, or None if git is unusable."""
+    if shutil.which("git") is None:
+        return None
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+    run = lambda *a: subprocess.run(a, cwd=str(parent), env=env, capture_output=True)
+    run("git", "init", "-q", "-b", "main")
+    run("git", "config", "user.email", "t@t")
+    run("git", "config", "user.name", "t")
+    (parent / "f.txt").write_text("hello\n")
+    run("git", "add", "f.txt")
+    run("git", "commit", "-qm", "init")
+    wt = tmp_path / "wt"
+    if run("git", "worktree", "add", "-q", str(wt), "-b", "side").returncode != 0:
+        return None
+    return parent, wt
+
+
+def test_a_plain_repo_needs_no_extra_git_binds(tmp_path):
+    """A normal checkout keeps its .git INSIDE the scope, so it comes along with
+    the mountpoint bind and must not produce a redundant bind."""
+    made = _make_repo_with_worktree(tmp_path)
+    if made is None:
+        pytest.skip("git unavailable")
+    parent, _ = made
+    assert scoped_exec._git_worktree_binds(str(parent)) == []
+
+
+def test_a_linked_worktree_binds_the_parent_git_directory(tmp_path):
+    made = _make_repo_with_worktree(tmp_path)
+    if made is None:
+        pytest.skip("git unavailable")
+    parent, wt = made
+    binds = scoped_exec._git_worktree_binds(str(wt))
+    assert binds, "a linked worktree must bind the parent .git or it is not a repo"
+    srcs = [os.path.realpath(s) for s, _ in binds]
+    assert os.path.realpath(str(parent / ".git")) in srcs
+    # Bound at its real path, so the absolute `gitdir:` pointer resolves.
+    for src, dest in binds:
+        assert src == dest
+
+
+def test_a_non_repository_directory_gets_no_git_binds(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert scoped_exec._git_worktree_binds(str(plain)) == []
+
+
+@pytest.mark.skipif(not _HAS_BWRAP, reason="bwrap unavailable")
+def test_git_works_inside_a_confined_linked_worktree(tmp_path, monkeypatch):
+    """The behaviour the binds exist for: read HEAD and commit, confined."""
+    made = _make_repo_with_worktree(tmp_path)
+    if made is None:
+        pytest.skip("git unavailable")
+    _, wt = made
+    monkeypatch.delenv("WORKSHOP_SCOPED_EXEC", raising=False)
+    monkeypatch.delenv("WORKSHOP_TURN_USER", raising=False)
+    if not scoped_exec.enabled():
+        pytest.skip("scoped exec disabled on this host")
+    argv = scoped_exec.wrap(
+        ["sh", "-c",
+         "git rev-parse --abbrev-ref HEAD && touch n && git add n && "
+         "git -c user.email=t@t -c user.name=t commit -qm probe && echo COMMITTED"],
+        str(wt),
+    )
+    out = subprocess.run(argv, cwd=str(wt), capture_output=True, text=True)
+    if out.returncode != 0 and "bwrap" in (out.stderr or ""):
+        pytest.skip(f"sandbox unavailable here: {out.stderr.strip()[:120]}")
+    assert "side" in out.stdout, out.stderr
+    assert "COMMITTED" in out.stdout, out.stderr
+
+
+@pytest.mark.skipif(not _HAS_BWRAP, reason="bwrap unavailable")
+def test_the_git_binds_come_after_the_mountpoint_bind(tmp_path):
+    """Ordering is load-bearing: bwrap applies mounts in order, so a git bind
+    emitted before the mountpoint bind is shadowed by it."""
+    made = _make_repo_with_worktree(tmp_path)
+    if made is None:
+        pytest.skip("git unavailable")
+    _, wt = made
+    argv = scoped_exec.wrap(["true"], str(wt))
+    if scoped_exec.MOUNTPOINT not in argv:
+        pytest.skip("sandbox disabled on this host")
+    mount_at = argv.index(scoped_exec.MOUNTPOINT)
+    binds = scoped_exec._git_worktree_binds(str(wt))
+    assert binds
+    for src, _ in binds:
+        assert argv.index(src) > mount_at
