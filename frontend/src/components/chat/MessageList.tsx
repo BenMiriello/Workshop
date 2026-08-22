@@ -267,18 +267,17 @@ const MessageBubble = memo(function MessageBubble({
   // card: tinting bubbles by tier turns a long log into a quilt.
   const autonomous = msg.role === "assistant" && !!msg.meta?.autonomous;
   return (
-    // THE ENTER ANIMATION GOES ON THE ROW, and it is gated on the same `arrived`
-    // flag as the flash, never on mount. A mount gate would replay on every
-    // re-attach (the stream replays a turn from offset 0) and, worse, every time
-    // a streaming turn seals: the live block is keyed `${turnId}:${i}` and
-    // becomes `ev.id` on commit, so React unmounts the live node and mounts a
-    // fresh one at exactly the moment the reader is reading it.
-    <div className={`chat-msg ${msg.role}${autonomous ? " autonomous" : ""}${arrived ? " chat-msg--enter" : ""}`}
+    // THE ENTER ANIMATION GOES ON THE ROW FOR ASSISTANT MESSAGES ONLY. User
+    // messages were already visible as a pending bubble before committing, so
+    // starting at opacity:0 would make the message vanish and reappear — the
+    // exact dim-state loss the operator reported. Gated on `arrived` (newer than
+    // list mount), never on mount, for the same reasons as the assistant case.
+    <div className={`chat-msg ${msg.role}${autonomous ? " autonomous" : ""}${arrived && msg.role === "assistant" ? " chat-msg--enter" : ""}`}
          {...(autonomous ? { "data-agency": "autonomous" as const } : {})}>
       {/* --copyable reserves the inline room the copy button occupies, so the
           button never lands on top of the last line of text. It is only set
           when there IS something to copy. */}
-      {body && <div className={`chat-bubble ${arrived && msg.role === "assistant" ? "ws-arrive " : ""}${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}${branchFor ? " chat-bubble--branchable" : ""}${inflight ? " chat-bubble--inflight" : ""}`}>
+      {body && <div className={`chat-bubble ${arrived && msg.role === "assistant" ? "ws-arrive " : ""}${arrived && msg.role === "user" && !inflight ? "chat-bubble--confirm " : ""}${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}${branchFor ? " chat-bubble--branchable" : ""}${inflight ? " chat-bubble--inflight" : ""}`}>
         <div className="chat-bubble__body">
           {/* Files the operator attached, shown on the message that carried
               them. Read-only here: the send already happened, so there is

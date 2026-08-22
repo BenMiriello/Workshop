@@ -2245,9 +2245,25 @@ button.chat-attach {
 /* Sent during the turn above and already handed to it, but not yet folded
    into the persisted transcript — same treatment as --queued (same opacity,
    same "hasn't landed yet" meaning), just for a message that was actually
-   dispatched rather than held back. See ChatLog.tsx for why this is a plain
-   opacity and nothing else. */
+   dispatched rather than held back. */
 .chat-bubble--inflight { opacity: 0.55; }
+/* A user message that just committed: fades from the pending opacity to full.
+   The pending bubble was already visible at 0.55, so the enter animation
+   (which starts at opacity:0) would make the message vanish and reappear at
+   full color. Starting from 0.55 instead keeps visual continuity: the reader
+   sees dim → fading to solid, which is the "server just confirmed this" signal.
+   Applied only when not inflight (mid-turn messages that the turn has not
+   reached yet must stay dim, not confirm). */
+@keyframes chat-bubble-confirm {
+  from { opacity: 0.55; }
+  to { opacity: 1; }
+}
+.chat-msg.user .chat-bubble--confirm {
+  animation: chat-bubble-confirm 300ms var(--ease-out) 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-msg.user .chat-bubble--confirm { animation: none; }
+}
 /* The utterance being spoken right now, as the message it is about to become.
    Same "hasn't landed yet" opacity as --queued/--inflight, and it wraps like any
    other bubble, which is the whole point: the strip it replaced was one clipped
