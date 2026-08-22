@@ -698,7 +698,39 @@ fi
 # must stay EXACTLY what dispatch_triggers.sh admits against (a bare slug for a
 # project, `agent:<slug>` for an agent) — prefixing it here would split one
 # scope's budget across two ledger keys and silently double it.
-BILL_SCOPE="${SLUG:-$ASSIGNEE}"; [[ -z "$BILL_SCOPE" ]] && BILL_SCOPE="$(basename "$DIR")"
+#
+# When neither a project slug nor an agent assignee names the sweep, the TREE
+# names it, and the tree's name is not its basename. basename($DIR) on the
+# platform repo is "workshop", but the platform repo's ticket store belongs to
+# the `development` scope (ADR 0014, task_scope.key_for_root). So an unbound
+# sweep working development tickets billed every token to `workshop`, halted on
+# a ceiling belonging to a scope it never touched, and left development's own
+# allowance untouched (measured 2026-08-22: 1,518,896/1,500,000 on workshop
+# with development at zero, and the loop stopped). Ask for the scope key rather
+# than guessing from the path — the same defect class as keying execution
+# intent by path, fixed on 2026-08-22.
+#
+# key_for_root returns the PREFIXED form (`project:<slug>`), but the ledger key
+# for a project is the BARE slug, per the paragraph above: strip that one
+# prefix and leave `agent:` alone, which already matches. A directory that is
+# not a registered scope root has no key, and keeps the basename so an ad-hoc
+# sweep still bills somewhere instead of failing.
+scope_key_for_dir() {
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$DIR" <<'PYEOF' 2>>"$LOG"
+import sys
+from services import task_scope
+key = task_scope.key_for_root(sys.argv[1]) or ""
+if key.startswith("project:"):
+    key = key[len("project:"):]
+print(key)
+PYEOF
+  )
+}
+BILL_SCOPE="${SLUG:-$ASSIGNEE}"
+if [[ -z "$BILL_SCOPE" ]]; then
+  BILL_SCOPE="$(scope_key_for_dir)"
+  [[ -z "$BILL_SCOPE" ]] && BILL_SCOPE="$(basename "$DIR")"
+fi
 
 # The LEARNINGS scope is a different namespace from the billing key, and this is
 # where F3 bit: learnings/knowledge require a PREFIXED scope (`project:<slug>`,
