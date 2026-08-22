@@ -931,3 +931,102 @@ describe("everything in the transcript comes from the transcript", () => {
     expect(blocks[0]).toMatchObject({ kind: "pending", status: "failed", text: "the one that never landed" });
   });
 });
+
+describe("backend-to-renderer contract: wire fields the renderer reads", () => {
+  // Agent segment helper local to this block — separate from the one in "a cut the
+  // server recorded" above, which omits done/result and uses different id conventions.
+  const agent = (id: string, name: string, steps: number, cut?: string): ChatSegment => ({
+    t: "agent", name, input: name, id,
+    steps: Array.from({ length: steps }, (_, i) => text(`${id}${i}`)),
+    done: true, result: `done ${name}`,
+    ...(cut ? { cut_after: [cut] } : {}),
+  } as ChatSegment);
+
+  // Full fixture: shape chat_store.commit_turn writes via chat_log.append_message_sync.
+  // Two agent delegations (A and B) both launched before the mid-turn user message.
+  // Backend wrote cut_id on the user message and cut_after:["c1"] on B (the last
+  // segment at the moment of arrival, per build_streaming.cut_here).
+  // aSteps lets A grow after the message was sent — this is the regression vector.
+  const withTokens = (aSteps: number): LogEvent[] => [
+    { seq: 1, id: "s1", ts: "2026-08-14T12:00:00Z",
+      kind: "message", role: "user", content: "go" },
+    { seq: 2, id: "s2", ts: "2026-08-14T12:05:00Z",
+      kind: "message", role: "user", content: "and also",
+      meta: { injected: true, during_turn: "r1", at_segment: 1, at_unit: 5, cut_id: "c1" } },
+    { seq: 3, id: "s3", ts: "2026-08-14T12:30:00Z",
+      kind: "message", role: "assistant", content: "",
+      meta: { turn_id: "r1",
+        segments: [agent("a1", "A", aSteps), agent("b1", "B", 1, "c1"), text("final answer")] } },
+  ];
+
+  // Stripped fixture: same events without cut_id and cut_after — equivalent to the
+  // pre-2026-08-12 wire shape, or any path where the server does not hold the live
+  // turn. The renderer falls back to the at_unit index.
+  const withoutTokens = (aSteps: number): LogEvent[] => [
+    { seq: 1, id: "s1", ts: "2026-08-14T12:00:00Z",
+      kind: "message", role: "user", content: "go" },
+    { seq: 2, id: "s2", ts: "2026-08-14T12:05:00Z",
+      kind: "message", role: "user", content: "and also",
+      meta: { injected: true, during_turn: "r1", at_segment: 1, at_unit: 5 } },
+    { seq: 3, id: "s3", ts: "2026-08-14T12:30:00Z",
+      kind: "message", role: "assistant", content: "",
+      meta: { turn_id: "r1",
+        segments: [agent("a1", "A", aSteps), agent("b1", "B", 1), text("final answer")] } },
+  ];
+
+  it("interleaves: each mid-run message after the work before it, before the work after it", () => {
+    expect(shape(selectTranscript(stateOf(withTokens(1))))).toEqual([
+      "user:go",
+      "assistant:[agent][agent]",
+      "user:and also",
+      "assistant:final answer",
+    ]);
+  });
+
+  it("holds B's position as A keeps growing — the 2026-08-14 measured regression", () => {
+    const order = ["user:go", "assistant:[agent][agent]", "user:and also", "assistant:final answer"];
+    expect(shape(selectTranscript(stateOf(withTokens(1))))).toEqual(order);
+    expect(shape(selectTranscript(stateOf(withTokens(21))))).toEqual(order);
+  });
+
+  it("goes red on the stripped fixture: message drifts when cut_id and cut_after are absent", () => {
+    const correct = ["user:go", "assistant:[agent][agent]", "user:and also", "assistant:final answer"];
+    expect(shape(selectTranscript(stateOf(withoutTokens(21))))).not.toEqual(correct);
+  });
+
+  // cut_head path: message that arrived before the first output. No segment to
+  // attach cut_after to yet, so the server writes the token onto the reply's
+  // cut_head list instead (build_streaming.cut_here, Turn.cut_head).
+  // Two messages: "first" beat all output (cut_head), "second" arrived after a
+  // segment (cut_after). Stripping cut_head leaves "first" unmatched and stray.
+  const withCutHead: LogEvent[] = [
+    { seq: 4, id: "s4", ts: "2026-08-14T13:00:00Z",
+      kind: "message", role: "user", content: "go" },
+    { seq: 5, id: "s5", ts: "2026-08-14T13:00:01Z",
+      kind: "message", role: "user", content: "first",
+      meta: { injected: true, during_turn: "r2", at_segment: 0, at_unit: 0, cut_id: "c2" } },
+    { seq: 6, id: "s6", ts: "2026-08-14T13:02:00Z",
+      kind: "message", role: "user", content: "second",
+      meta: { injected: true, during_turn: "r2", at_segment: 1, at_unit: 1, cut_id: "c3" } },
+    { seq: 7, id: "s7", ts: "2026-08-14T13:05:00Z",
+      kind: "message", role: "assistant", content: "",
+      meta: { turn_id: "r2",
+        cut_head: ["c2"],
+        segments: [{ ...text("middle"), cut_after: ["c3"] }, text("last")] } },
+  ];
+
+  it("places a message that beat the first output above the whole reply (cut_head)", () => {
+    expect(shape(selectTranscript(stateOf(withCutHead)))).toEqual([
+      "user:go", "user:first", "assistant:middle", "user:second", "assistant:last",
+    ]);
+  });
+
+  it("goes red when cut_head is absent: the pre-output message becomes stray and renders last", () => {
+    const withoutCutHead: LogEvent[] = withCutHead.map((ev) =>
+      ev.meta?.cut_head ? { ...ev, meta: { ...ev.meta, cut_head: undefined } } : ev
+    );
+    expect(shape(selectTranscript(stateOf(withoutCutHead)))).not.toEqual([
+      "user:go", "user:first", "assistant:middle", "user:second", "assistant:last",
+    ]);
+  });
+});
