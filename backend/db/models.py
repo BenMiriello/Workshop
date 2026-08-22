@@ -60,6 +60,7 @@ from services.latitude import LATITUDES
 # service layer into the schema. This was two identical tuples until 2026-08-17;
 # `services/tasks.py` asked for exactly this pointing-one-at-the-other.
 from services.chat_store import CHAT_MODES
+from services.jobs import STATUSES as JOB_STATUSES, TRIGGERS as JOB_TRIGGERS
 from services.tasks import EFFORTS, STATE_TYPES as STATE_CATEGORIES
 
 # --- controlled vocabularies -------------------------------------------------
@@ -767,16 +768,102 @@ class TicketEvent(Base):
 
 
 # --- execution ---------------------------------------------------------------
-# `Agent` and `Run` lived here and are gone (T4, coherence-overhaul-2026-08-16,
-# migration def2cbf58df8). `agent` had zero reads and zero writes ever,
-# with three inbound FKs that could never be non-NULL. `run` had 2,753 rows and
-# zero readers once e9c4a71f0d38 stopped deriving `ticket.attempts` from it; it
-# was written only by the one-shot `db/backfill.py`, and had already diverged
-# (`max(started_at)` 2026-08-05 against a live queue that kept moving). What
-# either table's live writers actually needed a home for --
-# `ticket.job_ids`/`lease_until`/`last_heartbeat`/`claim_pid` -- moved onto
-# `Ticket` itself, next to `attempts`/`awaiting`/`assignee`, which got the same
-# treatment one migration earlier for the same reason.
+# The OLD `Agent` and OLD `Run` tables lived here and are gone (T4,
+# coherence-overhaul-2026-08-16, migration def2cbf58df8). The old `agent` had
+# zero reads and zero writes ever. The old `run` had 2,753 rows and zero readers
+# once e9c4a71f0d38 stopped deriving `ticket.attempts` from `count(run)`; its
+# only writer was a one-shot backfill and it had diverged. What those tables'
+# live writers actually needed a home for -- `ticket.job_ids`/`lease_until`/
+# `last_heartbeat`/`claim_pid` -- moved onto `Ticket` itself.
+#
+# The NEW `Run` below is NOT a revert of T4. It is shaped from the LIVE record
+# measured off .runtime/jobs.jsonl (3,527 collapsed rows, 2026-08-22), with the
+# columns T4 dropped for cause left out, and evidence modelled as JSONB (the
+# typed JobEvidence), not freeform text. The writer switch is a dependent ticket.
+
+
+class Run(Base, Timestamps):
+    """One bounded execution: a sweep tick, a Ralph run, a manual run.
+
+    Shaped from services/jobs.py's record (3,527 collapsed rows measured
+    2026-08-22 off .runtime/jobs.jsonl). `id` preserves the `job_<epoch>_<hex>`
+    string the file store mints; a future writer can carry it unchanged.
+
+    NOT the old `run` table (T4, def2cbf58df8 dropped it for cause).
+    Excluded from the old shape: `attempt_no` (write-never), lease columns
+    (moved to ticket), `summary` freeform text (replaced by JSONB evidence).
+
+    No soft delete: like `ticket_event` and `chat_turn`, a run is a record
+    that something happened. It is never edited; liveness reconcile appends
+    a new terminal line to the JSONL, which a writer will land as an UPDATE.
+    """
+    __tablename__ = "run"
+
+    # TEXT, not UUID: preserves the `job_<epoch>_<hex>` format the file store
+    # mints so a writer from that store can carry IDs unchanged.
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[uuid.UUID] = _org_fk()
+
+    # Who ran. Letta id (`agent-...`) or logical name. Present on 3085/3527.
+    agent_id: Mapped[str | None] = mapped_column(String(255))
+
+    # Context the run belonged to. Both nullable: a cron tick belongs to neither.
+    project_slug: Mapped[str | None] = mapped_column(String(64))
+    chat_id: Mapped[str | None] = mapped_column(String(255))
+
+    trigger: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    exit_code: Mapped[int | None] = mapped_column(Integer)
+    tasks_done: Mapped[int | None] = mapped_column(Integer)
+    tasks_failed: Mapped[int | None] = mapped_column(Integer)
+    pid: Mapped[int | None] = mapped_column(Integer)
+
+    # Open-set (KINDS in jobs.py is recognized, not exhaustive). Not constrained.
+    kind: Mapped[str | None] = mapped_column(String(32))
+
+    # THE TICKET LINK -- a real FK column, not a scan over ticket.job_ids.
+    # The file store's `task_id` is a UUID-hex string; this stores the same
+    # identity as a proper UUID so the FK is enforceable and the index compact.
+    task_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+
+    # Coordinator sweep that spawned this child run (same string format as id).
+    parent_id: Mapped[str | None] = mapped_column(String(64))
+
+    # What the run produced, typed as JobEvidence (routes/api_models.py).
+    # extra="allow" on the Pydantic model means this column is a floor, not a
+    # ceiling: a writer or future producer may add keys and nothing here drops them.
+    evidence: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Loop caps that bounded the run (max_turns, max_cost, etc.).
+    budget: Mapped[dict | None] = mapped_column(JSONB)
+
+    # Arbitrary binding for deploy/event runs (3/3527 live).
+    binding: Mapped[dict | None] = mapped_column(JSONB)
+
+    __table_args__ = (
+        CheckConstraint(_one_of("trigger", JOB_TRIGGERS), name="ck_run_trigger"),
+        CheckConstraint(_one_of("status", JOB_STATUSES), name="ck_run_status"),
+        # UNIQUE (id, org_id) -- expose the composite so children can FK against
+        # it, matching the _org_target pattern used by every other table here.
+        # TEXT pk is still unique by itself; this adds the org_id dimension for
+        # the referential-integrity guard described in `_org_ref`'s docstring.
+        UniqueConstraint("id", "org_id", name="uq_run_id_org"),
+        # Ticket link: composite so a run cannot cross an org boundary.
+        _org_ref("run", "task_id", "ticket", ondelete="SET NULL (task_id)"),
+        # Parent coordinator: self-composite for the same reason.
+        ForeignKeyConstraint(
+            ["parent_id", "org_id"], ["run.id", "run.org_id"],
+            name="run_parent_id_org_fkey", ondelete="SET NULL (parent_id)"),
+        Index("ix_run_task", "org_id", "task_id", "started_at",
+              postgresql_where=text("task_id IS NOT NULL")),
+        Index("ix_run_org_started", "org_id", "started_at"),
+        Index("ix_run_parent", "parent_id",
+              postgresql_where=text("parent_id IS NOT NULL")),
+    )
 
 
 # --- chat --------------------------------------------------------------------

@@ -311,18 +311,19 @@ def test_no_composite_set_null_nulls_its_discriminator():
         f"NotNullViolation on delete: {bad}")
 
 
-def test_agent_and_run_tables_are_gone(org):
-    """T4 (coherence-overhaul-2026-08-16, migration def2cbf58df8) dropped both
-    tables outright: `agent` had zero reads and zero writes ever; `run` had
-    2,753 rows and zero readers once `ticket.attempts` stopped being derived
-    from it. Pinned so a future migration cannot silently resurrect either
-    without a reader to justify it."""
+def test_agent_table_is_gone(org):
+    """`agent` was dropped outright by T4 (coherence-overhaul-2026-08-16,
+    migration def2cbf58df8): zero reads, zero writes ever. Pinned so a future
+    migration cannot silently resurrect it without a reader to justify the cost.
+    `run` was also dropped by T4, but a NEW `run` table was added by
+    f3b8d2a17e94 shaped from the live .runtime/jobs.jsonl record; that table's
+    existence is tested in test_db_run.py."""
     from db.engine import tenant_session
 
     with tenant_session(org["org"]) as s:
         names = s.execute(text(
             "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = 'public' AND table_name IN ('agent', 'run')"
+            "WHERE table_schema = 'public' AND table_name = 'agent'"
         )).scalars().all()
     assert names == []
 

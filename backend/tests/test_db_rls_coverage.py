@@ -44,8 +44,10 @@ def _upgrade_section(source: str) -> str:
 
 
 def _tables_in_migration() -> set[str]:
-    """Every table any migration declares tenant-scoped, MINUS any a later
-    migration's `upgrade()` permanently dropped.
+    """The set of tenant-scoped tables with RLS policies, derived by replaying
+    every migration in alphabetical order (revision IDs are hex; alphabetical
+    order matches chronological when all migrations share the same filename
+    prefix convention this repo uses).
 
     EVERY migration, not just the initial one. This read the initial schema
     alone, which meant the check could not see a table added by a later
@@ -57,22 +59,21 @@ def _tables_in_migration() -> set[str]:
     The convention it enforces, and the reason a migration adding a
     tenant-scoped table must follow it: name the tuple `_TENANT_TABLES` and put
     the table names in it as string literals. A migration that DROPS a
-    tenant-scoped table (`op.drop_table` in `upgrade()`) is the other half of
-    the convention: without subtracting it here, a dropped table stays
-    "protected" forever in the union below while `db.models.TENANT_TABLES`
-    (derived from live metadata) stops naming it, and the two sets can never
-    agree again -- exactly what happened when `agent`/`run` were dropped.
+    tenant-scoped table (`op.drop_table` in `upgrade()`) must not name the
+    table in `_TENANT_TABLES`, so the drop removes it from the live set.
+    A migration that RE-ADDS a previously dropped table must include it in
+    `_TENANT_TABLES` again so the replay puts it back; the alphabetical
+    ordering guarantees the re-add is seen after the drop.
     """
-    found: set[str] = set()
-    dropped: set[str] = set()
+    current: set[str] = set()
     for path in sorted(MIGRATIONS.glob("*.py")):
         source = path.read_text()
         for block in re.finditer(r"_TENANT_TABLES\s*=\s*\((.*?)\)", source, re.S):
-            found.update(re.findall(r'"([a-z_]+)"', block.group(1)))
-        dropped.update(re.findall(
+            current.update(re.findall(r'"([a-z_]+)"', block.group(1)))
+        current -= set(re.findall(
             r'op\.drop_table\(\s*["\']([a-z_]+)["\']', _upgrade_section(source)))
-    assert found, "no migration declares _TENANT_TABLES"
-    return found - dropped
+    assert current, "no migration declares _TENANT_TABLES"
+    return current
 
 
 def test_every_org_scoped_table_has_a_policy_in_the_migration():
