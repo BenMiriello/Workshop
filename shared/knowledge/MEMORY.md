@@ -39,6 +39,8 @@
 - [Deep exploration before splitting work into tickets](deep-exploration-before-splitting-work-into-tick-1a0028fb299.md)
 - [Deep research before autonomous execution](deep-research-before-autonomous-execution-1a0028fb25e.md)
 - [Deep search degrades to lexical when the GPU dies](deep-search-dies-with-the-gpu-no-lexical-fallbac-1a001d05335.md) - `search()` is hybrid since aa457c8: BM25 over the same chunks when `embed()` raises, and `mode` says which path answered
+- [Defect confirmed: ui-card prompt submit is broken in this client (fails on select AND on type)](defect-confirmed-ui-card-prompt-submit-is-broken-1a025e170f1.md)
+- [Defect: prompt/clarifying-question card mishandles late or out-of-band answers](defect-prompt-clarifying-question-card-mishandle-1a025cf4832.md)
 - [Fable review-and-refine improves design plans](fable-review-and-refine-improves-design-plans-1a0028fb29c.md)
 - [Filing a ticket is not progress](filing-a-ticket-is-not-progress-1a0028fb2a7.md)
 - [Fire-and-continue: how a chat acts on a finished run on its own](fire-and-continue-how-a-chat-acts-on-a-finished-1a020796c2f.md)
