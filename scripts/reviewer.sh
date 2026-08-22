@@ -381,6 +381,27 @@ if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/.*\.py$'; then
   fi
 fi
 
+# 4.6c-iv A pinned ratchet baseline may not be LOOSENED by this diff.
+# Every other ratchet reads its baseline out of the WORKING TREE, so a worker
+# that rewrites the baseline instead of fixing the regression is, to the
+# checker, indistinguishable from a clean tree. That is not hypothetical: on
+# 2026-08-22 a worker failing the module-layout gate ran --write-baseline,
+# committed the result (971f7f3), passed, and landed in_review. Gated on this
+# diff touching a baseline file at all, which is the only way it can happen.
+# This gate is what makes the others hold. See the script's own header.
+RATCHETS_NOT_LOOSENED_CHECK="skipped"
+if printf '%s\n' "$CHANGED_ALL" | grep -qE '^scripts/.*baseline.*\.json$'; then
+  if [[ -f "$WORKSHOP/scripts/check_ratchets_not_loosened.py" ]]; then
+    if python3 "$WORKSHOP/scripts/check_ratchets_not_loosened.py" --baseline "$BASELINE" >/dev/null 2>&1; then
+      RATCHETS_NOT_LOOSENED_CHECK="ok"
+    else
+      RATCHETS_NOT_LOOSENED_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("ratchets_not_loosened_check_unavailable")
+  fi
+fi
+
 # 4.6c-v No new mutable STATE file committed under a source directory (Layer 0 of
 # managed-file-references-and-path-scoping-2026-08-18.md §9). Gated on this diff
 # adding/changing a json/jsonl/db under backend|frontend|packages — that is the
@@ -687,6 +708,9 @@ if [[ "$ONE_DEF_CHECK" == "fail" ]]; then
   REASONS+=("duplicate_definitions:${ONE_DEF_COUNT}")
   COMPLETE="false"
 fi
+if [[ "$RATCHETS_NOT_LOOSENED_CHECK" == "fail" ]]; then
+  REASONS+=("ratchet_baseline_loosened")
+fi
 if [[ "$MODULE_LAYOUT_CHECK" == "fail" ]]; then
   REASONS+=("module_layout_regression")
   COMPLETE="false"
@@ -795,7 +819,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK
+export RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -827,6 +851,7 @@ out = {
     # §4). All three GATE, same as `one_definition` above: each is a pinned
     # baseline that fails on regression, not an absolute count, for the
     # reasons each script's own header explains.
+    "ratchets_not_loosened": os.environ.get("RATCHETS_NOT_LOOSENED_CHECK", "skipped"),
     "module_layout": os.environ.get("MODULE_LAYOUT_CHECK", "skipped"),
     "no_process_globals": os.environ.get("NO_PROCESS_GLOBALS_CHECK", "skipped"),
     # Layer 0 ratchet (managed-file-references-and-path-scoping-2026-08-18.md §9):
@@ -861,7 +886,7 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

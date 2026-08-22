@@ -64,6 +64,8 @@ import json
 import os
 import sys
 from pathlib import Path
+
+from services import ownership
 from wsplatform import paths
 
 LATITUDES = ("strict", "standard", "open")
@@ -173,7 +175,6 @@ def main(argv: list[str]) -> int:
     set-point for exactly this; its own docstring lists the four other
     automation entrypoints that each had to learn it separately. This was the
     fifth (measured in the live ralph log, 2026-08-22)."""
-    from services import ownership
     ownership.pin_operator()
 
     ap = argparse.ArgumentParser(prog="latitude")
