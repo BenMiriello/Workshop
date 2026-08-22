@@ -6849,14 +6849,29 @@ export interface paths {
         put?: never;
         /**
          * Review Task
-         * @description Answer a blocked task. Returns {action, task, grant?, learning?, promotion?}.
+         * @description Answer a waiting task. Returns {action, task, grant?, learning?, promotion?}.
          *
-         *     approve            release the block; the task is `todo` and runs again.
-         *     deny               the work should not happen; the task is cancelled.
-         *     grant-and-continue mint the standing grant the block asked for, then release.
-         *     mint-rule          record the standing answer as a learning IN THE TASK'S
-         *                        SCOPE, then release (the rule IS the answer).
-         *     dismiss            leave the block in place, off the review queue.
+         *     A ticket waits in one of two states and they ask different questions, so the
+         *     verbs are split by which one they answer. `services/task_decision` owns what
+         *     each does; this route owns the side effects that only a review can produce.
+         *
+         *     FINISHED (`in_review`) — the work is done, is it right?
+         *       accept             take the work; the task is `done`.
+         *       send-back          return it for rework; the note becomes the instruction.
+         *
+         *     STUCK (`blocked`) — the worker cannot proceed.
+         *       approve            release the block; the task is `todo` and runs again.
+         *       grant-and-continue mint the standing grant the block asked for, then release.
+         *       mint-rule          record the standing answer as a learning IN THE TASK'S
+         *                          SCOPE, then release (the rule IS the answer).
+         *
+         *     EITHER
+         *       deny               the work should not happen; the task is cancelled.
+         *       dismiss            leave the block in place, off the review queue.
+         *
+         *     `approve` is REFUSED on a finished ticket. It used to be accepted there and
+         *     released it back to `todo`, which un-accepted committed work and refunded an
+         *     attempt; the caller has to say which of accept/send-back it meant.
          */
         post: operations["review_task_tasks__scope___task_id__review_post"];
         delete?: never;
