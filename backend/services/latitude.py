@@ -161,7 +161,21 @@ def main(argv: list[str]) -> int:
     """`python -m services.latitude resolve ...` — the shell's entry point.
 
     ralph.sh resolves the effective latitude at claim time through this, so the
-    sweep and the API can never disagree about the cascade."""
+    sweep and the API can never disagree about the cascade.
+
+    PIN THE OWNER FIRST. This is a shell entrypoint with no request behind it,
+    so nothing has set a data owner, and reading the task store raises
+    OwnerUnset the moment the scope is relational. ralph.sh swallows that with
+    `|| true` and falls back to "standard", which is indistinguishable from the
+    cascade having run and found nothing -- so a ticket or scope marked
+    `strict` would be silently downgraded, and `strict` is the only thing that
+    makes reviewer.sh block instead of guess. ownership.pin_operator is the one
+    set-point for exactly this; its own docstring lists the four other
+    automation entrypoints that each had to learn it separately. This was the
+    fifth (measured in the live ralph log, 2026-08-22)."""
+    from services import ownership
+    ownership.pin_operator()
+
     ap = argparse.ArgumentParser(prog="latitude")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sp = sub.add_parser("resolve")

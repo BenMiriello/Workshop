@@ -401,9 +401,18 @@ LATITUDE_JSON=$( (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m se
 LATITUDE=$(printf '%s' "$LATITUDE_JSON" | python3 -c "import json,sys
 try: print((json.load(sys.stdin) or {}).get('latitude') or 'standard')
 except Exception: print('standard')" 2>/dev/null || echo "standard")
+# A FAILED lookup must not report itself as a successful one. `|| true` above
+# keeps an advisory resolution from failing the run, which is right -- but the
+# source then said `default`, which is the same thing it says when the cascade
+# ran fine and found nothing set. So a crash in the resolver was
+# indistinguishable from "nothing is configured". That is how the OwnerUnset in
+# services.latitude went unnoticed: every line of the log read normal (measured
+# 2026-08-22). The VALUE still falls back to standard; only the SOURCE tells the
+# truth.
 LATITUDE_SOURCE=$(printf '%s' "$LATITUDE_JSON" | python3 -c "import json,sys
 try: print((json.load(sys.stdin) or {}).get('source') or 'default')
-except Exception: print('default')" 2>/dev/null || echo "default")
+except Exception: print('unresolved: latitude lookup failed, see log')" 2>/dev/null \
+  || echo "unresolved: latitude lookup failed, see log")
 export LATITUDE
 log "latitude=$LATITUDE (source=$LATITUDE_SOURCE scope=${LEARN_SCOPE:-none} task=${TASK_ID:-none})"
 
