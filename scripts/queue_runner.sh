@@ -74,6 +74,33 @@ SUPERVISED_FLAG=(); (( SUPERVISED == 1 )) && SUPERVISED_FLAG=(--supervised)
 # Developer-mode gate (ADR 0014): the target must be named, and the platform
 # repo is permitted only under WORKSHOP_DEV_MODE=1. Checked before the flock so
 # a refused runner never holds a tree's lock.
+#
+# DEPLOYMENT CONFIG FIRST, and the order is the whole point. instance.sh supplies
+# WORKSHOP_DEV_MODE, the database URL and the venv on PATH, and the gate on the
+# next line reads WORKSHOP_DEV_MODE. Sourced HERE rather than relied upon from
+# the caller: this script is documented to be started with `setsid nohup`, and by
+# cron through the watchdog. The watchdog sources it, so a runner IT spawned
+# inherited a correct environment and a runner started any other way did not --
+# the same "works one way, silently fails another" split the watchdog's own
+# comment warns about. Measured 2026-08-22: started from the systemd user manager
+# (which has no WORKSHOP_DEV_MODE) the gate refused the platform repo outright,
+# and sourcing this below the gate did not help, because the gate had already run.
+# Existing environment wins, so nothing the caller deliberately set is overridden.
+source "$WORKSHOP/scripts/lib/instance.sh"
+
+# AND THE DATABASE, same reasoning, same idiom as scripts/root_task_counts.sh
+# (read its header: the identical omission there had the 07:00 autonomy report
+# counting a ticket in the wrong column for days). The `development` and
+# `workshop` scopes keep their tickets in Postgres and the connection string
+# lives in secrets.env, which only systemd UNITS read. Without it the sweep does
+# not error -- it reports "no ready tasks" and exits 0, which is the silent
+# shape of this bug and the reason it survived: an armed scope with a resident
+# runner, quietly doing nothing forever. Measured 2026-08-22.
+SECRETS="${WORKSHOP_CONFIG_DIR:-$HOME/.config/workshop}/secrets.env"
+if [[ -z "${WORKSHOP_DATABASE_URL:-}" && -r "$SECRETS" ]]; then
+  set -a; source "$SECRETS"; set +a
+fi
+
 source "$WORKSHOP/scripts/dev_mode_gate.sh"
 assert_run_target "$DIR" "queue_runner.sh" || exit 2
 
@@ -88,14 +115,6 @@ LOG="$WORKSHOP/.runtime/queue-runner.log"
 # global Stop is worse than either.
 RUNNER_KEY="$(printf '%s\n' "$DIR" | md5sum | cut -c1-12)"
 PIDFILE="$WORKSHOP/.runtime/queue-runner-$RUNNER_KEY.pid"
-# Deployment config (WORKSHOP_DEV_MODE, the database URL, and the venv on PATH).
-# Sourced HERE rather than relied upon from the caller: this script is
-# documented to be started with `setsid nohup`, and by cron through the
-# watchdog. The watchdog sources it, so a runner it spawned inherited a correct
-# environment and a runner started any other way did not -- the same "works one
-# way, silently fails another" split the watchdog's own comment warns about.
-# Existing environment wins, so nothing the caller set is overridden.
-source "$WORKSHOP/scripts/lib/instance.sh"
 
 # One switch, read through services/autonomy_override. Fails closed.
 source "$WORKSHOP/scripts/autonomy_gate.sh"
