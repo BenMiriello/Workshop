@@ -767,12 +767,6 @@ class TicketEvent(Base):
 
 
 # --- execution ---------------------------------------------------------------
-# Vocabulary for the `run` table. Kept local to avoid a new `db -> services`
-# upward import (the ratchet currently sits at 48 violations, all pre-existing).
-# Must be kept in step with services/jobs.py STATUSES and TRIGGERS; the
-# test_db_run CHECK-violation tests catch any drift on the real database.
-_RUN_STATUSES = ("queued", "running", "awaiting_input", "done", "failed", "cancelled")
-_RUN_TRIGGERS = ("manual", "cron", "event", "loop")
 
 # The OLD `Agent` and OLD `Run` tables lived here and are gone (T4,
 # coherence-overhaul-2026-08-16, migration def2cbf58df8). The old `agent` had
@@ -851,8 +845,12 @@ class Run(Base, Timestamps):
     binding: Mapped[dict | None] = mapped_column(JSONB)
 
     __table_args__ = (
-        CheckConstraint(_one_of("trigger", _RUN_TRIGGERS), name="ck_run_trigger"),
-        CheckConstraint(_one_of("status", _RUN_STATUSES), name="ck_run_status"),
+        CheckConstraint(  # keep in step with services/jobs.py TRIGGERS
+            _one_of("trigger", ("manual", "cron", "event", "loop")),
+            name="ck_run_trigger"),
+        CheckConstraint(  # keep in step with services/jobs.py STATUSES
+            _one_of("status", ("queued", "running", "awaiting_input", "done", "failed", "cancelled")),
+            name="ck_run_status"),
         # UNIQUE (id, org_id) -- expose the composite so children can FK against
         # it, matching the _org_target pattern used by every other table here.
         # TEXT pk is still unique by itself; this adds the org_id dimension for
