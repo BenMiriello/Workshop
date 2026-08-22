@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
 import { usePoll, Button, Card, CardGrid, ChartFrame, ChartTooltip, CHART_SERIES, Field, Input, Modal, PageHeader, SectionLabel, Segmented, Skeleton, Stack, StackedBar, Stat, StateBlock, Table, TableScroll, NumCell, useEditMode, type SegmentedOption } from "@workshop/ui";
 import { Link, useNavigate } from "react-router-dom";
-import { RefreshCw, Gauge, SlidersHorizontal, FolderCog } from "lucide-react";
+import { RefreshCw, Gauge, MessageSquare, SlidersHorizontal, FolderCog } from "lucide-react";
 import {
+  Area,
+  AreaChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -15,6 +17,7 @@ import {
 import {
   usageApi,
   fmtTokens,
+  type ChatSeries,
   type UsageStatus,
   type UsageSeries,
   type UsageWindow,
@@ -42,6 +45,13 @@ const WINDOW_OPTIONS: SegmentedOption<UsageWindow>[] = [
   { value: "7d", label: "7d" },
   { value: "30d", label: "30d" },
   { value: "all", label: "All time" },
+];
+
+type ViewMode = "app" | "chat";
+
+const VIEW_OPTIONS: SegmentedOption<ViewMode>[] = [
+  { value: "app", label: "By App" },
+  { value: "chat", label: "By Chat" },
 ];
 
 // The subtitle has to carry the one thing that changes meaning with the window:
@@ -80,8 +90,12 @@ export default function Usage() {
   const nav = useNavigate();
   const [data, setData] = useState<UsageStatus | null>(null);
   const [series, setSeries] = useState<UsageSeries | null>(null);
+  const [chatSeries, setChatSeries] = useState<ChatSeries | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // View preference: By App (default) or By Chat. Commits on change.
+  const [viewMode, setViewMode] = useState<ViewMode>("app");
 
   // Which lookback we are reporting. A view preference, so it commits on change
   // (design system: only config/money writes wait for an explicit Save).
@@ -91,9 +105,14 @@ export default function Usage() {
     setLoading(true);
     setErr(null);
     try {
-      const [status, ts] = await Promise.all([usageApi.status(win), usageApi.timeseries(win)]);
+      const [status, ts, chatTs] = await Promise.all([
+        usageApi.status(win),
+        usageApi.timeseries(win),
+        usageApi.chatTimeseries(),
+      ]);
       setData(status);
       setSeries(ts);
+      setChatSeries(chatTs);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -129,15 +148,29 @@ export default function Usage() {
   const header = (
     <PageHeader
       title="Usage"
-      sub={data ? windowLabel(data, win) : undefined}
+      sub={
+        viewMode === "chat"
+          ? "Rolling 5-hour window, by chat thread. No cap."
+          : data
+          ? windowLabel(data, win)
+          : undefined
+      }
       actions={
         <>
-          <Segmented<UsageWindow>
-            ariaLabel="Usage window"
-            value={win}
-            onChange={setWin}
-            options={WINDOW_OPTIONS}
+          <Segmented<ViewMode>
+            ariaLabel="Usage grouping"
+            value={viewMode}
+            onChange={setViewMode}
+            options={VIEW_OPTIONS}
           />
+          {viewMode === "app" && (
+            <Segmented<UsageWindow>
+              ariaLabel="Usage window"
+              value={win}
+              onChange={setWin}
+              options={WINDOW_OPTIONS}
+            />
+          )}
           <Button size="sm" variant="ghost" onClick={() => nav("/projects")}>
             <FolderCog aria-hidden /> Manage projects
           </Button>
@@ -167,7 +200,7 @@ export default function Usage() {
         }
       />
     );
-  } else if (!data) {
+  } else if (!data || !chatSeries) {
     body = (
       <Stack gap="lg">
         <CardGrid>
@@ -187,6 +220,111 @@ export default function Usage() {
             <Skeleton width="80%" />
           </Stack>
         </Card>
+      </Stack>
+    );
+  } else if (viewMode === "chat") {
+    body = (
+      <Stack gap="lg">
+        <section>
+          <Stack gap="sm">
+            <SectionLabel icon={<MessageSquare aria-hidden size={14} />}>
+              Per-chat token usage
+            </SectionLabel>
+            {chatSeries.chats.length === 0 ? (
+              <StateBlock
+                title="No chat usage in the last 5 hours"
+                hint="Token usage from chat threads will appear here as conversations run."
+              />
+            ) : (
+              <>
+                <ChartFrame style={{ width: "100%", height: 200 }}>
+                  <ResponsiveContainer>
+                    <AreaChart
+                      data={chatSeries.points}
+                      margin={{ top: 8, right: 8, left: 8, bottom: 0 }}
+                    >
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="var(--border)"
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="t"
+                        tickFormatter={clockTick}
+                        tick={{ fontSize: 11, fill: "var(--muted)" }}
+                        minTickGap={40}
+                      />
+                      <YAxis
+                        tickFormatter={(v) => fmtTokens(v as number)}
+                        tick={{ fontSize: 11, fill: "var(--muted)" }}
+                        width={44}
+                      />
+                      <Tooltip
+                        isAnimationActive={false}
+                        cursor={{ stroke: "var(--border)" }}
+                        content={({ active, payload, label }: any) => (
+                          <ChartTooltip
+                            active={active}
+                            label={label ? clockTick(label as string) : ""}
+                            showName
+                            payload={payload ?? []}
+                            format={(v) => fmtTokens(v as number)}
+                          />
+                        )}
+                      />
+                      {chatSeries.chats.map((chatId, i) => (
+                        <Area
+                          key={chatId}
+                          type="monotone"
+                          dataKey={chatId}
+                          name={chatId === "_unbound" ? "Unbound" : chatId}
+                          stackId="a"
+                          fill={CHART_SERIES[i % CHART_SERIES.length]}
+                          stroke={CHART_SERIES[i % CHART_SERIES.length]}
+                          strokeWidth={1}
+                          fillOpacity={0.75}
+                          isAnimationActive={false}
+                        />
+                      ))}
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </ChartFrame>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "var(--space-3)",
+                    paddingTop: "var(--space-1)",
+                  }}
+                >
+                  {chatSeries.chats.map((chatId, i) => (
+                    <div
+                      key={chatId}
+                      style={{ display: "flex", alignItems: "center", gap: "var(--space-1)" }}
+                    >
+                      <div
+                        style={{
+                          width: 10,
+                          height: 10,
+                          borderRadius: "2px",
+                          backgroundColor: CHART_SERIES[i % CHART_SERIES.length],
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                        {chatId === "_unbound"
+                          ? "Unbound"
+                          : chatId.length > 20
+                          ? `${chatId.slice(0, 16)}...`
+                          : chatId}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </Stack>
+        </section>
       </Stack>
     );
   } else {

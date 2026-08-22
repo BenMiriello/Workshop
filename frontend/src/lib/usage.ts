@@ -43,6 +43,13 @@ export type UsageSeries = {
   points: UsagePoint[];
 };
 
+export type ChatSeries = {
+  window_s: number;
+  bin_s?: number;
+  chats: string[]; // thread IDs; "_unbound" for entries without a chat field
+  points: UsagePoint[];
+};
+
 export const usageApi = {
   status: (window: UsageWindow = "5h"): Promise<UsageStatus> =>
     fetch(`/api/usage?window=${encodeURIComponent(window)}`).then(async (r) => {
@@ -62,6 +69,11 @@ export const usageApi = {
     fetch(`/api/usage/timeseries?window=${encodeURIComponent(window)}`).then(async (r) => {
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       return r.json() as Promise<UsageSeries>;
+    }),
+  chatTimeseries: (): Promise<ChatSeries> =>
+    fetch("/api/usage/chat-timeseries").then(async (r) => {
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      return r.json() as Promise<ChatSeries>;
     }),
 };
 

@@ -234,6 +234,39 @@ def timeseries(now: datetime | None = None, window_s: int = WINDOW_S,
     return {"window_s": window_s, "bin_s": int(step), "projects": slugs, "points": points}
 
 
+def chat_timeseries(now: datetime | None = None, window_s: int = WINDOW_S,
+                    buckets: int = 60) -> dict:
+    """Per-interval per-chat token usage across the trailing window, in `buckets`
+    evenly spaced bins. Groups entries by their `chat` field (the originating
+    thread ID); entries without a `chat` field are bucketed under '_unbound'.
+    Same shape as `timeseries` but keyed by chat rather than project."""
+    end = (now or _now()).timestamp()
+    start = end - window_s
+    step = window_s / buckets
+    chats: set[str] = set()
+    bins: list[dict[str, int]] = [dict() for _ in range(buckets)]
+    for e in _read_entries():
+        t = _parse_ts(e.get("ts", ""))
+        if t is None or t < start:
+            continue
+        chat_id = e.get("chat") or "_unbound"
+        chats.add(chat_id)
+        bi = int((t - start) / step)
+        if bi < 0:
+            bi = 0
+        elif bi >= buckets:
+            bi = buckets - 1
+        bins[bi][chat_id] = bins[bi].get(chat_id, 0) + int(e.get("tokens") or 0)
+    slugs = sorted(chats)
+    points = []
+    for b in range(buckets):
+        edge = start + step * (b + 1)
+        pt: dict = {"t": datetime.fromtimestamp(edge, tz=timezone.utc).isoformat()}
+        pt.update({s: bins[b].get(s, 0) for s in slugs})
+        points.append(pt)
+    return {"window_s": window_s, "bin_s": int(step), "chats": slugs, "points": points}
+
+
 def prune(now: datetime | None = None, window_s: int = WINDOW_S) -> int:
     """Drop entries older than the window. Opportunistic; returns rows removed."""
     if not LEDGER_PATH.exists():

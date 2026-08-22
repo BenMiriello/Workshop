@@ -89,6 +89,17 @@ class UsageTimeseries(BaseModel):
     points: list[UsagePoint]
 
 
+class ChatTimeseries(BaseModel):
+    """Per-interval per-chat tokens over the last 5h. Same shape as
+    UsageTimeseries but grouped by the originating chat thread ID rather than
+    project slug. Entries without a chat field are grouped under '_unbound'."""
+
+    window_s: int
+    bin_s: int
+    chats: list[str]
+    points: list[UsagePoint]
+
+
 @router.get("", response_model=UsageStatus, response_model_exclude_unset=True)
 async def get_usage(window: str = "5h") -> dict:
     """Snapshot of a trailing usage window: app-wide totals + per-project share.
@@ -103,6 +114,13 @@ async def get_usage_timeseries(window: str = "5h") -> dict:
     """Per-interval per-project token usage across a trailing window, for the
     chart. Pure read; no side effects."""
     return usage_ledger.timeseries(window_s=_resolve_window(window))
+
+
+@router.get("/chat-timeseries", response_model=ChatTimeseries, response_model_exclude_unset=True)
+async def get_chat_timeseries() -> dict:
+    """Per-interval per-chat token usage for the last 5h, for the By Chat view.
+    Always the standard 5h window; no budget cap applies here."""
+    return usage_ledger.chat_timeseries(window_s=5 * 3600)
 
 
 class BudgetPatch(BaseModel):
