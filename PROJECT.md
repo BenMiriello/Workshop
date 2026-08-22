@@ -382,3 +382,62 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   check_design clean, 1032 frontend tests pass. STILL not turned on: nothing
   auto-runs until a scope is armed AND the global override is clear AND a resident
   driver (S3) runs; S3 is the next build.
+- 2026-08-22 — Operator: reassess the whole lineage, don't take past work for
+  granted, keep the design honest (REST, separation of concerns, no parallel
+  systems, no Jenga tower), and BUILD the core work loop so it actually runs and
+  he can use it. Also: work continuously, do not stop.
+  FINDING THAT REFRAMED S3: it did not need building. `queue_runner.sh` (resident
+  sweep, per-tree flock, wake file, supervised-by-default landing at in_review),
+  `project_ralph.sh`, `next_ready(unattended=True)`, the `scope_execution` gate, a
+  full REST runner API (status/targets/start/stop) and its Settings UI all already
+  existed. The loop was COMPLETE AND DISCONNECTED. The real defect was that
+  ARMING a scope and having a RUNNER resident were two independent controls and
+  neither implied the other: arming from the chat's Work settings did nothing at
+  all, and the only thing that would ever restart a dead runner was a cron entry
+  that is not installed (crontab is empty; the runner log had been dead since
+  Aug 10). So the build was a reconciler, not a driver: `services/work_driver.py`
+  makes mechanism follow intent in the same shape as the other lifespan
+  reconcilers (port_registry, deploy_watcher, jobs). Additive only -- it ensures a
+  runner per armed scope and never kills one it did not start; disarming stops at
+  the moment of disarming. Start now ARMS and Stop DISARMS, so neither is a button
+  the next reconcile pass undoes. Route layer stopped owning process management.
+  THEN RUNNING IT FOUND FOUR MORE, none visible by reading:
+  (1) Intent was keyed by ROOT PATH. Arming `development` from inside a confined
+  chat turn stored "/workspace" (the bwrap mountpoint), and the backend started a
+  runner for a directory that does not exist in its namespace
+  (`project not found or no dir: /workspace`). Re-keyed by SCOPE; roots resolve
+  per namespace; legacy path keys fold on read. Same class as the WORKSHOP_ROOT
+  remap of 2026-08-21 and it will recur anywhere a confined turn persists a path.
+  (2) The interpreter was INHERITED, not resolved: every script calls a bare
+  `python3` and needs the venv, which only held because the backend's PATH had it.
+  Started by cron/nohup the store read fails as "a database is configured but did
+  not answer" -- a missing import reported as a database outage. instance.sh now
+  puts the venv on PATH and queue_runner.sh sources instance.sh itself.
+  (3) The owner pin was a COMMENT, not a function: project_ralph.sh's inline python
+  pinned no owner and died on OwnerUnset. Three copies existed and one omission;
+  now one, `ownership.pin_operator`.
+  (4) THE LOOP COULD NOT WRITE. `WORKSHOP_UNATTENDED_WRITES` was set in exactly one
+  place, behind the operator's Run-now button, so the entire autonomous path
+  started a worker with no hands: armed scope, live driver, resident runner,
+  claimed ticket, and every write silently auto-denied. Both comments owning the
+  flag named the S3 driver as where it changes, and the attended verification had
+  already run (4c5010d). Set on the sweep invocation. Still bounded by: armed
+  scope, supervised ceiling (in_review), bwrap confinement, the
+  irreversible-action deny gate, and the reviewer gate on a revertable commit.
+  SEPARATELY, the operator's turn was killed mid-work and he asked why, and why
+  his reply had an outline. One cause: a `search` call found the index empty, the
+  rebuild ran IN-PROCESS inside the turn's own MCP server child (an 8-minute
+  multi-GB ONNX job; a healthy query server is 11 MB), and the turn was killed at
+  the 6 GB ceiling for searching. The outline was not a stray design change: it is
+  `.chat-bubble.error`, correctly reporting the errored turn. Worse, the ceiling
+  reclaimed NOTHING -- `_kill_turn_proc` called `proc.kill()` and returned, making
+  its own `killpg` unreachable, so it killed the group LEADER and orphaned
+  `claude` plus its 9.0 GB child to systemd for seven hours. Fixed both: index
+  maintenance is now a backend lifespan loop with a single owning process, and the
+  hard-kill path signals the GROUP like its sibling `_retire_turn_proc` always
+  did. 9.0 GB reclaimed.
+  MEASURED WHILE WATCHING IT: a 20-minute per-task wall is not enough for a large
+  UI ticket (the chat-branching one timed out with nothing committed); and the
+  worker cannot be launched from inside a confined chat turn (its own bwrap cannot
+  bind host paths), which is exactly why the backend must be the thing that
+  spawns it -- the reconciler.
