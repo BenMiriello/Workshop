@@ -741,10 +741,23 @@ fi
 # everywhere. Emit the prefixed form HERE, at the source, instead of leaving
 # ralph.sh to guess that a bare token means a project (it cannot know; an
 # unbound --dir sweep's basename is not a project).
+#
+# For an unbound --dir sweep, ask task_scope.key_for_root for the FULL prefixed
+# key (unlike scope_key_for_dir, which strips "project:" for the ledger). The
+# platform repo resolves to "development", project dirs to "project:<slug>", etc.
+# An unregistered directory falls back to "workshop" so the sweep never fails.
 learn_scope_for() {
   if [[ -n "$SLUG" ]]; then echo "project:$SLUG"
   elif [[ -n "$ASSIGNEE" ]]; then echo "$ASSIGNEE"   # already carries `agent:`
-  else echo "project:$(basename "$DIR")"
+  else
+    local key
+    key=$( (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$DIR" <<'PYEOF' 2>>"${LOG:-/dev/stderr}"
+import sys
+from services import task_scope
+print(task_scope.key_for_root(sys.argv[1]) or "")
+PYEOF
+    ) )
+    [[ -n "$key" ]] && echo "$key" || echo "workshop"
   fi
 }
 LEARN_SCOPE="$(learn_scope_for)"
