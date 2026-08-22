@@ -441,6 +441,62 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   worker cannot be launched from inside a confined chat turn (its own bwrap cannot
   bind host paths), which is exactly why the backend must be the thing that
   spawns it -- the reconciler.
+- 2026-08-22 (4) — Operator answered a ticket question from the chat toolbar and
+  could not tell whether anything had happened. It had, and it was the opposite
+  of what he asked for. Directive mid-session: "don't rush to fix! Read research
+  into it more and think and plan and design THEN act and do all this."
+  ROOT CAUSE, and it is a parallel-systems defect rather than a bug: the word
+  `approve` named two OPPOSITE outcomes in two routers. routes/jobs mapped it to
+  in_review -> done ("accept the worker's completion"); routes/tasks_all.
+  review_task mapped it to "release the block, the task is todo and runs again",
+  and its docstring said "Answer a BLOCKED task". The inbox posted every
+  free-text answer to the second one regardless of what the ticket was waiting
+  for, so "Approve" on FINISHED, COMMITTED work sent it back to `todo`, refunded
+  an attempt via restore_attempt, and wrote the bare word into the ticket body as
+  a Clarification the next attempt would read as an instruction. Measured on the
+  live record for 86f58aea at 07:04:28Z. entity-model-2026-07-18 had already
+  ratified `in_review -> done` on approval, so this was a divergence from the
+  model of record, not an open question. Notably TaskPanel was CORRECT and knew:
+  it gates the verbs by status and relabels the blocked one "Release".
+  BUILT: services/task_decision owns what an answer means and both routers call
+  it (accept | send_back | answer | cancel | dismiss, each named for its
+  outcome); the verb is chosen from the ticket STATUS, never assumed; `approve`
+  is REFUSED on a finished ticket rather than guessed at, which keeps the two
+  correct callers working; only a rework instruction reaches the body; only a
+  ticket that STOPPED refunds an attempt. Repaired 86f58aea (accepted, bogus
+  clarification removed, cause in evidence) and scanned every other ticket for
+  the same shape: it was the only one.
+  THE QUESTION ALSO COULD NOT BE ANSWERED WHERE IT WAS ASKED. question_report
+  ended its chat message "Answer here, or on the ticket: /tickets/<scope>/<id>"
+  and both halves were false: nothing routes a chat reply back to `awaiting`, and
+  a bare path is not a link, which on a phone means unfollowable. `ticket` has
+  been a managed ref kind since managed links shipped, so it is a chip now. The
+  decision itself is INLINE under the message that raised it (work/
+  TicketDecision.tsx), following the rule ApprovalBlock already states for tool
+  permissions: rendered in the log under the message that caused it, not in the
+  strip above, which is for things pointing OUT of the chat. It reads live ticket
+  state rather than remembering its own click, so answering in the panel, on the
+  ticket page or in the transcript resolves all three. clarifying-question-flow-
+  2026-07-18 had specified exactly this, was marked accepted, and was never built.
+  ALSO: the ticket PAGE offered nothing at all for in_review (its answer box was
+  gated on `blocked`), which is why nothing looked actionable; four in_review rows
+  shared one generic sentence so a list of them said the same thing under four
+  titles (the sweep now says which question it is and what each answer does, and
+  run_inbox offers Accept / Send back as taps). Three of the four had no
+  originating chat at all (source.kind agent/operator), so the asymmetry he saw
+  was correct behaviour, not a bug.
+  CONVENTION, which had never been written down: docs/ticket-writing.md.
+  ticket_format enforced four labels and nothing said how to fill them, so
+  tickets drifted into shorthand the operator could not read on his own queue
+  (the offending title was "Pin the backend-to-renderer seam with a contract
+  test", which I wrote). It covers BOTH readers, which is the thing that was
+  missed: the worker gets the body and nothing else, and the operator opens the
+  ticket to decide something on a phone weeks later. Wired into chat_context's
+  build rule and ticket_drafts' prompt.
+  Design: docs/platform-redesign/deciding-on-work-from-a-chat-2026-08-22.md.
+  Backend suite verified against clean HEAD in a throwaway worktree: zero new
+  failures. 1047 frontend tests, typecheck, check_design clean.
+
 - 2026-08-22 (3) — Operator: get caught up and continue. The loop was deadlocked,
   and unblocking it surfaced the gate hole that matters most.
   IT WAS BILLING TO THE WRONG BUDGET. Every 60s cycle for hours refused with
