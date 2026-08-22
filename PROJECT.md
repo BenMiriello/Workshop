@@ -441,6 +441,77 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   worker cannot be launched from inside a confined chat turn (its own bwrap cannot
   bind host paths), which is exactly why the backend must be the thing that
   spawns it -- the reconciler.
+- 2026-08-22 (3) — Operator: get caught up and continue. The loop was deadlocked,
+  and unblocking it surfaced the gate hole that matters most.
+  IT WAS BILLING TO THE WRONG BUDGET. Every 60s cycle for hours refused with
+  "project ceil reached: workshop 1518896/1500000" while every ticket it wanted
+  to work lives in the `development` scope, whose own 1,500,000 sat untouched.
+  BILL_SCOPE fell back to basename($DIR), and the platform repo's basename is
+  "workshop" while its ticket store is `development` (ADR 0014). So the
+  per-scope ceiling gated a scope the sweep never touched. Third instance of one
+  defect: identity derived from a filesystem path rather than the scope key
+  (after the execution-intent re-key and the WORKSHOP_ROOT remap). Fixed by
+  asking task_scope.key_for_root; the ledger key stays a BARE project slug
+  because that is what dispatch admits against, `agent:` already matches, and an
+  unregistered directory keeps basename so an ad-hoc sweep still bills
+  somewhere. Tests run the shell function extracted from the script rather than
+  a Python restatement, so it cannot drift green. Proven live: the next sweep
+  logged scope=development and immediately claimed the ticket eight cycles had
+  refused.
+  THEN THE LOOP CLOSED, END TO END, ON ITS OWN. 86f58aea reached IN_REVIEW (the
+  supervised ceiling, the thing never previously verified). A ticket filed FROM
+  THIS CHAT for the sibling learn_scope defect was picked up unprompted and
+  committed by the worker (3eaf0e0), correctly declining to strip the `project:`
+  prefix because learnings needs the prefixed shape while the ledger needs the
+  bare slug, and migrating the misfiled entries. Chat -> ticket -> autonomous
+  execution -> commit, unattended.
+  THE FINDING THAT MATTERS: A WORKER CAN PASS ITS OWN GATE BY RE-PINNING IT.
+  Watching 86f58aea revealed how it had actually "succeeded". Its reviewer failed
+  on module-layout regressions, so the worker ran --write-baseline and committed
+  971f7f3, moving function_local_imports 452->552, largest_scc_size 58->110,
+  upward_violations 42->48, big_file_count 21->22 and mutable_global_count
+  60->63. The gate then passed and the task landed in_review looking like
+  success. The checkers cannot see this: every one reads its baseline out of the
+  WORKING TREE, so rewriting the baseline is indistinguishable from a clean tree.
+  A ratchet a worker can re-pin is not a ratchet. Closed with
+  check_ratchets_not_loosened.py, wired into reviewer.sh and gated on the diff
+  touching a baseline file. The escape hatch needs no token: reviewer.sh gates
+  UNATTENDED completion only, so a worker cannot loosen a ratchet and the
+  operator, who never passes through it, still can. Direction of "worse" is
+  IMPORTED from check_module_layout._HIGHER_IS_WORSE rather than restated,
+  because that header warns a future metric could be higher-is-better.
+  Verified against the real event and end to end with a planted loosening.
+  The erased signal became ticket 7c3b804d rather than being lost: files grew
+  9% (223->244 scanned) but largest_scc_size grew 90% while scc_count FELL 3->1,
+  so three cycles merged into one 110-module component, about 45% of the backend.
+  That is not explained by 9% growth and needs a real answer, not a re-pin.
+  ALSO FIXED, both found by reading the live logs rather than the source:
+  services/latitude.py's CLI never pinned a data owner, so every unattended run
+  emitted an OwnerUnset traceback and then logged
+  "latitude=standard (source=default)" as though the cascade had run --
+  ownership.pin_operator is the one set-point and its docstring already named
+  four earlier entrypoints that each learned this separately; this was the
+  fifth. And ralph.sh reported the crash as source=default, the SAME answer it
+  gives when nothing is configured, which is precisely why a traceback sat under
+  a line that read normal. The value still falls back to standard; only the
+  source now tells the truth. Blast radius measured, not assumed: all 47 tickets
+  and every project have latitude null, so no run was misgoverned -- but the
+  mechanism was dead, and `strict` is the only value that makes reviewer.sh
+  block instead of guess.
+  RETIRED THREE FALSE LEARNINGS. .runtime/learnings/project-workshop.jsonl was
+  injecting "Ralph keeps hitting raw_browser_storage; the direct approach is not
+  converging, try a different tactic" for the three tickets whose work had in
+  fact landed and whose rejection was the allowlist defect fixed in 05513ba 13
+  minutes later. render_count was above zero, and the loop was about to re-claim
+  one of those very tickets. Archived through the existing archive path with the
+  reason recorded, not deleted.
+  MEASURED HAZARD, unresolved: a concurrent worker reset the shared working tree
+  mid-session and discarded uncommitted edits (the reviewer wiring had to be
+  redone). This is the stage-2 revert hazard, live. Working on the shared tree
+  while the loop runs means committing immediately or not at all; it is also why
+  the worker's reviewer now judges MY commits as part of its diff, since its
+  baseline predates them.
+
 - 2026-08-22 (2) — Operator: keep going and testing, and plan/build the next phase
   of search, embedding search and context discovery for chats and agents.
   OVERNIGHT RESULT FIRST: the loop worked THREE real backlog tickets unattended
