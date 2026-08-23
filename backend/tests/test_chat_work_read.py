@@ -467,3 +467,23 @@ def test_a_named_agent_still_wins():
         {"id": "t1"}, {"agent_name": "reviewer", "trigger": "loop"},
         "development", {})
     assert who == "reviewer"
+
+
+def test_a_stored_row_naming_a_ticket_does_not_double_up_with_its_derived_row():
+    """Deleting `run_inbox`'s producer left every row it had already written
+    open in the store, so the panel showed 20 rows for 11 waiting tickets: each
+    one once derived and once legacy. The ticket is the fact; the stored copy is
+    the second answer to one question that deletion was meant to end."""
+    stored = [
+        {"id": "legacy-uuid", "kind": "question", "ticket_id": "t1",
+         "title": "same ticket, stored", "body": "", "agent": "x",
+         "scope": "development", "options": [], "chat_id": None,
+         "run_id": None, "snoozed_until": None},
+        {"id": "ambient", "kind": "notify", "ticket_id": None,
+         "title": "an agent with something to say", "body": "", "agent": "keeper",
+         "scope": "development", "options": [], "chat_id": None,
+         "run_id": None, "snoozed_until": None},
+    ]
+    kept = [r for r in stored if not r.get("ticket_id")]
+    assert [r["id"] for r in kept] == ["ambient"], \
+        "a stored row with a ticket behind it must not surface beside the derived one"

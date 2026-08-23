@@ -374,10 +374,22 @@ def thread_work(thread_id: str) -> dict | None:
     # `surfaces_in_chat` unchanged, which is the rule that keeps this column
     # readable, and through one sort, so the two cannot interleave differently
     # in the panel and in the card that links to a row.
+    # A STORED ROW THAT NAMES A TICKET DOES NOT SURFACE. The ticket is the fact
+    # and it already has a derived row above; a stored copy is the second answer
+    # to one question that `run_inbox` was deleted for being.
+    #
+    # This is what the paragraph above always claimed and did not enforce.
+    # Deleting the PRODUCER left every row it had already written open in the
+    # store, so nine tickets appeared TWICE in the panel: once derived, once
+    # legacy. Measured on the live store 2026-08-22: 20 rows for 11 waiting
+    # tickets, every duplicate a leftover uuid row beside its `task:` twin.
+    stored = [row for row in inbox.list_items(chat_scope=chat_scope,
+                                              chat_id=thread_id)
+              if not row.get("ticket_id")]
     items = inbox.sort_items(
         [row for row in (_needs_you_row(r, s, names) for r, s in waiting_raw)
          if inbox.surfaces_in_chat(row, chat_scope, thread_id)]
-        + inbox.list_items(chat_scope=chat_scope, chat_id=thread_id))
+        + stored)
 
     running = sum(1 for rec in (*filed, *scope_rows)
                   if (rec.get("run") or {}).get("status") == "running")
