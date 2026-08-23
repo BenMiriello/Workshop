@@ -698,6 +698,11 @@ export default function Chat({
     focusItem: workFocus,
     work,
     scope: taskScope,
+    // The session this surface IS, for the control channel. A chat's presence
+    // is keyed by its thread, which is the only id this surface has to offer;
+    // nothing writes chat presence yet, so today this only ever means "not one
+    // of the rows in the directory".
+    selfSessionId: activeId,
     chatMode: thread.chatMode,
     onChooseChatMode: thread.chooseChatMode,
     // Filing this chat is an action on an existing conversation, so it only

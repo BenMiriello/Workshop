@@ -2,7 +2,7 @@ import {
   useCallback, useEffect, useRef, useState,
 } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, ListPlus, Settings2 } from "lucide-react";
+import { ChevronRight, ListPlus, Settings2, Users } from "lucide-react";
 import {
   FilterChip, Skeleton, Tag, catFor,
 } from "@workshop/ui";
@@ -13,6 +13,7 @@ import ChatProblemBlock from "../ChatProblemBlock";
 import QuestionView from "./QuestionView";
 import { NeedsYouRow, TicketRow } from "./TicketRow";
 import WorkSettings from "./WorkSettings";
+import DirectoryView from "./DirectoryView";
 import type { ChatWork } from "./useChatWork";
 import {
   WORK_CHIPS, chipCount, defaultChip, emptyText, workList, type WorkChip,
@@ -64,6 +65,9 @@ export type WorkPanelProps = {
   work: ChatWork;
   /** The chat's task scope, or null for a chat with no queue. */
   scope: string | null;
+  /** This conversation's id, used as the session this surface IS when talking
+   *  to the control channel. See the note on the directory view. */
+  selfSessionId?: string | null;
   chatMode: ChatModeId;
   onChooseChatMode: (mode: ChatModeId) => void;
   /** Opens the ticket drafts dialog. Absent on a chat with no thread yet. */
@@ -127,9 +131,9 @@ function useNow(active: boolean): number {
 
 function WorkBody({
   work, scope, chatMode, onChooseChatMode, onFileTicket, onNavigate, onOpenChange,
-  focusItem,
+  focusItem, selfSessionId,
 }: WorkPanelProps) {
-  const [view, setView] = useState<"list" | "settings">("list");
+  const [view, setView] = useState<"list" | "settings" | "directory">("list");
   const [questionId, setQuestionId] = useState<string | null>(focusItem ?? null);
   // Null until the operator picks one, so the default can follow the first
   // payload in rather than being computed against the zeroes that are on screen
@@ -155,6 +159,7 @@ function WorkBody({
 
   const close = useCallback(() => onOpenChange(false), [onOpenChange]);
   const openSettings = useCallback(() => { setQuestionId(null); setView("settings"); }, []);
+  const openDirectory = useCallback(() => { setQuestionId(null); setView("directory"); }, []);
   const backToList = useCallback(() => { setQuestionId(null); setView("list"); }, []);
 
   // Read from the whole payload rather than from the rows on screen, so the
@@ -191,6 +196,18 @@ function WorkBody({
           onClose={close}
           onNavigate={onNavigate}
         />
+      </>
+    );
+  }
+
+  if (view === "directory") {
+    // WHO IS HERE, in this same sheet. It reads the presence directory rather
+    // than this chat's work, so it draws its own four states and does not touch
+    // the payload above.
+    return (
+      <>
+        {problem}
+        <DirectoryView selfSessionId={selfSessionId} onBack={backToList} />
       </>
     );
   }
@@ -247,6 +264,20 @@ function WorkBody({
             <ListPlus size={14} strokeWidth={1.8} aria-hidden />
           </button>
         )}
+        {/* WHO IS HERE. Beside the settings gear because it is the same kind
+            of control: a second view of this one sheet, not a second sheet.
+            It is not scoped to this chat, and that is the point of it: the
+            question is "who is working, anywhere", and the answer is what tells
+            you whether the tree under you is moving. */}
+        <button
+          type="button"
+          className="chat-workpanel__iconbtn"
+          onClick={openDirectory}
+          title="Who is here"
+          aria-label="Who is here"
+        >
+          <Users size={14} strokeWidth={1.8} aria-hidden />
+        </button>
         <button
           type="button"
           className="chat-workpanel__iconbtn"

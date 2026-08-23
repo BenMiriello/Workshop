@@ -4,9 +4,12 @@
 // app-record loading/error states every tab needs before it can call any
 // nested /api/apps/{id}/... route.
 import type { ReactNode } from "react";
-import { PageHeader, StateBlock, Card, Stack, Skeleton, Button } from "@workshop/ui";
+import { PageHeader, StateBlock, Card, Stack, Skeleton, Button, Notice, Row } from "@workshop/ui";
 import { useApp, type AppRecord } from "../../../lib/apps";
 import { usePageChrome } from "../../../components/shell/takeover";
+import RefPill from "../../../components/holders/RefPill";
+import { useAppRef } from "../../../components/holders/useHolders";
+import { stalenessNote } from "../../../lib/holders";
 
 export function AppTabPage({
   slug, title, sub, actions, children,
@@ -18,6 +21,11 @@ export function AppTabPage({
   children: (app: AppRecord) => ReactNode;
 }) {
   const { app, err, reload } = useApp(slug);
+  // WHICH REF THIS SURFACE IS ON, AND WHO IS WRITING IT. One read for both: the
+  // pill in the header and the staleness line under it are two views of the
+  // same join, so they cannot disagree about who is here.
+  const refState = useAppRef({ projectSlug: app?.project_slug, appId: app?.id });
+  const stale = stalenessNote(refState.writers);
   // THE PAGE'S CONTENT OWNS THE SCREEN IN TWO CASES, and the tab declares which
   // (components/shell/takeover.tsx); this reads them as one answer.
   //
@@ -65,7 +73,29 @@ export function AppTabPage({
 
   return (
     <div className="ws-page">
-      {chrome && <PageHeader title={title} sub={sub} actions={actions?.(app)} />}
+      {chrome && (
+        <PageHeader
+          title={title}
+          sub={sub}
+          actions={
+            // The ref pill goes in the header that is already here. It is the
+            // first action because it says WHERE you are reading from, which
+            // frames everything the tab's own actions then do.
+            <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+              <RefPill state={refState} projectSlug={app.project_slug} />
+              {actions?.(app)}
+            </Row>
+          }
+        />
+      )}
+      {/* READER STALENESS (leases design section 11). A LINE, not a region: the
+          content is still on screen and still readable, one thing about it is
+          just no longer guaranteed current. There is deliberately no
+          invalidation here. Section 11 is explicit that no protocol fixes a
+          read that is already in a session's context window, and that the only
+          real remedy is a message into that session, which is the steer verb in
+          the directory sheet rather than a new mechanism. */}
+      {stale && <Notice tone="warn">{stale}</Notice>}
       {children(app)}
     </div>
   );
