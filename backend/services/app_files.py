@@ -152,12 +152,44 @@ def _resolve_project(slug: str, ref: str) -> Workspace:
 
 
 def _resolve_app(slug: str, ref: str) -> Workspace:
-    """An app's files ARE its linked project's working tree. Composed from
-    the two existing single-sources, never a third mapping."""
+    """The app's own tree when it declares one, else its linked project's.
+
+    THE APP DECLARES, THE PLATFORM READS (CLAUDE.md: "An app declares what it
+    is and the platform reads the declaration"). Two candidate directories
+    exist for one app while the registries are still unmerged
+    (app-is-the-entity-2026-08-20.md sec 9): `apps/<slug>`, which
+    `paths.scope_root` names and the knowledge store already uses, and
+    `projects/<slug>`, the build tree. Which one holds the app is NOT uniform
+    and cannot be guessed, measured 2026-08-23 by counting both trees:
+
+        birds      apps/ 30150 files   projects/    41   (a scaffold)
+        gengui     apps/     0         projects/  1754
+        notes-app  apps/     0         projects/    24
+        budget     apps/     0         projects/     9
+        location   apps/     0         projects/     8
+        commute    apps/     3         projects/    10   (split across both)
+
+    So this used to say "an app's files ARE its linked project's working tree",
+    which is right for five of six and left the operator's largest app -- 2.2 GB
+    of it -- unreachable from its own Files tab, and from anywhere in the UI.
+    An emptiness or existence heuristic gets `commute` wrong in the other
+    direction, so there is no rule to infer: the app has to say.
+
+    It says it with a manifest in its own tree, read through
+    `app_runner._read_manifest_file`, which is the ONE reader of that file and
+    already owns the filename set and the jsonc tolerance. A manifest there
+    means "this directory is the app". No manifest means the previous answer,
+    unchanged, so nothing that worked before moves.
+    """
     from services import app_links
 
     if not slug:
         return _fail(f"{ref!r} names no app")
+
+    own = _app_declared_root(slug)
+    if own is not None:
+        return Workspace(ref=ref, root=own, display=own.name)
+
     project_slug = app_links.linked_project_slug(slug)
     if not project_slug:
         return _fail("this app has no linked project, so it has no file tree")
@@ -169,6 +201,28 @@ def _resolve_app(slug: str, ref: str) -> Workspace:
         return _fail(
             f"the app's linked project directory does not exist on disk: {root}")
     return Workspace(ref=ref, root=root, display=root.name)
+
+
+
+def _app_declared_root(slug: str) -> Path | None:
+    """`apps/<slug>` when the app declares itself there with a manifest, else
+    None. Never invents a root: a directory with no manifest is not a claim."""
+    from services import app_runner
+    from wsplatform import paths
+
+    try:
+        d = paths.scope_root(f"app:{slug}")
+    except (ValueError, OSError):
+        return None
+    if not d.is_dir():
+        return None
+    try:
+        manifest = app_runner._read_manifest_file(d)
+    except Exception:
+        # A malformed manifest is app_runner's error to raise where it is
+        # deploying; here it must not take out file browsing for every app.
+        return None
+    return d if manifest is not None else None
 
 
 def _resolve_documents(_arg: str, ref: str) -> Workspace:
