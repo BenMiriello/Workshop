@@ -1342,9 +1342,18 @@ def question_for(t: dict) -> str:
     # under four titles and the operator could not tell whether any of them was
     # blocked, finished, or waiting on words (2026-08-22).
     if t["status"] == "in_review":
-        return ("The work on this ticket is finished and waiting on you. "
-                "Accept it to mark it done, or send it back with a note saying "
-                "what to change.")
+        # NOTHING. This is the case the comment above was written for and then
+        # did not fix: it differentiated `blocked` (which quotes its own reason)
+        # and left every finished ticket carrying one identical sentence, so a
+        # column of twenty of them said the same thing under twenty titles and
+        # the operator could not tell them apart at a glance (measured on the
+        # live store, 2026-08-22 evening: 11 waiting tickets, 11 identical asks).
+        #
+        # A finished ticket has no question beyond its status. "Is this right"
+        # IS what in_review means, the verbs are on the buttons, and the thing
+        # that differs between two of these rows is the TITLE. A sentence every
+        # instance repeats is not information (one-fact-one-place sec 3.3).
+        return ""
     reason = (t.get("blocked_reason") or "").strip()
     if reason:
         return f"This ticket stopped: {reason}. Answer, and it goes back in the queue."

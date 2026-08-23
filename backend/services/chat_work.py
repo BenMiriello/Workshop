@@ -198,6 +198,19 @@ def needs_you_options(task: dict) -> list[str]:
     return []
 
 
+# The sentence the sweep used to stamp onto EVERY finished ticket. It is dropped
+# on read as well as no longer written (`project_ralph.sh question_for`), because
+# the store already holds it on tickets that were finished before the writer was
+# fixed, and a row is not worth a migration to look right. Matched on a distinctive
+# prefix rather than the whole string so a reworded copy of the same non-fact does
+# not slip back in unnoticed.
+_BOILERPLATE_ASK = "the work on this ticket is finished and waiting on you"
+
+
+def _is_boilerplate(ask: str) -> bool:
+    return ask.strip().lower().startswith(_BOILERPLATE_ASK)
+
+
 def needs_you_ask(task: dict) -> str:
     """What this ticket is ASKING, when it has something to say beyond its state.
 
@@ -213,7 +226,7 @@ def needs_you_ask(task: dict) -> str:
     """
     aw = task.get("awaiting") or {}
     ask = str(aw.get("ask") or aw.get("question") or "").strip()
-    if ask:
+    if ask and not _is_boilerplate(ask):
         return ask
     if task.get("status") == "blocked":
         return str(task.get("blocked_reason") or "").strip()
@@ -237,7 +250,18 @@ def _who_did_the_work(task: dict, run: dict | None, scope: str,
     if assignee and assignee != tasks.DEFAULT_OWNER:
         from routes.jobs import _display_agent
         return _display_agent(assignee, names) or assignee
-    return scope
+    # A ticket worked by the unattended sweep has a run but NO agent identity:
+    # nothing delegated it, the queue picked it up. Its trigger is the true
+    # answer to "who did this", and it is the one the run feed already shows.
+    from routes.jobs import _TRIGGER_LABELS
+    trigger = str((run or {}).get("trigger") or "")
+    if trigger:
+        return f"{_TRIGGER_LABELS.get(trigger, trigger.capitalize())} run"
+    # NOT the scope. "development asks" is the same non-fact as the "operator
+    # asks" this function was written to remove, one word further out: it names
+    # the queue the ticket sits in, not anybody who did anything. Empty, and the
+    # row leads with its TITLE instead, which is the part that differs.
+    return ""
 
 
 def _needs_you_row(task: dict, scope: str, names: dict[str, str]) -> dict:

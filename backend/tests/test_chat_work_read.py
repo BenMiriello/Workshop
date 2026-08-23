@@ -413,3 +413,57 @@ class TestRoute:
         body = env["client"].get(f"/chat/threads/{t['id']}/work").json()
         assert set(body) == {"inbox", "filed", "scope", "counts", "scope_key"}
         assert set(body["counts"]) == {"needs_you", "running", "this_chat", "all"}
+
+
+# --- the row has to say something DIFFERENT from the row above it -----------
+#
+# Operator, 2026-08-22, over a screenshot of twenty rows: "no useful info at a
+# glance". Every one read "operator asks" above one identical sentence. Both
+# halves are fixed here; the third half (the title leading the card) is in
+# frontend/src/components/chat/work/TicketRow.tsx.
+
+def test_the_finished_boilerplate_is_not_treated_as_an_ask():
+    """The sweep stamped one sentence onto every in_review ticket. It is no
+    longer written, and it is dropped on read for the ones that already carry
+    it, so no migration is needed to make a stored row read correctly."""
+    task = {
+        "id": "t1", "status": "in_review",
+        "awaiting": {"question": "The work on this ticket is finished and "
+                                 "waiting on you. Accept it to mark it done."},
+    }
+    assert chat_work.needs_you_ask(task) == ""
+
+
+def test_a_real_question_still_reaches_the_row():
+    task = {"id": "t1", "status": "blocked",
+            "awaiting": {"question": "Which store should win?"}}
+    assert chat_work.needs_you_ask(task) == "Which store should win?"
+
+
+def test_a_blocked_ticket_still_quotes_its_reason():
+    task = {"id": "t1", "status": "blocked", "awaiting": {},
+            "blocked_reason": "the migration needs a decision"}
+    assert chat_work.needs_you_ask(task) == "the migration needs a decision"
+
+
+def test_an_unknown_worker_is_nobody_rather_than_the_scope_name():
+    """`development asks` is the same non-fact as `operator asks`, one word
+    further out: it names the queue, not anyone who did anything. Empty, and
+    the row leads with its title instead."""
+    who = chat_work._who_did_the_work({"id": "t1"}, None, "development", {})
+    assert who == ""
+
+
+def test_a_sweep_worked_ticket_is_attributed_to_the_run_that_did_it():
+    """A queue-picked ticket has a run but no agent identity. Its trigger is
+    the true answer, and it is the one the run feed already shows."""
+    who = chat_work._who_did_the_work(
+        {"id": "t1"}, {"agent_name": None, "trigger": "loop"}, "development", {})
+    assert who == "Autonomous run"
+
+
+def test_a_named_agent_still_wins():
+    who = chat_work._who_did_the_work(
+        {"id": "t1"}, {"agent_name": "reviewer", "trigger": "loop"},
+        "development", {})
+    assert who == "reviewer"

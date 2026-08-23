@@ -2529,14 +2529,18 @@ button.chat-attach {
   display: flex; align-items: center; gap: var(--space-2); min-width: 0;
   color: var(--muted); font-size: var(--fs-xs);
 }
-/* The ask itself, under the heading that says who asked it. */
+/* The second line of a card: who raised it and, when there is one, the ask.
+   It is meta about the title above it, so it is muted and it is ABSENT rather
+   than empty when it has nothing to add. (It used to be the primary text, with
+   the title demoted below it. See NeedsYouRow for why that inverted.) */
 .chat-workpanel__cardtext {
   display: block; min-width: 0;
   color: var(--muted); font-size: var(--fs-sm);
 }
-.chat-workpanel__asks {
-  flex: 0 0 auto; font-size: var(--fs-sm); font-weight: var(--fw-semi);
-}
+/* A card leads with its title, so the title carries the weight there. A flat
+   row does not: it is one line among many and the dot plus the state word are
+   already doing the work. */
+.chat-workpanel__row--card .chat-workpanel__title { font-weight: var(--fw-semi); }
 /* The short handle on the right of a card's first line, and the ticket key on
    the left of a flat row. Faint: it is how you cite the row, not what the row
    says. */

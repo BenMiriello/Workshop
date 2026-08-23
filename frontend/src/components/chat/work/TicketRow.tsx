@@ -8,6 +8,7 @@ import { jobIsLive } from "../../../lib/jobs";
 import { formatElapsed } from "../chatScope";
 import { elapsedSeconds } from "../turnStatus";
 import { AgentAvatar } from "./AgentAvatar";
+import { needsYouMeta } from "./workRows";
 import type { InboxItem, WorkTicket } from "./workTypes";
 
 // The two rows the Work panel is made of, and the only two it has.
@@ -29,20 +30,6 @@ import type { InboxItem, WorkTicket } from "./workTypes";
 // for "what needs me and what is moving", so those two are the only things that
 // earn a card, and everything else stays flat behind them.
 
-/** The first line of an inbox item's body, for the card's second line. */
-function firstLine(body: string): string {
-  return (body || "").split("\n").map((s) => s.trim()).find(Boolean) ?? "";
-}
-
-/** What the agent DID, from what kind of item it raised. 4a writes the verb into
- *  the heading ("reviewer asks") rather than putting an icon beside a bare name,
- *  which is what makes the line a sentence. */
-const KIND_VERB: Record<InboxItem["kind"], string> = {
-  question: "asks",
-  review: "proposes",
-  notify: "says",
-};
-
 /** An agent stopped and is waiting: the one place in the panel that spends a
  *  hue on something other than liveness. A proposal is ordinary work, so it
  *  keeps the accent. */
@@ -52,12 +39,29 @@ const KIND_TONE = {
   notify: "muted",
 } as const;
 
-/** Something an agent raised. Selecting it opens the question view. */
+/** Something an agent raised. Selecting it opens the question view.
+ *
+ *  THE TITLE LEADS. This row used to open with "<agent> asks" and put the title
+ *  underneath as the body, on the reasoning that the heading carries who and the
+ *  body carries the ask. That reads well for ONE row and fails completely for a
+ *  column of them: the dominant case by far is a finished ticket, whose ask is
+ *  the same sentence every time and whose agent is often the same word every
+ *  time, so twenty rows opened with twenty copies of one phrase and the only
+ *  thing that differed was demoted to the second line (operator, 2026-08-22:
+ *  "no useful info at a glance", over a screenshot of exactly that).
+ *
+ *  So it leads with the ticket's title, in the same shape `TicketRow` uses, and
+ *  the who-and-what-they-ask line drops BELOW it and disappears entirely when
+ *  it has nothing to add. One row idiom, and the differing part on top. */
 export function NeedsYouRow({ item, onSelect }: {
   item: InboxItem;
   onSelect: (id: string) => void;
 }) {
-  const snippet = firstLine(item.body);
+  // The agent line earns its space only when it says something. A sweep-worked
+  // ticket has no agent identity at all, and the server now sends "" rather
+  // than naming the scope, which was the same non-fact one word further out.
+  const who = (item.agent || "").trim();
+  const meta = needsYouMeta(item.agent, item.kind, item.body);
   return (
     <button
       type="button"
@@ -66,11 +70,8 @@ export function NeedsYouRow({ item, onSelect }: {
       title={item.title}
     >
       <span className="chat-workpanel__cardline">
-        <AgentAvatar name={item.agent} tone={KIND_TONE[item.kind]} />
-        <span className="chat-workpanel__asks">
-          {item.agent} {KIND_VERB[item.kind] ?? "says"}
-        </span>
-        <span className="chat-workpanel__spacer" />
+        <AgentAvatar name={who || undefined} tone={KIND_TONE[item.kind]} />
+        <span className="ws-truncate chat-workpanel__title">{item.title}</span>
         {/* The design's `WS-412`, or its `draft` when an item names no ticket.
             We have neither a ticket counter nor a draft state on an inbox row,
             so this is the six-hex handle everything else quotes, falling back
@@ -80,9 +81,7 @@ export function NeedsYouRow({ item, onSelect }: {
         </span>
         <ChevronRight size={14} strokeWidth={1.8} aria-hidden className="chat-workpanel__caret" />
       </span>
-      {/* The question itself, not the title. The title is what it is about and
-          the heading above already carries who; this is the ask. */}
-      <span className="ws-truncate chat-workpanel__cardtext">{snippet || item.title}</span>
+      {meta && <span className="ws-truncate chat-workpanel__cardtext">{meta}</span>}
     </button>
   );
 }

@@ -2,8 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   MAX_ROWS, NOTHING_FILED_HERE, NOTHING_RUNNING, NOTHING_UNDER_WAY, NOTHING_WAITING,
   WORK_CHIPS,
-  chipCount, defaultChip, emptyText, ticketsForChip, workList,
-} from "./workRows";
+  chipCount, defaultChip, emptyText, ticketsForChip, workList, needsYouMeta } from "./workRows";
 import { EMPTY_WORK, type InboxItem, type WorkPayload, type WorkTicket } from "./workTypes";
 import type { TaskStatus } from "../../../lib/tasks";
 
@@ -337,5 +336,39 @@ describe("headings", () => {
 
   it("never heads the needs-you list, which is always one group", () => {
     expect(workList(payload({ inbox: [item("i")] }), "needs_you").headed).toBe(false);
+  });
+});
+
+describe("needsYouMeta", () => {
+  it("is empty when there is nothing to add, so the line disappears", () => {
+    // The dominant case: a finished ticket the queue picked up. No ask beyond
+    // its status, no agent identity. The card is its title and nothing else.
+    expect(needsYouMeta("", "question", "")).toBe("");
+    expect(needsYouMeta(null, "question", "")).toBe("");
+  });
+
+  it("names the raiser alone when there is no ask, without a dangling verb", () => {
+    expect(needsYouMeta("Autonomous run", "question", "")).toBe("Autonomous run");
+  });
+
+  it("makes a sentence when there IS an ask", () => {
+    expect(needsYouMeta("reviewer", "question", "Which store wins?"))
+      .toBe("reviewer asks · Which store wins?");
+  });
+
+  it("uses the verb the kind implies", () => {
+    expect(needsYouMeta("keeper", "review", "Promote this rule?"))
+      .toBe("keeper proposes · Promote this rule?");
+    expect(needsYouMeta("keeper", "notify", "Index rebuilt."))
+      .toBe("keeper says · Index rebuilt.");
+  });
+
+  it("takes the first non-blank line of a multi-line ask", () => {
+    expect(needsYouMeta("a", "question", "\n\n  first  \nsecond"))
+      .toBe("a asks · first");
+  });
+
+  it("shows the ask alone when nobody is named", () => {
+    expect(needsYouMeta("", "question", "Which store wins?")).toBe("Which store wins?");
   });
 });

@@ -18,7 +18,7 @@
 
 import { jobIsLive } from "../../../lib/jobs";
 import { taskStateTypeOf, type TaskStateType } from "../../../lib/tasks";
-import type { InboxItem, WorkCounts, WorkPayload, WorkTicket } from "./workTypes";
+import type { InboxItem, WorkCounts, WorkPayload, WorkTicket, InboxKind } from "./workTypes";
 
 export type WorkChip = "needs_you" | "running" | "this_chat" | "all";
 
@@ -226,4 +226,34 @@ const EMPTY_TEXT: Record<WorkChip, string> = {
 
 export function emptyText(chip: WorkChip): string {
   return EMPTY_TEXT[chip];
+}
+
+
+/** The verb that turns a raiser's name into a sentence, by what they raised. */
+const KIND_VERB: Record<InboxKind, string> = {
+  question: "asks",
+  review: "proposes",
+  notify: "says",
+};
+
+/** The SECOND line of a needs-you card: who raised it, and what they said.
+ *
+ *  Absent rather than empty when there is nothing to add, which is the common
+ *  case: a finished ticket has no question beyond its status (the server sends
+ *  an empty ask for exactly that reason), and a ticket the queue picked up has
+ *  no agent identity at all. The card's first line is the ticket TITLE, so this
+ *  line only ever exists to add something the title does not carry.
+ *
+ *  The VERB only appears when an ask follows it. "Autonomous run asks" with
+ *  nothing after it is a sentence that stops before its object; the name alone
+ *  is the honest form of "who did this". */
+export function needsYouMeta(
+  agent: string | null | undefined,
+  kind: InboxKind,
+  ask: string,
+): string {
+  const who = (agent || "").trim();
+  const said = (ask || "").split("\n").map((s) => s.trim()).find(Boolean) || "";
+  if (who && said) return `${who} ${KIND_VERB[kind] ?? "says"} \u00b7 ${said}`;
+  return who || said;
 }
