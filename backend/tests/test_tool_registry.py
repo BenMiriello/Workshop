@@ -319,3 +319,64 @@ def test_the_api_refuses_to_create_edit_or_delete_a_platform_tool(client, tools_
     assert "WebSearch" in r.json()["detail"]
 
     assert not tools_file.exists(), "no refused write reached the store"
+
+
+# ---- cross-source coverage gate (stage 3) -----------------------------------
+
+def test_every_name_the_four_sources_can_produce_resolves_to_a_registry_entry():
+    """Every tool name any of the four declaration sources can produce must be
+    in PLATFORM_TOOL_IDS, so a fifth private list cannot be added silently.
+
+    The four sources (doc §1):
+      llm_router.BASELINE_DISALLOWED_TOOLS
+      agent_authority._READ_TOOLS and _TARGET_TOOLS values
+      chat_context.WEB_TOOLS, SUBAGENT_TOOL, WORKSHOP_TOOLKIT, per-provider allowed_tools
+      agents_registry._PERSONA_TOOL_CEILING
+
+    Note: llm_router is a deny-list source, not a grant source. Its names still
+    must be in the registry: a tool denied by name that is not declared is a name
+    that appears in two places.
+    """
+    from services import agent_authority, agents_registry, chat_context
+    from services import llm_router
+
+    ids = tr.PLATFORM_TOOL_IDS
+
+    # llm_router baseline deny list
+    for name in llm_router.BASELINE_DISALLOWED_TOOLS:
+        assert name in ids, (
+            f"{name!r} is in llm_router.BASELINE_DISALLOWED_TOOLS "
+            "but is not in tool_registry.PLATFORM_TOOLS")
+
+    # agent_authority: read tools and per-target write tools
+    for name in agent_authority._READ_TOOLS:
+        assert name in ids, (
+            f"{name!r} is in agent_authority._READ_TOOLS "
+            "but is not in tool_registry.PLATFORM_TOOLS")
+    for target, tools in agent_authority._TARGET_TOOLS.items():
+        for name in tools:
+            assert name in ids, (
+                f"{name!r} is in agent_authority._TARGET_TOOLS[{target!r}] "
+                "but is not in tool_registry.PLATFORM_TOOLS")
+
+    # chat_context: web tools, subagent tool, workshop toolkit
+    for name in (*chat_context.WEB_TOOLS, chat_context.SUBAGENT_TOOL):
+        assert name in ids, (
+            f"{name!r} is in chat_context WEB_TOOLS/SUBAGENT_TOOL "
+            "but is not in tool_registry.PLATFORM_TOOLS")
+    for name in chat_context.WORKSHOP_TOOLKIT:
+        assert name in ids, (
+            f"{name!r} is in chat_context.WORKSHOP_TOOLKIT "
+            "but is not in tool_registry.PLATFORM_TOOLS")
+    # Every provider's allowed_tools (catches app personas and the general provider)
+    for provider in chat_context.provider_map().values():
+        for name in provider.allowed_tools:
+            assert name in ids, (
+                f"{name!r} is in provider {provider.key!r}.allowed_tools "
+                "but is not in tool_registry.PLATFORM_TOOLS")
+
+    # agents_registry persona ceiling
+    for name in agents_registry._PERSONA_TOOL_CEILING:
+        assert name in ids, (
+            f"{name!r} is in agents_registry._PERSONA_TOOL_CEILING "
+            "but is not in tool_registry.PLATFORM_TOOLS")

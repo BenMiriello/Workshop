@@ -183,22 +183,26 @@ class Tool:
 # --------------------------------------------------------------------------- #
 # PLATFORM: a literal tuple in source.
 #
-# Seeded with the tools that GENUINELY EXIST on this instance today, read off
-# the two places that already grant them, so the enumeration starts true and
-# stage 3 (making those places read from here) is a no-op rather than a change:
+# Stage 1 seeded this with the tools from `chat_context` and the workshop MCP
+# server. Stage 3 expands it to include every CLI builtin the four declaration
+# sources (`llm_router`, `agent_authority`, `chat_context`, `agents_registry`)
+# can name — so those sources can read from here rather than maintaining their
+# own private lists (doc §2.3, §5 step 3):
 #
+#   CLI builtins — Read, Write, Edit, MultiEdit, Bash, Grep, Glob, the
+#     delegation tools (Agent, Task), and the session/notebook tools
+#     (BashOutput, KillShell, NotebookEdit), plus AskUserQuestion which
+#     `llm_router.BASELINE_DISALLOWED_TOOLS` names specifically to deny it.
 #   `chat_context.WEB_TOOLS` + `chat_context.SUBAGENT_TOOL` — the CLI builtins
-#     every data/assistant chat is granted on top of its provider's MCP tools
-#     (`chat_context.effective_allowed_tools`). Build/project chats have them
-#     via the full toolset.
+#     every data/assistant chat is granted.
 #   the workshop MCP server's own tools — `chat_context.WORKSHOP_TOOLKIT` plus
 #     the `query`/`search` pair in `_general.allowed_tools`, and
 #     `spawn_background`, which the server exposes only to a chat-bound turn.
 #     Their descriptions are imported from the server rather than rewritten.
 #
-# Nothing is invented here. No `preview`, no screenshot tool: those are doc §3
-# and stage 5, and a catalog that lists a capability the platform does not have
-# is worse than one that lists nothing.
+# Nothing is invented. No `preview`, no screenshot tool: those are doc §3 and
+# stage 5, and a catalog that lists a capability the platform does not have is
+# worse than one that lists nothing.
 #
 # The ids ARE the CLI/MCP names, because the id is "the thing an allowlist
 # names" and an allowlist here is an exact-match list of exactly these strings.
@@ -313,9 +317,116 @@ PLATFORM_TOOLS: tuple[Tool, ...] = (
         scopes=("chat",),
         ceiling=(_mcp_id(_wqs.SPAWN_TOOL_NAME),),
     ),
+    # --- CLI builtin tools ---------------------------------------------------
+    # agent_authority._READ_TOOLS and _TARGET_TOOLS, and
+    # agents_registry._PERSONA_TOOL_CEILING reference these; so does
+    # llm_router.BASELINE_DISALLOWED_TOOLS (AskUserQuestion). Stage 3 puts
+    # them here so the three sources can import their names from one place.
+    Tool(id="Read", title="Read a file",
+         description="Read a file's contents from the local filesystem.",
+         kind="builtin", provenance="platform", ceiling=("Read",)),
+    Tool(id="Write", title="Write a file",
+         description="Write content to a file, creating or overwriting it.",
+         kind="builtin", provenance="platform", ceiling=("Write",)),
+    Tool(id="Edit", title="Edit a file",
+         description="Make a targeted string-replacement edit to one file.",
+         kind="builtin", provenance="platform", ceiling=("Edit",)),
+    Tool(id="MultiEdit", title="Edit multiple files",
+         description="Apply multiple edits to one or more files in one call.",
+         kind="builtin", provenance="platform", ceiling=("MultiEdit",)),
+    Tool(id="Bash", title="Run a shell command",
+         description="Execute a shell command and return its stdout/stderr.",
+         kind="builtin", provenance="platform", ceiling=("Bash",)),
+    Tool(id="Grep", title="Search file contents",
+         description="Search file contents with a regular expression.",
+         kind="builtin", provenance="platform", ceiling=("Grep",)),
+    Tool(id="Glob", title="Match file paths",
+         description="Match file paths against a glob pattern.",
+         kind="builtin", provenance="platform", ceiling=("Glob",)),
+    Tool(id="BashOutput", title="View shell output",
+         description="View the output of a running or previously run shell command.",
+         kind="builtin", provenance="platform", ceiling=("BashOutput",)),
+    Tool(id="KillShell", title="Kill a shell session",
+         description="Terminate a running shell session.",
+         kind="builtin", provenance="platform", ceiling=("KillShell",)),
+    Tool(id="NotebookEdit", title="Edit a notebook cell",
+         description="Edit cells in a Jupyter notebook.",
+         kind="builtin", provenance="platform", ceiling=("NotebookEdit",)),
+    Tool(id="Task", title="Delegate to a subagent (legacy)",
+         description=(
+             "Older accepted spelling of Agent. Both names invoke the subagent "
+             "tool; `Agent` is the current emitted name."
+         ),
+         kind="builtin", provenance="platform", ceiling=("Task",)),
+    Tool(id="AskUserQuestion", title="Ask the operator a question",
+         description=(
+             "Ask the operator a multiple-choice question and block until answered. "
+             "Denied on every headless turn (llm_router.BASELINE_DISALLOWED_TOOLS): "
+             "there is no channel to surface the question or receive the answer in "
+             "an async chat turn."
+         ),
+         kind="builtin", provenance="platform", ceiling=("AskUserQuestion",)),
 )
 
 PLATFORM_TOOL_IDS: frozenset[str] = frozenset(t.id for t in PLATFORM_TOOLS)
+
+
+# --------------------------------------------------------------------------- #
+# Named groups for the three declaration sources (doc §2.3, step 3).
+#
+# Each source imports its names from here rather than maintaining its own copy.
+# `_group()` and `_single()` assert the ids are in PLATFORM_TOOLS at import
+# time, so a refactor that removes a tool cannot silently leave a dangling
+# reference in one of the groups.
+# --------------------------------------------------------------------------- #
+
+def _group(*ids: str) -> tuple[str, ...]:
+    """Return ids after asserting each is in PLATFORM_TOOLS. Fails at import."""
+    for i in ids:
+        if i not in PLATFORM_TOOL_IDS:
+            raise AssertionError(
+                f"tool_registry._group: {i!r} is not in PLATFORM_TOOLS; "
+                "add it to the tuple before declaring a group that names it")
+    return ids
+
+
+def _single(tool_id: str) -> str:
+    """Return tool_id after asserting it is in PLATFORM_TOOLS. Fails at import."""
+    if tool_id not in PLATFORM_TOOL_IDS:
+        raise AssertionError(
+            f"tool_registry._single: {tool_id!r} is not in PLATFORM_TOOLS")
+    return tool_id
+
+
+# agent_authority: the read-only tools every role with any writes gets.
+FILE_READ_TOOL_IDS: tuple[str, ...] = _group("Read", "Grep", "Glob")
+# The workshop semantic search tool (used in both agent_authority and
+# agents_registry._general.allowed_tools).
+SEARCH_TOOL_ID: str = _single("mcp__workshop__search")
+# agent_authority: the tools that write to the working tree.
+TREE_WRITE_TOOL_IDS: tuple[str, ...] = _group("Write", "Edit", "MultiEdit", "Bash")
+
+# chat_context: the universal web grant added on top of every provider's tools.
+WEB_TOOL_IDS: tuple[str, ...] = _group("WebSearch", "WebFetch")
+# chat_context: the subagent delegation tool.
+SUBAGENT_TOOL_ID: str = _single("Agent")
+# chat_context: the workshop-toolkit read verbs added to every app-persona chat.
+WORKSHOP_KIT_IDS: tuple[str, ...] = _group(
+    "mcp__workshop__where_is",
+    "mcp__workshop__list_attachments",
+    "mcp__workshop__get_file",
+)
+
+# agents_registry: tools app personas may NEVER declare, whatever their markdown
+# says. An app persona is the chat assistant of an installed app; it has no
+# working directory of its own and must not be able to claim system-level tools.
+# The persona parser drops anything in this set with a logged warning.
+PERSONA_TOOL_CEILING_IDS: frozenset[str] = frozenset(_group(
+    "Bash", "BashOutput", "KillShell",
+    "Edit", "MultiEdit", "Write", "NotebookEdit",
+    "Read", "Glob", "Grep",
+    "Task", "Agent",
+))
 
 
 # --------------------------------------------------------------------------- #
