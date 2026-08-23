@@ -441,6 +441,56 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   worker cannot be launched from inside a confined chat turn (its own bwrap cannot
   bind host paths), which is exactly why the backend must be the thing that
   spawns it -- the reconciler.
+- 2026-08-23 (2) — Operator: the screenshot tool was too stack-specific to make
+  permanent as written ("better just to build in generalized tools and inform the
+  system a default way to configure the rest"); tool call definitions must be
+  something any system can add to, with base ones that "can only be used not
+  edited"; and fix the desktop file list.
+  DESKTOP FILE LIST: fixed and verified by screenshot. Two defects had stacked.
+  places.ts gives every app place defaultColumnOpen false, so on an app route
+  there was no column two at ALL, and AppFilesTab never registered as a directory
+  page so it rendered its tree in a right-hand rail at every width. They
+  interact: the spec's trigger is "tap the page you are already on", which
+  presumes a column already showing the page list, so a tree drawn only inside
+  the column would have been unreachable on an app. The tree is now column two
+  with the 46px back header.
+  TOOLS, DESIGNED BEFORE BUILDING because a registry done wrong becomes a seventh
+  parallel system. Audit first: there is exactly ONE enforcement point
+  (llm_router.tool_flags builds the argv) fed by FOUR uncoordinated declaration
+  sources, plus two disjoint MCP resolvers; and there is NO tools table, no
+  tools.json, no tool CRUD, no tools UI, and no way for a user to define a tool
+  at runtime. GET /agents/tools returned a hardcoded five-string list
+  (filesystem, google-docs, playwright, ollama, web) in a vocabulary nothing
+  enforces and no frontend consumes. Model of record:
+  `tools-are-declared-2026-08-23.md`.
+  SHIPPED stages 1 and 2: services/tool_registry.py, a frozen record with
+  provenance platform|app|user. Nine platform tools, every one of them real and
+  taken from what the code already grants, with the MCP descriptions IMPORTED
+  from the server's own constants rather than restated. Provenance is an argument
+  to the normalizer and is never read off disk, so a hand-written tools.json
+  claiming "platform" normalizes to user. A user tool may not take a platform id:
+  refused at write time naming the id, AND dropped on read, because tools.json is
+  an ordinary file an agent can edit and a property that only holds in the UI is
+  not a property. That is a deliberate divergence from app_registry, which lets a
+  discovered app shadow a built-in loudly: shadowing is right for an app and
+  wrong here, because a base tool a user record can redefine is a default rather
+  than a base tool. The dead five-string vocabulary is deleted along with
+  AppSpec.tools and installed_tools.
+  PREVIEW GENERALIZED, which was the operator's actual objection: the verb
+  (load a URL, screenshot, report console and page errors) knows no port, cookie,
+  user, browser version or app; the particulars are declared by the thing being
+  previewed, read through app_runner's existing single manifest reader; and the
+  stack defaults are one table with a reason beside each row, so a new stack is a
+  row. This repo's own entry is now `workshop.preview.json` with env overrides,
+  making the platform its own first consumer rather than the only thing that
+  works. Same rule already settled for worktree provisioning.
+  NOT LIVE YET, and stated rather than implied: the backend restart is correctly
+  refused because ANOTHER agent has uncommitted backend work in the shared tree,
+  and forcing it with --publish-wip would publish their half-finished code. The
+  UI bundle IS rebuilt. The tool routes reach the operator when that work lands.
+  Stages 3 (one reader not four), 4 (command tools execute) and 6 (the UI) are
+  filed.
+
 - 2026-08-23 — Operator: "Why are you unable to restart? That makes no sense.
   And why unable to load and view?... in general you should find and adopt a way
   to load and screenshot and view and test and check your work and do that for
