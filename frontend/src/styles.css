@@ -688,6 +688,21 @@ input[type="range"].grad::-moz-range-thumb {
 
    WHEN THE LAST LINE IS FULL the reserve cannot fit beside it, and the answer
    is that the last WORD gives way, not the icons. See the word joiner below. */
+/* THE THIRD SHAPE: a body that is PURE TEXT, with no element child at all.
+   The two selectors below reserve on a `.chat-clamp` (plain text) and inside a
+   `.ws-md` (markdown), and the padding rule further down reserves on any trailing
+   ELEMENT (a work fold, a Show-more row, a receipt line, a card). A bare text
+   node is none of those: it is not `.chat-clamp`, not `.ws-md`, and not an
+   element, so it slipped through every rule and the copy/branch icons landed on
+   top of the last line. That was the errored-turn bubble, whose body was returned
+   as a raw string (fixed at the source too, MessageList.renderAssistantBody, so a
+   body no longer ends in a bare text node). `:not(:has(*))` matches a body with
+   no element children, i.e. exactly that pure-text case, so any body that ever
+   ends in a bare string reserves the gutter without a per-case fix. It shares the
+   spacer mechanics below; a pure-text body is inline, so the inline `::after`
+   joins its last line and never orphans. Operator, 2026-08-23: this overlap
+   "should never happen, not here, not anywhere" — a rule, not another patch. */
+.chat-bubble__body:not(:has(*))::after,
 .chat-bubble__body > .chat-clamp:not(:has(.ws-md))::after,
 .chat-bubble__body .ws-md > :last-child::after {
   /* U+FEFF, a WORD JOINER, and it is the whole trick. The reserve has to be

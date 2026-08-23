@@ -36,8 +36,8 @@
 export type BranchMode = "after" | "before";
 
 /** The only fields the rule reads. `id` is the log event; `key` is the block,
- *  and one event can produce several blocks. */
-export type BranchBlock = { key: string; id: string; role: string };
+ *  and one event can produce several blocks. `error` marks a failed turn. */
+export type BranchBlock = { key: string; id: string; role: string; error?: boolean };
 
 /**
  * The blocks that offer to go back to them, keyed by BLOCK key, valued by the
@@ -62,6 +62,14 @@ export function branchTargets(blocks: BranchBlock[], head: string | null): Map<s
 
   const out = new Map<string, BranchMode>();
   for (const b of lastBlockOfEvent.values()) {
+    // A FAILED TURN IS NOT A POINT TO RETURN TO. An error bubble carries no
+    // answer, so "keep this answer, drop what came after" (the "after" sense an
+    // assistant message gets) has nothing to keep, and going back to a turn that
+    // failed is not something to offer. Operator, 2026-08-23: branching to or off
+    // an error message "seems like dumb logic to allow." The prompt that led to
+    // the error keeps its own control, so retrying from before it is still one
+    // click away; it is only the error itself that carries none.
+    if (b.error) continue;
     const mode: BranchMode = b.role === "user" ? "before" : "after";
     // The identity operation. Only reachable in "after": see the note above.
     if (mode === "after" && head !== null && b.id === head) continue;

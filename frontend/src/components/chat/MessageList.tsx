@@ -179,7 +179,18 @@ function turnTookMs(m: ChatMsg): number | undefined {
 function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: string, cardCtx: UiCardCtx,
                              answerPermission?: AnswerPermissionFor, nowMs?: number) {
   // An error with no text is still an error; don't fall through to a blank bubble.
-  if (m.meta?.error) return m.content.trim() || "The turn failed, but no error text was recorded.";
+  // WRAPPED IN `.chat-clamp`, NOT RETURNED AS A BARE STRING. The copy/branch
+  // corner controls reserve their gutter off the body's trailing element (a
+  // `.chat-clamp` for text, a `.ws-md` for markdown, or the padded fallback for
+  // any other trailing element). A raw text node is none of those, so an error
+  // body returned as a plain string reserved nothing and the icons landed on top
+  // of the last line. Rendering it through the same clamp every other text body
+  // uses closes that hole at the source: a body never ends in a bare text node.
+  if (m.meta?.error) {
+    const errText = m.content.trim() || "The turn failed, but no error text was recorded.";
+    return <ElidedContent source={errText} cfg={modelDisplay(m.meta?.model ?? fallbackModel)}
+                          expanded={isLatest} render={(s) => <>{s}</>} />;
+  }
   const model = m.meta?.model ?? fallbackModel;
   if (m.meta?.segments && m.meta.segments.length) {
     // Bound to the turn that ASKED. A persisted message carries its own
@@ -539,7 +550,9 @@ function MessageList({
   // committed: none of the three is a point in the conversation you could
   // return to, because none of them is IN the conversation.
   const branchTarget = branchTargets(
-    blocks.flatMap((b) => (b.kind === "message" ? [{ key: b.key, id: b.id, role: b.msg.role }] : [])),
+    blocks.flatMap((b) => (b.kind === "message"
+      ? [{ key: b.key, id: b.id, role: b.msg.role, error: !!b.msg.meta?.error }]
+      : [])),
     branchHead ?? null,
   );
 

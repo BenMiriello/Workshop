@@ -583,12 +583,23 @@ export function composeTranscript(
   // `pending` — the same message visibly changing sides mid-turn. Reported
   // 2026-08-18: "it shows up above my continue message... it started working
   // after I sent it... then the two messages flip order."
+  // THE CONVERSATION'S FIRST MESSAGE IS NEVER BELOW THE WORKING INDICATOR.
+  // `duringActiveTurn` is captured from `!!state.activeTurn` at send time, and on
+  // a NEW chat that flag can be stale (a turn left active on the thread this one
+  // was opened from, or the new-chat lifecycle race): the first message is then
+  // stamped as "sent during a turn" and drops below the indicator, exactly the
+  // "it shows at the bottom then moves to the top once read" the operator has
+  // reported repeatedly. But a turn cannot predate the message that started it,
+  // so nothing the operator typed first can sit under a run that was already
+  // going. When the committed log carries no message yet, a tail send IS that
+  // first message and belongs above the indicator whatever the flag says.
+  const noCommittedMessage = !committed.blocks.some((b) => b.kind === "message");
   const atTail: TranscriptBlock[] = [];
   const beforeLive: TranscriptBlock[] = [];
   for (let i = pending.length - 1; i >= 0; i--) {
     const p = pending[i];
     if (p.afterSeq >= tail) {
-      (p.duringActiveTurn ? atTail : beforeLive).unshift(toBlock(p));
+      (p.duringActiveTurn && !noCommittedMessage ? atTail : beforeLive).unshift(toBlock(p));
     } else {
       out.splice(anchorIndex(out, p.afterSeq), 0, toBlock(p));
     }

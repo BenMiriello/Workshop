@@ -743,6 +743,23 @@ describe("a pending send's place in the log", () => {
     });
     expect(shape(selectTranscript(sent))).toEqual(["user:a", "live:*", "pending:also"]);
   });
+
+  it("the FIRST send in a chat sits above the indicator, even with a stale active turn", () => {
+    // Reported repeatedly: a message sent in a NEW chat shows at the bottom, then
+    // moves to the top once read. Mechanism: `duringActiveTurn` is captured from
+    // `!!state.activeTurn` at send time, and a new chat can carry a stale active
+    // turn (left over from the thread it was opened from, or the new-chat
+    // lifecycle race). The pending bubble is then treated as mid-turn and dropped
+    // below the working indicator, then jumps above the instant it commits (the
+    // committed prompt carries no `during_turn`, so it renders in place). With no
+    // committed message on the thread yet, the send IS the opener and belongs
+    // above the indicator from the first frame, so it never travels.
+    const empty = threadReducer(initialThreadState("t"), { type: "turnStarted", turnId: "stale" });
+    const sent = threadReducer(empty, {
+      type: "sendStarted", clientId: "c1", text: "first", ts: "2026-08-23T00:00:00Z",
+    });
+    expect(shape(selectTranscript(sent))).toEqual(["pending:first", "live:*"]);
+  });
 });
 
 // The split that keeps a streamed frame cheap. These are not style assertions:

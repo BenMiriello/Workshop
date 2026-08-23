@@ -72,4 +72,18 @@ describe("branchTargets", () => {
   it("is empty for an empty transcript", () => {
     expect(branchTargets([], null).size).toBe(0);
   });
+
+  it("offers no control on an error message, and keeps the prompt before it", () => {
+    // A failed turn is not a point to return to (operator, 2026-08-23). The
+    // errored assistant bubble carries no control; the user prompt that led to it
+    // still does, so retrying from before the failure is one click away.
+    const err = (key: string, id: string, role: string): BranchBlock =>
+      ({ key, id, role, error: true });
+    const t = branchTargets(
+      [b("u1", "u1", "user"), err("a1", "a1", "assistant")],
+      "a1",
+    );
+    expect(t.has("a1")).toBe(false);
+    expect(t.get("u1")).toBe("before");
+  });
 });
