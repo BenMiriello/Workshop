@@ -3,6 +3,7 @@ import { scopeIsRunnable } from "../../lib/scopePickup";
 import {
   composeTaskText, resolveCardActions, DEFAULT_CARD_ACTIONS, UI_CARD_ACTIONS, hasCardHandler,
   composePromptAnswer,
+  displayDefault,
 } from "./uiCardActions";
 
 // composeTaskText is the whole seam between a proposal card and the ticket
@@ -177,5 +178,62 @@ describe("addTasksAndRun honours the server's pickup answer", () => {
     expect(res.status).toBe("error");
     expect((res as { message: string }).message).toContain("cannot run tickets");
     expect((res as { message: string }).message).toContain("autonomy brake");
+  });
+});
+
+// displayDefault is the fix for a defect the operator hit on 2026-08-23: a
+// two-option prompt card showed option one as selected while state held "", so
+// the action refused with "Choose or type an answer first." under an apparently
+// chosen answer. The rule these pin: what a control SHOWS is what state HOLDS.
+describe("displayDefault", () => {
+  it("gives a choice field its first option, which is what the control draws", () => {
+    expect(
+      displayDefault({
+        name: "ceiling",
+        type: "choice",
+        options: [
+          { value: "keep", label: "Leave it" },
+          { value: "3m", label: "Raise to 3M" },
+        ],
+      }),
+    ).toBe("keep");
+  });
+
+  it("gives a select field its first option too, because a native select shows it", () => {
+    expect(
+      displayDefault({
+        name: "scope",
+        type: "select",
+        options: [{ value: "development", label: "Development" }],
+      }),
+    ).toBe("development");
+  });
+
+  it("defaults a sensitivity field to shareable", () => {
+    expect(displayDefault({ name: "s", type: "sensitivity" })).toBe("shareable");
+  });
+
+  it("leaves a free-text field empty, so an untouched one still reads as unanswered", () => {
+    expect(displayDefault({ name: "title", type: "text" })).toBe("");
+  });
+
+  it("does not invent a value for an option field that carries no options", () => {
+    expect(displayDefault({ name: "x", type: "choice", options: [] })).toBe("");
+    expect(displayDefault({ name: "y", type: "select" })).toBe("");
+  });
+
+  it("composes an answer from a seeded, untouched choice, which is the whole bug", () => {
+    const fields = [
+      {
+        name: "ceiling",
+        type: "choice" as const,
+        options: [
+          { value: "keep", label: "Leave it, wait for the window" },
+          { value: "3m", label: "Raise to 3M per 5h" },
+        ],
+      },
+    ];
+    const seeded = { ceiling: displayDefault(fields[0]) };
+    expect(composePromptAnswer(fields, seeded)).toBe("Leave it, wait for the window");
   });
 });

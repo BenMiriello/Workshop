@@ -555,3 +555,27 @@ export function resolveCardActions(
   const runnable = opts?.runnable ?? true;
   return base.filter((a) => a.id !== "addTasksAndRun" || runnable);
 }
+/** What a control SHOWS when its stored value is empty. This exists because the
+ *  three option-shaped controls used to substitute a fallback at render time
+ *  (`value || options[0].value`) while state still held "". The card then
+ *  displayed a selection it did not have, so pressing the action without
+ *  touching the control submitted nothing and the operator was told to "choose
+ *  or type an answer first" while looking at an apparently chosen answer.
+ *  Reported by the operator 2026-08-23 on a two-option prompt card.
+ *
+ *  The rule now: seed the STATE with this, and let each control render `value`
+ *  bare. Display and state cannot disagree, because there is only one of them.
+ *  A future control that needs a visible default adds a case here rather than a
+ *  fallback in its own JSX. */
+export function displayDefault(field: UiCardField): string {
+  switch (field.type) {
+    case "sensitivity":
+      return "shareable";
+    case "choice":
+    case "select":
+      return field.options?.[0]?.value ?? "";
+    default:
+      return "";
+  }
+}
+

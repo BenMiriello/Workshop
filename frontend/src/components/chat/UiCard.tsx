@@ -32,7 +32,7 @@ import {
 import { proposalGaps, readinessLine, scopeLabel } from "../../lib/tasks";
 import { pickupFor, pickupNote, type PickupMap } from "../../lib/scopePickup";
 import TicketCard from "./work/TicketCard";
-import {
+import { displayDefault,
   KNOWN_KINDS,
   UI_CARD_ACTIONS,
   hasCardHandler,
@@ -285,7 +285,7 @@ function CardField({
         <Field label={label} help={help}>
           <Segmented
             options={SENSITIVITY_OPTIONS}
-            value={value || "shareable"}
+            value={value}
             onChange={onChange}
             ariaLabel={label}
           />
@@ -308,7 +308,7 @@ function CardField({
         <Field label={label} help={help}>
           <Segmented
             options={(field.options || []).map((o) => ({ value: o.value, label: o.label }))}
-            value={value || field.options?.[0]?.value || ""}
+            value={value}
             onChange={onChange}
             ariaLabel={label}
           />
@@ -404,7 +404,7 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
     // by the handler (an older transcript's `priority`/`effort` still file) but
     // never becomes a control, and a canonical field always wins the key.
     const seed: Record<string, string> = { ...(normalized?.carried ?? {}) };
-    for (const f of fields) seed[f.name] = f.value ?? "";
+    for (const f of fields) seed[f.name] = f.value ?? displayDefault(f);
     if (recorded?.slug) seed.slug = recorded.slug;
     return seed;
   });
