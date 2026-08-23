@@ -15,7 +15,7 @@
 // so a second submit after reload is safe and idempotent.
 
 import type { TaskProposalSpec } from "@shared/types";
-import { scopeIsRunnable } from "../../lib/scopePickup";
+import { scopeIsRunnable, type Pickup } from "../../lib/scopePickup";
 import { scopeLabel, ticketHref } from "../../lib/tasks";
 import { runHref } from "../../lib/jobs";
 import { shortHttpError } from "@workshop/ui";
@@ -88,6 +88,15 @@ export type UiCardCtx = {
   navigate: (to: string) => void;
   contextKey: string;
   threadId: string | null;
+  // The SERVER's answer for the scope this card is currently pointed at
+  // (`scope_pickup`, routes/tasks_all.py), which is the same answer the card
+  // used to decide whether to render "File and run" at all. The handler must
+  // read THIS rather than re-deciding locally: a second copy of the rule is how
+  // the button and the button's own handler came to disagree, refusing
+  // `development` (runnable, per ADR 0014) while allowing `workshop` (not
+  // runnable, by definition, per ADR 0014 §4.1). Absent only when the card is
+  // not a ticket proposal.
+  pickup?: Pickup | null;
   rescopeThread: (id: string, contextKey: string) => Promise<unknown>;
   // Post text back into the conversation as the operator's own message. This is
   // how a `prompt` card returns an answer to the agent: it sends the answer, the
@@ -399,10 +408,23 @@ const addTasksAndRun: UiCardHandler = async (state, ctx) => {
   // can say this in advance (routes/tasks_all.py), and TicketDraftsDialog
   // already honours it; this path did not, so a general chat scope filed the
   // ticket and then reported the failure as a footnote on a success message.
-  if (!scopeIsRunnable(asked)) {
+  //
+  // Read the SERVER's answer, which the card already fetched and already used
+  // to decide whether to show this button. Deciding it again from a local list
+  // is what made the button and its handler contradict each other: the list
+  // omitted `development` and included `workshop`, so the one scope the
+  // operator works in was refused by the very button the same data had just
+  // enabled. The local predicate stays only as the no-answer fallback, because
+  // some scopes (development, gated on developer mode) cannot be judged from
+  // the client at all.
+  const runnable = ctx.pickup ? ctx.pickup.runnable : scopeIsRunnable(asked);
+  if (!runnable) {
+    const why = ctx.pickup?.why
+      ? `${asked} cannot run tickets: ${ctx.pickup.why}.`
+      : `${asked} cannot run tickets.`;
     return {
       status: "error",
-      message: `${asked} cannot run tickets. File it with "File ticket", or choose a scope that can run work.`,
+      message: `${why} File it with "File ticket", or choose a scope that can run work.`,
     };
   }
   let created: CreatedTask;

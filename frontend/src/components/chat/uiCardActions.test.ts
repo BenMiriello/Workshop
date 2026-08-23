@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { scopeIsRunnable } from "../../lib/scopePickup";
 import {
   composeTaskText, resolveCardActions, DEFAULT_CARD_ACTIONS, UI_CARD_ACTIONS, hasCardHandler,
   composePromptAnswer,
@@ -132,5 +133,49 @@ describe("composePromptAnswer", () => {
 
   it("is empty when nothing was answered, so the handler can refuse to send", () => {
     expect(composePromptAnswer([{ name: "x", type: "text" }], {})).toBe("");
+  });
+});
+
+// The handler behind "File and run" must reach the SAME answer the button used
+// to decide whether to render at all. It did not: it re-derived runnability from
+// a local list that omitted `development` and included `workshop`, so the button
+// appeared (server said runnable) and then its own handler refused. Measured
+// 2026-08-23 on a development chat: "development cannot run tickets".
+describe("addTasksAndRun honours the server's pickup answer", () => {
+  const ctx = (pickup: unknown) => ({
+    navigate: () => {},
+    contextKey: "development",
+    threadId: "t1",
+    rescopeThread: async () => ({}),
+    pickup,
+  }) as never;
+
+  const state = (scope: string) => ({
+    spec: { kind: "task-proposal", title: "x" },
+    values: { scope, title: "Do the thing" },
+  }) as never;
+
+  // Both cases pick a scope where the local predicate and the server DISAGREE,
+  // so the test fails if the handler goes back to deciding for itself.
+
+  it("runs a scope the server calls runnable even where the local list would not", async () => {
+    expect(scopeIsRunnable("app:budget")).toBe(false); // local says no...
+    const res = await UI_CARD_ACTIONS.addTasksAndRun(state("app:budget"), ctx({
+      scope: "app:budget", runnable: true, automatic: false, why: "nothing polls it",
+    })); // ...server says yes, and the server wins.
+    // It gets past the guard and fails later on the network, which is fine here.
+    // What must NOT happen is the pre-flight refusal.
+    expect(JSON.stringify(res)).not.toContain("cannot run tickets");
+  });
+
+  it("refuses a scope the server calls not runnable even where the local list would allow it", async () => {
+    expect(scopeIsRunnable("project:birds")).toBe(true); // local says yes...
+    const res = await UI_CARD_ACTIONS.addTasksAndRun(state("project:birds"), ctx({
+      scope: "project:birds", runnable: false, automatic: false,
+      why: "the autonomy brake is engaged",
+    })); // ...server says no, and the server wins.
+    expect(res.status).toBe("error");
+    expect((res as { message: string }).message).toContain("cannot run tickets");
+    expect((res as { message: string }).message).toContain("autonomy brake");
   });
 });

@@ -78,12 +78,17 @@ function question(over: Partial<InboxItem> = {}): InboxItem {
 function input(over: Partial<TicketCardInput> = {}): TicketCardInput {
   return {
     id: "a3f19c0000000000",
-    scope: "workshop",
-    ticket: ticket(),
+    scope: "development",
+    ticket: ticket({ scope: "development" }),
     filedTitle: "Rebuild the ticket card",
     deleted: false,
     error: null,
-    pickup: pickupFor(null, "workshop"),
+    // `development`, not `workshop`. A ticket filed to `workshop` is NOT
+    // runnable and never was (ADR 0014 4.1: it is the root inbox and has no
+    // code tree to run in), so a default fixture claiming it could run made
+    // these states test a combination the server cannot produce. Corrected
+    // 2026-08-23 when the client predicate was aligned with the backend.
+    pickup: pickupFor(null, "development"),
     waiting: null,
     filedNote: null,
     nowMs: T0,
@@ -372,7 +377,7 @@ describe("a group with no data is omitted entirely", () => {
   it("names the key as the scope plus the app's real ticket handle", () => {
     const plan = ticketCardPlan(input());
     expect(plan.props[0]).toEqual({
-      key: "key", label: "Key", scope: "Workshop", text: "a3f19c",
+      key: "key", label: "Key", scope: "Development", text: "a3f19c",
     });
   });
 

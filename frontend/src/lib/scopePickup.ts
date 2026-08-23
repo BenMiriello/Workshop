@@ -23,13 +23,28 @@ export type Pickup = {
 
 export type PickupMap = Record<string, Pickup>;
 
-// Mirrors backend scope_is_runnable: launch_task_run accepts these three scope
-// shapes and 400s on everything else (a general chat resolves to `general`, so
-// "file and run" there could only ever file).
+// FALLBACK ONLY, for when the server map has no entry. The authoritative answer
+// is the backend's `scope_pickup`; prefer `pickupFor(map, scope).runnable` and
+// reach for this only when there is genuinely no map.
+//
+// It mirrors backend `scope_is_runnable`, and it had drifted from it in BOTH
+// directions, which is what a mirrored rule does:
+//
+//   `development` was MISSING, so the one scope the platform is developed in
+//   was refused. It IS runnable (ADR 0014): its working tree is the platform
+//   repo. The backend gates it on developer mode, which a client cannot see, so
+//   this answers optimistically and lets the server be the one to refuse.
+//
+//   `workshop` was PRESENT, and is not runnable by definition rather than by
+//   omission (ADR 0014 4.1): it is the root organising layer and has no code
+//   tree for a sweep to run in. Work filed there is triaged and re-scoped.
+//
+// A general chat resolves to `general`, which is not runnable either, so "file
+// and run" there could only ever file.
 export function scopeIsRunnable(scope: string | null | undefined): boolean {
   if (!scope) return false;
   return (
-    scope === "workshop"
+    scope === "development"
     || scope.startsWith("project:")
     || scope.startsWith("agent:")
   );

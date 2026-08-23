@@ -2,12 +2,23 @@ import { describe, expect, it } from "vitest";
 import { pickupFor, pickupNote, scopeIsRunnable, type PickupMap } from "./scopePickup";
 
 describe("scopeIsRunnable", () => {
-  it("accepts exactly the three shapes launch_task_run accepts", () => {
-    expect(scopeIsRunnable("workshop")).toBe(true);
+  it("accepts exactly the shapes launch_task_run accepts", () => {
+    expect(scopeIsRunnable("development")).toBe(true);
     expect(scopeIsRunnable("project:birds")).toBe(true);
     expect(scopeIsRunnable("agent:keeper")).toBe(true);
-    // The fourth was `build:<slug>`, and it is deleted on both sides.
+    // `build:<slug>` is deleted on both sides.
     expect(scopeIsRunnable("build:thing")).toBe(false);
+  });
+
+  // Both directions of a drift measured 2026-08-23: the card refused
+  // `development`, the scope the platform is developed in, while offering to
+  // run `workshop`, which the backend refuses by definition (ADR 0014 4.1).
+  it("accepts development, which the backend accepts and this used to refuse", () => {
+    expect(scopeIsRunnable("development")).toBe(true);
+  });
+
+  it("refuses workshop, which is the root inbox and has no tree to run in", () => {
+    expect(scopeIsRunnable("workshop")).toBe(false);
   });
 
   it("refuses a general chat scope, which is the case that used to file and fail", () => {
@@ -43,7 +54,8 @@ describe("pickupFor", () => {
 
   it("falls back to the pure predicate with no map at all", () => {
     expect(pickupFor(null, "general").runnable).toBe(false);
-    expect(pickupFor(undefined, "workshop").runnable).toBe(true);
+    expect(pickupFor(undefined, "development").runnable).toBe(true);
+    expect(pickupFor(undefined, "workshop").runnable).toBe(false);
   });
 });
 

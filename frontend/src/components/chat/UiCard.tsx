@@ -434,6 +434,14 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
     return () => { cancelled = true; };
   }, [isTaskProposal]);
 
+  // ONE pickup answer per render, read by all three consumers: the warning
+  // sentence, whether "File and run" is offered at all, and the handler that
+  // runs when it is pressed. Computing it separately in the handler is what let
+  // the button and its own handler disagree.
+  const pickup = isTaskProposal
+    ? pickupFor(pickupMap, (values.scope || "workshop").trim())
+    : null;
+
   // A card rendered before its thread's states arrived (or acted on in another
   // tab) reconciles when the record shows up, rather than staying stale.
   useEffect(() => {
@@ -460,7 +468,7 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
     setBusyId(action.id);
     setError(null);
     try {
-      const result = await handler({ spec, values }, ctx);
+      const result = await handler({ spec, values }, { ...ctx, pickup });
       if (result.status === "success") {
         if (result.slug) setValues((prev) => ({ ...prev, slug: result.slug as string }));
         if (result.values) setValues((prev) => ({ ...prev, ...result.values }));
@@ -584,7 +592,6 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
   // through the ticket. Advisory only, exactly as on the ticket page: it never
   // disables File.
   const notReady = isTaskProposal ? readinessLine(proposalGaps(values)) : "";
-  const pickup = isTaskProposal ? pickupFor(pickupMap, (values.scope || "workshop").trim()) : null;
   const pickupWarning = pickup ? pickupNote(pickup) : null;
   // The actions this card offers: the model's own, minus any with no handler,
   // falling back to the kind's canonical set if it named none this build can
