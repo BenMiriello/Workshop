@@ -1,7 +1,12 @@
 # Who is working here: branch ownership, leases, and takeover
 
 - Date: 2026-08-22
-- Status: **design, nothing built.** Revision 2, after an adversarial review pass
+- Status: **B0 and B2a are built** (2026-08-22 evening), along with track C's
+  record, review surface and merge-on-accept, and all of track A. B1 through B8
+  are not, and B1 has MOVED to after B3: it is defined as read-write-if-you-hold-
+  the-lease and there is no lease until B3. Build log and the corrections it
+  forced: [`HANDOFF-branch-isolation-2026-08-22.md`](HANDOFF-branch-isolation-2026-08-22.md)
+  section 0. Revision 2, after an adversarial review pass
   (§16). Revision 1's central mechanism was wrong and is replaced.
 - Answers what [`branches-worktrees-and-environments-2026-08-20.md`](branches-worktrees-and-environments-2026-08-20.md)
   §14 left open: that doc decided a worktree is created when work first needs to

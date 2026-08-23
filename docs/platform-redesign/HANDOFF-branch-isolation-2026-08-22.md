@@ -3,11 +3,73 @@
 - Date: 2026-08-22
 - For: the agent or agents that will build this. Read this first, then the two
   design docs it points at.
-- Status of the work: **nothing built.** Every step below is unstarted.
+- Status of the work: **B0, B2a, C1, C2, C5 and Track A are BUILT** (2026-08-22
+  evening). See section 0. B1 and B3 to B8 are unstarted, and B1's position in
+  the order was wrong: it needs the lease, so it now follows B3.
 - Design of record: [`workspace-ownership-and-leases-2026-08-22.md`](workspace-ownership-and-leases-2026-08-22.md)
   (revision 2, post-review) and
   [`branches-worktrees-and-environments-2026-08-20.md`](branches-worktrees-and-environments-2026-08-20.md)
   (the environment model underneath it).
+
+---
+
+## 0. What is built, and what it changed about the plan
+
+Shipped 2026-08-22 in this order, each verified rather than asserted:
+
+- **B0** (`75526b8`). Worktree mode had never once executed: `WT_ENABLED`
+  required a slug the resident runner never passes. It now resolves the project
+  from the REGISTRY by directory (`WT_SLUG`, kept separate from `SLUG` so the
+  billing and learnings keys fixed earlier the same day are not undone), and the
+  allocation calls `provision_worktree`, which had only test callers. Measured:
+  0.48s, `node_modules` and `backend/.venv` hardlink-cloned, same inode.
+- **The trap B0 would have died on**, same commit. A linked worktree has no
+  `.git` directory, only a FILE with an absolute `gitdir:` pointer into the
+  parent repo. Confined alone it is NOT A GIT REPOSITORY: measured, every git
+  command failed. `scoped_exec` now binds the parent `.git` at its real path,
+  read-write. The host working tree stays absent; only `.git` appears. **Bind
+  ORDER is load-bearing** and is pinned by a test: bwrap applies mounts in
+  sequence, so a git bind emitted before the mountpoint bind is shadowed.
+- **B2a** (`14addd7`). `services/git_service.py` + `/git`, repo-path-first,
+  knows nothing about projects or tickets. `worktrees.py` keeps branch records
+  and naming/merge policy. No public signature changed. +63 tests.
+- **Track A** (`d00c820`). Needs-you is read off tickets; `run_inbox.py` and the
+  dead run notifier are gone. **756 open inbox items to 3.** Net -139 lines. The
+  "operator asks himself" attribution is fixed as a consequence.
+- **C1** (`9febe9d`). The `change` table, `services/changes.py`, `/changes`, RLS
+  per the Ticket model, migration `a7c3e10d9b64`.
+- **C2 + C5** (`865e219`, `bcc1f5b`, `50fc367`). A supervised local sweep now
+  leaves its branch UNMERGED and opens a change; accepting is what merges, on
+  both acceptance surfaces. A merge that fails refuses the acceptance with the
+  git reason rather than marking the ticket done over work that did not land.
+- **C4** (`1ccf888`). The review surface: diff first, the summary explicitly
+  labelled as the author's claim, risk signals, `/changes` list, entry points
+  from Home and the ticket page.
+
+### What building it corrected in this document
+
+1. **B1 cannot be second.** "Read-write if the session holds the lease" needs a
+   lease, which is B3. Ordered before it, B1 is either a no-op or it makes every
+   tree read-only. Correct order: B0, B2a, B2, **B3, then B1**.
+2. **The supervised ceiling was cosmetic and this doc did not notice.** A
+   supervised sweep merged into the trunk and THEN set `in_review`, so declining
+   unlanded nothing. C2 is what makes worktree isolation pay for itself, and it
+   belongs beside B0 rather than late in track C.
+3. **`git worktree prune` will not reclaim a LOCKED worktree** whose directory
+   was removed, and `allocate_task_worktree` locks every one it makes. The slug
+   stays permanently taken. Hit repeatedly while testing. `gc.reap_merged_worktrees`
+   needs `unlock` before `prune`, or `remove -f -f`.
+4. **A merged change loses its diff unless the base sha is pinned BEFORE the
+   merge.** Diffing `base_ref..merged_sha` afterwards is guaranteed empty,
+   because the base ref by then contains the change. `change.base_sha` exists
+   for this (migration `c8299a81457a`).
+5. **`ownership.pin_operator` is now a SIXTH entrypoint's lesson.** Any new
+   shell-into-python helper that touches the relational store dies on OwnerUnset
+   and fails SILENTLY. Add the pin when you write the helper, not after.
+6. **This tree had `main` 160 commits behind a `wt/` branch that had silently
+   become trunk.** With B0 live that would have branched every worker off stale
+   code and merged into a branch nobody used. `main` was fast-forwarded and the
+   checkout moved onto it.
 
 ---
 
@@ -33,13 +95,15 @@ and hand off without destroying work.
 
 **Things that look shipped and are not:**
 
-- `worktrees.provision_worktree` has **only test callers**. The live sweep calls
-  `allocate_task_worktree`, which does a bare `git worktree add` with no dependency
-  provisioning.
-- **Worktree mode has never executed.** `WT_ENABLED` needs `CONCURRENT_WT == 1 && -n
-  "$SLUG"` (`project_ralph.sh:632-633`), and `queue_runner.sh:214` invokes the sweep
-  as `--dir "$DIR"` with no slug, so `SLUG` is always empty.
-- `gc.reap_merged_worktrees` exists but nothing schedules it, and it disagrees with
+- ~~`worktrees.provision_worktree` has only test callers.~~ **FIXED in `75526b8`**:
+  the sweep calls it. Left here because the SHAPE of the mistake recurs: a fully
+  built path with only test callers reads as shipped.
+- ~~Worktree mode has never executed.~~ **FIXED in `75526b8`** (`WT_SLUG` resolves
+  the project from the registry by directory). Both halves of the old gate were
+  unreachable; do not re-add a gate that asks whether a human typed a name.
+- `gc.reap_merged_worktrees` exists but nothing schedules it, it cannot reclaim a
+  LOCKED worktree (which is every one `allocate_task_worktree` makes) without an
+  `unlock` or a double `--force`, and it disagrees with
   `worktrees.cleanup_merged` about what "merged" means (local `main` ancestry versus
   `origin/<default>`). Reconcile them or pick one.
 - The post-commit hook that refuses to build from a linked worktree is in
@@ -82,6 +146,8 @@ and hand off without destroying work.
 Each is scoped to be filed as one ticket. Do them in order; the dependencies are real.
 
 ### B0. Ungate worktree mode for the self-repo and wire the provisioner
+**DONE (`75526b8`).** Kept for the record; see section 0 for what it actually
+took, including the sandbox git-bind trap this spec did not contain.
 **Objective:** an unattended sweep works each ticket in its own worktree, so two
 workers can never write to one tree.
 **Output:** the sweep's allocation path calls `provision_worktree` rather than
@@ -100,6 +166,9 @@ voice-mode.
 **Why first:** it ends the actual collisions and needs nothing else in this plan.
 
 ### B1. Read-only mounts for a session with no lease
+**REORDERED: this now follows B3.** It is defined as read-write when the session
+holds the tree's lease, and there is no lease until B3, so ahead of it this step
+is either a no-op or it makes every tree read-only.
 **Objective:** a session that does not hold the tree physically cannot write to it.
 **Output:** `scoped_exec` mounts the session's root read-only unless the session
 holds the tree's lease, in which case read-write. A write attempt without the lease
@@ -109,10 +178,11 @@ a real confined turn both ways.
 `backend/services/build_streaming.py` (where a turn is spawned and its env built).
 **Boundaries:** the mount flag and its plumbing only. Must fail closed. Do not change
 the grant set or the confinement default.
-**Why second:** it is the enforcement primitive §4 rests on, and on its own it makes
-the shared tree safe to read.
+**Why it is the enforcement primitive:** §4 rests on it, and once B3 exists it
+makes the shared tree safe to read.
 
 ### B2a. Extract the git service
+**DONE (`14addd7`).**
 **Objective:** all git operations live in one service that knows nothing about
 projects, tickets, leases or scopes, so anything can use it against any repository.
 **Output:** `services/git_service.py` taking a repo path plus arguments, covering

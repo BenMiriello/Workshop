@@ -1,7 +1,9 @@
 # The Change: what gets reviewed, and how work becomes merged
 
 - Date: 2026-08-22
-- Status: **design, nothing built.**
+- Status: **C1, C2, C4 and C5 are BUILT** (2026-08-22 evening). C3 (gate results
+  on the change), C6 (the claim-to-diff check) and C7 (auto-merge) are not.
+  Section 8 carries what each step turned out to need.
 - Answers the question left open by
   [`workspace-ownership-and-leases-2026-08-22.md`](workspace-ownership-and-leases-2026-08-22.md)
   §12 ("does accepting merge?"), which turned out to be the wrong shape of question.
@@ -187,6 +189,13 @@ derivation in §4.
 
 Slots into the branch-isolation plan after B2 (the worktree record). Each step is one
 ticket.
+
+Built: C1 (`9febe9d`), C2 + C5 (`865e219`, `bcc1f5b`, `50fc367`), C4 (`1ccf888`).
+Two things the plan did not anticipate, both found by running it: a merged
+change loses its diff unless the base SHA is pinned BEFORE the merge (diffing
+against the base REF afterwards is guaranteed empty, since it now contains the
+change), and the sweep helper that opens a change must call
+`ownership.pin_operator` or it dies silently on OwnerUnset.
 
 - **C1. The change record**, created when a branch first has commits ahead of base.
   `diff_branch` becomes its payload. No UI yet.
