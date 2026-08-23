@@ -13,6 +13,7 @@ import type { ChatDrawer } from "./drawers";
 import { keepFocusOnTap } from "./keepFocus";
 import RecentChatsMenu from "./RecentChatsMenu";
 import ScopeIcon from "./ScopeIcon";
+import { workTitle } from "./work/workRows";
 
 // The chat header: where you are on the left, what you can do on the right.
 //
@@ -58,8 +59,8 @@ import ScopeIcon from "./ScopeIcon";
 //
 // So the Tickets button is the ONLY work affordance on this bar. It opens the
 // sheet (WorkPanel, mounted in the log-wrap) at every width via `onWorkClick`.
-// The toolbar keeps the badge, and the badge rule is unchanged and load-bearing:
-// needs-you only, never an open-ticket count.
+// The toolbar keeps the badge, and the badge's load-bearing rule is unchanged:
+// it counts what is ABOUT THIS CONVERSATION, never the scope's open tickets.
 //
 // The overflow menu now holds only what is genuinely rare or destructive:
 // All chats, Open full screen, Archive chat. Actions you take ON a conversation
@@ -69,7 +70,7 @@ export default function ChatToolbar({
   variant, mode, slug, hideExpand,
   activeId, activeThreadTitle, branchPicker,
   showProviderPicker, providers, activeProvider, onChooseProvider, turnActive,
-  drawer, needsYouCount, onWorkClick,
+  drawer, workCount, needsYouCount, onWorkClick,
   onBack, onOpenWorkbench, onEditTitle, onOpenThread,
   onNewChat, onArchive, onPopOut, onNavigate,
 }: {
@@ -94,9 +95,19 @@ export default function ChatToolbar({
   /** Which drawer is open. Read for the button's `is-active` tone only: the
    *  panel owns opening and closing itself, through `workAnchor`. */
   drawer: ChatDrawer;
-  // The BADGE. Inbox items waiting on the operator in this chat, and nothing
-  // else. It deliberately does not count open tickets: a badge is an alarm, and
-  // forty open tickets is the normal state of a working queue.
+  /** The BADGE. What this conversation is carrying: the work it filed and has
+   *  not finished, plus whatever is waiting on the operator here, counted as a
+   *  union so one blocked ticket is one. Built by `chatBadgeCount`, which holds
+   *  the reasoning.
+   *
+   *  IT IS NOT THE SCOPE'S OPEN-TICKET COUNT AND MUST NOT BECOME ONE. A badge
+   *  is an alarm, forty open tickets is the normal state of a working queue,
+   *  and a scope-wide number is the same in every chat of that scope: the
+   *  operator reported exactly that on 2026-08-23, an unchanging 13 beside a
+   *  button that claimed to be about the conversation he was in. */
+  workCount: number;
+  /** How much of `workCount` is actually waiting on the operator. Used for the
+   *  tooltip's wording only, so that "3" can say which kind of three it is. */
   needsYouCount: number;
   /** Wraps the Tickets button in the Work panel. A render prop rather than
    *  eight forwarded props, because the toolbar's business is the BUTTON: it
@@ -249,14 +260,14 @@ export default function ChatToolbar({
         <button
           data-chat-workpanel-trigger=""
           className={`chat-tb__btn${workOpen ? " is-active" : ""}`}
-          title={needsYouCount ? `Tickets. ${needsYouCount} waiting on you` : "Tickets"}
+          title={workTitle(workCount, needsYouCount)}
           aria-label="Tickets"
           aria-haspopup="dialog"
           aria-expanded={workOpen}
           onClick={onWorkClick}
         >
           <Ticket size={16} aria-hidden />
-          {needsYouCount > 0 && <span className="chat-tb__badge">{needsYouCount}</span>}
+          {workCount > 0 && <span className="chat-tb__badge">{workCount}</span>}
         </button>
       )}
       <button className="chat-tb__btn" onClick={onNewChat} title="Start a new chat" aria-label="New chat">

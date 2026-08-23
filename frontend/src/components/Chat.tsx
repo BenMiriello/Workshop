@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { WifiOff, ArrowDown, Paperclip, Unplug } from "lucide-react";
 import WorkPanel from "./chat/work/WorkPanel";
 import { useChatWork } from "./chat/work/useChatWork";
+import { chatBadgeCount } from "./chat/work/workRows";
 import { ChatWorkProvider, type ChatWorkAccess } from "./chat/work/TicketCard";
 import ChatComposer from "./chat/ChatComposer";
 import { useAttachments, dragHasFiles, filesFromTransfer } from "./chat/useAttachments";
@@ -1048,6 +1049,10 @@ export default function Chat({
       onChooseProvider={chooseScope}
       turnActive={turnActive}
       drawer={drawer}
+      // TWO NUMBERS, ONE BADGE. `workCount` is what the badge prints (this
+      // chat's unfinished filed work unioned with what is waiting here); the
+      // needs-you count only picks the tooltip's wording. See chatBadgeCount.
+      workCount={chatBadgeCount(work.data)}
       needsYouCount={work.data.counts.needs_you}
       onWorkClick={() => requestAnimationFrame(() => setWorkOpen(drawer !== "work"))}
       onBack={back}

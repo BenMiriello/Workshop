@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   MAX_ROWS, NOTHING_FILED_HERE, NOTHING_RUNNING, NOTHING_UNDER_WAY, NOTHING_WAITING,
   WORK_CHIPS,
-  chipCount, defaultChip, emptyText, ticketsForChip, workList, needsYouMeta } from "./workRows";
+  chatBadgeCount, chipCount, chipLabel, defaultChip, emptyText, ticketsForChip,
+  workList, workTitle, needsYouMeta } from "./workRows";
 import { EMPTY_WORK, type InboxItem, type WorkPayload, type WorkTicket } from "./workTypes";
 import type { TaskStatus } from "../../../lib/tasks";
 
@@ -53,7 +54,7 @@ function ticket(
   };
 }
 
-function item(id: string): InboxItem {
+function item(id: string, ticketId: string | null = null): InboxItem {
   return {
     id,
     kind: "question",
@@ -63,7 +64,7 @@ function item(id: string): InboxItem {
     body: "Which one?",
     options: [],
     chat_id: "t1",
-    ticket_id: null,
+    ticket_id: ticketId,
     run_id: null,
     snoozed_until: null,
   };
@@ -115,6 +116,74 @@ describe("chipCount", () => {
     expect(chipCount(counts, "running")).toBe(2);
     expect(chipCount(counts, "this_chat")).toBe(3);
     expect(chipCount(counts, "all")).toBe(4);
+  });
+});
+
+describe("chipLabel", () => {
+  it("names the scope on the chip that lists the scope's work", () => {
+    expect(chipLabel("all", "Development")).toBe("Development");
+  });
+
+  it("leaves the other three alone: they are already about this chat", () => {
+    expect(chipLabel("needs_you", "Development")).toBe("Needs you");
+    expect(chipLabel("running", "Development")).toBe("Running");
+    expect(chipLabel("this_chat", "Development")).toBe("This chat");
+  });
+
+  it("falls back to All on a chat with no scope to name", () => {
+    expect(chipLabel("all", null)).toBe("All");
+    expect(chipLabel("all", "   ")).toBe("All");
+  });
+});
+
+describe("chatBadgeCount", () => {
+  // The reported defect, executable. `counts.all` is every active ticket in
+  // the SCOPE, so it is the same number in every chat of that scope; the
+  // operator saw an unchanging 13 beside a per-conversation button.
+  it("is never the scope-wide total", () => {
+    const scope = Array.from({ length: 12 }, (_, i) => ticket(`s${i}`, "todo"));
+    const data = payload({ filed: [ticket("mine", "todo")], scope });
+    expect(data.counts.all).toBe(13);
+    expect(chatBadgeCount(data)).toBe(1);
+    expect(chatBadgeCount(data)).not.toBe(data.counts.all);
+  });
+
+  it("differs between two chats that share one scope", () => {
+    const scope = Array.from({ length: 12 }, (_, i) => ticket(`s${i}`, "todo"));
+    const busy = payload({ filed: [ticket("a", "todo"), ticket("b", "doing")], scope });
+    const quiet = payload({ filed: [], scope });
+    expect(chatBadgeCount(busy)).toBe(2);
+    expect(chatBadgeCount(quiet)).toBe(0);
+  });
+
+  it("drops the work this chat already finished", () => {
+    const data = payload({
+      filed: [ticket("a", "todo"), ticket("b", "done"), ticket("c", "cancelled")],
+    });
+    expect(chatBadgeCount(data)).toBe(1);
+  });
+
+  it("counts a filed ticket that is now blocked on a question once, not twice", () => {
+    const blocked = ticket("a", "blocked");
+    const data = payload({ filed: [blocked], inbox: [item("i1", "a")] });
+    expect(data.counts.this_chat + data.counts.needs_you).toBe(2);
+    expect(chatBadgeCount(data)).toBe(1);
+  });
+
+  it("counts a raised item with no ticket behind it as its own work", () => {
+    const data = payload({ filed: [ticket("a", "todo")], inbox: [item("i1")] });
+    expect(chatBadgeCount(data)).toBe(2);
+  });
+});
+
+describe("workTitle", () => {
+  it("names an interruption first, because it is the only alarm", () => {
+    expect(workTitle(4, 2)).toBe("Tickets. 2 waiting on you");
+  });
+
+  it("otherwise says what the number is", () => {
+    expect(workTitle(3, 0)).toBe("Tickets. 3 from this chat");
+    expect(workTitle(0, 0)).toBe("Tickets");
   });
 });
 

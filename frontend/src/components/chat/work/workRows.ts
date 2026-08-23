@@ -20,6 +20,10 @@ import { jobIsLive } from "../../../lib/jobs";
 import { taskStateTypeOf, type TaskStateType } from "../../../lib/tasks";
 import type { InboxItem, WorkCounts, WorkPayload, WorkTicket, InboxKind } from "./workTypes";
 
+/** A ticket this chat filed is still CARRIED until it stops moving. Done and
+ *  cancelled work is history, and history does not belong on a badge. */
+const CARRIED: TaskStateType[] = ["backlog", "unstarted", "started"];
+
 export type WorkChip = "needs_you" | "running" | "this_chat" | "all";
 
 export const WORK_CHIPS: { id: WorkChip; label: string }[] = [
@@ -99,6 +103,78 @@ export function chipCount(counts: WorkCounts, chip: WorkChip): number {
   if (chip === "running") return counts.running;
   if (chip === "this_chat") return counts.this_chat;
   return counts.all;
+}
+
+/** WHAT THE `All` CHIP IS ACTUALLY SHOWING, said out loud.
+ *
+ *  `counts.all` is every active ticket in the chat's SCOPE, which means it is
+ *  the SAME NUMBER AND THE SAME LIST in every chat of that scope, by
+ *  construction. That is deliberate and it stays (tickets-in-chat-2026-08-15:
+ *  a conversation can see its queue). What was wrong is that a chip called
+ *  "All", inside a panel titled Tickets, hanging off a button in one
+ *  conversation's toolbar, reads as "all of THIS conversation's tickets", so
+ *  the operator saw the same 13 in every development chat and reported it as a
+ *  bug (2026-08-23). It is not a bug in the number, it is a number with no
+ *  label on it.
+ *
+ *  So the chip carries the scope's own name: "Development" beside "This chat"
+ *  says which two sets these are without a sentence of explanation, and it
+ *  makes the identical count self-evidently honest: it is the same queue, so
+ *  of course it is the same number. "All" is only used on a chat that has no
+ *  scope to name, where there is nothing better to say. */
+export function chipLabel(chip: WorkChip, scopeLabel?: string | null): string {
+  const fallback = WORK_CHIPS.find((c) => c.id === chip)?.label ?? chip;
+  if (chip !== "all") return fallback;
+  const named = (scopeLabel || "").trim();
+  return named || fallback;
+}
+
+/** THE TOOLBAR COUNT: what THIS conversation is carrying, and nothing else.
+ *
+ *  It was `counts.needs_you` alone, and the reason for that is still right and
+ *  is kept intact: a badge is an alarm, and an open-ticket count is ambient
+ *  information wearing an alarm's clothing. Forty open tickets is the normal
+ *  state of a working queue, and a permanent "40" teaches the operator to stop
+ *  reading the badge. `counts.all` must therefore never reach it.
+ *
+ *  What that left out is the other half of "about this chat". The union of two
+ *  sets is counted here:
+ *
+ *    - what this chat FILED and has not finished. `data.filed` is keyed by
+ *      thread id on the server (`source.ref == thread_id`), so it is the one
+ *      genuinely per-conversation set in the payload, and it is what makes two
+ *      chats in one scope show different numbers. Completed and cancelled rows
+ *      are dropped: a chat that filed nine tickets and finished them is not
+ *      carrying nine.
+ *    - what is WAITING ON THE OPERATOR here, `data.inbox`, unchanged.
+ *
+ *  A UNION, NOT A SUM. A ticket this chat filed that is now blocked on a
+ *  question is in both lists, and adding the two counts would make the badge
+ *  read 2 for one piece of work. An inbox row names its ticket (`ticket_id`),
+ *  which is what makes the overlap knowable at all; a row with no ticket behind
+ *  it is its own piece of work and keys on its own id.
+ *
+ *  Read from the PAYLOAD rather than from `counts`, because the overlap is only
+ *  visible in the rows. The server's four counts are untouched. */
+/** The Tickets button's tooltip. The badge is ONE number that can be two kinds
+ *  of thing, so the words say which kind it is: an interruption is named first
+ *  because it is the only half that is an alarm, and otherwise the number is
+ *  simply what this chat filed and has not finished. */
+export function workTitle(count: number, needsYou: number): string {
+  if (needsYou > 0) return `Tickets. ${needsYou} waiting on you`;
+  if (count > 0) return `Tickets. ${count} from this chat`;
+  return "Tickets";
+}
+
+export function chatBadgeCount(data: WorkPayload): number {
+  const ids = new Set<string>();
+  for (const t of data.filed) {
+    if (CARRIED.includes(taskStateTypeOf(t))) ids.add(`task:${t.id}`);
+  }
+  for (const it of data.inbox) {
+    ids.add(it.ticket_id ? `task:${it.ticket_id}` : `item:${it.id}`);
+  }
+  return ids.size;
 }
 
 // `filed` and `scope` are disjoint on the server today (a ticket this chat filed

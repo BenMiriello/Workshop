@@ -16,7 +16,7 @@ import WorkSettings from "./WorkSettings";
 import DirectoryView from "./DirectoryView";
 import type { ChatWork } from "./useChatWork";
 import {
-  WORK_CHIPS, chipCount, defaultChip, emptyText, workList, type WorkChip,
+  WORK_CHIPS, chipCount, chipLabel, defaultChip, emptyText, workList, type WorkChip,
 } from "./workRows";
 
 // THE CHAT'S ONE WORK SURFACE. Everything that is waiting, running, or was filed
@@ -101,9 +101,16 @@ export default function WorkPanel(props: WorkPanelProps) {
   if (!open) return null;
   return (
     <>
-      {/* Behind the panel, over the log. Dismisses on a press. */}
+      {/* THE ONE SCRIM, composed, and it covers the whole app. `.ws-overlay` is
+          the system's single dimming surface; --bare drops the dialog centring
+          because this element holds nothing, the sheet below positions itself.
+          The two decisions behind the geometry are recorded in styles.css above
+          `.chat-workpanel--sheet`; read them before narrowing it again.
+          Dismisses on a press, which is the half that must not change: the
+          panel carries a text field and so does the composer, and this is what
+          keeps only one of them live. */}
       <div
-        className="chat-workpanel__scrim"
+        className="ws-overlay ws-overlay--bare"
         aria-hidden
         onPointerDown={() => onOpenChange(false)}
       />
@@ -291,13 +298,17 @@ function WorkBody({
 
       {/* All four, always, including the zeroes. They are the chat's summary of
           its own work, and dropping an empty one would slide the other three
-          sideways the moment an agent raised something. */}
+          sideways the moment an agent raised something.
+
+          THE LAST CHIP NAMES THE SCOPE rather than saying "All", because that
+          is what it lists: every active ticket in the chat's scope, the same
+          set and the same number in every chat of that scope. See chipLabel. */}
       <div className="chat-workpanel__chips" role="group" aria-label="Which tickets to show">
         {WORK_CHIPS.map((c) => (
           <FilterChip
             key={c.id}
             className={`chat-workpanel__chip${c.id === selected ? " is-on" : ""}`}
-            label={c.label}
+            label={chipLabel(c.id, scope ? scopeName(scope) : null)}
             value={chipCount(counts, c.id)}
             onClick={() => setChip(c.id)}
           />
