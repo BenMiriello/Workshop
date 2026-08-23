@@ -442,7 +442,7 @@ app.include_router(relay.router, dependencies=_LOOPBACK)
 # "missing" whether or not it was set. Identity gates it on either origin now.
 app.include_router(services.router, dependencies=_OPERATOR)
 app.include_router(events.router, dependencies=_LOOPBACK)
-# Letta tool sandbox runs off-loopback (Docker bridge); internal-only, no
+# App ingest routers run off-loopback (Docker bridge); internal-only, no
 # personal data, never proxied to the public origin.
 
 # Public auth entry (register/login/logout/me) — no gate; it establishes identity.

@@ -44,9 +44,9 @@ Phase 1 backing stores are adapted, not replaced:
   * Project triggers live in the project registry, translated to/from the old
     `autonomy.mode {off, manual, continuous}` field.
   * Agent triggers are read from a definition's frontmatter `triggers:` list
-    via `definition_triggers` below. An earlier Phase 1 adapter read the same
-    shape (`autonomy_mode`, `cron_expression`, `event_sources`) straight off
-    Letta metadata; it was never called from anywhere and was removed.
+    via `definition_triggers` below. An earlier adapter read the same shape
+    (`autonomy_mode`, `cron_expression`, `event_sources`) off Letta metadata;
+    it was never called from anywhere and was removed with Letta.
 """
 from __future__ import annotations
 
@@ -298,17 +298,15 @@ def triggers_to_preset(triggers: list[dict] | None) -> str:
 # ---------------------------------------------------------------------------
 # Agent adapter — definition frontmatter (Phase 2 backing store) -> triggers
 # ---------------------------------------------------------------------------
-# Phase 2 swaps the agent-side backing store from Letta metadata to markdown
-# definition frontmatter. The frontmatter already stores triggers in normalized
-# shape under a `triggers:` list, so the adapter is a normalize pass.
+# The agent-side backing store IS the markdown definition's frontmatter, which
+# stores triggers in normalized shape under a `triggers:` list, so this adapter
+# is a normalize pass.
 #
-# A Phase 1 sibling of this adapter, `agent_triggers(meta)`, used to read
-# `autonomy_mode`/`cron_expression`/`event_sources` straight off Letta
-# metadata for agents not yet migrated to a definition file. It had no
-# callers — the live inline readers of that same Letta metadata shape are
-# `services/event_dispatch.py` and `routes/agents.py`, neither of which ever
-# called through this module — so it was deleted rather than kept as an
-# unused adapter nothing exercises.
+# A sibling, `agent_triggers(meta)`, used to read `autonomy_mode` /
+# `cron_expression` / `event_sources` off Letta metadata for agents not yet
+# migrated to a definition file. It had no callers and was deleted. Letta was
+# decommissioned 2026-08-16 and the last inline readers of that metadata shape
+# went with it, so there is no second backing store left to reconcile.
 
 def definition_triggers(defn: dict | None) -> list[dict]:
     """Read the `triggers` list from an agent definition's frontmatter (or a

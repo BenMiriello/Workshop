@@ -44,7 +44,7 @@ def _load_subscriptions() -> dict:
 
 def _load_meta_cache() -> dict:
     """Optional cache mapping agent_id -> {autonomy_mode, tools, ...}.
-    Maintained by agents.py PATCH/POST handlers when they update Letta metadata.
+    Maintained by agents.py PATCH/POST handlers when they write the definition.
     If absent, we don't filter — every subscriber gets enqueued."""
     try:
         return json.loads(AGENT_META_CACHE.read_text())

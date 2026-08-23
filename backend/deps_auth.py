@@ -19,9 +19,11 @@ import ipaddress
 from fastapi import HTTPException, Request
 
 # The genuinely-internal networks a machine caller may reach these infra routers
-# from: loopback (backend self-calls) + the Docker bridge (the Letta tool sandbox,
-# which runs in a container on 172.17.x and calls /tools off-loopback). These are
-# NEVER the public internet.
+# from: loopback (backend self-calls) + the Docker bridge, where an app's own
+# ingest container runs on 172.17.x and posts off-loopback. These are NEVER the
+# public internet. (Until 2026-08-16 the stated reason was Letta's tool sandbox
+# calling /tools; Letta is gone and that surface was deleted on 2026-08-18, so
+# the one live caller now is a containerised app ingest router.)
 #
 # We deliberately do NOT trust the whole of RFC1918. The backend binds 0.0.0.0:8000
 # (reachable from the physical/home LAN, e.g. 192.168.1.x, and via the tailnet), so
@@ -63,9 +65,9 @@ async def require_loopback(request: Request) -> None:
 
 
 async def require_internal_caller(request: Request) -> None:
-    """Allow loopback OR the host's private/Docker-bridge networks. For the Letta
-    tool sandbox, which calls /tools from the Docker bridge (off-loopback) and
-    holds no personal data. Never reachable from the public origin."""
+    """Allow loopback OR the Docker bridge. For a containerised app ingest
+    router that posts from the bridge (off-loopback) and holds no personal
+    data. Never reachable from the public origin."""
     peer = request.client.host if request.client else ""
     if _is_internal(peer):
         return

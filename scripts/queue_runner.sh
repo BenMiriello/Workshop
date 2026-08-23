@@ -135,7 +135,7 @@ is_autonomy_off() {
 }
 RALPH="$WORKSHOP/scripts/project_ralph.sh"
 # Touching this file interrupts the idle sleep and starts the next sweep
-# immediately. Tasks enqueued via the API or letta tools write it; the runner
+# immediately. Tasks enqueued via the API write it; the runner
 # clears it on wake. The poll is kept as the recovery path for missed signals.
 WAKE_FILE="$WORKSHOP/.runtime/queue-runner.wake"
 
