@@ -318,7 +318,8 @@ def update_change(change_id: UUID | str, **fields: Any) -> dict:
     return _shape(row)
 
 
-def mark_merged(change_id: UUID | str, commit: str) -> dict:
+def mark_merged(change_id: UUID | str, commit: str, *,
+                base_sha: str | None = None) -> dict:
     """Record that this change merged, as the commit that did it. Step C5.
 
     This is the writer `update_change` refuses to be. `status`, `merged_sha` and
@@ -339,12 +340,14 @@ def mark_merged(change_id: UUID | str, commit: str) -> dict:
     with tenant_session(org_id, user_id) as s:
         if change_repo.get_change(s, org_id, change_id) is None:
             raise ChangeNotFound(str(change_id))
-        row = change_repo.update_change(
-            s, org_id, change_id,
-            status="merged",
-            merged_sha=str(commit).strip(),
-            merged_at=datetime.now(timezone.utc),
-        )
+        fields: dict[str, Any] = {
+            "status": "merged",
+            "merged_sha": str(commit).strip(),
+            "merged_at": datetime.now(timezone.utc),
+        }
+        if base_sha:
+            fields["base_sha"] = str(base_sha).strip()
+        row = change_repo.update_change(s, org_id, change_id, **fields)
     return _shape(row)
 
 
@@ -376,9 +379,24 @@ def diff_for(change_id: UUID | str) -> dict:
     would reintroduce, at the artifact layer, the same "the record says
     something the repository does not" problem this table removes at the status
     layer.
+
+    A MERGED CHANGE IS DIFFED base_sha..merged_sha INSTEAD. Merging reaps the
+    worktree and deletes the branch, so the branch-addressed diff of accepted
+    work answers "no files", which on a review surface reads as "this changed
+    nothing" for exactly the work that landed. The record of what was accepted
+    has to survive acceptance.
+
+    It is base_SHA and not base_REF, and the difference is the whole point: by
+    the time anyone asks, the base ref CONTAINS the change, so diffing against
+    the name is guaranteed to be empty. `base_sha` is the commit the base stood
+    at before the merge, pinned at merge time for exactly this.
     """
     change = get_change(change_id)
+    merged_sha = change.get("merged_sha")
+    base_sha = change.get("base_sha")
     try:
+        if merged_sha and base_sha:
+            return worktrees.diff_refs(change["project_slug"], base_sha, merged_sha)
         return worktrees.diff_branch(change["project_slug"],
                                      change["branch_slug"])
     except ValueError as e:

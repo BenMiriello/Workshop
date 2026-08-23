@@ -35,7 +35,7 @@ __all__ = [
 # identity of the branch this record was opened for, and a change that could be
 # repointed at another branch would silently relabel a reviewed diff.
 UPDATABLE = (
-    "app_id", "worktree_id", "base_ref", "head_sha", "title", "summary",
+    "app_id", "worktree_id", "base_ref", "base_sha", "head_sha", "title", "summary",
     "ticket_ids", "status", "gates", "remote", "merged_sha", "merged_at",
     "closed_reason",
 )

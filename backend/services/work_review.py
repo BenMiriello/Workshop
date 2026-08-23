@@ -137,6 +137,17 @@ def merge_for_task(task_id: str, *, message: str = "") -> dict:
         raise MergeRefused(
             f"change {change_id} does not name a branch, so it cannot be merged")
 
+    # Pin the base BEFORE merging. Afterwards the base contains this change, so
+    # the commit it stood at is unrecoverable and the change's own diff becomes
+    # permanently un-showable. This is the record of what was accepted.
+    base_sha = ""
+    try:
+        base_sha = str(worktrees.branch_state(project_slug, branch_slug)
+                       .get("base_sha") or "")
+    except Exception as e:  # noqa: BLE001
+        log.warning("work_review: could not pin the base sha for %s/%s: %s",
+                    project_slug, branch_slug, e)
+
     result = worktrees.merge_branch(project_slug, branch_slug, message=message)
     if not result.get("ok"):
         reason = str(result.get("reason") or "merge failed")
@@ -144,7 +155,7 @@ def merge_for_task(task_id: str, *, message: str = "") -> dict:
 
     commit = str(result.get("commit") or "")
     try:
-        changes.mark_merged(change_id, commit)
+        changes.mark_merged(change_id, commit, base_sha=base_sha or None)
     except Exception as e:  # noqa: BLE001
         # The code IS merged. Losing the bookkeeping must not un-merge it or
         # refuse the acceptance; it must be loud instead.

@@ -263,6 +263,31 @@ def diff_branch(project_slug: str, branch_slug: str) -> dict:
     return {"summary": summary, "files": files}
 
 
+def diff_refs(project_slug: str, base: str, head: str) -> dict:
+    """Diff two refs in the project, in the same shape as `diff_branch`.
+
+    PUBLISHED SO A MERGED CHANGE KEEPS ITS DIFF. Merging reaps the worktree and
+    deletes the branch, so asking for a merged change's diff BY BRANCH answers
+    "no files", which reads as "this changed nothing" for work that in fact
+    landed. The commits are still in the trunk, so the review record is
+    recoverable as base..merged_sha; it just cannot be addressed by a branch
+    that no longer exists. Two-dot, not three: after the merge the base contains
+    the change, so a merge-base diff would correctly report nothing.
+    """
+    project_slug = _validate_slug(project_slug, "project_slug")
+    project_dir = _project_dir(project_slug)
+    summary = git_service.diff_stat(project_dir, base, head) or "no changes"
+    files: list[dict] = []
+    for entry in git_service.diff_name_status(project_dir, base, head):
+        path = entry["path"]
+        files.append({
+            "path": path,
+            "status": entry["status"],
+            "diff": git_service.diff(project_dir, base, head, paths=[path]),
+        })
+    return {"summary": summary, "files": files}
+
+
 def branch_state(project_slug: str, branch_slug: str) -> dict:
     """Where a branch stands against the base it will merge into.
 
@@ -292,6 +317,10 @@ def branch_state(project_slug: str, branch_slug: str) -> dict:
         "branch_slug": branch_slug,
         "branch": branch,
         "base_ref": base,
+        # The base as a SHA, resolved now. A ref name moves; a merged change
+        # needs the commit the base stood at BEFORE it absorbed the change, or
+        # its own diff becomes unrecoverable (see changes.diff_for).
+        "base_sha": git_service.rev_parse(project_dir, base, verify=True),
         "head_sha": head_sha,
         "ahead": counts["ahead"],
         "behind": counts["behind"],

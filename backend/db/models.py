@@ -939,6 +939,10 @@ class Change(Base, Timestamps, SoftDelete):
     # object name, never an abbreviation: an abbreviation is ambiguous the day
     # the repository grows.
     base_ref: Mapped[str] = mapped_column(String(255), nullable=False)
+    # The commit the base stood at when this change merged. Null until then.
+    # A merged change's diff is base_sha..merged_sha, because by that point
+    # base_ref CONTAINS the change and diffing against the name is empty.
+    base_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
     head_sha: Mapped[str] = mapped_column(String(40), nullable=False)
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)

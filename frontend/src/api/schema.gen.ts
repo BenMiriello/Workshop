@@ -14704,6 +14704,25 @@ export interface components {
             relates_to: components["schemas"]["TaskLink"][];
         };
         /**
+         * TaskMergeOut
+         * @description The merge that acceptance performed. `merged` is always True here: a
+         *     ticket with nothing to merge omits the field entirely rather than reporting
+         *     a merge that did not happen.
+         */
+        TaskMergeOut: {
+            /** Change Id */
+            change_id: string;
+            /** Commit */
+            commit: string;
+            /** Merged */
+            merged: boolean;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+        };
+        /**
          * TaskOrigin
          * @description A ticket's `source` resolved into something a UI can link to. `id` with
          *     null `title`/`context_key` means the chat was deleted.
@@ -14787,6 +14806,7 @@ export interface components {
             grant?: Record<string, never> | null;
             /** Learning */
             learning?: Record<string, never> | null;
+            merged?: components["schemas"]["TaskMergeOut"] | null;
             /** Promotion */
             promotion?: boolean | null;
             task: components["schemas"]["Task"];

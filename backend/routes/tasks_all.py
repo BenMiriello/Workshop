@@ -1093,6 +1093,17 @@ def _grantee(task: dict, scope: str) -> str:
     return a if a.startswith("agent:") else scope
 
 
+class TaskMergeOut(BaseModel):
+    """The merge that acceptance performed. `merged` is always True here: a
+    ticket with nothing to merge omits the field entirely rather than reporting
+    a merge that did not happen."""
+
+    merged: bool
+    commit: str
+    change_id: str
+    reason: str = ""
+
+
 class TaskReviewOut(BaseModel):
     """What the review verb did. `grant` (the minted standing grant),
     `learning` (the recorded rule) and `promotion` (whether that rule has now
@@ -1108,6 +1119,11 @@ class TaskReviewOut(BaseModel):
     grant: dict | None = None
     learning: dict | None = None
     promotion: bool | None = None
+    # What accepting actually did to the repository. Present only when the
+    # ticket had a change and it merged, so a caller can say "merged as <sha>"
+    # instead of re-fetching the change to find out. Undeclared, it was computed
+    # and then silently dropped by response_model_exclude_unset.
+    merged: TaskMergeOut | None = None
 
 
 @router.post("/{scope}/{task_id}/review", response_model=TaskReviewOut, response_model_exclude_unset=True)

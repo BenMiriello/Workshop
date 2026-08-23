@@ -19,21 +19,29 @@ class _Changes:
         self._found = found or []
         self._raise_on_list = raise_on_list
         self.marked: list[tuple[str, str]] = []
+        self.base_shas: list[str | None] = []
 
     def list_changes(self, *, ticket_id=None, **_):
         if self._raise_on_list:
             raise self._raise_on_list
         return [c for c in self._found if ticket_id in (c.get("ticket_ids") or [])]
 
-    def mark_merged(self, change_id, commit):
+    def mark_merged(self, change_id, commit, *, base_sha=None):
         self.marked.append((str(change_id), str(commit)))
+        self.base_shas.append(base_sha)
         return {"id": change_id, "status": "merged", "merged_sha": commit}
 
 
 class _Worktrees:
-    def __init__(self, result):
+    def __init__(self, result, base_sha="base000"):
         self.result = result
+        self.base_sha = base_sha
         self.calls: list[tuple] = []
+        self.state_calls: list[tuple] = []
+
+    def branch_state(self, project_slug, branch_slug):
+        self.state_calls.append((project_slug, branch_slug))
+        return {"base_ref": "main", "base_sha": self.base_sha}
 
     def merge_branch(self, project_slug, branch_slug, *, message=""):
         self.calls.append((project_slug, branch_slug, message))
@@ -106,6 +114,10 @@ def test_accepting_merges_the_branch_and_records_the_commit(monkeypatch):
     assert worktrees.calls == [("development", "task-abc", "take it")]
     assert changes.marked == [(_change()["id"], "deadbee")], \
         "the change is marked merged with the commit that merged it"
+    assert changes.base_shas == ["base000"], \
+        "the base is pinned so the accepted diff stays recoverable"
+    assert worktrees.state_calls == [("development", "task-abc")], \
+        "and it is read BEFORE the merge, not after"
 
 
 def test_a_conflict_refuses_the_acceptance_rather_than_completing_it(monkeypatch):
@@ -136,7 +148,7 @@ def test_losing_the_bookkeeping_does_not_un_accept_merged_code(monkeypatch):
     """The merge already happened; refusing here would leave the trunk carrying
     work the ticket says was never taken. It is logged loudly instead."""
     class _Broken(_Changes):
-        def mark_merged(self, change_id, commit):
+        def mark_merged(self, change_id, commit, *, base_sha=None):
             raise RuntimeError("store went away")
 
     changes = _Broken(found=[_change()])
