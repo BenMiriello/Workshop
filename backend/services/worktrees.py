@@ -630,30 +630,36 @@ def publish_branch(project_slug: str, branch_slug: str, *,
 def cleanup_merged(project_slug: str) -> dict:
     """Remove worktrees whose branch is already merged into the canonical base.
 
-    For each wt/<slug>/ branch, if github.is_merged reports it an ancestor of
-    origin/<default_branch>, the worktree is force-removed, its local ref
-    deleted, and stale worktree metadata pruned. Unbound projects have no origin
-    to compare against, so they are skipped. Returns {removed, kept} (branch
-    slugs). Best-effort per branch: a branch still ahead of the base is kept.
+    For each wt/<slug>/ branch, if the branch tip is an ancestor of the local
+    canonical branch, the worktree is force-removed, its local ref deleted, and
+    stale worktree metadata pruned. Returns {removed, kept} (branch slugs).
+    Best-effort per branch: a branch still ahead of the base is kept.
+
+    CANONICAL "MERGED" CHECK: `git_service.is_ancestor(project_dir, branch, main)`
+    against the LOCAL canonical branch. gc.reap_merged_worktrees uses the same
+    check. Two definitions existed briefly: this function used github.is_merged
+    against origin/<base> while the GC used the local-main check. Local main wins
+    because (1) it works for both bound and unbound projects — merge_branch's own
+    github.merge_pr fast-forwards local main to origin/<base> after every remote
+    merge, so both refs agree after the fact; (2) it needs no network call or
+    fetched origin ref; (3) the GC is the broader path and had the right answer.
+    gc.reap_merged_worktrees is the CANONICAL site; this function calls the same
+    check so one definition exists.
     """
     project_slug = _validate_slug(project_slug, "project_slug")
     project_dir = _project_dir(project_slug)
-    repo = _project_repo(project_slug)
-    if not repo:
-        return {"removed": [], "kept": []}
-    base = repo.get("default_branch") or git_service.main_branch(project_dir)
+    main = _canonical_branch(project_slug, project_dir)
 
-    from services import github
     removed: list[str] = []
     kept: list[str] = []
     for wt in list_branches(project_slug):
         branch = wt["branch"]
         branch_slug = wt["branch_slug"]
-        if github.is_merged(str(project_dir), branch, base):
+        if git_service.is_ancestor(project_dir, branch, main):
             with work_driver.tree_lock(project_dir):
                 _reap_worktree(project_dir, project_slug, branch_slug, branch,
                                merged_sha=git_service.rev_parse(
-                                   project_dir, base, verify=True))
+                                   project_dir, main, verify=True))
             removed.append(branch_slug)
         else:
             kept.append(branch_slug)
