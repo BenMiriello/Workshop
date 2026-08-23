@@ -212,6 +212,17 @@ job_finish() {  # $1=job_id $2=status $3=tasks_done $4=tasks_failed [$5=evidence
   _job_py finish --id "$1" --status "$2" --tasks-done "${3:-0}" \
     --tasks-failed "${4:-0}" "${ev[@]}" >/dev/null || true
 }
+# The evidence a halted sweep closes with: the reason SENTENCE, plus the
+# structured refusal when a guard is what stopped it. One builder, so the two
+# job_finish call sites at the bottom cannot drift apart.
+halt_evidence() {
+  if [[ -n "$HALT_REFUSAL" ]]; then
+    jq -nc --arg r "$HALT_REASON" --argjson f "$HALT_REFUSAL" \
+      '{halted:$r, refusal:$f}' 2>/dev/null && return 0
+  fi
+  jq -nc --arg r "$HALT_REASON" '{halted:$r}' 2>/dev/null
+}
+
 job_finish_child() {  # $1=child_job $2=status $3=exit_code [$4=evidence-json]
   [[ -z "$1" ]] && return 0
   local ev=(); [[ -n "${4:-}" ]] && ev=(--evidence "$4")
@@ -1025,6 +1036,11 @@ release_or_block() {  # $1=task_id $2=attempts $3=cap $4=reason-verb
 # `done` with 0 tasks told the operator the opposite of what happened. Set here,
 # read at job_finish below.
 HALT_REASON=""
+# Set only when a GUARD refused the run (today: the usage budget). A halt with
+# no refusal is a stop the sweep chose (yield, out of wall clock); a halt WITH
+# one is an expected, correct outcome of a working guard, and the two must not
+# read the same on the screen.
+HALT_REFUSAL=""
 
 n=0
 while (( n < MAX_TASKS )); do
@@ -1103,6 +1119,11 @@ while (( n < MAX_TASKS )); do
     ADMIT_WHY=$(printf '%s' "$ADMIT_OUT" | jq -r '.reason // empty' 2>/dev/null)
     [[ -z "$ADMIT_WHY" ]] && ADMIT_WHY="usage budget exhausted for scope=$BILL_SCOPE"
     HALT_REASON="$ADMIT_WHY"
+    # The structured half of the refusal (scope, used, limit, window, when it is
+    # next admissible), carried onto the Job so the run card can say what
+    # refused this and what would change it. The SENTENCE is not composed here:
+    # `usage_ledger` decides the wording once and this only forwards it.
+    HALT_REFUSAL=$(printf '%s' "$ADMIT_OUT" | jq -c '.refusal // empty' 2>/dev/null)
     log "usage budget refused scope=$BILL_SCOPE: $ADMIT_WHY (task=$TASK_ID left ready)"
     break
   fi
@@ -1277,6 +1298,31 @@ print(len(crit))
   # links to the run rather than duplicating the receipt payload).
   note_receipt_ref() { python3 "$PTASKS" note "$DIR" "$TASK_ID" "$CHILD_JOB" --kind receipt --ref "$CHILD_JOB" >/dev/null 2>>"$LOG"; }
 
+  # WHERE THE WORK WENT, on every terminal path that does NOT publish.
+  #
+  # `publish_or_park` records the branch (as a change, a PR, or a local merge)
+  # and it is only reached from the rc=0 success legs. The park and block legs
+  # below return without it, so a run that COMMITTED and then hit the touches
+  # gate, the classifier, the thrash guard or a strict-latitude ambiguity left
+  # its commits on a locked worktree branch that nothing in the ticket named.
+  # On 2026-08-23 that had happened eleven times over: eleven `wt/development/*`
+  # branches, each one commit ahead of main, none referenced from any ticket,
+  # and the rc=6 note on five of them asserting "nothing committed" while the
+  # branch held a commit. The commit was only findable by reading `git worktree
+  # list` and diffing every branch by hand.
+  #
+  # So: state the branch and its head on the ticket. This does not merge, does
+  # not change status, and does not run in the default (non-worktree) mode --
+  # it only stops the run's output from being unfindable.
+  note_unmerged_branch() {
+    (( WT_MODE == 1 )) || return 0
+    (( COMMITTED == 1 )) || return 0
+    [[ -n "$WT_BRANCH_SLUG" ]] || return 0
+    python3 "$PTASKS" note "$DIR" "$TASK_ID" \
+      "work committed on branch wt/$WT_SLUG/$WT_BRANCH_SLUG at ${HEAD:0:12}; UNMERGED and awaiting acceptance (this run did not reach the publish path)" \
+      --kind acceptance --ref "wt/$WT_SLUG/$WT_BRANCH_SLUG" >/dev/null 2>>"$LOG"
+  }
+
   # Touches gate: hold the run to what the TASK said it writes. $EVIDENCE.files is
   # the committed diff vs the pre-run baseline (bookkeeping paths already filtered
   # out by build_receipt_evidence), i.e. what this run actually landed. A task with
@@ -1289,6 +1335,7 @@ print(len(crit))
                   --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" 2>>"$LOG")
     if [[ "$TOUCH_OUT" == *'"blocked": true'* ]]; then
       # enforce_touches already recorded the evidence line and blocked the task.
+      note_unmerged_branch
       BLOCKED=$((BLOCKED+1))
       job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"
       log "task=$TASK_ID BLOCKED: touches violation $(printf '%s' "$TOUCH_OUT" | jq -c '.violations' 2>/dev/null)"
@@ -1379,7 +1426,7 @@ print(len(crit))
       fi
       fi
       ;;
-    3) ptasks_tx block "$DIR" "$TASK_ID" "classifier block" --expect-claim-token "${CLAIM_TOKEN:-}" || true; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"; log "task=$TASK_ID BLOCKED (classifier)" ;;
+    3) note_unmerged_branch; ptasks_tx block "$DIR" "$TASK_ID" "classifier block" --expect-claim-token "${CLAIM_TOKEN:-}" || true; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"; log "task=$TASK_ID BLOCKED (classifier)" ;;
     5)
       # Environment failure (API outage / auth), NOT task failure: give the
       # attempt back and STOP the sweep so we do not hammer a down API. The sweep
@@ -1408,7 +1455,13 @@ print(len(crit))
       # The reason names the child job so the run is findable, which is the
       # "resumable id" half: un-parking the ticket is one click and the operator
       # can read what the run actually did first.
-      python3 "$PTASKS" note "$DIR" "$TASK_ID" "no progress within the run (repeated rejection / near-identical diff, or run token budget exceeded); parked mid-run, nothing committed. Run: $CHILD_JOB" --kind acceptance >/dev/null 2>>"$LOG"
+      # "nothing committed" is only true when nothing was committed. A thrashing
+      # run can still have landed commits before it started churning, and saying
+      # otherwise put a false statement in the ticket record eleven times on
+      # 2026-08-23. Say which one it was, and name the branch either way.
+      if (( COMMITTED == 1 )); then PARK_WORK="its commits are on the task branch, unmerged"; else PARK_WORK="nothing committed"; fi
+      python3 "$PTASKS" note "$DIR" "$TASK_ID" "no progress within the run (repeated rejection / near-identical diff, or run token budget exceeded); parked mid-run, $PARK_WORK. Run: $CHILD_JOB" --kind acceptance >/dev/null 2>>"$LOG"
+      note_unmerged_branch
       ptasks_tx set-status "$DIR" "$TASK_ID" parked --expect-claim-token "${CLAIM_TOKEN:-}" || true
       PARKED=$((PARKED+1))
       # The child job is `failed` to match the other park sites (publish_or_park):
@@ -1432,6 +1485,7 @@ print(len(crit))
       # ambiguity list is the dedupe key, so a rule that stopped ten tasks the same
       # way is answered once.
       BLOCK_AMBIG=$(jq -r '(.reviewer.ambiguous // []) | join(",")' "$RECEIPT_FILE" 2>/dev/null)
+      note_unmerged_branch
       ptasks_tx block "$DIR" "$TASK_ID" "$BLOCK_REASON" \
         --kind decision --ask "$BLOCK_REASON" \
         --unblocks-if "the operator confirms completeness, or says what to check instead" \
@@ -1446,9 +1500,11 @@ print(len(crit))
       # rc=1 (iteration cap) / rc=2 (wall cap): the run did NOT converge. Finish
       # the child FAILED and count it in tasks_failed so a pure-timeout thrash loop
       # is visible to the circuit breaker, which keys on tasks_failed. (review F14)
+      note_unmerged_branch
       if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "incomplete (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
       job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
     *)
+      note_unmerged_branch
       if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "failed (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
       job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
   esac
@@ -1548,12 +1604,12 @@ else
   # `cancelled` carrying the refusal, so the Job row, the run report, and the UI
   # all say the run did not happen instead of claiming a clean zero-task success.
   if [[ -n "$HALT_REASON" && "$DONE" -eq 0 && "$FAILED" -eq 0 ]]; then
-    HALT_EV=$(jq -nc --arg r "$HALT_REASON" '{halted:$r}' 2>/dev/null)
+    HALT_EV=$(halt_evidence)
     [[ -z "$HALT_EV" ]] && HALT_EV="{\"halted\":\"refused\"}"
     job_finish "$JOB_ID" cancelled "$DONE" "$FAILED" "$HALT_EV"
     log "sweep cancelled without working anything: $HALT_REASON"
   elif [[ -n "$HALT_REASON" ]]; then
-    HALT_EV=$(jq -nc --arg r "$HALT_REASON" '{halted:$r}' 2>/dev/null)
+    HALT_EV=$(halt_evidence)
     [[ -z "$HALT_EV" ]] && HALT_EV="{\"halted\":\"stopped early\"}"
     job_finish "$JOB_ID" done "$DONE" "$FAILED" "$HALT_EV"
   else
