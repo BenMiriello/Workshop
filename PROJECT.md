@@ -441,6 +441,69 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   worker cannot be launched from inside a confined chat turn (its own bwrap cannot
   bind host paths), which is exactly why the backend must be the thing that
   spawns it -- the reconciler.
+- 2026-08-22 (5) — Operator: research, think, design and DECIDE the file tree and
+  file viewer/editor, find a package rather than building it custom, make it work
+  on web and the mobile app, file tickets for every phase, and build it with
+  subagents while monitoring that it actually lands and gets used.
+  Model of record: `docs/platform-redesign/file-viewer-and-editor-2026-08-22.md`.
+  It answers the question `navigation-shell-2026-08-20.md` parked at 10.5
+  ("evaluate existing packages") and unblocks its 8.1.
+  TWO MEASUREMENTS RESHAPED THE PLAN, both assumptions until checked. (1) The
+  mobile app is a WebView over the web app (`mobile/app/index.tsx:20-22`), not a
+  native UI, so there is NO React Native editor to build: the standard answer to
+  this problem (CodeMirror in a react-native-webview behind an RPC bridge, which
+  is what Joplin and Obsidian ship) is an architecture this repo already has for
+  the entire product. That deleted the bridge, the prebuilt editor asset bundle,
+  the Expo config plugin, a second tree renderer, and the reason to pick a tree
+  library for its RN support. (2) `navigation-shell` 8.1's "there is no
+  file-browser backend" is STALE: four listing+read+write pairs already exist
+  (apps, projects, build agents, documents), so the work was consolidation and
+  the first rule became not adding a fifth.
+  THE DECISION THE OPERATOR ASKED FOR. His instinct that the split is view/edit
+  rather than features-by-file-type is right, and the rule under it is that a
+  file gets a rendered view when its rendered form DIFFERS from its source.
+  Markdown has two forms, a .py has one. So it is ONE component with two axes
+  (form, editable) and not two components, `editable` is a fact about the path
+  rather than a mode the user picks, and "lighter for memories" is an extension
+  profile (prose|code|view), not a second editor.
+  CodeMirror 6 adopted, all MIT. Monaco rejected on its maintainers' own one-word
+  answer to "is the editor supported in mobile browsers or mobile web app
+  frameworks?". Tiptap rejected on FIT, not licensing (it is MIT and free for us):
+  it is a WYSIWYG editor that serializes TO markdown, so the round trip is lossy
+  by construction, which for git-tracked memory files means a reformatting diff on
+  every save. A tree LIBRARY was also rejected, against the research
+  recommendation, because its decisive advantage was React Native support that
+  measurement (1) makes worthless, and because the hard part here is the takeover
+  interaction the shell doc already specifies, which a generic tree argues with.
+  SHIPPED, six commits: `@workshop/ui/editor` (CodeMirror as OPTIONAL peers on the
+  same subpath pattern `./map` and `./markdown` already use, so the kit core gains
+  no dependency) plus nine `--syn-*` roles generated across 8 palettes x 2 modes
+  from `palette.mjs`, which is the only place allowed to define a color; a
+  `FileTree` primitive whose ADAPTER seam lets a directory and the Memory scope
+  tree be the same component; one file API over a resolved workspace root, where
+  the old frontend rule `path.startsWith("docs/")` becomes backend data and
+  `writable` is ENFORCED on write rather than merely reported; the app Files tab
+  rebuilt (textarea, hand-rolled list and pre viewer deleted); and Memory, which
+  did not render markdown at all (`Memory.tsx:1106` was a pre-wrap paragraph),
+  gaining rendered view, an edit mode, a tree, and the column-two takeover that
+  `navigation-shell` 8.1 says Memory needs and which had never been built.
+  THE GATE EARNED ITS KEEP. A work-reviewer run on the two foundation commits
+  found three real defects no self-report mentioned: a read-only editor painted
+  its FIRST FRAME as contenteditable (compartments seeded empty and filled by
+  passive effects, which run after paint, so the frame a phone sees is an editable
+  one that can open the keyboard) while the comment claimed the opposite; a
+  literal `writable: True` standing in for a computation; and a dead `codemirror`
+  meta-package. All three fixed in d935d9f.
+  NOT DONE, and stated rather than implied: the backend restart could only be
+  ARMED, because apply.sh will not kill a live turn, so the new routes begin
+  serving after this reply lands and the two consumer tickets are `in_review` with
+  their verification steps recorded on them rather than marked done. Mobile device
+  verification is its own open ticket and needs a real phone. Parked deliberately
+  in section 8 of the doc: Obsidian-style live preview (lang-markdown ships zero
+  preview decorations, so it is all bespoke and tables are where every such editor
+  leaks), a diff view, retiring the three duplicate file routes, virtualization,
+  and drag and drop.
+
 - 2026-08-22 (4) — Operator answered a ticket question from the chat toolbar and
   could not tell whether anything had happened. It had, and it was the opposite
   of what he asked for. Directive mid-session: "don't rush to fix! Read research
