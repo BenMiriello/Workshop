@@ -862,3 +862,60 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   (a current doc discussing a retired field) is untouched, and deliberately so —
   a recency prior is not the same as correctness and was not justifiable on the
   measurements.
+
+- 2026-08-23 (4) — Operator, from an app's Memory tab: why is this just an input
+  form and a link to global memory, is the thinking right; audit memory AND the
+  file viewer/navigator/editor holistically; and reorganize the leftover files
+  in the apps.
+  HIS READ WAS RIGHT, AND FOR A BETTER REASON THAN HE HAD. The link is
+  `/memory?scope=app:<slug>`, so it is nominally scoped, BUT measured by
+  screenshot the scope parameter is honoured at 1440 and DROPPED at 390: on a
+  phone it lands on the tree root. So on the surface he was using, it is a link
+  to global memory. The deeper answer is that the tab has no READ surface at
+  all: its rows are `<li><span>`, not links, and it is the only app tab that
+  makes the PAGE a link to another page where Tickets and Agents make the ROW a
+  link to the record. The escape hatch exists BECAUSE nothing there opens. Fix
+  the read and the link has no job, which is what he suspected.
+  THE EMPTINESS HAD A CAUSE UNDER THE CAUSE. All four app knowledge dirs were
+  empty, so "there is just no memory in this app" was true. But an app's memory
+  is looked up at `apps/<slug>/knowledge` while everything else about that app
+  resolves through `app_links` to `projects/<slug>`. `app:<slug>` means two
+  different directories depending on which subsystem asks, and `app:X` and
+  `project:X` sit as unrelated SIBLINGS in the scope tree (eight rows for four
+  things). commute is the proof: it has 2 real operator notes, filed under
+  `project:commute`, invisible to the Commute app's Memory tab.
+  THE BIGGEST FINDING WAS ON THE FILES SIDE AND NOBODY HAD LOOKED. `_resolve_app`
+  says "an app's files ARE its linked project's working tree". So the Birds
+  Files tab serves projects/birds: 118 files, 976K, an empty src/ and June
+  Playwright logs. The Birds app is apps/birds: 30,150 files, 2.2G, with pi/,
+  brain/, bridge/, analyzer/, publish/. None of it is reachable from anywhere in
+  the UI. That sentence was true when a project was where an app got built and
+  is the retired model per app-is-the-entity-2026-08-20.md.
+  A GET THAT WRITES. `knowledge.scope_dir` ends in `mkdir(exist_ok=True)` and
+  every read goes through it, so listing notes CREATES the scope. Proven by
+  calling `list_notes('app:zzprobe')` for an app that does not exist: it
+  returned [] and created two directories. The damage was already on his screen:
+  `agent:undefined` was a real row in his Memory tree, created 02:13 that
+  morning by a caller that sent the JavaScript string "undefined", and four
+  empty app scopes were there for the same reason. `routes/notes_all.py`
+  asserts the opposite in its own docstring ("listing never creates a scope").
+  ALSO MEASURED: three tree implementations are live (the kit `FileTree`, plus
+  hand-rolled ones in `AgentBuild.tsx` and `NoteSidebar.tsx`), and AgentBuild,
+  whose whole job is reading and writing code, still edits in a `Textarea` and
+  views in a `<pre>`. The kit ticket named two hand-rolled trees and migrated
+  one; AgentBuild was never catalogued, the same shape as the fifth private tool
+  list found on 2026-08-23. Four file APIs remain and `/apps/{id}/files*` has
+  zero callers. `scopeLabel` has no `app` case, so the tree reads "app: budget"
+  beside "Project: budget" and "Agent: masini". And `check_no_app_names` is
+  FAILING on clean HEAD at 319 against a pinned 309, which gates reviewer.sh and
+  therefore rejects unrelated work, the same shape as the three gates found on
+  2026-08-22.
+  DONE, not filed: 14 Letta memory exports left the `workshop` scope (109 -> 95
+  notes) for `.runtime/archive/letta-2026-08-16/`. They were not merely clutter:
+  `letta-operator-context-shared.md` still describes the backend as "uvicorn,
+  nohup" on 0.0.0.0:8000, which an agent searching memory could act on. Copied
+  first, then removed through `delete_note` so MEMORY.md and the semantic index
+  stayed consistent; the 4 correctly-placed copies in `agent:` scopes were left
+  alone and verify_memory still passes that check. `agent:undefined` and the
+  four empty app scope dirs removed: the operator's Memory tree went 17 rows to
+  12. Six tickets filed for the code.
