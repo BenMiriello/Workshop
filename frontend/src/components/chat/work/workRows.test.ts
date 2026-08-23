@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   MAX_ROWS, NOTHING_FILED_HERE, NOTHING_RUNNING, NOTHING_UNDER_WAY, NOTHING_WAITING,
   WORK_CHIPS,
-  chatBadgeCount, chipCount, chipLabel, defaultChip, emptyText, ticketsForChip,
+  chatBadge, chipCount, chipLabel, defaultChip, emptyText, ticketsForChip,
   workList, workTitle, needsYouMeta } from "./workRows";
 import { EMPTY_WORK, type InboxItem, type WorkPayload, type WorkTicket } from "./workTypes";
 import type { TaskStatus } from "../../../lib/tasks";
@@ -136,43 +136,71 @@ describe("chipLabel", () => {
   });
 });
 
-describe("chatBadgeCount", () => {
-  // The reported defect, executable. `counts.all` is every active ticket in
-  // the SCOPE, so it is the same number in every chat of that scope; the
-  // operator saw an unchanging 13 beside a per-conversation button.
-  it("is never the scope-wide total", () => {
+describe("chatBadge", () => {
+  const THREAD = "t1";
+
+  // The reported defect, executable, and measured against the live store on
+  // 2026-08-23: the constant 13 was `counts.needs_you`, not `counts.all`. The
+  // server derives a needs-you row for every waiting ticket in the SCOPE and
+  // admits it into a chat whose scope matches, with `chat_id: null`, so every
+  // development chat showed the identical thirteen.
+  it("does not print the scope's needs-you count, which is the same in every chat", () => {
+    // chat_id null is what the server actually sends for a derived row: it
+    // reached this chat by SCOPE, not by naming it.
+    const inbox = Array.from({ length: 13 },
+      (_, i) => ({ ...item(`i${i}`, `s${i}`), chat_id: null }));
+    const here = payload({ inbox, filed: [ticket("mine", "todo")] });
+    const elsewhere = payload({ inbox, filed: [] });
+    expect(here.counts.needs_you).toBe(13);
+    expect(elsewhere.counts.needs_you).toBe(13);
+    expect(chatBadge(here, THREAD).count).toBe(1);
+    expect(chatBadge(elsewhere, THREAD).count).toBe(0);
+  });
+
+  it("is never the scope-wide ticket total either", () => {
     const scope = Array.from({ length: 12 }, (_, i) => ticket(`s${i}`, "todo"));
     const data = payload({ filed: [ticket("mine", "todo")], scope });
     expect(data.counts.all).toBe(13);
-    expect(chatBadgeCount(data)).toBe(1);
-    expect(chatBadgeCount(data)).not.toBe(data.counts.all);
+    expect(chatBadge(data, THREAD).count).toBe(1);
   });
 
   it("differs between two chats that share one scope", () => {
     const scope = Array.from({ length: 12 }, (_, i) => ticket(`s${i}`, "todo"));
     const busy = payload({ filed: [ticket("a", "todo"), ticket("b", "doing")], scope });
     const quiet = payload({ filed: [], scope });
-    expect(chatBadgeCount(busy)).toBe(2);
-    expect(chatBadgeCount(quiet)).toBe(0);
+    expect(chatBadge(busy, THREAD).count).toBe(2);
+    expect(chatBadge(quiet, THREAD).count).toBe(0);
   });
 
   it("drops the work this chat already finished", () => {
     const data = payload({
       filed: [ticket("a", "todo"), ticket("b", "done"), ticket("c", "cancelled")],
     });
-    expect(chatBadgeCount(data)).toBe(1);
+    expect(chatBadge(data, THREAD).count).toBe(1);
   });
 
   it("counts a filed ticket that is now blocked on a question once, not twice", () => {
-    const blocked = ticket("a", "blocked");
-    const data = payload({ filed: [blocked], inbox: [item("i1", "a")] });
+    const data = payload({ filed: [ticket("a", "blocked")], inbox: [item("i1", "a")] });
     expect(data.counts.this_chat + data.counts.needs_you).toBe(2);
-    expect(chatBadgeCount(data)).toBe(1);
+    const badge = chatBadge(data, THREAD);
+    expect(badge.count).toBe(1);
+    expect(badge.needsYou).toBe(1);
   });
 
-  it("counts a raised item with no ticket behind it as its own work", () => {
-    const data = payload({ filed: [ticket("a", "todo")], inbox: [item("i1")] });
-    expect(chatBadgeCount(data)).toBe(2);
+  it("counts a raised item that names this chat even with no ticket behind it", () => {
+    const raised = { ...item("i1"), chat_id: THREAD };
+    const data = payload({ filed: [], inbox: [raised] });
+    expect(chatBadge(data, THREAD).count).toBe(1);
+  });
+
+  it("ignores a raised item that names another chat", () => {
+    const raised = { ...item("i1"), chat_id: "somewhere-else" };
+    const data = payload({ filed: [], inbox: [raised] });
+    expect(chatBadge(data, THREAD).count).toBe(0);
+  });
+
+  it("resolves on a blank chat that has no thread yet", () => {
+    expect(chatBadge(EMPTY_WORK, null).count).toBe(0);
   });
 });
 

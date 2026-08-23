@@ -131,31 +131,71 @@ export function chipLabel(chip: WorkChip, scopeLabel?: string | null): string {
 
 /** THE TOOLBAR COUNT: what THIS conversation is carrying, and nothing else.
  *
- *  It was `counts.needs_you` alone, and the reason for that is still right and
- *  is kept intact: a badge is an alarm, and an open-ticket count is ambient
+ *  It was `counts.needs_you`, and the reason for that is still right and is
+ *  kept intact: a badge is an alarm, and an open-ticket count is ambient
  *  information wearing an alarm's clothing. Forty open tickets is the normal
  *  state of a working queue, and a permanent "40" teaches the operator to stop
- *  reading the badge. `counts.all` must therefore never reach it.
+ *  reading the badge. `counts.all`, every active ticket in the SCOPE, must
+ *  therefore never reach it.
  *
- *  What that left out is the other half of "about this chat". The union of two
- *  sets is counted here:
+ *  WHAT WAS ACTUALLY WRONG, measured against the live store on 2026-08-23. The
+ *  operator reported an unchanging 13 beside a button that claims to be about
+ *  the conversation he is in. It was not `counts.all`, which was 56. It was
+ *  `counts.needs_you`, and that count is SCOPE-POINTED rather than chat-pointed:
+ *  the server derives a needs-you row from every waiting ticket in reach and
+ *  admits it here when the row names this chat OR its scope is this chat's scope
+ *  (inbox.surfaces_in_chat). All thirteen carried `chat_id: null`, so every
+ *  development chat showed the same thirteen, which is exactly what he
+ *  described: "each chat always has the same list/number of connected tickets
+ *  whatever that number currently is".
+ *
+ *  So the badge counts the UNION of two sets, and both POINT AT THIS CHAT:
  *
  *    - what this chat FILED and has not finished. `data.filed` is keyed by
  *      thread id on the server (`source.ref == thread_id`), so it is the one
- *      genuinely per-conversation set in the payload, and it is what makes two
- *      chats in one scope show different numbers. Completed and cancelled rows
- *      are dropped: a chat that filed nine tickets and finished them is not
- *      carrying nine.
- *    - what is WAITING ON THE OPERATOR here, `data.inbox`, unchanged.
+ *      unambiguously per-conversation set in the payload. Completed and
+ *      cancelled rows are dropped: a chat that filed nine tickets and finished
+ *      them is not carrying nine.
+ *    - what is waiting on the operator AND NAMES THIS CHAT: an inbox row whose
+ *      `chat_id` is this thread, or whose ticket this chat filed. A row that is
+ *      only in the same scope belongs to the scope, and the panel still lists
+ *      every one of them under `Needs you`. It is the BADGE that has to be about
+ *      the conversation, because it is the one number sitting in the
+ *      conversation's own toolbar with no room to explain itself.
  *
  *  A UNION, NOT A SUM. A ticket this chat filed that is now blocked on a
- *  question is in both lists, and adding the two counts would make the badge
- *  read 2 for one piece of work. An inbox row names its ticket (`ticket_id`),
- *  which is what makes the overlap knowable at all; a row with no ticket behind
- *  it is its own piece of work and keys on its own id.
+ *  question is in both sets, and adding two counts would make the badge read 2
+ *  for one piece of work. Keying an inbox row on its ticket is what collapses
+ *  the overlap; a row with no ticket behind it keys on its own id.
  *
- *  Read from the PAYLOAD rather than from `counts`, because the overlap is only
- *  visible in the rows. The server's four counts are untouched. */
+ *  Read from the PAYLOAD, not from `counts`: neither the overlap nor "does this
+ *  row name my chat" is visible in four integers. The server's four counts are
+ *  untouched and the panel still shows everything it showed before. */
+export type ChatWorkBadge = {
+  /** What the badge prints. Zero hides it. */
+  count: number;
+  /** How much of `count` is an interruption rather than work in progress.
+   *  Wording only: it picks which sentence the tooltip uses. */
+  needsYou: number;
+};
+
+export function chatBadge(data: WorkPayload, threadId?: string | null): ChatWorkBadge {
+  const filedHere = new Set(data.filed.map((t) => t.id));
+  const ids = new Set<string>();
+  for (const t of data.filed) {
+    if (CARRIED.includes(taskStateTypeOf(t))) ids.add(`task:${t.id}`);
+  }
+  let needsYou = 0;
+  for (const it of data.inbox) {
+    const namesThisChat = (!!threadId && it.chat_id === threadId)
+      || (!!it.ticket_id && filedHere.has(it.ticket_id));
+    if (!namesThisChat) continue;
+    needsYou += 1;
+    ids.add(it.ticket_id ? `task:${it.ticket_id}` : `item:${it.id}`);
+  }
+  return { count: ids.size, needsYou };
+}
+
 /** The Tickets button's tooltip. The badge is ONE number that can be two kinds
  *  of thing, so the words say which kind it is: an interruption is named first
  *  because it is the only half that is an alarm, and otherwise the number is
@@ -164,17 +204,6 @@ export function workTitle(count: number, needsYou: number): string {
   if (needsYou > 0) return `Tickets. ${needsYou} waiting on you`;
   if (count > 0) return `Tickets. ${count} from this chat`;
   return "Tickets";
-}
-
-export function chatBadgeCount(data: WorkPayload): number {
-  const ids = new Set<string>();
-  for (const t of data.filed) {
-    if (CARRIED.includes(taskStateTypeOf(t))) ids.add(`task:${t.id}`);
-  }
-  for (const it of data.inbox) {
-    ids.add(it.ticket_id ? `task:${it.ticket_id}` : `item:${it.id}`);
-  }
-  return ids.size;
 }
 
 // `filed` and `scope` are disjoint on the server today (a ticket this chat filed
