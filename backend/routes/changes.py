@@ -73,6 +73,10 @@ class Change(BaseModel):
     project_slug: str
     branch_slug: str
     base_ref: str
+    # The commit the base stood at when this merged; null until then. It is what
+    # makes a merged change's own diff recoverable, since by then the base ref
+    # contains the change.
+    base_sha: str | None = None
     head_sha: str
     title: str
     # THE AUTHOR'S CLAIM. The review surface labels it as one and shows the

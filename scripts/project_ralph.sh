@@ -313,7 +313,12 @@ PYEOF
 open_change_for_task() {  # $1=branch_slug $2=task_id $3=title
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
 import sys
-from services import work_review
+from services import ownership, work_review
+# Pin the data owner before any relational read/write. Without this the call
+# dies on OwnerUnset and the change is silently never opened. This is the SIXTH
+# entrypoint to learn it the hard way (see ownership.pin_operator's docstring),
+# and it was caught here only by running the path rather than reading it.
+ownership.pin_operator()
 slug, branch_slug, task_id, title = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 c = work_review.open_for_task(slug, branch_slug, task_id=task_id, title=title,
                               summary="Opened by the unattended sweep on its success leg. "

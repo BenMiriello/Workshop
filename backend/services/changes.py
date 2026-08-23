@@ -116,6 +116,7 @@ def _shape(row: dict) -> dict:
         "project_slug": row["project_slug"],
         "branch_slug": row["branch_slug"],
         "base_ref": row["base_ref"],
+        "base_sha": row.get("base_sha"),
         "head_sha": row["head_sha"],
         "title": row["title"],
         "summary": row["summary"] or "",
