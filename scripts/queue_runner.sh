@@ -155,7 +155,38 @@ fi
 echo $$ > "$PIDFILE"
 # Clear the pidfile on the way out however we exit, so the watchdog never reads a
 # stale pid as "healthy".
-cleanup() { rm -f "$PIDFILE"; log "runner exiting (pid $$)"; }
+# --- presence (workspace-ownership-and-leases-2026-08-22 sec 6, step B4) -----
+#
+# The resident runner is a SESSION and says so, by shelling scripts/presence.py:
+# it is a separate OS process, which is precisely why section 6 requires presence
+# to be a shared TTL'd store rather than a map inside the backend.
+#
+# ONE ROW PER TREE, keyed on the same RUNNER_KEY as the lock and the pidfile, so
+# a per-project runner and the root one are two rows and not one fought over.
+#
+# WHY THE TTL IS THE FULL SWEEP BUDGET. This loop beats once per iteration and an
+# iteration contains a whole bounded sweep, so a shorter TTL would show the
+# runner as absent for most of the time it is hardest at work. What makes that
+# safe is `--profile pid` with this shell's pid: the liveness accelerator
+# (services/presence.py) probes it through port_registry.process_alive and drops
+# a crashed runner from the directory in seconds instead of stranding it for the
+# TTL -- the fast path section 6 keeps for exactly this case. It can only ever
+# shorten the row's life; nothing can extend it past the beat's own expiry.
+PRESENCE_ID="queue-runner-$RUNNER_KEY"
+PRESENCE_TTL="${WORKSHOP_RUNNER_PRESENCE_TTL:-3600}"
+beat_presence() {   # $1 = activity
+  python3 "$WORKSHOP/scripts/presence.py" heartbeat "$PRESENCE_ID" \
+      --kind run --activity "${1:-waiting for work}" --scope "$DIR" \
+      --pid $$ --profile pid --ttl "$PRESENCE_TTL" >/dev/null 2>&1 || true
+}
+
+cleanup() {
+  rm -f "$PIDFILE"
+  # Withdraw rather than expire: the runner is gone NOW, and the directory
+  # should say so on the next read instead of an hour later.
+  python3 "$WORKSHOP/scripts/presence.py" release "$PRESENCE_ID" >/dev/null 2>&1 || true
+  log "runner exiting (pid $$)"
+}
 trap cleanup EXIT
 trap 'log "caught TERM/INT — draining out"; exit 0' TERM INT
 
@@ -167,6 +198,7 @@ unset ANTHROPIC_API_KEY
 log "=== runner start pid=$$ dir=$DIR poll=${POLL}s max_tasks=$MAX_TASKS ==="
 
 while :; do
+  beat_presence "sweeping $DIR"
   if is_autonomy_off; then
     log "autonomy disabled (flag or override present); idling"
   else
@@ -218,6 +250,10 @@ while :; do
     fi
   fi
   (( ONCE == 1 )) && break
+  # Idle is a different activity from sweeping, and the directory should be able
+  # to tell them apart -- "here, waiting" is the answer to a different question
+  # than "here, busy".
+  beat_presence "waiting for work"
   # Interruptible idle: check for a wake signal every second, fall through
   # after POLL seconds so we also recover from any missed signals.
   _idle_end=$(( SECONDS + POLL ))

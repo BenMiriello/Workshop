@@ -90,6 +90,13 @@
 #   reviewer.sh [baseline-rev]        # default baseline = HEAD
 #
 # Exits 0 always (output is JSON; consumers parse `complete` field).
+#
+# GATE RESULTS ON THE CHANGE (step C3). Set REVIEWER_CHANGE_ID, or
+# REVIEWER_GATE_PROJECT + REVIEWER_GATE_BRANCH, and every per-check outcome
+# below is also written to that change's `gates` column via
+# services/change_gates.py — including the ones that SKIPPED, with the reason,
+# because an absent gate and a skipped one read identically to a person. The
+# write is best-effort and cannot change this script's verdict or exit code.
 
 set -u
 
@@ -820,7 +827,7 @@ export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK AP
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
 export RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK
-python3 - <<'PYEOF'
+RESULT_JSON=$(python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
 # evidence. project_ralph.sh reads this into the persisted receipt.
@@ -865,6 +872,11 @@ out = {
     "no_raw_storage": os.environ.get("NO_RAW_STORAGE_CHECK", "skipped"),
     "generated_client": os.environ.get("GENERATED_CLIENT_CHECK", "skipped"),
     "duplicate_helpers": os.environ.get("DUPLICATE_HELPERS_CHECK", "skipped"),
+    # Reported, not newly checked: 4.5f has computed and GATED on this since it
+    # was written (see `opaque_response_field` in REASONS above) but never
+    # emitted it, so the one consumer that shows a reviewer's per-check
+    # outcomes to a person could not show the one that blocked the run.
+    "opaque_fields": os.environ.get("OPAQUE_FIELDS_CHECK", "skipped"),
     # "skipped" covers both "this diff did not touch backend/" and "there was no
     # backend to probe"; the latter also lands in `ambiguous`, which is what
     # distinguishes them for a strict sweep.
@@ -884,6 +896,8 @@ out = {
 }
 print(json.dumps(out))
 PYEOF
+)
+printf '%s\n' "$RESULT_JSON"
 
 # Also log a one-liner for humans.
 echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
@@ -892,6 +906,40 @@ if [[ -n "$OCCUPANCY_NOTICE" ]]; then
 fi
 if [[ -n "$DOC_STATUS_NOTICE" ]]; then
   echo "[$(ts)] doc-status notice: $DOC_STATUS_NOTICE" >> "$LOG"
+fi
+
+# 5.9 Attach these per-check outcomes to the CHANGE they judged (step C3 of
+#     docs/platform-redesign/changes-and-review-2026-08-22.md, §5.3: machine
+#     gates first, human attention last). Until this block the results above
+#     went to stdout and $LOG and nowhere a reviewer could see them, so the
+#     review surface said — honestly — that no machine checks were recorded and
+#     a person re-answered by hand what a checker had already answered.
+#
+#     Addressed by REVIEWER_CHANGE_ID when the caller knows the change, or by
+#     REVIEWER_GATE_PROJECT + REVIEWER_GATE_BRANCH when it only knows the branch
+#     (the sweep learns the branch first). Unset on a manual run, which then
+#     behaves exactly as before.
+#
+#     BEST-EFFORT BY CONTRACT. The verdict above is already made; recording it
+#     is bookkeeping. No database, no open change, an unreadable payload: each
+#     is logged by services/change_gates.py and none of them touches this
+#     script's output or its "exits 0 always" contract. The module pins the data
+#     owner itself before the store, for the reason project_ralph.sh's
+#     open_change_for_task learned the hard way.
+if [[ -n "${REVIEWER_CHANGE_ID:-}" ]] || \
+   [[ -n "${REVIEWER_GATE_PROJECT:-}" && -n "${REVIEWER_GATE_BRANCH:-}" ]]; then
+  GATE_ARGS=()
+  [[ -n "${REVIEWER_CHANGE_ID:-}" ]] && GATE_ARGS+=(--change-id "$REVIEWER_CHANGE_ID")
+  [[ -n "${REVIEWER_GATE_PROJECT:-}" ]] && GATE_ARGS+=(--project "$REVIEWER_GATE_PROJECT")
+  [[ -n "${REVIEWER_GATE_BRANCH:-}" ]] && GATE_ARGS+=(--branch "$REVIEWER_GATE_BRANCH")
+  # The backend venv, where sqlalchemy lives, in preference to whatever python3
+  # is on PATH — the store is unreachable from the bare interpreter, and the
+  # module would log an import error forever instead of writing anything. Same
+  # resolution the occupancy block above uses.
+  GATE_PY=$WORKSHOP/backend/.venv/bin/python
+  [[ -x "$GATE_PY" ]] || GATE_PY=python3
+  printf '%s' "$RESULT_JSON" | (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" \
+    "$GATE_PY" -m services.change_gates "${GATE_ARGS[@]}") >> "$LOG" 2>&1 || true
 fi
 
 # 6. Meter the reviewer's OWN auxiliary claude spend (research rec 5). When this

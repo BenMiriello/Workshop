@@ -278,10 +278,11 @@ export default function ChangeReview() {
       <Card compact>
         {gates.length === 0 ? (
           <p className="ws-claim__note">
-            No machine checks are recorded on this change. The repo runs several
-            (the reviewer gate, the design lint, typecheck, the test suites), but
-            nothing writes their results here yet, so their silence is not a
-            pass. Anything you want checked, check yourself.
+            No machine checks are recorded on this change. The sweep writes them
+            here when the reviewer runs against a branch that has a change open,
+            so a change opened by hand, or one whose reviewer run predates it,
+            has none. Silence is not a pass: anything you want checked here,
+            check yourself.
           </p>
         ) : (
           <Stack gap="sm">

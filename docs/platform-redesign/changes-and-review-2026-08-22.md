@@ -1,8 +1,8 @@
 # The Change: what gets reviewed, and how work becomes merged
 
 - Date: 2026-08-22
-- Status: **C1, C2, C4 and C5 are BUILT** (2026-08-22 evening). C3 (gate results
-  on the change), C6 (the claim-to-diff check) and C7 (auto-merge) are not.
+- Status: **C1 through C5 are BUILT** (C3 on 2026-08-23; the rest 2026-08-22
+  evening). C6 (the claim-to-diff check) and C7 (auto-merge) are not.
   Section 8 carries what each step turned out to need.
 - Answers the question left open by
   [`workspace-ownership-and-leases-2026-08-22.md`](workspace-ownership-and-leases-2026-08-22.md)
@@ -203,7 +203,18 @@ change), and the sweep helper that opens a change must call
   the worker stops setting `in_review` itself. This is the step that removes
   self-reported completion.
 - **C3. Gate results on the change**: `reviewer.sh` and the test and typecheck runs
-  write their outcomes to `gates` instead of only to a log.
+  write their outcomes to `gates` instead of only to a log. BUILT (2026-08-23).
+  `services/change_gates.py` translates a reviewer run into gate entries and
+  writes them; `reviewer.sh` calls it whenever `REVIEWER_CHANGE_ID` or
+  `REVIEWER_GATE_PROJECT`+`REVIEWER_GATE_BRANCH` is set, and `project_ralph.sh`
+  routes the receipt's verdict onto the change the moment it opens one. Two
+  things this step turned out to need. First, a SKIPPED check has to be
+  recorded with its reason: most of the reviewer's checks are gated on whether
+  the diff touches the paths they inspect, and an absent gate reads to a person
+  exactly like one that did not apply. Second, the write has to resolve the
+  backend venv rather than PATH's `python3` — the store is unreachable from the
+  bare interpreter, so a bare call logs an import error forever and writes
+  nothing, which is the same silent death `open_change_for_task` had.
 - **C4. The review surface**: diff first, summary labelled as a claim, gates, intent
   beside outcome, risk signals. To the design system, on the existing sheet host.
 - **C5. Merge on approve**, local or via the mirrored PR, with the existing

@@ -637,7 +637,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Tools */
+        /**
+         * List Tools
+         * @description The tools an agent's allowlist may name, with what each one is.
+         *
+         *     Served from `services/tool_registry` — the same enumeration `GET /tools`
+         *     returns, because there is one set of tools, and an agent editor asking
+         *     "what can I grant" and a tools screen asking "what exists" are the same
+         *     question.
+         *
+         *     This route used to return a hardcoded five-string list (`filesystem`,
+         *     `google-docs`, `playwright`, `ollama`, `web`). Audited 2026-08-23: those
+         *     strings were not CLI tool names and not MCP server names, nothing enforced
+         *     them, and no frontend read them — a vocabulary used nowhere else in the
+         *     tree. They are deleted rather than translated, per
+         *     `docs/platform-redesign/tools-are-declared-2026-08-23.md` §1.
+         *
+         *     LISTING IS NOT GRANTING. `services/llm_router.tool_flags` remains the only
+         *     thing that puts a tool on an agent's argv.
+         */
         get: operations["list_tools_agents_tools_get"];
         put?: never;
         post?: never;
@@ -7379,6 +7397,53 @@ export interface paths {
          */
         post: operations["run_task_tasks__scope___task_id__run_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Tools
+         * @description Every tool this instance can name: platform first, then the installed
+         *     apps', then the user's own. `editable` is true for exactly the user ones.
+         */
+        get: operations["list_tools_tools_get"];
+        put?: never;
+        /**
+         * Create Tool
+         * @description Declare a user tool.
+         *
+         *     Refused when the id is already a platform or app tool's, naming it: a base
+         *     tool a user record could quietly redefine would be a default, not a base
+         *     tool.
+         */
+        post: operations["create_tool_tools_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tools/{tool_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Tool */
+        put: operations["update_tool_tools__tool_id__put"];
+        post?: never;
+        /** Delete Tool */
+        delete: operations["delete_tool_tools__tool_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -15322,10 +15387,157 @@ export interface components {
             /** Spec Hash */
             spec_hash?: string | null;
         };
+        /** ToolCreate */
+        ToolCreate: {
+            /** Ceiling */
+            ceiling?: string[];
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @default command
+             */
+            kind: string;
+            /** Scopes */
+            scopes?: string[];
+            spec?: components["schemas"]["ToolSpec"];
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+        };
+        /**
+         * ToolParam
+         * @description One typed input a `command` tool accepts.
+         *
+         *     Read off `services/tool_registry.ToolParam`. A declared parameter list
+         *     rather than a raw JSON-Schema blob: a `dict` field here would generate
+         *     `Record<string, never>` in the client (see `scripts/check_opaque_fields.py`)
+         *     and the frontend would hand-write the shape anyway.
+         */
+        ToolParam: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Name */
+            name: string;
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /**
+             * Type
+             * @default string
+             */
+            type: string;
+        };
+        /**
+         * ToolRecord
+         * @description A named capability an agent may be granted. Read off
+         *     `services/tool_registry.Tool.to_dict`.
+         *
+         *     ENUMERATION, NOT AUTHORITY: appearing here does not put a tool on any
+         *     agent's argv. `services/llm_router.tool_flags` remains the only thing that
+         *     grants a tool, and this record says what exists and who owns it.
+         */
+        ToolRecord: {
+            /**
+             * Ceiling
+             * @default []
+             */
+            ceiling: string[];
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Editable
+             * @default false
+             */
+            editable: boolean;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Provenance */
+            provenance: string;
+            /**
+             * Scopes
+             * @default []
+             */
+            scopes: string[];
+            /** @default {} */
+            spec: components["schemas"]["ToolSpec"];
+            /** Title */
+            title: string;
+        };
+        /**
+         * ToolSpec
+         * @description A tool's kind-specific launch detail. `extra="allow"` because the spec
+         *     grows per kind: the declared floor below is what the three current kinds
+         *     use, and an unrecognised key survives the round trip rather than being
+         *     dropped by the response model.
+         */
+        ToolSpec: {
+            /** App */
+            app?: string | null;
+            /** Command */
+            command?: string[] | null;
+            /** Params */
+            params?: components["schemas"]["ToolParam"][] | null;
+            /** Server */
+            server?: string | null;
+            /** Tool */
+            tool?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ToolWrite
+         * @description The editable half of a tool record.
+         *
+         *     `provenance` is deliberately absent: it is set by the source that loaded a
+         *     record, so a body cannot declare itself platform-owned. `id` is in the body
+         *     on create and in the path on update, because an id is the one thing an edit
+         *     may not change — renaming a tool is deleting one and declaring another, and
+         *     an allowlist elsewhere may already name the old one.
+         */
+        ToolWrite: {
+            /** Ceiling */
+            ceiling?: string[];
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Kind
+             * @default command
+             */
+            kind: string;
+            /** Scopes */
+            scopes?: string[];
+            spec?: components["schemas"]["ToolSpec"];
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+        };
         /** ToolsOut */
         ToolsOut: {
             /** Tools */
-            tools: string[];
+            tools: components["schemas"]["ToolRecord"][];
         };
         /**
          * TreeNode
@@ -29261,6 +29473,125 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskRunOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tools_tools_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolsOut"];
+                };
+            };
+        };
+    };
+    create_tool_tools_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_tool_tools__tool_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tool_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_tool_tools__tool_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tool_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedOut"];
                 };
             };
             /** @description Validation Error */

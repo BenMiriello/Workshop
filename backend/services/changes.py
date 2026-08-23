@@ -29,9 +29,11 @@ WHAT IS DELIBERATELY NOT HERE, because it is a later step and building it early
 would collide with the agent doing it:
 
   * ticket status derivation (a ticket following its change) -- step C2.
-  * gate PRODUCTION: running `reviewer.sh` and the test/typecheck sweeps and
-    writing their outcomes -- step C3. The `gates` slot round-trips here; what
-    fills it does not exist yet.
+  * gate PRODUCTION and the translation of a reviewer run into gate entries --
+    `services/change_gates.py` (step C3). It calls `update_change` like any
+    other caller; this module does not know what a reviewer is, and the
+    validation of the `gates` shape stays here because its writers are scripts
+    rather than HTTP callers.
   * merging, auto-merge, `merge_policy`, and the low-risk classifier -- steps
     C5 and C7. There is no merge entry point in this module and no route for
     one, because a verb that exists and does nothing is worse than one that

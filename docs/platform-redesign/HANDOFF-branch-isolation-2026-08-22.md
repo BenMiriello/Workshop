@@ -3,9 +3,10 @@
 - Date: 2026-08-22
 - For: the agent or agents that will build this. Read this first, then the two
   design docs it points at.
-- Status of the work: **B0, B2a, C1, C2, C5 and Track A are BUILT** (2026-08-22
-  evening). See section 0. B1 and B3 to B8 are unstarted, and B1's position in
-  the order was wrong: it needs the lease, so it now follows B3.
+- Status of the work: **B0, B2a, B2, C1, C2, C5 and Track A are BUILT** (B2 on
+  2026-08-23; the rest 2026-08-22 evening). See section 0. B1 and B3 to B8 are
+  unstarted, and B1's position in the order was wrong: it needs the lease, so it
+  now follows B3.
 - Design of record: [`workspace-ownership-and-leases-2026-08-22.md`](workspace-ownership-and-leases-2026-08-22.md)
   (revision 2, post-review) and
   [`branches-worktrees-and-environments-2026-08-20.md`](branches-worktrees-and-environments-2026-08-20.md)
@@ -45,6 +46,20 @@ Shipped 2026-08-22 in this order, each verified rather than asserted:
 - **C4** (`1ccf888`). The review surface: diff first, the summary explicitly
   labelled as the author's claim, risk signals, `/changes` list, entry points
   from Home and the ticket page.
+- **B2** (2026-08-23). The `worktree` record and its `worktree_event` timeline,
+  migration `e7d4c1b90a63`, `services/worktree_records.py`, `/branches`.
+  `services/worktrees.py` writes the row at allocate/provision and moves it
+  through merge, discard and reap. Record-keeping is ADDITIVE and a test pins
+  it: with no relational store the tree still allocates and answers with a null
+  `worktree_id`. The per-tree lock is `work_driver.tree_lock` -- section 15's
+  "fold in work_driver's existing lock rather than adding a third" -- keyed the
+  same way, with a `kind` prefix so a record write does not wait out a resident
+  sweep. `change.worktree_id` finally got the composite foreign key
+  `a7c3e10d9b64` deferred to this migration by name. **Correction 3 below is
+  fixed as part of it**: teardown now unlocks before removing and prunes before
+  deleting the ref, so an allocated branch's slug is reusable after its merge.
+  It was not, and no test had noticed, because the branch ref survived every
+  reap of an allocated (as opposed to hand-created) worktree.
 
 ### What building it corrected in this document
 

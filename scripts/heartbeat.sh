@@ -1,13 +1,30 @@
 #!/usr/bin/env bash
-# heartbeat.sh — write a liveness heartbeat for an agent (Phase 5c writer side).
+# heartbeat.sh — write a liveness heartbeat for an agent.
 #
 # Usage: heartbeat.sh <agent_id> [meta-key=val ...]
 #
-# Writes ~/workshop/.runtime/heartbeats/<agent_id>.json with current ISO-8601 ts.
-# Any additional `key=value` args are folded into the heartbeat JSON as
-# top-level fields. Use this from cron_agent.sh or the supervisor's per-agent
-# loop to mark "I am alive at <ts>" — the GET /agents/{id}/runs endpoint
-# (backend/routes/agents.py) reads it and computes heartbeat_age_s/liveness.
+# MIGRATED ONTO THE PRESENCE CHANNEL (step B4 of docs/platform-redesign/
+# workspace-ownership-and-leases-2026-08-22.md). This script used to compose its
+# own JSON; it now shells `scripts/presence.py`, which writes the SAME
+# .runtime/heartbeats/<id>.json file through backend/services/presence.py.
+#
+# That is deliberate and it is the whole point of the step: section 6 says the
+# heartbeats channel "is already this shape and is the thing to generalize
+# rather than replace", so there is ONE writer implementation and one expiry
+# rule, not a heartbeat mechanism beside a presence mechanism. The record gained
+# a server-computed `expires_at`; `ts`, `pid` and `hostname` keep their old
+# names and meanings, and the extra `key=val` args now land under `meta` instead
+# of at the top level.
+#
+# The record is written with the default `heartbeat` liveness profile, so the
+# pid is recorded but NOT probed: this shell exits immediately after the write,
+# so probing its pid would expire every agent's presence the instant it appeared.
+# A long-running loop that wants the accelerator calls presence.py directly with
+# `--profile pid`.
+#
+# Called from cron_agent.sh and the supervisor's per-agent loop to mark "I am
+# alive at <ts>"; GET /agents/{id}/runs reads it back as heartbeat_age_s +
+# liveness, and GET /presence lists it beside every other session.
 #
 # Output: prints the absolute heartbeat-file path to stdout on success.
 # Exit: 0 on write success, 1 on usage error, 2 on write failure.
@@ -22,45 +39,9 @@ fi
 AGENT_ID="$1"
 shift
 
-HEARTBEATS_DIR="${WORKSHOP_HEARTBEATS_DIR:-${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/.runtime/heartbeats}"
-TARGET="${HEARTBEATS_DIR}/${AGENT_ID}.json"
-
-mkdir -p "$HEARTBEATS_DIR"
-
-# Build JSON body. Always include ts + agent_id + hostname + pid.
-TS="$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)"
-HOST="$(hostname -s 2>/dev/null || echo unknown)"
+WORKSHOP_DIR="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PID="${HEARTBEAT_PID:-$$}"
 
-# Collect optional key=val extras into a JSON object.
-EXTRAS_JSON="{}"
-if command -v python3 >/dev/null 2>&1 && [[ $# -gt 0 ]]; then
-    EXTRAS_JSON="$(python3 -c '
-import json, sys
-out = {}
-for arg in sys.argv[1:]:
-    if "=" in arg:
-        k, v = arg.split("=", 1)
-        out[k] = v
-print(json.dumps(out))
-' "$@")"
-fi
-
-# Compose final JSON with python (no jq dependency).
-python3 -c '
-import json, sys
-body = {
-    "ts": sys.argv[1],
-    "agent_id": sys.argv[2],
-    "hostname": sys.argv[3],
-    "pid": int(sys.argv[4]),
-}
-extras = json.loads(sys.argv[5])
-body.update(extras)
-print(json.dumps(body))
-' "$TS" "$AGENT_ID" "$HOST" "$PID" "$EXTRAS_JSON" > "$TARGET.tmp"
-
-# Atomic move so readers never see a half-written file.
-mv "$TARGET.tmp" "$TARGET" || { echo "heartbeat write failed: $TARGET" >&2; exit 2; }
-
-echo "$TARGET"
+python3 "$WORKSHOP_DIR/scripts/presence.py" heartbeat "$AGENT_ID" \
+    --kind run --pid "$PID" --activity "agent run" --path -- "$@" \
+    || { echo "heartbeat write failed: $AGENT_ID" >&2; exit 2; }

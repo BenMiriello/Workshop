@@ -121,7 +121,41 @@ revoke_grant() {
      python3 -m services.dispatch_grants revoke "$GRANT_TOKEN" >/dev/null 2>&1) || true
   GRANT_TOKEN=""
 }
-trap revoke_grant EXIT
+# --- presence (workspace-ownership-and-leases-2026-08-22 sec 6, step B4) -----
+#
+# A sweep is a SESSION: it is here, it is working on something, and that fact
+# expires on its own. Written by shelling scripts/presence.py because this is a
+# separate OS process — the reason section 6 requires presence to be a shared
+# store and not a map in the backend, which could never see this script at all.
+#
+# TTL vs the ACCELERATOR. A sweep beats at task boundaries, which can be
+# ~PER_TASK wall apart, so the TTL is long. That is safe only because the record
+# opts into the pid accelerator (--profile pid with THIS shell's pid, which
+# outlives the beat): a crashed sweep is gone from the directory in seconds
+# rather than stranded for the full TTL, which is exactly the fast path section 6
+# says to keep. The accelerator can only ever shorten this; it cannot renew it.
+#
+# Best-effort on every path: a bookkeeping write must never fail a sweep.
+PRESENCE_ID=""
+LEARN_SCOPE="${LEARN_SCOPE:-}"   # set for real far below; declared here so `set -u` is safe
+PRESENCE_TTL="${WORKSHOP_SWEEP_PRESENCE_TTL:-1800}"
+beat_presence() {   # $1 = activity ; $2 = subject-kind (default none) ; $3 = subject-id
+  [[ -z "$PRESENCE_ID" ]] && return 0
+  python3 "$WORKSHOP/scripts/presence.py" heartbeat "$PRESENCE_ID" \
+      --kind run --activity "${1:-sweeping}" \
+      --subject-kind "${2:-none}" ${3:+--subject-id "$3"} \
+      ${LEARN_SCOPE:+--scope "$LEARN_SCOPE"} \
+      --pid $$ --profile pid --ttl "$PRESENCE_TTL" >/dev/null 2>&1 || true
+}
+# Leaving is stated, not waited for (section 6: presence expiry releases an
+# interactive holder's lease immediately; withdrawing on the way out is the same
+# courtesy for a sweep). Runs on EVERY exit path, beside revoke_grant.
+release_presence() {
+  [[ -z "$PRESENCE_ID" ]] && return 0
+  python3 "$WORKSHOP/scripts/presence.py" release "$PRESENCE_ID" >/dev/null 2>&1 || true
+  PRESENCE_ID=""
+}
+trap 'revoke_grant; release_presence' EXIT
 # A run-now targets exactly one task; never let it drain the queue.
 [[ -n "$TASK_ID_ARG" ]] && MAX_TASKS=1
 
@@ -328,6 +362,28 @@ PYEOF
 )
 }
 
+# Attach the run's MACHINE-GATE results to the change it just opened (C3 of
+# changes-and-review, §5.3: machine gates first, human attention last). The
+# reviewer that decided this run's RC already produced a per-check verdict for
+# every check it ran; ralph.sh persists that verdict verbatim under `.reviewer`
+# in the receipt file, so nothing is re-run here — the results are ROUTED, not
+# regenerated. services/change_gates.py unwraps the receipt itself.
+#
+# Best-effort by the same contract as open_change_for_task: the work is
+# committed on the branch and the ticket has already been decided either way,
+# so a bookkeeping failure must never cost either. The module logs and returns
+# rather than raising, and pins the data owner before it touches the store.
+record_change_gates() {  # $1=change_id
+  [[ -n "${1:-}" && -f "$RECEIPT_FILE" ]] || return 0
+  # The backend venv where sqlalchemy lives, in preference to PATH's python3:
+  # the store is unreachable from the bare interpreter, so a bare call would
+  # log an import error forever rather than writing anything.
+  local gate_py=$WORKSHOP/backend/.venv/bin/python
+  [[ -x "$gate_py" ]] || gate_py=python3
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$gate_py" -m services.change_gates \
+     --change-id "$1" --input "$RECEIPT_FILE") >>"$LOG" 2>&1 || true
+}
+
 # Reap worktrees whose branch already merged into the canonical base. Best-effort.
 cleanup_merged_worktrees() {
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
@@ -368,6 +424,7 @@ publish_or_park() {  # $1=branch_slug $2=title $3=body
       '. + {branch: $branch, change: $change}' 2>/dev/null)
     [[ -n "$aug" ]] && EVIDENCE="$aug"
     if [[ -n "$change_id" ]]; then
+      record_change_gates "$change_id"
       python3 "$PTASKS" note "$DIR" "$TASK_ID" "change opened on branch wt/$WT_SLUG/$1; accepting it merges the branch" --kind acceptance >/dev/null 2>>"$LOG"
       log "task=$TASK_ID change=$change_id opened on wt/$WT_SLUG/$1 (unmerged, awaiting review)"
     else
@@ -559,8 +616,21 @@ print(f'{n_ok}/{len(r)} acceptance criteria passed | ' + ' ; '.join(parts))
   # Pass the bill scope + attribution so this criteria-aware reviewer pass meters
   # its own auxiliary claude spend (if any) against the worker's scope, role=reviewer.
   # Inert for the deterministic gate (no reviewer claude envelope). (research rec 5)
-  local rjson rcomplete rreasons
+  # Address the change this branch already has, if it has one. On a first
+  # attempt it does not (the change is opened further down, on the success leg,
+  # and record_change_gates routes the results there); on a RE-attempt of a task
+  # whose branch already produced a change, this is what puts the
+  # criteria-aware verdict — the one that judged executed evidence — onto it
+  # rather than only the plain reviewer pass. Empty outside worktree mode, where
+  # reviewer.sh's gate block is inert. (C3)
+  local rjson rcomplete rreasons gate_project gate_branch
+  gate_project=""; gate_branch=""
+  if [[ "${WT_MODE:-0}" == "1" ]]; then
+    gate_project="$WT_SLUG"; gate_branch="${WT_BRANCH_SLUG:-}"
+  fi
   rjson=$(REVIEWER_CRITERIA_FILE="$CRIT_RESULTS_FILE" REVIEWER_ROOT="$WORK_DIR" \
+          REVIEWER_GATE_PROJECT="$gate_project" \
+          REVIEWER_GATE_BRANCH="$gate_branch" \
           REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" \
           REVIEWER_BILL_SCOPE="${BILL_SCOPE:-}" \
           REVIEWER_BILL_TASK_ID="${TASK_ID:-}" \
@@ -859,6 +929,11 @@ LEARN_SCOPE="$(learn_scope_for)"
 START_EPOCH=$(date +%s)
 log "=== sweep start slug=$SLUG wt_slug=$WT_SLUG dir=$DIR autonomy=$PRESET job=$JOB_ID scope=$BILL_SCOPE learn_scope=$LEARN_SCOPE grant=${GRANT_TOKEN:0:8} max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS bound=$REPO_BOUND worktrees=$WT_ENABLED ==="
 
+# The sweep is now a live session in the directory. Keyed on its Job id, so the
+# presence row and the run-state record name the same thing.
+PRESENCE_ID="sweep-$JOB_ID"
+beat_presence "sweeping $BILL_SCOPE"
+
 # The canonical branch for a bound project: the tracked default_branch, else the
 # same main/master/HEAD detection worktrees.py falls back to. Used by
 # fetch-before-work and worktree allocation.
@@ -1009,6 +1084,9 @@ while (( n < MAX_TASKS )); do
   # Fencing token from this claim; passed to every finalize so a zombie can't
   # clobber a task that a liveness reclaim reassigned to a newer sweep.
   CLAIM_TOKEN=$(jf "$CLAIMED" claim_token)
+  # Now working a named subject. A whole-record write, so the previous subject
+  # (or none) is replaced rather than accumulated.
+  beat_presence "working ticket $TASK_ID" ticket "$TASK_ID"
 
   # Worktree-per-task (Phase G3): opt-in, bound projects only. Run this task in
   # its own isolated worktree off origin/<default_branch> instead of the shared

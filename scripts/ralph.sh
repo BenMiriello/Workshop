@@ -126,12 +126,46 @@ assert_run_target "$DIR" "ralph.sh" || exit 4
 # this run drives an isolated worktree (--dir), so default it to the tree we drive.
 [[ -z "$STORE_DIR" ]] && STORE_DIR="$DIR"
 
+# This run's presence row. Keyed on the child Job id when project_ralph.sh
+# passed one, so the directory entry and the run-state record name the same
+# attempt; a standalone ralph keys on the tree it drives instead.
+#
+# --profile pid opts the record into the liveness accelerator, which is what
+# makes the long TTL honest: an iteration can take PER_ITER_TIMEOUT (up to
+# 1500s) and only beats between iterations, so a crashed run would otherwise sit
+# in the directory until the TTL ran out. The accelerator probes THIS shell's
+# pid and can only ever shorten the row's life.
+PRESENCE_ID="${RUN_ID:-ralph-$(printf '%s' "$DIR" | md5sum | cut -c1-12)}"
+PRESENCE_TTL="${WORKSHOP_RUN_PRESENCE_TTL:-1800}"
+beat_presence() {
+  local subject=(--subject-kind none)
+  [[ -n "$TASK_ID" ]] && subject=(--subject-kind ticket --subject-id "$TASK_ID")
+  python3 "$WORKSHOP/scripts/presence.py" heartbeat "$PRESENCE_ID" \
+      --kind run --activity "${PRESENCE_ACTIVITY:-working}" "${subject[@]}" \
+      --scope "$STORE_DIR" --pid $$ --profile pid --ttl "$PRESENCE_TTL" \
+      >/dev/null 2>&1 || true
+}
+# Say we are gone rather than making the directory wait out the TTL.
+release_presence() {
+  python3 "$WORKSHOP/scripts/presence.py" release "$PRESENCE_ID" >/dev/null 2>&1 || true
+}
+trap release_presence EXIT
+
 # Renew the claimed task's lease so a slow-but-alive worker is never reclaimed
 # mid-iteration (Fix 2). Best-effort and inert unless project_ralph passed the
 # claim identity. Presents the claim token so it is fenced by Fix 1: once an
 # operator edit or a liveness reclaim displaces this run, the heartbeat becomes a
 # no-op (as will the final write), which we log but do not treat as fatal.
+#
+# IT ALSO WRITES PRESENCE (workspace-ownership-and-leases-2026-08-22 sec 6, step
+# B4). Two different records, on purpose, and conflating them is the mistake to
+# avoid: the task-store beat renews a CLAIM on a ticket (durable, fenced by a
+# token), while presence is the expiring fact that this run is here and what it
+# is doing (disposable, owned by nobody). They are renewed together because they
+# are true together, and this run is a separate OS process, so the only way the
+# platform can see it at all is a shared store it shells into.
 heartbeat_task() {
+  beat_presence
   [[ -z "$TASK_ID" || -z "$CLAIM_TOKEN" || -z "$STORE_DIR" ]] && return 0
   local out hb_id
   out=$(python3 "$PTASKS" heartbeat "$STORE_DIR" "$TASK_ID" "$CLAIM_TOKEN" 2>>"$LOG")

@@ -1,6 +1,4 @@
-import json
 import os
-from pathlib import Path
 
 from typing import Any, Literal
 
@@ -8,28 +6,12 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from routes.api_models import (AgentLimits, AgentTrigger, ContentOut, DeletedOut, FileOut, Job, OkOut,
-                               QueueCounts, AwaitingRow, Task, TreeOut)
-from services import agents_registry, build_agents, dev_servers, jobs, triggers
+                               QueueCounts, AwaitingRow, Task, ToolsOut, TreeOut)
+from services import agents_registry, build_agents, dev_servers, jobs, presence, tool_registry, triggers
 from services import agent_authority
-from wsplatform import paths
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE
 
 router = APIRouter()
-
-HEARTBEATS_DIR = paths.env_path("WORKSHOP_HEARTBEATS_DIR", "heartbeats")
-
-# Tool handles the platform itself provides. An app's tools come from its
-# AppSpec.tools and appear only while it is installed.
-PLATFORM_TOOLS = ["filesystem", "google-docs", "playwright", "ollama", "web"]
-
-
-def known_tools() -> list[str]:
-    from services import app_registry
-
-    return PLATFORM_TOOLS + [
-        t for t in app_registry.installed_tools() if t not in PLATFORM_TOOLS
-    ]
-
 
 # ---- Response models -------------------------------------------------------
 # ADR 0023 clause 6. Every field below was read off its emitter --
@@ -306,10 +288,6 @@ class DelegatesOut(BaseModel):
     delegates: list[NativeSubagent]
 
 
-class ToolsOut(BaseModel):
-    tools: list[str]
-
-
 class BuildAgent(BaseModel):
     """A maker's execution state, out of `.runtime/build_agents.json`. Distinct
     from `Agent`, which is what a DEFINITION FILE declares: running is not a way
@@ -441,10 +419,11 @@ class AgentJobsOut(BaseModel):
 class AgentRunsOut(BaseModel):
     """The per-agent activity feed: the run history plus heartbeat freshness.
 
-    `heartbeat` is whatever the heartbeat writer put in `.runtime/heartbeats/
-    <id>.json`, so it stays an open dict. `heartbeat_age_s` is a float of
-    seconds, which ADR 0023 clause 4 says should be `<thing>_ms` as an integer;
-    unchanged for the same reason as every other rename here."""
+    `heartbeat` is this agent's PRESENCE record (`services/presence.py`, step
+    B4), which is what the heartbeats channel became; it stays an open dict
+    because the channel carries a writer-supplied `meta` tail. `heartbeat_age_s`
+    is a float of seconds, which ADR 0023 clause 4 says should be `<thing>_ms`
+    as an integer; unchanged for the same reason as every other rename here."""
 
     agent_id: str
     heartbeat: dict | None = None
@@ -639,7 +618,24 @@ async def list_delegates():
 
 @router.get("/tools", response_model=ToolsOut, response_model_exclude_unset=True)
 async def list_tools():
-    return {"tools": known_tools()}
+    """The tools an agent's allowlist may name, with what each one is.
+
+    Served from `services/tool_registry` — the same enumeration `GET /tools`
+    returns, because there is one set of tools, and an agent editor asking
+    "what can I grant" and a tools screen asking "what exists" are the same
+    question.
+
+    This route used to return a hardcoded five-string list (`filesystem`,
+    `google-docs`, `playwright`, `ollama`, `web`). Audited 2026-08-23: those
+    strings were not CLI tool names and not MCP server names, nothing enforced
+    them, and no frontend read them — a vocabulary used nowhere else in the
+    tree. They are deleted rather than translated, per
+    `docs/platform-redesign/tools-are-declared-2026-08-23.md` §1.
+
+    LISTING IS NOT GRANTING. `services/llm_router.tool_flags` remains the only
+    thing that puts a tool on an agent's argv.
+    """
+    return {"tools": [t.to_dict() for t in tool_registry.catalog()]}
 
 
 # ---- Build agents (Claude Code coding sessions) ----------------------------
@@ -1441,23 +1437,20 @@ async def agent_jobs(agent_id: str,
 @router.get("/{agent_id}/runs", response_model=AgentRunsOut, response_model_exclude_unset=True)
 async def agent_runs(agent_id: str,
                      limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE)):
-    """Recent activity feed for an agent: cron-runs JSONL (filtered) + last
-    heartbeat from .runtime/heartbeats/{id}.json + heartbeat freshness flag.
-    Powers per-agent activity cards on the Agents page."""
-    # Heartbeat
-    heartbeat = None
-    heartbeat_age_s = None
-    hb_path = HEARTBEATS_DIR / f"{agent_id}.json"
-    if hb_path.exists():
-        try:
-            heartbeat = json.loads(hb_path.read_text())
-            from datetime import datetime, timezone
-            hb_ts = heartbeat.get("ts")
-            if hb_ts:
-                hb_dt = datetime.fromisoformat(hb_ts.replace("Z", "+00:00"))
-                heartbeat_age_s = (datetime.now(timezone.utc) - hb_dt).total_seconds()
-        except (json.JSONDecodeError, ValueError):
-            pass
+    """Recent activity feed for an agent: cron-runs JSONL (filtered) + its
+    presence record + a freshness flag. Powers per-agent activity cards on the
+    Agents page.
+
+    READ THROUGH `services/presence.py` (step B4), not by parsing the file here.
+    This route used to open `.runtime/heartbeats/{id}.json` itself and call a
+    record older than 120 seconds unresponsive; that threshold was a second,
+    private copy of an expiry rule the record can now state. The agent's
+    session id in that channel IS its agent id -- the writer is
+    `scripts/heartbeat.sh <agent_id>` -- so the lookup is unchanged, and a
+    record written before B4 still reads (`presence._tolerate`).
+    """
+    heartbeat = presence.get(agent_id)
+    heartbeat_age_s = presence.beat_age_s(heartbeat)
 
     # Recent Jobs for this agent, sourced from the unified Job store
     # (.runtime/jobs.jsonl) rather than the retired agent-runs.jsonl. Same
@@ -1468,7 +1461,12 @@ async def agent_runs(agent_id: str,
         "agent_id": agent_id,
         "heartbeat": heartbeat,
         "heartbeat_age_s": heartbeat_age_s,
-        "liveness": "unresponsive" if (heartbeat_age_s is not None and heartbeat_age_s > 120) else ("alive" if heartbeat else "no-heartbeat"),
+        # The same three words as before, now decided by the record's own
+        # expiry (and by the accelerator, where a record opted into one)
+        # instead of by a threshold spelled only here.
+        "liveness": ("no-heartbeat" if not heartbeat
+                     else "alive" if presence.is_live(heartbeat)
+                     else "unresponsive"),
         "runs": runs,
         "runs_count": len(runs),
     }
