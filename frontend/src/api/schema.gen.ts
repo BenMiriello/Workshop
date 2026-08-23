@@ -9729,6 +9729,8 @@ export interface components {
             app_id?: string | null;
             /** Base Ref */
             base_ref: string;
+            /** Base Sha */
+            base_sha?: string | null;
             /** Branch Slug */
             branch_slug: string;
             /** Closed Reason */
