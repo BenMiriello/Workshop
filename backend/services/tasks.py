@@ -1775,12 +1775,23 @@ def reclaim(root: Path, *, now: datetime | None = None, ttl: int = LEASE_TTL_SEC
     (dead-letter, visible to the operator, never re-picked). The monotonic
     `claim_token` is left intact so a zombie that later tries to finalize is
     fenced. Returns [{id, action}] for logging. Cheap: scans lock-free first and
-    only takes the lock when there is actually something to reclaim."""
-    raw = _read_store(root)
-    if not raw:
+    only takes the lock when there is actually something to reclaim.
+
+    THE PRESCAN READS `_load`, NOT `_read_store` (fixed 2026-08-23). It used to
+    open with `_read_store(root)`, which reads the RETIRED `.tasks.json` file
+    store directly and skips the relational branch every other caller goes
+    through -- including the `_load` two lines below, inside the lock. On this
+    installation that file held 126 rows with ZERO in `doing` while the
+    relational store held 175 with two, so the prescan found nothing stale and
+    returned `[]` on every single poll. The self-healing this function IS never
+    ran: two tickets sat `doing` with dead pids for 41 hours, and because
+    `next_ready` calls `reclaim` first, they were invisible to the scheduler the
+    whole time. A prescan that reads a different store from the pass it guards
+    is not an optimization, it is a guaranteed wrong answer."""
+    normalized = _load(root)
+    if not normalized:
         return []
     now_dt = now or datetime.now(timezone.utc)
-    normalized = [_normalize(t) for t in raw if isinstance(t, dict)]
     if not any(_is_stale_claim(t, now_dt, ttl) for t in normalized):
         return []
     out: list[dict] = []

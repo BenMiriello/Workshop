@@ -1,16 +1,18 @@
-"""Delta mode for the two whole-tree ratchets (2026-08-23).
+"""Delta mode for the three whole-tree gates (2026-08-23).
 
-WHAT BROKE, AND WHAT THESE TESTS PIN. `scripts/check_module_layout.py` and
-`scripts/check_no_app_names.py` measure the WHOLE tree against a STATIC pinned
-baseline. Run that way as `scripts/reviewer.sh`'s completion gate they rejected
-every run for debt the run had inherited -- 2,066 loop jobs from 2026-07-18
+WHAT BROKE, AND WHAT THESE TESTS PIN. `scripts/check_module_layout.py`,
+`scripts/check_no_app_names.py` and `scripts/check_no_hardcoding.sh` all
+measured the WHOLE tree against a STATIC absolute reference -- a pinned
+baseline for the first two, plain zero for the third. Run that way as
+`scripts/reviewer.sh`'s completion gate they rejected every run for debt the
+run had inherited -- 2,066 loop jobs from 2026-07-18
 onward all reported `tasks_done: 0`, because each worker collected a rejection
 it had not caused, retried, and tripped ralph.sh's no-progress thrash guard.
 `--since <ref>` compares the run's base ref against the working tree and fails
 only on what the run itself made worse.
 
 There are exactly two properties worth pinning, and they pull in opposite
-directions, which is why both are here for both scripts:
+directions, which is why both are here for all three scripts:
 
   * inherited debt must PASS   -- or the loop stalls again
   * a NEW regression must FAIL -- or the fix has quietly deleted the ratchet
@@ -26,6 +28,7 @@ construction -- the same reasoning `test_check_one_definition.py` records.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -231,3 +234,112 @@ class TestNoAppNamesDelta:
         r = _run(repo, "check_no_app_names.py", "--since", "HEAD")
         assert r.returncode == 0, r.stdout + r.stderr
         assert "otherapp" in r.stdout  # the roster really did pick it up
+
+
+class TestNoHardcodingDelta:
+    """`scripts/check_no_hardcoding.sh` — the third gate with the same defect.
+
+    It is bash, not Python, and it was the WORST of the three: absolute,
+    whole-tree AND unconditional in reviewer.sh, so 25 inherited identity
+    references in files no worker had touched rejected every run in the tree.
+    Its `--since` mode reuses `_ratchet_delta.extract_into` through that
+    module's `__main__`, so there is still exactly ONE definition of "the base
+    tree" across all three checkers.
+
+    The needles come from the MACHINE, so the fixture pins one it controls:
+    repo-local `git config user.name`. `WORKSHOP` is passed explicitly because
+    reviewer.sh exports it — without that the script would helpfully scan the
+    real workshop instead of the fixture.
+    """
+
+    NAME = "fixtureoperator"
+    SCRIPT = "check_no_hardcoding.sh"
+
+    def _run_sh(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(repo / "scripts" / self.SCRIPT), *args],
+            cwd=repo, capture_output=True, text=True,
+            env={**os.environ, "WORKSHOP": str(repo)},
+        )
+
+    @pytest.fixture()
+    def repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "repo"
+        (repo / "scripts").mkdir(parents=True)
+        for name in (self.SCRIPT, "_ratchet_delta.py"):
+            shutil.copy(_SCRIPTS / name, repo / "scripts" / name)
+        _git(repo, "init", "-q", "-b", "main")
+        # The identity this fixture's "machine" answers with. Repo-local, so it
+        # cannot leak into the real tree and cannot be the real operator's.
+        _git(repo, "config", "user.name", self.NAME)
+        _git(repo, "config", "user.email", f"{self.NAME}@fixture.invalid")
+        (repo / "backend").mkdir()
+        (repo / "backend" / "legacy.py").write_text(
+            f'A = "{self.NAME}"\nB = "{self.NAME}"\nC = "{self.NAME}"\n'
+        )
+        _commit(repo, "base: three inherited identity references")
+        return repo
+
+    def test_absolute_mode_still_reports_the_inherited_debt(self, repo: Path):
+        """A bare run is unchanged: the real debt must stay visible to a human."""
+        r = self._run_sh(repo)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "3 reference(s) to this deployment's own identity" in r.stdout
+
+    def test_delta_passes_on_inherited_debt(self, repo: Path):
+        """The whole point: a run that added no identity is not blamed for three."""
+        (repo / "backend" / "unrelated.py").write_text("VALUE = 1\n")
+        _commit(repo, "worker's unrelated change")
+        r = self._run_sh(repo, "--since", "HEAD~1")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "clean vs HEAD~1" in r.stdout
+        # ...and the inherited debt is still REPORTED, just not gated on.
+        assert "not gating" in r.stdout
+        assert "identity: 3 reference(s), 3 of them already present" in r.stdout
+
+    def test_delta_fails_on_a_newly_introduced_identity(self, repo: Path):
+        """And the other direction: one new reference anywhere still fails, or
+        the fix has quietly deleted the check."""
+        (repo / "backend" / "legacy.py").write_text(
+            f'A = "{self.NAME}"\nB = "{self.NAME}"\nC = "{self.NAME}"\nD = "{self.NAME}"\n'
+        )
+        r = self._run_sh(repo, "--since", "HEAD")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "1 NEW reference(s) to this deployment's own identity" in r.stdout
+        assert "was 3 at HEAD, now 4" in r.stdout
+
+    def test_delta_fails_on_a_new_identity_in_a_committed_file(self, repo: Path):
+        """The worker commits its own work, so a base-ref comparison is the only
+        one that can still see what it added."""
+        (repo / "backend" / "added.py").write_text(f'D = "{self.NAME}"\n')
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        _commit(repo, "worker's commit")
+        r = self._run_sh(repo, "--since", base)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "1 NEW" in r.stdout
+        assert "backend/added.py" in r.stdout
+
+    def test_delta_catches_a_file_this_diff_never_touched(self, repo: Path):
+        """`--since`, not `--only-changed`: moving an identity into an untouched
+        file is exactly what a per-file scoping would miss."""
+        (repo / "backend" / "other.py").write_text("PLACEHOLDER = 0\n")
+        _commit(repo, "base has an innocent second file")
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        (repo / "backend" / "other.py").write_text(f'MOVED = "{self.NAME}"\n')
+        r = self._run_sh(repo, "--since", base)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "backend/other.py" in r.stdout
+
+    def test_removing_an_identity_is_not_a_failure(self, repo: Path):
+        (repo / "backend" / "legacy.py").write_text(f'A = "{self.NAME}"\n')
+        r = self._run_sh(repo, "--since", "HEAD")
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_unresolvable_ref_fails_loudly(self, repo: Path):
+        """An empty extract would read as "the base had nothing", turning every
+        inherited reference into a brand-new one."""
+        r = self._run_sh(repo, "--since", "no-such-ref")
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "cannot read ref" in r.stderr

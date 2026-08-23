@@ -310,12 +310,32 @@ if $_APPS_RELEVANT; then
 fi
 unset _APPS_CORE _APPS_FORBIDDEN _APPS_RELEVANT _apf
 
-# 4.6b No hardcoded machine or operator identity. Unlike the apps check this has
-# no relevance precondition: a path or a hostname can land in any file, and the
-# whole point is that it looks fine from inside the install that has it.
+# 4.6b No hardcoded machine or operator identity. STILL UNCONDITIONAL — unlike
+# the apps check this has no relevance precondition, because a path or a
+# hostname can land in any file and the whole point is that it looks fine from
+# inside the install that has it. It still scans EVERY tracked file.
+#
+# `--since "$BASELINE"` (added 2026-08-23) is what makes it a REVIEW gate rather
+# than a tree-health readout, and it is the same treatment the two ratchets
+# above got. It counts identity hits on the whole tree at the run's base ref AND
+# on the working tree, and fails only on a category THIS RUN made worse. Before
+# that it was ABSOLUTE and whole-tree: any hit anywhere failed the review, so
+# being unconditional made it fatal. On 2026-08-23 it was rejecting every run in
+# this tree over 25 inherited references — 19 operator-name hits in two backend
+# test files, 3 login-name hits in a frontend test, 3 more — in files no worker
+# had touched, several older than the check itself. Each run collected a
+# rejection it could not act on (fixing it means editing another agent's files,
+# which the repo rule forbids), retried, hit ralph.sh's no-progress thrash guard
+# and exited 6: 2,066 loop jobs since 2026-07-18 all reported tasks_done: 0.
+#
+# The check is NOT weakened and nothing is allowlisted. A bare run still reports
+# the real absolute debt (25 today) and delta mode still prints it as FYI; the
+# needles are still asked of the machine rather than written down; introducing
+# ONE new reference anywhere in the tree still fails. A run is simply not blamed
+# for identity references that existed at its own base commit.
 HARDCODE_CHECK="skip"
 if [[ -x "$WORKSHOP/scripts/check_no_hardcoding.sh" ]]; then
-  if bash "$WORKSHOP/scripts/check_no_hardcoding.sh" >/dev/null 2>&1; then
+  if bash "$WORKSHOP/scripts/check_no_hardcoding.sh" --since "$BASELINE" >/dev/null 2>&1; then
     HARDCODE_CHECK="ok"
   else
     HARDCODE_CHECK="fail"

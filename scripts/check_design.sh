@@ -284,19 +284,85 @@ design_status=$?
 # docs-only change is not answerable for a bundle someone else left stale. Both
 # path prefixes matter — packages/ui compiles INTO the bundle via vite's
 # `workshop-source` condition, so a kit edit is a UI change.
+#
+# WHAT THIS SCOPING MISSED, AND THE DECISION TAKEN 2026-08-23. "Touched the
+# bundle's inputs" was read off `git diff --name-only $REV`, which on a SHARED
+# CHECKOUT is not this run's diff: it also carries every other agent's
+# UNCOMMITTED edit. So one agent with an open .tsx made every other run in the
+# tree fail this clause — and the failure was UNFIXABLE BY THE RUN THAT GOT IT.
+# The only prescribed remedy is `scripts/apply.sh`, and apply.sh DELIBERATELY
+# REFUSES to build while any uncommitted UI work is in the tree ("THE BUILT
+# ORIGIN SERVES COMMITTED WORK ... uncommitted is the definition of unfinished",
+# apply.sh, the ui_wip guard). `--publish-wip` would override it by dragging
+# somebody's half-written screen onto the origin the operator looks at, which is
+# the exact accident that guard was written for. And the run cannot commit those
+# files either: CLAUDE.md says stage only your own. A gate whose only remedies
+# are forbidden is not a gate, it is a deadlock, and it is one of the things
+# that held every reviewer run at `reject` while 2,066 loop jobs reported
+# tasks_done: 0.
+#
+# So the clause is now judged against WHAT A BUILD CAN ACTUALLY PUBLISH, which
+# is the committed tree — the same line apply.sh and .githooks/post-commit
+# already draw. FATAL when a UI input THIS RUN changed differs between the
+# commit the bundle was built from and HEAD: that means this run's UI work is
+# committed and the operator's origin does not have it. That is 2026-08-09
+# exactly — those width fixes were correct in source, committed, and never
+# built — so the case the rule exists for still fails, loudly.
+#
+# NOT fatal when the remaining staleness is uncommitted work, whoever's. It is
+# reported by name instead. Nothing is lost by that: committing rebuilds
+# automatically via the post-commit hook, committing as you go is already the
+# repo rule, and :5173 serves the working tree live meanwhile. An uncommitted
+# edit is BY POLICY not on the built origin, so failing a review over one is
+# asserting a state the platform refuses to enter.
+#
+# Deliberately NOT done: dropping the clause, exempting the reviewer, or
+# comparing source ids after stashing. ui_source_id.sh stays the ONE definition
+# of "which UI source is this" and is not touched; this only decides who is
+# ANSWERABLE for a mismatch it reports.
 ui_inputs_touched=0
+run_ui_files=""
 if [ "$MODE" = "added" ]; then
-  if git -C "$WORKSHOP" diff --name-only "$REV" 2>/dev/null \
-       | grep -qE '^(frontend|packages/ui)/'; then
-    ui_inputs_touched=1
-  fi
+  run_ui_files="$(git -C "$WORKSHOP" diff --name-only "$REV" 2>/dev/null \
+                  | grep -E '^(frontend|packages/ui)/' || true)"
+  [ -n "$run_ui_files" ] && ui_inputs_touched=1
 fi
 if [ "$ui_inputs_touched" = 1 ]; then
   if ! bash "$WORKSHOP/scripts/ui_sync.sh" --strict; then
-    echo "check_design: this change touches the UI but the built bundle is STALE."
-    echo "              the operator views the BUILT origin, so it does not have this change."
-    echo "              run: bash scripts/apply.sh"
-    design_status=1
+    # Which commit is the bundle built from? Recorded by the build itself, so
+    # this is not a second definition of freshness — it is the same stamp
+    # ui_sync.sh just read, asked a narrower question.
+    dist_commit="$(python3 -c '
+import json, sys
+try:
+    print(json.load(open("frontend/dist/build-info.json")).get("commit") or "")
+except Exception:
+    print("")' 2>/dev/null)"
+    unbuilt=""
+    if [ -n "$dist_commit" ] && git -C "$WORKSHOP" cat-file -e "$dist_commit^{commit}" 2>/dev/null; then
+      # This run's UI files whose COMMITTED content is not what the bundle holds.
+      unbuilt="$(git -C "$WORKSHOP" diff --name-only "$dist_commit" HEAD -- frontend packages/ui 2>/dev/null \
+                 | grep -E '^(frontend|packages/ui)/' \
+                 | grep -Fxf <(printf '%s\n' "$run_ui_files") || true)"
+    else
+      # No stamp, or a bundle built from a commit this repo does not have. We
+      # cannot show the change is published, so we must not claim it is.
+      unbuilt="(no usable build stamp on frontend/dist)"
+    fi
+    if [ -n "$unbuilt" ]; then
+      echo "check_design: this change's COMMITTED UI work is not in the built bundle."
+      echo "              the operator views the BUILT origin, so it does not have this change."
+      printf '%s\n' "$unbuilt" | sed 's/^/              /'
+      echo "              run: bash scripts/apply.sh"
+      design_status=1
+    else
+      echo "warn: the bundle is stale, but not from this change's committed UI work —"
+      echo "      it is uncommitted UI edits in this shared tree, which apply.sh"
+      echo "      declines to publish on purpose. Commit them and the post-commit"
+      echo "      hook builds; :5173 serves them live meanwhile."
+      git -C "$WORKSHOP" status --porcelain -- frontend/src packages/ui frontend/index.html \
+        2>/dev/null | sed 's/^/      /'
+    fi
   fi
 else
   bash "$WORKSHOP/scripts/ui_sync.sh" --warn
