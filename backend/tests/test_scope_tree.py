@@ -358,3 +358,42 @@ class TestLabel:
 
     def test_unparseable_falls_back_to_the_raw_key(self):
         assert scope_tree.label("nonsense") == "nonsense"
+
+
+class TestAnAppContainsItsBuildView:
+    """`app-is-the-entity-2026-08-20.md`: an app and its project are one thing
+    wearing two records, so the project nests under the app.
+
+    Until 2026-08-23 neither edge existed and the two were unrelated siblings,
+    which put eight rows in the Memory tree for four things and left two real
+    `project:commute` notes unreachable from the Commute app.
+    """
+
+    def test_a_linked_project_hangs_off_its_app(self, monkeypatch):
+        monkeypatch.setattr(scope_tree, "_project_is_an_apps_build_view",
+                            lambda slug: slug == "budget")
+        assert scope_tree.parent("project:budget") == "app:budget"
+
+    def test_the_app_stays_at_the_root(self, monkeypatch):
+        monkeypatch.setattr(scope_tree, "_project_is_an_apps_build_view",
+                            lambda slug: slug == "budget")
+        assert scope_tree.parent("app:budget") == scope_tree.WORKSHOP_SCOPE
+
+    def test_an_unlinked_project_stays_at_the_root(self, monkeypatch):
+        monkeypatch.setattr(scope_tree, "_project_is_an_apps_build_view",
+                            lambda slug: False)
+        assert scope_tree.parent("project:solo") == scope_tree.WORKSHOP_SCOPE
+
+    def test_the_app_reaches_the_project_it_contains(self, monkeypatch):
+        monkeypatch.setattr(scope_tree, "_existing_scopes",
+                            lambda: ["app:budget", "project:budget"])
+        monkeypatch.setattr(scope_tree, "_project_is_an_apps_build_view",
+                            lambda slug: slug == "budget")
+        assert scope_tree.reach("app:budget") == ["app:budget", "project:budget"]
+
+    def test_the_project_does_not_reach_upward_to_its_app(self, monkeypatch):
+        monkeypatch.setattr(scope_tree, "_existing_scopes",
+                            lambda: ["app:budget", "project:budget"])
+        monkeypatch.setattr(scope_tree, "_project_is_an_apps_build_view",
+                            lambda slug: slug == "budget")
+        assert scope_tree.reach("project:budget") == ["project:budget"]

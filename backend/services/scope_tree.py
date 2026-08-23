@@ -14,11 +14,20 @@ assume: `development` is ABOVE `workshop`, not below it.
     development                 ROOT on a developer build. Reaches everything.
     |-- workshop                root of a NORMAL install. Cannot see into
         |                       development.
-        |-- project:<slug>
-        |   |-- app:<name>      when bound to that project
-        |   `-- agent:<slug>    when bound to that project
-        |-- app:<name>          unattached
+        |-- app:<name>          the thing the operator named
+        |   `-- project:<slug>  its BUILD VIEW, when both records exist
+        |       `-- agent:<slug>    when bound to that project
+        |-- project:<slug>      a working tree with no app catalog entry
         `-- agent:<slug>        unattached
+
+APP OVER PROJECT, NOT THE OTHER WAY AROUND. This diagram used to show
+`app:<name>` nested UNDER `project:<slug>` "when bound to that project", and
+`_default_parent` never implemented it. That nesting is the retired model:
+`app-is-the-entity-2026-08-20.md` makes the app the one container the user
+names and the project the build view of it, so the containing node is the app.
+Until 2026-08-23 neither edge existed and the two sat as unrelated SIBLINGS,
+which put eight rows in the operator's Memory tree for four things and hid
+`project:commute`'s notes from the Commute app entirely.
 
 `development` is the developer's environment: the only scope whose work target
 is the running application. It exists only when
@@ -247,11 +256,10 @@ def _default_parent(scope: Scope) -> str | None:
     For development/workshop/role this is purely a function of KIND (design
     doc sec 4.1's tree diagram). For an AGENT it also honours the registry's
     own `project_slug` binding when the agent has one -- existing data, not a
-    scheme invented for this tree (see `_agent_bound_project`). APPS have no
-    equivalent binding field anywhere today (`app_registry.AppSpec` carries no
-    project reference), so every app defaults to the root; a future
-    project-scoped app catalog entry, or a binding record alongside
-    `installed_apps.json`, is what would carry that later."""
+    scheme invented for this tree (see `_agent_bound_project`). For a PROJECT
+    it honours `app_links.load().linked`, the one place the app-to-project
+    merge is computed, so a project that is an app's build view nests under
+    that app instead of sitting beside it."""
     if scope.kind == "development":
         return None  # the root, on a developer build
     if scope.kind == "workshop":
@@ -267,7 +275,19 @@ def _default_parent(scope: Scope) -> str | None:
                 return candidate
             except ValueError:
                 pass
-    return WORKSHOP_SCOPE  # project / app / unattached agent, unattached by default
+    if scope.kind == "project" and _project_is_an_apps_build_view(scope.slug):
+        # One thing wearing two records (app-is-the-entity sec 2.1). The app is
+        # what the operator named; the project is how it gets built. So the
+        # project hangs off the app, which also means `reach("app:X")` finally
+        # includes the notes filed to `project:X` -- the measured symptom on
+        # 2026-08-23 was two real Commute notes that its own app could not see.
+        candidate = f"app:{scope.slug}"
+        try:
+            parse(candidate)
+            return candidate
+        except ValueError:
+            pass
+    return WORKSHOP_SCOPE  # app / unlinked project / unattached agent
 
 
 def parent(scope_key: str) -> str | None:
@@ -401,8 +421,21 @@ def _raw_registry_scopes() -> tuple[list[str], dict[str, str]]:
     return scopes, agent_projects
 
 
-def _tree_snapshot() -> tuple[list[str], dict[str, str]]:
-    """Cached (every concrete scope key, agent slug -> bound project_slug).
+def _raw_linked_apps() -> frozenset[str]:
+    """Slugs where an installed app and a project BOTH exist, off
+    `app_links` -- the one place that merge is computed (its docstring:
+    "neither owns a second copy of the rule"). Uncached; the snapshot caches
+    it alongside everything else."""
+    try:
+        from services import app_links
+        return frozenset(app_links.load().linked)
+    except Exception:
+        return frozenset()
+
+
+def _tree_snapshot() -> tuple[list[str], dict[str, str], frozenset[str]]:
+    """Cached (every concrete scope key, agent slug -> bound project_slug,
+    slugs where an app and a project are the same thing).
     See `_watched_roots` for the invalidation key. Tests substitute a fixture
     tree by monkeypatching `_existing_scopes` and/or `_agent_bound_project`
     (below) directly, which sidesteps this cache entirely rather than
@@ -419,7 +452,7 @@ def _tree_snapshot() -> tuple[list[str], dict[str, str]]:
     if cached is not None and cached[0] == cache_key:
         return cached[1]
     reg_scopes, agent_projects = _raw_registry_scopes()
-    result = (_raw_project_scopes() + reg_scopes, agent_projects)
+    result = (_raw_project_scopes() + reg_scopes, agent_projects, _raw_linked_apps())
     _tree_cache = (cache_key, result)
     return result
 
@@ -435,6 +468,13 @@ def _agent_bound_project(slug: str) -> str | None:
     `project_slug` field, or None when unattached. Existing data, not a
     binding scheme invented for this tree."""
     return _tree_snapshot()[1].get(slug)
+
+
+def _project_is_an_apps_build_view(slug: str) -> bool:
+    """True when an installed app and this project are one thing wearing two
+    records. Existing data (`app_links.load().linked`), not a binding scheme
+    invented for this tree, exactly like `_agent_bound_project`."""
+    return slug in _tree_snapshot()[2]
 
 
 def children(scope_key: str) -> list[str]:
