@@ -144,7 +144,8 @@ _AMBIGUOUS: dict[str, tuple[str, ...]] = {
     ),
     "budget": (r"token budget", r"budget\.remaining", r"wall[- ]clock budget", r"per-scope budget",
                r"injection budget", r"reconnect budget", r"budget ceiling"),
-    "notes": (r"notes_all", r"notes and docs", r"knowledge", r"release notes"),
+    "notes": (r"notes_all", r"notes and docs", r"knowledge", r"release notes",
+              r"/api/notes"),  # platform knowledge store (notes_all.py), not the notes-app
     "environment": (r"environment variable", r"deployment target", r"\benv\b", r"environments are"),
     "commute": (),
     "birds": (),
@@ -206,11 +207,11 @@ def scan(apps: list[str]) -> dict:
     literals: list[dict] = []
 
     for rel in files:
-        # The gate's own memory is not a violation. `watched` in the baseline is
-        # a list of app names, it lives under scripts/, and without this the
-        # ratchet counts itself: eight literals that can only ever be removed by
-        # forgetting which apps to watch for.
-        if rel == str(BASELINE.relative_to(ROOT)):
+        # The gate's own files are not violations. The baseline lists the apps it
+        # watches (those can only leave when an app is extracted). The gate script
+        # itself lists the same names as _AMBIGUOUS keys and as inline-comment
+        # examples in _literal_patterns; neither is a platform dependency on an app.
+        if rel in (str(BASELINE.relative_to(ROOT)), str(Path(__file__).relative_to(ROOT))):
             continue
         owner = next((a for a in apps if any(p.search(rel) for p in content_pat[a])), None)
         if owner:
