@@ -12,6 +12,57 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.21 - 2026-08-22 - text fields stop zooming an iOS page in
+
+**Additive only.** Two new tokens and one coarse-pointer block. No export moved,
+no class was renamed, and fine-pointer rendering is unchanged.
+
+Reported on a phone, 2026-08-22: "focusing any text input, textarea, or the code
+editor zooms the page in." iOS Safari zooms the viewport whenever a focused text
+field computes below 16px and does not zoom back out. Every size in this kit's
+type scale is below 16px, so every editable surface did it.
+
+Added:
+
+- `--fs-field` (`var(--fs-base)`, 14px) and `--fs-field-code`
+  (`var(--fs-sm)`, 13px) in `tokens.css`. `.ws-input`, `.ws-select`,
+  `.ws-textarea`, `.ws-readonly`, `.ws-searchfield input` and
+  `.ws-stepper__input` now name `--fs-field`; the `Editor` theme names
+  `--fs-field-code`. The values ARE the scale values, so nothing moves on a
+  desktop.
+- A `@media (pointer: coarse)` block in `components.css` ("THE 16px FLOOR")
+  that raises both tokens to `1rem` on `.ws-root`, floors
+  `.ws-searchfield--lg input`, `.ws-titleedit__form .ws-input` and
+  `.ws-editor .cm-textfield`, and widens `.ws-stepper__input` to `3.25rem` so a
+  four-digit value still fits.
+
+`.cm-textfield` is the code editor's search panel, which `Editor` turns on. It
+is the one editable surface this kit does not author: CodeMirror's base theme
+sizes it at 70%, about 11px, the smallest focusable field in the app. It is
+floored in the coarse block rather than in the `Editor` theme so the desktop
+panel stays exactly as CodeMirror draws it.
+
+**A pointer query, not a breakpoint.** An iPhone Pro Max in landscape is 932px
+wide, so a max-width media query misses the exact device with the problem.
+`(pointer: coarse)` asks what the primary input device is, which is the real
+question, and it matches the focus-ring block already in this sheet.
+
+**Not the viewport meta tag.** `user-scalable=no` and `maximum-scale=1` stop the
+zoom by taking pinch-zoom from everyone, which fails WCAG 1.4.4, and iOS has
+ignored both since iOS 10.
+
+**Control heights do not move**, which was measured rather than assumed. The
+only fixed height any editable control has is `--control-h` (32px); less the 1px
+borders that is a 30px content box, and 16px at the UA `normal` line-height is a
+~20px line box, so it centres with room either side. `--control-h-sm` and
+`--control-h-lg` carry no editable control at all. Raising the height tokens
+would have resized every button, chip and pager cell on the phone for nothing.
+
+**The editor is sized on `&`, not on `.cm-content`.** `&` is the one ancestor
+both `.cm-content` and `.cm-gutters` inherit from, and `.cm-scroller` sets the
+line-height for both, so one declaration scales code and line numbers by the
+same factor and the gutter cannot drift out of alignment.
+
 ## 0.5.20 - 2026-08-22 - `FileDrill`: the same tree, one level at a time
 
 **Additive only.** The phone shape of `FileTree`, from

@@ -398,3 +398,75 @@ describe("the chat toolbar cannot be pushed sideways by a long name", () => {
     expect(block).not.toContain("padding-block: 0.375rem");
   });
 });
+
+// ---- THE 16px FLOOR --------------------------------------------------------
+//
+// iOS Safari zooms the viewport in when you focus a text field computing under
+// 16px, and every size in the Workshop type scale is under 16px. Reported
+// 2026-08-22 on a phone: focusing any input, textarea or the code editor zoomed
+// the page. There is no DOM harness here and computed styles cannot be
+// asserted, so the rules that make it impossible are pinned as text, the same
+// way the shell's invariants above are.
+describe("no text-entry surface can zoom an iOS page on focus", () => {
+  const tokens = read("../../packages/ui/src/styles/tokens.css");
+
+  /** The body of the kit's `@media (pointer: coarse)` block that holds the floor. */
+  const floorBlock = (): string => {
+    const at = kit.indexOf("@media (pointer: coarse) {\n  .ws-root {\n    /* 1rem");
+    expect(at, "no coarse-pointer 16px floor block in the kit sheet").toBeGreaterThan(-1);
+    return kit.slice(at, kit.indexOf("\n}", at));
+  };
+
+  it("routes every editable control through the two field tokens", () => {
+    // The indirection IS the fix: one override moves all of them. A control
+    // that goes back to naming a scale size directly drops out of the floor.
+    expect(tokens).toContain("--fs-field:      var(--fs-base);");
+    expect(tokens).toContain("--fs-field-code: var(--fs-sm);");
+    expect(kitRule(".ws-input, .ws-select, .ws-textarea")).toContain("font-size: var(--fs-field)");
+    expect(kit).toContain("font-family: inherit; font-size: var(--fs-field); color: var(--fg);");
+    expect(kitRule(".ws-stepper__input")).toContain("font-size: var(--fs-field)");
+  });
+
+  it("raises both tokens to at least 16px on a coarse pointer", () => {
+    const block = floorBlock();
+    expect(block).toContain("--fs-field: 1rem;");
+    expect(block).toContain("--fs-field-code: 1rem;");
+  });
+
+  it("covers the surfaces that name a size of their own", () => {
+    const block = floorBlock();
+    // The phone ticket bar's tall search field (--fs-md, 15px).
+    expect(block).toContain(".ws-searchfield--lg input { font-size: var(--fs-field); }");
+    // An inline title editor inherits its heading's size, which is not
+    // guaranteed to clear the floor. `1em` resolves against the parent.
+    expect(block).toContain(".ws-titleedit__form .ws-input { font-size: max(1rem, 1em); }");
+    // CodeMirror's own base theme sizes the search panel's field at 70% (~11px),
+    // and the editor turns that panel on. It is the one editable surface the kit
+    // does not author, so it is easy to miss.
+    expect(block).toContain(".ws-editor .cm-textfield { font-size: var(--fs-field); }");
+  });
+
+  it("sizes the code editor from the token, on the element the gutter shares", () => {
+    const editor = read("../../packages/ui/src/Editor.tsx");
+    expect(editor).toContain('fontSize: "var(--fs-field-code)"');
+    // .cm-content must NOT carry its own size: the gutter would stay behind.
+    const content = editor.slice(editor.indexOf('".cm-content": {'));
+    expect(content.slice(0, content.indexOf("}"))).not.toContain("fontSize");
+  });
+
+  it("is a pointer query, never a width breakpoint", () => {
+    // An iPhone Pro Max in landscape is 932px wide: it is the device with the
+    // problem and it is outside every breakpoint in this system.
+    expect(floorBlock()).not.toContain("max-width");
+  });
+
+  it("leaves the fine-pointer scale and the viewport meta alone", () => {
+    // Raising the scale would have been an app-wide typography change.
+    expect(tokens).toContain("--fs-base: 0.875rem;");
+    expect(tokens).toContain("--fs-sm:   0.8125rem;");
+    // Killing pinch-zoom is a WCAG 1.4.4 failure and iOS ignores it anyway.
+    const html = read("../index.html");
+    expect(html).not.toContain("user-scalable");
+    expect(html).not.toContain("maximum-scale");
+  });
+});

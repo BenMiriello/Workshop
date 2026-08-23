@@ -65,6 +65,19 @@
   --fs-xl:   1.5rem;     /* 24px */
   --fs-2xl:  2rem;       /* 32px */
 
+  /* Text-entry sizes. These exist as their own tokens, rather than each control
+     naming --fs-base / --fs-sm directly, for exactly one reason: iOS Safari
+     zooms the whole page in when you focus a text field whose computed
+     font-size is under 16px, and EVERY size in the scale above is under 16px.
+     Indirecting through these two lets the coarse-pointer block in
+     components.css ("THE 16px FLOOR") raise every editable surface at once
+     without touching the scale, which the rest of the app reads. Their values
+     here are the scale values, so nothing moves on a fine pointer.
+       --fs-field       input / select / textarea / search field / stepper
+       --fs-field-code  the code editor's surface (mono, one step tighter) */
+  --fs-field:      var(--fs-base);  /* 14px */
+  --fs-field-code: var(--fs-sm);    /* 13px */
+
   --lh-tight: 1.2;
   --lh-snug:  1.4;
   --lh-base:  1.55;

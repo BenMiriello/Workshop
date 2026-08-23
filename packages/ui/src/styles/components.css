@@ -1094,7 +1094,7 @@ a.ws-btn { text-decoration: none; }
 .ws-searchfield input {
   flex: 1 1 auto; min-width: 0;
   appearance: none; border: 0; background: none; outline: none;
-  font-family: inherit; font-size: var(--fs-base); color: var(--fg);
+  font-family: inherit; font-size: var(--fs-field); color: var(--fg);
 }
 .ws-searchfield input::placeholder { color: var(--faint); }
 
@@ -1275,7 +1275,7 @@ span.ws-filterchip__open { cursor: default; }
   height: var(--control-h);
   padding: 0 var(--field-pad-x);
   font-family: inherit;
-  font-size: var(--fs-base);
+  font-size: var(--fs-field);
   color: var(--fg);
   background-color: var(--field-bg);
   border: 1px solid transparent;
@@ -1306,7 +1306,7 @@ span.ws-filterchip__open { cursor: default; }
 }
 
 /* read-only display value (Edit-mode "view" state) */
-.ws-readonly { font-size: var(--fs-base); color: var(--fg); padding: 0 0; min-height: var(--control-h); display: inline-flex; align-items: center; }
+.ws-readonly { font-size: var(--fs-field); color: var(--fg); padding: 0 0; min-height: var(--control-h); display: inline-flex; align-items: center; }
 .ws-readonly--empty { color: var(--faint); font-style: italic; }
 
 /* inline field (label beside control, like Settings rows) */
@@ -2568,7 +2568,7 @@ span.ws-filterchip__open { cursor: default; }
   color: var(--fg);
   text-align: center;
   font: inherit;
-  font-size: var(--fs-base);
+  font-size: var(--fs-field);
   font-variant-numeric: tabular-nums;
   padding: 0;
   outline: none;
@@ -3014,6 +3014,72 @@ span.ws-filterchip__open { cursor: default; }
 .ws-editor > .cm-editor {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+/* ---- THE 16px FLOOR: nothing zooms the page when you focus it ------------- */
+/* iOS Safari zooms the viewport in whenever you focus a text field whose
+   computed font-size is below 16px, and it does not zoom back out. Every size
+   in the type scale is below 16px (--fs-md, the largest any control used, is
+   15px), so every input, textarea, select, search field and the code editor did
+   it. Reported 2026-08-22: "focusing any text input, textarea, or the code
+   editor zooms the page in."
+
+   WHY A POINTER QUERY AND NOT A BREAKPOINT. An iPhone Pro Max in landscape is
+   932px wide, so it falls out the bottom of any plausible max-width media query
+   while being exactly the device with the problem. `(pointer: coarse)` asks
+   what the primary input device is, which is the actual question, and it is the
+   same reasoning as the focus-ring block near the top of this file.
+
+   WHY NOT THE VIEWPORT META TAG. `user-scalable=no` / `maximum-scale=1` stop
+   the zoom by taking pinch-zoom away from everybody, which is a WCAG 1.4.4
+   failure, and iOS has ignored both since iOS 10 regardless.
+
+   WHY NOT RAISE THE SCALE. --fs-base and friends are read by every surface in
+   the app in both themes; this is a fix for editable controls, not a typography
+   change. Only the two --fs-field* tokens move, and only inside this query, so
+   fine-pointer rendering is untouched down to the byte.
+
+   HEIGHTS DO NOT MOVE, and that was checked rather than assumed. The only fixed
+   height a text-entry surface has is --control-h (32px) on .ws-input /
+   .ws-select / .ws-searchfield / .ws-stepper. Minus the 1px border top and
+   bottom that leaves a 30px content box; 16px of Hanken Grotesk at the UA's
+   `normal` line-height is a ~20px line box, so it centres with 5px either side
+   and no descender goes near the edge. --control-h-sm (28px) and
+   --control-h-lg (38px) carry no editable control at all (.ws-addfilter--sm,
+   .ws-pager__page, .ws-btn--lg: all buttons). Raising the height tokens here
+   would have resized every button, chip and pager cell on the phone for no
+   reason. The one measurement that did not survive is the stepper's field
+   WIDTH, handled below. */
+@media (pointer: coarse) {
+  .ws-root {
+    /* 1rem, not a hard 16px: the root size is the browser default, so a reader
+       who has raised it gets a proportionally larger field instead of a pinned
+       one, and the floor still clears 16px. */
+    --fs-field: 1rem;
+    --fs-field-code: 1rem;
+  }
+
+  /* The phone ticket bar's tall search field names --fs-md (15px) directly,
+     under the floor. It is a 44px control, so 16px fits with room to spare. */
+  .ws-searchfield--lg input { font-size: var(--fs-field); }
+
+  /* An inline title editor deliberately inherits the heading's size, which is
+     usually well over the floor but is not guaranteed to be. `1em` in a
+     font-size resolves against the parent, so `max(1rem, 1em)` is precisely
+     "inherit, but never below the floor" and keeps a large heading large. */
+  .ws-titleedit__form .ws-input { font-size: max(1rem, 1em); }
+
+  /* 44px was sized for 14px digits and clips a four-digit value at 16px. The
+     field widens; the control keeps its height, its chrome and its buttons. */
+  .ws-stepper__input { width: 3.25rem; }
+
+  /* The code editor's search panel (`search({ top: true })` in Editor.tsx) is
+     the one editable surface this kit does not author: CodeMirror's own base
+     theme sizes `.cm-textfield` at 70%, which is about 11px, the worst offender
+     anywhere in the app. It is floored here rather than in the Editor theme
+     because the theme object would change the panel on a desktop too, and the
+     desktop panel is fine as CodeMirror draws it. */
+  .ws-editor .cm-textfield { font-size: var(--fs-field); }
 }
 
 /* ---- RESPONSIVE ---------------------------------------------------------- */

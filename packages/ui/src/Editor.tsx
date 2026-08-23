@@ -87,7 +87,21 @@ const THEME = EditorView.theme({
     backgroundColor: "var(--bg-inset)",
     border: "1px solid var(--border)",
     borderRadius: "var(--radius-md)",
-    fontSize: "var(--fs-sm)",
+    // The editor's type size lives HERE, on the editor element, rather than in
+    // the .ws-editor CSS, for two reasons. First, `&` is the one ancestor that
+    // both .cm-content and .cm-gutters inherit from, and .cm-scroller sets the
+    // line-height for both, so one declaration scales text and line numbers by
+    // the same factor and they cannot drift out of alignment -- putting it on
+    // .cm-content instead would move the code and leave the gutter behind.
+    // Second, the container rule in components.css exists only to make `height`
+    // reach the editor; the SURFACE is themed from tokens in this object, and
+    // splitting one property out of it would put the editor's appearance in two
+    // places.
+    // --fs-field-code is --fs-sm (13px) on a fine pointer and 1rem on a coarse
+    // one, which is what keeps a tap on a phone from zooming the page in (see
+    // "THE 16px FLOOR" in components.css). 16px of mono is also simply a better
+    // read on a phone.
+    fontSize: "var(--fs-field-code)",
   },
   "&.cm-focused": {
     outline: "none",
