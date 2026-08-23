@@ -170,6 +170,29 @@ describe("there is one overlay backdrop, not four", () => {
     expect(block).not.toContain("\n  .ws-overlay { padding");
     expect(block).toContain(".ws-overlay:not(.ws-overlay--bare):not(.ws-overlay--sheet)");
   });
+
+  // THE CHAT TICKET SHEET'S SCRIM, whose geometry has been wrong in both
+  // directions in one day: it dimmed only the chat column and left the page
+  // bright either side of the conversation, then the correction handed it the
+  // unmodified overlay and it covered the whole viewport, bar one and the chat
+  // toolbar included. "idk why you made it overlay the entire fucking page
+  // including the toolbars that makes no sense."
+  //
+  // The settled shape is the two complaints together: full page width, from
+  // under the chat toolbar down over the composer. Width comes from the shell's
+  // overlay host, the top edge comes from this modifier. The full reasoning,
+  // all three positions in order, is in styles.css above `.chat-workpanel--sheet`.
+  it("can start below chrome the shell does not own, without a second rule", () => {
+    // A top offset only. Anything sideways here would be a rule that stops the
+    // scrim reaching the edges of its region, which is defect one coming back.
+    const mod = kitRule(".ws-overlay--under-chrome");
+    expect(mod).toContain("top: var(--ws-overlay-top, 0px)");
+    for (const sideways of ["left", "right", "width", "inset", "position"]) {
+      expect(mod, `--under-chrome must not set ${sideways}`).not.toContain(`${sideways}:`);
+    }
+    // And it is a MODIFIER on the one surface, not a scrim of its own.
+    expect(css).not.toContain(".chat-workpanel__scrim");
+  });
 });
 
 // The phone's place menu. Geometry:

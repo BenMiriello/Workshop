@@ -1,10 +1,11 @@
 import {
-  useCallback, useEffect, useRef, useState,
+  useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties,
 } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { ChevronRight, ListPlus, Settings2, Users } from "lucide-react";
 import {
-  FilterChip, Skeleton, Tag, catFor,
+  FilterChip, Skeleton, Tag, catFor, useOverlayHost,
 } from "@workshop/ui";
 import { jobIsLive } from "../../../lib/jobs";
 import { scopeName } from "../chatScope";
@@ -78,6 +79,12 @@ export type WorkPanelProps = {
 export default function WorkPanel(props: WorkPanelProps) {
   const { open, onOpenChange } = props;
   const sheetRef = useRef<HTMLDivElement>(null);
+  // Where the scrim lands. The host is the shell's content region, so an
+  // overlay in it already stops at the dock and the phone's bars; the offset is
+  // the one thing left, and it is the chat toolbar's height, which no token
+  // knows. See the scrim's own comment below.
+  const overlayHost = useOverlayHost();
+  const [scrimTop, setScrimTop] = useState(0);
 
   // Escape closes and hands focus back to the button that opened it. Capture,
   // so it still fires from inside the answer field.
@@ -98,22 +105,68 @@ export default function WorkPanel(props: WorkPanelProps) {
     return () => document.removeEventListener("keydown", onKey, true);
   }, [open, onOpenChange]);
 
+  // WHERE THE SCRIM'S TOP EDGE IS. The chat toolbar's height is content (the
+  // scope name wraps, the phone trims the padding), so no token can state it
+  // and the only honest source is the toolbar itself. Layout effect, not an
+  // effect: it settles before the browser paints, so the scrim never shows for
+  // a frame with the toolbar under it. The observer is for the toolbar changing
+  // height while the panel is open, which wrapping does.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const toolbar = sheetRef.current
+      ?.closest(".chat-panel")
+      ?.querySelector<HTMLElement>(".chat-toolbar");
+    if (!toolbar) return;
+    const measure = () => {
+      // Relative to whatever box the scrim is positioned in: the shell's
+      // content region when there is a host, the viewport when there is not.
+      const base = overlayHost ? overlayHost.getBoundingClientRect().top : 0;
+      setScrimTop(Math.max(0, Math.round(toolbar.getBoundingClientRect().bottom - base)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(toolbar);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [open, overlayHost]);
+
   if (!open) return null;
+
+  // THE ONE SCRIM, composed. `.ws-overlay` is the system's single dimming
+  // surface; --bare drops the dialog centring because this element holds
+  // nothing and the sheet positions itself; --under-chrome starts it below the
+  // chat toolbar, at the offset measured above.
+  //
+  // THE GEOMETRY HAS BEEN WRONG IN BOTH DIRECTIONS, AND THE THREE POSITIONS
+  // THAT DECIDE IT ARE RECORDED IN styles.css above `.chat-workpanel--sheet`.
+  // Read all three before you move this again.
+  //
+  // Dismisses on a press, which is the half that has never changed: the panel
+  // carries a text field and so does the composer, and this is what keeps only
+  // one of them live.
+  const scrim = (
+    <div
+      className="ws-overlay ws-overlay--bare ws-overlay--under-chrome"
+      style={{ "--ws-overlay-top": `${scrimTop}px` } as CSSProperties}
+      aria-hidden
+      onPointerDown={() => onOpenChange(false)}
+    />
+  );
+
   return (
     <>
-      {/* THE ONE SCRIM, composed, and it covers the whole app. `.ws-overlay` is
-          the system's single dimming surface; --bare drops the dialog centring
-          because this element holds nothing, the sheet below positions itself.
-          The two decisions behind the geometry are recorded in styles.css above
-          `.chat-workpanel--sheet`; read them before narrowing it again.
-          Dismisses on a press, which is the half that must not change: the
-          panel carries a text field and so does the composer, and this is what
-          keeps only one of them live. */}
-      <div
-        className="ws-overlay ws-overlay--bare"
-        aria-hidden
-        onPointerDown={() => onOpenChange(false)}
-      />
+      {/* Into the shell's overlay host when there is one, which is what makes
+          the scrim span the page rather than this chat's column: the host fills
+          the content region, so the dock and the phone's bars are outside it by
+          construction and every dialog in the app already lands this way. The
+          sheet itself stays here, in .chat-log-wrap, which is what positions
+          it. Outside a shell (the springer entry, tests) the base rule's fixed
+          positioning is the fallback and the measurement is viewport-relative,
+          so the same element is correct either way. */}
+      {overlayHost ? createPortal(scrim, overlayHost) : scrim}
       <div ref={sheetRef} className="chat-workpanel chat-workpanel--sheet" role="dialog" aria-label="Tickets">
         <WorkBody {...props} />
       </div>

@@ -1640,7 +1640,7 @@ span.ws-filterchip__open { cursor: default; }
 }
 .ws-overlay-host > .ws-overlay { position: absolute; pointer-events: auto; }
 
-/* THE MODIFIERS. Four, and they are the only sanctioned ways this varies.
+/* THE MODIFIERS. Five, and they are the only sanctioned ways this varies.
 
    --bare       nothing is inside it. It is a dismiss surface, not a dialog
                 host, so it drops the centring and the padding that exist to
@@ -1653,11 +1653,28 @@ span.ws-filterchip__open { cursor: default; }
                 viewport, so the tile that opened the panel stays visible and
                 stays live. Geometry from
                 docs/platform-redesign/shell-mockup-spec-2026-08-22.md section 3.
+   --under-chrome
+                it starts below a strip of chrome the SHELL does not own, so
+                the height cannot be a token here. The caller measures that
+                strip and publishes the offset as `--ws-overlay-top`; this rule
+                is only the agreement about where the number goes. Everything
+                sideways is untouched, so the scrim still fills its region edge
+                to edge — which is the whole reason this is not a private rule
+                in the caller's stylesheet (see below).
    --sheet      the dialog inside it is a bottom sheet, so it aligns to the
-                bottom edge and gives up its padding. */
+                bottom edge and gives up its padding.
+
+   --under-bar1 and --under-chrome are the same idea at two altitudes, and the
+   split is not redundancy. Bar one is the shell's own bar, so the shell knows
+   how tall it is (--bar1-h) and can say so in CSS. A chat toolbar, an app's
+   header, anything a PAGE draws: the shell has never heard of it and its height
+   is content, so the only honest source is a measurement at runtime. */
 .ws-overlay--bare { display: block; padding: 0; }
 .ws-overlay--dropdown { z-index: var(--z-dropdown); }
 .ws-overlay--under-bar1 { top: calc(env(safe-area-inset-top) + var(--bar1-h)); }
+/* Defaulted, so a caller that has not measured yet gets the full region rather
+   than a scrim collapsed to nothing. */
+.ws-overlay--under-chrome { top: var(--ws-overlay-top, 0px); }
 .ws-modal {
   position: relative; z-index: var(--z-modal);
   /* border-box so the max-height cap includes our padding — the modal is

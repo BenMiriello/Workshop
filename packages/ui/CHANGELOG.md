@@ -12,6 +12,31 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.6.1 - 2026-08-23 - an overlay can start below chrome the shell does not own
+
+**Additive.** One new modifier. Nothing existing moved: `--bare`, `--dropdown`,
+`--under-bar1` and `--sheet` are byte-identical, so the place menu, the birds
+bottom sheet, `Modal` and `ConfirmDialog` are all unaffected.
+
+- **New: `.ws-overlay--under-chrome`.** `top: var(--ws-overlay-top, 0px)`. For a
+  scrim that must start below a strip of chrome the SHELL does not own, whose
+  height is therefore content rather than a token. The caller measures the strip
+  and publishes the offset as `--ws-overlay-top`; the default keeps an
+  unmeasured scrim filling its whole region rather than collapsing it.
+
+  It is `--under-bar1` at a different altitude, and the split is deliberate. Bar
+  one belongs to the shell, so the shell knows its height (`--bar1-h`) and can
+  say so in CSS. A chat toolbar or an app's own header is drawn by a page, so
+  the only honest source is a measurement at runtime.
+
+  First consumer: the chat's ticket sheet, whose scrim has now been wrong in
+  both directions. It dimmed only the chat column and left the page bright to
+  either side; the correction handed it the unmodified overlay, which covered
+  the entire viewport including the top nav and the chat toolbar. Combined with
+  the shell's overlay host (content region, so the dock and the phone's bars are
+  outside it already), this modifier is the remaining half: full page width,
+  starting under the toolbar, down over the composer.
+
 ## 0.6.0 - 2026-08-23 - one overlay backdrop, not four
 
 **Breaking.** `.ws-placemenu__scrim` is REMOVED. There is now exactly one

@@ -2363,10 +2363,15 @@ button.chat-attach {
      equal z-index the later sibling won and this panel covered any menu opened
      while it was showing. It now sits ON the overlay layer, at --z-modal, for
      one reason: the scrim behind it is the kit's `.ws-overlay` at --z-overlay,
-     and a panel below its own scrim is a panel nobody can see. The constraint
-     that put it at --z-sticky went with the same change: the scrim covers the
-     toolbar now, so no menu can be opened while this sheet is up and there is
-     nothing left for it to sit under. */
+     and a panel below its own scrim is a panel nobody can see. The toolbar
+     itself stays lit and live above the scrim's top edge (see the scrim's own
+     note below), so a toolbar menu can still be opened while this sheet is up,
+     and it opens at --z-dropdown into a scrim at --z-overlay. If that ever
+     needs solving, solve it the way PlaceMenu does, by pairing the menu with a
+     scrim of its own on the dropdown layer. Do NOT raise the toolbar over the
+     scrim: that puts the toolbar in its own stacking context above
+     --z-overlay, which takes its menus with it and lands them under this
+     panel instead. */
   /* THE SHEET: it hangs from the toolbar, inset from both edges, with its
      bottom corners rounded and a border on the three sides that are not against
      the toolbar. It read as a full-bleed grey slab before, because it spanned
@@ -2390,38 +2395,66 @@ button.chat-attach {
   .chat-workpanel--sheet { max-height: 34vh; }
 }
 /* THE WORK SHEET'S SCRIM HAS NO RULE HERE ANY MORE. It is the kit's one
-   dimming surface, `ws-overlay ws-overlay--bare`, composed at the render site
-   in WorkPanel.tsx. TWO OPERATOR DECISIONS ARE RECORDED BELOW AND THE SECOND
-   REVERSES THE FIRST. Read both before narrowing it again; it has been flipped
-   once already.
+   dimming surface, `ws-overlay ws-overlay--bare ws-overlay--under-chrome`,
+   composed at the render site in WorkPanel.tsx and portalled into the shell's
+   overlay host.
 
-   2026-08-16, THE SCRIM MUST NOT DIM THE APP CHROME. A dim is a statement about
-   what is behind the panel, and the Workshop topnav and the chat toolbar are
-   the frame you are still in, so dimming them said the whole app was suspended
-   when only the conversation was. What came out of that was a scrim positioned
-   inside `.chat-log-wrap`, starting under the chat toolbar, with a 100vh
-   overhang so it still reached past the wrap onto the composer.
+   THIS GEOMETRY HAS BEEN WRONG IN BOTH DIRECTIONS. Three positions decide it
+   and all three are below, in the order they were taken. Read all three: the
+   third is not a reversal of the first, it is the first one's rule with the
+   second one's complaint fixed, and moving it a fourth time means breaking one
+   of them.
 
-   2026-08-23, IT LOOKS BAD, AND THE APPEARANCE HALF IS REVERSED. Scoping it to
-   the log-wrap also scoped it to the CHAT COLUMN, so at desk width everything
-   around the column stayed bright while the middle went dark. Operator: "it
-   does an overlay over chat, but only on the chat column, so the area around is
-   not overlaid and still light. looks shitty." He named the fix in the same
-   breath: the kit blurred overlay "is better than this". So the scrim covers
-   the viewport and blurs, like every dialog in the app, and geometry no longer
-   serves the 2026-08-16 statement. What survives of that statement is that this
-   is a dismiss surface with nothing in it: a press anywhere outside the sheet
-   closes it, so the chrome under the scrim is one tap away rather than locked
-   out.
+   ONE. 2026-08-16, THE SCRIM MUST NOT DIM THE APP CHROME, AND THIS IS STILL THE
+   RULE. A dim is a statement about what is behind the panel, and the Workshop
+   topnav (bar one on a phone, the dock on a desktop) and the chat's own toolbar
+   are the frame you are still inside, so dimming them says the whole app is
+   suspended when only the conversation is. What came out of it was a scrim
+   positioned inside `.chat-log-wrap`, starting under the chat toolbar, with a
+   100vh overhang meant to reach past the wrap onto the composer.
 
-   THE FUNCTIONAL HALF IS UNCHANGED AND IS NOT AN APPEARANCE QUESTION. The panel
-   carries a text field for answering an agent, the composer is another one, and
-   both must not be live at once (seen 2026-08-16: composer bright, focused and
-   typeable under an open sheet, because the old absolute scrim ancestor stopped
-   above the composer). tickets-in-chat-2026-08-15.md sec 5 states the rule: "the
-   scrim makes it exclusive... only one text entry is reachable at a time". A
-   fixed, viewport-covering overlay satisfies that by construction, with no
-   `height: 100vh` overhang trick to get right. */
+   TWO. 2026-08-23, THE COLUMN-WIDTH DIM LOOKS BROKEN. Scoping the scrim to the
+   log-wrap also scoped it to the CHAT COLUMN, which is capped at --chat-max, so
+   at desk width the middle of the screen went dark and everything to either
+   side of it stayed bright. Operator: "it does an overlay over chat, but only
+   on the chat column, so the area around is not overlaid and still light. looks
+   shitty... the blur one is better than this." Two defects in one sentence: the
+   dim stopped at the column, and it had no blur while the kit's overlay does.
+
+   THREE. 2026-08-23, AND FULL-VIEWPORT WAS THE OVERCORRECTION. The fix for two
+   was to hand the sheet the kit overlay unmodified, which is `position: fixed;
+   inset: 0`, so it covered the entire screen including bar one and the chat
+   toolbar. That is position one thrown away rather than kept. Operator: "for
+   the new tickets drawer overlay well idk why you made it overlay the entire
+   fucking page including the toolbars that makes no sense."
+
+   SO THE GEOMETRY IS BOTH STATEMENTS AT ONCE, and each clause below is load
+   bearing:
+
+     full width of the PAGE REGION, not of the chat column, so there is no
+     bright margin beside the conversation. That comes free from portalling into
+     the shell's overlay host: it fills the content region, so the dock and the
+     phone's bars are outside it by construction, exactly as they are for every
+     dialog in the app.
+
+     starting BELOW THE CHAT TOOLBAR, via `--under-chrome` and a top offset
+     WorkPanel measures off the toolbar. The toolbar's height is content, so no
+     token states it.
+
+     down to the BOTTOM of that region, covering the composer.
+
+     blurred, because he asked for the blurred one by name.
+
+   THE COMPOSER CLAUSE IS FUNCTIONAL, NOT APPEARANCE, and it is the one that
+   must survive any future change. The panel carries a text field for answering
+   an agent, the composer is another one, and both must not be live at once
+   (seen 2026-08-16: composer bright, focused and typeable under an open sheet,
+   because the old absolute scrim's ancestor stopped above the composer).
+   tickets-in-chat-2026-08-15.md sec 5 states the rule: "the scrim makes it
+   exclusive... only one text entry is reachable at a time". A scrim that fills
+   the content region from the toolbar down satisfies that with no `height:
+   100vh` overhang to get right, and an outside press still dismisses, so the
+   chrome it deliberately leaves lit is one tap away rather than locked out. */
 
 /* THE SQUARE THAT SAYS WHO. Shared by the ticket card's run line, the panel's
    needs-you card, a running row's second line and the question view, because
