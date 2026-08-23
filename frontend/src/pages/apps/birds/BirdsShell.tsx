@@ -105,8 +105,11 @@ function MobileTabBar() {
           </button>
         )}
       </nav>
+      {/* The kit's one scrim, bottom-sheet variant. This used to be
+          `.birds-sheet-backdrop`, a third private copy of the same idea with a
+          raw rgba fill, a raw z-index and no blur. */}
       {moreOpen && (
-        <div className="birds-sheet-backdrop" onClick={() => setMoreOpen(false)}>
+        <div className="ws-overlay ws-overlay--sheet" onClick={() => setMoreOpen(false)}>
           <div className="birds-sheet" role="dialog" aria-label="More" onClick={(e) => e.stopPropagation()}>
             <div className="birds-sheet__head">
               <span className="birds-nav__label" style={{ margin: 0 }}>Manage</span>

@@ -12,6 +12,47 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.6.0 - 2026-08-23 - one overlay backdrop, not four
+
+**Breaking.** `.ws-placemenu__scrim` is REMOVED. There is now exactly one
+dimming surface in the system, `.ws-overlay`, plus four sanctioned modifiers,
+and anything that puts a surface over the app composes them.
+
+Reported by the operator on 2026-08-23, having counted the copies: the chat work
+sheet dimmed only the chat column and left the rest of the screen bright, the
+phone place menu had a private copy with no blur, and the birds More sheet had a
+third with a raw `rgba()` fill and a raw z-index. "why do we have multiple
+randomly implemented poorly implemented different overlay backdrops... the blur
+one is better than this. we shouldnt have multiple implementations of the same
+thing done different like this its a terrible way to make an app." The blur one
+is `.ws-overlay`, so the others became it.
+
+- **Removed: `.ws-placemenu__scrim`.** It was `.ws-overlay` with a different top
+  edge, a lower layer and no blur.
+  **Migration:** render
+  `class="ws-overlay ws-overlay--bare ws-overlay--under-bar1 ws-overlay--dropdown"`.
+  That composition is byte-for-byte the old geometry plus the blur.
+- **New: `.ws-overlay--bare`.** `display: block; padding: 0`. For a scrim that
+  holds nothing: a dismiss surface, where the panel positions itself. The base
+  rule centres a `.ws-modal` and pads around it, which a bare scrim does not
+  want.
+- **New: `.ws-overlay--dropdown`.** `z-index: var(--z-dropdown)`. For a scrim
+  that belongs under a panel on the dropdown layer rather than over the whole
+  app on the modal layer.
+- **New: `.ws-overlay--under-bar1`.** Starts the scrim at bar one's hairline
+  instead of the top of the viewport, so the tile that opened the panel stays
+  visible and stays live.
+- **Fixed: the phone media query no longer re-applies padding to
+  `.ws-overlay--sheet`.** `@media (max-width: 560px) { .ws-overlay { padding: ... } }`
+  sat below `.ws-overlay--sheet { padding: 0 }` at equal specificity and undid
+  it, so a bottom sheet was inset 16px from the screen edges on exactly the
+  device it exists for. The query now excludes `--sheet` and `--bare`. If you
+  were compensating for that inset in an app, drop the compensation.
+- **Fixed: `prefers-reduced-motion` now stills every overlay**, not only the
+  place menu's, because there is one rule to still.
+
+No TypeScript surface changed; `api/ui.api.md` is unchanged by this release.
+
 ## 0.5.25 - 2026-08-22 - the chrome around an open file
 
 **Additive.** The file viewer and editor had two near-identical headers (the

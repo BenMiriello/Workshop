@@ -133,9 +133,9 @@
 .birds-tab > svg { color: var(--muted); }
 .birds-tab.is-active, .birds-tab.is-active > svg { color: var(--accent); }
 
-/* "More" bottom sheet (mobile Manage group). */
-.birds-sheet-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.45);
-  display: flex; align-items: flex-end; }
+/* "More" bottom sheet (mobile Manage group). The backdrop is the kit's
+   `ws-overlay ws-overlay--sheet` and has no rule here: one dimming surface in
+   the system, and this was the third private copy of it. */
 .birds-sheet { width: 100%; background: var(--card); border-radius: 14px 14px 0 0; border-top: 1px solid var(--border);
   padding: 0.75rem 0.75rem calc(1rem + env(safe-area-inset-bottom)); }
 .birds-sheet__head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; }

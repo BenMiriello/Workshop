@@ -1611,8 +1611,25 @@ span.ws-filterchip__open { cursor: default; }
 .ws-reveal__val { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .ws-reveal__val--hidden { letter-spacing: 0.15em; }
 
-/* ---- MODAL / SHEET ------------------------------------------------------- */
-/* Fixed is the fallback for an overlay with no shell around it (the springer
+/* ---- OVERLAY: THE ONE SCRIM ----------------------------------------------
+   THERE IS EXACTLY ONE DIMMING SURFACE IN THIS SYSTEM AND THIS IS IT. Anything
+   that puts a surface over the app and dims what is behind it composes
+   `.ws-overlay` plus the modifiers below. Do not write a second rule.
+
+   That is a correction, not a preference. On 2026-08-23 the operator counted
+   the bespoke ones: the chat's work sheet dimmed only the chat column and left
+   the rest of the screen bright, the phone place menu had its own copy with no
+   blur, and the birds More sheet had a third with a raw rgba fill and a raw
+   z-index. His words: "why do we have multiple randomly implemented poorly
+   implemented different overlay backdrops... the blur one is better than this.
+   we shouldnt have multiple implementations of the same thing done different
+   like this its a terrible way to make an app". The blur one is this one, so
+   every other copy became this one.
+
+   A surface that needs different GEOMETRY takes a modifier here. It does not
+   get a rule of its own, because a rule of its own is how the four diverged.
+
+   Fixed is the fallback for an overlay with no shell around it (the springer
    entry). Inside the shell's host it is absolute, so it fills the content
    region and stops at the top nav. */
 .ws-overlay {
@@ -1622,6 +1639,25 @@ span.ws-filterchip__open { cursor: default; }
   animation: ws-fade var(--dur-base) var(--ease-out);
 }
 .ws-overlay-host > .ws-overlay { position: absolute; pointer-events: auto; }
+
+/* THE MODIFIERS. Four, and they are the only sanctioned ways this varies.
+
+   --bare       nothing is inside it. It is a dismiss surface, not a dialog
+                host, so it drops the centring and the padding that exist to
+                frame a `.ws-modal`. The chat's work sheet and the place menu
+                position their own panel and hand this element the dimming only.
+   --dropdown   it belongs under a panel that lives on the dropdown layer, not
+                over the whole app on the modal layer. Without this a scrim at
+                --z-overlay would cover the very menu it sits behind.
+   --under-bar1 it starts at bar one's hairline instead of the top of the
+                viewport, so the tile that opened the panel stays visible and
+                stays live. Geometry from
+                docs/platform-redesign/shell-mockup-spec-2026-08-22.md section 3.
+   --sheet      the dialog inside it is a bottom sheet, so it aligns to the
+                bottom edge and gives up its padding. */
+.ws-overlay--bare { display: block; padding: 0; }
+.ws-overlay--dropdown { z-index: var(--z-dropdown); }
+.ws-overlay--under-bar1 { top: calc(env(safe-area-inset-top) + var(--bar1-h)); }
 .ws-modal {
   position: relative; z-index: var(--z-modal);
   /* border-box so the max-height cap includes our padding — the modal is
@@ -1668,7 +1704,11 @@ span.ws-filterchip__open { cursor: default; }
 /* Centered dialogs still have to fit a phone: shrink the padding and let the
    dialog use the full width minus a margin, without becoming a sheet. */
 @media (max-width: 560px) {
-  .ws-overlay { padding: var(--space-4); }
+  /* :not() so the two modifiers that DELETED the padding keep it deleted. A
+     bare scrim has nothing to frame, and a bottom sheet inset 16px from the
+     edges is not a bottom sheet. Both used to be undone here, because this rule
+     is later in the file at equal specificity. */
+  .ws-overlay:not(.ws-overlay--bare):not(.ws-overlay--sheet) { padding: var(--space-4); }
   .ws-modal, .ws-modal--lg {
     max-width: none; padding: var(--space-4);
   }
@@ -2329,18 +2369,15 @@ span.ws-filterchip__open { cursor: default; }
    palettes.css), and it is dark-only, so its hard-coded scrim and shadow are
    replaced by --scrim and --shadow-lg, which are solved for both modes. */
 
-/* THE SCRIM NEVER COVERS BAR ONE. It starts at the bar's hairline and runs to
-   the bottom of the screen, so the tile you opened the menu with stays visible
-   and stays live -- and so tapping the title or the avatar has to be closed by
-   a pointerdown listener rather than by this element (see PlaceMenu.tsx). */
-.ws-placemenu__scrim {
-  position: fixed;
-  left: 0; right: 0; bottom: 0;
-  top: calc(env(safe-area-inset-top) + var(--bar1-h));
-  z-index: var(--z-dropdown);
-  background: var(--scrim);
-  animation: ws-fade var(--dur-fast) var(--ease-out);
-}
+/* THE SCRIM NEVER COVERS BAR ONE, and it has no rule here any more. It is
+   `ws-overlay ws-overlay--bare ws-overlay--under-bar1 ws-overlay--dropdown`,
+   composed at the render site in PlaceMenu.tsx: --under-bar1 is the geometry
+   that keeps the tile you opened the menu with visible and live, and --dropdown
+   is what keeps the scrim under the panel rather than over it. The private copy
+   this replaced was identical except that it had no blur, which is exactly the
+   drift the one-scrim rule exists to stop. Tapping it still closes through the
+   pointerdown listener in PlaceMenu.tsx, because the bar above it is not
+   covered and that listener is what catches a tap up there. */
 .ws-placemenu {
   position: fixed;
   z-index: var(--z-dropdown);
@@ -2456,7 +2493,7 @@ span.ws-filterchip__open { cursor: default; }
      land settled either way; saying it here means a future literal duration
      cannot quietly reintroduce the movement. */
   .ws-placemenu,
-  .ws-placemenu__scrim { animation: none; }
+  .ws-overlay { animation: none; }
 }
 
 /* ---- SEGMENTED CONTROL — sliding thumb ----------------------------------- */

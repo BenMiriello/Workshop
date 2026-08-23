@@ -137,16 +137,60 @@ describe("the app shell cannot scroll its own chrome away", () => {
   });
 });
 
+// ONE SCRIM IN THE WHOLE SYSTEM.
+//
+// Reported 2026-08-23: "why do we have multiple randomly implemented poorly
+// implemented different overlay backdrops". There were four (the kit's
+// `.ws-overlay`, the chat work sheet's, the place menu's, the birds More
+// sheet's), they differed in blur, in z-index and in which part of the screen
+// they covered, and one of them dimmed only the chat column. They are one rule
+// now, and this is what stops a fifth being written: a dimming surface is
+// `--scrim` on a full-bleed box, so the token has exactly one consumer.
+describe("there is one overlay backdrop, not four", () => {
+  it("spends --scrim in the kit's overlay rule and nowhere else", () => {
+    const uses = (text: string) => text.split("var(--scrim)").length - 1;
+    // The legacy app sheet must own no scrim of its own.
+    expect(uses(css), "frontend/src/styles.css paints its own scrim").toBe(0);
+    expect(uses(kit), "the kit has more than one scrim rule").toBe(1);
+    expect(kitRule(".ws-overlay")).toContain("background: var(--scrim)");
+  });
+
+  it("blurs, because the operator picked the blurred one", () => {
+    expect(kitRule(".ws-overlay")).toContain("backdrop-filter: blur(2px)");
+  });
+
+  it("keeps the padding deleted on the modifiers that delete it", () => {
+    // Both --bare and --sheet set `padding: 0`, and the phone media query
+    // re-applied it to every `.ws-overlay` at equal specificity from further
+    // down the file. A bare scrim has nothing to frame and a bottom sheet inset
+    // from the edges is not a bottom sheet.
+    const at = kit.indexOf("@media (max-width: 560px)");
+    expect(at).toBeGreaterThan(-1);
+    const block = kit.slice(at, at + 600);
+    expect(block).not.toContain("\n  .ws-overlay { padding");
+    expect(block).toContain(".ws-overlay:not(.ws-overlay--bare):not(.ws-overlay--sheet)");
+  });
+});
+
 // The phone's place menu. Geometry:
 // docs/platform-redesign/shell-mockup-spec-2026-08-22.md section 3.
 describe("the place menu is a dropdown, not a drawer", () => {
   it("never lets the scrim cover bar one", () => {
     // The tile that opened the menu stays visible and stays live. Everything
     // below the bar's hairline is covered; the bar itself never is.
-    const scrim = kitRule(".ws-placemenu__scrim");
-    expect(scrim).toContain("position: fixed");
-    expect(scrim).toContain("top: calc(env(safe-area-inset-top) + var(--bar1-h))");
-    expect(scrim).toContain("bottom: 0");
+    //
+    // The menu has no scrim rule of its own any more: it composes the kit's
+    // ONE dimming surface plus the modifier that carries this geometry. See
+    // PlaceMenu.tsx for the composition and the overlay block for why there is
+    // only one.
+    const base = kitRule(".ws-overlay");
+    expect(base).toContain("position: fixed");
+    expect(base).toContain("inset: 0");
+    expect(kitRule(".ws-overlay--under-bar1"))
+      .toContain("top: calc(env(safe-area-inset-top) + var(--bar1-h))");
+    // And it stays UNDER the panel it belongs to, rather than over it.
+    expect(kitRule(".ws-overlay--dropdown")).toContain("z-index: var(--z-dropdown)");
+    expect(kit).not.toContain(".ws-placemenu__scrim");
   });
 
   it("anchors the panel under the tile at the left edge", () => {
@@ -172,7 +216,7 @@ describe("the place menu is a dropdown, not a drawer", () => {
   });
 
   it("spends no raw colour on the panel, which the dark-only mockup does", () => {
-    const panel = kitRule(".ws-placemenu") + kitRule(".ws-placemenu__scrim");
+    const panel = kitRule(".ws-placemenu") + kitRule(".ws-overlay");
     expect(panel).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
     expect(panel).not.toContain("rgba(");
   });

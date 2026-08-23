@@ -161,10 +161,21 @@ export function PlaceMenu({ shell }: { shell: Shell }) {
 
       {open && (
         <>
-          {/* Starts below bar one and runs to the bottom of the screen. Tapping
-              it closes; the listener above is what actually does that, and this
-              handler is here so the element reads as the control it is. */}
-          <div className="ws-placemenu__scrim" aria-hidden onClick={() => close(false)} />
+          {/* THE ONE SCRIM, composed. It was `.ws-placemenu__scrim`, a private
+              copy of `.ws-overlay` that differed only by having no blur; the
+              kit's rule is the system's single dimming surface now and this
+              names the two ways it varies here: --under-bar1 starts it at bar
+              one's hairline so the tile stays visible and live, --dropdown
+              keeps it under the panel instead of over it. --bare because
+              nothing is inside it.
+              Tapping it closes; the listener above is what actually does that,
+              and this handler is here so the element reads as the control it
+              is. */}
+          <div
+            className="ws-overlay ws-overlay--bare ws-overlay--under-bar1 ws-overlay--dropdown"
+            aria-hidden
+            onClick={() => close(false)}
+          />
           <div
             id={id}
             ref={panelRef}
