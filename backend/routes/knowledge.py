@@ -161,12 +161,16 @@ async def delete_note(scope_key: str, note_id: str):
 
 @router.post("/{scope_key}/search", response_model=list[SearchHit], response_model_exclude_unset=True)
 async def search(scope_key: str, body: SearchIn):
+    """DEPRECATED. No frontend callers. Use GET /api/memory/search (semantic_index.search)
+    for ranked semantic search. This runs the same plaintext path as ?q= on the notes list."""
     _scope(scope_key)
     return await knowledge.search(scope_key, body.query, body.limit)
 
 
 @router.post("/recall", response_model=list[SearchHit], response_model_exclude_unset=True)
 async def recall(body: RecallIn):
+    """DEPRECATED. No frontend callers. Use GET /api/memory/search (semantic_index.search)
+    for ranked semantic search. This runs the same plaintext path as /{scope}/search."""
     _scope(body.from_scope)
     _scope(body.target_scope)
     return await knowledge.recall(body.from_scope, body.target_scope, body.query, body.limit)
