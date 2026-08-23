@@ -1,50 +1,22 @@
 """Every tool this instance can name, with an owner. ENUMERATION, NOT AUTHORITY.
 
-Design of record: `docs/platform-redesign/tools-are-declared-2026-08-23.md`
-(stage 1 of its section 5). The operator's instruction is the whole shape:
+Design of record: `docs/platform-redesign/tools-are-declared-2026-08-23.md`.
 
-    "tool call definitions ... something that any system can add to but there
-    can be undetectable base ones that can only be used not edited ... then any
-    user can make any of their own tools."
+WHAT THIS MODULE IS NOT (doc §2.3, §4): there is exactly ONE enforcement point
+for tool capability in this tree — `services/llm_router.tool_flags()`, which
+builds the CLI argv. Nothing here grants anything. A tool being in this catalog
+does not put it on any argv; a tool missing from it does not take it off one.
 
-WHAT THIS MODULE IS NOT, and this is the load-bearing constraint (doc §2.3, §4).
-There is exactly ONE enforcement point for tool capability in this tree:
-`services/llm_router.tool_flags()`, which builds the CLI argv (`--tools`,
-`--allowedTools`, `--disallowedTools`, `--mcp-config`), called from
-`llm_router.call_cloud` and `build_streaming._build_cmd`. Nothing here grants
-anything. A tool being in this catalog does not put it on any argv; a tool
-missing from it does not take it off one. This is a table with owners, and if it
-ever becomes the reason an agent can do something, the design has failed.
+Three registration sources answer "what tools exist and who owns each":
 
-So the three registration sources below answer "what tools exist and who owns
-each" — nothing more:
+  PLATFORM  literal tuple in source (`PLATFORM_TOOLS`). Code-owned, present on
+            every install, NOT editable through any API.
+  APP       declared by an installed app's manifest, arrives/leaves with the app.
+  USER      created at runtime in `.runtime/tools.json`, missing means empty.
 
-  PLATFORM  a literal tuple in source (`PLATFORM_TOOLS`), exactly as
-            `app_registry._CATALOG_FACTORIES` is for apps. Code-owned, present
-            on every install, and NOT editable or deletable through any API.
-            These are the "base ones that can only be used not edited".
-  APP       declared by an INSTALLED app's manifest (`services/manifests`), so
-            it arrives and leaves with the app.
-  USER      created at runtime in `.runtime/tools.json`, shaped and treated
-            exactly like `services/installed_apps`' installed-apps registry: one
-            JSON file, missing means empty, a fresh clone ships none, and
-            editing it is never an edit to platform source.
-
-THE ONE DELIBERATE DIVERGENCE FROM `app_registry` (doc §2.2). A discovered app
-may SHADOW a built-in app of the same id, "deliberately and loudly", because
-replacing the stock app with an extracted one is a legitimate thing to want.
-A user tool may NOT take a platform tool's id. A platform tool that a user
-record can quietly redefine is not a base tool, it is a default. So a collision
-is REFUSED at write time with the conflicting id named (`ToolConflict`), and a
-colliding record hand-written into tools.json is dropped on read with a warning
-that names it, rather than being allowed to win.
-
-TOLERANCE IS ASYMMETRIC, on purpose. Reads never raise: a malformed record is
-normalized to defaults and an unreadable file reads as empty, so a hand-edited
-tools.json can never take the API down (the discipline `services/manifests`
-already sets for app metadata). Writes are strict: `create_user_tool` validates
-the id and kind and refuses a collision, because that is the moment a person is
-present to be told why.
+A user tool may NOT take a platform tool's id — collision is refused at write
+time (`ToolConflict`), and a colliding hand-written record is dropped on read.
+Reads never raise; writes are strict (doc §2.2).
 """
 from __future__ import annotations
 
