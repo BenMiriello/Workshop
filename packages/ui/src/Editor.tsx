@@ -232,6 +232,21 @@ const BASE: Extension = [
    and it makes the editor a keyboard trap: once focused, Tab can never leave.
    Design rule 10 is WCAG AA, and 2.1.2 is explicit about this. `indentOnInput`
    plus the newline auto-indent covers the actual need. */
+// What `editable` means to CodeMirror. Two switches, not one: `readOnly`
+// refuses modification, while `editable.of(false)` removes contenteditable
+// altogether so a phone does not open its keyboard for a file you are only
+// reading. With contenteditable gone the content is no longer focusable, so a
+// keyboard user could not scroll a long file; a plain tabindex restores that
+// without bringing the keyboard back, because a phone opens the keyboard for
+// an editable element, not for a focusable one.
+function editExtensions(canEdit: boolean): Extension {
+  return [
+    EditorView.editable.of(canEdit),
+    EditorState.readOnly.of(!canEdit),
+    ...(canEdit ? [] : [EditorView.contentAttributes.of({ tabindex: "0" })]),
+  ];
+}
+
 function profileExtensions(profile: EditorProfile, ariaLabel?: string): Extension {
   const attrs: Record<string, string> = {
     // A memory document is prose somebody wrote; a source file is not, and a
@@ -327,6 +342,11 @@ export function Editor({
   const language = resolved.language;
   const active: EditorProfile = profile ?? resolved.profile;
   const canEdit = editable && active !== "view";
+  // Read once at mount to seed the compartments; every later change goes
+  // through the reconfiguring effects below.
+  const activeRef = useRef(active);
+  const ariaLabelRef = useRef(ariaLabel);
+  const canEditRef = useRef(canEdit);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -341,9 +361,14 @@ export function Editor({
         doc: docRef.current,
         extensions: [
           BASE,
-          shape.of([]),
+          // Seeded with the real values rather than empty. The effects below
+          // reconfigure these on every later change, but they are passive
+          // (useEffect runs after paint), so seeding empty would paint one
+          // frame of a read-only editor as contenteditable -- which on a phone
+          // is a frame that can open the virtual keyboard.
+          shape.of(profileExtensions(activeRef.current, ariaLabelRef.current)),
           lang.of([]),
-          edit.of([]),
+          edit.of(editExtensions(canEditRef.current)),
           EditorView.updateListener.of((u) => {
             if (!u.docChanged) return;
             const next = u.state.doc.toString();
@@ -359,8 +384,8 @@ export function Editor({
       view.destroy();
       viewRef.current = null;
     };
-    // Mount once. Everything that can change is in a compartment below, and the
-    // three effects that fill them run on this same commit, before paint.
+    // Mount once. Everything that can change lives in a compartment, seeded
+    // above with its value at mount and reconfigured by the effects below.
   }, [shape, lang, edit]);
 
   useEffect(() => {
@@ -368,17 +393,7 @@ export function Editor({
   }, [active, ariaLabel, shape]);
 
   useEffect(() => {
-    viewRef.current?.dispatch({
-      effects: edit.reconfigure([
-        EditorView.editable.of(canEdit),
-        EditorState.readOnly.of(!canEdit),
-        // With contenteditable gone the content is no longer focusable, so a
-        // keyboard user could not scroll a long file. A plain tabindex restores
-        // that without bringing the virtual keyboard back: a phone opens the
-        // keyboard for an editable element, not for a focusable one.
-        ...(canEdit ? [] : [EditorView.contentAttributes.of({ tabindex: "0" })]),
-      ]),
-    });
+    viewRef.current?.dispatch({ effects: edit.reconfigure(editExtensions(canEdit)) });
   }, [canEdit, edit]);
 
   useEffect(() => {

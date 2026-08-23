@@ -410,5 +410,5 @@ def write_file(ws: Workspace, path: str, content: str) -> dict:
         "path": rel,
         "size": st.st_size,
         "modified": _iso_mtime(st.st_mtime),
-        "writable": True,
+        "writable": is_writable(ws, rel),
     }
