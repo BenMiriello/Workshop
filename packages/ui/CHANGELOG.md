@@ -12,6 +12,49 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.24 - 2026-08-22 - the file browser, measured against the mockup
+
+**Additive, plus two corrections.** `FileDrill` and `FileTree` shipped earlier
+the same day, built from the prose design doc; neither was ever measured against
+the mockup they are judged by. This is the geometry, from
+`docs/platform-redesign/shell-mockup-spec-2026-08-22.md` sections 4 and 5.
+
+- **New: `drillUpIntent(trail)` and the `FileDrillUpIntent` type.** Up at the
+  ROOT of a directory leaves the directory page entirely (section 4.1) rather
+  than doing nothing, and the kit cannot know what leaving means for the page it
+  is drawn on. So the rule is decided in `fileTree.ts` and the destination is the
+  caller's, through the new optional **`onExit`** prop on `FileDrill`. Without
+  `onExit` the Up bar is not drawn at the root at all: a control that does
+  nothing is worse than an absent one. `drillUp` is unchanged and still exported.
+- **New: `drillTrailText(trail)`.** The Up bar's label: every trail label, root
+  first, joined with " / ".
+- **New: `FileTreeNode.dirty`.** Optional. Draws section 5's 6px amber dot at the
+  right of a desktop tree row.
+- **`FileDrill` redrawn.** The Up control is now its OWN 40px full-width row
+  above the list and the WHOLE BAR is the tap target (a 13px arrow plus the word
+  "Up" in `--accent`, then the trail in `--faint`, both mono 12px; no trail
+  segment is separately tappable). Rows are 52px, FULL BLEED (they pull back
+  through `--page-pad-x`), `padding: 0 14px`, `gap: 11px`, a faint hairline
+  between them, and no indentation at any depth: a phone list does not indent,
+  depth is expressed by drilling. A folder is the SANS face with a child count
+  and a chevron; a file is the MONO face with a relative time and no chevron.
+  New classes: `.ws-drill__up`, `__up-go`, `__up-trail`, `__icon`, `__meta`,
+  `__block`, `.ws-drill__row--folder`, `--file`, `--pending`. **Removed:**
+  `.ws-drill__trail`, `.ws-drill__cursor`, `.ws-drill__detail` (now `__meta`).
+- **`FileTree` redrawn.** 27px rows, radius 6, gap 7, `padding-right: 8`, indent
+  `8 + depth * 15`, a 12px icon at `opacity .75`, a 13px ellipsized label, and an
+  optional dirty dot. **No disclosure triangles anywhere** (section 5 has none):
+  the row opens its own branch, the arrow keys still do, and a folder is told
+  from a file by the FACE, sans versus mono, exactly as on the phone. The row no
+  longer draws `node.detail` either: the 252px column has no width for a meta
+  column and section 5 does not have one. New classes:
+  `.ws-tree__row--folder`, `--file`, `.ws-tree__dirty`. **Removed:**
+  `.ws-tree__twist`, `.ws-tree__twist--empty`, `.ws-tree__detail`.
+- **No new colour.** The faint hairline both surfaces use is
+  `color-mix(in oklab, var(--border), transparent 45%)`, derived from the token
+  rather than added to the palette, so it follows all eight palettes in light and
+  dark. The dirty dot is `--warn`.
+
 ## 0.5.23 - 2026-08-22 - the phone's place menu, and the page toolbar's baseline
 
 **Additive, plus one correction and one deletion.** No export changed, so

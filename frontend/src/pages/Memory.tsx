@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   RefreshCw, Plus, Trash2, FileText, FolderTree, ChevronUp,
   ShieldCheck, Lock, Globe, GitBranch,
@@ -225,6 +225,7 @@ const DRILL_MAX_ROWS = 100;
 
 function Library() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const isWide = useIsWide();
   // Bumped by every write. A new source means a new adapter, which is how the
   // tree is told to drop what it had loaded and read the level again.
@@ -365,6 +366,11 @@ function Library() {
         adapter={source.adapter}
         trail={trail}
         onTrail={setTrail}
+        // UP AT THE ROOT LEAVES THE DIRECTORY (mockup spec section 4.1). There
+        // is no level above Memory's root, so the way out is off this page: the
+        // Dashboard, which is the first row of this place's page column
+        // (components/shell/places.ts).
+        onExit={() => navigate("/")}
         selectedId={selected ? encodeMemoryNode(selected) : null}
         onSelect={(node) => {
           const parsed = parseMemoryNode(node.id);

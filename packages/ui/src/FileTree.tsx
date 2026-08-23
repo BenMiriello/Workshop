@@ -29,13 +29,18 @@
 // The test from frontend/CLAUDE.md: would this space be empty if the failure
 // had not happened? Under an open branch beside four other open branches, no.
 //
-// Chevrons and file icons are CONTROLS, not content (design rule 3): neutral at
-// rest, `--fg` on hover, never a categorical hue. All styling is in
-// components.css under `.ws-tree`; there are no colors in this file.
+// NO DISCLOSURE TRIANGLES, and that is the geometry rather than an omission:
+// shell-mockup-spec-2026-08-22.md section 5 draws the 27px row as icon, label
+// and an optional dirty dot, nothing else. The row itself opens and closes the
+// branch, and the arrow keys still do (`treeKeyIntent`). A folder reads as a
+// folder because it is in the SANS face and a file is in the MONO face, which
+// is section 5's rule and the same one `FileDrill` follows on a phone.
+//
+// A file icon is a CONTROL, not content (design rule 3): neutral at rest, `--fg`
+// on hover, never a categorical hue. All styling is in components.css under
+// `.ws-tree`; there are no colors in this file.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ChevronDown,
-  ChevronRight,
   Database,
   File as FileIcon,
   FileCode,
@@ -285,7 +290,6 @@ export function FileTree({
           isTabStop={row.key === tabStop}
           onActivate={activate}
           onFocusRow={setFocusId}
-          onToggle={(node) => setOpen((prev) => toggleBranch(prev, node.id))}
           onRetry={retry}
           register={(el) => {
             if (el) rowRefs.current.set(row.key, el);
@@ -303,7 +307,6 @@ function TreeRow({
   isTabStop,
   onActivate,
   onFocusRow,
-  onToggle,
   onRetry,
   register,
 }: {
@@ -314,7 +317,6 @@ function TreeRow({
   /** Tabbing into the tree lands on a row without any keystroke, so the row
    *  itself has to say where the arrow keys start from. */
   onFocusRow: (id: string) => void;
-  onToggle: (node: FileTreeNode) => void;
   onRetry: (parentId: string) => void;
   register: (el: HTMLDivElement | null) => void;
 }) {
@@ -373,9 +375,9 @@ function TreeRow({
   }
 
   const { node, open } = row;
+  const branch = node.kind === "branch";
   const Icon = fileTreeIconFor(node, open);
   const selected = node.id === selectedId;
-  const Twist = open ? ChevronDown : ChevronRight;
 
   return (
     <div
@@ -383,30 +385,22 @@ function TreeRow({
       role="treeitem"
       aria-level={row.depth + 1}
       aria-selected={selected}
-      aria-expanded={node.kind === "branch" ? open : undefined}
+      aria-expanded={branch ? open : undefined}
       tabIndex={isTabStop ? 0 : -1}
-      className={cx("ws-tree__row", selected && "is-selected")}
+      className={cx(
+        "ws-tree__row",
+        branch ? "ws-tree__row--folder" : "ws-tree__row--file",
+        selected && "is-selected",
+      )}
       style={indent(row.depth)}
       onClick={() => onActivate(node)}
       onFocus={() => onFocusRow(node.id)}
     >
-      {node.kind === "branch" ? (
-        <span
-          className="ws-tree__twist"
-          aria-hidden
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggle(node);
-          }}
-        >
-          <Twist />
-        </span>
-      ) : (
-        <span className="ws-tree__twist ws-tree__twist--empty" aria-hidden />
-      )}
       <Icon className="ws-tree__icon" aria-hidden />
       <span className="ws-tree__label">{node.label}</span>
-      {node.detail != null && <span className="ws-tree__detail">{node.detail}</span>}
+      {node.dirty && (
+        <span className="ws-tree__dirty" role="img" aria-label="unsaved changes" />
+      )}
     </div>
   );
 }

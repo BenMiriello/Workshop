@@ -3768,16 +3768,26 @@ span.ws-filterchip__open { cursor: default; }
 .ws-tt__ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- FileTree -------------------------------------------------------------
-   The kit's tree navigator (src/FileTree.tsx). One flat list of rows, indented
-   by `--ws-tree-depth`, so the DOM is not nested and a virtualizer can be
-   dropped in later without a new row shape.
+   The kit's tree navigator (src/FileTree.tsx), drawn to
+   docs/platform-redesign/shell-mockup-spec-2026-08-22.md section 5: a 27px row,
+   radius 6, gap 7, padding-right 8, indent `8 + depth * 15`, a 12px icon at
+   opacity .75, a 13px ellipsized label, and an optional 6px amber dirty dot.
+   One flat list of rows indented by `--ws-tree-depth`, so the DOM is not nested
+   and a virtualizer can be dropped in later without a new row shape.
 
-   A CHEVRON AND A FOLDER ICON ARE CONTROLS, NOT CONTENT (rule 3): both are
-   `--muted` at rest and go to `--fg` when the row is hovered. Neither ever
-   takes a categorical hue. The only hue in here is the selected row, which is
-   a state and follows the same `--accent-soft` treatment as every other
-   current-item in this file. */
+   NO DISCLOSURE TRIANGLES. Section 5 has none, and there is no `__twist` here
+   to style: the row opens its own branch, and a folder is told from a file by
+   the FACE (sans versus mono) plus the ink, which is the same rule the phone
+   list follows. There is likewise no meta column on this row; the 252px column
+   has no width to spend on one, and the phone list is where it lives.
+
+   A file icon is a CONTROL, not content (rule 3): `--muted` at rest, `--fg` when
+   the row is hovered, never a categorical hue. The two hues in here are states:
+   the selected row's `--accent-soft`, and the dirty dot's `--warn`. */
 .ws-tree {
+  /* Geometry from section 5, named once so a row and its indent cannot drift. */
+  --ws-tree-row-h: 27px;
+  --ws-tree-indent: 15px;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -3788,14 +3798,15 @@ span.ws-filterchip__open { cursor: default; }
 }
 .ws-tree__row,
 .ws-tree__aside {
-  padding-block: var(--space-1);
   padding-right: var(--space-2);
-  padding-left: calc(var(--space-2) + var(--ws-tree-depth, 0) * var(--space-4));
+  padding-left: calc(var(--space-2) + var(--ws-tree-depth, 0) * var(--ws-tree-indent));
 }
+.ws-tree__aside { padding-block: var(--space-1); }
 .ws-tree__row {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 7px;
+  height: var(--ws-tree-row-h);
   min-width: 0;
   border-radius: var(--radius-sm);
   color: var(--fg);
@@ -3803,39 +3814,37 @@ span.ws-filterchip__open { cursor: default; }
   cursor: pointer;
   user-select: none;
 }
+/* SANS IS A FOLDER, MONO IS A FILE. Section 5's row table, and the only thing
+   that tells the two apart now that the triangles are gone. */
+.ws-tree__row--folder { font-family: var(--font-sans); color: var(--fg); }
+.ws-tree__row--file { font-family: var(--font-mono); color: var(--muted); }
 .ws-tree__row:hover { background: var(--bg-inset); }
 .ws-tree__row.is-selected { background: var(--accent-soft); color: var(--accent); }
-.ws-tree__row svg { width: 15px; height: 15px; flex: none; }
-.ws-tree__twist {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 15px;
-  flex: none;
-  color: var(--muted);
-  transition: color var(--dur-fast) var(--ease-out);
-}
-.ws-tree__twist--empty { visibility: hidden; }
 .ws-tree__icon {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  opacity: 0.75;
   color: var(--muted);
   transition: color var(--dur-fast) var(--ease-out);
 }
-.ws-tree__row:hover .ws-tree__twist,
 .ws-tree__row:hover .ws-tree__icon { color: var(--fg); }
-.ws-tree__row.is-selected .ws-tree__twist,
 .ws-tree__row.is-selected .ws-tree__icon { color: var(--accent); }
 .ws-tree__label {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ws-tree__detail {
-  margin-left: auto;
-  padding-left: var(--space-2);
-  color: var(--faint);
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
+/* Unsaved edits in this file. Amber is `--warn`: it is the same "needs your
+   attention, nothing is broken" meaning the status suite gives that hue. */
+.ws-tree__dirty {
+  width: 6px;
+  height: 6px;
   flex: none;
+  border-radius: var(--radius-pill);
+  background: var(--warn);
 }
 /* The lines that sit between rows: a level still loading, a level that failed
    (a Notice, because the rest of the tree is still on screen), an empty
@@ -3851,81 +3860,139 @@ span.ws-filterchip__open { cursor: default; }
 .ws-tree__aside--muted svg { width: 13px; height: 13px; flex: none; color: var(--faint); }
 
 /* ---- FileDrill ------------------------------------------------------------
-   The phone shape of the same tree (src/FileDrill.tsx): one level on screen and
-   an Up control walking back out of it. This list IS the page, not a rail
-   beside it, so rows are full-width 44px touch targets and nothing here scrolls
-   inside anything else. A folder's chevron and icon are controls, not content
-   (rule 3): muted at rest, and they take the current ink on the selected row. */
+   The phone shape of the same tree (src/FileDrill.tsx), drawn to
+   docs/platform-redesign/shell-mockup-spec-2026-08-22.md section 4: a 40px Up
+   bar that is entirely one tap target, then 52px full-bleed rows with
+   `padding: 0 14px`, `gap: 11px`, a hairline between them and NO INDENT AT ALL.
+   A phone list does not indent; depth is expressed by drilling.
+
+   FULL BLEED IS A NEGATIVE MARGIN, not a change to the page. The list is the
+   page's content, so it pulls back out through the page inset (`--page-pad-x`,
+   the one token every page indents by) and the rows carry their own 14px.
+
+   THE HAIRLINE IS THE FAINT ONE. Section 4.1: weaker than `--border`, so the
+   rows read as one surface rather than a stack of cards. It is derived from
+   `--border` rather than being a ninth colour, so it moves with every palette
+   and works in light as well as dark. */
 .ws-drill {
+  --ws-drill-hairline: color-mix(in oklab, var(--border), transparent 45%);
+  --ws-drill-row-h: 52px;
+  --ws-drill-bar-h: 40px;
+  --ws-drill-gap: 11px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   min-width: 0;
+  margin-inline: calc(-1 * var(--page-pad-x));
 }
-.ws-drill__trail {
+/* THE WHOLE BAR IS THE TARGET. Its own row, not a control inside a header, and
+   the trail in it is a label: no segment of it is separately tappable. */
+.ws-drill__up {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  color: var(--muted);
-  font-size: var(--fs-sm);
+  gap: 9px;
+  width: 100%;
+  height: var(--ws-drill-bar-h);
+  flex: none;
+  padding: 0 var(--pad-x);
+  border: 0;
+  border-bottom: 1px solid var(--ws-drill-hairline);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-.ws-drill__cursor {
+.ws-drill__up:hover { background: var(--bg-inset); }
+.ws-drill__up-go,
+.ws-drill__up-trail {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+}
+.ws-drill__up-go {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: var(--accent);
+}
+.ws-drill__up-go svg { width: 13px; height: 13px; flex: none; }
+.ws-drill__up-trail {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--faint);
 }
 .ws-drill__level {
   display: flex;
   flex-direction: column;
-  gap: 1px;
   min-width: 0;
 }
 .ws-drill__row {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--ws-drill-gap);
   width: 100%;
-  min-height: 44px;
-  padding: var(--space-2) var(--space-3);
+  height: var(--ws-drill-row-h);
+  flex: none;
+  padding: 0 var(--pad-x);
   border: 0;
+  border-bottom: 1px solid var(--ws-drill-hairline);
+  border-radius: 0;
   background: none;
-  border-radius: var(--radius-sm);
   color: var(--fg);
-  font-family: inherit;
-  font-size: var(--fs-base);
+  font-size: var(--fs-md);
   text-align: left;
   cursor: pointer;
 }
+/* Same rule as the desktop tree, and the reason it is worth repeating: sans
+   versus mono is how a folder and a file are told apart in this design. */
+.ws-drill__row--folder { font-family: var(--font-sans); }
+.ws-drill__row--file { font-family: var(--font-mono); }
+.ws-drill__row--pending { cursor: default; }
 .ws-drill__row:hover { background: var(--bg-inset); }
 .ws-drill__row.is-selected { background: var(--accent-soft); color: var(--accent); }
-.ws-drill__row svg { width: 17px; height: 17px; flex: none; color: var(--muted); }
-.ws-drill__row:hover svg { color: var(--fg); }
-.ws-drill__row.is-selected svg { color: inherit; }
+.ws-drill__icon { width: 17px; height: 17px; flex: none; color: var(--muted); }
+.ws-drill__row:hover .ws-drill__icon { color: var(--fg); }
+.ws-drill__row.is-selected .ws-drill__icon { color: inherit; }
 .ws-drill__label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ws-drill__detail {
+/* A folder's child count, a file's relative time. The adapter decides which,
+   and renders nothing at all when its source cannot answer. */
+.ws-drill__meta {
   margin-left: auto;
   padding-left: var(--space-2);
-  color: var(--faint);
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
   flex: none;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
 }
-.ws-drill__detail + .ws-drill__into { margin-left: 0; }
-.ws-drill__into { margin-left: auto; }
+.ws-drill__meta + .ws-drill__into { margin-left: 0; }
+.ws-drill__into { width: 14px; height: 14px; flex: none; margin-left: auto; color: var(--faint); }
+.ws-drill__row.is-selected .ws-drill__meta,
+.ws-drill__row.is-selected .ws-drill__into { color: inherit; }
+/* Empty and failed levels. Section 4.2 centres the empty state in the list area
+   with room around it, and `StateBlock` already supplies the centring and the
+   vertical room (rule 9 requires it here: an empty level still has to say how to
+   put something in this folder). This wrapper adds the breathing space above and
+   RESTORES THE PAGE INSET the full-bleed list just pulled out of, so a dashed
+   region never runs to the screen edge. */
+.ws-drill__block { padding: var(--space-4) var(--page-pad-x); }
 /* The remainder of a capped level, and what the source filtered out. */
 .ws-drill__aside {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   margin: 0;
-  padding: 0 var(--space-3);
+  padding: var(--space-2) var(--pad-x);
   color: var(--muted);
   font-size: var(--fs-xs);
 }

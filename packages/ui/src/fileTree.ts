@@ -43,9 +43,16 @@ export type FileTreeNode = {
   label: string;
   kind: FileTreeNodeKind;
   icon?: FileTreeIconHint;
-  /** Trailing muted text on the row: a size, a count, a modified time. The
-   *  adapter formats it, because only the adapter knows what it is. */
+  /** The row's right-hand meta, which `FileDrill` prints and the desktop tree
+   *  does not (shell-mockup-spec-2026-08-22.md sections 4.2 and 5: the phone row
+   *  carries a child count on a folder and a relative time on a file; the 252px
+   *  tree row carries neither). The adapter formats it, because only the adapter
+   *  knows what it is, and omits it rather than inventing a placeholder when the
+   *  source cannot answer cheaply. */
   detail?: string;
+  /** Unsaved edits live in this node. The desktop tree draws the 6px amber dot
+   *  from section 5; the phone row has no dot. */
+  dirty?: boolean;
 };
 
 /** One level, as the adapter returns it. `filtered` reports what the source
@@ -199,9 +206,33 @@ export function drillInto(trail: FileDrillTrail, node: FileTreeNode): FileDrillT
 }
 
 /** Up one level. At the root there is nothing above the tree, so this returns
- *  the SAME trail: nothing re-renders, and Up never falls through to history. */
+ *  the SAME trail: nothing re-renders, and Up never falls through to history.
+ *  `drillUpIntent` is what a control should read, because a bar that only ever
+ *  returns the same trail at the root is a dead control. */
 export function drillUp(trail: FileDrillTrail): FileDrillTrail {
   return trail.length > 1 ? trail.slice(0, -1) : trail;
+}
+
+/** What pressing Up MEANS from here.
+ *
+ *  Above the root there is no level left inside the directory, and the spec is
+ *  that Up then leaves the directory page entirely
+ *  (docs/platform-redesign/shell-mockup-spec-2026-08-22.md section 4.1). A kit
+ *  component cannot know what leaving means for the page it is drawn on, so the
+ *  rule is decided here and the destination is the caller's. */
+export type FileDrillUpIntent =
+  | { type: "level"; trail: FileDrillTrail }
+  | { type: "exit" };
+
+export function drillUpIntent(trail: FileDrillTrail): FileDrillUpIntent {
+  return trail.length > 1 ? { type: "level", trail: trail.slice(0, -1) } : { type: "exit" };
+}
+
+/** The trail as the Up bar prints it: every label from the root to the level
+ *  being listed, joined with " / ". The root IS included, because the bar names
+ *  where you are rather than how far you have come. */
+export function drillTrailText(trail: FileDrillTrail): string {
+  return trail.map((n) => n.label).join(" / ");
 }
 
 // ---- Flattening ------------------------------------------------------------

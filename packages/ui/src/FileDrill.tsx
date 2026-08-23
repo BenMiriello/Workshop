@@ -15,16 +15,30 @@
 // fileTree.ts), so there is no second loader to keep in step with the first.
 //
 // UP IS STRUCTURAL, NOT BACK (section 8.1). The way out of a level is the trail
-// this component is handed, not browser history, and at the root it is a
-// defined no-op. The trail lives in the CALLER so that opening a file and
-// coming back up returns to the level the file is in, which is the whole point
-// of Up. `drillTrail` / `drillInto` / `drillUp` in fileTree.ts are that rule,
-// pure and tested.
+// this component is handed, not browser history, and AT THE ROOT IT LEAVES THE
+// DIRECTORY PAGE rather than doing nothing: `drillUpIntent` decides that, and
+// the page it leaves for is the caller's answer (`onExit`). The trail lives in
+// the CALLER so that opening a file and coming back up returns to the level the
+// file is in, which is the whole point of Up. `drillTrail` / `drillInto` /
+// `drillUpIntent` in fileTree.ts are those rules, pure and tested.
 //
-// Rows are full-width 44px targets: this list is the page, not a rail beside
-// it. All styling is in components.css under `.ws-drill`; no colors here.
+// THE GEOMETRY IS THE MOCKUP'S, NOT PROSE (shell-mockup-spec-2026-08-22.md
+// section 4, extracted from the mockup this surface is measured against):
+//
+//   - The Up bar is its OWN 40px full-width row above the list, and the WHOLE
+//     bar is the tap target. A 13px arrow plus the word "Up" in `--accent`, then
+//     the trail in `--faint`, both mono 12px, segments joined with " / ". No
+//     segment is tappable on its own.
+//   - Rows are 52px, FULL BLEED, `padding: 0 14px`, `gap: 11px`, and have ZERO
+//     indentation. A phone list does not indent; depth is expressed by drilling,
+//     which is the entire point of the pattern.
+//   - A folder is the SANS face with a child count and a chevron; a file is the
+//     MONO face with a relative time and no chevron. That face difference is how
+//     the two are told apart here, so it is not decoration.
+//
+// All styling is in components.css under `.ws-drill`; no colors here.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, ChevronUp, EyeOff, MoreHorizontal } from "lucide-react";
+import { ArrowUp, ChevronRight, EyeOff, MoreHorizontal } from "lucide-react";
 import { cx } from "./cx";
 import { Button } from "./controls";
 import { Skeleton, StateBlock } from "./feedback";
@@ -34,7 +48,8 @@ import {
   drillInto,
   drillParent,
   drillTrail,
-  drillUp,
+  drillTrailText,
+  drillUpIntent,
   levelFailed,
   levelForget,
   levelLoading,
@@ -55,6 +70,12 @@ export type FileDrillProps = {
   /** A new trail, already computed: descending and Up both report through
    *  here, so the caller only has to store what it is given. */
   onTrail: (trail: FileDrillTrail) => void;
+  /** Up AT THE ROOT leaves the directory page entirely (section 4.1). What
+   *  leaving means is the page's own business and this component cannot know
+   *  it, so it is reported here instead of being swallowed. Without it the bar
+   *  is not drawn at the root at all, because a control that does nothing is
+   *  worse than an absent one. */
+  onExit?: () => void;
   /** The selected node's id, if the caller tracks one. Controlled. */
   selectedId?: string | null;
   /** A leaf was chosen. A branch is a level here, not a destination, so it
@@ -80,6 +101,7 @@ export function FileDrill({
   adapter,
   trail,
   onTrail,
+  onExit,
   selectedId,
   onSelect,
   maxRows = FILE_TREE_MAX_ROWS_PER_LEVEL,
@@ -135,31 +157,34 @@ export function FileDrill({
     setLevels((prev) => levelForget(prev, cursor.id));
   }, [cursor.id]);
 
-  const trailBar = (
-    <div className="ws-drill__trail">
-      {parent && (
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => onTrail(drillUp(at))}
-          aria-label={`Up to ${parent.label}`}
-        >
-          <ChevronUp aria-hidden /> Up
-        </Button>
-      )}
-      <span className="ws-drill__cursor">{cursor.label}</span>
-    </div>
-  );
+  // ONE BAR, ONE TARGET. Not a button inside a header and not a breadcrumb: the
+  // 40px row IS the control, and the trail beside "Up" is a label rather than a
+  // set of links, so there is exactly one thing to hit on a phone.
+  const up = drillUpIntent(at);
+  const trailBar = up.type === "level" || onExit ? (
+    <button
+      type="button"
+      className="ws-drill__up"
+      onClick={() => (up.type === "level" ? onTrail(up.trail) : onExit?.())}
+      aria-label={parent ? `Up to ${parent.label}` : `Up out of ${cursor.label}`}
+    >
+      <span className="ws-drill__up-go">
+        <ArrowUp aria-hidden /> Up
+      </span>
+      <span className="ws-drill__up-trail">{drillTrailText(at)}</span>
+    </button>
+  ) : null;
 
   if (!state || state.status === "loading") {
     return (
       <div className={cx("ws-drill", className)} aria-busy="true" aria-label={label}>
         {trailBar}
         <div className="ws-drill__level">
-          <Skeleton width="70%" />
-          <Skeleton width="55%" />
-          <Skeleton width="62%" />
-          <Skeleton width="40%" />
+          {["70%", "55%", "62%", "40%"].map((w) => (
+            <div key={w} className="ws-drill__row ws-drill__row--pending">
+              <Skeleton width={w} />
+            </div>
+          ))}
         </div>
       </div>
     );
@@ -173,12 +198,14 @@ export function FileDrill({
     return (
       <div className={cx("ws-drill", className)}>
         {trailBar}
-        <StateBlock
-          variant="error"
-          title={`Couldn't load ${cursor.label}`}
-          hint={state.message}
-          action={<Button size="sm" onClick={retry}>Retry</Button>}
-        />
+        <div className="ws-drill__block">
+          <StateBlock
+            variant="error"
+            title={`Couldn't load ${cursor.label}`}
+            hint={state.message}
+            action={<Button size="sm" onClick={retry}>Retry</Button>}
+          />
+        </div>
       </div>
     );
   }
@@ -187,10 +214,12 @@ export function FileDrill({
     return (
       <div className={cx("ws-drill", className)}>
         {trailBar}
-        <StateBlock
-          title={parent ? `Nothing in ${cursor.label}` : emptyTitle}
-          hint={emptyHint}
-        />
+        <div className="ws-drill__block">
+          <StateBlock
+            title={parent ? `Nothing in ${cursor.label}` : emptyTitle}
+            hint={emptyHint}
+          />
+        </div>
       </div>
     );
   }
@@ -210,13 +239,17 @@ export function FileDrill({
             <button
               key={node.id}
               type="button"
-              className={cx("ws-drill__row", selected && "is-selected")}
+              className={cx(
+                "ws-drill__row",
+                branch ? "ws-drill__row--folder" : "ws-drill__row--file",
+                selected && "is-selected",
+              )}
               aria-current={selected ? "true" : undefined}
               onClick={() => (branch ? onTrail(drillInto(at, node)) : onSelect?.(node))}
             >
-              <Icon aria-hidden />
+              <Icon className="ws-drill__icon" aria-hidden />
               <span className="ws-drill__label">{node.label}</span>
-              {node.detail != null && <span className="ws-drill__detail">{node.detail}</span>}
+              {node.detail ? <span className="ws-drill__meta">{node.detail}</span> : null}
               {branch && <ChevronRight className="ws-drill__into" aria-hidden />}
             </button>
           );

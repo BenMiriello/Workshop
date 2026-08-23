@@ -8,7 +8,7 @@
 // second adapter. It reads three endpoints that already exist and adds none:
 //
 //   GET /api/notes/scopes/tree   the scope tree, root-first, with parents
-//   GET /api/notes?scope=<key>   the notes a scope reaches, narrowed to exact
+//   GET /api/notes               every note, filtered to a scope exactly, here
 //   GET /api/documents           the committed docs/ index
 //
 // A NOTE IS A SCOPE AND AN ID. Nothing here turns one into a file path; see
@@ -27,6 +27,7 @@ import { useEffect, useState } from "react";
 import {
   FileTree,
   Skeleton,
+  timeAgo,
   type FileTreeAdapter,
   type FileTreeLevel,
   type FileTreeNode,
@@ -48,25 +49,59 @@ import {
   type ScopeNode,
 } from "./memoryTree";
 
-function scopeNode(key: string): FileTreeNode {
-  return memoryFileNode({ kind: "scope", scope: key });
+// THE META COLUMN (shell-mockup-spec-2026-08-22.md section 4.2). The phone row
+// carries a CHILD COUNT on a container and a RELATIVE TIME on a document, and
+// this adapter can answer both without a single extra request: the scope tree,
+// the docs index and the cross-scope notes listing each describe the WHOLE
+// structure in one cached response, so a count is arithmetic over what is
+// already here. `{ suffix: false }` is the mockup's compact form ("2h", "5d"),
+// not "2h ago": the column is 12px mono at the right edge of a 390px row.
+function countOf(n: number): string {
+  return String(n);
+}
+
+function scopeNode(key: string, children: number): FileTreeNode {
+  return { ...memoryFileNode({ kind: "scope", scope: key }), detail: countOf(children) };
 }
 
 /** A note's row. The stored title is what a reader recognises, so it overrides
  *  the id `memoryFileNode` can name it by; the address is unchanged. */
 function noteNode(note: NoteRow): FileTreeNode {
-  return { ...memoryFileNode({ kind: "note", scope: note.scope, id: note.id }), label: note.title || note.id };
+  return {
+    ...memoryFileNode({ kind: "note", scope: note.scope, id: note.id }),
+    label: note.title || note.id,
+    detail: timeAgo(note.updated, { suffix: false }) || undefined,
+  };
 }
 
-function docDirNode(path: string): FileTreeNode {
-  return memoryFileNode({ kind: "docdir", path });
+function docDirNode(path: string, children: number): FileTreeNode {
+  return { ...memoryFileNode({ kind: "docdir", path }), detail: countOf(children) };
 }
 
 function docNode(doc: DocRow): FileTreeNode {
-  return { ...memoryFileNode({ kind: "doc", path: doc.path }), label: doc.title || baseName(doc.path) };
+  return {
+    ...memoryFileNode({ kind: "doc", path: doc.path }),
+    label: doc.title || baseName(doc.path),
+    detail: timeAgo(doc.mtime, { suffix: false }) || undefined,
+  };
 }
 
-const DOCS_NODE: FileTreeNode = memoryFileNode({ kind: "docs" });
+/** How many rows a scope's own level would hold: the scopes directly inside it,
+ *  plus the notes filed to exactly it. Both come from responses this source has
+ *  already cached, which is why every folder row can carry a count. */
+function scopeCount(tree: readonly ScopeNode[], notes: readonly NoteRow[], key: string): number {
+  return childScopes(tree, key).length + notesInScope(notes, key).length;
+}
+
+/** The same, for a directory of the committed docs tree. */
+function docDirCount(docs: readonly DocRow[], dir: string): number {
+  const level = docLevel(docs, dir);
+  return level.dirs.length + level.files.length;
+}
+
+function docsNode(docs: readonly DocRow[]): FileTreeNode {
+  return { ...memoryFileNode({ kind: "docs" }), detail: countOf(docDirCount(docs, DOCS_ROOT)) };
+}
 
 export const MEMORY_ROOT_NODE: FileTreeNode = memoryFileNode({ kind: "root" });
 
@@ -84,11 +119,14 @@ export type MemorySource = {
 /**
  * One source, with the two whole-tree reads cached in it.
  *
- * The scope tree and the docs index are each ONE response describing the whole
- * structure, so caching them is what makes a level a grouping rather than a
- * request. Notes are fetched per scope, because that is the only shape the
- * notes endpoint has. A failed cache entry is dropped, so the tree's Retry
- * really does retry rather than replaying the same rejection.
+ * The scope tree, the docs index and the notes listing are each ONE response
+ * describing the whole structure, so caching them is what makes a level a
+ * grouping rather than a request, and what lets every container row carry a
+ * child count. Notes used to be fetched per scope (`?scope=`, which answers
+ * with that scope's whole reach and is then narrowed to an exact match anyway),
+ * so the unscoped read is strictly fewer requests for strictly more data. A
+ * failed cache entry is dropped, so the tree's Retry really does retry rather
+ * than replaying the same rejection.
  *
  * Build it in a `useMemo`: a new source means a new adapter, and the tree drops
  * every level it had loaded and reloads. That is exactly what a refresh wants
@@ -97,6 +135,7 @@ export type MemorySource = {
 export function createMemorySource(): MemorySource {
   let scopesP: Promise<ScopeNode[]> | null = null;
   let docsP: Promise<DocRow[]> | null = null;
+  let notesP: Promise<NoteRow[]> | null = null;
 
   const scopes = (): Promise<ScopeNode[]> => {
     if (!scopesP) {
@@ -116,22 +155,37 @@ export function createMemorySource(): MemorySource {
     return docsP;
   };
 
+  // EVERY NOTE, ONCE. `GET /api/notes` unscoped is the same response shape the
+  // per-scope call returns, and one cached copy answers three questions that
+  // used to cost a request each: what is in this scope, how many rows each
+  // CHILD scope holds, and the same for the level above. Filtering to a scope
+  // is `notesInScope`, which is exact-match and pure.
+  const notes = (): Promise<NoteRow[]> => {
+    if (!notesP) {
+      notesP = getJson<{ notes?: NoteRow[] }>("/api/notes")
+        .then((j) => j.notes ?? [])
+        .catch((e) => { notesP = null; throw e; });
+    }
+    return notesP;
+  };
+
   const children = async (node: MemoryNode): Promise<FileTreeLevel> => {
     switch (node.kind) {
       case "root": {
-        const tree = await scopes();
-        return { nodes: [...childScopes(tree, null).map(scopeNode), DOCS_NODE] };
-      }
-      case "scope": {
-        const [tree, notes] = await Promise.all([
-          scopes(),
-          getJson<{ notes?: NoteRow[] }>(`/api/notes?scope=${encodeURIComponent(node.scope)}`)
-            .then((j) => j.notes ?? []),
-        ]);
+        const [tree, all, allDocs] = await Promise.all([scopes(), notes(), docs()]);
         return {
           nodes: [
-            ...childScopes(tree, node.scope).map(scopeNode),
-            ...notesInScope(notes, node.scope).map(noteNode),
+            ...childScopes(tree, null).map((k) => scopeNode(k, scopeCount(tree, all, k))),
+            docsNode(allDocs),
+          ],
+        };
+      }
+      case "scope": {
+        const [tree, all] = await Promise.all([scopes(), notes()]);
+        return {
+          nodes: [
+            ...childScopes(tree, node.scope).map((k) => scopeNode(k, scopeCount(tree, all, k))),
+            ...notesInScope(all, node.scope).map(noteNode),
           ],
         };
       }
@@ -140,7 +194,12 @@ export function createMemorySource(): MemorySource {
         const all = await docs();
         const dir = node.kind === "docs" ? DOCS_ROOT : node.path;
         const level = docLevel(all, dir);
-        return { nodes: [...level.dirs.map(docDirNode), ...level.files.map(docNode)] };
+        return {
+          nodes: [
+            ...level.dirs.map((d) => docDirNode(d, docDirCount(all, d))),
+            ...level.files.map(docNode),
+          ],
+        };
       }
       default:
         // A leaf. The tree never asks, and answering with an empty level is

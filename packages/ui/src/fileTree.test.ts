@@ -5,7 +5,9 @@ import {
   drillInto,
   drillParent,
   drillTrail,
+  drillTrailText,
   drillUp,
+  drillUpIntent,
   flattenTree,
   levelFailed,
   levelForget,
@@ -358,5 +360,28 @@ describe("the drill trail", () => {
     const retried = levelForget(levels, "src/lib");
     expect("src/lib" in retried).toBe(false);
     expect(drillUp(deep).map((n) => n.id)).toEqual(["", "src"]);
+  });
+});
+
+describe("what Up means, and what the bar prints", () => {
+  const root: FileTreeNode = { id: "", label: "src", kind: "branch" };
+  const dir = (id: string): FileTreeNode => ({ id, label: id.split("/").pop()!, kind: "branch" });
+
+  it("walks to the level above from anywhere below the root", () => {
+    const deep = drillTrail(root, [dir("lib"), dir("lib/net")]);
+    const intent = drillUpIntent(deep);
+    expect(intent.type).toBe("level");
+    if (intent.type === "level") expect(intent.trail.map((n) => n.id)).toEqual(["", "lib"]);
+  });
+
+  it("LEAVES THE DIRECTORY at the root instead of doing nothing", () => {
+    // Section 4.1 of the mockup spec. The destination is the caller's, which is
+    // exactly why this is an intent rather than a trail.
+    expect(drillUpIntent(drillTrail(root))).toEqual({ type: "exit" });
+  });
+
+  it("prints the whole trail, root first, joined with a slash", () => {
+    expect(drillTrailText(drillTrail(root))).toBe("src");
+    expect(drillTrailText(drillTrail(root, [dir("lib"), dir("lib/net")]))).toBe("src / lib / net");
   });
 });

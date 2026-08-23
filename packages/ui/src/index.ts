@@ -67,7 +67,8 @@ export { FileDrill, type FileDrillProps } from "./FileDrill";
 // wants this tree's row model and keymap rather than a second one.
 export {
   flattenTree, treeKeyIntent, toggleBranch, nodesById, FILE_TREE_MAX_ROWS_PER_LEVEL,
-  drillTrail, drillCursor, drillParent, drillInto, drillUp, type FileDrillTrail,
+  drillTrail, drillCursor, drillParent, drillInto, drillUp, drillUpIntent, drillTrailText,
+  type FileDrillTrail, type FileDrillUpIntent,
   type FileTreeAdapter, type FileTreeNode, type FileTreeNodeKind, type FileTreeIconHint,
   type FileTreeLevel, type FileTreeLevels, type FileTreeLevelState, type FileTreeRow,
   type FileTreeIntent,

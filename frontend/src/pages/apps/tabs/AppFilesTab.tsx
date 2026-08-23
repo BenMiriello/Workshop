@@ -22,7 +22,7 @@
 // `/api/apps/{id}/files*` routes are the same service through a second door and
 // are parked for retirement in sec 8; nothing new should be built on them.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ChevronUp, FolderTree, Lock } from "lucide-react";
 import {
   ActionBar, Badge, Button, Card, DetailLayout, FileDrill, FileTree, Notice, Row, SectionLabel,
@@ -230,6 +230,7 @@ function FilePane({
 
 function FilesBody({ app }: { app: AppRecord }) {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const selected = params.get("path");
   const workspace = `app:${app.slug}`;
   const isWide = useIsWide();
@@ -276,7 +277,12 @@ function FilesBody({ app }: { app: AppRecord }) {
           label: e.name,
           kind: e.kind === "dir" ? "branch" : "leaf",
           icon: e.kind === "dir" ? "folder" : fileIconFor(e.path, languageForPath(e.path)),
-          detail: e.kind === "file" && e.size != null ? formatBytes(e.size) : undefined,
+          // THE PHONE ROW'S META (shell-mockup-spec-2026-08-22.md section 4.2):
+          // a relative time on a file. A folder's is a CHILD COUNT, which this
+          // API cannot answer without one listing request per folder, so the
+          // meta is simply absent on a folder rather than being filled with a
+          // size or a placeholder. The desktop tree draws no meta at all.
+          detail: e.kind === "file" && e.modified ? timeAgo(e.modified, { suffix: false }) : undefined,
         })),
         filtered: level.filtered ?? undefined,
       };
@@ -309,6 +315,12 @@ function FilesBody({ app }: { app: AppRecord }) {
     }, { replace: true });
   }, [root, folders, setParams]);
 
+  // UP AT THE ROOT LEAVES THE DIRECTORY (mockup spec section 4.1). There is no
+  // level above the workspace root, so the only honest destination is out of the
+  // Files page: the app's own screen, which is the first row of this app's page
+  // column (components/shell/places.ts) and the path these tab routes hang off.
+  const leaveFiles = useCallback(() => { navigate(`/apps/${app.slug}`); }, [navigate, app.slug]);
+
   if (noTree) return <StateBlock title="No files here" hint={noTree} />;
 
   if (!isWide) {
@@ -329,6 +341,7 @@ function FilesBody({ app }: { app: AppRecord }) {
         adapter={adapter}
         trail={trail}
         onTrail={setTrail}
+        onExit={leaveFiles}
         selectedId={selected}
         onSelect={onSelect}
         label={`${app.name} files`}
