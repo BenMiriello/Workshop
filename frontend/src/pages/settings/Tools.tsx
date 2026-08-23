@@ -325,38 +325,53 @@ export default function Tools() {
             {!loadErr && all.length > 0 && (
               <Stack gap="sm">
                 <TableScroll>
-                  <Table>
+                  {/* The kit's 520px floor is a sensible default for a six
+                      column diagnostics table. This one has three, and on a
+                      phone the floor pushed the Edit and Delete controls off
+                      the right edge of a row the operator owns. */}
+                  <Table style={{ minWidth: 0 }}>
                     <thead>
                       <tr>
                         <th>Tool</th>
-                        <th>Kind</th>
                         <th>Owner</th>
-                        <th>Description</th>
-                        <th>Editing</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {shown.rows.map((t) => (
+                      {/* Two rows per tool: the columns you scan, then the
+                          description on its own full-width line. A description
+                          is written for a model as well as a person, so as a
+                          fifth column it set the table's width and pushed the
+                          rest off a phone. */}
+                      {shown.rows.flatMap((t) => [
                         <tr key={t.id}>
                           <td>
-                            <span>{t.title || t.id}</span>
-                            <span
-                              className="ws-mono ws-muted"
-                              style={{ display: "block", fontSize: "var(--fs-xs)" }}
-                            >
-                              {t.id}
+                            <span className="ws-wrap">{t.title || t.id}</span>
+                            {/* The id is what an allowlist writes, so it is on
+                                the row rather than behind a disclosure. Kind
+                                rides with it instead of taking a column of its
+                                own: three columns is what fits a phone before
+                                the table starts scrolling sideways. */}
+                            {/* ws-wrap: an id like mcp__workshop__list_attachments
+                                is one unbreakable token, and it sets the
+                                column's min-content width if it is allowed to. */}
+                            <span className="ws-muted ws-wrap" style={{ display: "block", fontSize: "var(--fs-xs)" }}>
+                              <span className="ws-mono">{t.id}</span>
+                              {" \u00b7 "}
+                              {t.kind}
                             </span>
                           </td>
-                          <td><span className="ws-muted">{t.kind}</span></td>
-                          <td><Tag hue={catFor(t.provenance)}>{provenanceLabel(t.provenance)}</Tag></td>
+                          {/* Owner and editability are ONE fact: the API
+                              derives `editable` from provenance and nothing
+                              else. They share a cell so a phone can hold both,
+                              and so a row never says who owns it in one place
+                              and what that means in another. */}
                           <td>
-                            <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-                              {t.description}
-                            </span>
-                          </td>
-                          <td>
+                            {/* flex-start, or the Stack stretches a Tag into a
+                                480px bar on a wide screen. */}
+                            <Stack gap="sm" style={{ alignItems: "flex-start" }}>
+                            <Tag hue={catFor(t.provenance)}>{provenanceLabel(t.provenance)}</Tag>
                             {t.editable ? (
-                              <Row style={{ gap: "var(--space-2)", flexWrap: "nowrap" }}>
+                              <Row wrap style={{ gap: "var(--space-2)" }}>
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -385,16 +400,33 @@ export default function Tools() {
                                   alignItems: "center",
                                   gap: "var(--space-2)",
                                   fontSize: "var(--fs-xs)",
-                                  whiteSpace: "nowrap",
                                 }}
                               >
                                 <Lock size={14} strokeWidth={1.8} aria-hidden />
                                 Used, not edited
                               </span>
                             )}
+                            </Stack>
                           </td>
-                        </tr>
-                      ))}
+                        </tr>,
+                        t.description ? (
+                          <tr key={`${t.id}:what`}>
+                            <td colSpan={2} style={{ paddingTop: 0 }}>
+                              {/* A measure, not the full row: a description
+                                  set across 1200px is one long line the eye
+                                  loses its place in. Narrower than the cell on
+                                  a wide screen, wider than it on a phone, so
+                                  the phone is unaffected. */}
+                              <span
+                                className="ws-muted"
+                                style={{ display: "block", maxWidth: "80ch", fontSize: "var(--fs-sm)" }}
+                              >
+                                {t.description}
+                              </span>
+                            </td>
+                          </tr>
+                        ) : null,
+                      ])}
                     </tbody>
                   </Table>
                 </TableScroll>
