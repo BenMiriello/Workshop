@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ancestorIdsFor, breadcrumbsFor, fileIconFor, parentPath, viewModeFor } from "./filePath";
+import {
+  ancestorIdsFor, breadcrumbsFor, fileIconFor, folderNodesFor, parentPath, viewModeFor,
+} from "./filePath";
 
 describe("breadcrumbsFor", () => {
   it("is empty at the root", () => {
@@ -45,6 +47,26 @@ describe("ancestorIdsFor", () => {
       "src/pages",
       "src/pages/apps",
     ]);
+  });
+});
+
+describe("folderNodesFor", () => {
+  it("has no folders above a file at the root, so the drill opens at the root", () => {
+    expect(folderNodesFor("main.py")).toEqual([]);
+    expect(folderNodesFor("")).toEqual([]);
+  });
+
+  it("is the file's own folders as tree nodes, outermost first", () => {
+    expect(folderNodesFor("src/pages/apps/Files.tsx")).toEqual([
+      { id: "src", label: "src", kind: "branch", icon: "folder" },
+      { id: "src/pages", label: "pages", kind: "branch", icon: "folder" },
+      { id: "src/pages/apps", label: "apps", kind: "branch", icon: "folder" },
+    ]);
+  });
+
+  it("agrees with the ids the desktop tree opens", () => {
+    const path = "a/b/c/d.ts";
+    expect(folderNodesFor(path).map((n) => n.id)).toEqual(ancestorIdsFor(path));
   });
 });
 

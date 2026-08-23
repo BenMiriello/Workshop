@@ -102,7 +102,10 @@ const ICONS: Record<FileTreeIconHint, typeof FileIcon> = {
   scope: Layers,
 };
 
-function iconFor(node: FileTreeNode, open: boolean) {
+/** The icon for a node, from its hint and its state. Exported for `FileDrill`,
+ *  the phone shape of this same tree: one tree must not have two icon tables.
+ *  Not part of the package's public surface (see `index.ts`). */
+export function fileTreeIconFor(node: FileTreeNode, open: boolean) {
   if (node.icon && node.icon in ICONS) {
     const Hinted = ICONS[node.icon];
     return node.icon === "folder" && open ? FolderOpen : Hinted;
@@ -370,7 +373,7 @@ function TreeRow({
   }
 
   const { node, open } = row;
-  const Icon = iconFor(node, open);
+  const Icon = fileTreeIconFor(node, open);
   const selected = node.id === selectedId;
   const Twist = open ? ChevronDown : ChevronRight;
 

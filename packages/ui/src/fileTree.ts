@@ -143,6 +143,67 @@ export function toggleBranch(
   return next;
 }
 
+// ---- The drill: one level at a time ----------------------------------------
+// The phone shape of the same tree, from
+// docs/platform-redesign/navigation-shell-2026-08-20.md section 8.6: "the file
+// tree is the page content and drills in place, with Up walking the tree".
+//
+// UP IS STRUCTURAL, NOT BACK (section 8.1). So the way out of a level is not
+// browser history, and it cannot be derived from the level either: a node knows
+// its own id and nothing about what contains it. It is RECORDED, as the trail
+// of branches the reader descended through. The trail's first entry is always
+// the root, which is what makes "Up at the root" a defined no-op rather than an
+// empty list.
+
+/** Root first, the branch being listed last. Never empty. */
+export type FileDrillTrail = readonly FileTreeNode[];
+
+/** The trail to start from. `ancestors` are the branches between the root and
+ *  the level to open, outermost first, so a deep link to a file opens at that
+ *  file's own folder instead of at the root. A leaf cannot be a level and a
+ *  repeated id is a cycle, so both are dropped rather than pushed. */
+export function drillTrail(
+  root: FileTreeNode,
+  ancestors: readonly FileTreeNode[] = [],
+): FileDrillTrail {
+  const trail: FileTreeNode[] = [root];
+  const seen = new Set<string>([root.id]);
+  for (const node of ancestors) {
+    if (node.kind !== "branch" || seen.has(node.id)) continue;
+    seen.add(node.id);
+    trail.push(node);
+  }
+  return trail;
+}
+
+/** The branch being listed. */
+export function drillCursor(trail: FileDrillTrail): FileTreeNode {
+  return trail[trail.length - 1];
+}
+
+/** The level above the one being listed, or `null` at the root: what an Up
+ *  control names, and whether there is one to draw at all. */
+export function drillParent(trail: FileDrillTrail): FileTreeNode | null {
+  return trail.length > 1 ? trail[trail.length - 2] : null;
+}
+
+/** Descend into a branch. A leaf is a destination rather than a level, so it is
+ *  a no-op here and the caller selects it instead. Descending into a branch
+ *  already on the trail returns TO it rather than pushing a second copy, so a
+ *  cyclic adapter cannot grow the trail without bound. */
+export function drillInto(trail: FileDrillTrail, node: FileTreeNode): FileDrillTrail {
+  if (node.kind !== "branch") return trail;
+  const at = trail.findIndex((n) => n.id === node.id);
+  if (at < 0) return [...trail, node];
+  return at === trail.length - 1 ? trail : trail.slice(0, at + 1);
+}
+
+/** Up one level. At the root there is nothing above the tree, so this returns
+ *  the SAME trail: nothing re-renders, and Up never falls through to history. */
+export function drillUp(trail: FileDrillTrail): FileDrillTrail {
+  return trail.length > 1 ? trail.slice(0, -1) : trail;
+}
+
 // ---- Flattening ------------------------------------------------------------
 
 export type FlattenOptions = { maxRowsPerLevel?: number };

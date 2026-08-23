@@ -58,12 +58,16 @@ export { Popover } from "./Popover";
 export { StateBlock, Notice, Skeleton, ActionBar, CopyButton, RevealField } from "./feedback";
 export { TableScroll, Table, NumCell, TimeCell } from "./Table";
 export { FileTree, type FileTreeProps } from "./FileTree";
+// The same tree on a phone: one level at a time, Up walking back out. Same
+// adapter as `FileTree`, so a surface branches on width and says nothing twice.
+export { FileDrill, type FileDrillProps } from "./FileDrill";
 // The tree's data seam and its pure row model. A consumer supplies an adapter
 // (a root plus a function returning one node's children); `flattenTree` and
 // `treeKeyIntent` are exported because a caller that draws its own rows still
 // wants this tree's row model and keymap rather than a second one.
 export {
   flattenTree, treeKeyIntent, toggleBranch, nodesById, FILE_TREE_MAX_ROWS_PER_LEVEL,
+  drillTrail, drillCursor, drillParent, drillInto, drillUp, type FileDrillTrail,
   type FileTreeAdapter, type FileTreeNode, type FileTreeNodeKind, type FileTreeIconHint,
   type FileTreeLevel, type FileTreeLevels, type FileTreeLevelState, type FileTreeRow,
   type FileTreeIntent,

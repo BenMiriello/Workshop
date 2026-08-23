@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.5.19
+Version: 0.5.20
 
 ## @workshop/ui
 
@@ -46,9 +46,15 @@ Source: `src/index.ts`
 - DEFAULT_PALETTE
 - DetailLayout
 - Divider
+- drillCursor
+- drillInto
+- drillParent
+- drillTrail
+- drillUp
 - ERROR_BODY_CAP
 - Field
 - FILE_TREE_MAX_ROWS_PER_LEVEL
+- FileDrill
 - FileTree
 - FilterBar
 - FilterChip
@@ -138,6 +144,8 @@ Source: `src/index.ts`
 - type CatHue
 - type Crumb
 - type EditMode
+- type FileDrillProps
+- type FileDrillTrail
 - type FileTreeAdapter
 - type FileTreeIconHint
 - type FileTreeIntent

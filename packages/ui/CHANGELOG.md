@@ -12,6 +12,46 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.20 - 2026-08-22 - `FileDrill`: the same tree, one level at a time
+
+**Additive only.** The phone shape of `FileTree`, from
+`docs/platform-redesign/navigation-shell-2026-08-20.md` section 8.6: "the file
+tree is the page content and drills in place, with Up walking the tree".
+`AppFilesTab.tsx` is the first consumer and branches on `useIsWide()`: the rail
+above 900px, the drill below it.
+
+Added, on the **core entry**:
+
+- `FileDrill`, `type FileDrillProps`: one level on screen, a folder tap
+  descends, an Up control walks back out. Props: `adapter`, `trail`, `onTrail`,
+  `selectedId`, `onSelect`, `maxRows`, `emptyTitle`, `emptyHint`, `label`,
+  `className`.
+- `drillTrail`, `drillCursor`, `drillParent`, `drillInto`, `drillUp`,
+  `type FileDrillTrail`: the pure trail rules (`src/fileTree.ts`, tested in
+  `fileTree.test.ts`).
+- `.ws-drill`, `.ws-drill__trail`, `.ws-drill__cursor`, `.ws-drill__level`,
+  `.ws-drill__row`, `.ws-drill__label`, `.ws-drill__detail`, `.ws-drill__into`,
+  `.ws-drill__aside` in `components.css`.
+
+**It takes the SAME `FileTreeAdapter`.** A surface that shows a rail on a
+desktop and drills on a phone writes one adapter and branches on width; nothing
+about the data is said twice, and the level store is the same three transitions
+(`levelLoading` / `levelReady` / `levelFailed`), so there is no second loader.
+
+**UP IS STRUCTURAL, NOT BACK** (section 8.1). The way out of a level cannot be
+derived from a node, which knows its own id and nothing about what contains it,
+and it is not browser history either. It is RECORDED, as the trail of branches
+the reader descended through, and the trail lives in the CALLER so that opening
+a file and pressing Up returns to the level that file is in. At the root, Up is
+a defined no-op that returns the same trail.
+
+Four list states as usual: skeleton rows while a level loads, an empty
+`StateBlock` naming the folder with an instructional hint, an error `StateBlock`
+naming the folder that failed with Retry (the level IS the page here, so a
+failed level is a region rather than a line) with the trail still above it so Up
+works out of a folder that will not load, and a capped level reporting the
+remainder. Rows are full-width 44px touch targets.
+
 ## 0.5.19 - 2026-08-22 - `FileTree`: one tree navigator, lazy per level
 
 **Additive only.** P2 of

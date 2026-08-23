@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   FILE_TREE_MAX_ROWS_PER_LEVEL,
+  drillCursor,
+  drillInto,
+  drillParent,
+  drillTrail,
+  drillUp,
   flattenTree,
   levelFailed,
   levelForget,
@@ -281,5 +286,77 @@ describe("treeKeyIntent", () => {
 
   it("has nothing to say about an empty tree", () => {
     expect(treeKeyIntent([], null, "ArrowDown")).toBeNull();
+  });
+});
+
+// ---- The drill --------------------------------------------------------------
+// The phone shape: one level on screen and a trail recording the way back out.
+// Up is structural, so every assertion here is about the trail and none of them
+// is about history.
+
+describe("the drill trail", () => {
+  it("starts at the root, which is the level a phone opens on", () => {
+    const trail = drillTrail(root);
+    expect(drillCursor(trail)).toEqual(root);
+    expect(drillParent(trail)).toBeNull();
+  });
+
+  it("opens at a deep link's own folder, outermost first", () => {
+    const trail = drillTrail(root, [dir("src"), dir("src/lib")]);
+    expect(trail.map((n) => n.id)).toEqual(["", "src", "src/lib"]);
+    expect(drillCursor(trail).id).toBe("src/lib");
+    expect(drillParent(trail)?.id).toBe("src");
+  });
+
+  it("drops a leaf and a repeat from the ancestors it is given", () => {
+    const trail = drillTrail(root, [dir("src"), file("src/main.ts"), dir("src"), dir("src/lib")]);
+    expect(trail.map((n) => n.id)).toEqual(["", "src", "src/lib"]);
+  });
+
+  it("descends into a branch", () => {
+    const trail = drillInto(drillTrail(root), dir("src"));
+    expect(trail.map((n) => n.id)).toEqual(["", "src"]);
+    expect(drillCursor(trail).id).toBe("src");
+    expect(drillParent(trail)?.id).toBe("");
+  });
+
+  it("does not descend into a leaf: a file is a destination, not a level", () => {
+    const at = drillTrail(root, [dir("src")]);
+    expect(drillInto(at, file("src/main.ts"))).toBe(at);
+  });
+
+  it("returns to a branch already on the trail instead of pushing it twice", () => {
+    const deep = drillTrail(root, [dir("src"), dir("src/lib")]);
+    expect(drillInto(deep, dir("src")).map((n) => n.id)).toEqual(["", "src"]);
+    // Descending into the level you are already looking at changes nothing.
+    expect(drillInto(deep, dir("src/lib"))).toBe(deep);
+  });
+
+  it("walks Up one level from a nested level", () => {
+    const deep = drillTrail(root, [dir("src"), dir("src/lib")]);
+    const up = drillUp(deep);
+    expect(up.map((n) => n.id)).toEqual(["", "src"]);
+    expect(drillUp(up).map((n) => n.id)).toEqual([""]);
+  });
+
+  it("is a no-op at the root, and says so by returning the same trail", () => {
+    const at = drillTrail(root);
+    expect(drillUp(at)).toBe(at);
+    expect(drillCursor(drillUp(at))).toEqual(root);
+  });
+
+  it("keeps the trail while the level it points at fails, so Up still works", () => {
+    // The level store and the trail are independent: a level that will not load
+    // cannot cost the reader the way back out of it.
+    const deep = drillTrail(root, [dir("src"), dir("src/lib")]);
+    let levels = levelLoading({}, "src/lib");
+    levels = levelFailed(levels, "src/lib", "503 Service Unavailable");
+    expect(levels["src/lib"]).toEqual({ status: "error", message: "503 Service Unavailable" });
+    expect(drillCursor(deep).id).toBe("src/lib");
+    expect(drillParent(deep)?.id).toBe("src");
+    // Retry forgets the level so it is asked for again; the trail is untouched.
+    const retried = levelForget(levels, "src/lib");
+    expect("src/lib" in retried).toBe(false);
+    expect(drillUp(deep).map((n) => n.id)).toEqual(["", "src"]);
   });
 });

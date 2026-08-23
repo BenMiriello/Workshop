@@ -21,19 +21,20 @@
 // addressed by workspace reference rather than by app id. The older
 // `/api/apps/{id}/files*` routes are the same service through a second door and
 // are parked for retirement in sec 8; nothing new should be built on them.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { FolderTree, Lock } from "lucide-react";
+import { ChevronUp, FolderTree, Lock } from "lucide-react";
 import {
-  ActionBar, Badge, Button, Card, DetailLayout, FileTree, Notice, Row, SectionLabel,
-  Skeleton, Stack, StateBlock, formatBytes, shortHttpError, timeAgo, useEditMode,
-  type FileTreeAdapter, type FileTreeNode,
+  ActionBar, Badge, Button, Card, DetailLayout, FileDrill, FileTree, Notice, Row, SectionLabel,
+  Skeleton, Stack, StateBlock, drillTrail, formatBytes, shortHttpError, timeAgo, useEditMode,
+  type FileDrillTrail, type FileTreeAdapter, type FileTreeNode,
 } from "@workshop/ui";
 import { Editor, languageForPath } from "@workshop/ui/editor";
 import type { components } from "../../../api/schema.gen";
 import type { AppRecord } from "../../../lib/apps";
+import { useIsWide } from "../../../lib/useMediaQuery";
 import { AppTabPage } from "./AppTabShell";
-import { ancestorIdsFor, fileIconFor, viewModeFor } from "./filePath";
+import { ancestorIdsFor, fileIconFor, folderNodesFor, viewModeFor } from "./filePath";
 
 type FileLevel = components["schemas"]["FileTree"];
 type FileContent = components["schemas"]["FileContent"];
@@ -59,7 +60,19 @@ async function readFailure(r: Response): Promise<{ message: string; reason: stri
 
 // ---- the file ---------------------------------------------------------------
 
-function FilePane({ workspace, path }: { workspace: string; path: string }) {
+function FilePane({
+  workspace,
+  path,
+  actions,
+}: {
+  workspace: string;
+  path: string;
+  /** Chrome that belongs to the page rather than the file. On a phone this is
+   *  the Up control, which is why it sits above the four states below and not
+   *  only beside a file that loaded: a file that failed still has a level to
+   *  walk back out to. */
+  actions?: ReactNode;
+}) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
@@ -107,16 +120,24 @@ function FilePane({ workspace, path }: { workspace: string; path: string }) {
 
   if (err) {
     return (
-      <StateBlock
-        variant="error"
-        title="Couldn't load this file"
-        hint={<code>{endpoint} ({err})</code>}
-        action={<Button size="sm" onClick={load}>Retry</Button>}
-      />
+      <Stack gap="sm">
+        {actions}
+        <StateBlock
+          variant="error"
+          title="Couldn't load this file"
+          hint={<code>{endpoint} ({err})</code>}
+          action={<Button size="sm" onClick={load}>Retry</Button>}
+        />
+      </Stack>
     );
   }
   if (!file) {
-    return <Card><Stack gap="sm"><Skeleton width="70%" /><Skeleton width="50%" /></Stack></Card>;
+    return (
+      <Stack gap="sm">
+        {actions}
+        <Card><Stack gap="sm"><Skeleton width="70%" /><Skeleton width="50%" /></Stack></Card>
+      </Stack>
+    );
   }
 
   const mode = viewModeFor(file);
@@ -125,7 +146,10 @@ function FilePane({ workspace, path }: { workspace: string; path: string }) {
   return (
     <Stack>
       <Row between wrap>
-        <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{path}</span>
+        <Row>
+          {actions}
+          <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{path}</span>
+        </Row>
         <Row>
           {mode === "readonly" && (
             <Badge><Lock size={12} strokeWidth={1.8} aria-hidden /> read only</Badge>
@@ -185,11 +209,30 @@ function FilePane({ workspace, path }: { workspace: string; path: string }) {
 }
 
 // ---- the tree ---------------------------------------------------------------
+//
+// TWO SHAPES, ONE ADAPTER. A wide screen gets the two-pane `DetailLayout`: the
+// tree in the rail, the file beside it. A phone gets the tree AS THE PAGE,
+// drilled one level at a time, with Up walking back out of it
+// (docs/platform-redesign/navigation-shell-2026-08-20.md section 8.6, "the file
+// tree is the page content and drills in place, with Up walking the tree").
+//
+// It used to render `DetailLayout` unconditionally, which on a phone stacks the
+// rail above the main column: the picker and the file it picked ended up in one
+// page scroll, with the tree additionally scrolling inside a 65vh card. Two
+// nested scrollers, and the file you opened below the fold. Reported 2026-08-22.
+// So the drill is a DIFFERENT TREE, not the same one restyled, which is exactly
+// what `useIsWide` is for (see lib/useMediaQuery.ts): rendering both and hiding
+// one in CSS would mount every row twice and fetch every level twice.
+//
+// Up is STRUCTURAL, not Back (section 8.1). From an open file it goes to the
+// level that file is IN, whether you drilled there or arrived on a deep link,
+// because the trail is rebuilt from the path either way.
 
 function FilesBody({ app }: { app: AppRecord }) {
   const [params, setParams] = useSearchParams();
   const selected = params.get("path");
   const workspace = `app:${app.slug}`;
+  const isWide = useIsWide();
   // "This app has no linked project" is the workspace resolver's own answer and
   // it is an ABSENCE, not a failure: at the root (and only there) a 404 means
   // there is no tree to load rather than that loading it went wrong.
@@ -198,10 +241,22 @@ function FilesBody({ app }: { app: AppRecord }) {
   // its folders expanded. Later selections open on the click that made them.
   const [openIds] = useState(() => ancestorIdsFor(params.get("path") ?? ""));
 
+  // The root is not a row: its children are the top level, and its label is
+  // what the tree's error state names.
+  const root = useMemo<FileTreeNode>(
+    () => ({ id: "", label: app.name, kind: "branch", icon: "folder" }),
+    [app.name],
+  );
+
+  // THE PHONE'S TRAIL: which level the drill is listing, and the way back out
+  // of it. It lives here rather than in the drill so that opening a file and
+  // pressing Up returns to the level the file is in instead of the root.
+  const [trail, setTrail] = useState<FileDrillTrail>(
+    () => drillTrail(root, folderNodesFor(params.get("path") ?? "")),
+  );
+
   const adapter = useMemo<FileTreeAdapter>(() => ({
-    // The root is not a row: its children are the top level, and its label is
-    // what the tree's error state names.
-    root: { id: "", label: app.name, kind: "branch", icon: "folder" },
+    root,
     children: async (node) => {
       const url =
         `/api/files/tree?workspace=${encodeURIComponent(workspace)}&path=${encodeURIComponent(node.id)}`;
@@ -226,7 +281,7 @@ function FilesBody({ app }: { app: AppRecord }) {
         filtered: level.filtered ?? undefined,
       };
     },
-  }), [workspace, app.name]);
+  }), [workspace, root]);
 
   useEffect(() => { setNoTree(null); }, [workspace]);
 
@@ -240,7 +295,48 @@ function FilesBody({ app }: { app: AppRecord }) {
     }, { replace: true });
   }, [setParams]);
 
+  // Up out of an open file, on a phone: back to the folder that holds it. The
+  // trail is rebuilt from the path, so a deep link walks up correctly on its
+  // first press without having been drilled into.
+  const folders = useMemo(() => folderNodesFor(selected ?? ""), [selected]);
+  const upTo = folders[folders.length - 1] ?? root;
+  const upFromFile = useCallback(() => {
+    setTrail(drillTrail(root, folders));
+    setParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("path");
+      return next;
+    }, { replace: true });
+  }, [root, folders, setParams]);
+
   if (noTree) return <StateBlock title="No files here" hint={noTree} />;
+
+  if (!isWide) {
+    // The tree IS the page here. One level, no rail, no nested scroller.
+    return selected ? (
+      <FilePane
+        key={selected}
+        workspace={workspace}
+        path={selected}
+        actions={
+          <Button size="sm" variant="ghost" onClick={upFromFile} aria-label={`Up to ${upTo.label}`}>
+            <ChevronUp aria-hidden /> Up
+          </Button>
+        }
+      />
+    ) : (
+      <FileDrill
+        adapter={adapter}
+        trail={trail}
+        onTrail={setTrail}
+        selectedId={selected}
+        onSelect={onSelect}
+        label={`${app.name} files`}
+        emptyTitle="No files here"
+        emptyHint="Add a file to this app's project tree and it shows up here."
+      />
+    );
+  }
 
   return (
     <DetailLayout

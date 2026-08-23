@@ -3,7 +3,7 @@
 // allowed to do with one file's read response. Extracted so all of it survives
 // without a DOM harness (frontend/CLAUDE.md: "the target of a test is always
 // the pure rule behind a behaviour").
-import type { FileTreeIconHint } from "@workshop/ui";
+import type { FileTreeIconHint, FileTreeNode } from "@workshop/ui";
 
 export type Crumb = { label: string; path: string };
 
@@ -36,6 +36,20 @@ export function parentPath(path: string): string {
  *  expanded instead of at the bare root. One request per id, not a walk. */
 export function ancestorIdsFor(path: string): string[] {
   return breadcrumbsFor(parentPath(path)).map((c) => c.path);
+}
+
+/** The same ancestors as `FileTreeNode`s, which is what the phone's drill takes
+ *  as its trail: a file's folders, outermost first, so a link straight to
+ *  `?path=src/pages/x.tsx` opens the level that file is IN rather than the
+ *  workspace root. The root is not among them, since `drillTrail` supplies it
+ *  and only the adapter knows its label. */
+export function folderNodesFor(path: string): FileTreeNode[] {
+  return breadcrumbsFor(parentPath(path)).map((c) => ({
+    id: c.path,
+    label: c.label,
+    kind: "branch",
+    icon: "folder",
+  }));
 }
 
 /* Extensions whose icon says something the language does not. Everything else
