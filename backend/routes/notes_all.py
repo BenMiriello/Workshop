@@ -305,20 +305,40 @@ async def list_scopes() -> dict:
 async def list_scopes_tree() -> dict:
     """The same scope keys as `/scopes`, shaped as a tree instead of a flat
     list (design doc sec 11: "a scope filter shaped like the TREE, not a flat
-    list"). Each entry carries its `parent` (per `scope_tree.parent`, when that
-    parent is itself one of the visible scopes) and a `depth`, in root-first
+    list"). Each entry carries its `parent` and a `depth`, in root-first
     depth-first order, so a picker can convey containment by indentation alone
-    without building a tree widget."""
+    without building a tree widget.
+
+    A PARENT THAT IS NOT VISIBLE IS SKIPPED, NOT DROPPED. This enumerates the
+    scopes that have a knowledge DIRECTORY, while `scope_tree.parent` answers
+    for the whole model, so a real parent can be absent here (an app with no
+    notes of its own still contains its project). Attaching such a child to the
+    root instead of to its nearest visible ancestor promotes it above scopes
+    that genuinely contain it: measured 2026-08-23, when `project:<slug>` moved
+    under `app:<slug>`, four projects whose app had no notes jumped from under
+    `workshop` to the top level, as siblings of `development`. Walking up keeps
+    containment truthful under partial visibility, and the `seen` guard means a
+    cycle in a hand-edited `.runtime/scope-tree.json` cannot hang the request."""
     from services import scope_tree
     keys = [skey for skey, _ in _scope_roots()]
     key_set = set(keys)
-    parent_of: dict[str, str | None] = {}
-    for k in keys:
-        try:
-            p = scope_tree.parent(k)
-        except ValueError:
-            p = None
-        parent_of[k] = p if p in key_set else None
+
+    def _visible_parent(key: str) -> str | None:
+        seen: set[str] = {key}
+        cur = key
+        while True:
+            try:
+                nxt = scope_tree.parent(cur)
+            except ValueError:
+                return None
+            if nxt is None or nxt in seen:
+                return None
+            if nxt in key_set:
+                return nxt
+            seen.add(nxt)
+            cur = nxt
+
+    parent_of: dict[str, str | None] = {k: _visible_parent(k) for k in keys}
     children: dict[str | None, list[str]] = {}
     for k in keys:
         children.setdefault(parent_of[k], []).append(k)
