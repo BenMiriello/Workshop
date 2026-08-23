@@ -11,6 +11,7 @@
 import type { ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { OverlayHost } from "@workshop/ui";
+import { DirectoryProvider } from "./directory";
 import { Dock } from "./Dock";
 import { MobileBars } from "./MobileBars";
 import { PageColumn } from "./PageColumn";
@@ -27,21 +28,27 @@ export function Shell({ children }: { children: ReactNode }) {
   const widthClass = chatFull ? " ws-app--chatfull" : appFull ? " ws-app--appfull" : "";
 
   return (
-    <div className={"ws-root ws-app ws-shell" + widthClass}>
-      <Dock shell={shell} />
-      <div className="ws-shell__stage">
-        <MobileBars shell={shell} />
-        <div className="ws-shell__cols">
-          <PageColumn shell={shell} />
-          {/* The content region, and the only place an overlay may land.
-              Dialogs portal into the host this renders, so they cover the page
-              and not the dock or the toolbars beside it. */}
-          <OverlayHost>
-            <ShellTrail />
-            <main>{children}</main>
-          </OverlayHost>
+    // The directory takeover spans the page column AND the content, because a
+    // directory page registers itself from the content side and its tree is
+    // drawn in the column. One provider above both is what lets the shell stay
+    // ignorant of what any particular directory contains.
+    <DirectoryProvider onNeedColumn={shell.openColumn}>
+      <div className={"ws-root ws-app ws-shell" + widthClass}>
+        <Dock shell={shell} />
+        <div className="ws-shell__stage">
+          <MobileBars shell={shell} />
+          <div className="ws-shell__cols">
+            <PageColumn shell={shell} />
+            {/* The content region, and the only place an overlay may land.
+                Dialogs portal into the host this renders, so they cover the page
+                and not the dock or the toolbars beside it. */}
+            <OverlayHost>
+              <ShellTrail />
+              <main>{children}</main>
+            </OverlayHost>
+          </div>
         </div>
       </div>
-    </div>
+    </DirectoryProvider>
   );
 }

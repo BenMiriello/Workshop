@@ -42,6 +42,7 @@ import {
   openPath,
   parseMemory,
   rememberPath,
+  setColumnOpen,
   settleMotion,
   tabsKey,
   tabsOpen as readTabsOpen,
@@ -102,6 +103,11 @@ export type Shell = {
   hrefFor: (place: ShellPlace) => string;
   /** Tapping a page row. */
   selectPage: (page: ShellPage) => void;
+  /** Make sure the page column is open, without flipping it shut for someone
+   *  whose column already was. The directory takeover calls this: its tree is
+   *  drawn in the column, and the control that asks for it can be in the
+   *  content. */
+  openColumn: () => void;
   toggleTabs: () => void;
 };
 
@@ -195,6 +201,11 @@ export function useShell(): Shell {
     [navigate],
   );
 
+  const openColumn = useCallback(() => {
+    setMotion(grantMotion(pathname));
+    setMemory((m) => setColumnOpen(m, place, true));
+  }, [place, pathname]);
+
   const onToggleTabs = useCallback(() => {
     setMemory((m) => toggleTabs(m, key));
   }, [key]);
@@ -213,6 +224,7 @@ export function useShell(): Shell {
     selectPlace,
     hrefFor,
     selectPage,
+    openColumn,
     toggleTabs: onToggleTabs,
   };
 }

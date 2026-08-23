@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  RefreshCw, Plus, Pencil, Trash2, FileText, BookOpen, MessageSquare, Pin,
+  RefreshCw, Plus, Trash2, FileText, FolderTree, ChevronUp,
   ShieldCheck, Lock, Globe, GitBranch,
 } from "lucide-react";
-import { Button, Card, CardGrid, PageHeader, SectionLabel, Row, Stack, Segmented, Select, Input, Textarea, Field, Modal, ConfirmDialog, StateBlock, Notice, Skeleton, StatusDot, Table, TableScroll, Tag, Checkbox, catFor, type SegmentedOption, shortHttpError, timeAbsolute, formatBytes } from "@workshop/ui";
-import { scopeLabel, scopeHref } from "../lib/tasks";
+import { Button, Card, CardGrid, PageHeader, SectionLabel, Row, Stack, Segmented, Select, Input, Textarea, Field, Modal, ConfirmDialog, StateBlock, Skeleton, StatusDot, Table, TableScroll, Tag, Checkbox, catFor, type SegmentedOption, shortHttpError, timeAbsolute, formatBytes } from "@workshop/ui";
+import { scopeLabel } from "../lib/tasks";
 import { orderScopes } from "../lib/devMode";
+import { useIsWide } from "../lib/useMediaQuery";
 import AttachmentViewer from "../components/chat/AttachmentViewer";
-import { Ref } from "../components/Ref";
-import { backlinksFor } from "../lib/refs";
-import { useResolvedRefs } from "../lib/useResolvedRefs";
+import { useDirectoryPage } from "../components/shell/directory";
 
 import {
   getPolicy,
@@ -24,16 +24,59 @@ import {
   type ShareValue,
 } from "../lib/memoryPolicy";
 
-// The Memory surface (memory-and-documentation-model-2026-08-14.md sec 11):
-// one page over three substrates that used to be scattered -- the scoped
-// knowledge store (Notes), the committed docs/ tree (Documents), and chat
-// threads (Chats) -- unified into one filterable list, plus the Vault
-// (a frozen Apple Notes export, kept separate per sec 9) and Files (chat
-// attachments) as their own tabs.
+import { getJson } from "./memory/api";
+import {
+  isBranch,
+  nodeForParams,
+  paramsForNode,
+  parentOf,
+  searchDocs,
+  type DocRow,
+  type MemoryNode,
+  type NoteRow,
+  type ScopeNode,
+} from "./memory/memoryTree";
+import { MemoryDrill, MemoryTreeView, createMemorySource, nodeLabel } from "./memory/MemoryTree";
+import { DocDocument, NoteDocument } from "./memory/MemoryDocument";
+import { NOTE_TYPES, freshNoteId, noteTypeLabel, type NoteType } from "./memory/notes";
+
+// The Memory surface (memory-and-documentation-model-2026-08-14.md sec 11),
+// rebuilt on the file-viewer/editor design of 2026-08-22.
 //
-// Same Segmented/filter/list/drawer language as Work. Tokens not hex, lucide
-// not emoji, per frontend/CLAUDE.md. Four list states, Edit-mode for writes,
-// ConfirmDialog for delete.
+// WHAT CHANGED, AND WHY IT IS NOT A SMALLER CHANGE THAN IT LOOKS:
+//
+// 1. MEMORY RENDERS MARKDOWN. It did not. Both bodies on this page went into a
+//    paragraph with `white-space: pre-wrap`, so a heading was a hash and a word
+//    and a table was a wall of pipes, on the one page whose whole content is
+//    markdown. The kit has had a `Markdown` primitive the whole time and six
+//    other pages import it.
+//
+// 2. A DOCUMENT HAS TWO FORMS. A note and a doc open RENDERED, with an Edit
+//    control that switches to the kit editor showing the SOURCE. That is
+//    file-viewer-and-editor-2026-08-22.md section 4's rule, and markdown is
+//    exactly the case it is about. It lives in ./memory/MemoryDocument.tsx.
+//
+// 3. NAVIGATION IS A TREE, NOT A GRID OF CARDS. The scope tree and the docs
+//    tree are one tree through one adapter over the kit's `FileTree`
+//    (./memory/MemoryTree.tsx). On a desktop it is drawn in column two by the
+//    shell's directory takeover (navigation-shell-2026-08-20.md sections 3.4 and
+//    8.1, built for this); on a phone it is this page's own content and drills
+//    in place with `Up`, and it does not touch the tab bar.
+//
+//    A NOTE IS STILL A SCOPE AND AN ID. The tree did not turn Memory into a
+//    filesystem: `?scope=&note=` and `?path=` are still the addresses, which is
+//    also why every link services/refs.py has handed out still opens.
+//
+// 4. CHATS ARE THEIR OWN TAB. A chat is a collection that resolves by query,
+//    not a document in a directory (navigation-shell sec 3.5: "A directory gets
+//    the takeover and the chevron. A collection is a page and never a tree."),
+//    so it moved out of the unified list rather than into the tree. Nothing was
+//    dropped: the list and its sharing control are unchanged, one tab across.
+//
+// 5. SEARCH IS A LIST. A query is not containment, so its results are a plain
+//    list in the content pane and never a second tree.
+//
+// The Vault and Files tabs below are untouched.
 
 // A helper for the `${r.status} ${await r.text()}` -> shortHttpError swap: a
 // small, throwaway wrapper so every fetch call site below reads the same way
@@ -42,38 +85,7 @@ async function httpFail(r: Response): Promise<Error> {
   return new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
 }
 
-type Note = {
-  id: string;
-  title: string;
-  hook: string;
-  updated?: string | null;
-  scope: string;
-  // Provenance and the ranked-digest facets (design doc sec 5, sec 11):
-  // who wrote it, its type (decision/fact/reference/preference), and whether
-  // it is pinned. Absent on a note written before this metadata existed --
-  // `author` renders as "Unknown author" and `type`/`pinned` default like the
-  // backend does (fact / not pinned).
-  author?: string;
-  type?: string;
-  pinned?: boolean;
-};
-
-type NotesResp = { notes: Note[]; count: number; scopes?: number };
-
-// A doc from the docs/ index (GET /api/documents). Committed markdown; edits
-// land in the working tree (PUT /api/documents/file) and are NOT auto-
-// committed -- the operator commits them on their own schedule, same as any
-// other tracked-file edit.
-type Doc = {
-  path: string;
-  title: string;
-  section: string;
-  mtime?: string | null;
-};
-type DocsResp = { docs: Doc[]; count: number };
-
-// A thread summary (GET /api/chat/threads). Chats are the third source in
-// the unified list -- shown, not edited here; a row navigates to the chat.
+// A thread summary (GET /api/chat/threads).
 type ChatSummary = {
   id: string;
   title: string;
@@ -84,17 +96,11 @@ type ChatSummary = {
   archived_at?: string | null;
 };
 
-// One entry in the scope filter (GET /api/notes/scopes/tree). `parent` is the
-// containing scope, or null at a root; `depth` is how far under a visible
-// root this scope sits. Root-first, depth-first order from the backend, so
-// rendering it as a flat, indented list already reads as a tree.
-type ScopeNode = { key: string; parent: string | null; depth: number };
-
 // One note in the ~/notes vault, served through the Store door
 // (POST /api/stores/notes:vault/read). The vault is a plain folder of Markdown a
 // real Obsidian opens; the Store URI is what makes it addressable by a grant.
 type VaultNote = { path: string; title: string; size?: number; modified?: number };
-// What the door returns. `tier` is "operator" for us — the operator is served
+// What the door returns. `tier` is "operator" for us: the operator is served
 // ungated, verbatim, with no policy consulted and no broker call. The gate this
 // page's data passes through is on an agent job's perimeter, not on the human.
 type StoreRead = {
@@ -106,57 +112,12 @@ type StoreRead = {
   count: number;
 };
 
-const OVERFLOW_AT = 100;
-
-// Vault and Files stay their own tabs (sec 9: the vault is a dead one-time
-// import and explicitly out of the unified list). Notes, Documents and Chats
-// merge into "library", one list with a source badge per row and a filter
-// over it (sec 11).
-type Tab = "library" | "vault" | "files";
-const TABS: SegmentedOption<Tab>[] = [
-  { value: "library", label: "Library" },
-  { value: "vault", label: "Vault" },
-  { value: "files", label: "Files" },
-];
-
-type Source = "note" | "doc" | "chat";
-type SourceFilter = "all" | Source;
-const SOURCE_OPTIONS: SegmentedOption<SourceFilter>[] = [
-  { value: "all", label: "All" },
-  { value: "note", label: "Notes" },
-  { value: "doc", label: "Documents" },
-  { value: "chat", label: "Chats" },
-];
-const SOURCE_ICON: Record<Source, typeof FileText> = {
-  note: FileText,
-  doc: BookOpen,
-  chat: MessageSquare,
-};
-const SOURCE_LABEL: Record<Source, string> = { note: "Note", doc: "Document", chat: "Chat" };
-
-function SourceBadge({ source }: { source: Source }) {
-  const Icon = SOURCE_ICON[source];
-  return (
-    <Tag hue={catFor(source)}>
-      <Icon size={12} strokeWidth={1.8} aria-hidden /> {SOURCE_LABEL[source]}
-    </Tag>
-  );
-}
-
-const NOTE_TYPES = ["decision", "fact", "reference", "preference"] as const;
-type NoteType = (typeof NOTE_TYPES)[number];
-function noteTypeLabel(t?: string): string {
-  const v = (t || "fact").trim().toLowerCase();
-  return v.charAt(0).toUpperCase() + v.slice(1);
-}
-
 // A file the operator attached to a chat (GET /api/chat/attachments).
 //
 // Files live HERE rather than on a page of their own because this page is
 // already "what this system knows, by scope": notes are the text half and an
 // attached image or PDF is the binary half. Same scope vocabulary, same filter,
-// same four list states — so the tab is a read of data the attachment index
-// already carries rather than a second knowledge surface with its own rules.
+// same four list states.
 type StoredFile = {
   id: string;
   name: string;
@@ -176,50 +137,20 @@ type StoredFile = {
 };
 type FilesResp = { files: StoredFile[]; count: number; scopes: string[] };
 
-// Who wrote it (design doc sec 5, sec 11): `author` is an origin string
-// (services/origin on the backend) -- "operator", "self", "agent:<slug>",
-// "derived:<model>", "tool:<name>", or "" on a note written before this
-// metadata existed.
-function authorLabel(author?: string): string {
-  const a = (author || "").trim();
-  if (!a) return "Unknown author";
-  if (a === "operator") return "You";
-  if (a === "self") return "The assistant";
-  if (a.startsWith("agent:")) return `Agent: ${a.slice(6)}`;
-  if (a.startsWith("derived:")) return `Distilled by ${a.slice(8)}`;
-  if (a.startsWith("tool:")) return `Tool: ${a.slice(5)}`;
-  return a;
-}
+const OVERFLOW_AT = 100;
 
-// Any `workshop:chat/...` refs named in a note's body -- the note's OWN
-// provenance, not "referenced by" (see ReferencedBy below, which is the
-// reverse direction). Refs are written into note bodies by agents that file a
-// note from a chat (design doc sec 10); this renders whichever ones are
-// there as navigable chips instead of leaving them as inert text.
-const CHAT_REF_RE = /workshop:chat\/[^\s)\]"'<>]+/g;
-function chatRefsIn(body: string): string[] {
-  const found = body.match(CHAT_REF_RE) ?? [];
-  return Array.from(new Set(found));
-}
+type Tab = "library" | "chats" | "vault" | "files";
+const TABS: SegmentedOption<Tab>[] = [
+  { value: "library", label: "Library" },
+  { value: "chats", label: "Chats" },
+  { value: "vault", label: "Vault" },
+  { value: "files", label: "Files" },
+];
 
-// A note id must match the store's slug rule ([a-z0-9] segments joined by "-").
-// Derive one from the title, fall back to "note", and always append a base36
-// timestamp so a fresh note never collides with an existing file.
-function freshNoteId(title: string): string {
-  const base =
-    (title || "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 48) || "note";
-  return `${base}-${Date.now().toString(36)}`;
-}
-
-// Every scope `root`'s descendants, per the tree endpoint -- the frontend half
-// of "everything below it" (sec 4.2's `reach`, sec 11's scope filter). Notes
-// are already filtered this way server-side (`GET /api/notes?scope=` calls
-// `scope_tree.reach`); chats have no such endpoint, so the same containment
-// is recomputed here from the same tree data and applied client-side.
+// Every scope `root`'s descendants, per the tree endpoint: the frontend half of
+// "everything below it" (sec 4.2's `reach`). Notes are filtered this way
+// server-side; chats have no such endpoint, so the same containment is
+// recomputed here from the same tree data and applied client-side.
 function reachSetFrom(nodes: ScopeNode[], root: string): Set<string> {
   const children = new Map<string, string[]>();
   for (const n of nodes) {
@@ -248,19 +179,18 @@ function reachSetFrom(nodes: ScopeNode[], root: string): Set<string> {
 export default function Notes() {
   const [searchParams] = useSearchParams();
   // Honour ?tab=. `?tab=docs` is a still-live deep link (routes/refs.py's doc
-  // resolver hands it out) from before Notes and Documents merged into one
-  // Library tab; it now just means "open Library with the Documents filter".
+  // resolver hands it out) from before Notes and Documents merged; it now just
+  // means "open the Library", where its `?path=` selects the document.
   const urlTab = searchParams.get("tab");
   const [tab, setTab] = useState<Tab>(
-    urlTab === "vault" || urlTab === "files" ? (urlTab as Tab) : "library",
+    urlTab === "vault" || urlTab === "files" || urlTab === "chats" ? (urlTab as Tab) : "library",
   );
-  const initialSource: SourceFilter = urlTab === "docs" ? "doc" : "all";
 
   return (
     <div>
       <PageHeader
         title="Memory"
-        sub="Notes, documents and chats in one place, filterable by scope. What agents read and write."
+        sub="Notes and documents by scope, plus the chats, the vault and everything attached. What agents read and write."
       />
       <div style={{ marginBottom: "var(--space-4)" }}>
         <Segmented<Tab> ariaLabel="Memory view" value={tab} onChange={setTab} options={TABS} />
@@ -269,31 +199,542 @@ export default function Notes() {
         <VaultNotes />
       ) : tab === "files" ? (
         <Files />
+      ) : tab === "chats" ? (
+        <Chats />
       ) : (
-        <Library initialSource={initialSource} />
+        <Library />
       )}
     </div>
   );
 }
 
-// ---- Library (Notes + Documents + Chats, unified) --------------------------
+// ---- Library: the tree, and the document it opens --------------------------
 
-// One chat's entry in the sharing model (sec 6). A full "Other chats find
-// it: <select> <help sentence>" row used to sit as a SIBLING of the card
-// inside the grid cell, which broke two ways at once: as a second flex child
-// of `.ws-notes-grid > li` it fought the card for the row's width (the card
-// lost, down to a squeezed strip with the control overflowing into the next
-// column), and repeating the full sentence on every one of a hundred cards
-// was noise even where it fit.
+function Library() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const isWide = useIsWide();
+  // Bumped by every write. A new source means a new adapter, which is how the
+  // tree is told to drop what it had loaded and read the level again.
+  const [generation, setGeneration] = useState(0);
+  const source = useMemo(() => createMemorySource(), [generation]);
+  const [scopeTree, setScopeTree] = useState<ScopeNode[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    source.scopes().then(
+      (s) => { if (live) setScopeTree(s); },
+      // Not swallowed: the tree asks for the same response and reports the
+      // failure with a Retry. This copy is only used to answer "what contains
+      // what", and an empty answer degrades to a flat tree rather than a crash.
+      () => { if (live) setScopeTree([]); },
+    );
+    return () => { live = false; };
+  }, [source]);
+
+  const selected = useMemo(
+    () => nodeForParams({
+      scope: searchParams.get("scope"),
+      note: searchParams.get("note"),
+      path: searchParams.get("path"),
+    }),
+    [searchParams],
+  );
+  const applied = (searchParams.get("q") ?? "").trim();
+  const [query, setQuery] = useState(applied);
+
+  // THE PHONE'S CURSOR: which level the drill list is showing. It lives here
+  // rather than in the drill so that opening a document and coming back up does
+  // not lose your place, which is what `Up` is for.
+  const [cursor, setCursor] = useState<MemoryNode>({ kind: "root" });
+
+  const setParams = useCallback(
+    (mutate: (next: URLSearchParams) => void) => {
+      const next = new URLSearchParams(searchParams);
+      mutate(next);
+      setSearchParams(next);
+    },
+    [searchParams, setSearchParams],
+  );
+
+  const select = useCallback(
+    (node: MemoryNode) => {
+      setNotice(null);
+      const params = paramsForNode(node);
+      // A branch is a container. Clicking one opens it; it does not become the
+      // thing on screen, and it must not blank the document you are reading.
+      if (!params || isBranch(node)) return;
+      setParams((next) => {
+        next.delete("note");
+        next.delete("path");
+        next.delete("scope");
+        next.delete("q");
+        for (const [k, v] of Object.entries(params)) next.set(k, v);
+      });
+    },
+    [setParams],
+  );
+
+  const clearSelection = useCallback(() => {
+    setParams((next) => { next.delete("note"); next.delete("path"); });
+  }, [setParams]);
+
+  const onChanged = useCallback((msg?: string) => {
+    setNotice(msg ?? null);
+    setGeneration((n) => n + 1);
+  }, []);
+
+  const onDeleted = useCallback(() => {
+    clearSelection();
+    setNotice("Note deleted.");
+    setGeneration((n) => n + 1);
+  }, [clearSelection]);
+
+  // The desktop tree lives in column two. The page declares itself a directory
+  // and portals its own tree into the slot the shell provides, so the shell
+  // knows nothing about scopes or notes. Off on a phone, where the tree is this
+  // page's content instead and mounting it twice would cost every request twice.
+  const { host, setOpen } = useDirectoryPage({ pageId: "memory", label: "Memory", enabled: isWide });
+
+  // Walking up from a document on a phone means going to what contains it.
+  const upFrom = selected ? parentOf(selected, scopeTree) : null;
+  const upAction = !isWide && upFrom ? (
+    <Button
+      onClick={() => { setCursor(upFrom); clearSelection(); }}
+      aria-label={`Up to ${nodeLabel(upFrom)}`}
+    >
+      <ChevronUp aria-hidden /> Up
+    </Button>
+  ) : null;
+
+  let pane: JSX.Element;
+  if (applied) {
+    pane = (
+      <SearchResults
+        source={source}
+        query={applied}
+        onSelect={select}
+        onClear={() => { setQuery(""); setParams((next) => next.delete("q")); }}
+      />
+    );
+  } else if (selected?.kind === "note") {
+    pane = (
+      <NoteDocument
+        key={`${selected.scope}/${selected.id}`}
+        scope={selected.scope}
+        noteId={selected.id}
+        onChanged={() => onChanged()}
+        onDeleted={onDeleted}
+        actions={upAction}
+      />
+    );
+  } else if (selected?.kind === "doc") {
+    pane = (
+      <DocDocument
+        key={selected.path}
+        path={selected.path}
+        onChanged={() => onChanged("Saved. Not committed, so commit it yourself when ready.")}
+        actions={upAction}
+      />
+    );
+  } else if (!isWide) {
+    pane = (
+      <MemoryDrill
+        source={source}
+        cursor={cursor}
+        onCursor={setCursor}
+        selected={selected}
+        onSelect={select}
+        scopeTree={scopeTree}
+      />
+    );
+  } else {
+    pane = (
+      <StateBlock
+        icon={<FolderTree aria-hidden />}
+        title={selected?.kind === "scope" ? `Nothing open in ${scopeLabel(selected.scope)}` : "Nothing open"}
+        hint="Open the tree to pick a note or a document, or write a new note."
+        action={
+          <Row wrap style={{ gap: "var(--space-2)" }}>
+            <Button size="sm" onClick={() => setOpen(true)}><FolderTree aria-hidden /> Open the tree</Button>
+            <Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus aria-hidden /> New note</Button>
+          </Row>
+        }
+      />
+    );
+  }
+
+  return (
+    <div>
+      {host && createPortal(
+        <MemoryTreeView source={source} selected={selected} onSelect={select} />,
+        host,
+      )}
+      <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end", marginBottom: "var(--space-4)" }}>
+        <Field label="Search" inline>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setNotice(null);
+              setParams((next) => {
+                if (query.trim()) next.set("q", query.trim());
+                else next.delete("q");
+              });
+            }}
+            style={{ display: "flex", gap: "var(--space-2)" }}
+          >
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Find in notes and documents"
+              aria-label="Search Memory"
+            />
+            <Button size="sm" type="submit">Search</Button>
+          </form>
+        </Field>
+        <Button size="sm" onClick={() => setGeneration((n) => n + 1)}>
+          <RefreshCw aria-hidden /> Refresh
+        </Button>
+        <Button size="sm" variant="primary" onClick={() => { setNotice(null); setCreating(true); }}>
+          <Plus aria-hidden /> New note
+        </Button>
+      </Row>
+      {notice && (
+        <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>{notice}</p>
+      )}
+      {pane}
+      {creating && (
+        <CreateNote
+          scopes={scopeTree.map((n) => n.key)}
+          initialScope={selected?.kind === "note" ? selected.scope : undefined}
+          onClose={() => setCreating(false)}
+          onCreated={(scope, id, msg) => {
+            setCreating(false);
+            setGeneration((n) => n + 1);
+            setNotice(msg);
+            setParams((next) => {
+              next.delete("path");
+              next.delete("q");
+              next.set("scope", scope);
+              next.set("note", id);
+            });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---- Search results --------------------------------------------------------
+// A query is not containment, so this is a list and never a tree. Notes are
+// filtered server-side by `GET /api/notes?q=` (which delegates to
+// knowledge.search); documents have no search route, so their titles and paths
+// are matched against the index the tree already holds.
+
+function SearchResults({
+  source,
+  query,
+  onSelect,
+  onClear,
+}: {
+  source: ReturnType<typeof createMemorySource>;
+  query: string;
+  onSelect: (node: MemoryNode) => void;
+  onClear: () => void;
+}) {
+  const [notes, setNotes] = useState<NoteRow[] | null>(null);
+  const [docs, setDocs] = useState<DocRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let live = true;
+    setNotes(null);
+    setDocs(null);
+    setErr(null);
+    Promise.all([
+      getJson<{ notes?: NoteRow[] }>(`/api/notes?q=${encodeURIComponent(query)}`).then((j) => j.notes ?? []),
+      source.docs(),
+    ]).then(
+      ([n, d]) => { if (live) { setNotes(n); setDocs(d); } },
+      (e: unknown) => { if (live) setErr(e instanceof Error ? e.message : String(e)); },
+    );
+    return () => { live = false; };
+  }, [source, query, attempt]);
+
+  if (err) {
+    return (
+      <StateBlock
+        variant="error"
+        title="Couldn't search Memory"
+        hint={err}
+        action={<Button size="sm" onClick={() => setAttempt((n) => n + 1)}>Retry</Button>}
+      />
+    );
+  }
+  if (!notes || !docs) {
+    return (
+      <Stack gap="sm">
+        {[0, 1, 2, 3].map((i) => <Skeleton key={i} width="70%" />)}
+      </Stack>
+    );
+  }
+
+  const docHits = searchDocs(docs, query);
+  const total = notes.length + docHits.length;
+  if (total === 0) {
+    return (
+      <StateBlock
+        title="Nothing matches"
+        hint={<>Nothing in notes or documents matches <strong>{query}</strong>. Clear the search to browse the tree instead.</>}
+        action={<Button size="sm" onClick={onClear}>Clear search</Button>}
+      />
+    );
+  }
+
+  const noteRows = notes.slice(0, OVERFLOW_AT);
+  const docRows = docHits.slice(0, Math.max(0, OVERFLOW_AT - noteRows.length));
+  const hidden = total - noteRows.length - docRows.length;
+
+  return (
+    <Stack gap="lg">
+      <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+        <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+          {total} {total === 1 ? "result" : "results"} for {query}
+        </span>
+        <Button size="sm" onClick={onClear}>Clear search</Button>
+      </Row>
+      <div className="ws-memory__level" role="list">
+        {noteRows.map((n) => (
+          <button
+            key={`note:${n.scope}:${n.id}`}
+            type="button"
+            role="listitem"
+            className="ws-memory__row"
+            onClick={() => onSelect({ kind: "note", scope: n.scope, id: n.id })}
+          >
+            <FileText size={16} strokeWidth={1.8} aria-hidden />
+            <span className="ws-memory__rowlabel">{n.title || n.id}</span>
+            <span className="ws-memory__more"><Tag hue={catFor(n.scope)}>{scopeLabel(n.scope)}</Tag></span>
+          </button>
+        ))}
+        {docRows.map((d) => (
+          <button
+            key={`doc:${d.path}`}
+            type="button"
+            role="listitem"
+            className="ws-memory__row"
+            onClick={() => onSelect({ kind: "doc", path: d.path })}
+          >
+            <FileText size={16} strokeWidth={1.8} aria-hidden />
+            <span className="ws-memory__rowlabel">{d.title || d.path}</span>
+            <span className="ws-memory__more">{d.path}</span>
+          </button>
+        ))}
+      </div>
+      {hidden > 0 && (
+        <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
+          Showing the first {OVERFLOW_AT} of {total}. Narrow the search to see the rest.
+        </p>
+      )}
+    </Stack>
+  );
+}
+
+// ---- Chats -----------------------------------------------------------------
+// A collection, resolved by query, so it is a page and never a tree
+// (navigation-shell-2026-08-20.md sec 3.5). It used to sit in the unified
+// Library list; the list became a tree, and a chat is not a document in a
+// directory, so it moved here rather than being dropped.
+
+function Chats() {
+  const [threads, setThreads] = useState<ChatSummary[] | null>(null);
+  const [policy, setPolicy] = useState<MemoryPolicy | null>(null);
+  const [scopeTree, setScopeTree] = useState<ScopeNode[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [scope, setScope] = useState("all");
+  const [query, setQuery] = useState("");
+  const [applied, setApplied] = useState("");
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/chat/threads");
+      if (!r.ok) throw await httpFail(r);
+      setThreads(await r.json());
+      // Best effort and deliberately not awaited into the failure path above:
+      // the list is still readable without it.
+      void getPolicy().then(setPolicy).catch(() => {});
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    fetch("/api/notes/scopes/tree")
+      .then((r) => (r.ok ? r.json() : { scopes: [] }))
+      .then((j) => setScopeTree(j.scopes ?? []))
+      .catch(() => setScopeTree([]));
+  }, []);
+
+  const scopeOptions = useMemo(
+    () => orderScopes(scopeTree.map((n) => n.key)).map((key) => {
+      const node = scopeTree.find((n) => n.key === key);
+      return { key, label: "  ".repeat(node?.depth ?? 0) + scopeLabel(key) };
+    }),
+    [scopeTree],
+  );
+
+  const reachSet = useMemo(
+    () => (scope === "all" ? null : reachSetFrom(scopeTree, scope)),
+    [scope, scopeTree],
+  );
+
+  const q = applied.trim().toLowerCase();
+  const items = (threads ?? [])
+    .filter((c) => !c.archived_at)
+    .filter((c) => !q || c.title.toLowerCase().includes(q))
+    .filter((c) => !reachSet || reachSet.has(c.scope || "workshop"))
+    .sort((a, b) => {
+      const ak = a.last_user_at || a.created_at || "";
+      const bk = b.last_user_at || b.created_at || "";
+      return ak < bk ? 1 : ak > bk ? -1 : 0;
+    });
+  const overflow = items.length > OVERFLOW_AT;
+  const shown = overflow ? items.slice(0, OVERFLOW_AT) : items;
+  const filtered = scope !== "all" || applied.trim() !== "";
+
+  let body: JSX.Element;
+  if (err) {
+    body = (
+      <StateBlock
+        variant="error"
+        title="Couldn't load chats"
+        hint={<><code>/api/chat/threads</code> ({err})</>}
+        action={<Button size="sm" onClick={refresh}>Retry</Button>}
+      />
+    );
+  } else if (!threads) {
+    body = (
+      <CardGrid>
+        {[0, 1, 2, 3].map((i) => (
+          <Card key={i}>
+            <Stack gap="sm">
+              <Skeleton width="60%" />
+              <Skeleton width="40%" />
+            </Stack>
+          </Card>
+        ))}
+      </CardGrid>
+    );
+  } else if (items.length === 0) {
+    body = (
+      <StateBlock
+        title={filtered ? "No chats match" : "No chats yet"}
+        hint={
+          filtered
+            ? <>Reset <strong>Scope</strong> to <strong>All</strong>, or clear the search.</>
+            : "Start a conversation and it shows up here, with what other chats may find in it."
+        }
+        action={filtered ? <Button size="sm" onClick={() => { setScope("all"); setQuery(""); setApplied(""); }}>Clear filters</Button> : undefined}
+      />
+    );
+  } else {
+    body = (
+      <>
+        {overflow && (
+          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginBottom: "var(--space-3)" }}>
+            Listing the first {OVERFLOW_AT} of {items.length}. Narrow by scope or search to see the rest.
+          </p>
+        )}
+        <CardGrid className="ws-notes-grid">
+          {shown.map((c) => (
+            <li key={c.id}>
+              <Link
+                to={`/chat/${encodeURIComponent(c.context_key)}?thread=${encodeURIComponent(c.id)}`}
+                className="ws-note-card__link"
+              >
+                <Card interactive compact className="ws-note-card">
+                  <Stack gap="sm">
+                    <span className="ws-note-card__title">{c.title || "Chat"}</span>
+                    <Row wrap className="ws-note-card__footer" style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                      <Tag hue={catFor(c.scope || "workshop")}>{scopeLabel(c.scope)}</Tag>
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                        {timeAbsolute(c.last_user_at || c.created_at)}
+                      </span>
+                    </Row>
+                  </Stack>
+                </Card>
+              </Link>
+              {/* Outside the Link on purpose: see ChatShareBadge below. */}
+              <ChatShareBadge
+                threadId={c.id}
+                scope={c.scope || "workshop"}
+                title={c.title || "Chat"}
+                policy={policy}
+                onSaved={setPolicy}
+              />
+            </li>
+          ))}
+        </CardGrid>
+      </>
+    );
+  }
+
+  return (
+    <div>
+      <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end", marginBottom: "var(--space-4)" }}>
+        <Field label="Scope" inline>
+          <Select value={scope} onChange={(e) => setScope(e.target.value)} aria-label="Filter chats by scope">
+            <option value="all">All scopes</option>
+            {scopeOptions.map((s) => (
+              <option key={s.key} value={s.key}>{s.label}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Search" inline>
+          <form
+            onSubmit={(e) => { e.preventDefault(); setApplied(query); }}
+            style={{ display: "flex", gap: "var(--space-2)" }}
+          >
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Find by title"
+              aria-label="Search chats"
+            />
+            <Button size="sm" type="submit">Search</Button>
+          </form>
+        </Field>
+        <Button size="sm" onClick={refresh} loading={loading}>
+          <RefreshCw aria-hidden /> Refresh
+        </Button>
+      </Row>
+      {body}
+    </div>
+  );
+}
+
+// ---- Sharing ---------------------------------------------------------------
+// One chat's entry in the sharing model (sec 6). A full "Other chats find it:
+// <select> <help sentence>" row used to sit as a SIBLING of the card inside the
+// grid cell, which broke two ways at once: as a second flex child of
+// `.ws-notes-grid > li` it fought the card for the row's width, and repeating
+// the full sentence on every one of a hundred cards was noise even where it fit.
 //
-// This is a compact icon badge instead, living in the card's footer, that
-// opens a small dialog on click. It sits OUTSIDE the card's `Link` (a select
-// nested inside a link is not operable, and a nested <button> inside an <a>
-// is invalid markup besides) as an absolutely-positioned overlay in the
-// corner: absolutely-positioned children of a flex container are not flex
-// items, so it costs the grid's single-child stretch rule nothing. The icon
-// itself already answers "what is this set to" (a locked padlock reads as
-// private at a glance); the dialog is only for changing it.
+// This is a compact icon badge instead, living in the card's footer, that opens
+// a small dialog on click. It sits OUTSIDE the card's `Link` (a select nested
+// inside a link is not operable, and a nested <button> inside an <a> is invalid
+// markup besides) as an absolutely-positioned overlay in the corner:
+// absolutely-positioned children of a flex container are not flex items, so it
+// costs the grid's single-child stretch rule nothing.
 //
 // CURATION, NOT SECURITY. This changes what other chats' searches turn up. It
 // does not restrict what anything can read: everything here runs as one uid.
@@ -407,369 +848,7 @@ function ChatShareDialog({
   );
 }
 
-function Library({ initialSource }: { initialSource: SourceFilter }) {
-  const [searchParams] = useSearchParams();
-  const [notesData, setNotesData] = useState<NotesResp | null>(null);
-  const [docsData, setDocsData] = useState<DocsResp | null>(null);
-  const [chatsData, setChatsData] = useState<ChatSummary[] | null>(null);
-  // What other chats find when they search (sec 6). Loaded once; a failure here
-  // must never take the list down, so it stays null and the controls read as
-  // the shipped defaults.
-  const [policy, setPolicy] = useState<MemoryPolicy | null>(null);
-  const [scopeTree, setScopeTree] = useState<ScopeNode[]>([]);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  // Honor a ?scope= deep link (a resolved note ref, or "View all in Memory"
-  // links from Project and Agent detail).
-  const [scope, setScope] = useState<string>(searchParams.get("scope") || "all");
-  const [source, setSource] = useState<SourceFilter>(initialSource);
-  const [query, setQuery] = useState("");
-  const [applied, setApplied] = useState("");
-  const [open, setOpen] = useState<
-    | { mode: "create" }
-    | { mode: "editNote"; note: Note }
-    | { mode: "editDoc"; doc: Doc }
-    | null
-  >(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      const params = new URLSearchParams();
-      if (scope !== "all") params.set("scope", scope);
-      if (applied.trim()) params.set("q", applied.trim());
-      const qs = params.toString();
-      const [notesR, docsR, chatsR] = await Promise.all([
-        fetch(`/api/notes${qs ? `?${qs}` : ""}`),
-        fetch("/api/documents"),
-        fetch("/api/chat/threads"),
-      ]);
-      if (!notesR.ok) throw await httpFail(notesR);
-      if (!docsR.ok) throw await httpFail(docsR);
-      if (!chatsR.ok) throw await httpFail(chatsR);
-      setNotesData(await notesR.json());
-      setDocsData(await docsR.json());
-      setChatsData(await chatsR.json());
-      // Best effort and deliberately not awaited into the failure path above:
-      // the library is still readable without it.
-      void getPolicy().then(setPolicy).catch(() => {});
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [scope, applied]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    fetch("/api/notes/scopes/tree")
-      .then((r) => (r.ok ? r.json() : { scopes: [] }))
-      .then((j) => setScopeTree(j.scopes ?? []))
-      .catch(() => setScopeTree([]));
-  }, []);
-
-  const scopeOptions = useMemo(
-    () => orderScopes(scopeTree.map((n) => n.key)).map((key) => {
-      const node = scopeTree.find((n) => n.key === key);
-      const depth = node?.depth ?? 0;
-      return { key, label: "  ".repeat(depth) + scopeLabel(key) };
-    }),
-    [scopeTree],
-  );
-
-  const reachSet = useMemo(
-    () => (scope === "all" ? null : reachSetFrom(scopeTree, scope)),
-    [scope, scopeTree],
-  );
-
-  const notes = notesData?.notes ?? [];
-
-  // Documents have no scope of their own (docs/ is a single committed tree),
-  // so the scope filter does not apply to them -- only the source filter and
-  // the search do. Chats DO have a scope, filtered client-side against the
-  // same reach set the notes endpoint already applied server-side.
-  const q = applied.trim().toLowerCase();
-  const docs = (docsData?.docs ?? []).filter(
-    (d) => !q || d.title.toLowerCase().includes(q) || d.path.toLowerCase().includes(q),
-  );
-  const chats = (chatsData ?? []).filter((c) => !c.archived_at)
-    .filter((c) => !q || c.title.toLowerCase().includes(q))
-    .filter((c) => !reachSet || reachSet.has(c.scope || "workshop"));
-
-  type Item = {
-    key: string;
-    source: Source;
-    sortKey: string;
-    note?: Note;
-    doc?: Doc;
-    chat?: ChatSummary;
-  };
-  const items: Item[] = useMemo(() => {
-    const out: Item[] = [];
-    if (source === "all" || source === "note") {
-      for (const n of notes) out.push({ key: `note:${n.scope}:${n.id}`, source: "note", sortKey: n.updated || "", note: n });
-    }
-    if (source === "all" || source === "doc") {
-      for (const d of docs) out.push({ key: `doc:${d.path}`, source: "doc", sortKey: d.mtime || "", doc: d });
-    }
-    if (source === "all" || source === "chat") {
-      for (const c of chats) out.push({ key: `chat:${c.id}`, source: "chat", sortKey: c.last_user_at || c.created_at || "", chat: c });
-    }
-    out.sort((a, b) => (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0));
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notesData, docsData, chatsData, source, applied, reachSet]);
-
-  // Open the note/doc a deep link names, once. A chat receipt or a `<Ref>`
-  // chip links here ("Saved a note to workshop", a doc chip in a note body),
-  // and landing on a filtered list still leaves the operator hunting for the
-  // one item they clicked. Fires once per id: without the guard, closing the
-  // modal would immediately reopen it, since the param is still in the URL.
-  const wantNote = searchParams.get("note");
-  const wantPath = searchParams.get("path");
-  const openedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (wantNote && openedRef.current !== `note:${wantNote}` && notes.length) {
-      const hit = notes.find((n) => n.id === wantNote);
-      if (hit) {
-        openedRef.current = `note:${wantNote}`;
-        setOpen({ mode: "editNote", note: hit });
-      }
-    } else if (wantPath && openedRef.current !== `doc:${wantPath}` && docs.length) {
-      openedRef.current = `doc:${wantPath}`;
-      // A doc chip can point at any markdown in the tree, including a root-level
-      // one (PROJECT.md, TODO.md) that the docs/ list does not carry. Open the
-      // listed row when there is one; otherwise synthesize a minimal row so the
-      // link still opens (the modal fetches content by path either way).
-      const hit = docs.find((d) => d.path === wantPath);
-      const name = wantPath.split("/").pop() || wantPath;
-      setOpen({ mode: "editDoc", doc: hit ?? { path: wantPath, title: name, section: "", mtime: null } });
-    }
-  }, [wantNote, wantPath, notes, docs]);
-
-  const overflow = items.length > OVERFLOW_AT;
-  const shown = overflow ? items.slice(0, OVERFLOW_AT) : items;
-
-  const onChanged = useCallback(
-    (msg?: string) => {
-      setNotice(msg ?? null);
-      refresh();
-    },
-    [refresh],
-  );
-
-  const submitSearch = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      setApplied(query);
-    },
-    [query],
-  );
-
-  const filtered = scope !== "all" || source !== "all" || applied.trim() !== "";
-
-  const filterBar = (
-    <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
-      <Field label="Scope" inline>
-        <Select value={scope} onChange={(e) => setScope(e.target.value)} aria-label="Filter by scope">
-          <option value="all">All scopes</option>
-          {scopeOptions.map((s) => (
-            <option key={s.key} value={s.key}>{s.label}</option>
-          ))}
-        </Select>
-      </Field>
-      <Field label="Source" inline>
-        <Segmented<SourceFilter> ariaLabel="Filter by source" value={source} onChange={setSource} options={SOURCE_OPTIONS} />
-      </Field>
-      <Field label="Search" inline>
-        <form onSubmit={submitSearch} style={{ display: "flex", gap: "var(--space-2)" }}>
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Find in title or body"
-            aria-label="Search"
-          />
-          <Button size="sm" type="submit">Search</Button>
-        </form>
-      </Field>
-      <Button size="sm" onClick={refresh} loading={loading}>
-        <RefreshCw aria-hidden /> Refresh
-      </Button>
-      <Button size="sm" variant="primary" onClick={() => { setNotice(null); setOpen({ mode: "create" }); }}>
-        <Plus aria-hidden /> New note
-      </Button>
-    </Row>
-  );
-
-  let body: JSX.Element;
-  if (err) {
-    body = (
-      <StateBlock
-        variant="error"
-        title="Couldn't load Memory"
-        hint={err}
-        action={<Button size="sm" onClick={refresh}>Retry</Button>}
-      />
-    );
-  } else if (!notesData || !docsData || !chatsData) {
-    body = (
-      <CardGrid>
-        {[0, 1, 2, 3].map((i) => (
-          <Card key={i}>
-            <Stack gap="sm">
-              <Skeleton width="60%" />
-              <Skeleton width="80%" />
-              <Skeleton width="30%" />
-            </Stack>
-          </Card>
-        ))}
-      </CardGrid>
-    );
-  } else if (items.length === 0) {
-    body = (
-      <StateBlock
-        title={filtered ? "Nothing matches these filters" : "Nothing here yet"}
-        hint={
-          filtered ? (
-            <>Nothing matches. Reset <strong>Scope</strong> and <strong>Source</strong> to <strong>All</strong>, or clear the search.</>
-          ) : (
-            <>Notes are shared with your agents. Create one with <strong>New note</strong>, or an agent will leave one as it works.</>
-          )
-        }
-        action={<Button size="sm" variant="primary" onClick={() => setOpen({ mode: "create" })}><Plus aria-hidden /> New note</Button>}
-      />
-    );
-  } else {
-    body = (
-      <>
-        {overflow && (
-          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginBottom: "var(--space-3)" }}>
-            Listing the first {OVERFLOW_AT} of {items.length}. Narrow by scope, source or search to see the rest.
-          </p>
-        )}
-        <CardGrid className="ws-notes-grid">
-          {shown.map((it) => (
-            <li key={it.key}>
-              {it.source === "note" && it.note ? (
-                <Card
-                  interactive
-                  compact
-                  onClick={() => { setNotice(null); setOpen({ mode: "editNote", note: it.note! }); }}
-                  style={{ cursor: "pointer" }}
-                  className="ws-note-card"
-                >
-                  <Stack gap="sm">
-                    <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                      <SourceBadge source="note" />
-                      {it.note.pinned && <Pin size={13} strokeWidth={1.8} aria-hidden />}
-                    </Row>
-                    <span className="ws-note-card__title">{it.note.title || it.note.id}</span>
-                    <span className="ws-note-card__hook">{it.note.hook || ""}</span>
-                    <Row wrap className="ws-note-card__footer" style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-                      <Tag hue={catFor(it.note.scope || "workshop")}>{scopeLabel(it.note.scope)}</Tag>
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{noteTypeLabel(it.note.type)}</span>
-                      {it.note.updated && (
-                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{timeAbsolute(it.note.updated)}</span>
-                      )}
-                    </Row>
-                  </Stack>
-                </Card>
-              ) : it.source === "doc" && it.doc ? (
-                <Card
-                  interactive
-                  compact
-                  onClick={() => { setNotice(null); setOpen({ mode: "editDoc", doc: it.doc! }); }}
-                  style={{ cursor: "pointer" }}
-                  className="ws-doc-card"
-                >
-                  <Stack gap="sm">
-                    <SourceBadge source="doc" />
-                    <span className="ws-note-card__title">{it.doc.title}</span>
-                    <span className="ws-doc-card__path">{it.doc.path}</span>
-                    {it.doc.mtime && (
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{timeAbsolute(it.doc.mtime)}</span>
-                    )}
-                  </Stack>
-                </Card>
-              ) : it.chat ? (
-                <>
-                  <Link to={`/chat/${encodeURIComponent(it.chat.context_key)}?thread=${encodeURIComponent(it.chat.id)}`} className="ws-note-card__link">
-                    <Card interactive compact className="ws-note-card">
-                      <Stack gap="sm">
-                        <SourceBadge source="chat" />
-                        <span className="ws-note-card__title">{it.chat.title || "Chat"}</span>
-                        <Row wrap className="ws-note-card__footer" style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-                          <Tag hue={catFor(it.chat.scope || "workshop")}>{scopeLabel(it.chat.scope)}</Tag>
-                          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                            {timeAbsolute(it.chat.last_user_at || it.chat.created_at)}
-                          </span>
-                        </Row>
-                      </Stack>
-                    </Card>
-                  </Link>
-                  {/* Outside the Link on purpose -- see ChatShareBadge above. */}
-                  <ChatShareBadge
-                    threadId={it.chat.id}
-                    scope={it.chat.scope || "workshop"}
-                    title={it.chat.title || "Chat"}
-                    policy={policy}
-                    onSaved={setPolicy}
-                  />
-                </>
-              ) : null}
-            </li>
-          ))}
-        </CardGrid>
-      </>
-    );
-  }
-
-  return (
-    <div>
-      {notice && (
-        <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>{notice}</p>
-      )}
-      <div style={{ marginBottom: "var(--space-2)" }}>{filterBar}</div>
-      {scope !== "all" ? (
-        <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginBottom: "var(--space-4)" }}>
-          Showing {scopeLabel(scope)} and everything below it.
-        </p>
-      ) : (
-        <div style={{ marginBottom: "var(--space-4)" }} />
-      )}
-      {body}
-      {open?.mode === "create" && (
-        <CreateNote
-          scopes={scopeTree.map((n) => n.key)}
-          initialScope={scope !== "all" ? scope : undefined}
-          onClose={() => setOpen(null)}
-          onCreated={(msg) => { setOpen(null); onChanged(msg); }}
-        />
-      )}
-      {open?.mode === "editNote" && (
-        <EditNote
-          note={open.note}
-          onClose={() => setOpen(null)}
-          onChanged={(msg) => { setOpen(null); onChanged(msg); }}
-        />
-      )}
-      {open?.mode === "editDoc" && (
-        <EditDoc
-          doc={open.doc}
-          onClose={() => setOpen(null)}
-          onChanged={(msg) => { setOpen(null); onChanged(msg); }}
-        />
-      )}
-    </div>
-  );
-}
-
-// ---- Create drawer ---------------------------------------------------------
+// ---- Create ----------------------------------------------------------------
 
 function CreateNote({
   scopes,
@@ -780,7 +859,7 @@ function CreateNote({
   scopes: string[];
   initialScope?: string;
   onClose: () => void;
-  onCreated: (msg?: string) => void;
+  onCreated: (scope: string, id: string, msg: string) => void;
 }) {
   const options = scopes.length ? scopes : ["workshop"];
   const [scope, setScope] = useState<string>(initialScope ?? options[0]);
@@ -810,7 +889,7 @@ function CreateNote({
         },
       );
       if (!r.ok) throw await httpFail(r);
-      onCreated(`Note saved to ${scopeLabel(scope)}.`);
+      onCreated(scope, id, `Note saved to ${scopeLabel(scope)}.`);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setBusy(false);
@@ -877,370 +956,6 @@ function CreateNote({
           />
         </Field>
         {err && <p className="ws-field__error">{err}</p>}
-      </Stack>
-    </Modal>
-  );
-}
-
-// "Referenced by" on a note (design doc sec 10: "backlinks fall out"; sec 12
-// Phase 3: "surface it at least on the note view"). An index read
-// (GET /api/refs/backlinks), never a corpus scan, and the batch resolve call
-// so N backlinks cost one request, not N. Renders nothing when there are none
-// -- an inline "no backlinks" line would out-noise the body on every note
-// written before this existed.
-function ReferencedBy({ scope, noteId }: { scope: string; noteId: string }) {
-  const target = `workshop:note/${scope}/${noteId}`;
-  const [sources, setSources] = useState<string[] | null>(null);
-  useEffect(() => {
-    let live = true;
-    backlinksFor(target)
-      .then((refs) => { if (live) setSources(refs); })
-      .catch(() => { if (live) setSources([]); });
-    return () => { live = false; };
-  }, [target]);
-  const resolved = useResolvedRefs(sources ?? []);
-  if (!sources || !sources.length) return null;
-  return (
-    <Stack gap="sm">
-      <SectionLabel>Referenced by</SectionLabel>
-      <Row wrap style={{ gap: "var(--space-2)" }}>
-        {sources.map((r) => <Ref key={r} resolved={resolved[r]} refStr={r} />)}
-      </Row>
-    </Stack>
-  );
-}
-
-// Provenance: author, timestamp, and the originating chat if the body names
-// one. Never a raw path or a copyable URL (design doc sec 10's acceptance
-// test) -- a chat ref renders as a `<Ref>` chip that navigates, exactly like
-// ReferencedBy above.
-function Provenance({ author, updated, body }: { author?: string; updated?: string | null; body: string }) {
-  const chatRefs = useMemo(() => chatRefsIn(body), [body]);
-  const resolved = useResolvedRefs(chatRefs);
-  return (
-    <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-      <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{authorLabel(author)}</span>
-      {updated && <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{timeAbsolute(updated)}</span>}
-      {chatRefs.map((r) => <Ref key={r} resolved={resolved[r]} refStr={r} />)}
-    </Row>
-  );
-}
-
-// ---- Edit drawer -----------------------------------------------------------
-
-type EditDraft = { title: string; hook: string; content: string; type: NoteType; pinned: boolean };
-
-function EditNote({
-  note,
-  onClose,
-  onChanged,
-}: {
-  note: Note;
-  onClose: () => void;
-  onChanged: (msg?: string) => void;
-}) {
-  const scope = note.scope;
-  const idPath = `${encodeURIComponent(scope)}/notes/${encodeURIComponent(note.id)}`;
-  const [editing, setEditing] = useState(false);
-  const [content, setContent] = useState<string | null>(null);
-  const [meta, setMeta] = useState<{ author: string; type: NoteType; pinned: boolean }>(
-    { author: note.author || "", type: (note.type as NoteType) || "fact", pinned: !!note.pinned },
-  );
-  const [draft, setDraft] = useState<EditDraft>({
-    title: note.title, hook: note.hook, content: "", type: "fact", pinned: false,
-  });
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [flash, setFlash] = useState(false);
-  const [confirmDel, setConfirmDel] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  // Load the note body plus its provenance (the list carries only
-  // id/title/hook/updated/author/type/pinned -- the last three summary-level,
-  // the body and the confirmed-fresh meta come from the per-note GET).
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    fetch(`/api/knowledge/${idPath}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (!live) return;
-        const bodyText = j?.content ?? "";
-        const m = {
-          author: j?.author ?? note.author ?? "",
-          type: (j?.type as NoteType) ?? (note.type as NoteType) ?? "fact",
-          pinned: j?.pinned ?? !!note.pinned,
-        };
-        setContent(bodyText);
-        setMeta(m);
-        setDraft({ title: note.title, hook: note.hook, content: bodyText, type: m.type, pinned: m.pinned });
-      })
-      .catch(() => { if (live) setContent(""); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-  }, [idPath, note.title, note.hook, note.author, note.type, note.pinned]);
-
-  const setField = <K extends keyof EditDraft>(k: K, v: EditDraft[K]) =>
-    setDraft((d) => ({ ...d, [k]: v }));
-
-  const baseDraft: EditDraft = {
-    title: note.title, hook: note.hook, content: content ?? "", type: meta.type, pinned: meta.pinned,
-  };
-  const dirty = editing && JSON.stringify(draft) !== JSON.stringify(baseDraft);
-
-  const save = useCallback(async () => {
-    setSaving(true);
-    setErr(null);
-    try {
-      const r = await fetch(`/api/knowledge/${idPath}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          title: draft.title.trim(), content: draft.content, hook: draft.hook.trim(),
-          // `author` is deliberately omitted: an edit does not reassign who
-          // wrote the note. `note_type`/`pinned` are sent explicitly, since
-          // the operator just chose them.
-          note_type: draft.type, pinned: draft.pinned,
-        }),
-      });
-      if (!r.ok) throw await httpFail(r);
-      setContent(draft.content);
-      setMeta((m) => ({ ...m, type: draft.type, pinned: draft.pinned }));
-      setEditing(false);
-      setFlash(true);
-      window.setTimeout(() => setFlash(false), 2000);
-      onChanged();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
-    }
-  }, [draft, idPath, onChanged]);
-
-  const del = useCallback(async () => {
-    setSaving(true);
-    try {
-      const r = await fetch(`/api/knowledge/${idPath}`, { method: "DELETE" });
-      if (!r.ok) throw await httpFail(r);
-      onChanged("Note deleted.");
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setSaving(false);
-      setConfirmDel(false);
-    }
-  }, [idPath, onChanged]);
-
-  const href = scopeHref(scope);
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={editing ? "Edit note" : (note.title || note.id)}
-      size="lg"
-      actions={
-        editing ? (
-          <>
-            <Button onClick={() => { setEditing(false); setDraft(baseDraft); }}>Cancel</Button>
-            <Button variant="primary" loading={saving} disabled={!dirty} onClick={save}>Save</Button>
-          </>
-        ) : (
-          <>
-            <Button variant="danger-ghost" onClick={() => setConfirmDel(true)}>
-              <Trash2 aria-hidden /> Delete
-            </Button>
-            <Button variant="primary" disabled={loading} onClick={() => { setDraft(baseDraft); setEditing(true); }}>
-              <Pencil aria-hidden /> Edit
-            </Button>
-          </>
-        )
-      }
-    >
-      <Stack gap="lg">
-        {editing ? (
-          <>
-            <Field label="Title" htmlFor="edit-note-title">
-              <Input id="edit-note-title" value={draft.title} onChange={(e) => setField("title", e.target.value)} data-autofocus />
-            </Field>
-            <Field label="Hook" htmlFor="edit-note-hook" optional help="A one-line summary shown in the index and lists.">
-              <Input id="edit-note-hook" value={draft.hook} onChange={(e) => setField("hook", e.target.value)} />
-            </Field>
-            <Row wrap style={{ gap: "var(--space-4)" }}>
-              <Field label="Type" htmlFor="edit-note-type" inline>
-                <Select id="edit-note-type" value={draft.type} onChange={(e) => setField("type", e.target.value as NoteType)}>
-                  {NOTE_TYPES.map((t) => (
-                    <option key={t} value={t}>{noteTypeLabel(t)}</option>
-                  ))}
-                </Select>
-              </Field>
-              <Checkbox checked={draft.pinned} onChange={(v) => setField("pinned", v)} label="Pinned" />
-            </Row>
-            <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-              Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope.
-            </p>
-            <Field label="Body" htmlFor="edit-note-body" optional>
-              <Textarea id="edit-note-body" rows={12} value={draft.content} onChange={(e) => setField("content", e.target.value)} />
-            </Field>
-            {err && <p className="ws-field__error">{err}</p>}
-            {dirty && <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>Unsaved changes.</p>}
-          </>
-        ) : (
-          <>
-            <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-              {href ? (
-                <Link to={href} className="ws-bc__link" onClick={onClose}>
-                  <Tag hue={catFor(scope)}>{scopeLabel(scope)}</Tag>
-                </Link>
-              ) : (
-                <Tag hue={catFor(scope)}>{scopeLabel(scope)}</Tag>
-              )}
-              <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{noteTypeLabel(meta.type)}</span>
-              {meta.pinned && (
-                <StatusDot status="ok"><Pin size={12} strokeWidth={1.8} aria-hidden /> Pinned</StatusDot>
-              )}
-            </Row>
-            {note.hook && <p className="ws-muted" style={{ margin: 0 }}>{note.hook}</p>}
-            {loading ? (
-              <Skeleton width="70%" />
-            ) : content && content.trim() ? (
-              <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>{content}</p>
-            ) : (
-              <p className="ws-muted" style={{ margin: 0 }}>This note has no body yet.</p>
-            )}
-            {!loading && <Provenance author={meta.author} updated={note.updated} body={content ?? ""} />}
-            {!loading && <ReferencedBy scope={scope} noteId={note.id} />}
-            {flash && <p className="ws-muted" style={{ margin: 0 }}>Saved.</p>}
-            {err && <p className="ws-field__error">{err}</p>}
-          </>
-        )}
-      </Stack>
-
-      <ConfirmDialog
-        open={confirmDel}
-        onCancel={() => setConfirmDel(false)}
-        onConfirm={del}
-        busy={saving}
-        title="Delete this note?"
-        body={<>This removes the note from <strong>{scopeLabel(scope)}</strong>. It can't be undone.</>}
-        confirmLabel="Delete note"
-      />
-    </Modal>
-  );
-}
-
-// ---- Document editor ---------------------------------------------------------
-// Docs stay committed markdown under docs/ (git history and editor-openability
-// are the point); this modal reads and writes the raw file through
-// GET/PUT /api/documents/file, with the same path containment on both sides.
-// A save lands in the working tree only -- there is no commit here, and the
-// modal says so, so a save does not look lost.
-function EditDoc({
-  doc,
-  onClose,
-  onChanged,
-}: {
-  doc: Doc;
-  onClose: () => void;
-  onChanged: (msg?: string) => void;
-}) {
-  const [content, setContent] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
-  const [editing, setEditing] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    setErr(null);
-    fetch(`/api/documents/file?path=${encodeURIComponent(doc.path)}`)
-      .then(async (r) => {
-        if (!r.ok) throw await httpFail(r);
-        return r.json();
-      })
-      .then((j) => { if (live) { setContent(j?.content ?? ""); setDraft(j?.content ?? ""); } })
-      .catch((e) => { if (live) setErr(e instanceof Error ? e.message : String(e)); })
-      .finally(() => { if (live) setLoading(false); });
-    return () => { live = false; };
-  }, [doc.path]);
-
-  const dirty = editing && draft !== (content ?? "");
-  // Writing is docs/-only (PUT /documents/file keeps that containment), so a
-  // root-level doc opened through a chip is view-only here. The operator edits
-  // those through the dev agent, not this modal.
-  const writable = doc.path.startsWith("docs/");
-
-  const save = useCallback(async () => {
-    setSaving(true);
-    setErr(null);
-    try {
-      const r = await fetch("/api/documents/file", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path: doc.path, content: draft }),
-      });
-      if (!r.ok) throw await httpFail(r);
-      setContent(draft);
-      setEditing(false);
-      onChanged("Saved. Not committed; commit it yourself when ready.");
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
-    }
-  }, [doc.path, draft, onChanged]);
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={doc.title}
-      size="lg"
-      actions={
-        editing ? (
-          <>
-            <Button onClick={() => { setEditing(false); setDraft(content ?? ""); }}>Cancel</Button>
-            <Button variant="primary" loading={saving} disabled={!dirty} onClick={save}>Save</Button>
-          </>
-        ) : (
-          <>
-            <Button onClick={onClose}>Close</Button>
-            {writable && (
-              <Button variant="primary" disabled={loading} onClick={() => setEditing(true)}>
-                <Pencil aria-hidden /> Edit
-              </Button>
-            )}
-          </>
-        )
-      }
-    >
-      <Stack gap="lg">
-        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", wordBreak: "break-all" }}>{doc.path}</span>
-        {editing && (
-          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-            Saving edits the file on disk. It is not committed; commit it yourself when ready.
-          </p>
-        )}
-        {loading ? (
-          <Stack gap="sm">
-            <Skeleton width="80%" />
-            <Skeleton width="90%" />
-            <Skeleton width="60%" />
-          </Stack>
-        ) : err ? (
-          <Notice tone="error" where={<code>/api/documents/file</code>} detail={err}>Couldn't load this document.</Notice>
-        ) : editing ? (
-          <Textarea
-            rows={20}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            data-autofocus
-            style={{ fontFamily: "var(--font-mono, monospace)" }}
-          />
-        ) : (
-          <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, fontSize: "var(--fs-sm)" }}>{content}</p>
-        )}
       </Stack>
     </Modal>
   );

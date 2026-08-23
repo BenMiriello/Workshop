@@ -8,6 +8,7 @@ import {
   openPath,
   parseMemory,
   rememberPath,
+  setColumnOpen,
   settleMotion,
   tabsKey,
   tabsOpen,
@@ -33,6 +34,21 @@ describe("columnOpen", () => {
 
     const twice = toggleColumn(once, birds);
     expect(columnOpen(twice, birds)).toBe(false);
+  });
+
+  it("opens without flipping, for the takeover's control in the content", () => {
+    // A toggle from the content side would CLOSE the column for anyone whose
+    // column was already open, which is the opposite of asking for the tree.
+    const opened = setColumnOpen(EMPTY_MEMORY, birds, true);
+    expect(columnOpen(opened, birds)).toBe(true);
+    expect(columnOpen(setColumnOpen(opened, birds, true), birds)).toBe(true);
+    // And it is still per place.
+    expect(columnOpen(opened, home)).toBe(true);
+  });
+
+  it("returns the same memory when the column is already what was asked for", () => {
+    const already = setColumnOpen(EMPTY_MEMORY, home, true);
+    expect(already).toBe(EMPTY_MEMORY);
   });
 
   it("remembers a state equal to the default, so it survives a default change", () => {

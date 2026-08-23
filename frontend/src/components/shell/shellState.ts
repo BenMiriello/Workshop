@@ -43,12 +43,28 @@ export function columnOpen(memory: ShellMemory, place: ShellPlace): boolean {
 
 /** Rule 2: tapping the tile of the place you are already in. */
 export function toggleColumn(memory: ShellMemory, place: ShellPlace): ShellMemory {
-  const next = !columnOpen(memory, place);
+  return setColumnOpen(memory, place, !columnOpen(memory, place));
+}
+
+/**
+ * Say what the column should be, rather than flip it.
+ *
+ * The directory takeover needs this: a control inside the CONTENT can ask for
+ * the tree, and the tree is drawn in a column that may currently be collapsed.
+ * A toggle from there would close the column for anyone whose column was
+ * already open, which is the opposite of what was asked for.
+ */
+export function setColumnOpen(
+  memory: ShellMemory,
+  place: ShellPlace,
+  open: boolean,
+): ShellMemory {
+  if (columnOpen(memory, place) === open) return memory;
   return {
     ...memory,
     places: {
       ...memory.places,
-      [place.id]: { ...memory.places[place.id], columnOpen: next },
+      [place.id]: { ...memory.places[place.id], columnOpen: open },
     },
   };
 }

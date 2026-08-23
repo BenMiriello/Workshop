@@ -2979,3 +2979,118 @@ p.chat-workpanel__note { margin: 0; }
 .ws-claim__body { margin: 0; white-space: pre-wrap; }
 .ws-claim__note { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
 .ws-changes__filters { margin-bottom: var(--space-4); }
+
+/* ---- The directory takeover ----------------------------------------------
+   navigation-shell-2026-08-20.md section 3.4, built for Memory (section 8.1:
+   "The takeover interaction (section 3.4) is still built, because Memory needs
+   it.").
+
+   ONE COUPLED SLIDE. The page list translates fully out to the left while the
+   tree comes in from the right, in the same frame and over the same duration.
+   Three things that were tried and rejected in the design and must not come
+   back: it is not a cross-fade, there is no shadow overlay under the incoming
+   panel, and the panel is never unmounted (it is mounted by PageColumn at all
+   times) so its exit animates too.
+
+   The section names 340ms cubic-bezier(.32,.72,0,1). This uses --dur-slow
+   (320ms) and --ease-out, because a new duration and a new easing curve are
+   kit tokens and this ticket does not touch packages/ui. That also buys
+   prefers-reduced-motion for free: the token collapses to 0ms under it, which
+   is design rule 10. */
+.ws-pagecol__inner { position: relative; }
+.ws-pagecol__pages {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+  transition: transform var(--dur-slow) var(--ease-out);
+}
+.ws-pagecol__pages.is-out { transform: translateX(-100%); }
+/* `visibility` is what takes the closed panel out of the TAB ORDER, which
+   `aria-hidden` alone does not do: the tree inside carries a roving tabindex,
+   and one tab stop parked off-screen is a focus that lands nowhere. It is
+   delayed by exactly the slide's duration, so the exit still animates in full
+   and only then goes away. Under prefers-reduced-motion --dur-slow is 0ms and
+   the delay disappears with it. */
+.ws-pagecol__dir {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg-inset);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition: transform var(--dur-slow) var(--ease-out), visibility 0s linear var(--dur-slow);
+}
+.ws-pagecol__dir.is-in {
+  transform: translateX(0);
+  visibility: visible;
+  transition: transform var(--dur-slow) var(--ease-out), visibility 0s;
+}
+/* Closing the column does NOT reset the tree (section 3.4, correction 4), so a
+   collapsed column can still be holding an open takeover. It is zero width and
+   clipped, so nothing in it may be reachable either. */
+.ws-pagecol:not(.is-open) .ws-pagecol__dir.is-in {
+  visibility: hidden;
+  transition: transform var(--dur-slow) var(--ease-out), visibility 0s linear var(--dur-slow);
+}
+/* The page's row, risen to the top of the column and now a back control. It
+   keeps the active treatment because you have not gone anywhere: the document
+   is still on screen behind it. */
+.ws-pagecol__dirhead {
+  flex: 0 0 auto;
+  width: calc(100% - var(--space-4));
+  margin: var(--space-3) var(--space-2) var(--space-2);
+  border: 0;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-pagecol__dirbody {
+  flex: 1 1 auto; min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-2) var(--space-3);
+}
+/* The symmetric half: with the page list restored the row still reads active
+   and carries a right-pointing chevron back into the tree. A control, so it is
+   neutral at rest and --fg on hover (design rule 3). */
+.ws-pagerow__wrap { position: relative; flex: 0 0 auto; display: flex; }
+.ws-pagerow__wrap > .ws-pagerow { flex: 1 1 auto; min-width: 0; padding-right: var(--space-6); }
+.ws-pagerow__chev {
+  position: absolute; top: 0; bottom: 0; right: var(--space-1);
+  display: flex; align-items: center;
+  padding: 0 var(--space-2);
+  border: 0; background: none;
+  color: var(--muted); cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.ws-pagerow__chev:hover { color: var(--fg); }
+
+/* ---- Memory ---------------------------------------------------------------
+   The tree in column two, the same tree drilled in place on a phone, and the
+   document beside it. */
+.ws-memory__tree { padding-top: var(--space-1); }
+/* The phone's tree: one level at a time with Up walking the tree (section 4.4,
+   "Up is structural and belongs to the page"). Rows are full-width targets. */
+.ws-memory__level { display: flex; flex-direction: column; gap: 1px; }
+.ws-memory__row {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-height: 40px;
+  padding: var(--space-2);
+  border: 0; background: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg); font-size: var(--fs-base); font-family: inherit;
+  text-align: left; cursor: pointer;
+}
+.ws-memory__row:hover { background: var(--card-hover); }
+.ws-memory__row.is-selected { background: var(--accent-soft); color: var(--accent); }
+.ws-memory__row svg { flex: 0 0 auto; color: var(--muted); }
+.ws-memory__row.is-selected svg { color: inherit; }
+.ws-memory__rowlabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-memory__more { margin-left: auto; color: var(--faint); }
+.ws-memory__trail {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  color: var(--muted); font-size: var(--fs-sm);
+}
+.ws-memory__trailname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The document body. The measure is the shell's, so nothing here caps width. */
+.ws-memory__title { margin: 0; font-size: var(--fs-xl); font-weight: var(--fw-semi); letter-spacing: -0.01em; }
+.ws-memory__path { color: var(--muted); font-size: var(--fs-xs); word-break: break-all; }
+.ws-memory__hook { margin: 0; color: var(--muted); }
