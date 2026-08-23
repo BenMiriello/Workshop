@@ -1,40 +1,30 @@
-import { AlertTriangle, Clock, Hand } from "lucide-react";
+import { AlertTriangle, Hand } from "lucide-react";
 import { Button } from "@workshop/ui";
 
-// WHAT THE WAITING MESSAGES ARE WAITING FOR, said once, under all of them.
+// The queue only speaks when something has actually happened to it.
 //
-// The chat runs one turn at a time and some turns read nothing at all (a slash
-// command, a voice turn), so a message sent during one waits. What matters is
-// WHERE it waits, and this line is the operator-facing half of that answer: it
-// waits on the server, on this thread. It will be sent whether or not this tab
-// is open, whether or not this device comes back, and it is the same queue in
-// every window looking at this chat.
+// The ordinary case (a message is waiting because a turn is running) shows NO
+// line: the dimmed bubble already says it is pending, and each queued bubble
+// carries its own unsend control in the corner. There is no standing explainer.
 //
-// It said "sends when the current turn finishes" before, from a browser that
-// could only keep that promise if it was still around to keep it. It was not,
-// on 2026-08-12, and two messages ceased to exist.
+// Two states remain, both of which carry a Send now the bubbles cannot:
 //
-// Three states, because there are exactly three reasons a message is sitting
-// here, and the operator's next move differs for each:
+//   held   the operator pressed Stop, so nothing sends until they say so.
+//   error  a send was attempted and failed. The text is safe; the reason is
+//          theirs to read rather than swallowed into a log.
 //
-//   waiting  a turn is running. Nothing to do; it goes when that ends.
-//   held     they pressed Stop. Nothing goes until they say so.
-//   error    a send was attempted and failed. The text is safe, and the reason
-//            is theirs to read rather than something swallowed into a log.
+// This renders nothing when neither is true; the caller also guards on that.
 
-export default function QueueNote({ count, held, error, onRelease, onCancelLast }: {
-  count: number;
+export default function QueueNote({ held, error, onRelease }: {
   held: boolean;
   error: string;
   onRelease: () => void;
-  onCancelLast: () => void;
 }) {
-  const n = count === 1 ? "This message is" : `These ${count} messages are`;
   if (error) {
     return (
       <div className="chat-unsent">
         <AlertTriangle size={13} strokeWidth={1.8} aria-hidden />
-        <span>{n} saved and not sent yet. {error}</span>
+        <span>Saved and not sent yet. {error}</span>
         <Button size="sm" variant="ghost" onClick={onRelease}>Send now</Button>
       </div>
     );
@@ -43,16 +33,10 @@ export default function QueueNote({ count, held, error, onRelease, onCancelLast 
     return (
       <div className="chat-unsent">
         <Hand size={13} strokeWidth={1.8} aria-hidden />
-        <span>{n} waiting. You stopped the turn, so nothing sends until you say so.</span>
+        <span>Waiting. You stopped the turn, so nothing sends until you say so.</span>
         <Button size="sm" variant="ghost" onClick={onRelease}>Send now</Button>
       </div>
     );
   }
-  return (
-    <div className="chat-queued-note">
-      <Clock size={13} strokeWidth={1.8} aria-hidden />
-      <span>{n} saved, and go out when this turn finishes.</span>
-      <Button size="sm" variant="ghost" onClick={onCancelLast}>Unsend last</Button>
-    </div>
-  );
+  return null;
 }

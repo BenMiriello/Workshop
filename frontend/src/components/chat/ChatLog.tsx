@@ -10,6 +10,7 @@ import MessageList, { SentAttachments, type AnswerPermissionFor } from "./Messag
 import FoldingNote from "./FoldingNote";
 import type { FoldMode } from "./useCompaction";
 import CopyMessage from "./CopyMessage";
+import UnsendMessage from "./UnsendMessage";
 import QueueNote from "./QueueNote";
 import { VoiceReply } from "./VoiceTurn";
 
@@ -218,13 +219,14 @@ export default function ChatLog({
 
       {/* WAITING ON THE SERVER, not in this browser. These have been accepted
           and are on the thread; they go out when the run in flight ends, sent
-          by the server, whether or not this tab is still open. So the line
-          under them is a statement about the system, not a promise this page
-          is making on its own. */}
+          by the server, whether or not this tab is still open. The dimmed bubble
+          is the whole signal that one is pending; each carries its own unsend
+          control in the corner, so there is no standing line of explainer text
+          under the queue. */}
       {queued.map((q) => (
         <div key={q.clientId} className="chat-msg user">
           <div
-            className={`chat-bubble chat-bubble--queued${q.text.trim() ? " chat-bubble--copyable" : ""}`}
+            className={`chat-bubble chat-bubble--queued chat-bubble--cancelable${q.text.trim() ? " chat-bubble--copyable" : ""}`}
           >
             <div className="chat-bubble__body">
               {/* A queued message keeps its files visible too. They are already
@@ -233,16 +235,18 @@ export default function ChatLog({
               {q.text}
             </div>
             {q.text.trim() && <CopyMessage value={q.text} />}
+            <UnsendMessage onUnsend={() => onCancelQueued(q.clientId)} />
           </div>
         </div>
       ))}
-      {queued.length > 0 && (
+      {/* Only when the queue is NOT simply waiting: it stopped (held) or a drain
+          failed (error). Both carry a Send now the dimmed bubbles cannot. The
+          ordinary waiting case shows no line at all. */}
+      {queued.length > 0 && (queueHeld || !!queueError) && (
         <QueueNote
-          count={queued.length}
           held={queueHeld}
           error={queueError}
           onRelease={onReleaseQueue}
-          onCancelLast={() => onCancelQueued(queued[queued.length - 1].clientId)}
         />
       )}
 
