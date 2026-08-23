@@ -85,6 +85,12 @@ class RunnerTarget(BaseModel):
     key: str
     label: str
     dir: str
+    # The SCOPE KEY for this tree (`development`, `project:<slug>`). Added when
+    # the enumeration moved to `services/makers.runnable_scopes`: every other
+    # control in this stack -- the arm level, the presence channel, the maker
+    # agent -- is keyed by the scope, and a caller holding only a path had to
+    # re-derive it, which is the kind of re-derivation that goes wrong once.
+    scope: str | None = None
 
 
 class RunnerTargets(BaseModel):

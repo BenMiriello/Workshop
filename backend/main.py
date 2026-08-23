@@ -25,6 +25,8 @@ from routes import deploys as deploys_routes
 from routes import apps as apps_routes
 from routes import git as git_routes
 from routes import changes as changes_routes
+from routes import branches as branches_routes
+from routes import presence as presence_routes
 from services import app_registry
 import asyncio
 import datetime as _dt
@@ -70,6 +72,16 @@ async def lifespan(app: FastAPI):
     # sits above it.
     from services import work_driver
     app.state._bg_work_driver = asyncio.create_task(work_driver.reconcile_loop())
+    # The other half of that question, and the reason it now has a face: every
+    # scope that CAN run tickets gets a maker agent -- a real definition file,
+    # listed beside every other agent, with the arm level, the residency, the
+    # live activity and the runs joined onto it at read time. It adds no store:
+    # the maker's arm level IS scope_execution, its runner IS the work driver's,
+    # its activity IS presence. A reconciler rather than a list-time synthesis
+    # because a synthesized record has no file to edit, and editing the maker's
+    # persona is what changes what the unattended worker is told (ralph.sh).
+    from services import makers as _makers
+    app.state._bg_maker_reconcile = asyncio.create_task(_makers.reconcile_loop())
     # Fire-and-continue: a finished background run leaves a continuation seed on
     # the originating thread's queue (services/run_report -> chat_drain), written
     # from the detached worker process that cannot reach this event loop. This is
@@ -343,6 +355,18 @@ app.include_router(git_routes.router, dependencies=_OPERATOR)  # /git
 # ABOVE /worktrees in the layering: it calls that service's published surface
 # for the branch state and the diff, and nothing below it knows what a change is.
 app.include_router(changes_routes.router, dependencies=_OPERATOR)  # /changes
+# The worktree RECORD and its timeline (workspace-ownership-and-leases
+# 2026-08-22 sec 13.2, step B2). BESIDE /worktrees, not above it: that
+# router is addressed by (project_slug, branch_slug) and operates on the
+# disk; this one is addressed by record id and answers who allocated a
+# tree, when, for which ticket, and what became of it. It is also where
+# the lease hangs off in B3.
+app.include_router(branches_routes.router, dependencies=_OPERATOR)  # /branches
+# Who is working here (workspace-ownership-and-leases-2026-08-22 sec 6, step
+# B4). A READER of a shared channel, not its owner: the sweeps write presence
+# by shelling scripts/presence.py, so this router holds no state and a restart
+# loses nothing. /presence/directory is the read-time join.
+app.include_router(presence_routes.router, dependencies=_OPERATOR)  # /presence
 app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], dependencies=_OPERATOR)
 # Grants + Stores (Phase 4). /base-apps/grants stays as a thin alias in base_apps
 # until Phase 5; this is the real grants router (/grants, /grants/mint,

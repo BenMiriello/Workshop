@@ -318,3 +318,89 @@ async def reconcile_loop(interval: float = RECONCILE_INTERVAL) -> None:
         except Exception:
             log.exception("work driver reconcile pass failed")
         await asyncio.sleep(interval)
+
+
+# ---- the shared intent surface ---------------------------------------------
+#
+# ONE IMPLEMENTATION OF "START", "STOP" AND "SET THE ARM LEVEL", because there
+# are now two callers: `routes/autonomy.py` (the Settings drawer, which names a
+# TREE) and `routes/agents.py` (the maker agent, which names a SCOPE). Those two
+# controls describe the same act, and a second copy of the intent-then-mechanism
+# ordering is precisely how the pre-driver system came to have two controls for
+# one intent that silently disagreed in both directions.
+#
+# THE RULE THESE PRESERVE, unchanged from the route code they were lifted from:
+#
+#   START ARMS.    The runner is DERIVED from `scope_execution` by `reconcile()`
+#                  above, so a start that only spawned a process would be undone
+#                  the moment the next pass found the scope unarmed -- and, before
+#                  the driver existed, would simply die at the next reboot with
+#                  nothing to bring it back. An already-`autonomous` scope is NOT
+#                  downgraded: pressing Start on a scope the operator took all the
+#                  way to run-to-done must not quietly move the ceiling back.
+#   STOP DISARMS.  `reconcile()` re-ensures a runner for every armed scope once a
+#                  minute, so killing without clearing the intent would have the
+#                  loop back within the poll interval and Stop would be a button
+#                  that lies. Clearing the intent IS the stop; the SIGTERM is only
+#                  how it takes effect now rather than at the end of the sweep.
+#
+# A tree that maps to no scope (`scope=None`) can still be swept on demand; it
+# just has no intent to record, and the reconciler will not keep it alive.
+
+# How long to wait after a SIGTERM before reporting state, so the answer
+# describes the runner's condition after the signal rather than a millisecond
+# before it. Small, and it is the reason `stop_work` is called off the event
+# loop (`asyncio.to_thread`) by both routes.
+STOP_SETTLE_S = 1.5
+
+
+def set_execution(scope: str | None, root: str | Path, mode: str) -> str:
+    """Record the execution intent for `scope` and make the mechanism follow NOW.
+
+    The store write is the source of truth and always happens; the ensure/stop
+    that follows is best-effort, because `reconcile()` converges the mechanism on
+    its next pass either way. Doing it here means the caller's response already
+    reflects a running loop, and disarming stops immediately rather than at the
+    end of the current sweep.
+    """
+    if mode not in scope_execution.MODES:
+        raise ValueError(f"unknown execution mode {mode!r}; one of {scope_execution.MODES}")
+    if scope:
+        scope_execution.set_mode(scope, mode)
+    armed = scope_execution.is_armed(scope) if scope else (mode != "reactive")
+    try:
+        if armed:
+            ensure(root, mode)
+        else:
+            stop(root)
+    except Exception:
+        log.warning("work driver could not follow the execution change for %s",
+                    root, exc_info=True)
+    return mode
+
+
+def start_work(scope: str | None, root: str | Path) -> bool:
+    """Start working this tree: ARM the scope if it is not armed, then ensure a
+    runner. Returns whether a runner is resident afterwards."""
+    if scope and not scope_execution.is_armed(scope):
+        scope_execution.set_mode(scope, "supervised")
+    mode = scope_execution.get_mode(scope) if scope else "supervised"
+    if mode == "reactive":
+        # Only reachable for a tree that maps to no scope; a named scope was
+        # just armed above. Sweeping on demand is allowed, supervised.
+        mode = "supervised"
+    return ensure(root, mode)
+
+
+def stop_work(scope: str | None, root: str | Path, *, settle: float = STOP_SETTLE_S) -> bool:
+    """Stop working this tree: DISARM the scope first, then kill the runner.
+
+    Disarm-then-kill, never the other way round. The sweep's own lease/reclaim
+    path returns a half-worked ticket to the queue, so this loses no tickets.
+    """
+    if scope:
+        scope_execution.set_mode(scope, "reactive")
+    killed = stop(root)
+    if settle > 0:
+        time.sleep(settle)
+    return killed

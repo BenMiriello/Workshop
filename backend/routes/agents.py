@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import os
 
 from typing import Any, Literal
@@ -7,10 +9,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from routes.api_models import (AgentLimits, AgentTrigger, ContentOut, DeletedOut, FileOut, Job, OkOut,
                                QueueCounts, AwaitingRow, Task, ToolsOut, TreeOut)
-from services import agents_registry, build_agents, dev_servers, jobs, presence, tool_registry, triggers
+from routes import autonomy_models as am
+from services import (agents_registry, build_agents, dev_servers, jobs, makers,
+                      presence, tool_registry, triggers, work_driver)
 from services import agent_authority
+from wsplatform import paths
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 # ---- Response models -------------------------------------------------------
@@ -95,6 +101,92 @@ class Agent(BaseModel):
     branch_slug: str | None = None
 
 
+# ---- The maker agent's live state ------------------------------------------
+#
+# EVERY FIELD BELOW IS READ AT REQUEST TIME AND STORED NOWHERE. There is no
+# maker store: the arm level is `services/scope_execution`, residency is the
+# flock `services/work_driver` probes, activity is `services/presence`, and the
+# runs are `services/jobs`. This is four existing facts wearing one face, which
+# is the whole design -- see `services/makers.py`'s header.
+
+MakerActivity = Literal["absent", "present", "working"]
+
+
+class MakerSummary(BaseModel):
+    """What the roster needs to answer "what is doing the tickets, and is it".
+
+    `arm_level` IS the scope's execution mode, not a copy of it. Setting it
+    through `POST /agents/{id}/maker/execution` writes `scope-execution.json`
+    and nothing else; there is no per-agent on/off beside it that could disagree.
+
+    `activity` is deliberately three values and not four. `present` covers both
+    "resident, idling on the poll" and "resident, sweeping, has not claimed a
+    ticket yet" because the presence channel carries no structural difference
+    between them -- only an activity string meant for a human. `activity_detail`
+    says exactly that rather than the API picking one and being wrong half the
+    time."""
+
+    scope: str
+    dir: str | None = None
+    arm_level: AutonomyMode
+    armed: bool
+    # How far auto-execution may advance: `in_review` (supervised) or `done`
+    # (autonomous). null when reactive. The supervised ceiling is unchanged.
+    ceiling: str | None = None
+    # The global brake, above every scope. A maker can be armed and resident and
+    # still do nothing because this is engaged, and the UI must be able to say so.
+    global_override_engaged: bool = False
+    runner_resident: bool
+    activity: MakerActivity
+    activity_detail: str
+    ticket_id: str | None = None
+    ticket_title: str | None = None
+    ticket_status: str | None = None
+
+
+class MakerSession(BaseModel):
+    """One live session working this scope, from the presence directory."""
+
+    session_id: str
+    session_kind: str
+    principal: str | None = None
+    activity: str = ""
+    scope: str | None = None
+    subject_kind: str
+    subject_id: str | None = None
+    subject_label: str | None = None
+    subject_status: str | None = None
+    pid: int | None = None
+    hostname: str | None = None
+    last_beat_at: str | None = None
+    expires_at: str | None = None
+
+
+class MakerState(MakerSummary):
+    """The full block: the summary, plus who is here and what has run.
+
+    `runner` is the SAME `QueueRunnerState` the Settings drawer reads from
+    `GET /queue/runner` -- the same helper, not a second rendering of it."""
+
+    slug: str | None = None
+    name: str | None = None
+    label: str | None = None
+    # False when this scope is no longer a tree a runner may be pointed at (the
+    # project was removed, or developer mode went off). The maker record is kept
+    # rather than deleted -- its definition may have been edited -- so the record
+    # has to be able to say that its tree is gone.
+    runnable: bool = True
+    runner: am.QueueRunnerState | None = None
+    sessions: list[MakerSession] = []
+    recent_runs: list[Job] = []
+
+
+class MakerExecutionIn(BaseModel):
+    """The arm level, written straight through to `scope_execution`."""
+
+    mode: AutonomyMode
+
+
 class RosterAgent(BaseModel):
     """The roster projection. Deliberately NOT `Agent`: the list route hand-picks
     a narrower set (no `definition` body, no `definition_path`) because the
@@ -126,6 +218,10 @@ class RosterAgent(BaseModel):
     created_at: str | None = None
     last_active: str | None = None
     source: str | None = None
+    # Present ONLY on a maker with a tree, null on every other row. This is what
+    # makes "what is doing the tickets" answerable from the list itself, which
+    # is where the operator looked for it and did not find it.
+    maker: MakerSummary | None = None
 
 
 class ActivationLink(BaseModel):
@@ -564,6 +660,12 @@ async def list_agents():
     Per-channel bridge agents are excluded by the registry."""
     reg = agents_registry.list_agents()
 
+    # The presence channel is read ONCE for the whole roster, not once per maker:
+    # `directory()` globs a directory and joins each row to its ticket, so N
+    # makers asking separately would be N scans of the same files. Everything
+    # else `makers.summary` needs is a single flock probe and a dict lookup.
+    sessions = presence.directory() if any(a.get("role") == "maker" for a in reg) else []
+
     out: list[dict] = []
     for a in reg:
         out.append({
@@ -594,6 +696,10 @@ async def list_agents():
             "created_at": a.get("created"),
             "last_active": a.get("last_active") or a.get("created"),
             "source": a.get("source"),
+            # Null for everything that is not a maker with a tree. A maker's
+            # live block is joined here and stored nowhere -- see
+            # services/makers.py.
+            "maker": _maker_summary(a, sessions),
         })
 
     out.sort(key=lambda a: a.get("last_active") or a.get("created_at") or "", reverse=True)
@@ -1421,6 +1527,122 @@ async def delete_agent(agent_id: str):
     agents_registry.retire(rec["slug"])
     _drop_from_project_roster(rec)
     return {"ok": True, "retired": rec["slug"]}
+
+
+# ---- The maker agent: what is doing the tickets ----------------------------
+#
+# THE CONTROLS DELEGATE, THEY DO NOT REIMPLEMENT. Every write below goes through
+# `services/work_driver`'s shared intent surface -- the same three functions
+# `routes/autonomy.py`'s queue-runner endpoints call -- so the agent-level
+# control and the Settings-drawer control cannot drift apart. In particular the
+# driver's own rule is preserved exactly: START ARMS the scope and STOP DISARMS
+# it, because the reconciler derives the runner from the arm level and would
+# otherwise undo either button within a minute.
+#
+# These are two-segment paths, so they never fall into the `/{agent_id}`
+# catch-all, which matches a single segment only.
+
+
+def _maker_summary(rec: dict, sessions: list[dict]) -> dict | None:
+    """The roster's compact maker block, or None. Never raises: a roster that
+    500s because one agent's tree went missing is worse than a null."""
+    if rec.get("role") != "maker":
+        return None
+    try:
+        return makers.summary(rec, sessions=sessions)
+    except Exception:
+        log.warning("could not read maker state for %s", rec.get("slug"), exc_info=True)
+        return None
+
+
+def _maker(agent_id: str) -> dict:
+    """Resolve an agent and insist it is a maker with a tree, or 404/409.
+
+    409 rather than 404 for a real agent that is not a maker: the agent exists,
+    the sub-resource does not, and reporting it as missing would send a caller
+    looking for a typo in a slug that is correct."""
+    rec = agents_registry.get(agent_id)
+    if rec is None:
+        raise HTTPException(404, f"unknown agent: {agent_id}")
+    if rec.get("role") != "maker":
+        raise HTTPException(
+            409, f"{rec.get('slug')} is a {rec.get('role') or 'roleless'} agent, "
+                 "not a maker: only a maker works a scope's ticket queue")
+    if makers.scope_for(rec) is None:
+        raise HTTPException(
+            409, f"{rec.get('slug')} is a maker with no tree: link it to a "
+                 "project and it gets that project's queue, its runner and its "
+                 "arm level")
+    return rec
+
+
+def _maker_state(rec: dict) -> dict:
+    try:
+        return makers.live_state(rec)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.get("/{agent_id}/maker", response_model=MakerState, response_model_exclude_unset=True)
+async def get_maker_state(agent_id: str):
+    """Everything about this maker that is true right now, joined at read time.
+
+    The four questions the UI has to ask, and where each answer comes from:
+      is it allowed to run   `arm_level` / `armed` / `ceiling`  scope_execution
+      is a worker here       `runner_resident` / `runner`       work_driver flock
+      is it working, on what `activity` / `ticket_*` / `sessions`  presence
+      what has it run        `recent_runs`                      the Job store
+    Nothing here is persisted, and nothing here is a flag someone set."""
+    return _maker_state(_maker(agent_id))
+
+
+@router.post("/{agent_id}/maker/execution", response_model=MakerState, response_model_exclude_unset=True)
+async def set_maker_execution(agent_id: str, body: MakerExecutionIn):
+    """Set this maker's arm level.
+
+    THIS WRITES `scope-execution.json` AND NOTHING ELSE. The maker's arm level
+    IS its scope's execution mode -- there is no per-agent copy of it, so there
+    is nothing that can disagree with the same setting reached from the chat's
+    Work settings. Setting it also makes the mechanism follow immediately
+    (arming ensures a runner, disarming stops one) via the same shared service
+    `POST /agents/autonomy/scope-execution` uses."""
+    rec = _maker(agent_id)
+    scope = makers.scope_for(rec)
+    row = makers.scope_row(scope)
+    root = (row or {}).get("dir") or paths.workshop_root()
+    await asyncio.to_thread(work_driver.set_execution, scope, root, body.mode)
+    return _maker_state(rec)
+
+
+@router.post("/{agent_id}/maker/runner/start", response_model=MakerState, response_model_exclude_unset=True)
+async def start_maker_runner(agent_id: str):
+    """Put a worker on this maker's tree. ARMS the scope first (supervised, if
+    it was not armed at all), because the runner is derived from the arm level:
+    a start that only spawned would be undone by the next reconcile pass. A
+    scope already at `autonomous` is not downgraded."""
+    rec = _maker(agent_id)
+    scope = makers.scope_for(rec)
+    row = makers.scope_row(scope)
+    if row is None:
+        raise HTTPException(
+            409, f"{rec.get('slug')}'s tree is not a runnable target: the "
+                 "project is gone, or developer mode is off for the platform repo")
+    await asyncio.to_thread(work_driver.start_work, scope, row["dir"])
+    return _maker_state(rec)
+
+
+@router.post("/{agent_id}/maker/runner/stop", response_model=MakerState, response_model_exclude_unset=True)
+async def stop_maker_runner(agent_id: str):
+    """Take the worker off this maker's tree. DISARMS the scope first, then
+    signals the runner, so the reconciler does not bring it straight back. The
+    sweep's own lease/reclaim path returns a half-worked ticket to the queue, so
+    stopping mid-run loses no tickets."""
+    rec = _maker(agent_id)
+    scope = makers.scope_for(rec)
+    row = makers.scope_row(scope)
+    root = (row or {}).get("dir") or paths.workshop_root()
+    await asyncio.to_thread(work_driver.stop_work, scope, root)
+    return _maker_state(rec)
 
 
 @router.get("/{agent_id}/jobs", response_model=AgentJobsOut, response_model_exclude_unset=True)

@@ -22,8 +22,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from routes import autonomy_models as am
-from services import (agent_slots, autonomy_override, jobs, scope_execution,
-                      task_scope, work_driver)
+from services import (agent_slots, autonomy_override, jobs, makers,
+                      scope_execution, task_scope, work_driver)
 from pydantic import BaseModel, Field
 from wsplatform import paths
 
@@ -273,31 +273,20 @@ async def queue_runner_targets():
     ADR 0014 says a target must be named, so the UI needs a list to name one
     from. The platform repo appears only when developer mode is on: offering it
     and then having the gate refuse it would be another control that lies.
-    """
-    from wsplatform import dev_mode
 
-    out: list[dict] = []
-    if dev_mode.dev_mode_on():
-        out.append({
-            "key": "development",
-            "label": "development (the Workshop itself)",
-            "dir": str(WORKSHOP_ROOT),
-        })
-    try:
-        import json as _json
-        data = _json.loads(paths.projects_registry().read_text())
-    except (OSError, ValueError):
-        data = {}
-    for slug, raw in sorted((data.get("projects") or {}).items()):
-        d = (raw or {}).get("dir")
-        if not d or dev_mode.is_self_dir(d):
-            continue
-        out.append({
-            "key": slug,
-            "label": raw.get("title") or slug,
-            "dir": str(d),
-        })
-    return {"targets": out}
+    ONE ENUMERATION, in `services/makers.runnable_scopes`. It used to be built
+    here, and the maker reconciler needs the identical list -- "which trees can
+    run tickets" answered in two places is how the picker and the roster come to
+    disagree about which scopes exist. `key` keeps its meaning (the registry
+    slug / the self-project's name) and `scope` is added beside it, because the
+    scope KEY is what `scope_execution` and the presence channel are keyed by
+    and the caller should not have to re-derive it from a path.
+    """
+    return {"targets": [
+        {"key": row["project_slug"], "label": row["label"],
+         "dir": row["dir"], "scope": row["scope"]}
+        for row in makers.runnable_scopes()
+    ]}
 
 
 @router.post("/queue/runner/start", response_model=am.QueueRunnerState, response_model_exclude_unset=True)
@@ -319,14 +308,13 @@ async def queue_runner_start(body: RunnerStart):
     # keyed by scope, so map it. A tree that is not a known scope can still be
     # swept on demand; it just has no intent to record, and the reconciler will
     # not keep it alive.
+    #
+    # THE SHARED SERVICE, not a copy of the rule. `work_driver.start_work` is
+    # the one implementation of arm-then-ensure, and the maker agent's Start
+    # button calls the same function -- an agent-level control that reimplemented
+    # this would be free to drift from it.
     scope = task_scope.key_for_root(target)
-    if scope:
-        if not scope_execution.is_armed(scope):
-            scope_execution.set_mode(scope, "supervised")
-        mode = scope_execution.get_mode(scope)
-    else:
-        mode = "supervised"
-    await asyncio.to_thread(work_driver.ensure, target, mode)
+    await asyncio.to_thread(work_driver.start_work, scope, target)
     return _queue_runner_state(target)
 
 
@@ -361,10 +349,10 @@ async def queue_runner_stop(dir: str | None = None):
     # effect now rather than at the end of the current sweep.
     target = os.path.realpath(dir.strip())
     scope = task_scope.key_for_root(target)
-    if scope:
-        scope_execution.set_mode(scope, "reactive")
-    await asyncio.to_thread(work_driver.stop, target)
-    await asyncio.sleep(1.5)
+    # Same shared service as the maker agent's Stop button. The settle wait that
+    # used to be an `asyncio.sleep(1.5)` here now lives inside `stop_work`,
+    # beside the SIGTERM it is waiting on, which is why this runs in a thread.
+    await asyncio.to_thread(work_driver.stop_work, scope, target)
     return _queue_runner_state(target)
 
 
@@ -424,23 +412,13 @@ async def set_scope_execution(body: ScopeExecutionMode):
         raise HTTPException(status_code=422,
                             detail=f"mode must be one of {scope_execution.MODES}")
     root = _scope_root(body.scope)
-    mode = scope_execution.set_mode(body.scope, body.mode)
-    # ACT ON IT NOW. Arming a scope used to be a pure store write, so the setting
-    # the operator flipped in the chat's Work settings did precisely nothing
-    # until something else happened to start a runner for that tree. The work
-    # driver would pick it up within a minute anyway; doing it here means the
-    # response already reflects a running loop, and disarming stops immediately
-    # instead of at the end of the current sweep.
-    try:
-        if scope_execution.is_armed(body.scope):
-            await asyncio.to_thread(work_driver.ensure, root, mode)
-        else:
-            await asyncio.to_thread(work_driver.stop, root)
-    except Exception:
-        # The setting is the source of truth and it is written; the reconciler
-        # will converge the mechanism on its next pass.
-        log.warning("work driver could not follow scope-execution change for %s",
-                    root, exc_info=True)
+    # ACT ON IT NOW, through the shared service. Arming a scope used to be a pure
+    # store write, so the setting the operator flipped in the chat's Work
+    # settings did precisely nothing until something else happened to start a
+    # runner for that tree. `work_driver.set_execution` writes the intent and
+    # makes the mechanism follow in one call, and it is the same call the maker
+    # agent's arm-level control makes.
+    mode = await asyncio.to_thread(work_driver.set_execution, body.scope, root, body.mode)
     return {
         "scope": body.scope,
         "mode": mode,

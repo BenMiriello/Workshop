@@ -646,6 +646,51 @@ $SCOPE_LEARN"
   log "injected learnings (global=$([[ -n $GLOBAL_LEARN ]] && echo y || echo n) scope=$([[ -n $SCOPE_LEARN ]] && echo y || echo n))"
 fi
 
+# --- The maker agent's persona and rules -------------------------------------
+#
+# EDITING THE AGENT IS WHAT CHANGES THIS WORKER. Every scope that can run
+# tickets has a maker agent (services/makers.py) -- an ordinary
+# `agents/<slug>.md` with frontmatter and a markdown body, listed by
+# `GET /agents` beside every other agent and editable through `PUT /agents/{id}`
+# or by opening the file. Its body is that agent's persona and standing rules,
+# and it is injected HERE, into the prompt of the `claude -p` that actually does
+# the ticket. That injection is the entire point of the record existing: without
+# it the maker would be a card on a screen describing a worker that never read
+# it, which is the "built but not wired up" failure this system keeps having.
+#
+# Injected the same way learnings are, one section further down the same
+# instruction string, and for the same reason: it is standing guidance for the
+# scope rather than anything about this particular ticket.
+#
+# FAILS SOFT, ALWAYS, ON EVERY PATH. No maker for this scope, an empty body, a
+# missing interpreter, an unreadable registry, a backend mid-deploy: the block
+# is empty and this run proceeds EXACTLY as it does today. This script runs
+# unattended with nobody to answer a traceback, so a bookkeeping read must never
+# be able to fail a sweep. That is why the command is `|| true`, why stderr is
+# discarded, and why nothing below is conditional on the block being non-empty
+# except the injection itself.
+#
+# `services.makers` needs the backend's dependencies (it parses agent
+# frontmatter), so it runs on the backend venv's interpreter when one is there,
+# the same way scripts/log_learning.sh does, and simply produces nothing if it
+# is not.
+MAKER_PY="$WORKSHOP/backend/.venv/bin/python"
+[[ -x "$MAKER_PY" ]] || MAKER_PY="python3"
+maker_block() {   # $1 = the scope key
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" \
+     "$MAKER_PY" -m services.makers prompt --scope "$1" 2>/dev/null) || true
+}
+MAKER_BLOCK=""
+if [[ -n "$LEARN_SCOPE" ]]; then
+  MAKER_BLOCK=$(maker_block "$LEARN_SCOPE")
+fi
+if [[ -n "$MAKER_BLOCK" ]]; then
+  RALPH_INSTRUCTIONS="$RALPH_INSTRUCTIONS
+
+$MAKER_BLOCK"
+  log "injected maker persona (scope=$LEARN_SCOPE)"
+fi
+
 iter=0
 exit_code=1
 last_reviewer_json='{"reasons":["initial-iteration-not-yet-run"]}'

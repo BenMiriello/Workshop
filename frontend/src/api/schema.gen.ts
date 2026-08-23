@@ -727,6 +727,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{agent_id}/maker": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Maker State
+         * @description Everything about this maker that is true right now, joined at read time.
+         *
+         *     The four questions the UI has to ask, and where each answer comes from:
+         *       is it allowed to run   `arm_level` / `armed` / `ceiling`  scope_execution
+         *       is a worker here       `runner_resident` / `runner`       work_driver flock
+         *       is it working, on what `activity` / `ticket_*` / `sessions`  presence
+         *       what has it run        `recent_runs`                      the Job store
+         *     Nothing here is persisted, and nothing here is a flag someone set.
+         */
+        get: operations["get_maker_state_agents__agent_id__maker_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{agent_id}/maker/execution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Maker Execution
+         * @description Set this maker's arm level.
+         *
+         *     THIS WRITES `scope-execution.json` AND NOTHING ELSE. The maker's arm level
+         *     IS its scope's execution mode -- there is no per-agent copy of it, so there
+         *     is nothing that can disagree with the same setting reached from the chat's
+         *     Work settings. Setting it also makes the mechanism follow immediately
+         *     (arming ensures a runner, disarming stops one) via the same shared service
+         *     `POST /agents/autonomy/scope-execution` uses.
+         */
+        post: operations["set_maker_execution_agents__agent_id__maker_execution_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{agent_id}/maker/runner/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Maker Runner
+         * @description Put a worker on this maker's tree. ARMS the scope first (supervised, if
+         *     it was not armed at all), because the runner is derived from the arm level:
+         *     a start that only spawned would be undone by the next reconcile pass. A
+         *     scope already at `autonomous` is not downgraded.
+         */
+        post: operations["start_maker_runner_agents__agent_id__maker_runner_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{agent_id}/maker/runner/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Maker Runner
+         * @description Take the worker off this maker's tree. DISARMS the scope first, then
+         *     signals the runner, so the reconciler does not bring it straight back. The
+         *     sweep's own lease/reclaim path returns a half-worked ticket to the queue, so
+         *     stopping mid-run loses no tickets.
+         */
+        post: operations["stop_maker_runner_agents__agent_id__maker_runner_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{agent_id}/runs": {
         parameters: {
             query?: never;
@@ -736,9 +836,17 @@ export interface paths {
         };
         /**
          * Agent Runs
-         * @description Recent activity feed for an agent: cron-runs JSONL (filtered) + last
-         *     heartbeat from .runtime/heartbeats/{id}.json + heartbeat freshness flag.
-         *     Powers per-agent activity cards on the Agents page.
+         * @description Recent activity feed for an agent: cron-runs JSONL (filtered) + its
+         *     presence record + a freshness flag. Powers per-agent activity cards on the
+         *     Agents page.
+         *
+         *     READ THROUGH `services/presence.py` (step B4), not by parsing the file here.
+         *     This route used to open `.runtime/heartbeats/{id}.json` itself and call a
+         *     record older than 120 seconds unresponsive; that threshold was a second,
+         *     private copy of an expiry rule the record can now state. The agent's
+         *     session id in that channel IS its agent id -- the writer is
+         *     `scripts/heartbeat.sh <agent_id>` -- so the lookup is unchanged, and a
+         *     record written before B4 still reads (`presence._tolerate`).
          */
         get: operations["agent_runs_agents__agent_id__runs_get"];
         put?: never;
@@ -2752,6 +2860,95 @@ export interface paths {
          *     subscribed agents. Body shape is brain/webhook-template.json.
          */
         post: operations["detection_webhook_birds_webhook_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Branches
+         * @description Worktree records, newest activity first.
+         *
+         *     `live=true` narrows to the trees that still exist on disk (not merged, not
+         *     discarded), which is the question a "who is working where" view asks;
+         *     without it the answer includes the history, which is the question
+         *     "what happened to this branch" asks. Both are real, so neither is the
+         *     default hidden inside the other.
+         */
+        get: operations["list_branches_branches_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/branches/{worktree_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Branch */
+        get: operations["get_branch_branches__worktree_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/branches/{worktree_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Append Branch Event
+         * @description Append one structured event.
+         *
+         *     A sub-resource rather than a PATCH on the worktree because the timeline is
+         *     append-only: an event is a new fact, never an edit to the record it is
+         *     about. An unknown `kind` is a 400 -- the vocabulary is closed
+         *     (`db.models.WORKTREE_EVENT_KINDS`), and a timeline whose kinds are free text
+         *     is prose with punctuation.
+         */
+        post: operations["append_branch_event_branches__worktree_id__events_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/branches/{worktree_id}/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Branch Timeline
+         * @description Everything that happened to this tree, oldest first.
+         */
+        get: operations["branch_timeline_branches__worktree_id__timeline_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6170,6 +6367,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/presence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Presence
+         * @description Who is here. Reading changes nothing: an expired row is filtered out, not
+         *     deleted, not rewritten and not marked.
+         */
+        get: operations["list_presence_presence_get"];
+        put?: never;
+        /**
+         * Write Presence
+         * @description Write or refresh a presence. For a session that lives INSIDE the backend
+         *     (a chat turn); a separate OS process uses `scripts/presence.py` instead.
+         */
+        post: operations["write_presence_presence_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/presence/directory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Presence Directory
+         * @description The directory: live sessions joined to their subjects. Stores nothing.
+         *
+         *     Declared ABOVE `/{session_id}` so the literal path never competes with a
+         *     parameter, the same ordering rule `routes/agents.py` follows.
+         */
+        get: operations["presence_directory_presence_directory_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/presence/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Release Presence
+         * @description Withdraw a presence now rather than in TTL seconds -- a chat closing, a
+         *     sweep finishing. Idempotent: releasing what is not there is `false`, not a
+         *     404, because the caller's intent (be absent) is satisfied either way.
+         */
+        delete: operations["release_presence_presence__session_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/": {
         parameters: {
             query?: never;
@@ -6748,6 +7016,14 @@ export interface paths {
          *     ADR 0014 says a target must be named, so the UI needs a list to name one
          *     from. The platform repo appears only when developer mode is on: offering it
          *     and then having the gate refuse it would be another control that lies.
+         *
+         *     ONE ENUMERATION, in `services/makers.runnable_scopes`. It used to be built
+         *     here, and the maker reconciler needs the identical list -- "which trees can
+         *     run tickets" answered in two places is how the picker and the roster come to
+         *     disagree about which scopes exist. `key` keeps its meaning (the registry
+         *     slug / the self-project's name) and `scope` is added beside it, because the
+         *     scope KEY is what `scope_execution` and the presence channel are keyed by
+         *     and the caller should not have to re-derive it from a path.
          */
         get: operations["queue_runner_targets_queue_runner_targets_get"];
         put?: never;
@@ -8499,10 +8775,11 @@ export interface components {
          * AgentRunsOut
          * @description The per-agent activity feed: the run history plus heartbeat freshness.
          *
-         *     `heartbeat` is whatever the heartbeat writer put in `.runtime/heartbeats/
-         *     <id>.json`, so it stays an open dict. `heartbeat_age_s` is a float of
-         *     seconds, which ADR 0023 clause 4 says should be `<thing>_ms` as an integer;
-         *     unchanged for the same reason as every other rename here.
+         *     `heartbeat` is this agent's PRESENCE record (`services/presence.py`, step
+         *     B4), which is what the heartbeats channel became; it stays an open dict
+         *     because the channel carries a writer-supplied `meta` tail. `heartbeat_age_s`
+         *     is a float of seconds, which ADR 0023 clause 4 says should be `<thing>_ms`
+         *     as an integer; unchanged for the same reason as every other rename here.
          */
         AgentRunsOut: {
             /** Agent Id */
@@ -9571,7 +9848,13 @@ export interface components {
             /** Start Point */
             start_point?: string | null;
         };
-        /** BranchCreated */
+        /**
+         * BranchCreated
+         * @description `worktree_id` is the durable record this branch got (step B2). It is
+         *     OPTIONAL because record-keeping is additive: an installation with no
+         *     relational store still allocates the tree, and answers without an id rather
+         *     than refusing. `/branches/{worktree_id}` is where it is then addressable.
+         */
         BranchCreated: {
             /** Branch */
             branch: string;
@@ -9583,6 +9866,8 @@ export interface components {
             dir: string;
             /** Project Slug */
             project_slug: string;
+            /** Worktree Id */
+            worktree_id?: string | null;
         };
         /**
          * BranchDiff
@@ -10742,6 +11027,53 @@ export interface components {
             /** Summary */
             summary: string;
         };
+        /**
+         * DirectoryEntry
+         * @description One live session, joined to what it is working on.
+         *
+         *     `subject_label` and `subject_status` are resolved from the ticket store or
+         *     the branch records AT READ TIME and stored nowhere; they are null when the
+         *     subject cannot be resolved (an unknown scope, a deleted ticket), which is
+         *     the honest answer and not an error.
+         */
+        DirectoryEntry: {
+            /**
+             * Activity
+             * @default
+             */
+            activity: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Hostname */
+            hostname?: string | null;
+            /** Last Beat At */
+            last_beat_at?: string | null;
+            /** Pid */
+            pid?: number | null;
+            /** Principal */
+            principal?: string | null;
+            /** Scope */
+            scope?: string | null;
+            /** Session Id */
+            session_id: string;
+            /** Session Kind */
+            session_kind: string;
+            /** Subject Id */
+            subject_id?: string | null;
+            /** Subject Kind */
+            subject_kind: string;
+            /** Subject Label */
+            subject_label?: string | null;
+            /** Subject Status */
+            subject_status?: string | null;
+        };
+        /** DirectoryOut */
+        DirectoryOut: {
+            /** Count */
+            count: number;
+            /** Entries */
+            entries: components["schemas"]["DirectoryEntry"][];
+        };
         /** DisconnectIn */
         DisconnectIn: {
             /**
@@ -11847,6 +12179,166 @@ export interface components {
             scope: string;
         };
         /**
+         * MakerExecutionIn
+         * @description The arm level, written straight through to `scope_execution`.
+         */
+        MakerExecutionIn: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "reactive" | "supervised" | "autonomous";
+        };
+        /**
+         * MakerSession
+         * @description One live session working this scope, from the presence directory.
+         */
+        MakerSession: {
+            /**
+             * Activity
+             * @default
+             */
+            activity: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Hostname */
+            hostname?: string | null;
+            /** Last Beat At */
+            last_beat_at?: string | null;
+            /** Pid */
+            pid?: number | null;
+            /** Principal */
+            principal?: string | null;
+            /** Scope */
+            scope?: string | null;
+            /** Session Id */
+            session_id: string;
+            /** Session Kind */
+            session_kind: string;
+            /** Subject Id */
+            subject_id?: string | null;
+            /** Subject Kind */
+            subject_kind: string;
+            /** Subject Label */
+            subject_label?: string | null;
+            /** Subject Status */
+            subject_status?: string | null;
+        };
+        /**
+         * MakerState
+         * @description The full block: the summary, plus who is here and what has run.
+         *
+         *     `runner` is the SAME `QueueRunnerState` the Settings drawer reads from
+         *     `GET /queue/runner` -- the same helper, not a second rendering of it.
+         */
+        MakerState: {
+            /**
+             * Activity
+             * @enum {string}
+             */
+            activity: "absent" | "present" | "working";
+            /** Activity Detail */
+            activity_detail: string;
+            /**
+             * Arm Level
+             * @enum {string}
+             */
+            arm_level: "reactive" | "supervised" | "autonomous";
+            /** Armed */
+            armed: boolean;
+            /** Ceiling */
+            ceiling?: string | null;
+            /** Dir */
+            dir?: string | null;
+            /**
+             * Global Override Engaged
+             * @default false
+             */
+            global_override_engaged: boolean;
+            /** Label */
+            label?: string | null;
+            /** Name */
+            name?: string | null;
+            /**
+             * Recent Runs
+             * @default []
+             */
+            recent_runs: components["schemas"]["Job"][];
+            /**
+             * Runnable
+             * @default true
+             */
+            runnable: boolean;
+            runner?: components["schemas"]["QueueRunnerState"] | null;
+            /** Runner Resident */
+            runner_resident: boolean;
+            /** Scope */
+            scope: string;
+            /**
+             * Sessions
+             * @default []
+             */
+            sessions: components["schemas"]["MakerSession"][];
+            /** Slug */
+            slug?: string | null;
+            /** Ticket Id */
+            ticket_id?: string | null;
+            /** Ticket Status */
+            ticket_status?: string | null;
+            /** Ticket Title */
+            ticket_title?: string | null;
+        };
+        /**
+         * MakerSummary
+         * @description What the roster needs to answer "what is doing the tickets, and is it".
+         *
+         *     `arm_level` IS the scope's execution mode, not a copy of it. Setting it
+         *     through `POST /agents/{id}/maker/execution` writes `scope-execution.json`
+         *     and nothing else; there is no per-agent on/off beside it that could disagree.
+         *
+         *     `activity` is deliberately three values and not four. `present` covers both
+         *     "resident, idling on the poll" and "resident, sweeping, has not claimed a
+         *     ticket yet" because the presence channel carries no structural difference
+         *     between them -- only an activity string meant for a human. `activity_detail`
+         *     says exactly that rather than the API picking one and being wrong half the
+         *     time.
+         */
+        MakerSummary: {
+            /**
+             * Activity
+             * @enum {string}
+             */
+            activity: "absent" | "present" | "working";
+            /** Activity Detail */
+            activity_detail: string;
+            /**
+             * Arm Level
+             * @enum {string}
+             */
+            arm_level: "reactive" | "supervised" | "autonomous";
+            /** Armed */
+            armed: boolean;
+            /** Ceiling */
+            ceiling?: string | null;
+            /** Dir */
+            dir?: string | null;
+            /**
+             * Global Override Engaged
+             * @default false
+             */
+            global_override_engaged: boolean;
+            /** Runner Resident */
+            runner_resident: boolean;
+            /** Scope */
+            scope: string;
+            /** Ticket Id */
+            ticket_id?: string | null;
+            /** Ticket Status */
+            ticket_status?: string | null;
+            /** Ticket Title */
+            ticket_title?: string | null;
+        };
+        /**
          * MarkDuplicateOut
          * @description The folded ticket in its cancelled state, and a stub of the canonical one
          *     it now points at.
@@ -12617,6 +13109,113 @@ export interface components {
             verbosity?: string | null;
             /** Voice */
             voice?: string | null;
+        };
+        /**
+         * PresenceBeat
+         * @description A beat. Note what is NOT here: `ts` and `expires_at`.
+         */
+        PresenceBeat: {
+            /**
+             * Activity
+             * @default
+             */
+            activity: string;
+            /**
+             * Liveness Profile
+             * @default heartbeat
+             */
+            liveness_profile: string;
+            /** Meta */
+            meta?: {
+                [key: string]: string;
+            };
+            /** Pid */
+            pid?: number | null;
+            /** Principal */
+            principal?: string | null;
+            /** Scope */
+            scope?: string | null;
+            /** Session Id */
+            session_id: string;
+            /**
+             * Session Kind
+             * @default chat
+             */
+            session_kind: string;
+            /** Subject Id */
+            subject_id?: string | null;
+            /**
+             * Subject Kind
+             * @default none
+             */
+            subject_kind: string;
+            /** Ttl Sec */
+            ttl_sec?: number | null;
+        };
+        /** PresenceListOut */
+        PresenceListOut: {
+            /** Count */
+            count: number;
+            /** Presences */
+            presences: components["schemas"]["PresenceRow"][];
+        };
+        /** PresenceReleaseOut */
+        PresenceReleaseOut: {
+            /** Released */
+            released: boolean;
+            /** Session Id */
+            session_id: string;
+        };
+        /**
+         * PresenceRow
+         * @description One session's presence record, exactly as the channel stores it.
+         *
+         *     `ts` is the last beat and `expires_at` is when that beat stops counting;
+         *     both are server-computed. A row served here has NOT been filtered for
+         *     liveness by its own presence in the list -- `GET /presence` does that
+         *     filtering -- because `?include_expired=true` deliberately serves expired
+         *     rows so an operator can see a session that has just gone.
+         */
+        PresenceRow: {
+            /**
+             * Activity
+             * @default
+             */
+            activity: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Hostname */
+            hostname?: string | null;
+            /**
+             * Liveness Profile
+             * @default heartbeat
+             */
+            liveness_profile: string;
+            /** Meta */
+            meta?: {
+                [key: string]: string;
+            };
+            /** Pid */
+            pid?: number | null;
+            /** Principal */
+            principal?: string | null;
+            /** Scope */
+            scope?: string | null;
+            /** Session Id */
+            session_id: string;
+            /** Session Kind */
+            session_kind: string;
+            /** Subject Id */
+            subject_id?: string | null;
+            /** Subject Kind */
+            subject_kind: string;
+            /** Ts */
+            ts?: string | null;
+            /**
+             * Ttl Sec
+             * @default 90
+             */
+            ttl_sec: number;
         };
         /** PreviewLogOut */
         PreviewLogOut: {
@@ -13566,6 +14165,7 @@ export interface components {
             /** Latitude */
             latitude?: string | null;
             limits?: components["schemas"]["AgentLimits"] | null;
+            maker?: components["schemas"]["MakerSummary"] | null;
             /** Memory */
             memory?: unknown;
             /**
@@ -13675,6 +14275,8 @@ export interface components {
             key: string;
             /** Label */
             label: string;
+            /** Scope */
+            scope?: string | null;
         };
         /** RunnerTargets */
         RunnerTargets: {
@@ -16004,6 +16606,50 @@ export interface components {
             /** Updated */
             updated: string;
         };
+        /**
+         * Worktree
+         * @description One isolated line of work: the branch, the tree it lives in, and what
+         *     became of it.
+         *
+         *     `base_ref`/`base_sha` are WHAT THIS TREE WAS CUT FROM, as a name and as the
+         *     commit that name resolved to at creation. They are not the merge target: a
+         *     bound project cuts from `origin/<default>` and merges into `<default>`, and
+         *     the merge target is computed when it is needed because it moves.
+         */
+        Worktree: {
+            /** Allocated By */
+            allocated_by?: string | null;
+            /** App Id */
+            app_id?: string | null;
+            /** Base Ref */
+            base_ref: string;
+            /** Base Sha */
+            base_sha?: string | null;
+            /** Branch */
+            branch: string;
+            /** Branch Slug */
+            branch_slug: string;
+            /** Created At */
+            created_at?: string | null;
+            /** Id */
+            id: string;
+            /** Merged Sha */
+            merged_sha?: string | null;
+            /** Path */
+            path: string;
+            /** Project Slug */
+            project_slug: string;
+            /** Removed At */
+            removed_at?: string | null;
+            /** Scope */
+            scope: string;
+            /** Status */
+            status: string;
+            /** Ticket Id */
+            ticket_id?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
         /** WorktreeAddBody */
         WorktreeAddBody: {
             /** Branch */
@@ -16023,6 +16669,53 @@ export interface components {
             dir: string;
             /** Repo */
             repo: string;
+        };
+        /** WorktreeCollection */
+        WorktreeCollection: {
+            /** Worktrees */
+            worktrees: components["schemas"]["Worktree"][];
+        };
+        /**
+         * WorktreeEvent
+         * @description One entry on the timeline (design sec 9): "structured events, not prose
+         *     in a transcript".
+         *
+         *     TYPED, not a free dict, and there is no open payload field on purpose: a
+         *     blob is how "structured" decays back into prose. `sha` carries the
+         *     `snapshot <sha>` and the merge commit, `actor` carries "preempted by whom",
+         *     `paths` carries the directories or files an event is about, and `detail` is
+         *     the event's own text (the steer request, the discard reason).
+         */
+        WorktreeEvent: {
+            /** Actor */
+            actor?: string | null;
+            /** At */
+            at?: string | null;
+            /** Detail */
+            detail?: string | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Paths */
+            paths?: string[];
+            /** Sha */
+            sha?: string | null;
+            /** Worktree Id */
+            worktree_id: string;
+        };
+        /** WorktreeEventIn */
+        WorktreeEventIn: {
+            /** Actor */
+            actor?: string | null;
+            /** Detail */
+            detail?: string | null;
+            /** Kind */
+            kind: string;
+            /** Paths */
+            paths?: string[];
+            /** Sha */
+            sha?: string | null;
         };
         /** WorktreeList */
         WorktreeList: {
@@ -16076,6 +16769,16 @@ export interface components {
             pr?: components["schemas"]["PullRequest"] | null;
             /** Task Id */
             task_id: string;
+        };
+        /**
+         * WorktreeTimeline
+         * @description Oldest first: a handover read backwards is a handover read wrong.
+         */
+        WorktreeTimeline: {
+            /** Events */
+            events: components["schemas"]["WorktreeEvent"][];
+            /** Worktree Id */
+            worktree_id: string;
         };
         /** WriteIn */
         WriteIn: {
@@ -17905,6 +18608,134 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentJobsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_maker_state_agents__agent_id__maker_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MakerState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_maker_execution_agents__agent_id__maker_execution_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MakerExecutionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MakerState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_maker_runner_agents__agent_id__maker_runner_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MakerState"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stop_maker_runner_agents__agent_id__maker_runner_stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MakerState"];
                 };
             };
             /** @description Validation Error */
@@ -21941,6 +22772,141 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_branches_branches_get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+                status?: string | null;
+                ticket_id?: string | null;
+                app_id?: string | null;
+                live?: boolean;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorktreeCollection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_branch_branches__worktree_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                worktree_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Worktree"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    append_branch_event_branches__worktree_id__events_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                worktree_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorktreeEventIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorktreeEvent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    branch_timeline_branches__worktree_id__timeline_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                worktree_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorktreeTimeline"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -27465,6 +28431,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_presence_presence_get: {
+        parameters: {
+            query?: {
+                session_kind?: string | null;
+                subject_kind?: string | null;
+                subject_id?: string | null;
+                scope?: string | null;
+                include_expired?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresenceListOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    write_presence_presence_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PresenceBeat"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresenceRow"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    presence_directory_presence_directory_get: {
+        parameters: {
+            query?: {
+                session_kind?: string | null;
+                subject_kind?: string | null;
+                subject_id?: string | null;
+                scope?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    release_presence_presence__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresenceReleaseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
