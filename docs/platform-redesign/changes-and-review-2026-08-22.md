@@ -1,8 +1,8 @@
 # The Change: what gets reviewed, and how work becomes merged
 
 - Date: 2026-08-22
-- Status: **C1 through C5 are BUILT** (C3 on 2026-08-23; the rest 2026-08-22
-  evening). C6 (the claim-to-diff check) and C7 (auto-merge) are not.
+- Status: **C1 through C6 are BUILT** (C3 and C6 on 2026-08-23; the rest
+  2026-08-22 evening). C7 (auto-merge) is not.
   Section 8 carries what each step turned out to need.
 - Answers the question left open by
   [`workspace-ownership-and-leases-2026-08-22.md`](workspace-ownership-and-leases-2026-08-22.md)
@@ -220,7 +220,25 @@ change), and the sweep helper that opens a change must call
 - **C5. Merge on approve**, local or via the mirrored PR, with the existing
   park-on-conflict behaviour as the failure path.
 - **C6. The claim-to-diff check** (§5.2). Its own step because it is the novel part
-  and should not delay C1 to C5.
+  and should not delay C1 to C5. BUILT (2026-08-23). `services/claim_check.py`
+  compares a change's summary against its diff and writes ONE gate,
+  `claim_to_diff`, onto the same `gates` column C3 uses; `routes/changes.py`
+  runs it on open and on refresh, and `project_ralph.sh` runs it on the leg
+  that opens a change. Three things this step turned out to need. First, the
+  check is a FINDING and not a verdict: it never blocks a merge and never moves
+  a ticket, and it publishes `claim_check.ADVISORY_GATES` so C7's "every gate
+  green" classifier can exclude it by name — a judgement that can be wrong must
+  not be able to hold code hostage. Second, `skipped` is the honest answer far
+  more often than expected, including for every change the sweep opens (its own
+  boilerplate summary names nothing a diff could confirm), and recording `pass`
+  there instead would have been worse than recording nothing. Third, precision
+  is what decides whether the gate gets read: a path in a summary is only a
+  claim when its CLAUSE asserts work, because filenames are full of verbs
+  (`docs/applying-changes.md` contains "changes") and the first false finding is
+  the one that teaches a reviewer to skim the row. The second-model layer exists
+  but is off by default and off in every automatic wiring — the mechanical layer
+  costs a millisecond and therefore actually runs, and the gate records which
+  layer answered.
 - **C7. Auto-merge per change, then `merge_policy` per scope** (§6), with the
   fail-closed low-risk classifier.
 

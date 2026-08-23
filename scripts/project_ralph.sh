@@ -384,6 +384,25 @@ record_change_gates() {  # $1=change_id
      --change-id "$1" --input "$RECEIPT_FILE") >>"$LOG" 2>&1 || true
 }
 
+# Compare the change's SUMMARY against its DIFF (C6 of changes-and-review, §5.2).
+# The measured number-one defect in agent-authored changes is a description that
+# claims work the patch does not contain, and on this leg the worker wrote both,
+# so nothing else in the loop compares them. The result is a FINDING on the same
+# `gates` column the reviewer's checks land on -- it decides nothing and blocks
+# nothing.
+#
+# --model is NOT passed: the mechanical layer costs a millisecond and runs on
+# every change, and the sweep's own summary names nothing checkable anyway, so a
+# claude -p call here would buy nothing. Same best-effort contract and same venv
+# resolution as record_change_gates above.
+record_claim_check() {  # $1=change_id
+  [[ -n "${1:-}" ]] || return 0
+  local gate_py=$WORKSHOP/backend/.venv/bin/python
+  [[ -x "$gate_py" ]] || gate_py=python3
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" "$gate_py" -m services.claim_check \
+     --change-id "$1") >>"$LOG" 2>&1 || true
+}
+
 # Reap worktrees whose branch already merged into the canonical base. Best-effort.
 cleanup_merged_worktrees() {
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
@@ -425,6 +444,7 @@ publish_or_park() {  # $1=branch_slug $2=title $3=body
     [[ -n "$aug" ]] && EVIDENCE="$aug"
     if [[ -n "$change_id" ]]; then
       record_change_gates "$change_id"
+      record_claim_check "$change_id"
       python3 "$PTASKS" note "$DIR" "$TASK_ID" "change opened on branch wt/$WT_SLUG/$1; accepting it merges the branch" --kind acceptance >/dev/null 2>>"$LOG"
       log "task=$TASK_ID change=$change_id opened on wt/$WT_SLUG/$1 (unmerged, awaiting review)"
     else

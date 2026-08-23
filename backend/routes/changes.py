@@ -34,6 +34,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from services import claim_check
 from services import changes as changes_svc
 
 router = APIRouter(prefix="/changes", tags=["changes"])
@@ -145,6 +146,31 @@ class ChangeDeleted(BaseModel):
 
 # --- helpers ------------------------------------------------------------------
 
+def _judged(row: dict) -> dict:
+    """Re-run the claim-to-diff check (step C6, design doc §5.2) and return the
+    change with its answer on it.
+
+    WHY ON OPEN AND REFRESH, and nowhere else. The check compares two things --
+    the summary (the claim) and the diff (the artifact) -- and those are the two
+    entry points where the record is (re-)derived from the repository, so they
+    are the two moments at which either side can have moved. A GET must not do
+    it: a read that mutates the row it returns makes "why did this change"
+    unanswerable, which is the same reason `refresh` is a POST at all. A PATCH
+    of the summary does not do it either, because the answer is refreshed by the
+    next refresh and re-judging mid-edit would flag half-written sentences.
+
+    MECHANICAL LAYER ONLY here, deliberately: `record_claim_check` defaults
+    `use_model=False`, and an HTTP handler is exactly where a two-minute
+    `claude -p` subprocess must not be. The second-model layer belongs to the
+    CLI and the sweep, which can afford it.
+
+    Best-effort: the check never raises, and a None (no store, reaped branch)
+    leaves the change exactly as it was rather than failing a request that
+    otherwise succeeded.
+    """
+    return claim_check.record_claim_check(change_id=row["id"]) or row
+
+
 def _guard(fn, *args, **kwargs):
     """Run a service call, mapping its refusals onto status codes.
 
@@ -198,7 +224,7 @@ def open_change(body: ChangeOpenIn) -> Change:
                  title=body.title, summary=body.summary,
                  ticket_ids=body.ticket_ids, status=body.status,
                  worktree_id=body.worktree_id)
-    return Change(**row)
+    return Change(**_judged(row))
 
 
 @router.get("/{change_id}", response_model=Change)
@@ -244,4 +270,4 @@ def refresh_change(change_id: str) -> Change:
     the new state comes from the repository, and a GET that silently mutated
     the row it returns would make "why did this change" unanswerable.
     """
-    return Change(**_guard(changes_svc.refresh_change, change_id))
+    return Change(**_judged(_guard(changes_svc.refresh_change, change_id)))

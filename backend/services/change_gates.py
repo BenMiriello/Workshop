@@ -52,7 +52,8 @@ from typing import Any, NamedTuple
 
 from services import ownership
 
-__all__ = ["gates_from_reviewer", "record_reviewer_run", "GATE_CHECKS"]
+__all__ = ["gates_from_reviewer", "record_reviewer_run", "merge_gates",
+           "GATE_CHECKS"]
 
 
 class _Check(NamedTuple):
@@ -312,7 +313,7 @@ def gates_from_reviewer(payload: dict) -> list[dict]:
     return gates
 
 
-def _merged(existing: list, fresh: list[dict]) -> list[dict]:
+def merge_gates(existing: list, fresh: list[dict]) -> list[dict]:
     """This run's results supersede the previous run's, name by name.
 
     The column is a list and stays one -- names come from more than one
@@ -322,6 +323,11 @@ def _merged(existing: list, fresh: list[dict]) -> list[dict]:
     them stale, is worse than one showing its current answer. Gate names this
     run did not produce are kept untouched, so a future producer's entries are
     not collateral damage of a reviewer re-run.
+
+    PUBLIC because it is the rule for the whole column, not for this producer:
+    `services/claim_check.py` (step C6) writes the same column and must
+    supersede by exactly the same rule. Two copies of this would be two rules,
+    and the second one would be the one that drifts.
     """
     names = {g["name"] for g in fresh}
     kept = [g for g in (existing or [])
@@ -375,7 +381,7 @@ def record_reviewer_run(payload: dict, *, change_id: str | None = None,
                   "gates not recorded", file=sys.stderr)
             return None
         return changes.update_change(
-            current["id"], gates=_merged(current.get("gates"), gates))
+            current["id"], gates=merge_gates(current.get("gates"), gates))
     except Exception as exc:
         print(f"[change_gates] gates not recorded ({type(exc).__name__}: {exc})",
               file=sys.stderr)
