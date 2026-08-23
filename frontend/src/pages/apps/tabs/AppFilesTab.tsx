@@ -34,9 +34,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { FolderTree, Lock } from "lucide-react";
+import { FolderTree, Lock, Plus } from "lucide-react";
 import {
-  Badge, Button, Card, DocumentBar, FileDrill, FileTree, Notice,
+  Badge, Button, Card, DocumentBar, Field, FileDrill, FileTree, Input, Modal, Notice,
   Skeleton, Stack, StateBlock, cx, documentBar, drillTrail, formatBytes, shortHttpError, timeAgo,
   useEditMode,
   type FileDrillTrail, type FileTreeAdapter, type FileTreeNode,
@@ -249,6 +249,68 @@ function FilePane({
   );
 }
 
+// ---- create file ------------------------------------------------------------
+
+function CreateFile({
+  workspace,
+  onClose,
+  onCreated,
+}: {
+  workspace: string;
+  onClose: () => void;
+  onCreated: (path: string) => void;
+}) {
+  const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const submit = useCallback(async () => {
+    const trimmed = path.trim();
+    if (!trimmed) { setErr("A file path is required."); return; }
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/files/content", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace, path: trimmed, content: "" }),
+      });
+      if (!r.ok) throw new Error((await readFailure(r)).message);
+      onCreated(trimmed);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  }, [workspace, path, onCreated]);
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="New file"
+      actions={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" loading={busy} onClick={() => { void submit(); }}>Create</Button>
+        </>
+      }
+    >
+      <Stack gap="lg">
+        <Field label="Path" htmlFor="new-file-path" help="Relative path from the workspace root, e.g. src/hello.py">
+          <Input
+            id="new-file-path"
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            placeholder="src/filename.py"
+            data-autofocus
+            onKeyDown={(e) => { if (e.key === "Enter") { void submit(); } }}
+          />
+        </Field>
+        {err && <p className="ws-field__error">{err}</p>}
+      </Stack>
+    </Modal>
+  );
+}
+
 // ---- the tree ---------------------------------------------------------------
 //
 // TWO SHAPES, ONE ADAPTER. A wide screen gets the two-pane `DetailLayout`: the
@@ -297,6 +359,9 @@ function FilesBody({ app }: { app: AppRecord }) {
     () => drillTrail(root, folderNodesFor(params.get("path") ?? "")),
   );
 
+  const [filterText, setFilterText] = useState("");
+  const [creatingFile, setCreatingFile] = useState(false);
+
   const adapter = useMemo<FileTreeAdapter>(() => ({
     root,
     children: async (node) => {
@@ -329,6 +394,21 @@ function FilesBody({ app }: { app: AppRecord }) {
       };
     },
   }), [workspace, root]);
+
+  const filteredAdapter = useMemo<FileTreeAdapter>(() => {
+    if (!filterText) return adapter;
+    const lower = filterText.toLowerCase();
+    return {
+      ...adapter,
+      children: async (node) => {
+        const result = await adapter.children(node);
+        return {
+          ...result,
+          nodes: result.nodes.filter((n) => n.label.toLowerCase().includes(lower)),
+        };
+      },
+    };
+  }, [adapter, filterText]);
 
   useEffect(() => { setNoTree(null); }, [workspace]);
 
@@ -423,15 +503,37 @@ function FilesBody({ app }: { app: AppRecord }) {
   return (
     <>
       {host && createPortal(
-        <FileTree
-          adapter={adapter}
-          selectedId={selected}
-          onSelect={onSelect}
-          defaultOpenIds={openIds}
-          label={`${app.name} files`}
-          emptyTitle="No files here"
-          emptyHint="Add a file to this app's project tree and it shows up here."
-        />,
+        <>
+          <div className="ws-pagecol__dirtoolbar">
+            <button
+              type="button"
+              className="ws-dirtoolbar__new"
+              onClick={() => setCreatingFile(true)}
+              aria-label="New file"
+            >
+              <Plus size={12} aria-hidden /> New
+            </button>
+            <input
+              type="text"
+              className="ws-dirtoolbar__filter"
+              placeholder="Filter"
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              aria-label="Filter files"
+            />
+          </div>
+          <div className="ws-pagecol__treescroll">
+            <FileTree
+              adapter={filteredAdapter}
+              selectedId={selected}
+              onSelect={onSelect}
+              defaultOpenIds={openIds}
+              label={`${app.name} files`}
+              emptyTitle="No files here"
+              emptyHint="Add a file to this app's project tree and it shows up here."
+            />
+          </div>
+        </>,
         host,
       )}
       {selected ? (
@@ -450,6 +552,20 @@ function FilesBody({ app }: { app: AppRecord }) {
               </Button>
             )
           }
+        />
+      )}
+      {creatingFile && (
+        <CreateFile
+          workspace={workspace}
+          onClose={() => setCreatingFile(false)}
+          onCreated={(path) => {
+            setCreatingFile(false);
+            setParams((prev) => {
+              const next = new URLSearchParams(prev);
+              next.set("path", path);
+              return next;
+            }, { replace: true });
+          }}
         />
       )}
     </>

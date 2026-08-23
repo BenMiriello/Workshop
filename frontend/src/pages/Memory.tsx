@@ -285,6 +285,7 @@ function Library({ viewSwitch }: { viewSwitch?: ReactNode }) {
   // tree is told to drop what it had loaded and read the level again.
   const [generation, setGeneration] = useState(0);
   const source = useMemo(() => createMemorySource(), [generation]);
+  const [filterText, setFilterText] = useState("");
   const [scopeTree, setScopeTree] = useState<ScopeNode[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -358,6 +359,27 @@ function Library({ viewSwitch }: { viewSwitch?: ReactNode }) {
     setNotice("Note deleted.");
     setGeneration((n) => n + 1);
   }, [clearSelection]);
+
+  // A label-based client-side filter for the desktop tree. Wrapping the adapter
+  // creates a new object, which makes FileTree drop its cache and reload from
+  // the filter-narrowed children on the next open.
+  const filteredSource = useMemo(() => {
+    if (!filterText) return source;
+    const lower = filterText.toLowerCase();
+    return {
+      ...source,
+      adapter: {
+        ...source.adapter,
+        children: async (node: Parameters<typeof source.adapter.children>[0]) => {
+          const result = await source.adapter.children(node);
+          return {
+            ...result,
+            nodes: result.nodes.filter((n) => n.label.toLowerCase().includes(lower)),
+          };
+        },
+      },
+    };
+  }, [source, filterText]);
 
   // The desktop tree lives in column two. The page declares itself a directory
   // and portals its own tree into the slot the shell provides, so the shell
@@ -488,7 +510,29 @@ function Library({ viewSwitch }: { viewSwitch?: ReactNode }) {
   return (
     <div style={chrome.actionBar ? { paddingBottom: "var(--ws-pagebar-h)" } : undefined}>
       {host && createPortal(
-        <MemoryTreeView source={source} selected={selected} onSelect={select} />,
+        <>
+          <div className="ws-pagecol__dirtoolbar">
+            <button
+              type="button"
+              className="ws-dirtoolbar__new"
+              onClick={() => { setNotice(null); setCreating(true); }}
+              aria-label="New note"
+            >
+              <Plus size={12} aria-hidden /> New
+            </button>
+            <input
+              type="text"
+              className="ws-dirtoolbar__filter"
+              placeholder="Filter"
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              aria-label="Filter memory tree"
+            />
+          </div>
+          <div className="ws-pagecol__treescroll">
+            <MemoryTreeView source={filteredSource} selected={selected} onSelect={select} />
+          </div>
+        </>,
         host,
       )}
       {/* THE PAGE'S OWN CONTROLS, AND THEY ARE DESKTOP ONLY NOW
