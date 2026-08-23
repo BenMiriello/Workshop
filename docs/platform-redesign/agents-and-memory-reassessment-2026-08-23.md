@@ -266,3 +266,104 @@ Three habits, each earned by a specific failure in this episode:
    against it, and update it in the same commit.
 3. **Report built-and-unwired as absent.** Every item in §3.2 was "built". None of it
    ran. The operator experiences the difference as nothing, and he is right to.
+
+---
+
+## 6. Addendum, same day: working state, and the end of "learnings" as a concept
+
+The operator read §3, then asked two things: patch the most basic level so memory
+is not lost when we compact and continue, and give us handoff information we can
+read and continue from later, so the intended system gets built up and the
+shortcuts taken along the way get fixed. He also said, of learnings: "not sure
+this is a first order concept."
+
+### 6.1 What was built (commit `16c09d4`)
+
+Both asks land on one seam, which is worth stating because they did not look like
+one problem. Compaction folded the transcript through a model call whose prompt
+asked for "a running summary", and **the result lived only inside that thread**.
+So what survived a compaction was whatever the summarizer felt like writing, and
+a new chat in the same scope inherited nothing at all. Nothing durable was ever
+written at the exact moment memory was about to be lost.
+
+The compaction summary now has six fixed sections, generated from one constant so
+the prompt, the trimmer and the tests cannot drift apart:
+
+**Objective · Decisions and why · Done · Not done · Shortcuts taken and what they
+owe · Open questions**
+
+Two of those are load-bearing and neither is obvious:
+
+- **Decisions and why.** A decision without its reason gets re-litigated or
+  silently reversed. Most of the wasted work in this repo's history is one of
+  those two.
+- **Shortcuts taken and what they owe.** A shortcut nobody wrote down is
+  indistinguishable from a design decision. That is precisely how the parallel
+  systems this effort is removing came to exist, and it is why the operator asked
+  for it by name.
+
+It is persisted as **one note per scope in the store that already exists**, not a
+twelfth substrate, and injected into any chat in that scope. That injection is
+the half that makes it worth building: the old summary only ever helped the
+thread that produced it. Overlap with the ambient digest is settled rather than
+left to collide: the digest owns ticket and job **status**, the working state owns
+**reasoning**, because no registry has a field for why.
+
+Proven on a real fold with a live model call rather than asserted. The structured
+prompt produced structured output, and the note it wrote surfaced, unprompted,
+"keep learnings.py or delete it?" as an open question owned by the operator.
+
+### 6.2 Learnings is not a first-order concept. It is a kind of memory.
+
+The operator's instinct is right and the measurement is blunt about it:
+
+> **1,467 lines of machinery, for 48 rows, in 5 scope files, that the operator
+> cannot see, whose garbage collector has never once run.**
+
+That is not a substrate. That is a feature of memory that grew its own house.
+Everything that makes it feel separate is either something notes already do, or
+something notes should do:
+
+| What learnings has | Where it belongs |
+| --- | --- |
+| scope and layering | notes already have this, identically |
+| update-in-place and supersede | notes already update in place; the dedup and supersede logic is the genuinely valuable part and must survive |
+| provenance | notes carry an author and markers |
+| the quality gate (refuses a bare status token) | worth keeping, and worth applying to more than learnings |
+| render and retrieval counters | only earn their keep if a GC is scheduled; see N1 |
+| injected in FULL, not as a title | this is the one real difference, and §6.1 just built the precedent for it |
+
+That last row is the whole design. A note's **kind** should decide whether it is
+injected as a title or in full. The working-state note is injected in full and is
+a note; a learning is injected in full and should be a note too.
+
+**Decision: fold `learnings` into the knowledge store as a note kind, and delete
+the separate store.** One store, one injector, one garbage collector, one UI, and
+the operator gets to see and prune them, which is item 4 of §3.2 solved for free
+rather than built twice.
+
+The capability the operator explicitly blessed survives untouched: a system that
+learns specific things about him and keeps them for itself or for its agents.
+That is what it does now; it just stops being its own country to do it.
+
+### 6.3 The order of the rest, revised
+
+Recall first, still. The revision is that §6.1 landed ahead of everything and
+changes what N1 through N7 cost.
+
+1. **N1, schedule the collector** — now also decides whether the counters survive
+   the fold in §6.2, so it comes before it rather than beside it.
+2. **§6.2, fold learnings into notes** — the migration is 48 rows. It will never
+   be cheaper than it is now, and every week it waits, more code is written
+   against a store that is leaving.
+3. **N3, give the operator search** — with §6.1 landed, the working-state notes
+   become searchable objects, which is most of the value of searching at all.
+4. **N2, repoint and schedule the keeper** — it is the thing that would maintain
+   the merged store, so it follows the merge rather than preceding it.
+5. **N5 and N6, the triager's live trigger and its two surfaces.**
+6. **N7, teach the ratchet to detect an inert mechanism** — the general form of
+   every defect in §3.2, and the thing that stops this document being written
+   again in six weeks.
+
+N4 (make learnings visible) is **struck** as a separate item: §6.2 delivers it,
+because a note is already visible.
