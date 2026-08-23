@@ -378,12 +378,20 @@ export default function Usage() {
               )}
               {/* NAMED, not folded in. This is real spend the operator should
                   see and no guard will ever refuse a run over, so it sits beside
-                  the headline saying which it is rather than inside it. */}
-              <Stat
-                label={excludedLabel(data)}
-                value={fmtTokens(data.excluded?.total ?? 0)}
-                sub="not counted against the cap"
-              />
+                  the headline saying which it is rather than inside it.
+
+                  ABSENT, not zero, when the server does not report it. The
+                  bundle and the backend are deployed separately and a rebuild
+                  can be minutes ahead of a restart, so this WILL briefly read a
+                  server that has never heard of `excluded`. "Chat 0" would be a
+                  claim; showing nothing is the truth. */}
+              {data.excluded && (
+                <Stat
+                  label={excludedLabel(data)}
+                  value={fmtTokens(data.excluded.total)}
+                  sub="not counted against the cap"
+                />
+              )}
             </div>
 
             {series && series.points.length > 0 && series.projects.length > 0 && (
