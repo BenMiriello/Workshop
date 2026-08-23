@@ -35,6 +35,13 @@ import pytest
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
+# The fixture app ids (`demoapp`, `otherapp`) are INVENTED, not this operator's.
+# CLAUDE.md's no-app-names rule says "not a test fixture" in as many words, and
+# `backend/` is scanned, so naming a real app here would add literal sites to
+# the very ratchet under test -- which is exactly what happened on the first
+# draft of this file: the gate caught it at `0 -> 10`, correctly. The checker
+# derives its roster from the baseline it is given, so any id works.
+
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
@@ -70,10 +77,10 @@ def _literals(repo: Path) -> int:
     """`literal_sites` as the checker currently counts it in this fixture.
 
     Read rather than hardcoded because the fixture repo contains a COPY of
-    `check_no_app_names.py`, whose own body carries app names in trailing
-    comments on scanned lines (`# "birds"` beside the pattern it documents).
-    In the real tree those are already in the pinned baseline; here they are
-    just a constant offset, and the thing under test is the DELTA anyway."""
+    `check_no_app_names.py`, which carries app ids of its own in trailing
+    comments on scanned lines. In the real tree those are already inside the
+    pinned baseline; in the fixture they are just a constant offset, and the
+    thing under test is the DELTA anyway."""
     r = _run(repo, "check_no_app_names.py", "--json")
     assert r.returncode == 0, r.stdout + r.stderr
     return json.loads(r.stdout)["literal_sites"]
@@ -150,12 +157,12 @@ class TestNoAppNamesDelta:
         # Pinned at 1 literal; the base commit carries 3. Inherited debt again.
         repo = _repo_with(
             tmp_path, "check_no_app_names.py", "no_app_names_baseline.json",
-            {"watched": ["birds"], "content_files": 0,
+            {"watched": ["demoapp"], "content_files": 0,
              "import_sites": 0, "literal_sites": 1},
         )
         (repo / "backend").mkdir(parents=True)
         (repo / "backend" / "legacy.py").write_text(
-            'A = "birds"\nB = "birds"\nC = "birds"\n'
+            'A = "demoapp"\nB = "demoapp"\nC = "demoapp"\n'
         )
         _commit(repo, "base: three inherited app-name literals")
         return repo
@@ -178,7 +185,7 @@ class TestNoAppNamesDelta:
     def test_delta_fails_on_a_new_literal(self, repo: Path):
         n = _literals(repo)
         (repo / "backend" / "legacy.py").write_text(
-            'A = "birds"\nB = "birds"\nC = "birds"\nD = "birds"\n'
+            'A = "demoapp"\nB = "demoapp"\nC = "demoapp"\nD = "demoapp"\n'
         )
         r = _run(repo, "check_no_app_names.py", "--since", "HEAD")
         assert r.returncode == 1, r.stdout
@@ -186,7 +193,7 @@ class TestNoAppNamesDelta:
 
     def test_delta_fails_on_a_new_literal_in_a_committed_file(self, repo: Path):
         n = _literals(repo)
-        (repo / "backend" / "added.py").write_text('D = "birds"\n')
+        (repo / "backend" / "added.py").write_text('D = "demoapp"\n')
         base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
                                capture_output=True, text=True, check=True).stdout.strip()
         _commit(repo, "worker's commit")
@@ -196,7 +203,7 @@ class TestNoAppNamesDelta:
 
     def test_delta_reports_an_improvement_rather_than_failing(self, repo: Path):
         n = _literals(repo)
-        (repo / "backend" / "legacy.py").write_text('A = "birds"\n')
+        (repo / "backend" / "legacy.py").write_text('A = "demoapp"\n')
         r = _run(repo, "check_no_app_names.py", "--since", "HEAD")
         assert r.returncode == 0, r.stdout
         assert f"literal_sites improved {n} -> {n - 2}" in r.stdout
@@ -206,21 +213,21 @@ class TestNoAppNamesDelta:
         `git archive` extract can contain. Re-deriving it per side would watch
         fewer apps at the base, undercount it, and report a phantom regression.
 
-        Here `commute` is added to the roster ONLY via untracked
+        Here `otherapp` is added to the roster ONLY via untracked
         `.runtime/installed-apps.json`, and the literal exists on BOTH sides --
         so with one shared roster this is a no-op, and with a per-side roster it
         would read as 0 -> 1."""
         (repo / ".runtime").mkdir()
         (repo / ".runtime" / "installed-apps.json").write_text(
-            json.dumps({"installed": ["commute"]})
+            json.dumps({"installed": ["otherapp"]})
         )
         (repo / ".gitignore").write_text(".runtime/\n")
         (repo / "backend" / "legacy.py").write_text(
-            'A = "birds"\nB = "birds"\nC = "birds"\nE = "commute"\n'
+            'A = "demoapp"\nB = "demoapp"\nC = "demoapp"\nE = "otherapp"\n'
         )
-        _commit(repo, "commute literal present at the base too")
+        _commit(repo, "otherapp literal present at the base too")
         (repo / "docs").mkdir()
         (repo / "docs" / "note.md").write_text("docs-only change\n")
         r = _run(repo, "check_no_app_names.py", "--since", "HEAD")
         assert r.returncode == 0, r.stdout + r.stderr
-        assert "commute" in r.stdout  # the roster really did pick it up
+        assert "otherapp" in r.stdout  # the roster really did pick it up
