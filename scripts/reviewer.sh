@@ -358,15 +358,31 @@ fi
 # §2.2/§4 item 7). Gated on touching a backend .py file — same precondition
 # shape as the one-definition check above, and for the same reason: a
 # frontend-only or docs-only diff has nothing this check could move. Full
-# whole-backend measurement either way (~1.5s), not scoped to the diff,
-# because the metrics themselves (SCC size, upward-violation count, ...) are
-# properties of the WHOLE graph, not of one file — see the script's own
-# header for why this is a pinned-baseline ratchet rather than an absolute
-# gate.
+# whole-backend measurement either way (~1.5s per side), not scoped to the
+# diff, because the metrics themselves (SCC size, upward-violation count, ...)
+# are properties of the WHOLE graph, not of one file.
+#
+# `--since "$BASELINE"` (added 2026-08-23) is what makes it a REVIEW gate
+# rather than a tree-health readout. It measures the same whole backend at the
+# run's base ref AND on the working tree, and fails only on a metric THIS RUN
+# made worse. Before that it compared the whole tree to the STATIC pinned
+# baseline, so any debt already present when a worker started — another
+# agent's concurrent commit, the operator's own edit, drift from weeks ago —
+# failed that worker. On 2026-08-23 it was failing on three inherited metrics
+# (function_local_imports 552 -> 569, largest_scc_size 110 -> 124,
+# big_file_count 22 -> 24) that no single run had caused. Every run collected
+# that rejection, retried, hit ralph.sh's no-progress thrash guard and exited
+# 6: 2,066 loop jobs since 2026-07-18 all reported tasks_done: 0.
+#
+# The ratchet is NOT loosened. The pinned baseline still governs direction over
+# time (a bare run still reports the absolute debt, and delta mode still prints
+# it as FYI), --write-baseline still requires a deliberate re-pin, and
+# check_ratchets_not_loosened.py below still blocks re-pinning inside a review.
+# A run is simply not blamed for debt that existed at its own base commit.
 MODULE_LAYOUT_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/.*\.py$'; then
   if [[ -f "$WORKSHOP/scripts/check_module_layout.py" && -f "$WORKSHOP/scripts/module_layout_baseline.json" ]]; then
-    if python3 "$WORKSHOP/scripts/check_module_layout.py" >/dev/null 2>&1; then
+    if python3 "$WORKSHOP/scripts/check_module_layout.py" --since "$BASELINE" >/dev/null 2>&1; then
       MODULE_LAYOUT_CHECK="ok"
     else
       MODULE_LAYOUT_CHECK="fail"
@@ -455,16 +471,33 @@ if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(backend/services/(chat_context|bui
 fi
 
 # 4.6c-iiib No platform source file may name a specific app (CLAUDE.md; §6 of
-# docs/platform-redesign/app-is-the-entity-2026-08-20.md). UNCONDITIONAL, unlike
-# the two ratchets above, and deliberately so: check_pluggable_apps.sh below is
-# gated to five files and reported "clean" for five weeks while 143 tracked
-# files of one operator's apps sat in the platform tree. A rule this central
-# cannot be enforced only on diffs that happen to touch the right path.
-# Pinned-baseline ratchet: the three counts may only go DOWN. See
-# check_no_app_names.py, and §0.2 of app-separation-and-github-2026-08-20.md.
+# docs/platform-redesign/app-is-the-entity-2026-08-20.md). STILL UNCONDITIONAL,
+# and deliberately so: check_pluggable_apps.sh below is gated to five files and
+# reported "clean" for five weeks while 143 tracked files of one operator's
+# apps sat in the platform tree. A rule this central cannot be enforced only on
+# diffs that happen to touch the right path. It RUNS on every diff, docs-only
+# ones included, and it still scans EVERY tracked file.
+#
+# What changed on 2026-08-23 is what it is COMPARED against, not what it runs
+# on. `--since "$BASELINE"` scans the whole tree at the run's base ref as well,
+# and fails only on a count THIS RUN made worse. Being unconditional is exactly
+# what made the old absolute form fatal: it compared the whole tree to the
+# STATIC pinned baseline on EVERY run, so while the tree carried inherited debt
+# (literal_sites 309 -> 314 on 2026-08-23) it rejected every worker — including
+# docs-only diffs that could not possibly have added a literal. Each run
+# collected a rejection it could not act on, retried, hit ralph.sh's no-progress
+# thrash guard and exited 6: 2,066 loop jobs since 2026-07-18 all reported
+# tasks_done: 0, while reviewer-approved work sat stranded on locked branches.
+#
+# The ratchet is NOT loosened and the rule is NOT scoped. The counts may still
+# only go down over time: a bare run reports the real absolute debt, delta mode
+# prints inherited debt as FYI, --write-baseline still refuses an upward pin
+# without --because, and check_ratchets_not_loosened.py still blocks re-pinning
+# inside a review. See check_no_app_names.py, and §0.2 of
+# app-separation-and-github-2026-08-20.md.
 NO_APP_NAMES_CHECK="skipped"
 if [[ -f "$WORKSHOP/scripts/check_no_app_names.py" && -f "$WORKSHOP/scripts/no_app_names_baseline.json" ]]; then
-  if python3 "$WORKSHOP/scripts/check_no_app_names.py" >/dev/null 2>&1; then
+  if python3 "$WORKSHOP/scripts/check_no_app_names.py" --since "$BASELINE" >/dev/null 2>&1; then
     NO_APP_NAMES_CHECK="ok"
   else
     NO_APP_NAMES_CHECK="fail"

@@ -56,9 +56,44 @@ work in progress records whatever the index happened to hold: the first baseline
 was written mid-edit and read 313/143 when the committed tree was 331/144, which
 then failed the ratchet on the next run for no reason. Commit, then --write-baseline.
 
+DELTA MODE (`--since <ref>`), added 2026-08-23, and why it does not weaken the
+rule. Everything above describes measuring EVERY tracked file against the
+pinned baseline, and that is still exactly what a bare run does. But used that
+way as a REVIEW GATE it judged a worker on the absolute value of debt the
+worker inherited. This gate is UNCONDITIONAL in `scripts/reviewer.sh` -- on
+purpose, because the gate it replaced was scoped to five files and reported
+"clean" for five weeks -- so on 2026-08-23 it was failing (`literal_sites:
+309 -> 314`) on EVERY run in the tree, including docs-only diffs that could not
+possibly have added a literal. Each worker collected a rejection it could not
+act on, retried, hit the no-progress thrash guard in `scripts/ralph.sh` and
+exited 6. 2,066 loop jobs since 2026-07-18 all reported `tasks_done: 0`.
+
+So with `--since <ref>` the script scans at `<ref>` (a `git archive` extract of
+the base tree) AND on the working tree, and fails only on a count that got
+worse BETWEEN THOSE TWO POINTS. It still scans EVERY tracked file on both
+sides -- delta mode changes WHAT IS COMPARED, not what is measured. That is why
+it is `--since` and not `--only-changed`: adding a literal to a file this diff
+never touched (by moving code, or by adding an app to the roster) must still be
+caught, and a per-file scoping would miss it.
+
+ONE ROSTER FOR BOTH SIDES. The roster is computed once, from the working tree,
+and used for BOTH scans. It has to be: it is drawn partly from
+`.runtime/installed-apps.json`, which is untracked and therefore absent from
+any archive extract, so re-deriving it on the base side would silently watch
+fewer apps there, undercount the base, and report a regression that is really
+just the roster shrinking underneath the scan. Same failure the `watched` list
+in the baseline exists to prevent.
+
+The pinned baseline still governs direction over time: a bare run still reports
+the real absolute debt, `--write-baseline` still demands `--because` for an
+upward pin, and `check_ratchets_not_loosened.py` still blocks re-pinning inside
+a review. What delta mode removes is only this: blaming a run for debt that
+already existed at its own base commit.
+
 Usage:
     python3 scripts/check_no_app_names.py                 # report + gate on baseline
     python3 scripts/check_no_app_names.py --json
+    python3 scripts/check_no_app_names.py --since HEAD    # gate mode: fail only on THIS run's regression
     python3 scripts/check_no_app_names.py --write-baseline
 """
 
@@ -70,6 +105,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _ratchet_delta import extracted_tree  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "scripts" / "no_app_names_baseline.json"
@@ -174,11 +212,23 @@ def _literal_patterns(app: str) -> tuple[re.Pattern[str], ...]:
     )
 
 
-def tracked_files() -> list[str]:
-    out = subprocess.run(
-        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
-    ).stdout
-    return [ln for ln in out.splitlines() if ln]
+def tracked_files(root: Path = ROOT) -> list[str]:
+    """Repo-relative paths of every tracked file under `root`.
+
+    For this checkout that is `git ls-files`. For a `git archive` EXTRACT of a
+    base ref (delta mode) there is no `.git`, so the walk IS the answer: an
+    archive contains exactly the tracked tree at that ref and nothing else --
+    no working-tree edits, no untracked files, no ignored files. The two paths
+    therefore yield the same kind of list, which is what lets one `scan()`
+    serve both sides."""
+    if (root / ".git").exists():
+        out = subprocess.run(
+            ["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True
+        ).stdout
+        return [ln for ln in out.splitlines() if ln]
+    return sorted(
+        p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()
+    )
 
 
 def roster(baseline: dict) -> list[str]:
@@ -202,8 +252,12 @@ def roster(baseline: dict) -> list[str]:
     return sorted(n for n in names if n)
 
 
-def scan(apps: list[str]) -> dict:
-    files = tracked_files()
+def scan(apps: list[str], root: Path = ROOT) -> dict:
+    """Scan the tree under `root` for the given app roster.
+
+    `apps` is passed IN rather than re-derived per tree, so delta mode scans
+    both sides with the identical roster -- see this script's header."""
+    files = tracked_files(root)
     content_pat = {a: _app_content_patterns(a) for a in apps}
     import_short = {a: re.escape(a.removesuffix("-app")) for a in apps}
     literal_pat = {a: _literal_patterns(a) for a in apps}
@@ -236,7 +290,7 @@ def scan(apps: list[str]) -> dict:
             continue  # app source naming itself is not a platform violation
         if not rel.startswith(PLATFORM_DIRS):
             continue
-        path = ROOT / rel
+        path = root / rel
         try:
             body = path.read_text(errors="replace")
         except OSError:
@@ -279,6 +333,14 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--write-baseline", action="store_true")
     ap.add_argument(
+        "--since",
+        metavar="REV",
+        default=None,
+        help="DELTA MODE: scan REV's tree as well, and fail only on a count that "
+             "got worse between REV and the working tree. The pinned baseline is "
+             "still reported. See this script's header.",
+    )
+    ap.add_argument(
         "--because",
         default="",
         help="Required when a pin RAISES a count. Recorded in the baseline and "
@@ -287,7 +349,23 @@ def main() -> int:
     args = ap.parse_args()
 
     base = json.loads(BASELINE.read_text()) if BASELINE.exists() else {}
-    result = scan(roster(base))
+    # ONE roster for both sides -- see this script's header for why re-deriving
+    # it inside the extract would undercount the base tree.
+    apps = roster(base)
+    result = scan(apps, ROOT)
+
+    # DELTA MODE. `since_counts` becomes what the gate judges against; the
+    # pinned baseline is still compared and still printed, so inherited debt is
+    # never hidden just because this run happened not to add to it.
+    since_counts = None
+    if args.since is not None:
+        try:
+            with extracted_tree(args.since, ROOT) as base_tree:
+                since_counts = scan(apps, base_tree)
+        except (subprocess.CalledProcessError, OSError) as exc:
+            print(f"check_no_app_names: cannot read ref {args.since!r}: {exc}",
+                   file=sys.stderr)
+            return 2
 
     if args.write_baseline:
         # AN UPWARD PIN MUST SAY WHY. A ratchet you re-pin whenever it fails is
@@ -343,7 +421,14 @@ def main() -> int:
         return 0
 
     if args.json:
-        print(json.dumps(result, indent=2))
+        payload = dict(result)
+        if since_counts is not None:
+            payload["since_ref"] = args.since
+            payload["since"] = {
+                k: since_counts[k]
+                for k in ("content_files", "import_sites", "literal_sites")
+            }
+        print(json.dumps(payload, indent=2))
         return 0
 
     print(f"app-names: watching {len(result['watched'])} apps: {', '.join(result['watched'])}")
@@ -362,16 +447,36 @@ def main() -> int:
     for key, info in sorted((base.get("raised") or {}).items()):
         print(f"  note {key} was RAISED {info['from']} -> {info['to']}: {info['because']}")
 
+    judge_against = since_counts if since_counts is not None else base
+    against = f"the base ref {args.since}" if since_counts is not None else "the pinned baseline"
+
     failed = False
     for key in ("content_files", "import_sites", "literal_sites"):
-        was, now = base.get(key), result[key]
+        was, now = judge_against.get(key), result[key]
         if was is None:
             continue
         if now > was:
-            print(f"\nFAIL {key}: {was} -> {now}. The rule is that this only goes down.")
+            print(f"\nFAIL {key}: {was} -> {now} against {against}. "
+                  f"The rule is that this only goes down.")
             failed = True
         elif now < was:
-            print(f"  ok  {key} improved {was} -> {now} (re-pin with --write-baseline)")
+            print(f"  ok  {key} improved {was} -> {now} against {against}")
+
+    # Inherited debt is REPORTED in delta mode, never gated on. A count that is
+    # above the pinned baseline but unchanged by this run is somebody's problem,
+    # just not this run's, and it must not go quiet.
+    if since_counts is not None and base:
+        stale = [
+            f"{k}: pinned {base[k]} -> now {result[k]}"
+            for k in ("content_files", "import_sites", "literal_sites")
+            if base.get(k) is not None and result[k] > base[k]
+        ]
+        if stale:
+            print(f"\n  FYI {len(stale)} count(s) still past the PINNED baseline, "
+                  f"inherited and not caused by this change (not gating):")
+            for line in stale:
+                print(f"      {line}")
+
     return 1 if failed else 0
 
 

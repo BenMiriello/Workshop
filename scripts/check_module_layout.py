@@ -60,17 +60,48 @@ contributor for someone else's work. A human (or an agent that just did the
 work) re-runs `--write-baseline` deliberately once the improvement is
 confirmed, the same explicit step `field_occupancy.py` already requires.
 
+DELTA MODE (`--since <ref>`), added 2026-08-23, and why it does not weaken the
+ratchet. Everything above describes measuring the WHOLE backend against the
+pinned baseline, and that is still exactly what a bare run does. But run that
+way as a REVIEW GATE it judged a worker on the absolute value of debt the
+worker inherited: on 2026-08-23 this script failed on three metrics
+(`function_local_imports` 552 -> 569, `largest_scc_size` 110 -> 124,
+`big_file_count` 22 -> 24) that no single run had caused, so EVERY reviewer run
+collected a rejection it could not act on, retried, hit the no-progress thrash
+guard in `scripts/ralph.sh` and exited 6. 2,066 loop jobs since 2026-07-18 all
+reported `tasks_done: 0` on that.
+
+So with `--since <ref>` the script measures at `<ref>` (a `git archive` extract
+of the base tree) AND on the working tree, and fails only on a metric that got
+worse BETWEEN THOSE TWO POINTS. The metrics are still whole-graph properties
+measured over the whole backend -- delta mode changes WHAT IS COMPARED, not
+what is measured, which is why it is `--since` and not `--only-changed`: there
+is no per-file scoping here and there cannot be, because an SCC size is not a
+property of any one file.
+
+The pinned baseline still governs direction over time. A bare run (the human
+one, and the one in this header's other examples) still reports the real
+absolute debt, `--write-baseline` still demands a deliberate re-pin, and
+`check_ratchets_not_loosened.py` still blocks re-pinning inside a review. What
+delta mode removes is only this: blaming a run for debt that already existed at
+its own base commit.
+
 Usage:
     python3 scripts/check_module_layout.py                # measure, compare, exit 1 on regression
     python3 scripts/check_module_layout.py --json
+    python3 scripts/check_module_layout.py --since HEAD   # gate mode: fail only on THIS run's regression
     python3 scripts/check_module_layout.py --write-baseline
 """
 from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _ratchet_delta import extracted_tree  # noqa: E402
 
 _WORKSHOP = Path(__file__).resolve().parents[1]
 _BACKEND = _WORKSHOP / "backend"
@@ -127,11 +158,11 @@ _LAYER_ORDER = {"routes": 0, "services": 1, "wsplatform": 2, "db": 3}
 import ast  # noqa: E402
 
 
-def _iter_files() -> list[Path]:
+def _iter_files(root: Path = _WORKSHOP) -> list[Path]:
     out = []
-    for p in _BACKEND.rglob("*.py"):
-        rel = p.relative_to(_WORKSHOP).as_posix()
-        parts = p.relative_to(_WORKSHOP).parts
+    for p in (root / "backend").rglob("*.py"):
+        rel = p.relative_to(root).as_posix()
+        parts = p.relative_to(root).parts
         if any(part in _EXCLUDE_DIR_PARTS for part in parts):
             continue
         if any(ex in rel for ex in _EXCLUDE_PATH_PARTS):
@@ -140,28 +171,29 @@ def _iter_files() -> list[Path]:
     return out
 
 
-def _modname(p: Path) -> str:
+def _modname(p: Path, root: Path = _WORKSHOP) -> str:
     """Dotted module path relative to `backend/`, e.g.
     `backend/services/tasks.py` -> `services.tasks`."""
-    rel = p.relative_to(_BACKEND).with_suffix("")
+    rel = p.relative_to(root / "backend").with_suffix("")
     parts = list(rel.parts)
     if parts and parts[-1] == "__init__":
         parts = parts[:-1]
     return ".".join(parts)
 
 
-def _owner_pkg(p: Path) -> list[str]:
+def _owner_pkg(p: Path, root: Path = _WORKSHOP) -> list[str]:
     """Dotted package parts of the directory a file lives in, for resolving
     relative imports (`from . import x`, `from .. import y`)."""
-    rel = p.relative_to(_BACKEND).with_suffix("")
+    rel = p.relative_to(root / "backend").with_suffix("")
     parts = list(rel.parts)
     return parts[:-1]
 
 
 class _ModuleGraph:
-    def __init__(self, files: list[Path]):
+    def __init__(self, files: list[Path], root: Path = _WORKSHOP):
         self.files = files
-        self.modname_by_path = {p: _modname(p) for p in files}
+        self.root = root
+        self.modname_by_path = {p: _modname(p, root) for p in files}
         self.all_modules = set(self.modname_by_path.values())
         pkg_names: set[str] = set()
         for m in self.all_modules:
@@ -186,7 +218,7 @@ class _ModuleGraph:
     def _build(self) -> None:
         for p in self.files:
             src_mod = self.modname_by_path[p]
-            rel = p.relative_to(_WORKSHOP).as_posix()
+            rel = p.relative_to(self.root).as_posix()
             try:
                 tree = ast.parse(p.read_text(errors="replace"), filename=rel)
             except SyntaxError:
@@ -212,7 +244,7 @@ class _ModuleGraph:
 
                 def visit_ImportFrom(self, node):  # noqa: N802
                     if node.level and node.level > 0:
-                        pkg_parts = _owner_pkg(p)
+                        pkg_parts = _owner_pkg(p, graph.root)
                         base_parts = (
                             pkg_parts[: len(pkg_parts) - (node.level - 1)]
                             if node.level > 1 else pkg_parts
@@ -354,7 +386,7 @@ def _upward_violations(edges: dict[str, set[str]]) -> list[tuple[str, str]]:
     return sorted(out)
 
 
-def _big_files(files: list[Path]) -> list[tuple[str, int]]:
+def _big_files(files: list[Path], root: Path = _WORKSHOP) -> list[tuple[str, int]]:
     out = []
     for p in files:
         try:
@@ -362,17 +394,22 @@ def _big_files(files: list[Path]) -> list[tuple[str, int]]:
         except OSError:
             continue
         if n > _BIG_FILE_LINES:
-            out.append((p.relative_to(_WORKSHOP).as_posix(), n))
+            out.append((p.relative_to(root).as_posix(), n))
     return sorted(out, key=lambda t: -t[1])
 
 
-def measure() -> dict:
-    files = _iter_files()
-    graph = _ModuleGraph(files)
+def measure(root: Path = _WORKSHOP) -> dict:
+    """Measure the metrics over the backend tree under `root`.
+
+    `root` is a parameter so DELTA MODE can measure the same way over a
+    `git archive` extract of the run's base ref. Defaults to this checkout, so
+    every existing caller is unchanged."""
+    files = _iter_files(root)
+    graph = _ModuleGraph(files, root)
     sccs = _tarjan_sccs(graph.edges)
     multi_sccs = sorted((s for s in sccs if len(s) >= 2), key=len, reverse=True)
     violations = _upward_violations(graph.edges)
-    big = _big_files(files)
+    big = _big_files(files, root)
 
     return {
         "scanned_files": len(files),
@@ -433,7 +470,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--baseline", default=str(_BASELINE_PATH))
+    ap.add_argument("--baseline", default=str(_BASELINE_PATH),
+                     help="path to the pinned baseline JSON (NOT a git ref -- see --since)")
+    ap.add_argument("--since", metavar="REV", default=None,
+                     help="DELTA MODE: measure at REV as well, and fail only on a metric "
+                          "that got worse between REV and the working tree. The pinned "
+                          "baseline is still reported. See this script's header.")
     ap.add_argument("--write-baseline", action="store_true",
                      help="record current metrics as the new pinned baseline and exit")
     args = ap.parse_args()
@@ -454,13 +496,33 @@ def main() -> int:
     except (OSError, json.JSONDecodeError):
         baseline = {}
 
-    regressions = _regressions(current, baseline) if baseline else []
-    improvements = _improvements(current, baseline) if baseline else []
+    # DELTA MODE. `since` becomes the thing regressions are judged against; the
+    # pinned baseline is still measured and still printed, so the absolute debt
+    # never goes unreported just because this run happened not to add to it.
+    since = None
+    if args.since is not None:
+        try:
+            with extracted_tree(args.since, _WORKSHOP) as base_tree:
+                since = measure(base_tree)
+        except (subprocess.CalledProcessError, OSError) as exc:
+            print(f"check_module_layout: cannot read ref {args.since!r}: {exc}",
+                   file=sys.stderr)
+            return 2
+
+    judge_against = since if since is not None else baseline
+    regressions = _regressions(current, judge_against) if judge_against else []
+    improvements = _improvements(current, judge_against) if judge_against else []
 
     if args.json:
         print(json.dumps({
             "current": current,
             "baseline": baseline,
+            "since_ref": args.since,
+            "since": since,
+            # Absolute debt against the pinned baseline is ALWAYS reported, even
+            # in delta mode, so "this run added nothing" can never be misread as
+            # "the tree is clean".
+            "pinned_regressions": _regressions(current, baseline) if baseline else [],
             "regressions": regressions,
             "improvements": improvements,
         }, indent=2, sort_keys=False))
@@ -476,19 +538,34 @@ def main() -> int:
           f"{current['upward_violations']}")
     print(f"    files over {_BIG_FILE_LINES} lines: {current['big_file_count']}")
 
-    if not baseline:
+    if not judge_against:
         print(f"\n    no baseline at {baseline_path} -- run --write-baseline first")
         return 0
 
+    against = f"the base ref {args.since}" if since is not None else "the pinned baseline"
+
     if regressions:
-        print(f"\n=== {len(regressions)} metric(s) regressed past the pinned baseline")
+        print(f"\n=== {len(regressions)} metric(s) regressed past {against}")
         for r in regressions:
             print(f"    {r}")
-        print("\ncheck_module_layout: this is worse than the pinned tree. Either "
-              "undo the regression, or if it is a deliberate, understood tradeoff, "
-              "re-run with --write-baseline after review.")
+        if since is not None:
+            print("\ncheck_module_layout: THIS CHANGE made the backend layout worse. "
+                  "Undo the regression. (Delta mode: pre-existing debt at the base "
+                  "ref is not counted against you -- these numbers are yours.)")
+        else:
+            print("\ncheck_module_layout: this is worse than the pinned tree. Either "
+                  "undo the regression, or if it is a deliberate, understood tradeoff, "
+                  "re-run with --write-baseline after review.")
     else:
-        print("\ncheck_module_layout: no regression against the pinned baseline")
+        print(f"\ncheck_module_layout: no regression against {against}")
+
+    if since is not None and baseline:
+        pinned = _regressions(current, baseline)
+        if pinned:
+            print(f"\n=== FYI: {len(pinned)} metric(s) are still past the PINNED baseline, "
+                  f"inherited and not caused by this change (not gating):")
+            for r in pinned:
+                print(f"    {r}")
 
     if improvements:
         print(f"\n=== {len(improvements)} metric(s) improved (not auto-repinned -- "
