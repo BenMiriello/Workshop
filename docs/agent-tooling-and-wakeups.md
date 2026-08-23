@@ -58,6 +58,12 @@ Everything below is one of those two.
   runner (`scripts/queue_runner.sh`, reconciled by `services/work_driver.py`),
   `scripts/dispatch_triggers.sh`, and the crontab. A chat turn cannot set a
   durable timer, and pretending otherwise is how a promise gets dropped.
+- **Do not `nohup ... &` INSIDE a `run_in_background` call.** The harness tracks
+  the command it launched; detaching the real work makes that command exit
+  immediately, so you get a completion notification within a second, the log
+  file stays empty, and the actual job is an orphan nobody is watching. Hit
+  while writing this file. Pass the loop itself as the command and let
+  `run_in_background` do the backgrounding.
 - **In THIS chat surface a foreground subagent dies at turn end.** A hook forces
   `run_in_background: false` on Agent/Task for exactly that reason, so a
   subagent is context isolation for the CURRENT reply and nothing more. For
@@ -86,8 +92,16 @@ Building the branch-isolation work needed a bundle build (slow, one outcome) and
 an autonomous loop that might pick up a ticket at any time (unknown count, no
 known end). Both, correctly:
 
-    # one outcome, one notification, no polling
+    # one outcome, one notification, no polling. No `nohup` and no trailing
+    # `&`: run_in_background is already the backgrounding, and adding a second
+    # layer makes the tracked command exit at once.
     Bash({command: "bash scripts/apply.sh > /tmp/apply.log 2>&1",
+          run_in_background: true})
+
+    # wait for a condition, then act, then exit: still ONE notification
+    Bash({command: "for i in $(seq 1 100); do " +
+                   "  [ -z \"$(git status --porcelain -- frontend)\" ] && " +
+                   "    { bash scripts/apply.sh; exit 0; }; sleep 15; done; exit 1",
           run_in_background: true})
 
     # per-occurrence, quiet until something real happens, failure included
