@@ -781,7 +781,40 @@ def _validated(tool_id: str, body: dict[str, Any]) -> Tool:
     tool = _normalize({**body, "id": tool_id}, provenance="user")
     if tool is None:  # unreachable: the id is validated above
         raise ValueError(f"{tool_id!r} could not be read as a tool record")
+    _refuse_forbidden_command(tool)
     return tool
+
+
+def _refuse_forbidden_command(tool: Tool) -> None:
+    """Refuse a `command` tool whose command line would run something the
+    unattended deny list forbids, NAMING the pattern it hit.
+
+    Doc §2.3: "a `command` tool whose command line would run something the
+    unattended deny list forbids is refused at registration rather than at run
+    time". This is the half of that with a person present to read the reason;
+    the load-bearing half is the identical check on the RESOLVED argv in
+    `services/command_tools.run`, which is what catches a tool declared before a
+    pattern existed, a record hand-written into tools.json, and a forbidden line
+    assembled out of a parameter value. Both are wanted: this one is the good
+    error message, that one is the control.
+
+    Imported inside the function on purpose. `command_tools` imports
+    `agent_authority`, which imports THIS module for its tool-name groups, so a
+    module-level import here would be a cycle. Registration is a rare, attended
+    write; paying an import for it costs nothing.
+    """
+    if tool.kind != "command":
+        return
+    from services import command_tools
+    pattern = command_tools.forbidden_pattern(tool.spec.get("command"))
+    if pattern is None:
+        return
+    raise ValueError(
+        f"{tool.id!r} cannot be declared: its command line would run something the "
+        f"unattended deny list forbids ({pattern}). Irreversible actions are not "
+        "taken by an agent, so a tool that would take one is refused here rather "
+        "than failing when it is called."
+    )
 
 
 def create_user_tool(tool_id: str, body: dict[str, Any]) -> Tool:

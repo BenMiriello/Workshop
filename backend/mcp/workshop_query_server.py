@@ -7,6 +7,13 @@ a filesystem Read grant: they expose a bounded, computed summary and ranked
 passages, never arbitrary files, so they cannot leak `.runtime` secrets through
 the model's egress.
 
+Plus every `command` tool declared in `services/tool_registry`, listed beside
+these and dispatched to `services/command_tools` -- which is how a tool a user
+declared becomes callable at all (tools-are-declared-2026-08-23 §5 stage 4).
+They ride on THIS server rather than a second one so a declared tool's CLI name
+is an ordinary `mcp__workshop__<id>`, granted by the argv `llm_router.tool_flags`
+already builds and by nothing else.
+
 Plus one WRITE tool, `spawn_background`, offered ONLY to a real chat (when
 WORKSHOP_QUERY_THREAD is bound): it launches a background agent for that chat and
 returns an id, not file contents. The agent's own file access is a run's, not
@@ -429,6 +436,57 @@ def _bound_thread() -> str | None:
     return t or None
 
 
+# --- Declared `command` tools ride on this server ----------------------------
+#
+# Stage 4 of docs/platform-redesign/tools-are-declared-2026-08-23.md: a tool a
+# user declared has to be REACHABLE, and this is how it is reached. Every
+# `command` tool in `services/tool_registry` is listed below beside this
+# server's own five and dispatched to `services/command_tools`, which validates
+# its typed inputs, applies the unattended deny list to the resolved argv, and
+# spawns it through `services/scoped_exec` -- the same confinement as the turn.
+#
+# EXTENDING THIS SERVER RATHER THAN ADDING A SECOND ONE. A second server would
+# need its own launch spec in both MCP resolvers, its own entry in every
+# `--mcp-config` this turn might get, and its own reason to be spawned -- four
+# new places for a tool to exist in one and not the other, which is the exact
+# shape of the four-uncoordinated-sources problem the design is undoing. Riding
+# here means a command tool's CLI name is `mcp__workshop__<id>`, an ordinary MCP
+# tool name on a server the turn already has, so it arrives at an agent through
+# the argv `llm_router.tool_flags` already builds and through nothing else.
+#
+# The names below WIN a collision: a declared tool called `search` does not get
+# to be this server's `search`. Precedence, not a refusal, because tools.json is
+# an ordinary file and the platform's own surface must not depend on what is in
+# it (`tool_registry.catalog` takes the same position).
+_BUILTIN_TOOL_NAMES = (
+    TOOL_NAME, SEARCH_TOOL_NAME, SPAWN_TOOL_NAME, WHERE_IS_TOOL_NAME,
+    LIST_ATTACHMENTS_TOOL_NAME, GET_FILE_TOOL_NAME,
+)
+
+
+def _command_tools() -> list:
+    """The declared `command` tools, or [] if the catalog cannot be read.
+
+    Never raises: this runs inside `tools/list`, and a malformed tools.json must
+    cost the turn its user tools, not its search."""
+    try:
+        from services import command_tools
+        return [t for t in command_tools.declared() if t.id not in _BUILTIN_TOOL_NAMES]
+    except Exception as e:  # noqa: BLE001
+        print(f"workshop mcp: could not read declared command tools: {e}", file=sys.stderr)
+        return []
+
+
+def _scope_root() -> str:
+    """The directory a command tool runs in: this process's own cwd.
+
+    The server is spawned as a child of the turn's `claude` process, so inside a
+    confined turn that cwd IS the scope root at `scoped_exec.MOUNTPOINT` -- a
+    command tool gets the same filesystem view as the turn that called it, never
+    a wider one."""
+    return os.getcwd()
+
+
 def _tool_list() -> list:
     tools = [
         {"name": TOOL_NAME, "description": TOOL_DESC, "inputSchema": TOOL_SCHEMA},
@@ -445,7 +503,28 @@ def _tool_list() -> list:
     if _bound_thread():
         tools.append({"name": SPAWN_TOOL_NAME, "description": SPAWN_TOOL_DESC,
                       "inputSchema": SPAWN_TOOL_SCHEMA})
+    try:
+        from services import command_tools
+        for tool in _command_tools():
+            tools.append({
+                "name": tool.id,
+                "description": tool.description or tool.title or tool.id,
+                "inputSchema": command_tools.input_schema(tool),
+            })
+    except Exception as e:  # noqa: BLE001
+        print(f"workshop mcp: could not describe command tools: {e}", file=sys.stderr)
     return tools
+
+
+def _run_command_tool(name: str, args: dict) -> str:
+    """Run one declared command tool. Refusals (bad inputs, the deny list, a
+    sandbox that could not be built) come back as exceptions and are rendered by
+    the caller as a failed tool call, which is what they are."""
+    from services import command_tools
+    tool = command_tools.get(name)
+    if tool is None:  # raced with a delete between tools/list and tools/call
+        raise ValueError(f"no declared command tool named {name}")
+    return command_tools.run(tool, args, workdir=_scope_root())
 
 
 def _run_spawn(args: dict) -> str:
@@ -501,13 +580,17 @@ def _handle(msg: dict) -> dict | None:
     if method == "tools/call":
         params = msg.get("params") or {}
         name = params.get("name")
-        if name not in (TOOL_NAME, SEARCH_TOOL_NAME, SPAWN_TOOL_NAME,
-                        WHERE_IS_TOOL_NAME, LIST_ATTACHMENTS_TOOL_NAME,
-                        GET_FILE_TOOL_NAME):
+        # A declared command tool is dispatched only after the built-ins, the
+        # same precedence `_tool_list` advertises.
+        is_command_tool = name not in _BUILTIN_TOOL_NAMES and any(
+            t.id == name for t in _command_tools())
+        if name not in _BUILTIN_TOOL_NAMES and not is_command_tool:
             return {"jsonrpc": "2.0", "id": mid,
                     "error": {"code": -32602, "message": f"unknown tool: {name}"}}
         try:
-            if name == SEARCH_TOOL_NAME:
+            if is_command_tool:
+                text = _run_command_tool(name, params.get("arguments") or {})
+            elif name == SEARCH_TOOL_NAME:
                 text = _run_search(params.get("arguments") or {})
             elif name == SPAWN_TOOL_NAME:
                 text = _run_spawn(params.get("arguments") or {})
