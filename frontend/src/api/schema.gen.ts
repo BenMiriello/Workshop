@@ -2846,6 +2846,105 @@ export interface paths {
         patch: operations["patch_plan_budget_plan_patch"];
         trace?: never;
     };
+    "/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Changes
+         * @description Open and historical changes, newest activity first.
+         *
+         *     `ticket_id` answers "what change carries this ticket", which is the query
+         *     the status derivation (step C2) runs; it is a filter here so that step does
+         *     not have to scan.
+         */
+        get: operations["list_changes_changes_get"];
+        put?: never;
+        /**
+         * Open Change
+         * @description Open the change a branch has earned.
+         *
+         *     409 when the branch has no commits ahead of its base: a change with an
+         *     empty diff would assert work that does not exist. Idempotent -- a branch
+         *     that already has an open change gets that change back, brought up to date
+         *     with its current head.
+         */
+        post: operations["open_change_changes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/changes/{change_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Change */
+        get: operations["get_change_changes__change_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Change */
+        delete: operations["delete_change_changes__change_id__delete"];
+        options?: never;
+        head?: never;
+        /** Patch Change */
+        patch: operations["patch_change_changes__change_id__patch"];
+        trace?: never;
+    };
+    "/changes/{change_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Change Diff
+         * @description The review payload, computed from the branch on demand.
+         *
+         *     Not stored on the row: the branch moves, and a stored diff is a stale diff
+         *     the moment it does.
+         */
+        get: operations["change_diff_changes__change_id__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/changes/{change_id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Change
+         * @description Bring `head_sha` and `base_ref` back in step with the branch.
+         *
+         *     A sub-resource rather than a PATCH because the caller supplies no value:
+         *     the new state comes from the repository, and a GET that silently mutated
+         *     the row it returns would make "why did this change" unanswerable.
+         */
+        post: operations["refresh_change_changes__change_id__refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat/attachments": {
         parameters: {
             query?: never;
@@ -9624,12 +9723,171 @@ export interface components {
                 [key: string]: components["schemas"]["StoredCardState"];
             };
         };
+        /** Change */
+        Change: {
+            /** App Id */
+            app_id?: string | null;
+            /** Base Ref */
+            base_ref: string;
+            /** Branch Slug */
+            branch_slug: string;
+            /** Closed Reason */
+            closed_reason?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Gates */
+            gates?: components["schemas"]["ChangeGate"][];
+            /** Head Sha */
+            head_sha: string;
+            /** Id */
+            id: string;
+            /** Merged At */
+            merged_at?: string | null;
+            /** Merged Sha */
+            merged_sha?: string | null;
+            /** Project Slug */
+            project_slug: string;
+            remote?: components["schemas"]["ChangeRemote"] | null;
+            /** Status */
+            status: string;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /** Ticket Ids */
+            ticket_ids?: string[];
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Worktree Id */
+            worktree_id?: string | null;
+        };
+        /** ChangeCollection */
+        ChangeCollection: {
+            /** Changes */
+            changes: components["schemas"]["Change"][];
+        };
+        /** ChangeDeleted */
+        ChangeDeleted: {
+            /** Id */
+            id: string;
+            /** Ok */
+            ok: boolean;
+        };
+        /**
+         * ChangeDiff
+         * @description `worktrees.diff_branch`'s output, unchanged: a shortstat summary plus
+         *     per-file unified diffs. THE DIFF IS THE PRIMARY OBJECT of a review.
+         */
+        ChangeDiff: {
+            /** Files */
+            files: components["schemas"]["ChangeFileDiff"][];
+            /** Summary */
+            summary: string;
+        };
+        /** ChangeFileDiff */
+        ChangeFileDiff: {
+            /** Diff */
+            diff: string;
+            /** Path */
+            path: string;
+            /** Status */
+            status: string;
+        };
+        /**
+         * ChangeGate
+         * @description One machine check's outcome on this change (design doc sec 5.3).
+         *
+         *     TYPED, not a free dict: the review surface's whole job is to let a person
+         *     skip what a checker already answered, and it cannot do that with a payload
+         *     whose shape the client has to guess. `detail` is the checker's own words
+         *     (a failing line, a count); `at` is when it ran.
+         */
+        ChangeGate: {
+            /** At */
+            at?: string | null;
+            /** Detail */
+            detail?: string | null;
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+        };
+        /** ChangeOpenIn */
+        ChangeOpenIn: {
+            /** Branch Slug */
+            branch_slug: string;
+            /** Project Slug */
+            project_slug: string;
+            /**
+             * Status
+             * @default draft
+             */
+            status: string;
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /** Ticket Ids */
+            ticket_ids?: string[];
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /** Worktree Id */
+            worktree_id?: string | null;
+        };
         /** ChangePasswordBody */
         ChangePasswordBody: {
             /** Current Password */
             current_password: string;
             /** New Password */
             new_password: string;
+        };
+        /**
+         * ChangePatchIn
+         * @description Every field optional; only what is sent is written.
+         *
+         *     The merge outcome is absent on purpose: `merged_sha`, `merged_at` and
+         *     `status='merged'` are written together by whatever performs the merge
+         *     (step C5), never patched.
+         */
+        ChangePatchIn: {
+            /** App Id */
+            app_id?: string | null;
+            /** Closed Reason */
+            closed_reason?: string | null;
+            /** Gates */
+            gates?: components["schemas"]["ChangeGate"][] | null;
+            remote?: components["schemas"]["ChangeRemote"] | null;
+            /** Status */
+            status?: string | null;
+            /** Summary */
+            summary?: string | null;
+            /** Ticket Ids */
+            ticket_ids?: string[] | null;
+            /** Title */
+            title?: string | null;
+            /** Worktree Id */
+            worktree_id?: string | null;
+        };
+        /**
+         * ChangeRemote
+         * @description The mirrored pull request, when the app is bound to a remote. Null for
+         *     the common local case -- same record either way, which is the point of the
+         *     design's local-first requirement.
+         */
+        ChangeRemote: {
+            /** Kind */
+            kind: string;
+            /** Number */
+            number?: number | null;
+            /** Url */
+            url?: string | null;
         };
         /** ChatModeSet */
         ChatModeSet: {
@@ -21609,6 +21867,233 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_changes_changes_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                app_id?: string | null;
+                project?: string | null;
+                ticket_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeCollection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_change_changes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeOpenIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Change"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_change_changes__change_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Change"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_change_changes__change_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_change_changes__change_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePatchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Change"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_diff_changes__change_id__diff_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeDiff"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_change_changes__change_id__refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Change"];
                 };
             };
             /** @description Validation Error */
