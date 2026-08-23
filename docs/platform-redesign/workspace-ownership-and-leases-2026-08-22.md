@@ -1,12 +1,19 @@
 # Who is working here: branch ownership, leases, and takeover
 
 - Date: 2026-08-22
-- Status: **B0, B2a, B2, B4 and B3 are built** (B3 and B4 on 2026-08-23, B2 the
-  same day, the other two 2026-08-22 evening), along with track C's record,
-  review surface and merge-on-accept, and all of track A. B1 and B5 through B8
-  are not; B1 has MOVED to after B3 (it is defined as
-  read-write-if-you-hold-the-lease and there was no lease until B3) and its
-  prerequisite now exists. Build log and the corrections it
+- Status: **B0, B2a, B2, B4, B3, B1 and B8 are built** (B1 and B8 on 2026-08-23,
+  B3 and B4 the same day, B2 the same day, the other two 2026-08-22 evening),
+  along with track C's record, review surface and merge-on-accept, and all of
+  track A. B5 through B7 are not. B1 had MOVED to after B3 (it is defined as
+  read-write-if-you-hold-the-lease and there was no lease until B3) and shipped
+  once that prerequisite existed.
+  **B1 IS BEHIND A FLAG THAT IS OFF** (`WORKSHOP_TREE_LEASE_MOUNT`, unset =
+  off), for the reason the uid layer SEC-A1 did the same: `scoped_exec` is what
+  every live turn spawns inside, including the operator's own chat, so its
+  attended verification is the operator's and nothing has turned it on. With the
+  flag off the spawn path is byte-identical to the one before it
+  (`tests/test_tree_access_mount.py::TestTheFlagOffPathIsUnchanged`). Build log
+  and the corrections it
   forced: [`HANDOFF-branch-isolation-2026-08-22.md`](HANDOFF-branch-isolation-2026-08-22.md)
   section 0. Revision 2, after an adversarial review pass
   (§16). Revision 1's central mechanism was wrong and is replaced.
@@ -498,6 +505,22 @@ the collisions outright.
 
 **B1. Read-only mounts for sessions without a lease** (§4). The enforcement primitive
 everything else assumes, and on its own it makes the shared tree safe to read.
+BUILT, FLAG OFF: `services/tree_access.py` answers "does this session hold this
+tree", `scoped_exec.wrap` binds the scope `--ro-bind` when the answer is not an
+affirmative yes, and `WORKSHOP_TREE_LEASE_MOUNT` gates the whole thing. The
+subject id is the worktree record id when a record exists for the path and the
+path's realpath when none does — one identity, deterministic, because two
+identities for one subject is two locks on one door. Every non-affirmative
+outcome (no lease, someone else's, an unreadable store, no store at all, an
+unexpected exception) is read-only; nothing turns "I could not tell" into
+read-write. Per §14.3 of the branches doc the self-repo is NOT carved out, which
+is also the sharpest edge on the flag: with it on, a platform-repo chat holding
+no lease — including the operator's own — reads.
+
+**The `EROFS` half of B1.** `build_streaming._maybe_write_blocked` turns the
+first failed write into §10.3's offer (`write_blocked`), once per turn. It
+offers; it does not create a branch, does not join one, and does not fail the
+turn.
 
 **B2a. Extract the git service** (§13.1). Pure refactor: `services/git_service.py`
 takes a repo path and speaks git, knowing nothing about projects, tickets or scopes;
@@ -525,7 +548,15 @@ and write honest copy. Answer §12 first.
 
 **B7. Preempt with snapshot-and-quiesce** (§9) and the timeline.
 
-**B8. Session defaults** (§10), then reader staleness (§11).
+**B8. Session defaults** (§10), then reader staleness (§11). BUILT:
+`services/session_defaults.py` is §10's resolution table as pure functions
+(`resolve`, `first_write_offer`, `choose`) and names no branch — naming is
+`worktrees.py`'s policy per §13.2. `services/reader_staleness.py` is §11:
+`files_changed_since` (a sha, not a clock, and None rather than a guess) plus
+delivery through `control.steer`, which is the presence-driven steer §11 asks
+for and not a new protocol. Nothing calls `notify()` on a timer yet: WHO decides
+a reader should be told rides on B5's directory, and arming it is the same
+attended decision as the B1 flag.
 
 **Track A** (from `one-fact-one-place-2026-08-22.md` §6): A1 read needs-you from
 tickets and delete `run_inbox`; A2 retire the dead run notifications. A3 (one panel

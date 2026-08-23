@@ -379,6 +379,14 @@ class Turn:
     # client may still be reading it) from one that ended last Tuesday. Set in
     # `_finalize_turn`, which is the single place a turn ends.
     finished_at: float | None = None
+    # The §10.3 offer this turn's first blocked write produced, once. Set by
+    # `_maybe_write_blocked` when a tool result comes back EROFS against a
+    # read-only mount ([B1]); None on every turn where nothing was blocked,
+    # which is every turn while WORKSHOP_TREE_LEASE_MOUNT is off. Kept ON THE
+    # TURN rather than in a module-level set so it is collected with the turn
+    # and cannot outlive it, and so "once" means once per turn rather than once
+    # per process.
+    write_offer: dict | None = None
 
 
 # In-memory turn registry. Build sessions are short-lived enough that this is
@@ -609,6 +617,73 @@ def _tool_result_text(content: object) -> str:
         content = "\n".join(p for p in parts if p)
     s = str(content or "")
     return s if len(s) <= 600 else s[:597] + "…"
+
+
+def _current_ref(meta: dict) -> str:
+    """Which ref the blocked write was aimed at -- the base of the branch that
+    would be offered.
+
+    The turn meta carries one once a session's ref is bound to it (B5/B8); until
+    then the tree itself is the only thing that knows, so it is asked. That is a
+    `git rev-parse` in a path that runs at most once per turn, and only when a
+    write has ALREADY failed, so it is nowhere near the hot loop. "HEAD" is the
+    honest last resort: it is what the offer would branch from anyway.
+    """
+    named = meta.get("branch") or meta.get("base_ref")
+    if named:
+        return str(named)
+    cwd = meta.get("cwd")
+    if not cwd:
+        return "HEAD"
+    try:
+        from services import git_service
+        return git_service.rev_parse(cwd, "HEAD", abbrev_ref=True) or "HEAD"
+    except Exception:
+        return "HEAD"
+
+
+def _maybe_write_blocked(turn: Turn, meta: dict, payload: dict) -> None:
+    """The `EROFS` event, turned into an offer instead of a crash ([B1], §4.2).
+
+    THIS IS THE WRITE-DETECTION MECHANISM §14.1 OF THE BRANCHES DOC NEEDED AND
+    DID NOT HAVE. "Branch on write" was unbuildable as written: a turn is a
+    detached process inside bwrap, the backend cannot observe individual writes,
+    and "first write" is not even classifiable because the harness writes
+    session and temp files constantly. Against a read-only mount the first
+    GENUINE write comes back as a failed tool result carrying errno 30, which is
+    exact, cheap and observable -- and it arrives here, on the ordinary stream,
+    with no new channel.
+
+    What it produces is §10.3's offer, whose default is a NEW branch. It does
+    NOT create one, does not join one, and does not fail the turn: the write
+    already failed on its own, and what the operator is owed at that moment is
+    the choice, not a decision taken for him. A branch merges as one unit, so
+    joining is the thing that must never happen by itself.
+
+    ONCE PER TURN. A blocked write is usually followed by several more as the
+    model retries; one offer is the event, and five would be noise about the
+    same fact.
+
+    SILENT AND CHEAP WHILE THE FLAG IS OFF. `tree_lease_mounts()` is a single
+    env read and the very first thing checked, so a turn on today's read-write
+    mount does no work here at all -- including no import of the lease layer.
+    Any failure below is swallowed: a turn must not die because the platform
+    could not phrase an offer about it.
+    """
+    try:
+        from services import scoped_exec
+        if turn.write_offer is not None or not scoped_exec.tree_lease_mounts():
+            return
+        from services import tree_access
+        offer = tree_access.first_write_offer(
+            payload.get("text"), current_ref=_current_ref(meta),
+            ticket_id=meta.get("ticket_id"))
+        if offer is None:
+            return
+        turn.write_offer = offer
+        _push(turn, "write_blocked", offer)
+    except Exception as exc:  # pragma: no cover -- defensive, see docstring
+        log.debug("turn %s: could not build a write offer: %s", turn.id, exc)
 
 
 # The CLI's own no-op placeholder, and the ONLY synthetic message we drop.
@@ -2232,7 +2307,16 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     # top and is off by default -- see scoped_exec's module docstring.
     from services import scoped_exec
     try:
-        spawn_cmd = scoped_exec.spawn_argv(cmd, meta["cwd"])
+        # `session_id` is the lease layer's ([B1]) "who is asking": with
+        # WORKSHOP_TREE_LEASE_MOUNT on, this tree is mounted read-write only if
+        # this chat holds its worktree lease, and read-only otherwise
+        # (workspace-ownership-and-leases-2026-08-22.md §4). The flag is OFF by
+        # default and the argv is byte-identical while it is, so passing the id
+        # here changes nothing today and means no second edit to this file at
+        # the moment the operator turns it on.
+        spawn_cmd = scoped_exec.spawn_argv(cmd, meta["cwd"],
+                                           session_id=meta.get("thread_id"),
+                                           holder_kind="chat")
     except (scoped_exec.TurnUserUnavailable, scoped_exec.ConfinementUnavailable) as e:
         # FAIL-CLOSED: the turn cannot be confined, so it is refused, NOT spawned
         # with host access. Both the filesystem layer (bwrap) and the uid layer
@@ -2486,6 +2570,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         else:
             if kind in ("text", "tool", "tool_result", "permission"):
                 saw_tool = _segment_ingest(turn, kind, payload)
+                if kind == "tool_result" and payload.get("is_error"):
+                    _maybe_write_blocked(turn, meta, payload)
             elif kind == "meta" and payload.get("subtype") == "compact_boundary":
                 state["compacted"] = True
             elif kind == "user_echo":

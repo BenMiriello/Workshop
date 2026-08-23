@@ -58,6 +58,24 @@ mechanism, the `~/.claude` ownership resolution, and why a turn scoped to the
 platform's own repo (`WORKSHOP_ROOT`) is carved out of the uid layer for now
 (`systemctl --user` cannot cross a uid boundary, and `apply.sh` is how a change
 here reaches the operator).
+
+THE LEASE LAYER ([B1], `WORKSHOP_TREE_LEASE_MOUNT`). A third layer, composed the
+same way and gated the same way, from
+`workspace-ownership-and-leases-2026-08-22.md` §4: the scope is mounted
+`--bind` (read-write) when the session holds this tree's worktree lease and
+`--ro-bind` (read-only) when it does not. That is Perforce-style exclusive
+checkout enforced by the OS rather than by cooperation, and §4 is emphatic about
+which half is which -- the lease record is BOOKKEEPING and the mount is
+ENFORCEMENT, because nothing in a filesystem validates a fencing generation.
+
+UNSET MEANS OFF AND OFF MEANS BYTE-IDENTICAL. `tree_lease_mounts()` is the only
+place the flag is read; when it is off, `wrap()` builds exactly the argv it built
+before this layer existed and `services/tree_access.py` is not even imported.
+When it is ON, the only path to a read-write mount is an affirmative "this
+session holds this tree" -- an unreadable lease store, a missing session id, or
+any exception at all is read-only. Same posture as `WORKSHOP_TURN_USER`: an
+explicit opt-in whose broken precondition is the exact failure it exists to
+prevent, and one whose attended verification belongs to the operator.
 """
 from __future__ import annotations
 
@@ -78,6 +96,14 @@ _FLAG = "WORKSHOP_SCOPED_EXEC"
 # on the exact path without either reading the other.
 _USER_FLAG = "WORKSHOP_TURN_USER"
 TURN_WRAPPER = "/usr/local/libexec/workshop/turn-exec"
+
+# The lease layer's own flag ([B1], §4). Unset is OFF and that is not a
+# placeholder default: this module is what every live turn spawns inside, so a
+# mistake here stops the operator talking to his own system. It is declared HERE
+# rather than in `services/tree_access.py` so the flag can be read without
+# importing that module -- which pulls in the lease store, sqlalchemy and the
+# database -- on the path where the answer is "off".
+_TREE_LEASE_FLAG = "WORKSHOP_TREE_LEASE_MOUNT"
 
 
 class ConfinementUnavailable(RuntimeError):
@@ -160,6 +186,43 @@ def enabled() -> bool:
     if v == "1":
         return True
     return functional()
+
+
+def tree_lease_mounts() -> bool:
+    """Whether the mount follows the worktree lease ([B1], §4). Default OFF.
+
+    Only `1`/`true`/`yes`/`on` turn it on. Anything else -- unset, `0`, a typo,
+    an empty string a shell expanded to nothing -- is off, because the failure
+    mode of a misread flag here is every turn in the system losing write access
+    to its own tree at once.
+    """
+    return (os.environ.get(_TREE_LEASE_FLAG) or "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+def _mount_read_only(root: str, session_id: str | None,
+                     holder_kind: str | None) -> bool:
+    """Whether this tree should be mounted `--ro-bind` instead of `--bind`.
+
+    FALSE, ALWAYS, WHEN THE FLAG IS OFF, and that early return is the whole
+    byte-equivalence guarantee: no import, no lease read, no database, nothing
+    that could change the argv or raise.
+
+    With the flag on it fails CLOSED in both directions that matter. A session
+    id we do not have cannot hold a lease, so it reads. An import that fails --
+    a checkout with no lease module, a python that cannot load sqlalchemy -- is
+    a precondition that is broken, and a broken precondition here means
+    read-only, never read-write. `tree_access.decide` never raises, but the
+    `except` is not decorative: it covers the import itself.
+    """
+    if not tree_lease_mounts():
+        return False
+    try:
+        from services import tree_access
+        return tree_access.decide(root, session_id=session_id,
+                                  holder_kind=holder_kind).read_only
+    except Exception:
+        return True
 
 
 def _cli_root() -> str | None:
@@ -326,7 +389,9 @@ def _git_worktree_binds(root: str) -> list[tuple[str, str]]:
     return binds
 
 
-def wrap(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -> list[str]:
+def wrap(cmd: list[str], workdir: str, *, die_with_parent: bool = False,
+         session_id: str | None = None,
+         holder_kind: str | None = None) -> list[str]:
     """The command to actually spawn for a turn whose scope root is `workdir`.
 
     When scoped exec is off or bwrap is missing or `workdir` is empty, returns
@@ -344,6 +409,13 @@ def wrap(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -> list
     under `timeout`) is the opposite case: when `timeout` fires or the sweep dies
     it must take the whole sandbox down with it, or an orphaned `claude` runs past
     its wall budget. So the worker sets it and the chat turn leaves it off.
+
+    `session_id` is WHO is asking, for the lease layer ([B1], §4): with
+    `WORKSHOP_TREE_LEASE_MOUNT` on, the scope is bound read-write only if that
+    session holds this tree's worktree lease, and read-only otherwise.
+    Passing it is free while the flag is off -- the argv is identical either way
+    -- so callers adopt it now and the behaviour arrives when the operator turns
+    the flag on, rather than needing a second edit at that moment.
     """
     if not enabled() or not workdir:
         return cmd
@@ -388,9 +460,13 @@ def wrap(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -> list
     # files under the uid layer (they land in the turn-user's own home).
     for mode, src, dest in _grants(root):
         args += (["--bind", src, dest] if mode == "rw" else ["--ro-bind", src, dest])
-    # The scope, writable, at the fixed managed mountpoint. Bound AFTER the tmpfs
-    # so a scope that happens to live under /tmp is still present.
-    args += ["--bind", root, MOUNTPOINT]
+    # The scope at the fixed managed mountpoint, READ-WRITE IF THIS SESSION
+    # HOLDS THE LEASE ([B1], §4) and read-only if it does not. Off (the default)
+    # `_mount_read_only` is a constant False and this is the `--bind` it has
+    # always been. Bound AFTER the tmpfs so a scope that happens to live under
+    # /tmp is still present.
+    read_only = _mount_read_only(root, session_id, holder_kind)
+    args += ["--ro-bind" if read_only else "--bind", root, MOUNTPOINT]
     # A linked git worktree keeps its object store and refs in the parent repo,
     # at an absolute path outside itself. Without this the sandbox contains a
     # directory that is not a git repository. See _git_worktree_binds.
@@ -399,8 +475,15 @@ def wrap(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -> list
     # bind whose target sits under a path mounted later is hidden by it. Binding
     # these first worked for a parent repo under /home and silently vanished when
     # the parent repo was itself at MOUNTPOINT (measured while building this).
+    #
+    # THESE FOLLOW THE MOUNTPOINT'S MODE, and that is load-bearing rather than
+    # tidy. A worktree's objects and refs live in the parent `.git`, so leaving
+    # it read-write under a read-only checkout would leave a reader able to
+    # `git commit`, move a branch, or write a ref -- exclusion of the working
+    # tree with the repository still wide open, which is not the exclusion §4
+    # describes.
     for src, dest in _git_worktree_binds(root):
-        args += ["--bind", src, dest]
+        args += ["--ro-bind" if read_only else "--bind", src, dest]
     args += ["--chdir", MOUNTPOINT, "--"]
     return args + cmd
 
@@ -473,7 +556,9 @@ def turn_home() -> str:
     return os.path.expanduser("~")
 
 
-def spawn_argv(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -> list[str]:
+def spawn_argv(cmd: list[str], workdir: str, *, die_with_parent: bool = False,
+               session_id: str | None = None,
+               holder_kind: str | None = None) -> list[str]:
     """The full argv to actually spawn for a turn: the bwrap view from
     `wrap()`, further wrapped in `sudo -n -E -u <user> -- <turn-exec> run`
     when the uid layer is on for this scope.
@@ -489,11 +574,15 @@ def spawn_argv(cmd: list[str], workdir: str, *, die_with_parent: bool = False) -
     strip `CLAUDE_CODE_OAUTH_TOKEN` and every `WORKSHOP_*` var the child needs
     to run at all.
 
+    `session_id` is forwarded to `wrap()` for the lease layer ([B1]) and does
+    nothing at all while `WORKSHOP_TREE_LEASE_MOUNT` is off.
+
     Raises `TurnUserUnavailable` (never silently falls back to an un-isolated
     spawn) when the flag is set but its precondition is not met -- propagates
     to the caller, which must end the turn rather than spawn it unconfined.
     """
-    base = wrap(cmd, workdir, die_with_parent=die_with_parent)
+    base = wrap(cmd, workdir, die_with_parent=die_with_parent,
+                session_id=session_id, holder_kind=holder_kind)
     # FAIL-CLOSED. `wrap()` returns the command UNCHANGED when it could not build
     # a sandbox (bwrap missing, the kernel probe failed, an empty scope root, or
     # the flag forced confinement off). For an agent turn that unchanged command
@@ -612,6 +701,11 @@ def _exec_main(argv: list[str]) -> int:
     ex = sub.add_parser("exec", help="run a command confined to a scope root")
     ex.add_argument("--workdir", required=True,
                     help="the scope root to confine to (bind-mounted at /workspace)")
+    ex.add_argument("--session-id", default=None,
+                    help="the session this run acts as, for the lease layer "
+                         "([B1]): with WORKSHOP_TREE_LEASE_MOUNT on, the scope "
+                         "is mounted read-write only if this session holds its "
+                         "worktree lease. Ignored while the flag is off.")
     ex.add_argument("rest", nargs=argparse.REMAINDER,
                     help="-- then the command to run confined")
     args = ap.parse_args(argv)
@@ -624,7 +718,8 @@ def _exec_main(argv: list[str]) -> int:
         return 2
 
     try:
-        spawn = spawn_argv(cmd, args.workdir, die_with_parent=True)
+        spawn = spawn_argv(cmd, args.workdir, die_with_parent=True,
+                           session_id=args.session_id, holder_kind="run")
     except (ConfinementUnavailable, TurnUserUnavailable) as e:
         # Fail-closed: refuse rather than run the worker unconfined. Bash sees a
         # nonzero exit and treats the iteration as failed, which is correct -- a
