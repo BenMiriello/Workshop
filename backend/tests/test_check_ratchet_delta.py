@@ -343,3 +343,264 @@ class TestNoHardcodingDelta:
         r = self._run_sh(repo, "--since", "no-such-ref")
         assert r.returncode == 2, r.stdout + r.stderr
         assert "cannot read ref" in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# Tests for the four new delta-capable checkers (added 2026-08-23).
+# Each class exercises exactly the two properties that matter:
+#   * inherited debt must PASS   -- or the loop stalls again
+#   * a NEW regression must FAIL -- or the fix has quietly deleted the ratchet
+# ---------------------------------------------------------------------------
+
+
+def _backend_module(name: str = "mutglobal") -> str:
+    """A backend module with one mutable process global (container-mutate evidence)."""
+    return f'_{name.upper()}: dict = {{}}\n\ndef push(v):\n    _{name.upper()}[v] = 1\n'
+
+
+class TestNoProcessGlobalsDelta:
+    """`mutable_global_count` is the metric: a backend module that has a dict
+    mutated in-place is counted as a process global."""
+
+    @pytest.fixture()
+    def repo(self, tmp_path: Path) -> Path:
+        # Pinned baseline says zero globals; base commit already has one.
+        repo = _repo_with(
+            tmp_path, "check_no_process_globals.py", "no_process_globals_baseline.json",
+            {"mutable_global_count": 0},
+        )
+        (repo / "backend" / "services").mkdir(parents=True)
+        (repo / "backend" / "services" / "inherited.py").write_text(_backend_module())
+        _commit(repo, "base: one inherited mutable global")
+        return repo
+
+    def test_absolute_mode_still_reports_the_inherited_debt(self, repo: Path):
+        r = _run(repo, "check_no_process_globals.py")
+        assert r.returncode == 1, r.stdout
+        assert "mutable_global_count" in r.stdout or "REGRESSION" in r.stdout
+
+    def test_delta_passes_on_inherited_debt(self, repo: Path):
+        (repo / "docs").mkdir()
+        (repo / "docs" / "note.md").write_text("docs-only\n")
+        r = _run(repo, "check_no_process_globals.py", "--since", "HEAD")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "no regression" in r.stdout
+
+    def test_delta_fails_on_a_planted_regression(self, repo: Path):
+        (repo / "backend" / "services" / "added.py").write_text(_backend_module("new"))
+        r = _run(repo, "check_no_process_globals.py", "--since", "HEAD")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "REGRESSION" in r.stdout
+
+    def test_delta_fails_on_a_regression_in_a_committed_file(self, repo: Path):
+        (repo / "backend" / "services" / "added.py").write_text(_backend_module("new"))
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        _commit(repo, "worker's commit")
+        r = _run(repo, "check_no_process_globals.py", "--since", base)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "REGRESSION" in r.stdout
+
+    def test_unresolvable_ref_fails_loudly(self, repo: Path):
+        r = _run(repo, "check_no_process_globals.py", "--since", "no-such-ref")
+        assert r.returncode == 2
+        assert "cannot read ref" in r.stderr
+
+
+class TestNoStateInSourceDelta:
+    """A tracked state-like JSON under a source dir is the offender."""
+
+    @pytest.fixture()
+    def repo(self, tmp_path: Path) -> Path:
+        # Pinned baseline has empty allowed list; base commit already has a state file.
+        repo = _repo_with(
+            tmp_path, "check_no_state_in_source.py", "no_state_in_source_baseline.json",
+            {"allowed": [], "_note": "empty"},
+        )
+        (repo / "backend").mkdir(parents=True)
+        (repo / "backend" / "inherited_state.json").write_text('{"key": "value"}\n')
+        _commit(repo, "base: one inherited state file")
+        return repo
+
+    def test_absolute_mode_still_reports_the_inherited_debt(self, repo: Path):
+        r = _run(repo, "check_no_state_in_source.py")
+        assert r.returncode == 1, r.stdout
+        assert "backend/inherited_state.json" in r.stdout
+
+    def test_delta_passes_on_inherited_debt(self, repo: Path):
+        (repo / "docs").mkdir()
+        (repo / "docs" / "note.md").write_text("docs-only\n")
+        r = _run(repo, "check_no_state_in_source.py", "--since", "HEAD")
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_delta_fails_on_a_planted_regression(self, repo: Path):
+        (repo / "backend" / "new_state.json").write_text('{"x": 1}\n')
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        _commit(repo, "worker adds a new state file")
+        r = _run(repo, "check_no_state_in_source.py", "--since", base)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "backend/new_state.json" in r.stdout
+
+    def test_unresolvable_ref_fails_loudly(self, repo: Path):
+        r = _run(repo, "check_no_state_in_source.py", "--since", "no-such-ref")
+        assert r.returncode == 2
+        assert "cannot read ref" in r.stderr
+
+
+def _chat_context_with_path(path_str: str) -> str:
+    """Backend chat_context.py content containing a raw OS path."""
+    return f'# agent-facing text\nCWD_BRIEFING = "Working directory: {path_str}"\n'
+
+
+class TestNoRawPathsDelta:
+    """A raw OS path token in a scanned agent-facing surface is the offender."""
+
+    @pytest.fixture()
+    def repo(self, tmp_path: Path) -> Path:
+        # Pinned baseline has empty allowed list; base has a raw path in chat_context.
+        repo = _repo_with(
+            tmp_path, "check_no_raw_paths.py", "no_raw_paths_baseline.json",
+            {"allowed": [], "_note": "empty"},
+        )
+        (repo / "backend" / "services").mkdir(parents=True)
+        (repo / "backend" / "services" / "chat_context.py").write_text(
+            _chat_context_with_path("/home/user/inherited_path")
+        )
+        _commit(repo, "base: one inherited raw path in chat_context.py")
+        return repo
+
+    def test_absolute_mode_still_reports_the_inherited_debt(self, repo: Path):
+        r = _run(repo, "check_no_raw_paths.py")
+        assert r.returncode == 1, r.stdout
+        assert "/home/user/inherited_path" in r.stdout
+
+    def test_delta_passes_on_inherited_debt(self, repo: Path):
+        (repo / "docs").mkdir()
+        (repo / "docs" / "note.md").write_text("docs-only\n")
+        r = _run(repo, "check_no_raw_paths.py", "--since", "HEAD")
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_delta_fails_on_a_planted_regression(self, repo: Path):
+        existing = (repo / "backend" / "services" / "chat_context.py").read_text()
+        (repo / "backend" / "services" / "chat_context.py").write_text(
+            existing + '\nNEW_PATH = "/home/user/new_agent_path"\n'
+        )
+        r = _run(repo, "check_no_raw_paths.py", "--since", "HEAD")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "/home/user/new_agent_path" in r.stdout
+
+    def test_delta_fails_on_a_regression_in_a_committed_file(self, repo: Path):
+        existing = (repo / "backend" / "services" / "chat_context.py").read_text()
+        (repo / "backend" / "services" / "chat_context.py").write_text(
+            existing + '\nNEW_PATH = "/home/user/committed_path"\n'
+        )
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        _commit(repo, "worker adds a raw path")
+        r = _run(repo, "check_no_raw_paths.py", "--since", base)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "/home/user/committed_path" in r.stdout
+
+    def test_unresolvable_ref_fails_loudly(self, repo: Path):
+        r = _run(repo, "check_no_raw_paths.py", "--since", "no-such-ref")
+        assert r.returncode == 2
+        assert "cannot read ref" in r.stderr
+
+
+def _make_fixture_schema(opaque_schemas: "dict[str, list[str]]") -> dict:
+    """Build a minimal OpenAPI schema with the given opaque fields per schema."""
+    components: dict = {}
+    for schema_name, fields in opaque_schemas.items():
+        props = {f: {"type": "object"} for f in fields}
+        components[schema_name] = {"type": "object", "title": schema_name, "properties": props}
+    return {
+        "openapi": "3.0.0",
+        "info": {"title": "Test", "version": "0"},
+        "paths": {},
+        "components": {"schemas": components},
+    }
+
+
+_FIXTURE_GEN_OPENAPI = """\
+#!/usr/bin/env python3
+\"\"\"Minimal gen_openapi.py stub for the check_opaque_fields delta test.\"\"\"
+import argparse, json
+from pathlib import Path
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--schema-out", required=True)
+ap.add_argument("--schema-only", action="store_true")
+ap.add_argument("--quiet", action="store_true")
+args = ap.parse_args()
+
+fixture = Path(__file__).resolve().parents[1] / "backend" / "fixture_schema.json"
+schema = json.loads(fixture.read_text()) if fixture.exists() else {
+    "openapi": "3.0.0", "info": {"title": "T", "version": "0"},
+    "paths": {}, "components": {"schemas": {}},
+}
+Path(args.schema_out).write_text(json.dumps(schema))
+"""
+
+
+class TestOpaqueFieldsDelta:
+    """`opaque_fields` count is the metric: a schema field typed as `{type: object}`
+    with no properties counts as opaque."""
+
+    @pytest.fixture()
+    def repo(self, tmp_path: Path) -> Path:
+        # Pinned baseline at 0 opaque fields; base commit has 1.
+        repo = _repo_with(
+            tmp_path, "check_opaque_fields.py", "opaque_fields_baseline.json",
+            {"schemas_with_opaque_fields": 0, "opaque_fields": 0, "per_schema": {}},
+        )
+        # Stub gen_openapi.py that reads backend/fixture_schema.json
+        (repo / "scripts" / "gen_openapi.py").write_text(_FIXTURE_GEN_OPENAPI)
+        (repo / "backend").mkdir(parents=True)
+        # Base commit: one schema with one opaque field (inherited debt)
+        (repo / "backend" / "fixture_schema.json").write_text(
+            json.dumps(_make_fixture_schema({"ThingResponse": ["data"]}), indent=2)
+        )
+        _commit(repo, "base: one inherited opaque field")
+        return repo
+
+    def test_absolute_mode_still_reports_the_inherited_debt(self, repo: Path):
+        r = _run(repo, "check_opaque_fields.py")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "ThingResponse" in r.stdout
+
+    def test_delta_passes_on_inherited_debt(self, repo: Path):
+        (repo / "docs").mkdir()
+        (repo / "docs" / "note.md").write_text("docs-only\n")
+        r = _run(repo, "check_opaque_fields.py", "--since", "HEAD")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "no regression" in r.stdout
+
+    def test_delta_fails_on_a_planted_regression(self, repo: Path):
+        # Add a second schema with an opaque field
+        (repo / "backend" / "fixture_schema.json").write_text(
+            json.dumps(_make_fixture_schema(
+                {"ThingResponse": ["data"], "NewResponse": ["extra"]}
+            ), indent=2)
+        )
+        r = _run(repo, "check_opaque_fields.py", "--since", "HEAD")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "NewResponse" in r.stdout
+
+    def test_delta_fails_on_a_regression_in_a_committed_file(self, repo: Path):
+        (repo / "backend" / "fixture_schema.json").write_text(
+            json.dumps(_make_fixture_schema(
+                {"ThingResponse": ["data"], "CommittedResponse": ["bad"]}
+            ), indent=2)
+        )
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        _commit(repo, "worker adds an opaque field")
+        r = _run(repo, "check_opaque_fields.py", "--since", base)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "CommittedResponse" in r.stdout
+
+    def test_unresolvable_ref_fails_loudly(self, repo: Path):
+        r = _run(repo, "check_opaque_fields.py", "--since", "no-such-ref")
+        assert r.returncode == 2
+        assert "cannot read ref" in r.stderr

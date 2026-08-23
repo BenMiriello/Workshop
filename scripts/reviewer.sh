@@ -106,6 +106,54 @@
 
 set -u
 
+# ADDING A DELTA-CAPABLE CHECKER (2026-08-23). Seven checkers now follow the
+# same pattern: they accept `--since <ref>`, scan the whole tree at that ref
+# (via `git archive` through `scripts/_ratchet_delta.py`), and fail only when
+# THIS RUN made a metric worse, so inherited debt never blocks unrelated work.
+#
+# To wire a new delta-capable Python checker:
+#   1. Accept `--since REV` in the checker's argparse (see check_no_app_names.py
+#      and check_module_layout.py for the complete pattern).
+#   2. Call `_delta_check <VAR> <script.py> [<baseline.json>]` from reviewer.sh
+#      inside any applicable change gate. The helper handles the file-exists
+#      check, passes --since "$WS_BASELINE", and sets VAR to ok/fail.
+#   3. If the check also runs against a different root (REVIEWER_ROOT projects),
+#      make sure its --since ref is resolvable in the WORKSHOP repo
+#      (WS_BASELINE handles that; don't pass BASELINE directly).
+#   For a shell checker, call `bash "$WORKSHOP/scripts/<script>.sh" --since "$WS_BASELINE"`
+#   directly (shell callers manage the AMBIGUOUS array themselves, as hardcoding does).
+#
+# `_delta_check` sets the named variable to ok/fail/unchanged (skipped stays
+# as-is if the prerequisite files are missing). It DOES NOT handle the outer
+# change gate — that remains per-check so different checks can gate on different
+# file patterns.
+_delta_check() {
+  local varname="$1"
+  local script="$2"
+  local baseline="${3:-}"
+  local script_path="$WORKSHOP/scripts/$script"
+  local label="${script%.py}"
+  label="${label%.sh}"
+
+  if [[ ! -f "$script_path" ]]; then
+    AMBIGUOUS+=("${label}_check_unavailable")
+    return
+  fi
+  if [[ -n "$baseline" && ! -f "$WORKSHOP/scripts/$baseline" ]]; then
+    AMBIGUOUS+=("${label}_check_unavailable")
+    return
+  fi
+
+  local runner="python3"
+  [[ "$script" == *.sh ]] && runner="bash"
+
+  if $runner "$script_path" --since "$WS_BASELINE" >/dev/null 2>&1; then
+    printf -v "$varname" "ok"
+  else
+    printf -v "$varname" "fail"
+  fi
+}
+
 WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 export WORKSHOP
 # ROOT is the tree to inspect (git repo + stub scan). Defaults to the workshop
@@ -420,15 +468,7 @@ fi
 # A run is simply not blamed for debt that existed at its own base commit.
 MODULE_LAYOUT_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/.*\.py$'; then
-  if [[ -f "$WORKSHOP/scripts/check_module_layout.py" && -f "$WORKSHOP/scripts/module_layout_baseline.json" ]]; then
-    if python3 "$WORKSHOP/scripts/check_module_layout.py" --since "$WS_BASELINE" >/dev/null 2>&1; then
-      MODULE_LAYOUT_CHECK="ok"
-    else
-      MODULE_LAYOUT_CHECK="fail"
-    fi
-  else
-    AMBIGUOUS+=("module_layout_check_unavailable")
-  fi
+  _delta_check MODULE_LAYOUT_CHECK "check_module_layout.py" "module_layout_baseline.json"
 fi
 
 # 4.6c-iii No new process-local mutable globals (tenancy clause, §2.6 item 3).
@@ -438,15 +478,7 @@ fi
 # on whether there is any backend .py change to re-measure against.
 NO_PROCESS_GLOBALS_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/.*\.py$'; then
-  if [[ -f "$WORKSHOP/scripts/check_no_process_globals.py" && -f "$WORKSHOP/scripts/no_process_globals_baseline.json" ]]; then
-    if python3 "$WORKSHOP/scripts/check_no_process_globals.py" >/dev/null 2>&1; then
-      NO_PROCESS_GLOBALS_CHECK="ok"
-    else
-      NO_PROCESS_GLOBALS_CHECK="fail"
-    fi
-  else
-    AMBIGUOUS+=("no_process_globals_check_unavailable")
-  fi
+  _delta_check NO_PROCESS_GLOBALS_CHECK "check_no_process_globals.py" "no_process_globals_baseline.json"
 fi
 
 # 4.6c-iv A pinned ratchet baseline may not be LOOSENED by this diff.
@@ -479,15 +511,7 @@ fi
 # state file. See check_no_state_in_source.py's own header.
 NO_STATE_IN_SOURCE_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(backend|frontend|packages)/.*\.(json|jsonl|db|sqlite|sqlite3)$'; then
-  if [[ -f "$WORKSHOP/scripts/check_no_state_in_source.py" && -f "$WORKSHOP/scripts/no_state_in_source_baseline.json" ]]; then
-    if python3 "$WORKSHOP/scripts/check_no_state_in_source.py" >/dev/null 2>&1; then
-      NO_STATE_IN_SOURCE_CHECK="ok"
-    else
-      NO_STATE_IN_SOURCE_CHECK="fail"
-    fi
-  else
-    AMBIGUOUS+=("no_state_in_source_check_unavailable")
-  fi
+  _delta_check NO_STATE_IN_SOURCE_CHECK "check_no_state_in_source.py" "no_state_in_source_baseline.json"
 fi
 
 # 4.6c-vi No NEW raw OS path in agent-facing text (Layer 4 of
@@ -498,15 +522,7 @@ fi
 # once Layer 1 removes the runtime-briefing cwd. See check_no_raw_paths.py.
 NO_RAW_PATHS_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(backend/services/(chat_context|build_streaming|refs)\.py|frontend/src/components/chat/.*\.(ts|tsx))$'; then
-  if [[ -f "$WORKSHOP/scripts/check_no_raw_paths.py" && -f "$WORKSHOP/scripts/no_raw_paths_baseline.json" ]]; then
-    if python3 "$WORKSHOP/scripts/check_no_raw_paths.py" >/dev/null 2>&1; then
-      NO_RAW_PATHS_CHECK="ok"
-    else
-      NO_RAW_PATHS_CHECK="fail"
-    fi
-  else
-    AMBIGUOUS+=("no_raw_paths_check_unavailable")
-  fi
+  _delta_check NO_RAW_PATHS_CHECK "check_no_raw_paths.py" "no_raw_paths_baseline.json"
 fi
 
 # 4.6c-iiib No platform source file may name a specific app (CLAUDE.md; §6 of
@@ -535,15 +551,7 @@ fi
 # inside a review. See check_no_app_names.py, and §0.2 of
 # app-separation-and-github-2026-08-20.md.
 NO_APP_NAMES_CHECK="skipped"
-if [[ -f "$WORKSHOP/scripts/check_no_app_names.py" && -f "$WORKSHOP/scripts/no_app_names_baseline.json" ]]; then
-  if python3 "$WORKSHOP/scripts/check_no_app_names.py" --since "$WS_BASELINE" >/dev/null 2>&1; then
-    NO_APP_NAMES_CHECK="ok"
-  else
-    NO_APP_NAMES_CHECK="fail"
-  fi
-else
-  AMBIGUOUS+=("no_app_names_check_unavailable")
-fi
+_delta_check NO_APP_NAMES_CHECK "check_no_app_names.py" "no_app_names_baseline.json"
 
 # 4.6c-iv response_model= on every route (ADR 0023, §2.4). Gated on touching a
 # routes/ file specifically (narrower than the two checks above, because this
@@ -654,15 +662,7 @@ OPAQUE_FIELDS_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" \
    | grep -vE '^backend/tests/' \
    | grep -qE '^(backend/|scripts/gen_openapi\.py)'; then
-  if [[ -f "$WORKSHOP/scripts/check_opaque_fields.py" && -f "$WORKSHOP/scripts/opaque_fields_baseline.json" ]]; then
-    if python3 "$WORKSHOP/scripts/check_opaque_fields.py" >/dev/null 2>&1; then
-      OPAQUE_FIELDS_CHECK="ok"
-    else
-      OPAQUE_FIELDS_CHECK="fail"
-    fi
-  else
-    AMBIGUOUS+=("opaque_fields_check_unavailable")
-  fi
+  _delta_check OPAQUE_FIELDS_CHECK "check_opaque_fields.py" "opaque_fields_baseline.json"
 fi
 
 # 4.5g Every GET route answers (ADR 0023 clause 6, third half).

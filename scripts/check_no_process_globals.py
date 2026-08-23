@@ -73,9 +73,13 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _ratchet_delta import extracted_tree  # noqa: E402
 
 _WORKSHOP = Path(__file__).resolve().parents[1]
 _BACKEND = _WORKSHOP / "backend"
@@ -94,11 +98,11 @@ _MUTATOR_METHODS = {
 }
 
 
-def _iter_files() -> list[Path]:
+def _iter_files(root: Path = _WORKSHOP) -> list[Path]:
     out = []
-    for p in _BACKEND.rglob("*.py"):
-        rel = p.relative_to(_WORKSHOP).as_posix()
-        parts = p.relative_to(_WORKSHOP).parts
+    for p in (root / "backend").rglob("*.py"):
+        rel = p.relative_to(root).as_posix()
+        parts = p.relative_to(root).parts
         if any(part in _EXCLUDE_DIR_PARTS for part in parts):
             continue
         if any(ex in rel for ex in _EXCLUDE_PATH_PARTS):
@@ -280,8 +284,8 @@ def _find_evidence(tree: ast.Module, candidates: dict[str, Candidate]) -> None:
     visit(tree, None)
 
 
-def scan_file(path: Path) -> list[Candidate]:
-    rel = path.relative_to(_WORKSHOP).as_posix()
+def scan_file(path: Path, root: Path = _WORKSHOP) -> list[Candidate]:
+    rel = path.relative_to(root).as_posix()
     try:
         tree = ast.parse(path.read_text(errors="replace"), filename=rel)
     except SyntaxError:
@@ -293,11 +297,16 @@ def scan_file(path: Path) -> list[Candidate]:
     return [c for c in candidates.values() if c.evidence]
 
 
-def measure() -> dict:
-    files = _iter_files()
+def measure(root: Path = _WORKSHOP) -> dict:
+    """Measure mutable-global count over the backend tree under `root`.
+
+    `root` is a parameter so DELTA MODE can measure the same way over a
+    `git archive` extract of the run's base ref.
+    """
+    files = _iter_files(root)
     hits: list[Candidate] = []
     for p in files:
-        hits.extend(scan_file(p))
+        hits.extend(scan_file(p, root))
     hits.sort(key=lambda c: (c.file, c.line))
     return {
         "scanned_files": len(files),
@@ -368,6 +377,10 @@ def main() -> int:
     ap.add_argument("--write-baseline", action="store_true")
     ap.add_argument("--self-test", action="store_true",
                      help="check the detector against known true/false positives; exit 1 on mismatch")
+    ap.add_argument("--since", metavar="REV", default=None,
+                    help="DELTA MODE: scan REV's tree as well and fail only on a count that "
+                         "got worse between REV and the working tree. The pinned baseline is "
+                         "still reported as FYI. See this script's header.")
     args = ap.parse_args()
 
     if args.self_test:
@@ -387,16 +400,33 @@ def main() -> int:
     except (OSError, json.JSONDecodeError):
         baseline = {}
 
+    # DELTA MODE. `since` becomes the thing regressions are judged against; the
+    # pinned baseline is still compared and still printed so inherited debt stays
+    # visible even when it is not this run's fault.
+    since: dict | None = None
+    if args.since is not None:
+        try:
+            with extracted_tree(args.since, _WORKSHOP) as base_tree:
+                since = measure(base_tree)
+        except (subprocess.CalledProcessError, OSError) as exc:
+            print(f"check_no_process_globals: cannot read ref {args.since!r}: {exc}",
+                  file=sys.stderr)
+            return 2
+
+    judge_against = since if since is not None else baseline
+    against = f"the base ref {args.since}" if since is not None else "the pinned baseline"
+
     regressed = (
-        bool(baseline) and current["mutable_global_count"] > baseline.get("mutable_global_count", 0)
+        bool(judge_against)
+        and current["mutable_global_count"] > judge_against.get("mutable_global_count", 0)
     )
 
     if args.json:
-        print(json.dumps({
-            "current": current,
-            "baseline": baseline,
-            "regression": regressed,
-        }, indent=2, sort_keys=False))
+        payload: dict = {"current": current, "baseline": baseline, "regression": regressed}
+        if since is not None:
+            payload["since_ref"] = args.since
+            payload["since"] = {"mutable_global_count": since["mutable_global_count"]}
+        print(json.dumps(payload, indent=2, sort_keys=False))
         return 1 if regressed else 0
 
     print(f"check_no_process_globals: {current['scanned_files']} backend .py files scanned")
@@ -404,21 +434,31 @@ def main() -> int:
     for h in current["mutable_globals"]:
         print(f"        {h['name']:24} {h['file']}:{h['line']}  ({h['kind']}, {h['evidence']})")
 
-    if not baseline:
+    if not judge_against:
         print(f"\n    no baseline at {baseline_path} -- run --write-baseline first")
         return 0
 
-    base_n = baseline.get("mutable_global_count", 0)
+    base_n = judge_against.get("mutable_global_count", 0)
     if regressed:
-        print(f"\ncheck_no_process_globals: REGRESSION -- {base_n} -> {current['mutable_global_count']}. "
+        print(f"\ncheck_no_process_globals: REGRESSION against {against} -- "
+              f"{base_n} -> {current['mutable_global_count']}. "
               "A new process-local mutable global blocks running more than one uvicorn worker "
               "(target-architecture-2026-08-17.md §2.6). Move the state into the request/session "
               "scope, or if it is a genuine constant, remove the mutation that triggered this.")
     elif current["mutable_global_count"] < base_n:
-        print(f"\ncheck_no_process_globals: improved -- {base_n} -> {current['mutable_global_count']}. "
+        print(f"\ncheck_no_process_globals: improved against {against} -- "
+              f"{base_n} -> {current['mutable_global_count']}. "
               "Not auto-repinned (see header); run --write-baseline to lock it in.")
     else:
-        print("\ncheck_no_process_globals: no regression against the pinned baseline")
+        print(f"\ncheck_no_process_globals: no regression against {against}")
+
+    # In delta mode, also report any gap between the working tree and the pinned
+    # baseline -- inherited debt stays visible even when it is not this run's fault.
+    if since is not None and baseline:
+        pin_n = baseline.get("mutable_global_count", 0)
+        if current["mutable_global_count"] > pin_n:
+            print(f"    FYI mutable_global_count: pinned {pin_n} -> now "
+                  f"{current['mutable_global_count']} (inherited from base ref, not gating)")
 
     return 1 if regressed else 0
 

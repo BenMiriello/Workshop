@@ -39,6 +39,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _ratchet_delta import extracted_tree  # noqa: E402
+
 _WORKSHOP = Path(__file__).resolve().parents[1]
 _BASELINE_PATH = Path(__file__).resolve().parent / "no_state_in_source_baseline.json"
 
@@ -89,11 +92,17 @@ def _is_excluded(rel: str) -> bool:
     return False
 
 
-def _candidates() -> list[str]:
-    """Tracked state-like files under a source dir that are not config/fixture."""
+def _candidates(files: "list[str] | None" = None) -> list[str]:
+    """State-like files under a source dir that are not config/fixture.
+
+    `files` defaults to the git-tracked set (for the working tree). Pass an
+    explicit list to measure an extracted base-ref tree instead.
+    """
+    if files is None:
+        files = _tracked_files()
     out = []
-    for rel in _tracked_files():
-        if not rel.startswith(_SOURCE_DIRS):
+    for rel in files:
+        if not any(rel.startswith(d) for d in _SOURCE_DIRS):
             continue
         if not rel.endswith(_STATE_SUFFIXES):
             continue
@@ -101,6 +110,20 @@ def _candidates() -> list[str]:
             continue
         out.append(rel)
     return sorted(out)
+
+
+def _walk_tree(root: Path) -> list[str]:
+    """All files in root as repo-relative posix paths.
+
+    A `git archive` extract contains exactly the tracked files at that ref, so
+    a filesystem walk of the extract is the tracked-file list at that ref --
+    no `.git` directory or untracked files are present.
+    """
+    return sorted(
+        p.relative_to(root).as_posix()
+        for p in root.rglob("*")
+        if p.is_file()
+    )
 
 
 def _load_baseline(path: Path) -> list[str]:
@@ -119,6 +142,10 @@ def main() -> int:
     ap.add_argument("--baseline", default=str(_BASELINE_PATH))
     ap.add_argument("--write-baseline", action="store_true",
                     help="pin the current set of state files as the allowlist and exit")
+    ap.add_argument("--since", metavar="REV", default=None,
+                    help="DELTA MODE: scan REV's tree as well and fail only on a state file "
+                         "that is new since REV. The pinned allowlist is still reported as "
+                         "FYI. See this script's header.")
     args = ap.parse_args()
 
     baseline_path = Path(args.baseline)
@@ -136,17 +163,39 @@ def main() -> int:
         return 0
 
     allowed = _load_baseline(baseline_path)
-    offenders = [p for p in current if p not in allowed]
+
+    # DELTA MODE. Compare working tree against base ref rather than the pinned
+    # allowlist. Files that were already there at the base ref are inherited debt
+    # and must not block this run; only truly new files fail.
+    since_candidates: "list[str] | None" = None
+    if args.since is not None:
+        try:
+            with extracted_tree(args.since, _WORKSHOP) as base_tree:
+                since_candidates = _candidates(_walk_tree(base_tree))
+        except (subprocess.CalledProcessError, OSError) as exc:
+            print(f"check_no_state_in_source: cannot read ref {args.since!r}: {exc}",
+                  file=sys.stderr)
+            return 2
+
+    if since_candidates is not None:
+        # New offenders = state files in working tree not present at the base ref.
+        offenders = [p for p in current if p not in since_candidates]
+        against = f"the base ref {args.since}"
+    else:
+        offenders = [p for p in current if p not in allowed]
+        against = "the pinned allowlist"
 
     if args.json:
-        print(json.dumps({
-            "current": current, "allowed": allowed, "offenders": offenders,
-        }, indent=2))
+        payload: dict = {"current": current, "allowed": allowed, "offenders": offenders}
+        if since_candidates is not None:
+            payload["since_ref"] = args.since
+            payload["since"] = since_candidates
+        print(json.dumps(payload, indent=2))
         return 1 if offenders else 0
 
     if offenders:
         print(f"check_no_state_in_source: {len(offenders)} new state file(s) "
-              "committed under a source directory:")
+              f"committed under a source directory (against {against}):")
         for p in offenders:
             print(f"    {p}")
         print("\nMutable state does not belong in the source tree. Put it under the "
@@ -156,7 +205,17 @@ def main() -> int:
         return 1
 
     print(f"check_no_state_in_source: no new state file under {list(_SOURCE_DIRS)} "
-          f"(allowlisted baseline: {allowed or 'empty'})")
+          f"(against {against})")
+
+    # In delta mode, report files that are above the pinned allowlist as FYI.
+    if since_candidates is not None:
+        inherited = [p for p in current if p not in allowed and p in since_candidates]
+        if inherited:
+            print(f"    FYI {len(inherited)} file(s) inherited at base ref, "
+                  "not caused by this change (not gating):")
+            for p in inherited:
+                print(f"        {p}")
+
     return 0
 
 

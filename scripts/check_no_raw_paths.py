@@ -42,8 +42,12 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _ratchet_delta import extracted_tree  # noqa: E402
 
 _WORKSHOP = Path(__file__).resolve().parents[1]
 _BASELINE_PATH = Path(__file__).resolve().parent / "no_raw_paths_baseline.json"
@@ -75,14 +79,17 @@ _IMPORT_RE = re.compile(r"""^\s*(?:import\b|from\s+\S+\s+import\b|.*\brequire\s*
                         r"""export\s+(?:\*|\{|default)\b)""")
 
 
-def _scan_files() -> list[str]:
-    """Every scanned file that exists, repo-relative posix."""
+def _scan_files(root: Path = _WORKSHOP) -> list[str]:
+    """Every scanned file that exists under `root`, repo-relative posix.
+
+    `root` is a parameter so DELTA MODE can scan an extracted base-ref tree.
+    """
     out: list[str] = []
     for rel in _BACKEND_FILES:
-        if (_WORKSHOP / rel).is_file():
+        if (root / rel).is_file():
             out.append(rel)
     for g in _FRONTEND_GLOBS:
-        for p in sorted(_WORKSHOP.glob(g)):
+        for p in sorted(root.glob(g)):
             if not p.is_file():
                 continue
             name = p.name
@@ -91,19 +98,22 @@ def _scan_files() -> list[str]:
             # excludes a tests/ tree.
             if any(s in name for s in (".test.", ".spec.", ".stories.")):
                 continue
-            out.append(p.relative_to(_WORKSHOP).as_posix())
+            out.append(p.relative_to(root).as_posix())
     return sorted(set(out))
 
 
-def _offenses() -> list[str]:
+def _offenses(root: Path = _WORKSHOP) -> list[str]:
     """`<relfile> :: <path-snippet>` for every raw path token found in an
-    agent-facing file, excluding import specifiers. De-duplicated and sorted, so
-    the identity is (file, snippet) — never a line number."""
+    agent-facing file under `root`, excluding import specifiers. De-duplicated
+    and sorted, so the identity is (file, snippet) — never a line number.
+
+    `root` is a parameter so DELTA MODE can scan an extracted base-ref tree.
+    """
     tok = _token_re()
     found: set[str] = set()
-    for rel in _scan_files():
+    for rel in _scan_files(root):
         try:
-            text = (_WORKSHOP / rel).read_text(encoding="utf-8", errors="replace")
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         for line in text.splitlines():
@@ -131,6 +141,10 @@ def main() -> int:
     ap.add_argument("--baseline", default=str(_BASELINE_PATH))
     ap.add_argument("--write-baseline", action="store_true",
                     help="pin the current raw-path set as the allowlist and exit")
+    ap.add_argument("--since", metavar="REV", default=None,
+                    help="DELTA MODE: scan REV's tree as well and fail only on a raw path "
+                         "that is new since REV. The pinned allowlist is still reported as "
+                         "FYI. See this script's header.")
     args = ap.parse_args()
 
     baseline_path = Path(args.baseline)
@@ -150,17 +164,38 @@ def main() -> int:
         return 0
 
     allowed = _load_baseline(baseline_path)
-    offenders = [p for p in current if p not in allowed]
+
+    # DELTA MODE. Compare working tree against base ref rather than the pinned
+    # allowlist. Offenses that were already present at the base ref are inherited
+    # and must not block this run; only truly new offenses fail.
+    since_offenses: "list[str] | None" = None
+    if args.since is not None:
+        try:
+            with extracted_tree(args.since, _WORKSHOP) as base_tree:
+                since_offenses = _offenses(base_tree)
+        except (subprocess.CalledProcessError, OSError) as exc:
+            print(f"check_no_raw_paths: cannot read ref {args.since!r}: {exc}",
+                  file=sys.stderr)
+            return 2
+
+    if since_offenses is not None:
+        offenders = [p for p in current if p not in since_offenses]
+        against = f"the base ref {args.since}"
+    else:
+        offenders = [p for p in current if p not in allowed]
+        against = f"the pinned allowlist ({len(allowed)} entries)"
 
     if args.json:
-        print(json.dumps({
-            "current": current, "allowed": allowed, "offenders": offenders,
-        }, indent=2))
+        payload: dict = {"current": current, "allowed": allowed, "offenders": offenders}
+        if since_offenses is not None:
+            payload["since_ref"] = args.since
+            payload["since"] = since_offenses
+        print(json.dumps(payload, indent=2))
         return 1 if offenders else 0
 
     if offenders:
         print(f"check_no_raw_paths: {len(offenders)} new raw OS path(s) in "
-              "agent-facing text:")
+              f"agent-facing text (against {against}):")
         for p in offenders:
             print(f"    {p}")
         print("\nA file/note/doc/run is addressed by a managed ref "
@@ -171,7 +206,17 @@ def main() -> int:
         return 1
 
     print(f"check_no_raw_paths: no new raw path in agent-facing text "
-          f"(baseline: {len(allowed)} allowlisted)")
+          f"(against {against})")
+
+    # In delta mode, report any offenses still above the pinned allowlist as FYI.
+    if since_offenses is not None:
+        inherited = [p for p in current if p not in allowed and p in since_offenses]
+        if inherited:
+            print(f"    FYI {len(inherited)} raw path(s) inherited at base ref, "
+                  "not caused by this change (not gating):")
+            for p in inherited:
+                print(f"        {p}")
+
     return 0
 
 
