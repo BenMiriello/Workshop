@@ -73,16 +73,17 @@ async def lifespan(app: FastAPI):
     # sits above it.
     from services import work_driver
     app.state._bg_work_driver = asyncio.create_task(work_driver.reconcile_loop())
-    # The other half of that question, and the reason it now has a face: every
-    # scope that CAN run tickets gets a maker agent -- a real definition file,
-    # listed beside every other agent, with the arm level, the residency, the
-    # live activity and the runs joined onto it at read time. It adds no store:
-    # the maker's arm level IS scope_execution, its runner IS the work driver's,
-    # its activity IS presence. A reconciler rather than a list-time synthesis
-    # because a synthesized record has no file to edit, and editing the maker's
-    # persona is what changes what the unattended worker is told (ralph.sh).
-    from services import makers as _makers
-    app.state._bg_maker_reconcile = asyncio.create_task(_makers.reconcile_loop())
+    # THERE IS NO MAKER RECONCILER HERE, and its absence is deliberate. This
+    # used to start `services.makers.reconcile_loop`, which every 60 seconds
+    # wrote a maker definition file for every runnable scope. `maker` is not a
+    # shell-dispatched role (`primitive-roles-2026-07-18.md` §3 omits it from
+    # `ROLE_RUNNERS`) and a scope needs no definition file to be worked (§6:
+    # "projects work without any definition file") -- the loop above IS the
+    # maker. Auto-creating one per scope is the "machine for generating noise
+    # and cost" the roles research rejects, and it is the same thing
+    # `routes/projects.create_project` already refuses when it writes
+    # `"agents": []`. A maker definition is now written only by the operator
+    # action that asks for one (`POST /agents/build` -> `services.makers.ensure`).
     # Fire-and-continue: a finished background run leaves a continuation seed on
     # the originating thread's queue (services/run_report -> chat_drain), written
     # from the detached worker process that cannot reach this event loop. This is

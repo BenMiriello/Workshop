@@ -1,12 +1,34 @@
-"""The maker agent: the thing that works the tickets, as a record you can see.
+"""The maker agent: a scope's ticket-worker persona, as a record you can see.
 
-WHAT WAS WRONG. `agents_registry.list_agents()` returned three records and none
-of them worked a ticket. The thing that actually did was an anonymous chain of
-shell scripts with no record anywhere -- `queue_runner.sh` -> `project_ralph.sh`
--> `ralph.sh` -> `claude -p` -- so the operator's question, "what is doing the
-tickets", had no answer on any screen, and the controls for it lived in a
-settings drawer that never says the word agent. `ROLES` has reserved `maker`
-since the role enum was closed, and nothing has ever occupied it.
+WHAT A MAKER IS, and this is the design of record, not a local invention.
+`docs/platform-redesign/primitive-roles-2026-07-18.md` §2 lists `maker` as
+"exists (`ralph.sh`, `project_ralph.sh`)" and §6 says the project loop IS NOT AN
+AGENT: "projects work without any definition file." §3's `ROLE_RUNNERS` table
+omits `maker` entirely, because a maker is not shell-dispatched on a predicate.
+
+So: THE LOOP IS THE MAKER. `queue_runner.sh` -> `project_ralph.sh` -> `ralph.sh`
+is what takes a ready ticket off a scope's queue and drives it to done, and it
+does that whether or not any file in `agents/` mentions the scope. This module
+does not run tickets and must never start doing so.
+
+WHAT THIS MODULE OWNS is the maker's IDENTITY, which is the part that had no
+record: which tree a maker works (`scope_for`), what standing persona the loop
+is told to adopt there (`prompt_block`), and what is true about that tree right
+now (`summary`, `live_state`). The definition file is how the operator MANAGES
+the worker -- editing it is what changes the prompt -- and it is optional.
+A scope with no maker definition works its tickets exactly as it does today.
+
+NOTHING HERE CREATES A MAKER ON ITS OWN. There used to be a 60-second
+`reconcile_loop` started from the backend lifespan that wrote a definition file
+for every runnable scope. That is precisely the auto-provisioning
+`agent-roles-research-2026-07-16.md` rejects ("Nothing needs a definition file
+for a project to be worked"; "Three agent definitions per new project ... is a
+machine for generating noise and cost"), and `routes/projects.create_project`
+already refuses it by hand, writing `"agents": []` with that citation. It is
+gone. `ensure` below is the one seeding implementation and its only caller is
+the operator action that already means "give this project a maker":
+`POST /agents/build`, which is what `/agents/new` posts to when the role is
+Maker and a project is picked.
 
 WHAT THIS IS NOT. It is NOT a second autonomy system, and that is the constraint
 that decides every line below. This module owns NO state of its own. It gives
@@ -22,37 +44,36 @@ persists a mode. `arm_level` is a call into `scope_execution`; residency is a
 call into `work_driver`; activity is a call into `presence`. If a future change
 finds itself adding a store here, the store it wants already exists.
 
-A REAL DEFINITION FILE, NOT A SYNTHESIZED RECORD. The record is created by the
-reconciler below the same way `work_driver` ensures a runner: an ordinary
-`agents/<slug>.md` written through `agents_registry.create`, which every other
-agent in the system already is. The alternative -- synthesizing a record at list
-time from the scope registry -- was rejected for one reason: the operator's
-complaint is that he cannot MANAGE the thing, and managing an agent means
-editing its persona and its rules. A synthesized record has no file to edit, so
-`PUT /agents/{id}` would have nothing to write and the persona could never reach
-the worker. Requirement 5 (`scripts/ralph.sh` injects this definition into the
-worker's prompt) is only possible because the definition is a file.
+A REAL DEFINITION FILE, NOT A SYNTHESIZED RECORD. When a maker is created it is
+an ordinary `agents/<slug>.md` written through `agents_registry.create`, which
+every other agent in the system already is. The alternative -- synthesizing a
+record at list time from the scope registry -- was rejected for one reason: the
+operator's complaint is that he cannot MANAGE the thing, and managing an agent
+means editing its persona and its rules. A synthesized record has no file to
+edit, so `PUT /agents/{id}` would have nothing to write and the persona could
+never reach the worker. `scripts/ralph.sh` injecting this definition into the
+worker's prompt is only possible because the definition is a file.
 
-ONE MAKER PER SCOPE, ENFORCED HERE AND NOT BY `_assert_role_unique`.
+SEVERAL MAKERS ON ONE SCOPE IS LEGAL, AND IS NOT RESOLVED BY SORT ORDER.
 `agents_registry.SINGLETON_ROLES` is `("triager", "keeper")` and deliberately
 EXEMPTS `maker` -- its comment says so, because several makers on one scope is
 the concurrency case, governed by `touches` disjointness and the claim fence.
-So this module does not get uniqueness for free and does not try to change that
-rule for everyone. `ensure` is idempotent because it ASKS FIRST: if any maker
-already declares this scope (`maker_for_scope`), nothing is created, and the
-maker the operator already had is adopted as the scope's face rather than
-duplicated beside it. The slug is derived from the scope too, so even a lost
-registry read cannot mint a second file.
+An earlier version of this header claimed one-per-scope was "ENFORCED HERE". It
+was not, and on the live install `birds` and `budget` each had two, with the
+one the UI showed decided by which filename sorted first. So this module does
+not enforce it and does not pretend to: `makers_for_scope` returns ALL of them,
+`maker_for_scope` returns one only when there IS one, and `prompt_block` injects
+nothing at all when a scope has two -- because picking would be the sort order
+deciding what an unattended worker is told. The loop still runs; see above.
 
 NO SCOPE IS NAMED HERE. `runnable_scopes()` reads the projects registry and the
 developer-mode flag; it is the same enumeration `routes/autonomy.py` served as
-`GET /queue/runner/targets`, moved here so the maker reconciler and the runner
+`GET /queue/runner/targets`, moved here so the maker seeder and the runner
 picker cannot disagree about which trees can run tickets.
 """
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import logging
 import os
@@ -66,19 +87,20 @@ from wsplatform import dev_mode, paths
 log = logging.getLogger(__name__)
 
 __all__ = [
-    "MAKER_SLUG_SUFFIX", "RECONCILE_INTERVAL",
-    "runnable_scopes", "scope_row", "slug_for", "scope_for",
-    "maker_for_scope", "ensure", "reconcile", "reconcile_loop",
+    "runnable_scopes", "scope_row", "scope_for",
+    "makers_for_scope", "maker_for_scope", "ensure",
     "live_state", "summary", "prompt_block", "main",
 ]
 
-# The reconciler runs on the same cadence as the work driver's: a scope is added
-# or removed by an operator action, not by a hot loop, so a minute is prompt.
-RECONCILE_INTERVAL = 60.0
-
-# Derived, never hand-listed. A scope's maker is `<project-slug>-maker`, so the
-# name reads as what it is on the roster and two passes cannot mint two files.
-MAKER_SLUG_SUFFIX = "-maker"
+# NO SLUG CONVENTION IS DEFINED HERE, deliberately. The previous version minted
+# `<project-slug>-maker`, which is a name nobody in the docs chose; it reached
+# two of seven live scopes and the other five kept the `<slug>-builder` names
+# they already had, so the roster read as two conventions at once. The platform
+# already has exactly one slug rule -- `agents_registry.mint_slug`, which
+# kebab-cases the NAME the operator typed and disambiguates with `-2` -- and
+# `app-is-the-entity-2026-08-20.md` says a slug is a label, never an identity.
+# So the caller passes the slug it minted from the operator's name and this
+# module does not rename anything.
 
 # How many Jobs to scan when attributing runs to a scope. The Job store is a
 # collapsed read of one JSONL and is cached inside `services.jobs`, so this is a
@@ -87,9 +109,9 @@ _RUNS_SCAN = 500
 
 # What a fresh maker says about itself. Deliberately short and deliberately
 # EDITABLE: this is the seed of a document the operator owns, not a constant the
-# platform keeps re-asserting. The reconciler writes it once, at create time,
-# and never touches the body again -- an edit here does not propagate, for the
-# same reason `fork_from_template` has no sync engine.
+# platform keeps re-asserting. `ensure` writes it once, at create time, and
+# nothing ever touches the body again -- an edit here does not propagate, for
+# the same reason `fork_from_template` has no sync engine.
 _SEED_PURPOSE = "works this scope's ready tickets to done"
 
 _SEED_BODY = """\
@@ -120,8 +142,8 @@ def runnable_scopes() -> list[dict]:
     MOVED HERE FROM `routes/autonomy.queue_runner_targets`, which is the only
     behaviour change to that endpoint: it now calls this. Two enumerations of
     "which trees can run tickets" -- one deciding what the picker offers and one
-    deciding which makers exist -- is exactly the parallel-system defect this
-    work exists to remove.
+    deciding which trees a maker can be linked to -- is exactly the
+    parallel-system defect this work exists to remove.
 
     `scope` is the SCOPE KEY (`development`, `project:<slug>`), which is what
     `scope_execution` and the presence channel are keyed by. `project_slug` is
@@ -190,17 +212,6 @@ def scope_row(scope: str) -> dict | None:
     return None
 
 
-def slug_for(project_slug: str) -> str:
-    """The deterministic slug of a scope's maker.
-
-    Derived rather than minted, so the reconciler is idempotent even if the
-    registry read that `ensure` does first were to fail: a second pass computes
-    the same name and `agents_registry.create` refuses a slug that exists.
-    """
-    base = (project_slug or "").strip().lower()
-    return f"{base}{MAKER_SLUG_SUFFIX}"
-
-
 def scope_for(rec: dict) -> str | None:
     """Which execution scope this maker works, read off its own declaration.
 
@@ -229,53 +240,102 @@ def scope_for(rec: dict) -> str | None:
         return None
 
 
-def maker_for_scope(scope: str, *, include_retired: bool = False) -> dict | None:
-    """The maker agent that declares this scope, or None.
+def makers_for_scope(scope: str, *, include_retired: bool = False,
+                     roster: list[dict] | None = None) -> list[dict]:
+    """EVERY maker agent that declares this scope, in slug order.
 
-    THE IDEMPOTENCE CHECK, and it is a search rather than a slug lookup on
-    purpose: a maker the operator wrote by hand, with a different name, is still
-    this scope's maker, and creating a second one beside it would be the roster
-    growing a duplicate of the very thing the operator said he could not find.
+    A SEARCH, not a slug lookup, and that is the whole reason five of the seven
+    live scopes kept the maker the operator already had instead of growing a
+    duplicate beside it: a maker written by hand, under any name, IS this
+    scope's maker.
+
+    The list is the honest answer because the registry ALLOWS several. Slug
+    order is a display order and nothing else -- explicitly not a precedence
+    rule, because that is what filename sort order was when it silently decided
+    which of the two Birds makers the UI showed.
+
+    `roster` is a list `list_agents()` already produced. The roster route reads
+    it once for the whole page and hands it down, because otherwise drawing N
+    maker cards would re-glob and re-parse every definition file N times.
     """
-    for rec in agents_registry.list_agents(include_retired=include_retired):
-        if rec.get("role") != "maker":
-            continue
-        if scope_for(rec) == scope:
-            return rec
-    return None
+    rows = (agents_registry.list_agents(include_retired=include_retired)
+            if roster is None else roster)
+    out = [rec for rec in rows
+           if rec.get("role") == "maker" and scope_for(rec) == scope]
+    out.sort(key=lambda r: r.get("slug") or "")
+    return out
+
+
+def maker_for_scope(scope: str, *, include_retired: bool = False,
+                    roster: list[dict] | None = None) -> dict | None:
+    """This scope's maker when the scope HAS one -- exactly one. Else None.
+
+    None means one of two things and the caller must be able to live with both:
+    the scope has no maker definition (normal -- the loop is the maker and the
+    file is optional), or it has several and the platform will not pick. Use
+    `makers_for_scope` when you need to tell those apart or show them.
+    """
+    found = makers_for_scope(scope, include_retired=include_retired, roster=roster)
+    return found[0] if len(found) == 1 else None
 
 
 # ---------------------------------------------------------------------------
-# The reconciler
+# Seeding a maker -- only ever because someone asked
 # ---------------------------------------------------------------------------
 
-def ensure(row: dict) -> dict | None:
-    """Make a maker exist for one runnable scope. Idempotent. Returns the record.
+def ensure(*, slug: str, name: str, project_slug: str | None,
+           purpose: str | None = None, body: str | None = None) -> dict | None:
+    """Give a maker the operator just asked for its definition file. Additive.
+
+    WHO CALLS THIS, AND WHY IT IS THE ONLY CALLER. `POST /agents/build` -- what
+    `/agents/new` posts when the role is Maker and a project is picked. That
+    request IS the operator saying "this project gets a maker", so it is the
+    moment a definition may come into existence, and there is no other.
+
+    The three candidates named in the design were weighed and two are closed:
+
+      * the project-create path is closed BY THAT PATH. `create_project` writes
+        `"agents": []` and cites the research doc for it: a definition per new
+        project "is a machine for generating noise and cost". Seeding here would
+        reintroduce exactly what that comment refuses.
+      * adoption is closed by `primitive-roles-2026-07-18.md` §6: "Only
+        shell-dispatched roles are templatable (`maker` and `reviewer` are
+        invoked by the loop, not the shell)." There is no maker template to
+        adopt and there should not be one.
+      * an operator action is what is left, and one already existed. Before
+        this, `POST /agents/build` wrote an execution row into
+        `build_agents.json` and no definition, so the maker the operator had
+        just created did not appear on the roster at all (`list_agents` has no
+        builder fallback, on purpose: "an undeclared process is a Run"). The
+        declaration was the missing half of the operator's own action.
 
     ADDITIVE, in the same sense as `work_driver.ensure`: it creates what is
-    missing and never rewrites, retires or re-seeds what is there. The body is
-    the operator's document after the first write.
+    missing and never rewrites, retires or re-seeds what is there. If a
+    definition for this slug already exists it is returned untouched -- the body
+    is the operator's document from the first write onward.
+
+    NOT one-per-scope. A project may already have a maker; the operator asking
+    for a second one is the concurrency case the registry deliberately allows
+    (`SINGLETON_ROLES` exempts `maker`). What the second one must not do is
+    silently take over the first one's persona injection, and it does not --
+    see `prompt_block`.
+
+    Returns the record, or None if it could not be written. NEVER RAISES: the
+    caller has already created the build agent by the time this runs, and
+    failing the whole request over a definition file would leave the operator
+    with a half-made maker and an error.
     """
-    scope = row.get("scope")
-    project_slug = row.get("project_slug")
-    if not scope or not project_slug:
+    slug = (slug or "").strip().lower()
+    if not slug:
         return None
-    existing = maker_for_scope(scope, include_retired=True)
+    existing = agents_registry.get(slug)
     if existing is not None:
         return existing
-    slug = slug_for(project_slug)
-    if agents_registry.get(slug) is not None:
-        # The slug is taken by something that is not this scope's maker (a
-        # retired record, a hand-written agent with another role). Refusing is
-        # right: minting `<slug>-maker-2` would put a name on the roster that
-        # nobody chose and that no reconcile pass could ever converge on.
-        log.warning("makers: %s is taken; not creating a maker for %s", slug, scope)
-        return None
     try:
-        rec = agents_registry.create(
+        return agents_registry.create(
             slug=slug,
-            name=f"{row.get('label') or project_slug} maker",
-            purpose=_SEED_PURPOSE,
+            name=name or slug,
+            purpose=purpose or _SEED_PURPOSE,
             project_slug=project_slug,
             role="maker",
             # NOT a trigger and NOT an autonomy mode. A maker does not fire on a
@@ -284,47 +344,11 @@ def ensure(row: dict) -> dict | None:
             # the definition here would be the second setting this module exists
             # to avoid -- two fields answering "is this maker on", disagreeing.
             triggers_list=[],
-            body=_SEED_BODY,
+            body=body if body is not None else _SEED_BODY,
         )
-    except ValueError:
-        log.warning("makers: could not create a maker for %s", scope, exc_info=True)
+    except Exception:
+        log.warning("makers: could not write a definition for %s", slug, exc_info=True)
         return None
-    log.info("makers: created %s for scope %s", slug, scope)
-    return rec
-
-
-def reconcile() -> dict:
-    """One pass: every scope that can run tickets has a maker agent.
-
-    The same shape as `work_driver.reconcile` and for the same reason -- a
-    record that only appears when someone happens to open a screen is a record
-    that is missing when it matters. Never deletes: a scope that goes away
-    leaves its maker behind for the operator to retire, because a definition
-    file may have been edited and throwing away an edit is not reconciliation.
-    """
-    rows = runnable_scopes()
-    created = 0
-    for row in rows:
-        before = maker_for_scope(row["scope"], include_retired=True)
-        if before is None and ensure(row) is not None:
-            created += 1
-    return {"scopes": len(rows), "created": created}
-
-
-async def reconcile_loop(interval: float = RECONCILE_INTERVAL) -> None:
-    """Run `reconcile()` forever. Started from the backend lifespan, beside the
-    work driver's loop, because they answer the two halves of one question."""
-    log.info("maker reconcile loop started (interval=%ss)", interval)
-    while True:
-        try:
-            out = await asyncio.to_thread(reconcile)
-            if out.get("created"):
-                log.info("makers: created %s maker(s)", out["created"])
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("maker reconcile pass failed")
-        await asyncio.sleep(interval)
 
 
 # ---------------------------------------------------------------------------
@@ -409,12 +433,14 @@ def _recent_runs(scope: str, root: Path | None, limit: int) -> list[dict]:
     return out[:max(1, limit)]
 
 
-def summary(rec: dict, *, sessions: list[dict] | None = None) -> dict | None:
+def summary(rec: dict, *, sessions: list[dict] | None = None,
+            roster: list[dict] | None = None) -> dict | None:
     """The compact live block that rides on a roster row. None for a non-maker.
 
-    Cheap by construction: one flock probe and a filter over presence rows the
-    caller has already read. `sessions` is passed in by the roster route so a
-    list of N makers reads the presence channel once rather than N times.
+    Cheap by construction: one flock probe and a filter over rows the caller has
+    already read. `sessions` and `roster` are both passed in by the roster route
+    so that drawing N maker cards reads the presence channel once and the agent
+    definitions once, rather than N times each.
     """
     scope = scope_for(rec)
     if scope is None:
@@ -432,9 +458,17 @@ def summary(rec: dict, *, sessions: list[dict] | None = None) -> dict | None:
     else:
         activity = "absent"
     mode = scope_execution.get_mode(scope)
+    # WHO ELSE IS A MAKER HERE. Sent on every row because the multi-maker case
+    # must be visible rather than resolved: on the live install two scopes had
+    # two makers each and the UI showed whichever filename sorted first, which
+    # is not a decision anybody made. One entry is the ordinary case; two is a
+    # fact the operator gets to see and act on.
+    peers = [m.get("slug") for m in makers_for_scope(scope, roster=roster)
+             if m.get("slug")]
     return {
         "scope": scope,
         "dir": root,
+        "scope_makers": peers,
         "arm_level": mode,
         "armed": scope_execution.is_armed(scope),
         "ceiling": scope_execution.stage_ceiling(scope),
@@ -491,12 +525,28 @@ def prompt_block(scope: str) -> str:
 
     FAILS SOFT, ALWAYS. No definition, no maker, an unreadable registry: the
     answer is the empty string and the worker runs exactly as it does today.
-    The caller is an unattended sweep with nobody to answer a traceback.
+    The caller is an unattended sweep with nobody to answer a traceback. This is
+    not a degraded mode -- per `primitive-roles` §6 the loop IS the maker and the
+    definition is optional, so "" is the ordinary answer for an unadorned scope.
+
+    TWO MAKERS ON THE SCOPE ALSO GET "", and that is the point of this function
+    reading the list rather than the first match. Injecting one of two personas
+    into an unattended worker on the strength of which slug sorts first is the
+    filename deciding what the machine is told. It is logged loudly instead, so
+    the ambiguity shows up as something to fix rather than as a silent choice.
     """
     try:
-        rec = maker_for_scope(scope)
+        found = makers_for_scope(scope)
     except Exception:
         return ""
+    if len(found) > 1:
+        log.warning(
+            "makers: scope %s has %d makers (%s); injecting no persona, because "
+            "choosing between them would be slug order deciding what the worker "
+            "is told. Retire the ones that are not this scope's maker.",
+            scope, len(found), ", ".join(m.get("slug") or "?" for m in found))
+        return ""
+    rec = found[0] if found else None
     if not rec:
         return ""
     body = (rec.get("definition") or "").strip()
@@ -528,7 +578,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("state", help="a scope maker's live state (JSON)")
     s.add_argument("--scope", required=True)
 
-    sub.add_parser("reconcile", help="ensure a maker exists per runnable scope")
+    m = sub.add_parser("makers", help="every maker declaring a scope (JSON)")
+    m.add_argument("--scope", required=True)
 
     a = ap.parse_args(argv)
     if a.cmd == "prompt":
@@ -540,14 +591,21 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(runnable_scopes()))
         return 0
     if a.cmd == "state":
-        rec = maker_for_scope(a.scope)
-        if rec is None:
-            print(json.dumps({"scope": a.scope, "maker": None}))
+        found = makers_for_scope(a.scope)
+        if len(found) != 1:
+            # `maker: null` used to mean only "none". It can also mean "more
+            # than one and the platform will not pick", so say which.
+            print(json.dumps({"scope": a.scope, "maker": None,
+                              "scope_makers": [m.get("slug") for m in found]}))
             return 0
-        print(json.dumps(live_state(rec), default=str))
+        print(json.dumps(live_state(found[0]), default=str))
         return 0
-    if a.cmd == "reconcile":
-        print(json.dumps(reconcile()))
+    if a.cmd == "makers":
+        # The multi-maker case, answerable from a shell. `state` shows ONE
+        # maker's live block; this says how many there are to choose from.
+        print(json.dumps([{"slug": m.get("slug"), "name": m.get("name"),
+                           "definition_path": m.get("definition_path")}
+                          for m in makers_for_scope(a.scope)]))
         return 0
     return 2
 

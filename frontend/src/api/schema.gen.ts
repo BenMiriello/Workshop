@@ -262,7 +262,22 @@ export interface paths {
         /** List Build Agents */
         get: operations["list_build_agents_agents_build_get"];
         put?: never;
-        /** Create Build Agent */
+        /**
+         * Create Build Agent
+         * @description Create a maker with a working tree. THIS IS THE OPERATOR ACTION THAT
+         *     BRINGS A MAKER DEFINITION INTO EXISTENCE, and the only one.
+         *
+         *     `/agents/new` posts here when the role is Maker and a project is picked. It
+         *     used to write only an execution row into `build_agents.json`, and since
+         *     `agents_registry.list_agents` has no builder fallback on purpose ("an
+         *     undeclared process is a Run"), the maker the operator had just created never
+         *     appeared on the roster. The declaration was the missing half of his own
+         *     action; `makers.ensure` writes it, with the slug and name he supplied.
+         *
+         *     There is no reconciler behind this and there must not be one: a scope with
+         *     no maker definition still works its tickets, because the loop is the maker
+         *     (`services/makers.py` header, `primitive-roles-2026-07-18.md` §6).
+         */
         post: operations["create_build_agent_agents_build_post"];
         delete?: never;
         options?: never;
@@ -12618,6 +12633,11 @@ export interface components {
             /** Scope */
             scope: string;
             /**
+             * Scope Makers
+             * @default []
+             */
+            scope_makers: string[];
+            /**
              * Sessions
              * @default []
              */
@@ -12674,6 +12694,11 @@ export interface components {
             runner_resident: boolean;
             /** Scope */
             scope: string;
+            /**
+             * Scope Makers
+             * @default []
+             */
+            scope_makers: string[];
             /** Ticket Id */
             ticket_id?: string | null;
             /** Ticket Status */

@@ -130,6 +130,9 @@ export default function MakerPanel({
   const runs = state.recent_runs || [];
   const shownSessions = sessions.slice(0, MAX_SESSIONS);
   const armLevel = (edit.editing ? edit.draft.mode : state.arm_level) as ArmLevel;
+  // Every maker declaring this tree, this one included. One is the ordinary
+  // case and says nothing; two is a fact the operator has to be able to see.
+  const peers = state.scope_makers || [];
 
   return (
     <section>
@@ -173,6 +176,20 @@ export default function MakerPanel({
                 This maker's tree is no longer a runnable target. The project was removed, or
                 developer mode is off for the platform repo. The record is kept so its definition
                 is not lost.
+              </Notice>
+            )}
+            {/* SEVERAL MAKERS ON ONE SCOPE IS LEGAL AND MUST BE VISIBLE. The
+                registry allows it (a maker is exempt from the one-per-scope
+                rule, because concurrent makers on disjoint `touches` is a real
+                case). What is NOT legal is resolving it silently: the roster
+                used to show whichever definition filename sorted first. So the
+                peers are named, and the consequence is stated -- with more than
+                one persona for the tree the loop is given none of them, rather
+                than one picked by sort order. */}
+            {peers.length > 1 && (
+              <Notice tone="warn" detail={peers.join(", ")}>
+                {peers.length} makers declare this tree, so no persona is injected into its
+                unattended runs. Retire the ones that are not this scope's maker.
               </Notice>
             )}
           </Stack>

@@ -1,16 +1,42 @@
-"""The maker agent: the ticket worker, as a record you can see and manage.
+"""The maker agent: a scope's ticket-worker persona, as a record you can manage.
 
-What is pinned here is the one rule the design turns on -- THIS IS NOT A SECOND
-AUTONOMY SYSTEM. The maker's arm level is `scope_execution` and nothing else, its
-residency is the work driver's, its activity is the presence channel's. So the
-tests assert not just that a control works, but WHICH FILE MOVED when it did.
+Two rules are pinned here and everything else follows from them.
+
+THIS IS NOT A SECOND AUTONOMY SYSTEM. The maker's arm level is `scope_execution`
+and nothing else, its residency is the work driver's, its activity is the
+presence channel's. So the tests assert not just that a control works, but WHICH
+FILE MOVED when it did.
+
+THE LOOP IS THE MAKER, AND THE DEFINITION FILE IS OPTIONAL
+(`primitive-roles-2026-07-18.md` §6: "projects work without any definition
+file"). So nothing may create one on its own, and a scope with none must still
+be dispatched -- which is measured here by running the real dispatcher's own
+planner against a workshop whose `agents/` directory is empty.
 """
 from __future__ import annotations
 
 import importlib
 import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def seed(tree, slug="widgets-maker", name="Widgets maker", project_slug="widgets",
+         **kw):
+    """Create the scope's maker the way the operator's own action does.
+
+    `POST /agents/build` is the only caller of `makers.ensure` in the tree; this
+    is that call with the slug and name the create form would have minted. It is
+    a helper and not a fixture on purpose: a test that wants NO maker (most of
+    the interesting ones) simply does not call it.
+    """
+    return tree["makers"].ensure(slug=slug, name=name, project_slug=project_slug, **kw)
 
 
 @pytest.fixture
@@ -66,20 +92,194 @@ def tree(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# It exists, it is listed, and it is a maker
+# NOTHING CREATES A MAKER ON ITS OWN
 # ---------------------------------------------------------------------------
 
-def test_the_reconciler_gives_every_runnable_scope_a_maker(tree):
+def test_no_maker_appears_unless_someone_asks_for_one(tree):
+    """THE HEADLINE RULE. There was a 60-second `reconcile_loop` that wrote a
+    definition file for every runnable scope; `agent-roles-research-2026-07-16`
+    calls that "a machine for generating noise and cost" and
+    `routes/projects.create_project` already refuses it by hand.
+
+    So: the module has no reconciler, exercising every read on it creates
+    nothing, and the roster of a fresh workshop with a runnable scope is empty.
+    """
+    makers, reg = tree["makers"], tree["registry"]
+    assert not hasattr(makers, "reconcile")
+    assert not hasattr(makers, "reconcile_loop")
+
+    assert [r["scope"] for r in makers.runnable_scopes()] == ["project:widgets"]
+    makers.makers_for_scope("project:widgets")
+    makers.maker_for_scope("project:widgets")
+    makers.prompt_block("project:widgets")
+    makers.scope_row("project:widgets")
+
+    assert reg.list_agents() == []
+    assert sorted((tree["proj"] / "agents").glob("*.md")) == []
+
+
+def test_the_backend_lifespan_starts_no_maker_reconciler(tree):
+    """Pinned as source, because the loop was STARTED FROM `main.py` and the
+    module having no `reconcile` is only half of the guarantee: a future pass
+    must not reintroduce a background task that writes definition files."""
+    src = (REPO / "backend" / "main.py").read_text()
+    # Comments may name the retired loop; a started TASK may not exist.
+    code = [ln for ln in src.splitlines() if not ln.lstrip().startswith("#")]
+    assert not [ln for ln in code if "makers" in ln and "create_task" in ln]
+    assert not [ln for ln in code if "_bg_maker_reconcile" in ln]
+    # And the reason is on the record where the task used to be started.
+    assert "THERE IS NO MAKER RECONCILER HERE" in src
+
+
+def test_the_operator_action_is_the_one_thing_that_seeds_a_maker(tree):
+    """`ensure` is called from exactly one place in the tree: the create-a-maker
+    request. Grepping is the check, because the defect being prevented is a
+    SECOND caller appearing on a timer somewhere."""
+    hits = subprocess.run(
+        ["grep", "-rn", "makers.ensure(", "--include=*.py", "--include=*.sh",
+         str(REPO / "backend"), str(REPO / "scripts")],
+        capture_output=True, text=True).stdout.strip().splitlines()
+    hits = [h for h in hits if "/tests/" not in h]
+    assert len(hits) == 1, hits
+    assert "routes/agents.py" in hits[0]
+
+
+def test_a_scope_with_no_maker_definition_is_still_dispatched(tree, tmp_path):
+    """THE MEASUREMENT BEHIND "the loop is the maker".
+
+    Not a source assertion: this runs the dispatcher's OWN decision engine --
+    the Python heredoc inside `scripts/dispatch_triggers.sh`, extracted
+    verbatim -- against a workshop that has a project with a ready ticket and an
+    EMPTY `agents/` directory. It plans the sweep anyway. A maker definition is
+    not a prerequisite for a ticket being worked, and after this change none is
+    created, so this is the property that had to survive.
+    """
+    root = tmp_path / "ws"
+    (root / ".runtime").mkdir(parents=True)
+    (root / "agents").mkdir()
+    proj = root / "projects" / "widgets"
+    proj.mkdir(parents=True)
+    # The planner imports `services` from `$WORKSHOP/backend`, so the tmp root
+    # borrows the real tree for code while owning every registry it reads.
+    (root / "backend").symlink_to(REPO / "backend")
+    (root / ".runtime" / "projects.json").write_text(json.dumps({"projects": {
+        "widgets": {"title": "Widgets", "dir": str(proj),
+                    "autonomy": {"preset": "continuous",
+                                 "triggers": [{"kind": "loop"}]}}}}))
+
+    env = {**os.environ, "WORKSHOP": str(root), "WORKSHOP_ROOT": str(root),
+           "WORKSHOP_RUNTIME": str(root / ".runtime"),
+           "WORKSHOP_AGENTS_DIR": str(root / "agents"),
+           "WORKSHOP_PROJECTS_REGISTRY": str(root / ".runtime" / "projects.json")}
+    add = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, sys.argv[1]);"
+         "from pathlib import Path; from services import tasks;"
+         "tasks.add(Path(sys.argv[2]), text='Make the widget wider')",
+         str(REPO / "backend"), str(proj)],
+        env=env, capture_output=True, text=True, timeout=120)
+    assert add.returncode == 0, add.stderr
+
+    assert list((root / "agents").glob("*.md")) == []
+    plan = subprocess.run([sys.executable, "-c", _planner_source()],
+                          env=env, capture_output=True, text=True, timeout=120)
+    assert plan.returncode == 0, plan.stderr
+    assert [ln.split("\t")[:2] for ln in plan.stdout.splitlines() if ln.strip()] \
+        == [["project", "widgets"]]
+
+
+def test_a_trigger_less_maker_is_reported_as_resident_not_undispatchable(tree, tmp_path):
+    """The log half of "there is one answer to what works a ticket".
+
+    A maker seeded by the operator action carries `triggers: []` on purpose: it
+    is resident, and whether it may work is `scope_execution`'s answer for its
+    scope. The dispatcher used to report exactly that state as "registered but
+    undispatchable", which reads as though nothing worked those tickets -- while
+    the resident queue runner was working them.
+    """
+    root = tmp_path / "ws"
+    (root / ".runtime").mkdir(parents=True)
+    (root / "agents").mkdir()
+    (root / "backend").symlink_to(REPO / "backend")
+    proj = root / "projects" / "widgets"
+    proj.mkdir(parents=True)
+    (root / ".runtime" / "projects.json").write_text(json.dumps({"projects": {
+        "widgets": {"title": "Widgets", "dir": str(proj)}}}))
+    (root / "agents" / "widgets-maker.md").write_text(
+        "---\nname: Widgets maker\npurpose: ''\ncapabilities: []\n"
+        "triggers: []\nlimits: {}\nmemory: null\nrole: maker\n"
+        "project_slug: widgets\nautonomy: autonomous\n---\n\nBe careful.\n")
+
+    env = {**os.environ, "WORKSHOP": str(root), "WORKSHOP_ROOT": str(root),
+           "WORKSHOP_RUNTIME": str(root / ".runtime"),
+           "WORKSHOP_AGENTS_DIR": str(root / "agents"),
+           "WORKSHOP_PROJECTS_REGISTRY": str(root / ".runtime" / "projects.json")}
+    plan = subprocess.run([sys.executable, "-c", _planner_source()],
+                          env=env, capture_output=True, text=True, timeout=120)
+    assert plan.returncode == 0, plan.stderr
+    assert "skip-resident\twidgets-maker" in plan.stderr
+    assert "undispatchable" not in plan.stderr
+
+
+def _planner_source() -> str:
+    """The dispatcher's decision engine, lifted out of the bash file it lives
+    in. Extracted rather than copied so the test cannot pass against a stale
+    duplicate of the code it is checking."""
+    src = (REPO / "scripts" / "dispatch_triggers.sh").read_text()
+    body = src.split("<<'PYEOF'\n", 1)[1]
+    return body.split("\nPYEOF\n", 1)[0]
+
+
+def test_a_roleless_agent_logs_skip_role_not_skip_assistant(tree, tmp_path):
+    """Phase R1: "Unknown or unmapped role logs `skip-role`".
+
+    `_handler_for` used to fall through to `a.get("runtime") == "builder"`.
+    `runtime` was the builder/assistant axis, which is gone from the registry,
+    so the test was permanently False and EVERY roleless agent was reported as
+    `skip-assistant` -- a skip attributed to an unbuilt runner for an axis that
+    no longer exists. Measured through the real planner, same as above.
+    """
+    root = tmp_path / "ws"
+    (root / ".runtime").mkdir(parents=True)
+    (root / "agents").mkdir()
+    (root / "backend").symlink_to(REPO / "backend")
+    (root / ".runtime" / "projects.json").write_text(json.dumps({"projects": {}}))
+    (root / "agents" / "wanderer.md").write_text(
+        "---\nname: Wanderer\npurpose: ''\ncapabilities: []\n"
+        "triggers:\n  - kind: cron\n    cron_expression: '* * * * *'\n"
+        "limits: {}\nmemory: null\n---\n\nA roleless agent.\n")
+
+    env = {**os.environ, "WORKSHOP": str(root), "WORKSHOP_ROOT": str(root),
+           "WORKSHOP_RUNTIME": str(root / ".runtime"),
+           "WORKSHOP_AGENTS_DIR": str(root / "agents"),
+           "WORKSHOP_PROJECTS_REGISTRY": str(root / ".runtime" / "projects.json")}
+    plan = subprocess.run([sys.executable, "-c", _planner_source()],
+                          env=env, capture_output=True, text=True, timeout=120)
+    assert plan.returncode == 0, plan.stderr
+    assert "skip-role\twanderer" in plan.stderr
+    assert "skip-assistant" not in plan.stderr
+    # And the dead branch is gone from the code, not merely unreachable. Read
+    # off `_handler_for` itself so this cannot pass on a comment that still
+    # explains the retired field (the one right above does).
+    body = _planner_source().split("def _handler_for(a):", 1)[1].split("\n\n\n", 1)[0]
+    assert "runtime" not in body
+    assert "_dispatch_assistant_loop" not in _planner_source()
+
+
+# ---------------------------------------------------------------------------
+# It is listed, and it is a maker
+# ---------------------------------------------------------------------------
+
+def test_the_seeded_maker_is_listed_as_a_maker_on_its_project(tree):
     makers, reg = tree["makers"], tree["registry"]
     assert [a["slug"] for a in reg.list_agents()] == []
 
-    out = makers.reconcile()
-    assert out["created"] == 1
+    seed(tree)
 
     listed = reg.list_agents()
     assert [a["slug"] for a in listed] == ["widgets-maker"]
     assert listed[0]["role"] == "maker"
-    # `GET /agents` reads exactly this, so the roster now has an answer to
+    # `GET /agents` reads exactly this, so the roster has an answer to
     # "what is doing the tickets" where it previously had none.
     assert listed[0]["project_slug"] == "widgets"
 
@@ -88,7 +288,7 @@ def test_the_record_is_a_real_editable_definition_file(tree):
     """(a) not (b): a FILE, because managing an agent means editing its persona,
     and a synthesized record has nothing to write to."""
     makers, reg = tree["makers"], tree["registry"]
-    makers.reconcile()
+    seed(tree)
     rec = reg.get("widgets-maker")
     # Project-scoped, because the maker is linked to a project and that is where
     # `agents_registry._path_for` puts a project-linked agent's definition.
@@ -102,7 +302,7 @@ def test_the_record_is_a_real_editable_definition_file(tree):
 
 def test_the_maker_knows_which_scope_it_works(tree):
     makers, reg = tree["makers"], tree["registry"]
-    makers.reconcile()
+    seed(tree)
     rec = reg.get("widgets-maker")
     # Read off the project link the definition already carries, inverted through
     # task_scope. No new frontmatter field, no second mapping to keep in step.
@@ -117,28 +317,32 @@ def test_a_non_maker_has_no_execution_scope(tree):
 
 
 # ---------------------------------------------------------------------------
-# Idempotence: never two makers for one scope
+# Several makers on one scope: legal, visible, never resolved by sort order
 # ---------------------------------------------------------------------------
 
-def test_reconcile_is_idempotent(tree):
+def test_ensure_is_additive_and_never_rewrites(tree):
+    """Asked twice, it writes once. The body is the operator's document from the
+    first write onward, so re-seeding would silently discard an edit."""
     makers, reg = tree["makers"], tree["registry"]
-    first = makers.reconcile()
-    second = makers.reconcile()
-    third = makers.reconcile()
-    assert (first["created"], second["created"], third["created"]) == (1, 0, 0)
+    first = seed(tree)
+    reg.update("widgets-maker", body="Ship narrow diffs. Ask before renaming.")
+    again = seed(tree)
+    assert first["slug"] == again["slug"] == "widgets-maker"
+    assert "Ship narrow diffs" in again["definition"]
     assert len([a for a in reg.list_agents() if a["role"] == "maker"]) == 1
 
 
-def test_assert_role_unique_does_NOT_cover_maker_so_this_module_does(tree):
+def test_assert_role_unique_does_NOT_cover_maker_and_this_module_does_not_either(tree):
     """THE LOAD-BEARING NEGATIVE RESULT, pinned so nobody relies on the wrong
-    guard.
+    guard -- and so nobody restores the claim that used to be in this module's
+    header, that one-per-scope was "ENFORCED HERE". It was not. On the live
+    install `birds` and `budget` each had two.
 
     `agents_registry.SINGLETON_ROLES` is `("triager", "keeper")` and deliberately
     EXEMPTS `maker` -- several makers on one scope is the concurrency case,
     governed by `touches` disjointness and the claim fence, not a configuration
     error. So `_assert_role_unique` raises for a second keeper and says nothing
-    about a second maker, and the reconciler's idempotence cannot come from it.
-    It comes from `maker_for_scope` asking first.
+    about a second maker, and this module does not change that rule for anyone.
     """
     makers, reg = tree["makers"], tree["registry"]
     assert "maker" not in reg.SINGLETON_ROLES
@@ -147,24 +351,75 @@ def test_assert_role_unique_does_NOT_cover_maker_so_this_module_does(tree):
     with pytest.raises(ValueError):
         reg.create(slug="k2", name="K2", role="keeper")
 
-    # A second maker on the same scope is NOT refused by the registry...
-    makers.reconcile()
+    # A second maker on the same scope is NOT refused, by the registry or here.
+    seed(tree)
     reg.create(slug="hand-rolled", name="Hand rolled", role="maker",
                project_slug="widgets")
     assert len([a for a in reg.list_agents() if a["role"] == "maker"]) == 2
-    # ...and the reconciler still never adds a third, because it asks first.
-    assert makers.reconcile()["created"] == 0
+    assert makers.ensure(slug="hand-rolled", name="Hand rolled",
+                         project_slug="widgets")["slug"] == "hand-rolled"
 
 
-def test_an_operator_written_maker_is_adopted_rather_than_duplicated(tree):
-    """A maker the operator wrote by hand, under any name, IS this scope's
-    maker. Creating a second beside it would be the roster growing a duplicate
-    of the very thing he said he could not find."""
+def test_the_scopes_makers_are_all_of_them_not_whichever_file_sorts_first(tree):
+    """WHY THIS EXISTS. `maker_for_scope` was a `sorted(glob)` search that
+    returned the FIRST match, so Birds showed `birds-builder-2` purely because
+    `-2.md` sorts before `.md`. The roster was reporting a choice nobody made.
+
+    Now the list is the answer, `maker_for_scope` declines to pick, and the
+    peers ride on the summary block so the UI can say there are two.
+    """
+    makers, reg = tree["makers"], tree["registry"]
+    reg.create(slug="widgets-builder-2", name="Widgets builder 2", role="maker",
+               project_slug="widgets", body="second")
+    reg.create(slug="widgets-builder", name="Widgets builder", role="maker",
+               project_slug="widgets", body="first")
+
+    assert [m["slug"] for m in makers.makers_for_scope("project:widgets")] == \
+        ["widgets-builder", "widgets-builder-2"]
+    # None means "not one", which is honest; it does NOT mean "none exists".
+    assert makers.maker_for_scope("project:widgets") is None
+    # And both rows carry the whole set, so neither card can look like the only
+    # maker on the tree.
+    for rec in makers.makers_for_scope("project:widgets"):
+        assert makers.summary(rec)["scope_makers"] == \
+            ["widgets-builder", "widgets-builder-2"]
+
+
+def test_one_maker_is_the_ordinary_case_and_says_so(tree):
+    makers = tree["makers"]
+    seed(tree)
+    assert [m["slug"] for m in makers.makers_for_scope("project:widgets")] == \
+        ["widgets-maker"]
+    assert makers.maker_for_scope("project:widgets")["slug"] == "widgets-maker"
+    assert makers.summary(makers.maker_for_scope("project:widgets"))["scope_makers"] \
+        == ["widgets-maker"]
+
+
+def test_an_operator_written_maker_under_any_name_is_this_scopes_maker(tree):
+    """`makers_for_scope` is a SEARCH, not a slug lookup. That is why five of
+    the seven live scopes kept the maker the operator already had instead of
+    growing a `<slug>-maker` duplicate beside it."""
     makers, reg = tree["makers"], tree["registry"]
     reg.create(slug="my-own-worker", name="My own worker", role="maker",
                project_slug="widgets", body="do it my way")
-    assert makers.reconcile()["created"] == 0
     assert makers.maker_for_scope("project:widgets")["slug"] == "my-own-worker"
+    assert "do it my way" in makers.prompt_block("project:widgets")
+
+
+def test_no_slug_convention_is_minted_in_this_module(tree):
+    """The seeding path takes the slug it is given. The previous version minted
+    `<project-slug>-maker`, a name no doc chose, which reached two of seven live
+    scopes while the other five kept `<slug>-builder`: one roster, two
+    conventions. `app-is-the-entity-2026-08-20.md` -- a slug is a label, never an
+    identity -- so the label comes from the operator's name upstream."""
+    makers, reg = tree["makers"], tree["registry"]
+    src = (REPO / "backend" / "services" / "makers.py").read_text()
+    assert "MAKER_SLUG_SUFFIX" not in src
+    assert '"-maker"' not in src and "'-maker'" not in src
+    assert not hasattr(makers, "slug_for")
+
+    seed(tree, slug="widget-wrangler", name="Widget wrangler")
+    assert reg.get("widget-wrangler")["role"] == "maker"
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +430,7 @@ def test_arm_level_round_trips_through_scope_execution_and_no_new_store(tree):
     """THE RULE THIS WHOLE DESIGN TURNS ON. Setting the maker's arm level must
     move `scope-execution.json` and create no file of its own."""
     makers, reg, sexec = tree["makers"], tree["registry"], tree["exec"]
-    makers.reconcile()
+    seed(tree)
     rec = reg.get("widgets-maker")
 
     runtime = tree["root"] / ".runtime"
@@ -212,7 +467,7 @@ def test_the_shared_control_arms_and_disarms_the_same_store(tree, monkeypatch):
     pass undoes -- and both go through the ONE implementation the autonomy
     routes also call, so an agent-level control cannot drift from it."""
     makers, driver, sexec = tree["makers"], tree["driver"], tree["exec"]
-    makers.reconcile()
+    seed(tree)
     root = str(tree["proj"])
     monkeypatch.setattr(driver, "ensure", lambda r, m="supervised": True)
     monkeypatch.setattr(driver, "stop", lambda r: True)
@@ -236,7 +491,7 @@ def test_the_shared_control_arms_and_disarms_the_same_store(tree, monkeypatch):
 
 def test_a_sweeps_presence_row_surfaces_as_the_makers_current_ticket(tree):
     makers, reg, presence = tree["makers"], tree["registry"], tree["presence"]
-    makers.reconcile()
+    seed(tree)
     rec = reg.get("widgets-maker")
     assert makers.summary(rec)["activity"] == "absent"
 
@@ -261,7 +516,7 @@ def test_a_ticket_in_the_scopes_store_gives_the_row_its_subject(tree):
     from services import tasks
 
     makers, reg, presence = tree["makers"], tree["registry"], tree["presence"]
-    makers.reconcile()
+    seed(tree)
     task = tasks.add(tree["proj"], text="Make the widget wider")
     presence.beat("sweep-job_2", session_kind="run", subject_kind="ticket",
                   subject_id=task["id"], scope="project:widgets")
@@ -275,7 +530,7 @@ def test_present_does_not_pretend_to_know_idle_from_thinking(tree, monkeypatch):
     `present`, and the detail says the channel cannot tell "waiting on the poll"
     from "sweeping, nothing claimed yet" -- rather than the API picking one."""
     makers, reg, driver = tree["makers"], tree["registry"], tree["driver"]
-    makers.reconcile()
+    seed(tree)
     monkeypatch.setattr(driver, "is_resident", lambda d: True)
     s = makers.summary(reg.get("widgets-maker"))
     assert s["activity"] == "present"
@@ -288,7 +543,7 @@ def test_an_expired_presence_row_is_not_activity(tree):
     """Liveness is the record's own expiry. Reading never reconciles, so an
     expired sweep simply stops being here."""
     makers, reg, presence = tree["makers"], tree["registry"], tree["presence"]
-    makers.reconcile()
+    seed(tree)
     presence.beat("sweep-old", session_kind="run", subject_kind="ticket",
                   subject_id="t-9", scope="project:widgets", ttl_sec=1)
     path = presence._session_path("sweep-old")
@@ -305,7 +560,7 @@ def test_recent_runs_are_the_jobs_that_worked_this_scopes_tickets(tree):
     from services import tasks
 
     makers, reg, jobs = tree["makers"], tree["registry"], tree["jobs"]
-    makers.reconcile()
+    seed(tree)
     mine = tasks.add(tree["proj"], text="Mine")
     parent = jobs.start(trigger="loop")
     child = jobs.start(trigger="loop", task_id=mine["id"], parent_id=parent["id"])
@@ -324,7 +579,7 @@ def test_the_prompt_block_carries_the_makers_edited_body(tree):
     injects this into the unattended worker's prompt, so editing the agent is
     what changes the worker."""
     makers, reg = tree["makers"], tree["registry"]
-    makers.reconcile()
+    seed(tree)
     reg.update("widgets-maker", body="Never touch the migrations directory.")
     block = makers.prompt_block("project:widgets")
     assert "Never touch the migrations directory." in block
@@ -341,7 +596,7 @@ def test_the_prompt_build_tolerates_a_missing_definition(tree, monkeypatch):
     assert makers.prompt_block("project:nope") == ""          # no such scope
     assert makers.prompt_block("") == ""
 
-    makers.reconcile()
+    seed(tree)
     reg.update("widgets-maker", body="")
     assert makers.prompt_block("project:widgets") == ""       # empty body
 
@@ -349,6 +604,49 @@ def test_the_prompt_build_tolerates_a_missing_definition(tree, monkeypatch):
         raise RuntimeError("registry unavailable")
     monkeypatch.setattr(makers.agents_registry, "list_agents", boom)
     assert makers.prompt_block("project:widgets") == ""
+
+
+def test_two_personas_for_one_tree_means_no_persona_is_injected(tree):
+    """The worker prompt must not be decided by which slug sorts first.
+
+    A definition file is optional -- the loop is the maker -- so refusing to
+    choose costs the sweep nothing it was entitled to. Choosing would mean an
+    unattended run being told to be `widgets-builder-2` because `-2` sorts
+    before nothing, which is the exact defect on the live install.
+    """
+    makers, reg = tree["makers"], tree["registry"]
+    reg.create(slug="widgets-builder", name="Widgets builder", role="maker",
+               project_slug="widgets", body="be careful")
+    assert "be careful" in makers.prompt_block("project:widgets")
+
+    reg.create(slug="widgets-builder-2", name="Widgets builder 2", role="maker",
+               project_slug="widgets", body="move fast")
+    assert makers.prompt_block("project:widgets") == ""
+
+
+def test_the_cli_says_which_kind_of_nothing_it_found(tree):
+    """`maker: null` used to mean only "none". It can also mean "several and the
+    platform will not pick", and a shell caller has to be able to tell those
+    apart."""
+    makers, reg = tree["makers"], tree["registry"]
+    out = json.loads(_capture(makers, ["state", "--scope", "project:widgets"]))
+    assert out == {"scope": "project:widgets", "maker": None, "scope_makers": []}
+
+    reg.create(slug="m-a", name="A", role="maker", project_slug="widgets")
+    reg.create(slug="m-b", name="B", role="maker", project_slug="widgets")
+    out = json.loads(_capture(makers, ["state", "--scope", "project:widgets"]))
+    assert out["maker"] is None and out["scope_makers"] == ["m-a", "m-b"]
+    listed = json.loads(_capture(makers, ["makers", "--scope", "project:widgets"]))
+    assert [m["slug"] for m in listed] == ["m-a", "m-b"]
+
+
+def _capture(makers, argv):
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        assert makers.main(argv) == 0
+    return buf.getvalue()
 
 
 def test_the_cli_prints_nothing_and_exits_zero_when_there_is_no_maker(tree, capsys):
@@ -404,7 +702,7 @@ def _client(tree):
 
 def test_get_agents_lists_the_maker_with_its_live_block(tree):
     makers = tree["makers"]
-    makers.reconcile()
+    seed(tree)
     client = _client(tree)
 
     rows = client.get("/agents/").json()
@@ -418,7 +716,7 @@ def test_get_agents_lists_the_maker_with_its_live_block(tree):
 
 def test_the_maker_detail_route_answers_with_its_declared_model(tree):
     makers, presence = tree["makers"], tree["presence"]
-    makers.reconcile()
+    seed(tree)
     presence.beat("sweep-job_9", session_kind="run", activity="working ticket t-3",
                   subject_kind="ticket", subject_id="t-3", scope="project:widgets")
     body = _client(tree).get("/agents/widgets-maker/maker").json()
@@ -433,7 +731,7 @@ def test_setting_the_arm_level_on_the_agent_writes_scope_execution(tree):
     """The control on the AGENT and the control in the Settings drawer are the
     same write. There is no per-agent copy that could disagree."""
     makers, sexec = tree["makers"], tree["exec"]
-    makers.reconcile()
+    seed(tree)
     store = tree["root"] / ".runtime" / "scope-execution.json"
 
     body = _client(tree).post("/agents/widgets-maker/maker/execution",
@@ -441,6 +739,44 @@ def test_setting_the_arm_level_on_the_agent_writes_scope_execution(tree):
     assert body["arm_level"] == "supervised"
     assert json.loads(store.read_text()) == {"project:widgets": "supervised"}
     assert sexec.get_mode("project:widgets") == "supervised"
+
+
+def test_creating_a_maker_with_a_tree_writes_its_definition(tree):
+    """THE OPERATOR ACTION, end to end. `/agents/new` with role Maker and a
+    project posts here; before this it wrote only an execution row into
+    `build_agents.json` and `list_agents` has no builder fallback on purpose, so
+    the maker he had just created never reached the roster at all."""
+    client = _client(tree)
+    r = client.post("/agents/build", json={"slug": "widget-wrangler",
+                                           "name": "Widget wrangler",
+                                           "purpose": "keep widgets wide",
+                                           "project_slug": "widgets"})
+    assert r.status_code == 200, r.text
+
+    rec = tree["registry"].get("widget-wrangler")
+    assert rec is not None and rec["role"] == "maker"
+    assert rec["project_slug"] == "widgets"
+    assert (tree["proj"] / "agents" / "widget-wrangler.md").exists()
+    # It is on the roster with a live maker block, which is the whole point.
+    row = next(a for a in client.get("/agents/").json() if a["slug"] == "widget-wrangler")
+    assert row["maker"]["scope"] == "project:widgets"
+    assert row["maker"]["scope_makers"] == ["widget-wrangler"]
+
+
+def test_a_second_maker_on_a_project_is_allowed_and_both_say_so(tree):
+    """Creating another maker for a project the operator already gave one is
+    the concurrency case, not an error. What must not happen is one of them
+    quietly looking like the only one."""
+    client = _client(tree)
+    for slug, name in (("widget-wrangler", "Widget wrangler"),
+                       ("widget-polisher", "Widget polisher")):
+        assert client.post("/agents/build", json={
+            "slug": slug, "name": name, "project_slug": "widgets"}).status_code == 200
+    rows = {a["slug"]: a for a in client.get("/agents/").json()}
+    for slug in ("widget-wrangler", "widget-polisher"):
+        assert rows[slug]["maker"]["scope_makers"] == ["widget-polisher", "widget-wrangler"]
+    # And neither persona reaches the worker while it is ambiguous.
+    assert tree["makers"].prompt_block("project:widgets") == ""
 
 
 def test_an_agent_that_is_not_a_maker_gets_a_409_not_a_404(tree):

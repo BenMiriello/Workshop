@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  armLevelGloss, armLevelName, ceilingLine, makerPrimary, makerStatus,
+  armLevelGloss, armLevelName, ceilingLine, makerPrimary, makerStatus, peerNote,
   type MakerSummary,
 } from "./makers";
 
@@ -10,6 +10,7 @@ import {
 const base: MakerSummary = {
   scope: "project:atlas",
   dir: "/srv/projects/atlas",
+  scope_makers: ["atlas-maker"],
   arm_level: "supervised",
   armed: true,
   ceiling: "in_review",
@@ -160,5 +161,28 @@ describe("ceilingLine", () => {
 
   it("does not invent a ceiling for an armed scope that reports none", () => {
     expect(ceilingLine({ armed: true, ceiling: null })).toBe("No stage ceiling is set for this scope.");
+  });
+});
+
+describe("peerNote", () => {
+  // WHY THIS RULE EXISTS: two makers on one tree is legal (the registry exempts
+  // `maker` from its one-per-scope constraint), but which one the roster showed
+  // used to be decided by which definition FILENAME sorted first. One says
+  // nothing; two say how many, on both cards.
+  it("says nothing for the ordinary one-maker tree", () => {
+    expect(peerNote(base, "atlas-maker")).toBeNull();
+    expect(peerNote({ scope_makers: [] }, "atlas-maker")).toBeNull();
+  });
+
+  it("numbers each maker when a tree has more than one", () => {
+    const two = { scope_makers: ["atlas-builder", "atlas-builder-2"] };
+    expect(peerNote(two, "atlas-builder")).toBe("1 of 2 makers on this tree");
+    expect(peerNote(two, "atlas-builder-2")).toBe("2 of 2 makers on this tree");
+  });
+
+  it("still reports the count when the caller cannot name itself", () => {
+    const two = { scope_makers: ["a", "b"] };
+    expect(peerNote(two)).toBe("one of 2 makers on this tree");
+    expect(peerNote(two, "somebody-else")).toBe("one of 2 makers on this tree");
   });
 });

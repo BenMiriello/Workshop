@@ -430,8 +430,9 @@ for slug, p in sorted(projects.items()):
 #   keeper   -> one memory_keeper_run.sh consolidation pass (what `role: memory`
 #               did; the alias still resolves here, so memory-keeper.md is
 #               untouched and keeps running).
-#   maker    -> the bounded ralph sweep over the agent's scope (what a builder
-#               already did; now reachable by role, not only by runtime).
+#   maker    -> the bounded ralph sweep over the agent's scope. The SAME loop
+#               the resident queue runner drives; see _dispatch_maker for why
+#               there is only one answer to "what works a ticket".
 #   triager  -> one note-triage pass over the agent's scope (triager_run.sh): the
 #               notes modified since the scope's watermark are each decided
 #               task/link/escalate/none. Gated on a stat-only ready predicate, so
@@ -441,8 +442,8 @@ for slug, p in sorted(projects.items()):
 #   broker   -> NEVER dispatches. A broker is demand-only: it is called when
 #               something needs adjudication, it does not wake up on a timer.
 #
-# Default (no role): builder runtime -> maker; assistant runtime -> the assistant
-# loop (still unbuilt; skip-assistant, as before).
+# Default (no role, or a role with no handler): skip-role. There is no runtime
+# fallback -- see _skip_role.
 #
 # Each handler takes (a, slug, ctx) and returns (type, scope, assignee) or None.
 # A handler owns ALL of its own gates (liveness, circuit breaker, readiness,
@@ -473,22 +474,47 @@ def _dispatch_keeper(a, slug, ctx):
 
 
 def _dispatch_maker(a, slug, ctx):
-    """The bounded ralph sweep over the agent's own scope dir."""
-    from services import build_agents
-    try:
-        rec = build_agents.get_agent(slug)
-    except Exception:
-        return None
-    if not rec:
-        return None
-    pslug = rec.get("project_slug")
+    """The bounded ralph sweep over the agent's own scope dir.
+
+    THERE IS ONE ANSWER TO "WHAT WORKS A TICKET", and it is the loop:
+    `ralph.sh` over a scope's tree, claiming from that scope's task store.
+    `services/makers.py` does NOT run tickets and has no second dispatcher in
+    it; what it owns is the maker's IDENTITY -- which tree a maker declares
+    (`scope_for`), and the persona `ralph.sh` injects there (`prompt_block`).
+    This handler and that module are therefore two halves of one thing, not two
+    expressions of it: the loop is reached either RESIDENTLY (work_driver keeps
+    a queue runner on an armed scope) or DISPATCHED (here, when a maker carries
+    its own triggers and its own assigned queue). Both end in the same script.
+
+    So the tree is asked of `makers`, not re-derived. It used to be resolved
+    here through `build_agents.get_agent` -> `_project_dir`, a third spelling of
+    "which tree does this maker work" that skipped the developer-mode gate the
+    project loop above applies (ADR 0014) and could disagree with what the UI
+    showed. `makers.scope_row` is the one enumeration of runnable trees, shared
+    with the queue-runner picker.
+    """
+    from services import build_agents, makers
     root = None
-    if pslug:
-        root = build_agents._project_dir(pslug)
-    if root is None and rec.get("cwd"):
-        root = Path(rec["cwd"])
+    scope_key = None
+    try:
+        scope_key = makers.scope_for(a)
+        row = makers.scope_row(scope_key) if scope_key else None
+    except Exception:
+        row = None
+    if row is not None:
+        root = Path(row["dir"])
+    else:
+        # A project-less build agent (the scratch tree) has no scope key and no
+        # registry row, only a cwd. It is still a maker and still sweepable.
+        try:
+            rec = build_agents.get_agent(slug) or {}
+        except Exception:
+            rec = {}
+        if rec.get("cwd"):
+            root = Path(rec["cwd"])
     if root is None or not Path(root).is_dir():
         return None
+    pslug = a.get("project_slug")
     if running_job(agent_id=f"agent:{slug}"):
         return None
     opened, cb_reason, cb_half_open = circuit_open(f"agent:{slug}", agent_id=f"agent:{slug}")
@@ -500,7 +526,7 @@ def _dispatch_maker(a, slug, ctx):
     if not _budget_ok(slug):
         return None
     ctx["half_open"] = cb_half_open
-    ctx["scope_key"] = f"project:{pslug}" if pslug else f"agent:{slug}"
+    ctx["scope_key"] = scope_key or (f"project:{pslug}" if pslug else f"agent:{slug}")
     ctx["scope_path"] = str(root)
     return ("agent", str(root), f"agent:{slug}")
 
@@ -540,9 +566,20 @@ def _dispatch_reviewer(a, slug, ctx):
     return None
 
 
-def _dispatch_assistant_loop(a, slug, ctx):
-    """The non-code data-tier turn runner: still unbuilt. Logged, not dropped."""
-    print(f"skip-assistant\t{slug}\t", file=sys.stderr)
+def _skip_role(a, slug, ctx):
+    """No handler for this agent's role. Phase R1: `skip-role`, not
+    `skip-assistant`.
+
+    This replaces a branch that read `a.get("runtime") == "builder"` to decide
+    between the maker sweep and an "assistant loop". `runtime` was the
+    builder/assistant axis, which is GONE -- the registry emits no such key, so
+    the test was permanently False and EVERY roleless agent was reported as
+    `skip-assistant`: a skip attributed to an unbuilt runner for an axis that no
+    longer exists. An agent with no role is simply not dispatchable
+    (`primitive-roles-2026-07-18.md` §2: "an agent's existence does not imply
+    activation"), which is what this now says."""
+    print(f"skip-role\t{slug}\t(role={a.get('role') or 'none'}; "
+          f"no dispatch handler for this role)", file=sys.stderr)
     return None
 
 
@@ -560,9 +597,7 @@ def _handler_for(a):
     role = a.get("role")            # already coerced by agents_registry (alias-resolved)
     if role == "broker":
         return None
-    if role in ROLE_HANDLERS:
-        return ROLE_HANDLERS[role]
-    return _dispatch_maker if a.get("runtime") == "builder" else _dispatch_assistant_loop
+    return ROLE_HANDLERS.get(role, _skip_role)
 
 
 for a in agents:
@@ -591,12 +626,27 @@ for a in agents:
         print(f"skip-reactive\t{slug}\t(autonomy=reactive; manual invocation only)", file=sys.stderr)
         continue
     if not slug or not trigs:
-        # A registered agent with NO triggers can never be dispatched. Silent
-        # until now, which is why all 20 builder agents were invisible: they
-        # carry `triggers: []`, so `maker` - a fully built handler - has never
-        # fired once. Say so, rather than dropping them without a word.
+        # A registered agent with NO triggers is not dispatched from HERE.
+        # Silent until this line existed, which is why agents carrying
+        # `triggers: []` looked like they had simply vanished.
         if slug and not trigs:
-                print(f"skip-no-triggers\t{slug}\t(role={a.get('role') or 'none'}; registered but undispatchable)", file=sys.stderr)
+            role = a.get("role") or "none"
+            if role == "maker":
+                # NOT "undispatchable", and this is the log half of the single
+                # answer stated in _dispatch_maker. A maker with no triggers is
+                # the ORDINARY maker: its scope's queue is worked by the
+                # resident loop (work_driver keeps a queue runner on an armed
+                # scope, and that runner IS project_ralph.sh -> ralph.sh). The
+                # dispatcher's maker handler covers the other way into the same
+                # loop -- a maker that carries its own triggers and its own
+                # assigned tickets. Reporting the resident case as undispatchable
+                # made the log read as though nothing worked those tickets.
+                print(f"skip-resident\t{slug}\t(role=maker, no triggers; its "
+                      f"scope's queue is worked by the resident loop, not by "
+                      f"this tick)", file=sys.stderr)
+            else:
+                print(f"skip-no-triggers\t{slug}\t(role={role}; "
+                      f"registered but undispatchable)", file=sys.stderr)
         continue
     fire = False
     fired_cron_keys = []  # committed to state only if this agent is dispatched (F16)

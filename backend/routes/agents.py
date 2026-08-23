@@ -128,6 +128,12 @@ class MakerSummary(BaseModel):
 
     scope: str
     dir: str | None = None
+    # EVERY maker declaring this scope, in slug order, including this one. The
+    # registry allows several (`SINGLETON_ROLES` exempts `maker`), so a list of
+    # two is a legal state the UI has to be able to show -- not something the
+    # backend quietly resolves. It used to be resolved by filename sort order,
+    # which is how `birds-builder-2` became the Birds maker the operator saw.
+    scope_makers: list[str] = []
     arm_level: AutonomyMode
     armed: bool
     # How far auto-execution may advance: `in_review` (supervised) or `done`
@@ -699,7 +705,7 @@ async def list_agents():
             # Null for everything that is not a maker with a tree. A maker's
             # live block is joined here and stored nowhere -- see
             # services/makers.py.
-            "maker": _maker_summary(a, sessions),
+            "maker": _maker_summary(a, sessions, reg),
         })
 
     out.sort(key=lambda a: a.get("last_active") or a.get("created_at") or "", reverse=True)
@@ -767,8 +773,21 @@ async def list_build_agents():
 
 @router.post("/build", response_model=BuildAgent, response_model_exclude_unset=True)
 async def create_build_agent(body: BuildAgentCreate):
+    """Create a maker with a working tree. THIS IS THE OPERATOR ACTION THAT
+    BRINGS A MAKER DEFINITION INTO EXISTENCE, and the only one.
+
+    `/agents/new` posts here when the role is Maker and a project is picked. It
+    used to write only an execution row into `build_agents.json`, and since
+    `agents_registry.list_agents` has no builder fallback on purpose ("an
+    undeclared process is a Run"), the maker the operator had just created never
+    appeared on the roster. The declaration was the missing half of his own
+    action; `makers.ensure` writes it, with the slug and name he supplied.
+
+    There is no reconciler behind this and there must not be one: a scope with
+    no maker definition still works its tickets, because the loop is the maker
+    (`services/makers.py` header, `primitive-roles-2026-07-18.md` §6)."""
     try:
-        return build_agents.create_agent(
+        rec = build_agents.create_agent(
             slug=body.slug,
             name=body.name,
             purpose=body.purpose,
@@ -777,6 +796,12 @@ async def create_build_agent(body: BuildAgentCreate):
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
+    # Additive and never raising: the build agent exists by now, so a definition
+    # that could not be written is a maker without a persona, not a failed
+    # create. It is logged inside `ensure`.
+    makers.ensure(slug=rec["slug"], name=body.name, purpose=body.purpose or None,
+                  project_slug=body.project_slug)
+    return rec
 
 
 class BuildAgentRename(BaseModel):
@@ -1543,13 +1568,14 @@ async def delete_agent(agent_id: str):
 # catch-all, which matches a single segment only.
 
 
-def _maker_summary(rec: dict, sessions: list[dict]) -> dict | None:
+def _maker_summary(rec: dict, sessions: list[dict],
+                   roster: list[dict] | None = None) -> dict | None:
     """The roster's compact maker block, or None. Never raises: a roster that
     500s because one agent's tree went missing is worse than a null."""
     if rec.get("role") != "maker":
         return None
     try:
-        return makers.summary(rec, sessions=sessions)
+        return makers.summary(rec, sessions=sessions, roster=roster)
     except Exception:
         log.warning("could not read maker state for %s", rec.get("slug"), exc_info=True)
         return None

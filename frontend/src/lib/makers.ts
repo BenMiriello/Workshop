@@ -151,3 +151,22 @@ export const START_HELP =
   "Start arms this scope (at run to review, if it was off) and puts a worker on the tree.";
 export const STOP_HELP =
   "Stop disarms this scope and ends the resident worker. A ticket half-worked goes back on the queue.";
+
+/** "1 of 2 makers on this tree", or null when there is nothing to say.
+ *
+ *  SEVERAL MAKERS ON ONE SCOPE IS LEGAL: the registry exempts `maker` from its
+ *  one-per-scope rule, because concurrent makers on disjoint `touches` is a
+ *  real case. What is not legal is hiding it. On the live install two trees had
+ *  two makers each, and which one the roster showed was decided by which
+ *  definition FILENAME sorted first -- so `birds-builder-2` outranked
+ *  `birds-builder` for no reason anyone chose. One maker says nothing here;
+ *  more than one says how many, on every card that is one of them.
+ */
+export function peerNote(m: Pick<MakerSummary, "scope_makers">,
+                         slug?: string | null): string | null {
+  const peers = m.scope_makers || [];
+  if (peers.length < 2) return null;
+  const i = slug ? peers.indexOf(slug) : -1;
+  const which = i >= 0 ? `${i + 1} of ${peers.length}` : `one of ${peers.length}`;
+  return `${which} makers on this tree`;
+}

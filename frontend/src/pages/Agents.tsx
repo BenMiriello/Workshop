@@ -12,7 +12,7 @@ import { type AutonomyMode } from "../lib/autonomy";
 import { runHref } from "../lib/jobs";
 import { ticketHref } from "../lib/tasks";
 import { scopeLabel } from "../lib/scope";
-import { armLevelName, makerPrimary, makerStatus, type MakerSummary } from "../lib/makers";
+import { armLevelName, makerPrimary, makerStatus, peerNote, type MakerSummary } from "../lib/makers";
 
 // Roster item enriched with the O6/O7 autonomy fields the backend now returns on
 // GET /api/agents/ (autonomy preset + role + latitude). Kept local so the shared
@@ -456,6 +456,7 @@ export default function Agents() {
             const mk = a.maker ?? null;
             const mkStatus = mk ? makerStatus(mk) : null;
             const mkPrimary = mk ? makerPrimary(mk) : null;
+            const mkPeers = mk ? peerNote(mk, a.slug) : null;
             // A maker's card opens the MAKER, not its work pane. The work pane
             // is a code editor beside a chat; it does not say what the agent is
             // doing, which ticket it holds or whether a worker is even resident.
@@ -510,6 +511,11 @@ export default function Agents() {
                     applied to an agent that does not use it. */}
                 <p className="ws-card__meta">
                   {mk ? scopeLabel(mk.scope) : triggerSummary(a.triggers)}
+                  {/* Only when there IS more than one. Which maker the roster
+                      showed for a tree used to be decided by definition
+                      filename order; if two of them are here, the roster says
+                      so rather than letting one look like the only one. */}
+                  {mkPeers && <span className="ws-muted"> · {mkPeers}</span>}
                 </p>
               </>
             );
