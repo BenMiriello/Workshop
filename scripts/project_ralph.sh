@@ -243,7 +243,20 @@ build_receipt_evidence() {  # $1=receipt_file $2=baseline $3=head $4=commits(new
   # failed run still shows what it touched). Filter bookkeeping paths in both.
   local ignore='^(\.runtime/|\.tasks\.json|TODO\.md$)'
   local files_json
-  if [[ -n "$(printf '%s' "$commits_blob" | tr -d '[:space:]')" ]]; then
+  # Use worker_commits from the receipt when present: these are only the commits
+  # this specific ralph process made, so concurrent agents' commits on a shared
+  # checkout are not attributed to this worker. Falls back to baseline..head for
+  # receipts that predate this field (older ralph.sh) or when worker_commits is
+  # empty (the worker made no commits, e.g. env failure on iter 1).
+  local worker_commits_json
+  worker_commits_json=$(printf '%s' "$base" | jq -c '.worker_commits // null' 2>/dev/null)
+  if [[ -n "$worker_commits_json" && "$worker_commits_json" != "null" && "$worker_commits_json" != "[]" ]]; then
+    files_json=$(printf '%s' "$base" | jq -r '.worker_commits[]?' 2>/dev/null \
+      | while IFS= read -r sha; do
+          [[ -n "$sha" ]] && git -C "$WORK_DIR" diff-tree --no-commit-id -r --name-only "$sha" 2>/dev/null
+        done \
+      | sort -u | grep -vE "$ignore" | jq -R . | jq -s . 2>/dev/null)
+  elif [[ -n "$(printf '%s' "$commits_blob" | tr -d '[:space:]')" ]]; then
     files_json=$(cd "$WORK_DIR" && git diff --name-only "$baseline".."$head" 2>/dev/null \
       | grep -vE "$ignore" | jq -R . | jq -s . 2>/dev/null)
   else
