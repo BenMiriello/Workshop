@@ -20,6 +20,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ChevronLeft, ChevronDown, RefreshCw, Trash2, ExternalLink, MoreHorizontal,
   Play, CheckCheck, ScrollText, MessageSquare, Link2, Send, Plus, MessagesSquare,
+  GitPullRequestArrow,
 } from "lucide-react";
 
 import { Markdown } from "@workshop/ui/markdown";
@@ -30,6 +31,7 @@ import {
   latitudeSourceLabel, readinessLine, readinessTone, triageLabel,
 } from "../lib/tasks";
 import { parseList, unresolvedIds } from "../lib/ticketEdit";
+import { decisionRefusal, isOpenChange, type Change } from "../lib/changeReview";
 import { jobIsLive, jobStatusKind, runHref } from "../lib/jobs";
 import { nextWorkParams } from "../lib/workParams";
 import {
@@ -103,6 +105,10 @@ export default function TicketDetail() {
 
   const [task, setTask] = useState<Task | null>(null);
   const [runs, setRuns] = useState<JobRec[] | null>(null);
+  // The change this ticket's work is on, if it is on one. Fetched separately
+  // and BEST EFFORT: /changes needs the relational store and answers 503
+  // without it, and a ticket page must still render on a file-backed scope.
+  const [change, setChange] = useState<Change | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -138,7 +144,22 @@ export default function TicketDetail() {
       setLoading(false);
     }
   }, [scope, id]);
+
+  const loadChange = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/changes?ticket_id=${encodeURIComponent(id)}&limit=20`);
+      if (!r.ok) { setChange(null); return; }
+      const j = await r.json();
+      const open = (j.changes || []).find(isOpenChange) ?? (j.changes || [])[0] ?? null;
+      setChange(open);
+    } catch {
+      // No store, no route, no change: the ticket page is unaffected either way.
+      setChange(null);
+    }
+  }, [id]);
+
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { void loadChange(); }, [loadChange]);
 
   // ONE writer for every field on this page. It sends exactly the keys it is
   // given, which is what makes per-field commit safe: a title edit cannot
@@ -260,18 +281,23 @@ export default function TicketDetail() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action, note: answer.trim() || null }),
       });
-      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      // A 409 on `accept` is the MERGE CONFLICT answer, and its sentence names
+      // the branch state that has to be fixed. `shortHttpError` drops any body
+      // over 200 characters, which turns that into a bare "409 Conflict" and
+      // leaves the operator with nothing to act on.
+      if (!r.ok) throw new Error(decisionRefusal(r.status, r.statusText, await r.text().catch(() => "")));
       setAnswer("");
       say(action === "accept"
-        ? "Accepted. The ticket is done."
+        ? (change ? "Accepted. The branch is merged and the ticket is done." : "Accepted. The ticket is done.")
         : "Sent back. The next attempt reads your note in the ticket body.");
       await load();
+      await loadChange();
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e));
     } finally {
       setAnswerBusy(false);
     }
-  }, [scope, id, answer, load, say, fail]);
+  }, [scope, id, answer, change, load, loadChange, say, fail]);
 
   const postComment = useCallback(async () => {
     const text = commentDraft.trim();
@@ -359,9 +385,20 @@ export default function TicketDetail() {
       <Card compact>
         <Stack>
           <Notice tone="warn">
-            The work on this ticket is finished. Accept it to mark it done, or
-            send it back with a note saying what to change.
+            {change
+              // WITH A CHANGE, accepting is a merge and the copy has to say so:
+              // the work is on a branch and the trunk does not carry it yet.
+              // See changes-and-review-2026-08-22.md sec 4.
+              ? `The work is finished and sitting on ${change.branch_slug}, unmerged. Read the diff before you decide.`
+              : "The work on this ticket is finished. Accept it to mark it done, or send it back with a note saying what to change."}
           </Notice>
+          {change && (
+            <Row>
+              <Button size="sm" onClick={() => nav(`/changes/${encodeURIComponent(change.id)}`)}>
+                <GitPullRequestArrow aria-hidden /> Review the change
+              </Button>
+            </Row>
+          )}
           <Textarea
             rows={3}
             value={answer}
@@ -372,7 +409,7 @@ export default function TicketDetail() {
           <Row>
             <Button size="sm" variant="primary" loading={answerBusy}
                     onClick={() => void decide("accept")}>
-              <CheckCheck aria-hidden /> Accept
+              <CheckCheck aria-hidden /> {change ? "Accept and merge" : "Accept"}
             </Button>
             <Button size="sm" loading={answerBusy} onClick={() => void decide("send-back")}>
               Send it back
@@ -644,6 +681,20 @@ export default function TicketDetail() {
               editable={false}
               value={<code className="ws-mono" title={task.id}>{ticketKey(task.id)}</code>}
             />
+            {/* The code behind this ticket. Present at every status, not only
+                while it waits on a decision: a merged ticket's change is how
+                you find out what actually landed. */}
+            {change && (
+              <PropRow
+                label="Change"
+                editable={false}
+                value={
+                  <Link to={`/changes/${encodeURIComponent(change.id)}`}>
+                    {change.branch_slug}
+                  </Link>
+                }
+              />
+            )}
             {/* Tags: pills plus a dashed + , the same affordance as "+ Filter"
                 on the list. A tag is free text, so the editor is a text field
                 rather than a picker over a vocabulary that does not exist. */}

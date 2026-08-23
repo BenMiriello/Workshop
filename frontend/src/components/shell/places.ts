@@ -167,6 +167,11 @@ export function buildPlaces(
       { id: "apps", label: "Apps", to: "/apps", Icon: icons.apps },
       { id: "agents", label: "Agents", to: "/agents", Icon: icons.agents },
       { id: "tickets", label: "Tickets", to: "/tickets", Icon: icons.tickets },
+      // The review surface. A row of its own rather than a tab under Tickets:
+      // a change is a different record with a different lifecycle (design doc
+      // sec 2), and one that nobody thought to open its ticket is exactly the
+      // one that sits unreviewed.
+      { id: "changes", label: "Changes", to: "/changes", Icon: icons.changes },
       { id: "deploys", label: "Deploys", to: "/deploys", Icon: icons.deploys },
       { id: "memory", label: "Memory", to: "/memory", Icon: icons.memory },
       { id: "usage", label: "Usage", to: "/usage", Icon: icons.usage },

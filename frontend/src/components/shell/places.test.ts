@@ -73,6 +73,12 @@ describe("pageFor", () => {
     // which is the clearest evidence the split spellings were costing
     // something real rather than only reading badly.
     expect(pageFor(home, "/tickets/workshop/abc123")?.id).toBe("tickets");
+    // Same for a change: reading one is still being in Changes. Without the
+    // row the review page would be an orphan -- routed, reachable only by a
+    // link somebody remembered to add, and dark in the column while you read
+    // it.
+    expect(pageFor(home, "/changes")?.id).toBe("changes");
+    expect(pageFor(home, "/changes/9f2a")?.id).toBe("changes");
   });
 
   it("returns null where no row owns the path at all", () => {

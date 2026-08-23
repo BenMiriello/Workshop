@@ -38,6 +38,11 @@ const StoreDetail = lazyPage(() => import("./pages/StoreDetail"));
 const Stores = lazyPage(() => import("./pages/Stores"));
 const MemoryPage = lazyPage(() => import("./pages/Memory"));
 const Runs = lazyPage(() => import("./pages/Runs"));
+// The review surface (changes-and-review-2026-08-22.md step C4). Lazy: a
+// change page drags a whole patch renderer, and neither screen is on the way
+// into the app.
+const Changes = lazyPage(() => import("./pages/Changes"));
+const ChangeReview = lazyPage(() => import("./pages/ChangeReview"));
 const RunDetail = lazyPage(() => import("./pages/RunDetail"));
 const Usage = lazyPage(() => import("./pages/Usage"));
 const Settings = lazyPage(() => import("./pages/Settings"));
@@ -111,6 +116,11 @@ export default function App() {
               findable. This one is Memory (it is what agents read and write
               and what promotion in the memory design operates on). */}
           <Route path="/memory" element={<MemoryPage />} />
+          {/* A change is the reviewable artifact a branch produces: the diff
+              behind a finished ticket, before it reaches the trunk. Accepting
+              the ticket is what merges it, so there is no merge route here. */}
+          <Route path="/changes" element={<Changes />} />
+          <Route path="/changes/:id" element={<ChangeReview />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/usage" element={<Usage />} />

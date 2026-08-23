@@ -2894,3 +2894,88 @@ p.chat-workpanel__note { margin: 0; }
    the skeleton, which is the only prose in the dialog). */
 .tdraft__note { color: var(--muted); font-size: var(--fs-xs); }
 .tdraft__reading { color: var(--muted); font-size: var(--fs-sm); }
+
+/* ---- The review surface (pages/ChangeReview.tsx) --------------------------
+   changes-and-review-2026-08-22.md sec 5. The diff is the primary object of a
+   review, and this is the only thing in the app that draws one, so the rules
+   live here rather than in the kit: a patch renderer is not a design-system
+   primitive until a second screen needs it.
+
+   ADD AND REMOVE ARE STATUS COLOURS, deliberately. `--ok` and `--danger` are
+   byte-identical across all eight palettes, which is what makes a green line
+   mean the same thing on every theme; the tint is the `-soft` pair so the TEXT
+   stays `--fg` and remains readable rather than being coloured itself. */
+.ws-diff {
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.ws-diff__file {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--card);
+}
+/* The disclosure. A whole-width button so the hit target is the row, which is
+   what a phone needs; the caret carries the state and the path carries the
+   name. */
+.ws-diff__head {
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%; padding: var(--space-2) var(--space-3);
+  background: none; border: 0; color: var(--fg);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.ws-diff__head:hover { background: var(--bg-inset); }
+.ws-diff__head:focus-visible { box-shadow: var(--focus-ring); outline: none; }
+.ws-diff__caret { flex: none; color: var(--muted); transition: transform var(--dur-base) var(--ease-out); }
+.ws-diff__caret.is-open { transform: rotate(90deg); }
+/* The path WRAPS rather than truncating. Truncating on the right hides the
+   file name, which is the informative end; truncating on the left needs
+   `direction: rtl`, which reorders the slashes in a path and is worse than
+   either. Two lines on a phone is the cheapest of the three. */
+.ws-diff__path {
+  flex: 1 1 auto; min-width: 0;
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.ws-diff__stat {
+  flex: none; display: inline-flex; gap: var(--space-2);
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+}
+.ws-diff__plus  { color: var(--ok); }
+.ws-diff__minus { color: var(--danger); }
+.ws-diff__shortstat {
+  margin: 0; color: var(--muted);
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+}
+/* The patch body scrolls sideways rather than wrapping: a wrapped diff line
+   loses the column alignment that makes a diff readable at all. Vertical
+   height is capped so one long file cannot own the page; the LINE COUNT is
+   capped separately in changeReview.ts, because a scroll port still mounts
+   every node inside it. */
+.ws-diff__body {
+  margin: 0; padding: var(--space-2) 0;
+  max-height: 60vh; overflow: auto;
+  background: var(--bg-inset);
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: var(--fs-xs); line-height: var(--lh-snug);
+}
+.ws-diff__body code { display: block; min-width: max-content; }
+.ws-diff__line {
+  display: block; padding: 0 var(--space-3);
+  white-space: pre;
+}
+.ws-diff__line--add  { background: var(--ok-soft); }
+.ws-diff__line--del  { background: var(--danger-soft); }
+.ws-diff__line--hunk { color: var(--muted); background: var(--stopped-soft); }
+.ws-diff__line--meta { color: var(--faint); }
+.ws-diff__note {
+  margin: 0; padding: var(--space-2) var(--space-3);
+  color: var(--muted); font-size: var(--fs-xs);
+}
+/* One risk signal, and one gate: a status dot plus the checker's own words. */
+.ws-risk { align-items: baseline; gap: var(--space-2); }
+.ws-risk__detail { color: var(--muted); font-size: var(--fs-sm); }
+/* The author's claim, and every other "this is what it is, not what it means"
+   caption on the page. Muted and small: the diff above it is the evidence. */
+.ws-claim__body { margin: 0; white-space: pre-wrap; }
+.ws-claim__note { margin: 0; color: var(--muted); font-size: var(--fs-sm); }
+.ws-changes__filters { margin-bottom: var(--space-4); }
