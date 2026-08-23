@@ -83,7 +83,22 @@ bootstrap_driver() {
       ( cd "$DRIVER_DIR" && node "node_modules/$DRIVER_NAME/cli.js" install "$DRIVER_BROWSER" ) ;;
   esac
 }
-[ -d "$DRIVER_DIR/node_modules/$DRIVER_NAME" ] || bootstrap_driver
+# TRAP 3: the package and the BROWSER BINARY are two installs, and only the
+# first one lives in this directory. The browser lands in a shared per-user
+# cache, so anything that clears or rotates that cache leaves the package here
+# and the binary gone, and the guard below used to pass. Measured 2026-08-23:
+# shoot died with "Executable doesn't exist at .../chromium_headless_shell-1148"
+# while node_modules was intact. Check for both, and let a missing browser
+# re-trigger the bootstrap rather than needing a person to know this.
+browser_present() {
+  case "$DRIVER_NAME" in
+    playwright-core)
+      [ -n "$(ls -d "$HOME/.cache/ms-playwright/${DRIVER_BROWSER}"*/ 2>/dev/null)" ] \
+        || [ -n "$(ls -d "$HOME/.cache/ms-playwright/${DRIVER_BROWSER}_headless_shell-"*/ 2>/dev/null)" ] ;;
+    *) return 0 ;;
+  esac
+}
+{ [ -d "$DRIVER_DIR/node_modules/$DRIVER_NAME" ] && browser_present; } || bootstrap_driver
 
 # TRAP 2: the entry point is resolved to an absolute path and handed to the
 # runner. A bare `import "<driver>"` from scripts/ walks up and finds the ROOT
