@@ -269,9 +269,14 @@ Only the token subpath is importable there. The React primitives are react-dom a
 
 **`bash scripts/shoot.sh <path> [width] [height] [out.png]`** loads the running
 built app in a real Chromium, screenshots it, and reports console errors, page
-errors and failed requests. Run `bash scripts/shoot.sh --setup` once per machine
-to install the browser and mint a session. It defaults to a 390x800 phone frame,
-because that is what the operator reviews on and where things break first.
+errors and failed requests. First use installs the browser and mints a session by
+itself, so there is no setup step to remember. It defaults to a 390x800 phone
+frame, because that is what the operator reviews on and where things break first.
+
+The origin, the auth, the viewports and the browser are not in the script: this
+tree declares them in `workshop.preview.json`, and any other app declares its own
+in its manifest. [`docs/previewing-an-app.md`](../docs/previewing-an-app.md) has
+the declaration shape and the per-stack defaults.
 
 **Read the PNG.** Screenshotting and not looking is worse than not screenshotting,
 because it produces a confident report about a screen nobody saw.

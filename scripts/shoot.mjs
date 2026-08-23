@@ -1,4 +1,8 @@
-// Load a page in a real browser, screenshot it, and report console errors.
+// The generic preview verb: load a URL at a viewport, screenshot it, and report
+// what the page complained about. It is driven entirely by a resolved config on
+// stdin, so it names no port, no cookie, no user, no browser version and no app.
+// Everything of that kind is resolved by scripts/preview_config.py from the
+// app's own declaration, or from the documented stack defaults.
 //
 // WHY THIS EXISTS. On 2026-08-22 three UI surfaces were built to a written spec,
 // shipped, and were wrong in ways no test could see: a file list with 290px of
@@ -9,59 +13,90 @@
 // It can. This is that. Treat a screenshot as part of finishing UI work, the
 // same way `npm run typecheck` is.
 //
-//   node scripts/shoot.mjs <path> [width] [height] [out.png]
+//   scripts/preview_config.py <app_dir> | node scripts/shoot.mjs <path> [w] [h] [out.png]
 //
-// Defaults to the phone frame the design mockup uses (390x800), because the
-// operator reviews on a phone and that is where things break first.
-//
-// Auth: reads a session cookie from scratch/.tok. `bash scripts/shoot.sh --setup`
-// mints one and installs the browser.
+// Normally you do not run this directly: `bash scripts/shoot.sh <path>` resolves
+// the config, bootstraps the driver and pipes it in.
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
-// import.meta.dirname is Node 20+; this box is on 18.
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-// Resolve the PINNED copy explicitly. A bare `import "playwright-core"` walks up
-// from this file and finds the root workspace's newer playwright, which hard-
-// refuses on Node 18 ("requires Node.js 20 or higher") -- so the version that
-// runs must be named, not discovered.
-const PW = path.join(ROOT, "scratch", "browser", "node_modules", "playwright-core", "index.mjs");
-if (!fs.existsSync(PW)) {
-  console.error("shoot: browser not installed -- run: bash scripts/shoot.sh --setup");
+// import.meta.dirname is Node 20+; this box may be on 18.
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+function readStdin() {
+  try {
+    return fs.readFileSync(0, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+const raw = readStdin().trim();
+if (!raw) {
+  console.error("shoot: no preview config on stdin. Run: bash scripts/shoot.sh <path>");
   process.exit(2);
 }
-const { chromium } = await import(pathToFileURL(PW).href);
-const TOK_FILE = path.join(ROOT, "scratch", ".tok");
-const ORIGIN = process.env.WS_ORIGIN || "http://127.0.0.1:8002";
+const cfg = JSON.parse(raw);
 
-const target = process.argv[2] || "/";
-const W = parseInt(process.argv[3] || "390", 10);
-const H = parseInt(process.argv[4] || "800", 10);
-// Resolve a relative out path against the REPO ROOT, not cwd: shoot.sh runs
-// node from scratch/browser (that is where the pinned playwright lives), so a
-// bare "scratch/x.png" would land in scratch/browser/scratch/ and the caller
-// would go looking for it in the wrong place. It did.
-const outArg = process.argv[5] || path.join(ROOT, "scratch", "shot.png");
+// The driver is named by config and bootstrapped by scripts/shoot.sh, which
+// installs it under scratch/. Its entry point is passed in resolved, because a
+// bare `import "playwright-core"` walks up from THIS file and finds the root
+// workspace's own newer copy instead of the pinned one.
+const entry = cfg.driver && cfg.driver.entry;
+if (!entry || !fs.existsSync(entry)) {
+  console.error("shoot: browser driver not installed. Run: bash scripts/shoot.sh --setup");
+  process.exit(2);
+}
+const driverMod = await import(pathToFileURL(entry).href);
+const launcher = driverMod[cfg.driver.browser] || driverMod.chromium;
+if (!launcher) {
+  console.error(`shoot: driver ${cfg.driver.name} has no ${cfg.driver.browser} launcher`);
+  process.exit(2);
+}
+
+// Positional args: the path first, then any of width, height and an out file in
+// whatever order they arrive. A number is a dimension and anything else is the
+// out path, so `shoot.sh /memory out.png` works as well as the long form and a
+// mistyped viewport can never become a NaN the browser rejects obscurely.
+const [defaultW, defaultH] = (cfg.viewports && cfg.viewports[0]) || [1280, 800];
+const positional = process.argv.slice(2);
+const target = positional.shift() || "/";
+const dims = positional.filter((a) => /^\d+$/.test(a)).map(Number);
+const outFromArgs = positional.find((a) => !/^\d+$/.test(a));
+const W = dims[0] || defaultW;
+const H = dims[1] || defaultH;
+// Resolve a relative out path against the REPO ROOT, not cwd: shoot.sh runs node
+// from the directory the pinned driver lives in, so a bare "scratch/x.png" would
+// land under that directory and the caller would go looking for it in the wrong
+// place. It did.
+const ROOT = path.resolve(HERE, "..");
+const outArg = outFromArgs || path.join(ROOT, "scratch", "shot.png");
 const out = path.isAbsolute(outArg) ? outArg : path.resolve(ROOT, outArg);
 
-if (!fs.existsSync(TOK_FILE)) {
-  console.error("no session token at scratch/.tok -- run: bash scripts/shoot.sh --setup");
-  process.exit(2);
-}
-const TOK = fs.readFileSync(TOK_FILE, "utf8").trim();
-// Under 900px is the app's own WIDE breakpoint, so it is also what decides
-// whether we emulate touch. Keep the two in step or the shot lies.
-const isMobile = W < 900;
+// Whether to emulate touch is a property of the app's own layout breakpoint, so
+// it is configured, not guessed. Keep the two in step or the shot lies about
+// which layout the operator is looking at.
+const isMobile = W < (cfg.touch_below || 0);
 
-const browser = await chromium.launch({ args: ["--no-sandbox"] });
-const ctx = await browser.newContext({
+const ctxOptions = {
   viewport: { width: W, height: H },
-  deviceScaleFactor: 2,
+  deviceScaleFactor: cfg.device_scale_factor || 1,
   isMobile,
   hasTouch: isMobile,
-});
-await ctx.addCookies([{ name: "workshop_session", value: TOK, url: ORIGIN }]);
+};
+const auth = cfg.auth || { mode: "none" };
+if (auth.mode === "header" && auth.name && auth.value) {
+  ctxOptions.extraHTTPHeaders = { [auth.name]: auth.value };
+} else if (auth.mode === "basic" && auth.username) {
+  ctxOptions.httpCredentials = { username: auth.username, password: auth.password || "" };
+}
+
+const browser = await launcher.launch({ args: ["--no-sandbox"] });
+const ctx = await browser.newContext(ctxOptions);
+if (auth.mode === "cookie" && auth.name && auth.value) {
+  await ctx.addCookies([{ name: auth.name, value: auth.value, url: cfg.origin }]);
+}
 const page = await ctx.newPage();
 
 const problems = [];
@@ -69,14 +104,16 @@ page.on("console", (m) => { if (m.type() === "error") problems.push("console: " 
 page.on("pageerror", (e) => problems.push("pageerror: " + String(e).slice(0, 240)));
 page.on("requestfailed", (r) => problems.push("requestfailed: " + r.url().slice(0, 160)));
 
-await page.goto(ORIGIN + target, { waitUntil: "networkidle", timeout: 45000 })
+const url = cfg.origin + (target.startsWith("/") ? target : "/" + target);
+await page.goto(url, { waitUntil: "networkidle", timeout: cfg.timeout_ms || 45000 })
   .catch((e) => problems.push("goto: " + e.message.slice(0, 200)));
-await page.waitForTimeout(1200);
+await page.waitForTimeout(cfg.settle_ms || 0);
 fs.mkdirSync(path.dirname(out), { recursive: true });
 await page.screenshot({ path: out });
 await browser.close();
 
-console.log(`shot ${out}  (${W}x${H}, ${isMobile ? "touch" : "pointer"})  url=${target}`);
+console.log(`shot ${out}  (${W}x${H}, ${isMobile ? "touch" : "pointer"})  url=${url}`);
+console.log(`config ${cfg.source}  stack=${cfg.stack}  auth=${auth.mode}`);
 if (problems.length) {
   console.log("\nPROBLEMS (" + problems.length + "):");
   for (const p of problems.slice(0, 12)) console.log("  " + p);

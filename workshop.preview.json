@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "How this tree is previewed. Read by scripts/preview_config.py; the generic",
+    "verb in scripts/shoot.mjs never sees any of these values as literals.",
+    "An app that has a workshop.app.json declares the same block THERE, under",
+    "the `preview` key; this sidecar exists because the platform's own source",
+    "tree has no service manifest (systemd starts its services, not app_runner).",
+    "Any string may use ${VAR} or ${VAR:-fallback} to read the environment.",
+    "origin: the public edge, which serves the BUILT bundle. That is what the",
+    "operator looks at, so it is what a review shot must come from.",
+    "auth: this install authenticates a browser with a session cookie, so the",
+    "command below mints one for the operator's user and prints it.",
+    "touch_below: 900 is the frontend's own WIDE breakpoint."
+  ],
+  "preview": {
+    "origin": "${WORKSHOP_PREVIEW_ORIGIN:-http://127.0.0.1:8002}",
+    "auth": {
+      "mode": "cookie",
+      "name": "workshop_session",
+      "token_command": "cd backend && ./.venv/bin/python3 -c \"import sys; sys.path.insert(0,'.'); from services import auth_store; print(auth_store.create_session(${WORKSHOP_PREVIEW_USER_ID:-6}, user_agent='agent-screenshot'))\""
+    },
+    "viewports": [[390, 800], [1440, 900]],
+    "touch_below": 900
+  }
+}

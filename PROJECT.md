@@ -477,6 +477,17 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   THE LESSON: typecheck, check_design and 1,600 tests were green through every
   one of these. A test proves a rule holds; only a screenshot proves the screen
   is right.
+  THE SHAPE WAS STILL WRONG, and the operator said so the same day: the script
+  hardcoded Playwright, a Node 18 pin, port 8002, a cookie name and a user id,
+  all true of this repo on this machine and of nothing else. Generalized per
+  section 3 of docs/platform-redesign/tools-are-declared-2026-08-23.md: the verb
+  (scripts/shoot.mjs) knows only how to load a URL at a viewport, screenshot it
+  and report what the page complained about; the particulars are declared by the
+  app being shot, in its manifest or in a workshop.preview.json beside it, with
+  per-stack defaults in ONE documented table so adding a stack is a row. This
+  repo's own entry is workshop.preview.json at the root, and it is the first
+  consumer of the mechanism rather than the only thing it works for. The command
+  is unchanged and now bootstraps itself. See docs/previewing-an-app.md.
 
 - 2026-08-22 (6) — Operator, escalating twice on his phone: the file viewer and
   editor is "still terrible", "this can't be what the new ui plan handoff
