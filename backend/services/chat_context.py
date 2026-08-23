@@ -204,6 +204,17 @@ TASK_PROPOSAL_CARD = (
 
 # Build/project triage rule (sub-decision a): the model, not a code threshold,
 # decides inline-vs-delegate, with the operator's click as the tiebreaker.
+#
+# THIS IS L2 (see agent-context-and-toolkit-2026-08-20.md): platform text every
+# installation and every user gets. So it may only carry the GENERALIZED rule --
+# what makes a ticket readable to whoever files it and whoever later opens it.
+# It may NOT carry a fact about one checkout (a doc path, a repo convention, a
+# named person) or assume the reader's pronouns. A convention that is true of
+# THIS repo belongs in that scope's own slot: its AGENTS.md, injected as
+# "Project-local agent rules", the operator's L3 custom instructions, or (for
+# the platform's own checkout) CLAUDE.md. A pointer to `docs/ticket-writing.md`
+# lived here and moved to CLAUDE.md on 2026-08-23 for exactly this reason: no
+# other installation has that file.
 TASK_PROPOSAL_BUILD_RULE = (
     "TRIAGE: answer questions and make single-file trivial edits inline while the "
     "operator is watching. For anything multi-step, multi-file, or that should "
@@ -214,8 +225,9 @@ TASK_PROPOSAL_BUILD_RULE = (
     "title and body and NOTHING ELSE: not "
     "this conversation, not the operator, not you. Anything the ticket does not "
     "say is guessed at or asked about, and both cost a turn.\n"
-    "A TICKET HAS TWO READERS AND THE SECOND ONE IS THE OPERATOR. He opens it to "
-    "decide something, often on a phone, weeks later, having never seen the code. "
+    "A TICKET HAS TWO READERS AND THE SECOND ONE IS THE OPERATOR. They open it "
+    "to decide something, often on a phone, weeks later, having never seen the "
+    "code. "
     "So: the TITLE says what changes and where, in ordinary words, skimmable in a "
     "list without opening it (if the body is needed to know what it is about, the "
     "title has failed). The OBJECTIVE is one sentence stating the outcome as "
@@ -224,7 +236,7 @@ TASK_PROPOSAL_BUILD_RULE = (
     "throughout: jargon is fine when it is the real NAME of a thing (a path, a "
     "function, a status) and not as a description, so no metaphors for code "
     "structure (seam, spine, surface, substrate) unless that is literally what it "
-    "is called. Full convention: docs/ticket-writing.md.\n"
+    "is called.\n"
     "  - output is REQUIRED. It is how anyone tells the work is finished. Write "
     "the observable thing ('the endpoint returns the new field and a test covers "
     "it'), never 'it works'. Leave it out and the worker picks its own finish "
