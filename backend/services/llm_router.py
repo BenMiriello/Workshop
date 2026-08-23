@@ -251,6 +251,14 @@ _WRITE_BOUNDARY_NUDGE = (
     "enforcement, a reviewer pass, and a receipt. "
     "Your call. This is a reminder, not a restriction."
 )
+# Which tools count as "the write boundary" for the nudge above. Read off the
+# registry rather than spelled out here: this was the one remaining private
+# tool-name literal inside the enforcement point itself, and a private list in
+# the argv builder is the exact thing stage 3 exists to remove. NOT the same
+# set as TREE_WRITE_IDS, which adds Bash — a shell is a write target for a
+# maker's authority, but running a command is not the moment this reminder is
+# about.
+_WRITE_NUDGE_TOOLS: frozenset[str] = frozenset(_tool_registry.WRITE_TOOL_IDS)
 
 # MCP-startup race fix. By default the `claude -p` CLI starts --mcp-config
 # servers FULLY ASYNC ("[MCP] ... running fully async (nonblocking)") and fires
@@ -494,8 +502,7 @@ def tool_flags(
         # agent_authority.IRREVERSIBLE_PATTERNS. Always emitted now, because the
         # baseline (AskUserQuestion) is denied on every tool-bearing turn.
         flags += ["--disallowedTools", *_merged_disallowed(disallowed_tools)]
-        _write_tools = {"Write", "Edit", "MultiEdit"}
-        if _write_tools & set(kept_tools):
+        if _WRITE_NUDGE_TOOLS & set(kept_tools):
             flags += ["--append-system-prompt", _WRITE_BOUNDARY_NUDGE]
         env = dict(_MCP_BLOCK_STARTUP_ENV) if servers_subset else {}
         return (flags, env, bool(servers_subset))

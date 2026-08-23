@@ -430,6 +430,7 @@ PLATFORM_TOOL_IDS: frozenset[str] = frozenset(t.id for t in PLATFORM_TOOLS)
 #   TREE_WRITE_IDS                    → agent_authority._TARGET_TOOLS["tree"]
 #   PERSONA_CEILING_IDS               → agents_registry._PERSONA_TOOL_CEILING
 #   BASELINE_DISALLOW_IDS             → llm_router.BASELINE_DISALLOWED_TOOLS
+#   WRITE_TOOL_IDS                    → llm_router._WRITE_NUDGE_TOOLS
 # --------------------------------------------------------------------------- #
 
 WEB_TOOL_IDS: tuple[str, ...] = ("WebSearch", "WebFetch")
@@ -455,8 +456,15 @@ READ_TOOL_IDS: tuple[str, ...] = (
     "Read", "Grep", "Glob", _mcp_id(_wqs.SEARCH_TOOL_NAME)
 )
 
-# Tools agent_authority grants specifically for "tree" writes.
-TREE_WRITE_IDS: tuple[str, ...] = ("Write", "Edit", "MultiEdit", "Bash")
+# The tools that put bytes on disk. Named once because two of the four sources
+# reach for this set and reached for it with their own literal: agent_authority
+# adds Bash to it for the "tree" write target, and tool_flags tests for it to
+# decide whether the write-boundary nudge goes on the system prompt.
+WRITE_TOOL_IDS: tuple[str, ...] = ("Write", "Edit", "MultiEdit")
+
+# Tools agent_authority grants specifically for "tree" writes. Bash rides with
+# tree access (a maker runs tests and git); the rest is WRITE_TOOL_IDS.
+TREE_WRITE_IDS: tuple[str, ...] = (*WRITE_TOOL_IDS, "Bash")
 
 # Hard ceiling for app-persona tool declarations (agents_registry). A persona
 # file may not hold any of these — they are too broad for an app assistant that

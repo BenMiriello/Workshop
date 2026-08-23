@@ -342,6 +342,7 @@ class TestDeclarationSourcesUseTheRegistry:
             ("WORKSHOP_TOOLKIT_IDS", tr.WORKSHOP_TOOLKIT_IDS),
             ("GENERAL_ALLOWLIST_IDS", tr.GENERAL_ALLOWLIST_IDS),
             ("READ_TOOL_IDS", tr.READ_TOOL_IDS),
+            ("WRITE_TOOL_IDS", tr.WRITE_TOOL_IDS),
             ("TREE_WRITE_IDS", tr.TREE_WRITE_IDS),
             ("PERSONA_CEILING_IDS", tuple(tr.PERSONA_CEILING_IDS)),
             ("BASELINE_DISALLOW_IDS", tr.BASELINE_DISALLOW_IDS),
@@ -383,3 +384,50 @@ class TestDeclarationSourcesUseTheRegistry:
                 f"llm_router.BASELINE_DISALLOWED_TOOLS includes {tid!r}, "
                 "which has no PLATFORM_TOOLS entry"
             )
+
+    def test_llm_router_names_no_tool_of_its_own(self):
+        """The enforcement point itself must not keep a private tool list.
+
+        `tool_flags` used to carry a literal `{"Write", "Edit", "MultiEdit"}`
+        for the write-boundary nudge — a fifth private list living inside the
+        one place that builds the argv, which is the worst place for one.
+        """
+        from services import llm_router
+        ids = tr.PLATFORM_TOOL_IDS
+        for tid in llm_router._WRITE_NUDGE_TOOLS:
+            assert tid in ids, (
+                f"llm_router._WRITE_NUDGE_TOOLS includes {tid!r}, "
+                "which has no PLATFORM_TOOLS entry"
+            )
+        assert llm_router._WRITE_NUDGE_TOOLS == frozenset(tr.WRITE_TOOL_IDS)
+
+    def test_chat_context_produces_only_registered_names(self):
+        """Source 3, checked against the module's OWN exported names rather
+        than against the group constants it reads.
+
+        Asserting `tr.WEB_TOOL_IDS` is registered says nothing about whether
+        `chat_context` still uses it. These read the attributes the rest of the
+        backend actually imports (`WEB_TOOLS`, `SUBAGENT_TOOL`,
+        `WORKSHOP_TOOLKIT`) and the full grant a platform chat receives, so
+        re-hardcoding any of them fails here.
+        """
+        from services import chat_context as cc
+        ids = tr.PLATFORM_TOOL_IDS
+        named: list[tuple[str, list[str]]] = [
+            ("WEB_TOOLS", list(cc.WEB_TOOLS)),
+            ("SUBAGENT_TOOL", [cc.SUBAGENT_TOOL]),
+            ("WORKSHOP_TOOLKIT", list(cc.WORKSHOP_TOOLKIT)),
+        ]
+        # Every PLATFORM provider's full effective grant. App-persona providers
+        # are deliberately excluded: their tools come from an installed app's
+        # manifest (provenance `app`), not from a platform list.
+        for key, provider in cc._PLATFORM_PROVIDERS.items():
+            named.append((f"effective_allowed_tools({key})",
+                          cc.effective_allowed_tools(provider)))
+        for name, tools in named:
+            for tid in tools:
+                assert tid in ids, (
+                    f"chat_context.{name} includes {tid!r}, which has no "
+                    "PLATFORM_TOOLS entry; declare it in tool_registry rather "
+                    "than in a list of its own"
+                )
