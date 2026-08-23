@@ -12,6 +12,60 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.19 - 2026-08-22 - `FileTree`: one tree navigator, lazy per level
+
+**Additive only.** P2 of
+`docs/platform-redesign/file-viewer-and-editor-2026-08-22.md`. Nothing consumes
+it yet: `AppFilesTab.tsx` and `NoteSidebar.tsx`, the two hand-rolled trees it
+replaces, migrate in P4 and P5.
+
+Added, on the **core entry** (no new dependency, so it is a normal primitive
+rather than a subpath like `./editor`):
+
+- `FileTree`, `type FileTreeProps`: a tree that renders a node hierarchy and
+  fetches each level only when it is opened. Props: `adapter`, `selectedId`,
+  `onSelect`, `defaultOpenIds`, `maxRowsPerLevel`, `emptyTitle`, `emptyHint`,
+  `label`, `className`.
+- `type FileTreeAdapter`, `type FileTreeNode`, `type FileTreeNodeKind`,
+  `type FileTreeIconHint`, `type FileTreeLevel`: the data seam.
+- `flattenTree`, `treeKeyIntent`, `toggleBranch`, `nodesById`,
+  `FILE_TREE_MAX_ROWS_PER_LEVEL`, `type FileTreeLevels`,
+  `type FileTreeLevelState`, `type FileTreeRow`, `type FileTreeIntent`: the pure
+  row model and keymap (`src/fileTree.ts`, tested in `fileTree.test.ts`), for a
+  caller that draws its own rows and should not invent a second one.
+- `.ws-tree`, `.ws-tree__row`, `.ws-tree__twist`, `.ws-tree__icon`,
+  `.ws-tree__label`, `.ws-tree__detail`, `.ws-tree__aside` in `components.css`.
+
+**It takes an ADAPTER, not a URL and not a fixed data shape.** The adapter is a
+root node plus `children(node)` returning that node's children, one level per
+request. So an app's source directory and the Memory scope tree are this same
+component with two different adapters, and nothing about HTTP, paths or a
+response shape is in the primitive. A node carries `id`, `label`,
+`kind: "branch" | "leaf"` and an optional `icon` hint; a level may also report
+`filtered`, which the tree shows as a line rather than hiding silently. Section
+5.3 of the design doc records why this is a kit primitive and not headless-tree,
+react-arborist, react-complex-tree or MUI X Tree View.
+
+**A level that fails does not destroy the levels already open.** The level store
+is keyed by parent id and a failure replaces exactly one key, so the failure is
+a `Notice` at that branch's indent with its own Retry and every other branch
+stays on screen. That is the region-versus-line rule: the space would not have
+been empty if the failure had not happened. The ROOT level is the other case,
+and it gets all four list states as regions, because there the space would be
+empty: `Skeleton` rows while loading, an empty `StateBlock` with an
+instructional hint, an error `StateBlock` naming the root and offering retry,
+and a per-level cap (`FILE_TREE_MAX_ROWS_PER_LEVEL`, 500) whose remainder is
+reported as one overflow line.
+
+Keyboard: up and down move, right opens a branch and then steps into it, left
+closes it and then steps out to the parent, Enter selects, Home and End jump.
+One row is in the tab order at a time (roving tabindex).
+
+Not built, and deliberately (design doc section 8): **no drag and drop** and
+**no virtualization**. The row model is already a flat list of keyed rows each
+carrying a depth, so `@tanstack/react-virtual` drops in later without a new row
+shape, once a real directory is measurably slow.
+
 ## 0.5.18 - 2026-08-22 - The editor: `@workshop/ui/editor`, and the `--syn-*` color layer
 
 **Additive only.** P1 of

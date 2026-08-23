@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.5.18
+Version: 0.5.19
 
 ## @workshop/ui
 
@@ -48,8 +48,11 @@ Source: `src/index.ts`
 - Divider
 - ERROR_BODY_CAP
 - Field
+- FILE_TREE_MAX_ROWS_PER_LEVEL
+- FileTree
 - FilterBar
 - FilterChip
+- flattenTree
 - formatBytes
 - formatDuration
 - formatMiB
@@ -74,6 +77,7 @@ Source: `src/index.ts`
 - Modal
 - namespacedKey
 - native
+- nodesById
 - Notice
 - NumCell
 - onNativeEvent
@@ -123,7 +127,9 @@ Source: `src/index.ts`
 - timeAgoSeconds
 - TimeCell
 - Toggle
+- toggleBranch
 - Toolbar
+- treeKeyIntent
 - type AgencyTier
 - type AppChatDockOptions
 - type AppChatDockRenderer
@@ -132,6 +138,16 @@ Source: `src/index.ts`
 - type CatHue
 - type Crumb
 - type EditMode
+- type FileTreeAdapter
+- type FileTreeIconHint
+- type FileTreeIntent
+- type FileTreeLevel
+- type FileTreeLevels
+- type FileTreeLevelState
+- type FileTreeNode
+- type FileTreeNodeKind
+- type FileTreeProps
+- type FileTreeRow
 - type NativeInfo
 - type PaletteGroup
 - type PaletteId

@@ -3555,3 +3555,86 @@ span.ws-filterchip__open { cursor: default; }
 }
 .ws-tt__c-assignee { width: 130px; }
 .ws-tt__ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- FileTree -------------------------------------------------------------
+   The kit's tree navigator (src/FileTree.tsx). One flat list of rows, indented
+   by `--ws-tree-depth`, so the DOM is not nested and a virtualizer can be
+   dropped in later without a new row shape.
+
+   A CHEVRON AND A FOLDER ICON ARE CONTROLS, NOT CONTENT (rule 3): both are
+   `--muted` at rest and go to `--fg` when the row is hovered. Neither ever
+   takes a categorical hue. The only hue in here is the selected row, which is
+   a state and follows the same `--accent-soft` treatment as every other
+   current-item in this file. */
+.ws-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  /* Overflow is the tree's own scroll, so a deep directory never widens or
+     lengthens the page around it. */
+  overflow: auto;
+}
+.ws-tree__row,
+.ws-tree__aside {
+  padding-block: var(--space-1);
+  padding-right: var(--space-2);
+  padding-left: calc(var(--space-2) + var(--ws-tree-depth, 0) * var(--space-4));
+}
+.ws-tree__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  user-select: none;
+}
+.ws-tree__row:hover { background: var(--bg-inset); }
+.ws-tree__row.is-selected { background: var(--accent-soft); color: var(--accent); }
+.ws-tree__row svg { width: 15px; height: 15px; flex: none; }
+.ws-tree__twist {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  flex: none;
+  color: var(--muted);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.ws-tree__twist--empty { visibility: hidden; }
+.ws-tree__icon {
+  color: var(--muted);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.ws-tree__row:hover .ws-tree__twist,
+.ws-tree__row:hover .ws-tree__icon { color: var(--fg); }
+.ws-tree__row.is-selected .ws-tree__twist,
+.ws-tree__row.is-selected .ws-tree__icon { color: var(--accent); }
+.ws-tree__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-tree__detail {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+/* The lines that sit between rows: a level still loading, a level that failed
+   (a Notice, because the rest of the tree is still on screen), an empty
+   branch, the remainder of a capped level, and what the source filtered out. */
+.ws-tree__aside { font-size: var(--fs-sm); }
+.ws-tree__aside--muted {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.ws-tree__aside--muted svg { width: 13px; height: 13px; flex: none; color: var(--faint); }
