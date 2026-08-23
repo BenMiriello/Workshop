@@ -1055,6 +1055,131 @@ class WorktreeEvent(Base, Timestamps):
     )
 
 
+# --- leases ------------------------------------------------------------------
+# docs/platform-redesign/workspace-ownership-and-leases-2026-08-22.md, step B3.
+#
+# ONE TABLE FOR BOTH LEASES, WITH A TYPED SUBJECT (§5). There are two subjects
+# and both are needed: a TICKET lease (who took this work) because a `todo`
+# ticket has no tree yet, and two sweeps that both see `todo` would both create
+# a worktree and both work the same ticket; and a WORKTREE lease (who may write
+# to this tree). Collapsing them was revision 1's mistake and §5 reverses it.
+#
+# THE LEASE IS BOOKKEEPING, NOT ENFORCEMENT (§4). For the ticket subject the
+# storage layer really does validate the generation (`tasks.update()`), so the
+# fence bites. For a tree it does not: the filesystem validates nothing, and a
+# holder whose lease lapsed mid-test will `git commit` into the same directory
+# with no check anywhere stopping it. What excludes a second writer from a tree
+# is the read-only MOUNT (step B1). This row records who holds it, since when
+# and until when. It does not protect the tree.
+
+LEASE_SUBJECT_KINDS = ("worktree", "ticket")
+
+# A session kind, same closed set as `presence.SESSION_KINDS` (§7): a chat or an
+# agent run. A session is never an owner of anything durable -- it holds a lease
+# and is disposable -- which is why this is the HOLDER and not a foreign key
+# from `worktree`.
+LEASE_HOLDER_KINDS = ("chat", "run")
+
+
+class Lease(Base, Timestamps):
+    """The durable, exclusive right to write to one subject (§5).
+
+    NO SOFT DELETE, AND NO HARD DELETE EITHER, which is the one thing about
+    this table that is not like its neighbours. `generation` is a Kleppmann
+    fencing token and it is only worth anything if it never goes backwards for a
+    subject. Deleting the row on release would restart the count at 1, so a
+    resurrected holder carrying generation 4 would match the fourth holder after
+    the reset and write straight over live work. Release is therefore an UPDATE
+    that expires the row (§5: "Renew and release are `UPDATE ... WHERE
+    generation = :g`"), and the row stays as the subject's permanent generation
+    counter.
+
+    `expires_at` IS NOT NULL AND IS ALWAYS SERVER-COMPUTED. Every writer sets it
+    as `now() + interval`, evaluated by Postgres, and every reader compares it
+    against Postgres's `now()`. That is also the whole answer to clock skew
+    between the sweeps, the backend and a chat: no caller's clock is ever
+    accepted, so no caller can grant itself an hour by being wrong about the
+    time. A caller supplies a TTL (a duration); it never supplies an instant.
+
+    TWO STATES, NOT THREE (§6). Held, or expired -- and which one a row is in is
+    the comparison `expires_at > now()`, not a column. "Idle" is deliberately
+    NOT a third state with its own verb: it is `last_work_at`, from which a
+    reader derives the `idle_since` timestamp it renders as a warning. Storing a
+    state as well as the timestamp it is computed from is the derived duplicate
+    this schema keeps removing.
+
+    `last_work_at` IS SEPARATE FROM `last_renewed_at` because §6 makes them
+    different facts. A holder renews every 30 seconds to keep a 90-second lease
+    alive; that says the process is up, not that the work is moving. Idle is
+    "10 minutes with no WORK event", so the work event needs its own timestamp
+    or a heartbeating-but-stuck holder would never look idle.
+
+    UNIQUE (subject_kind, subject_id), EXACTLY AS §5 SPELLS IT, and deliberately
+    without `org_id` in front of it unlike every other uniqueness in this file.
+    The reason is that this uniqueness is not a naming rule, it is the
+    exclusion: the subject is one physical thing (one directory on one disk, one
+    ticket), its id is already globally unique (a uuid7 worktree id, a uuid4-hex
+    ticket id), and "one holder per subject" has to mean one, not one per
+    tenant. RLS still governs who may SEE or TAKE a lease; an acquire against a
+    subject another tenant holds raises a unique violation, which the repo layer
+    reports as "not acquired" -- fail closed, which is the correct answer.
+    """
+    __tablename__ = "lease"
+
+    id: Mapped[uuid.UUID] = _pk()
+    org_id: Mapped[uuid.UUID] = _org_fk()
+
+    subject_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    # TEXT, not a uuid FK, for the same reason `worktree.ticket_id` is: these
+    # are the ids the rest of the system passes around, and Postgres holds
+    # `ticket` rows only for the two relational scopes, so a FK would be a
+    # promise the data cannot keep.
+    subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    holder_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    # A session id: a chat thread id, a run/job id. Free text and not a FK,
+    # because sessions are disposable and are not a table (§7).
+    holder_id: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    # WHO IT ACTS FOR, separate from the holder kind, which is §5's own wording.
+    # Every chat acts on the operator's behalf, so "a chat holds it" does not
+    # answer "whose authority is this". Nullable: a sweep started outside any
+    # tenant context has no principal, and inventing one would be a false
+    # attribution that reads as a true one (`_actor_consistent`'s lesson).
+    principal_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("user_account.id", ondelete="SET NULL"))
+
+    generation: Mapped[int] = mapped_column(Integer, nullable=False,
+                                            server_default="1")
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False)
+    acquired_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_renewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_work_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint(_one_of("subject_kind", LEASE_SUBJECT_KINDS),
+                        name="ck_lease_subject_kind"),
+        CheckConstraint(_one_of("holder_kind", LEASE_HOLDER_KINDS),
+                        name="ck_lease_holder_kind"),
+        CheckConstraint("generation > 0", name="ck_lease_generation_positive"),
+        _org_target("lease"),
+        # THE EXCLUSION, and the ON CONFLICT target of the one atomic statement
+        # that acquires. Named rather than inferred so the upsert can name it.
+        UniqueConstraint("subject_kind", "subject_id", name="uq_lease_subject"),
+        # "What does this session hold" and "release everything this session
+        # holds", which is the join rule in §6: presence expiry for an
+        # interactive holder releases its lease immediately.
+        Index("ix_lease_holder", "org_id", "holder_kind", "holder_id"),
+        Index("ix_lease_live", "org_id", "expires_at"),
+    )
+
+
 # --- changes -----------------------------------------------------------------
 # docs/platform-redesign/changes-and-review-2026-08-22.md, step C1.
 #

@@ -22,13 +22,18 @@ duration, and the service computes the instant (section 5's rule for the lease,
 which applies identically to presence). A body field for `expires_at` would let
 a client with a skewed clock declare itself present indefinitely.
 
-THERE IS NO `lease` FIELD ON `DirectoryEntry`, deliberately. Section 6's join is
-over presence, leases, tickets and worktrees, and the lease is step B3, being
-built now. The service-level join already has the seam
-(`presence.directory(lease_source=...)`), but publishing a lease-shaped field
-that is always null would put a capability in the generated client that this
-system does not have -- the same reason `routes/changes.py` ships no merge
-route. It arrives with the behaviour.
+`DirectoryEntry.lease` ARRIVED WITH THE BEHAVIOUR, which is what this file said
+it was waiting for. Section 6's join is over presence, leases, tickets and
+worktrees; the lease is step B3 and is now built, so the directory is passed
+`leases.lease_source` and the field carries a real row. It is still NULL for two
+honest reasons and neither is an error: the session holds no subject the lease
+table knows about, or this installation has no relational store. A directory
+that could not decorate one row must still answer "who is here".
+
+TWO LEASE STATES, NOT THREE (section 6). `LeaseRef.state` is `held` or
+`expired`. `idle_since` is a TIMESTAMP the client renders as a `warn` -- it is
+deliberately not a third state with its own verb, because a state a caller can
+key on is a state the rest of the system then has to handle.
 
 Gated with the rest of the platform control surface in `main.py`
 (`dependencies=_OPERATOR`).
@@ -38,6 +43,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from services import leases as leases_svc
 from services import presence as presence_svc
 
 router = APIRouter(prefix="/presence", tags=["presence"])
@@ -93,6 +99,33 @@ class PresenceBeat(BaseModel):
     meta: dict[str, str] = Field(default_factory=dict)
 
 
+class LeaseRef(BaseModel):
+    """The lease on a directory entry's subject, read at join time.
+
+    TYPED, not a `dict[str, Any]`. An opaque field satisfies the route-level
+    response_model check and still generates `Record<string, never>` in the
+    client, so the frontend hand-writes the shape and drifts from it -- which is
+    the defect ADR 0023 clause 6 exists to remove.
+
+    `state` has exactly two values (section 6): `held` or `expired`. `idle_since`
+    is the moment of the last work event on a lease whose work has not moved for
+    ten minutes, and null otherwise; it is a warning a client renders, not a
+    third state.
+    """
+    subject_kind: str
+    subject_id: str
+    holder_kind: str
+    holder_id: str
+    principal_user_id: str | None = None
+    generation: int
+    state: str
+    idle_since: str | None = None
+    expires_at: str | None = None
+    acquired_at: str | None = None
+    last_renewed_at: str | None = None
+    last_work_at: str | None = None
+
+
 class DirectoryEntry(BaseModel):
     """One live session, joined to what it is working on.
 
@@ -114,6 +147,7 @@ class DirectoryEntry(BaseModel):
     hostname: str | None = None
     last_beat_at: str | None = None
     expires_at: str | None = None
+    lease: LeaseRef | None = None
 
 
 class DirectoryOut(BaseModel):
@@ -162,7 +196,8 @@ async def presence_directory(session_kind: str | None = Query(None),
     """
     entries = presence_svc.directory(session_kind=session_kind,
                                      subject_kind=subject_kind,
-                                     subject_id=subject_id, scope=scope)
+                                     subject_id=subject_id, scope=scope,
+                                     lease_source=leases_svc.lease_source)
     return {"entries": entries, "count": len(entries)}
 
 

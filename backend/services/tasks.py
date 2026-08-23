@@ -1796,6 +1796,12 @@ def reclaim(root: Path, *, now: datetime | None = None, ttl: int = LEASE_TTL_SEC
             cap = t.get("max_attempts") or attempt_cap
             t["lease_until"] = None
             t["claim_pid"] = None
+            # AND THE LEASE, or the reclaim does not actually free the ticket:
+            # the next `claim()` would find the dead worker's row still held and
+            # refuse. Released at the record's generation, which is the one the
+            # lease carries, and `claim_token` is deliberately left intact here
+            # exactly as it always has been -- the next acquire bumps it.
+            _release_ticket_lease(t["id"], _as_int(t.get("claim_token"), 0))
             if attempts >= cap:
                 t["status"] = "parked"
                 t["blocked_reason"] = (
@@ -2099,6 +2105,7 @@ def update(
         # the end so the worker is fenced out.
         _held_by_worker = (found.get("status") == "doing"
                            and found.get("claim_token") is not None)
+        _leaving_doing = False
         _material_edit = any(v is not None for v in (
             status, title, body, assignee, set_assignee, priority, depends_on,
             blocked_reason, acceptance, max_attempts, effort, latitude, awaiting,
@@ -2116,6 +2123,12 @@ def update(
             if status != "doing":
                 found["lease_until"] = None
                 found["claim_pid"] = None
+                # Captured, not acted on yet: the LEASE is given up at the end
+                # of this block, after the Fix-1 bump below has had its say
+                # about which generation is current. Releasing here would
+                # release the generation the caller arrived with rather than the
+                # one the record ends up carrying.
+                _leaving_doing = True
         if title is not None:
             found["title"] = title
         if body is not None:
@@ -2247,7 +2260,25 @@ def update(
         # note-only / job-id-only no-token writes are not material, so a worker's
         # own untokened notes never fence its subsequent tokened finalize.
         if expect_claim_token is None and _held_by_worker and _material_edit:
-            found["claim_token"] = _as_int(found.get("claim_token"), 0) + 1
+            # B3: the generation comes from the LEASE, so an operator edit and a
+            # concurrent acquire cannot each decide what "the current generation"
+            # is. Same act it always was; one authority for the number now.
+            found["claim_token"] = _fence_ticket_lease(
+                found["id"], _as_int(found.get("claim_token"), 0))
+        if _leaving_doing and _held_by_worker:
+            # A ticket that is waiting, released, parked or finished is NOT being
+            # worked, so it must not hold a lease -- the same rule the two lines
+            # above enforce on `lease_until` and `claim_pid`, applied to the row
+            # that is now the authority. Fenced by generation, so a stale caller
+            # releases nothing; and a no-op when the Fix-1 bump just expired the
+            # lease anyway.
+            #
+            # `_held_by_worker` NARROWS IT to the transitions that can actually
+            # be holding one. Every other status change (todo -> blocked, a
+            # triage edit) would otherwise spend a database round trip releasing
+            # a lease that was never taken.
+            _release_ticket_lease(found["id"],
+                                  _as_int(found.get("claim_token"), 0))
         found["updated"] = _now()
         # Keep the `exec` projection true for THIS call's return value, the same
         # discipline `owner`, `text` and `blocked_request` already follow above.
@@ -2272,14 +2303,140 @@ def update(
     return found
 
 
+# ---- the ticket lease ------------------------------------------------------
+#
+# ONE LEASE MECHANISM, NOT TWO (workspace-ownership-and-leases-2026-08-22.md
+# section 5, step B3). `services/leases.py` owns acquiring, renewing, releasing
+# and fencing; this module stopped computing its own generation. What was here
+# before -- `claim_token = old + 1` under an flock -- was mutual exclusion only
+# between processes that happened to share the same lock file, which
+# `db/ticket_sync.py`'s unconditional `UPDATE ... SET claim_token = :ct` then
+# wrote through with no compare-and-set at all. The lease's single atomic
+# `INSERT ... ON CONFLICT ... DO UPDATE ... WHERE lease.expires_at < now()`
+# excludes every process reaching the same database, which is the actual set.
+#
+# WHY `claim_token` STILL EXISTS ON THE RECORD, and is not a derived duplicate.
+# The ticket store is DUAL-BACKED: `development` and `workshop` read Postgres,
+# and every project tree under `projects/` is file-backed by design and has no
+# database anywhere near it (`_from_relational` returns None for exactly that
+# reason). A lease is a Postgres row. Delete this column and a project sweep on
+# a checkout with no database loses its fence entirely -- not degraded, gone.
+# So the column stays, it keeps its name on the wire, and its VALUE is the
+# generation the lease issued wherever there is a lease to issue one. The
+# fencing checks that read it (`update`'s `expect_claim_token`, `heartbeat`'s)
+# are unchanged and every `--expect-claim-token` caller keeps working, which is
+# what section 2 means by "dropping a concurrency primitive from the wire is not
+# a change to make silently".
+#
+# THE FLOCK IS NOT DELETED, and section 5's "this is what lets the flock
+# actually be deleted" does not apply to it. `_locked` is not the claim's lock;
+# it is the store's load-modify-persist lock, held by `update`, `add`,
+# `add_comment`, `reconcile` and every other writer. What the atomic statement
+# replaces is the claim's DEPENDENCE on it for exclusivity, which is the half
+# that never worked across processes.
+
+
+def _lease_module():
+    """The lease module, or None when this installation cannot reach one.
+
+    NOT A BARE `except Exception`. Two conditions mean "there is no lease store
+    here" and both are legitimate: the interpreter cannot import sqlalchemy (a
+    checkout with no venv), or `leases.available()` says no database is
+    configured or reachable. Anything else -- a broken query, a constraint
+    violation -- propagates, because a lease store that exists and misbehaves
+    must not be silently downgraded to no lease store at all. That silent
+    downgrade is the defect e7b758a fixed for the task store itself.
+    """
+    try:
+        from services import leases
+    except ImportError:
+        return None
+    return leases if leases.available() else None
+
+
+def _acquire_ticket_lease(task: dict, *, holder_id: str, ttl: int) -> int | None:
+    """Take the ticket lease and return the generation it issued.
+
+    Returns None when another holder has it: the caller lost the race and must
+    not claim. With no lease store, returns the record's own next generation,
+    which is exactly what this module did before B3.
+
+    `min_generation` CARRIES THE RECORD'S FENCE IN. A ticket claimed five times
+    before this table existed has `claim_token = 5`, and a fresh lease row
+    starting at 1 would make the fence go BACKWARDS -- a fence that goes
+    backwards is a fence that can be replayed by a zombie holding 5.
+    """
+    task_id = str(task["id"])
+    local_next = _as_int(task.get("claim_token"), 0) + 1
+    leases = _lease_module()
+    if leases is None:
+        return local_next
+    row = leases.acquire("ticket", task_id, holder_kind="run",
+                         # A holder is a SESSION id and the child job id is
+                         # this sweep's. `str(None)` is the truthy string
+                         # "None", so the fallback is guarded on the value.
+                         holder_id=(str(holder_id or "").strip()
+                                    or f"task:{task_id}")[:128],
+                         ttl_sec=ttl, min_generation=local_next)
+    return None if row is None else int(row["generation"])
+
+
+def _renew_ticket_lease(task_id: str, generation: int, *, ttl: int) -> bool:
+    """Renew as a WORK event. False means the generation is stale: you were
+    fenced. True with no lease store, because the record's own fence has already
+    been checked by the caller."""
+    leases = _lease_module()
+    if leases is None:
+        return True
+    return leases.renew("ticket", str(task_id), int(generation),
+                        ttl_sec=ttl, work=True) is not None
+
+
+def _release_ticket_lease(task_id: str, generation: int) -> None:
+    """Give the ticket lease up now. Fenced by generation, so a caller holding a
+    stale one releases nothing -- which is the correct outcome, not an error."""
+    leases = _lease_module()
+    if leases is not None:
+        leases.release("ticket", str(task_id), int(generation))
+
+
+def _fence_ticket_lease(task_id: str, current: int) -> int:
+    """Invalidate whoever holds this ticket and return the new generation.
+
+    An operator edit to a ticket a worker holds. This module has always done
+    exactly this to its own record (see `update`'s Fix 1); B3 moves the
+    authority to the lease so the two cannot disagree, and falls back to the
+    record's own counter where there is no lease.
+    """
+    leases = _lease_module()
+    if leases is None:
+        return current + 1
+    return leases.fence("ticket", str(task_id)) or (current + 1)
+
+
 def claim(root: Path, task_id: str, job_id: str, *, assignee: str | None = None,
           pid: int | None = None, ttl: int = LEASE_TTL_SEC) -> dict | None:
-    """Atomically claim a task: todo -> doing under flock, recording the job id.
-    Records a fencing token (`claim_token`, monotonic per task), a lease
-    (`lease_until` = now + ttl) and the claiming `claim_pid` so a crashed sweep's
-    task can be reclaimed and a zombie's late finalize can be fenced (2d).
-    Returns the claimed task, or None if it was already claimed / not todo (a
-    concurrent sweep + CLI can race for the same task; the loser gets None)."""
+    """Atomically claim a task: todo -> doing, recording the job id.
+
+    TWO CHECKS, AND BOTH ARE NEEDED (section 5 of
+    workspace-ownership-and-leases-2026-08-22.md).
+
+    The `status == "todo"` compare-and-set is KEPT. Revision 1 of that design
+    proposed deleting it on the grounds that holding the tree admits you to the
+    work, and it is wrong at the only moment that matters: a `todo` ticket has
+    no tree yet, so two sweeps both see `todo`, both create a worktree, and both
+    work the same ticket.
+
+    The fencing generation now comes from the LEASE rather than from a counter
+    on this record, so mutual exclusion is a single atomic statement in Postgres
+    rather than an flock two processes may not share. Losing that race returns
+    None, exactly as losing the status race always has. Where there is no lease
+    store -- a file-backed project tree -- the record's own counter is the fence
+    and the behaviour is unchanged.
+
+    `lease_until` = now + ttl and `claim_pid` are still written: they are what a
+    file-backed scope's `reclaim()` reads, and they are on the wire.
+    """
     with _locked(root):
         tasks = _load(root)
         found = None
@@ -2289,9 +2446,12 @@ def claim(root: Path, task_id: str, job_id: str, *, assignee: str | None = None,
                 break
         if found is None or found["status"] != "todo":
             return None
+        generation = _acquire_ticket_lease(found, holder_id=job_id, ttl=ttl)
+        if generation is None:
+            return None  # another session holds this ticket's lease
         found["status"] = "doing"
         found["attempts"] = _as_int(found.get("attempts"), 0) + 1
-        found["claim_token"] = _as_int(found.get("claim_token"), 0) + 1
+        found["claim_token"] = generation
         found["lease_until"] = (
             datetime.now(timezone.utc) + timedelta(seconds=ttl)
         ).isoformat(timespec="seconds")
@@ -2478,6 +2638,15 @@ def heartbeat(root: Path, task_id: str, claim_token: int | None, *,
             return None
         if _as_int(found.get("claim_token"), 0) != _as_int(claim_token, 0):
             return None  # fenced: this is no longer this worker's claim generation
+        # And renew the LEASE at the same generation, as a WORK event. Two
+        # things can refuse here and they mean the same thing to the caller:
+        # the record's fence above, and the lease's own `WHERE generation = :g`.
+        # Renewing as work rather than as a bare heartbeat is what keeps the
+        # 10-minute idle window (section 6) measuring progress instead of
+        # measuring that the process is up -- this call is only made from inside
+        # a running worker's loop, which is a work event by construction.
+        if not _renew_ticket_lease(found["id"], _as_int(claim_token, 0), ttl=ttl):
+            return None
         now = _now()
         found["last_heartbeat"] = now
         found["lease_until"] = (

@@ -35,11 +35,13 @@ NOTHING on a read path -- only by an explicit `presence prune` from the CLI.
 
 THE ACCELERATOR MAY ONLY EVER SHORTEN A LIFETIME. See `effective_expiry`.
 
-WHAT IS DELIBERATELY NOT HERE. The lease (design section 5) is step B3 and is
-being built concurrently. There is no lease table, no lease module and no fake
-lease in this file: `DirectoryEntry.lease` is a declared, always-null seam and
-`directory(lease_source=...)` is the injection point B3 fills. Writing half a
-lease here would give a caller something indistinguishable from the real one.
+THE LEASE IS STILL NOT IN THIS FILE, and now it does not have to be. Step B3
+built it (`services/leases.py`), and the two modules meet at exactly the two
+seams this one already declared: a caller passes `directory(lease_source=...)`
+and gets a real lease on every entry, and `release()` gives up whatever the
+session was holding on its way out. There is no lease state here, no second
+expiry rule, and no import of the lease module at module scope -- see
+`_release_leases` for why that last one matters on the interpreter a sweep uses.
 """
 from __future__ import annotations
 
@@ -309,20 +311,71 @@ def get(session_id: str) -> dict | None:
     return _load(path)
 
 
+def _leases():
+    """The lease module, or None. THE ONLY PLACE THIS FILE REACHES FOR IT.
+
+    LAZY, because this module must keep running under the SYSTEM python3 that
+    the shell workers' CLI uses (see `_resolve_worktree` for the same
+    constraint). `services.leases` reaches sqlalchemy, which that interpreter
+    does not have, so a module-scope import here would make every
+    `scripts/presence.py heartbeat` from a sweep fail. One helper rather than an
+    import in each caller, so there is one place that decides what "no lease
+    module here" means.
+    """
+    try:
+        from services import leases
+        return leases
+    except Exception:
+        return None
+
+
+def _release_leases(session_id: str) -> int:
+    """Give up whatever this session was holding. Never raises, never blocks.
+
+    The WRITE half of section 6's join rule, landed by step B3.
+
+    SWALLOWED, because withdrawing a presence must succeed whether or not there
+    is a lease store. An installation with no database, or one whose database is
+    down, still gets to close a chat tab. The lease's own `expires_at` bounds
+    what that costs: a lease nobody released expires on its own, which is the
+    slow path this call exists to skip, not a correctness hole.
+
+    NOT RESTRICTED TO `chat` HOLDERS. Section 6's rule about presence EXPIRY is
+    specifically about interactive holders, and that half is a read-time
+    comparison in the lease module. This is the explicit half: a session that
+    says it is leaving has said so about everything it holds, whatever kind it
+    is, and a sweep withdrawing on its way out should not keep a tree.
+    """
+    leases = _leases()
+    if leases is None:
+        return 0
+    try:
+        return leases.release_for_holder(session_id)
+    except Exception:
+        return 0
+
+
 def release(session_id: str) -> bool:
     """Explicitly withdraw a presence: the session is leaving, now, rather than
     in TTL seconds.
 
     This is the WRITE half of section 6's join rule -- "presence expiry for an
     interactive holder releases its lease immediately" -- and it is why closing
-    a chat tab can cost nothing. The lease half of that rule is step B3 and is
-    deliberately absent; when it lands it hangs off this call and off
-    `list_live`, and needs no change here.
+    a chat tab can cost nothing rather than orphaning a tree for a full TTL.
+    The leases go with the presence, in the same call, so there is no window in
+    which a session is gone and still holds a tree.
+
+    The PASSIVE half of the same rule -- a chat that stops beating without
+    saying anything -- is not here and could not be: there is no process left to
+    make a write. It is a read-time comparison in `services/leases.py`, in
+    exactly the shape `effective_expiry` uses below, and it can only ever
+    shorten a lease.
     """
     try:
         path = _session_path(session_id)
     except PresenceError:
         return False
+    _release_leases(session_id)
     try:
         path.unlink()
         return True
@@ -572,12 +625,14 @@ def directory(*,
     subject comes back with a null label rather than raising, so the directory
     never fails to answer "who is here" because it could not decorate one row.
 
-    `lease_source` IS THE SEAM FOR B3 and is the only thing missing from the
-    join section 6 describes (presence, leases, tickets, worktrees). It is a
-    callable `(subject_kind, subject_id) -> lease dict | None`; the lease module
-    passes its own lookup and nothing here changes. It defaults to None, so
-    `lease` is null on every entry today -- an honestly absent field rather than
-    a plausible-looking fake that a caller could not tell from a real lease.
+    `lease_source` COMPLETES THE JOIN section 6 describes (presence, leases,
+    tickets, worktrees). It is a callable `(subject_kind, subject_id) -> lease
+    dict | None`, and step B3 supplies `services.leases.lease_source`;
+    `GET /presence/directory` passes it, so the directory answers who holds
+    what. It still DEFAULTS to None, and that default is not vestigial: this
+    module must keep working on the system python3 a sweep uses, which cannot
+    import the lease module at all, and a caller that has no lease store gets an
+    honestly absent field rather than a plausible-looking fake.
     """
     entries = []
     for rec in list_live(session_kind=session_kind, subject_kind=subject_kind,
@@ -695,8 +750,17 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(rows))
         return 0
     if a.cmd == "directory":
+        # The lease half of the join, when this interpreter can reach it. Under
+        # the system python3 a sweep uses there is no sqlalchemy, so `lease`
+        # comes back null rather than the command failing -- the same graceful
+        # degradation `_resolve_ticket` already makes for a Postgres-backed
+        # scope's title. `GET /presence/directory`, served in the backend, is
+        # the reader that always resolves both.
+        leases = _leases()
+        source = None if leases is None else leases.lease_source
         print(json.dumps(directory(session_kind=a.kind, subject_kind=a.subject_kind,
-                                   subject_id=a.subject_id, scope=a.scope)))
+                                   subject_id=a.subject_id, scope=a.scope,
+                                   lease_source=source)))
         return 0
     if a.cmd == "prune":
         print(json.dumps({"pruned": prune(older_than_sec=a.older_than)}))

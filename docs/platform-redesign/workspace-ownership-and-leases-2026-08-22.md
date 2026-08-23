@@ -1,11 +1,12 @@
 # Who is working here: branch ownership, leases, and takeover
 
 - Date: 2026-08-22
-- Status: **B0, B2a and B2 are built** (B2 on 2026-08-23, the other two
-  2026-08-22 evening), along with track C's record, review surface and
-  merge-on-accept, and all of track A. B1 and B3 through B8 are not, and B1 has
-  MOVED to after B3: it is defined as read-write-if-you-hold-the-lease and there
-  is no lease until B3. Build log and the corrections it
+- Status: **B0, B2a, B2, B4 and B3 are built** (B3 and B4 on 2026-08-23, B2 the
+  same day, the other two 2026-08-22 evening), along with track C's record,
+  review surface and merge-on-accept, and all of track A. B1 and B5 through B8
+  are not; B1 has MOVED to after B3 (it is defined as
+  read-write-if-you-hold-the-lease and there was no lease until B3) and its
+  prerequisite now exists. Build log and the corrections it
   forced: [`HANDOFF-branch-isolation-2026-08-22.md`](HANDOFF-branch-isolation-2026-08-22.md)
   section 0. Revision 2, after an adversarial review pass
   (§16). Revision 1's central mechanism was wrong and is replaced.

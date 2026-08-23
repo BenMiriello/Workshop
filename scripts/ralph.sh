@@ -81,6 +81,7 @@ RECEIPT_PATH=""   # --receipt <path>: best-effort JSON receipt of this run's wor
 # this run drives a claimed task; empty for a standalone/manual ralph (no heartbeat).
 TASK_ID=""        # --task-id <id>: the claimed task this run works
 CLAIM_TOKEN=""    # --claim-token <n>: the claim generation, presented to fence the beat
+                  # (B3: the lease's generation where there is a lease store)
 STORE_DIR=""      # --store-dir <dir>: scope dir whose .tasks.json holds the claim
                   # (the project dir; differs from --dir in worktree mode)
 RUN_ID=""         # --run <job_id>: the child Job (attempt) id, for usage-ledger
@@ -164,6 +165,15 @@ trap release_presence EXIT
 # is doing (disposable, owned by nobody). They are renewed together because they
 # are true together, and this run is a separate OS process, so the only way the
 # platform can see it at all is a shared store it shells into.
+#
+# AND IT RENEWS THE TICKET LEASE, by shelling in (B3). `project_tasks.py
+# heartbeat` goes through `services/leases.py` and renews as a WORK EVENT, which
+# is section 6's rule for a NON-interactive holder: a sweep's lease is renewed by
+# its work, not by its presence. (An interactive holder -- a chat -- is the other
+# half of that rule, and its lease is renewed by presence and released the moment
+# presence goes.) There is no second `scripts/lease.py renew` call here for the
+# same reason there is no second acquire in project_ralph.sh: it would be a
+# second renewal of the same subject.
 heartbeat_task() {
   beat_presence
   [[ -z "$TASK_ID" || -z "$CLAIM_TOKEN" || -z "$STORE_DIR" ]] && return 0

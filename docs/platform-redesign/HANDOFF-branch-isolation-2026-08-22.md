@@ -3,10 +3,10 @@
 - Date: 2026-08-22
 - For: the agent or agents that will build this. Read this first, then the two
   design docs it points at.
-- Status of the work: **B0, B2a, B2, C1, C2, C5 and Track A are BUILT** (B2 on
-  2026-08-23; the rest 2026-08-22 evening). See section 0. B1 and B3 to B8 are
-  unstarted, and B1's position in the order was wrong: it needs the lease, so it
-  now follows B3.
+- Status of the work: **B0, B2a, B2, B3, B4, C1, C2, C5 and Track A are BUILT**
+  (B2, B3 and B4 on 2026-08-23; the rest 2026-08-22 evening). See section 0. B1
+  and B5 to B8 are unstarted. B1's position in the order was wrong -- it needs
+  the lease -- and the lease now exists, so B1 is next.
 - Design of record: [`workspace-ownership-and-leases-2026-08-22.md`](workspace-ownership-and-leases-2026-08-22.md)
   (revision 2, post-review) and
   [`branches-worktrees-and-environments-2026-08-20.md`](branches-worktrees-and-environments-2026-08-20.md)
@@ -61,11 +61,44 @@ Shipped 2026-08-22 in this order, each verified rather than asserted:
   It was not, and no test had noticed, because the branch ref survived every
   reap of an allocated (as opposed to hand-created) worktree.
 
+- **B3** (2026-08-23). The `lease` table, migration `f2a6d0c31b78`,
+  `db/lease_repo.py`, `services/leases.py`, `scripts/lease.py`. One mechanism,
+  one table, a typed subject: the ticket lease (kept, per §5) and the worktree
+  lease. Acquire is the one atomic `INSERT ... ON CONFLICT ... DO UPDATE ...
+  WHERE lease.expires_at < now()`; renew and release are `UPDATE ... WHERE
+  generation = :g`; every instant is computed and compared by Postgres, so no
+  caller's clock is ever accepted. `tasks.claim/heartbeat/update/reclaim` call
+  the module instead of counting their own generation, and §6's join rule is
+  wired both ways: `presence.release()` gives the leases up, and an interactive
+  holder whose presence has gone reads as expired (a `min()`-shaped overlay that
+  can only ever SHORTEN a lease). `presence.directory(lease_source=...)` is
+  filled and `GET /presence/directory` answers who holds what.
+  **`SELECT ... FOR UPDATE SKIP LOCKED`, which §5 named as the boring
+  alternative, was evaluated and rejected**, with the reasoning in the module
+  docstring: its exclusion ends at COMMIT, a ticket claim outlives the process
+  that took it, and a row lock carries no fencing generation.
+
 ### What building it corrected in this document
 
 1. **B1 cannot be second.** "Read-write if the session holds the lease" needs a
    lease, which is B3. Ordered before it, B1 is either a no-op or it makes every
    tree read-only. Correct order: B0, B2a, B2, **B3, then B1**.
+1b. **`ticket.claim_token` could not be deleted, and §15's cost list assumed it
+   would be.** That list named "an alembic migration on a NOT-NULL column, a
+   `schema.gen.ts` regeneration, a `field_occupancy_baseline.json` edit, 14
+   `--expect-claim-token` shell call sites and 5 test files". It missed that the
+   ticket store is DUAL-BACKED: `development` and `workshop` read Postgres, and
+   every tree under `projects/` is file-backed by design with no database near
+   it. A lease is a Postgres row, so deleting the column would leave a project
+   sweep with no fence at all rather than a degraded one. What shipped instead:
+   the column keeps its name and its place on the wire, and its VALUE is the
+   generation the lease issued wherever a lease store exists. So there was no
+   NOT-NULL migration, no baseline edit and no test rewrite; the
+   `schema.gen.ts` regeneration DID happen, for the new `DirectoryEntry.lease`
+   field, and all 12 `--expect-claim-token` argument sites plus `ralph.sh`'s
+   `--claim-token` were re-read and are unchanged because the flag still means
+   exactly what it meant. The column stops being two facts when the file-backed
+   ticket store does, which is not this step.
 2. **The supervised ceiling was cosmetic and this doc did not notice.** A
    supervised sweep merged into the trunk and THEN set `in_review`, so declining
    unlanded nothing. C2 is what makes worktree isolation pay for itself, and it

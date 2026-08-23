@@ -1087,6 +1087,21 @@ while (( n < MAX_TASKS )); do
   # setting the lease/pid/fencing-token (self-healing 2d). --pid $$ lets the
   # liveness reclaim tell a crashed sweep from a live one. A concurrent sweep or
   # CLI that already claimed it returns {}; skip.
+  #
+  # THE TICKET LEASE IS TAKEN HERE, by shelling in (B3 of
+  # docs/platform-redesign/workspace-ownership-and-leases-2026-08-22.md).
+  # `project_tasks.py claim` goes through `services/leases.py`, so this sweep
+  # acquires the lease on the ticket subject through the one mechanism rather
+  # than a second one -- and the exclusion is now a single atomic statement in
+  # Postgres instead of an flock two processes may not share. There is
+  # deliberately no separate `scripts/lease.py acquire ticket` call beside this
+  # one: that would be a SECOND acquire of the same subject, which is the
+  # duplicate this step exists to remove. `scripts/lease.py` is for the subjects
+  # this sweep does not reach through the task store (a worktree, once B1 mounts
+  # one read-only).
+  #
+  # LOSING THE LEASE LOOKS EXACTLY LIKE LOSING THE STATUS RACE: `{}` on stdout,
+  # handled by the branch below. No new failure mode reaches this script.
   CLAIMED=$(python3 "$PTASKS" claim "$DIR" "$TASK_ID" "$CHILD_JOB" --pid $$ "${ASSIGNEE_FLAG[@]}" 2>>"$LOG")
   CLAIMED_ID=$(jf "$CLAIMED" id)
   if [[ -z "$CLAIMED_ID" ]]; then
@@ -1102,7 +1117,11 @@ while (( n < MAX_TASKS )); do
   fi
   ATTEMPTS=$(jf "$CLAIMED" attempts); [[ -z "$ATTEMPTS" ]] && ATTEMPTS=1
   # Fencing token from this claim; passed to every finalize so a zombie can't
-  # clobber a task that a liveness reclaim reassigned to a newer sweep.
+  # clobber a task that a liveness reclaim reassigned to a newer sweep. It is
+  # the LEASE's generation now (B3) wherever a lease store exists, and the
+  # record's own counter on a file-backed tree that has no database -- the flag
+  # spelling, the meaning and every --expect-claim-token call site below are
+  # unchanged either way.
   CLAIM_TOKEN=$(jf "$CLAIMED" claim_token)
   # Now working a named subject. A whole-record write, so the previous subject
   # (or none) is replaced rather than accumulated.
