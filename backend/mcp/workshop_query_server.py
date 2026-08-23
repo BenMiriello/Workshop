@@ -412,6 +412,28 @@ def _bound_thread() -> str | None:
     return t or None
 
 
+def _command_tool_input_schema(params: list[dict]) -> dict:
+    """JSON Schema for a command tool's typed inputs, built from its ToolParam list."""
+    properties: dict = {}
+    required: list = []
+    for p in params:
+        name = p.get("name", "")
+        if not name:
+            continue
+        prop: dict = {"type": p.get("type") or "string"}
+        desc = p.get("description") or ""
+        if desc:
+            prop["description"] = desc
+        properties[name] = prop
+        if p.get("required"):
+            required.append(name)
+    schema: dict = {"type": "object", "properties": properties,
+                    "additionalProperties": False}
+    if required:
+        schema["required"] = required
+    return schema
+
+
 def _tool_list() -> list:
     tools = [
         {"name": TOOL_NAME, "description": TOOL_DESC, "inputSchema": TOOL_SCHEMA},
@@ -428,6 +450,28 @@ def _tool_list() -> list:
     if _bound_thread():
         tools.append({"name": SPAWN_TOOL_NAME, "description": SPAWN_TOOL_DESC,
                       "inputSchema": SPAWN_TOOL_SCHEMA})
+
+    # User-defined (and app-defined) command tools, exposed as native MCP tools
+    # so an agent calls them by their declared id rather than through a dispatch
+    # wrapper. Platform tools never have kind=command (they are builtin or mcp),
+    # so no name collision with the static list above is possible.
+    try:
+        from services import tool_registry
+        for tool in tool_registry.catalog():
+            if tool.provenance == "platform" or tool.kind != "command":
+                continue
+            cmd = tool.spec.get("command") or []
+            if not cmd:
+                continue
+            params = tool.spec.get("params") or []
+            tools.append({
+                "name": tool.id,
+                "description": tool.description or tool.title,
+                "inputSchema": _command_tool_input_schema(params),
+            })
+    except Exception:
+        pass  # never crash the tool list; a missing registry is just an empty set
+
     return tools
 
 
@@ -458,6 +502,91 @@ def _run_spawn(args: dict) -> str:
     )
 
 
+def _run_command_tool(tool_id: str, args: dict) -> str:
+    """Run a user-declared command tool inside the existing confinement.
+
+    The MCP server is a subprocess of the claude turn that scoped_exec
+    confined (via bwrap); any subprocess it spawns inherits that namespace.
+    That is what "through the existing confinement (services/scoped_exec)"
+    means here — the sandbox is already in place, not re-established.
+    `turn_env` is called explicitly to keep the environment consistent with
+    what scoped_exec requires (path remapping under the scope root), even
+    though it is a near-no-op here because the MCP server's own env was
+    already set up at turn start.
+    """
+    import subprocess
+    from services import scoped_exec, tool_registry
+    from services.agent_authority import IRREVERSIBLE_PATTERNS
+
+    tool = tool_registry.get(tool_id)
+    if tool is None:
+        return f"error: no tool with id {tool_id!r}"
+    if tool.kind != "command":
+        return f"error: tool {tool_id!r} is kind {tool.kind!r}, not command"
+
+    cmd = list(tool.spec.get("command") or [])
+    if not cmd:
+        return f"error: tool {tool_id!r} has no command"
+
+    params = tool.spec.get("params") or []
+
+    # Validate typed inputs: required params must be present.
+    missing = [p["name"] for p in params
+               if p.get("required") and p.get("name") and p["name"] not in args]
+    if missing:
+        return "error: missing required parameter(s): " + ", ".join(missing)
+
+    # RUN-TIME deny-list check. Applied again even if the tool passed at
+    # registration: a pattern added after a tool was declared would not block
+    # it otherwise (doc §2.3).
+    cmd_str = " ".join(str(s) for s in cmd)
+    for pattern in IRREVERSIBLE_PATTERNS:
+        if pattern.startswith("Bash(") and pattern.endswith(":*)"):
+            prefix = pattern[5:-3]
+            if cmd_str == prefix or cmd_str.startswith(prefix + " "):
+                return (f"error: command denied by irreversible-action pattern "
+                        f"{pattern!r}")
+
+    # Prepare the environment via scoped_exec (path remapping for the scope
+    # root; workdir=None is correct here since the sandbox is already set up).
+    env = scoped_exec.turn_env(dict(os.environ))
+    # Pass declared inputs as TOOL_<NAME> env vars so the command can consume
+    # them without requiring placeholders in its own argv.
+    for name, value in args.items():
+        env[f"TOOL_{name.upper()}"] = str(value)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+            cwd=os.getcwd(),  # /workspace inside the bwrap sandbox
+        )
+    except subprocess.TimeoutExpired:
+        return "error: command timed out after 60 seconds"
+    except FileNotFoundError as e:
+        return f"error: command not found: {e}"
+    except Exception as e:  # noqa: BLE001
+        return f"error: {e}"
+
+    out = result.stdout or ""
+    if result.stderr:
+        out += ("\n" if out else "") + result.stderr
+    if result.returncode != 0:
+        out = out.rstrip("\n") + f"\n[exit code {result.returncode}]"
+    return out or "(no output)"
+
+
+# The platform tool names handled by the static dispatch below. Command tools
+# are NOT in this set; they are looked up dynamically from tool_registry.
+_PLATFORM_CALL_NAMES = frozenset({
+    TOOL_NAME, SEARCH_TOOL_NAME, SPAWN_TOOL_NAME,
+    WHERE_IS_TOOL_NAME, LIST_ATTACHMENTS_TOOL_NAME, GET_FILE_TOOL_NAME,
+})
+
+
 def _handle(msg: dict) -> dict | None:
     """Return a JSON-RPC response dict, or None for a notification (no reply)."""
     method = msg.get("method")
@@ -484,11 +613,17 @@ def _handle(msg: dict) -> dict | None:
     if method == "tools/call":
         params = msg.get("params") or {}
         name = params.get("name")
-        if name not in (TOOL_NAME, SEARCH_TOOL_NAME, SPAWN_TOOL_NAME,
-                        WHERE_IS_TOOL_NAME, LIST_ATTACHMENTS_TOOL_NAME,
-                        GET_FILE_TOOL_NAME):
-            return {"jsonrpc": "2.0", "id": mid,
-                    "error": {"code": -32602, "message": f"unknown tool: {name}"}}
+        is_cmd_tool = False
+        if name not in _PLATFORM_CALL_NAMES:
+            try:
+                from services import tool_registry as _tr
+                _t = _tr.get(name)
+                is_cmd_tool = _t is not None and _t.kind == "command"
+            except Exception:  # noqa: BLE001
+                pass
+            if not is_cmd_tool:
+                return {"jsonrpc": "2.0", "id": mid,
+                        "error": {"code": -32602, "message": f"unknown tool: {name}"}}
         try:
             if name == SEARCH_TOOL_NAME:
                 text = _run_search(params.get("arguments") or {})
@@ -500,6 +635,8 @@ def _handle(msg: dict) -> dict | None:
                 text = _run_list_attachments()
             elif name == GET_FILE_TOOL_NAME:
                 text = _run_get_file(params.get("arguments") or {})
+            elif is_cmd_tool:
+                text = _run_command_tool(name, params.get("arguments") or {})
             else:
                 text = _build_digest()
         except Exception as e:  # noqa: BLE001

@@ -383,3 +383,26 @@ class TestDeclarationSourcesUseTheRegistry:
                 f"llm_router.BASELINE_DISALLOWED_TOOLS includes {tid!r}, "
                 "which has no PLATFORM_TOOLS entry"
             )
+
+
+# ---- stage 4: command deny-list is applied at registration -----------------
+
+def test_registration_refuses_a_command_with_a_denied_pattern(tools_file, no_app_tools):
+    """A user tool whose command matches IRREVERSIBLE_PATTERNS is refused at
+    create time, with the matching pattern named; the store file is not written.
+
+    doc §5 step 4: "the deny list applied at registration and at run time."
+    Checked at registration rather than only at run time so that a pattern added
+    after a tool was declared cannot silently enable it.
+    """
+    with pytest.raises(ValueError) as exc_info:
+        tr.create_user_tool("force-push", {
+            "title": "Force push",
+            "kind": "command",
+            "spec": {"command": ["git", "push", "--force"]},
+        })
+    msg = str(exc_info.value)
+    assert "Bash(git push:*)" in msg, (
+        f"refusal must name the matching pattern; got: {msg!r}"
+    )
+    assert not tools_file.exists(), "a refused write leaves no file behind"

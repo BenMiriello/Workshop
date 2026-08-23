@@ -776,6 +776,30 @@ def _validated(tool_id: str, body: dict[str, Any]) -> Tool:
     return tool
 
 
+def _command_denied_by_pattern(command: list[str]) -> str | None:
+    """The first IRREVERSIBLE_PATTERNS entry the command matches, or None.
+
+    Lazy-imports agent_authority to avoid the circular import that would arise
+    from a module-level import (agent_authority imports tool_registry).
+
+    Pattern format: `Bash(<prefix>:*)`. A command list is joined with spaces
+    and checked for a prefix match, so `["git", "push", "origin"]` matches
+    `"Bash(git push:*)"`. Applied at REGISTRATION (refuse here, with the
+    pattern named) and again at RUN TIME inside the execution path (doc §2.3):
+    a tool declared before a pattern was added cannot slip through.
+    """
+    if not command:
+        return None
+    from services.agent_authority import IRREVERSIBLE_PATTERNS  # lazy: no circular import
+    cmd_str = " ".join(str(s) for s in command)
+    for pattern in IRREVERSIBLE_PATTERNS:
+        if pattern.startswith("Bash(") and pattern.endswith(":*)"):
+            prefix = pattern[5:-3]
+            if cmd_str == prefix or cmd_str.startswith(prefix + " "):
+                return pattern
+    return None
+
+
 def create_user_tool(tool_id: str, body: dict[str, Any]) -> Tool:
     """Declare a user tool. Refuses a platform or app id, naming it.
 
@@ -792,6 +816,17 @@ def create_user_tool(tool_id: str, body: dict[str, Any]) -> Tool:
     existing = user_tools()
     if any(t.id == tool.id for t in existing):
         raise ToolConflict(f"{tool.id!r} is already a user tool; edit it instead of creating it")
+    # DENY-LIST AT REGISTRATION (doc §2.3). A command tool whose argv matches
+    # IRREVERSIBLE_PATTERNS is refused here, with the matching pattern named, so
+    # the author knows exactly which rule it hit and can choose a different command.
+    if tool.kind == "command":
+        cmd = list(tool.spec.get("command") or [])
+        bad = _command_denied_by_pattern(cmd)
+        if bad:
+            raise ValueError(
+                f"the command {cmd!r} matches the irreversible-action deny-list "
+                f"pattern {bad!r}; user tools are subject to the same fence as "
+                "unattended runs — choose a command that does not match it")
     _write([*existing, tool])
     return tool
 
@@ -807,6 +842,15 @@ def update_user_tool(tool_id: str, body: dict[str, Any]) -> Tool:
     if not any(t.id == tool_id for t in existing):
         raise KeyError(tool_id)
     tool = _validated(tool_id, body)
+    # Deny-list check on update too: a re-registration to a forbidden command
+    # must be refused with the same fence as the original declaration.
+    if tool.kind == "command":
+        cmd = list(tool.spec.get("command") or [])
+        bad = _command_denied_by_pattern(cmd)
+        if bad:
+            raise ValueError(
+                f"the command {cmd!r} matches the irreversible-action deny-list "
+                f"pattern {bad!r}")
     _write([tool if t.id == tool_id else t for t in existing])
     return tool
 
