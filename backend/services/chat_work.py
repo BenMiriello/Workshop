@@ -97,6 +97,14 @@ def _run_summary(job: dict, names: dict[str, str]) -> dict:
     ev = job.get("evidence")
     receipt = ev if isinstance(ev, dict) and ev.get("kind") == "receipt" else {}
     files, commits = receipt.get("files"), receipt.get("commits")
+    # WHY IT STOPPED, which the card had no way to say. A run refused by a guard
+    # closes `cancelled` with nothing else on it, so from the chat it was
+    # indistinguishable from a crash (measured 2026-08-23: the operator pressed
+    # Run twice, got `cancelled 0s` twice, and the reason was only ever in
+    # `.runtime/queue-runner.log`). `halted` is the sentence; `refusal` is what
+    # makes it a refusal rather than a stop the sweep chose.
+    halted = str((ev or {}).get("halted") or "").strip() if isinstance(ev, dict) else ""
+    refusal = (ev or {}).get("refusal") if isinstance(ev, dict) else None
     out: dict[str, Any] = {
         "id": job.get("id"),
         "status": job.get("status"),
@@ -107,6 +115,8 @@ def _run_summary(job: dict, names: dict[str, str]) -> dict:
         "exit_code": job.get("exit_code"),
         "files": len(files) if isinstance(files, list) else None,
         "commits": len(commits) if isinstance(commits, list) else None,
+        "halted": halted or None,
+        "refusal": refusal if isinstance(refusal, dict) else None,
     }
     return out
 

@@ -32,7 +32,10 @@ import {
 } from "../lib/tasks";
 import { parseList, unresolvedIds } from "../lib/ticketEdit";
 import { decisionRefusal, isOpenChange, type Change } from "../lib/changeReview";
-import { jobIsLive, jobStatusKind, runHref } from "../lib/jobs";
+import {
+  jobIsLive, jobRefusal, nextAdmissibleText, runHref, runOutcome,
+  type JobEvidence,
+} from "../lib/jobs";
 import { nextWorkParams } from "../lib/workParams";
 import {
   EditableBody, EditableTitle, PickEditor, PropRow, TextEditor,
@@ -55,7 +58,10 @@ type JobRec = {
   // store has never written.
   agent_id?: string;
   agent_name?: string;
-  evidence?: { summary?: string; url?: string };
+  // The whole evidence record, straight off the backend's own model, so the
+  // refusal a guard attached to a run is readable here rather than being
+  // narrowed away by a hand-written shape. See routes/api_models.JobEvidence.
+  evidence?: JobEvidence | null;
 };
 
 // The run row's own link. `.ws-runrow` still lays the row out; the link inside
@@ -445,6 +451,12 @@ export default function TicketDetail() {
     </section>
   ) : null;
 
+  // The latest run's refusal, if that is how it ended. Only the latest: an older
+  // refusal is history, and a stack of them would bury the run list this sits
+  // above.
+  const lastRefusal = jobRefusal(lastRun?.evidence);
+  const lastRefusalNext = nextAdmissibleText(lastRefusal?.next_admissible_at);
+
   const runsCard = (
     <section>
       <div className="ws-sectionhead">
@@ -457,6 +469,17 @@ export default function TicketDetail() {
         )}
         <Link className="ws-sectionhead__link" to="/runs">All runs</Link>
       </div>
+      {/* WHY THE LAST RUN DID NOT HAPPEN, on the page the operator opens after
+          pressing Run and seeing nothing move. A LINE and not a region: the runs
+          are on screen, one thing beside them needs saying. `warn`, because a
+          guard refusing a run is the guard working. The sentence is the
+          server's, verbatim; nothing is re-worded here. */}
+      {lastRefusal && (
+        <Notice tone="warn">
+          {lastRefusal.reason}
+          {lastRefusalNext ? ` ${lastRefusalNext}` : ""}
+        </Notice>
+      )}
       <Card compact pad0>
         {runsInOrder.length === 0
           ? <div className="ws-runrow__none">No runs yet.</div>
@@ -468,7 +491,13 @@ export default function TicketDetail() {
                       The row used to BE the <a>, which left nowhere to put a
                       second one. */}
                   <Link style={RUN_LINK} to={runHref(r.id)}>
-                    <StatusDot status={jobStatusKind(r.status)}>{r.status}</StatusDot>
+                    {/* The run's OUTCOME, not its raw status. A run a budget
+                        guard turned away is stored `cancelled`, which is the
+                        same word an operator's own cancellation leaves; one
+                        helper decides that a refusal reads as `refused`. */}
+                    <StatusDot status={runOutcome(r.status, jobRefusal(r.evidence)).kind}>
+                      {runOutcome(r.status, jobRefusal(r.evidence)).label}
+                    </StatusDot>
                     <span className="ws-ticket-key">{r.id.slice(-6)}</span>
                     <span className="ws-runrow__who">
                       {r.kind || "run"} · attempt {r.attempt}

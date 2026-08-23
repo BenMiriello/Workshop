@@ -481,6 +481,36 @@ class JobAwaitingQuestion(BaseModel):
     blocked_reason: str | None = None
 
 
+class JobRefusal(BaseModel):
+    """A GUARD said no, and this is what it said.
+
+    Carried on `JobEvidence.refusal` by any run an admission guard turned away
+    before it worked anything. A refusal is not a failure and not an operator
+    cancellation: nothing is broken, the guard did its job, and the operator
+    needs to know what refused the run and what would change it -- which, before
+    this, only `.runtime/queue-runner.log` on the host knew.
+
+    `reason` is the WHOLE sentence, composed once in `services/usage_ledger`, so
+    the log line, this record and the run card all read identically. The rest is
+    what a sentence cannot carry: exact figures where the sentence rounds, and an
+    instant the UI renders in the reader's own timezone."""
+
+    model_config = ConfigDict(extra="allow")
+
+    # Which guard. `usage-budget` is the only one today.
+    by: str | None = None
+    # Which of that guard's limits: app_ceiling | scope_ceiling | scope_allocation.
+    kind: str | None = None
+    reason: str | None = None
+    scope: str | None = None
+    used: int | None = None
+    limit: int | None = None
+    window_s: int | None = None
+    # ESTIMATED instant the rolling window falls back under the limit on its own,
+    # assuming nothing else spends. Null when it cannot be derived.
+    next_admissible_at: str | None = None
+
+
 class JobEvidence(BaseModel):
     """What a run produced. One structured record, not a freeform dump.
 
@@ -505,6 +535,10 @@ class JobEvidence(BaseModel):
     # Set when a sweep stopped BEFORE doing any work, which must not read like
     # a run that did work and failed.
     halted: str | None = None
+    # Set when a GUARD is what stopped it, which is not the same event as the
+    # sweep choosing to stop (yielding, running out of wall clock). `halted`
+    # still carries the sentence; this carries the facts under it.
+    refusal: JobRefusal | None = None
     reviewer: str | None = None
     gate: str | None = None
 

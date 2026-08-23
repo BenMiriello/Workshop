@@ -113,6 +113,25 @@ def _parse_ts(s: str) -> float | None:
         return None
 
 
+def fmt_tokens(n: float) -> str:
+    """A token count the way a person reads it: 1972531 -> "1.97M", 150000 ->
+    "150K", 900 -> "900".
+
+    Byte-identical to `fmtTokens` in `frontend/src/lib/usage.ts`, deliberately.
+    A refusal sentence is composed HERE and rendered THERE, and two spellings of
+    the same count in one screen is how a number stops being believed."""
+    try:
+        v = float(n)
+    except (TypeError, ValueError):
+        return "0"
+    a = abs(v)
+    if a >= 1_000_000:
+        return f"{v / 1_000_000:.2f}M"
+    if a >= 1_000:
+        return f"{round(v / 1_000)}K"
+    return str(round(v))
+
+
 # ---------------------------------------------------------------------------
 # Accounting
 # ---------------------------------------------------------------------------
@@ -195,45 +214,96 @@ def usage_for_jobs(job_ids: list[str] | set[str]) -> dict[str, int]:
     return out
 
 
-def window_usage(now: datetime | None = None, window_s: int = WINDOW_S,
-                 exclude_roles: Iterable[str] | None = None) -> dict:
-    """Token usage over the trailing window: app-wide total + per-project.
+def window_rows(now: datetime | None = None, window_s: int = WINDOW_S,
+                exclude_roles: Iterable[str] | None = None) -> list[dict]:
+    """The ledger rows inside the trailing window, oldest first.
 
-    `exclude_roles` drops rows whose `role` is in the set. Default None counts
-    everything, so every reporting caller keeps its current numbers; only
-    `can_admit` passes ADMISSION_EXCLUDED_ROLES."""
+    Exposed because two questions need the ROWS and not just their sum: what the
+    window totals (`window_usage`) and WHEN it will total less (`_next_under`,
+    which has to know which row ages out first). Sorted here so neither caller
+    re-sorts, and so a hand-edited ledger with out-of-order lines still answers
+    the second question correctly."""
     cutoff = (now or _now()).timestamp() - window_s
     skip = set(exclude_roles or ())
-    by_project: dict[str, int] = {}
-    total = 0
+    rows: list[dict] = []
     for e in _read_entries():
         t = _parse_ts(e.get("ts", ""))
         if t is None or t < cutoff:
             continue
         if skip and e.get("role") in skip:
             continue
-        tok = int(e.get("tokens") or 0)
-        by_project[e.get("project", "unbound")] = by_project.get(e.get("project", "unbound"), 0) + tok
-        total += tok
+        rows.append({
+            "t": t,
+            "project": e.get("project", "unbound"),
+            "role": e.get("role"),
+            "tokens": int(e.get("tokens") or 0),
+        })
+    rows.sort(key=lambda r: r["t"])
+    return rows
+
+
+def window_usage(now: datetime | None = None, window_s: int = WINDOW_S,
+                 exclude_roles: Iterable[str] | None = None) -> dict:
+    """Token usage over the trailing window: app-wide total + per-project.
+
+    `exclude_roles` drops rows whose `role` is in the set. Default None counts
+    everything; `can_admit` and the reporting headline both pass
+    ADMISSION_EXCLUDED_ROLES so the figure on the screen is the figure the guard
+    used."""
+    by_project: dict[str, int] = {}
+    total = 0
+    for r in window_rows(now, window_s=window_s, exclude_roles=exclude_roles):
+        by_project[r["project"]] = by_project.get(r["project"], 0) + r["tokens"]
+        total += r["tokens"]
     return {"app": total, "by_project": by_project, "window_s": window_s}
 
 
+def window_excluded(now: datetime | None = None, window_s: int = WINDOW_S) -> dict:
+    """The spend the admission guard does NOT count, per role.
+
+    Reported SEPARATELY rather than folded into one total. Chat and compaction
+    are the operator's own conversation: real spend he should see, and spend no
+    guard will ever refuse a run over. Adding them to the headline is what made
+    the Usage page read 265M against a 5M pool while the guard that matters was
+    looking at 1.97M."""
+    by_role: dict[str, int] = {}
+    total = 0
+    for r in window_rows(now, window_s=window_s):
+        role = r["role"]
+        if role not in ADMISSION_EXCLUDED_ROLES:
+            continue
+        by_role[role] = by_role.get(role, 0) + r["tokens"]
+        total += r["tokens"]
+    return {"total": total, "by_role": by_role,
+            "roles": list(ADMISSION_EXCLUDED_ROLES)}
+
+
 def timeseries(now: datetime | None = None, window_s: int = WINDOW_S,
-               buckets: int = 60) -> dict:
+               buckets: int = 60,
+               exclude_roles: Iterable[str] | None = None) -> dict:
     """Per-interval per-project token usage across the trailing window, in
     `buckets` evenly spaced bins (default 60 -> 5-minute bins over a 5h window).
     Each point carries the tokens billed to each project WITHIN that bin, so a
     line chart shows usage as spikes when sweeps run, not a cumulative climb.
     Rolling: the window start is `now - window_s`, so aged-out entries are
-    already excluded. `bin_s` is returned so the client can label the rate."""
+    already excluded. `bin_s` is returned so the client can label the rate.
+
+    `exclude_roles` matches `window_usage`. The Usage page's By App view passes
+    ADMISSION_EXCLUDED_ROLES so the chart and the totals above it are the same
+    measurement: a chart peaking at 82M in one bin over a bar reading "1.97M of
+    5M" is two answers to one question. Chat spend is not lost, it is the By
+    Chat view, which is where it is actually legible."""
     end = (now or _now()).timestamp()
     start = end - window_s
     step = window_s / buckets
+    skip = set(exclude_roles or ())
     projects: set[str] = set()
     bins: list[dict[str, int]] = [dict() for _ in range(buckets)]
     for e in _read_entries():
         t = _parse_ts(e.get("ts", ""))
         if t is None or t < start:
+            continue
+        if skip and e.get("role") in skip:
             continue
         proj = e.get("project", "unbound")
         projects.add(proj)
@@ -460,10 +530,23 @@ def status(now: datetime | None = None, window_s: int = WINDOW_S) -> dict:
     against a 7-day total — so allowance/remaining are reported ONLY for the
     standard window and are None otherwise. `capped` tells the caller which of the
     two shapes it is holding, so nothing downstream can render a 5h cap as if it
-    bounded a 30-day total."""
+    bounded a 30-day total.
+
+    THE HEADLINE IS WHAT THE GUARD COUNTS. `app_used` and every project's `used`
+    exclude ADMISSION_EXCLUDED_ROLES, exactly as `can_admit` does, and the spend
+    the guard ignores is reported beside them under `excluded` with its roles
+    named. It used to be one total, and on 2026-08-23 that total read 265,430,033
+    against a 5,000,000 pool -- 53x the cap, a page that looked like a
+    catastrophe -- while the only figure any guard was reading was the 1,972,531
+    of autonomous spend underneath it. Same rule as the refusal sentence: the
+    number on the screen must be the number the decision used. `excluded` is
+    reported on EVERY window, capped or not, so "used" never quietly changes
+    meaning when the operator switches to 30 days."""
     cfg = load_config()
     capped = window_s == WINDOW_S
-    usage = window_usage(now, window_s=window_s)
+    usage = window_usage(now, window_s=window_s,
+                         exclude_roles=ADMISSION_EXCLUDED_ROLES)
+    excluded = window_excluded(now, window_s=window_s)
     used = usage["by_project"]
     # Treat every project with recent usage or config as a "demander" for the
     # share view (so the operator sees allowances even when nothing is pending).
@@ -487,6 +570,7 @@ def status(now: datetime | None = None, window_s: int = WINDOW_S) -> dict:
         "app_remaining": (
             max(0, int(cfg.get("app_total", 0)) - usage["app"]) if capped else None
         ),
+        "excluded": excluded,
         "projects": projects,
     }
 
@@ -518,6 +602,75 @@ def _inflight_coordinator_sweeps(exclude_job_id: str | None = None) -> int:
         return 0
 
 
+# ---------------------------------------------------------------------------
+# What a refusal IS
+# ---------------------------------------------------------------------------
+#
+# A REFUSED RUN IS NOT A FAILED RUN AND IT IS NOT A CANCELLED ONE. Nothing is
+# broken when this fires: the guard worked. But on 2026-08-23 the operator
+# pressed "File and run" twice and got `cancelled 0s` twice, with the only
+# explanation sitting in `.runtime/queue-runner.log` on the host. So a refusal
+# has to say, on the screen he was already looking at, what refused it and what
+# would change it.
+#
+# ONE PLACE DECIDES THE WORDING, and it is here, because the numbers are here.
+# `reason` is the sentence; the log line, the Job's `evidence.halted`, the chat
+# run card and the ticket page all print that same string rather than each
+# composing a variant of it from the fields beside it. The structured fields
+# exist for what a sentence cannot do: `next_admissible_at` is an INSTANT the UI
+# renders in the reader's own timezone, and `used`/`limit` are exact where the
+# sentence is rounded.
+
+REFUSED_BY = "usage-budget"
+
+
+def _next_under(rows: list[dict], target: float, window_s: int) -> str | None:
+    """When the rolling window drops to `target` on its own, or None if never.
+
+    The window is a sliding sum, so it falls only as rows age out of it. Drop
+    rows oldest-first until the remainder fits; the answer is the moment the
+    last one dropped leaves the window (its timestamp + the window length).
+
+    An ESTIMATE by construction, and said so wherever it is printed: it assumes
+    nothing else spends in the meantime, which a live scope generally does."""
+    total = sum(r["tokens"] for r in rows)
+    if total <= target:
+        return None
+    for r in rows:  # oldest first (window_rows sorts)
+        total -= r["tokens"]
+        if total <= target:
+            return datetime.fromtimestamp(r["t"] + window_s, tz=timezone.utc).isoformat()
+    return None
+
+
+def _refusal(kind: str, reason: str, *, scope: str | None, used: float,
+             limit: float, window_s: int, next_at: str | None) -> dict:
+    """The structured half of a refusal. `reason` is the operator's sentence and
+    the only wording; these are the facts under it."""
+    return {
+        "by": REFUSED_BY,
+        "kind": kind,
+        "reason": reason,
+        "scope": scope,
+        "used": int(used),
+        "limit": int(limit),
+        "window_s": int(window_s),
+        "next_admissible_at": next_at,
+    }
+
+
+def admission(scope: str | None, now: datetime | None = None,
+              exclude_job_id: str | None = None) -> dict:
+    """`can_admit` with its reasoning kept: `{ok, reason, refusal}`.
+
+    `refusal` is None when admitted, and otherwise the structured record that
+    rides onto the Job so a refused run can explain itself without anybody
+    reading a log file on the host. Admission LOGIC is unchanged; this only
+    stopped throwing the explanation away."""
+    ok, reason, refusal = _admission(scope, now=now, exclude_job_id=exclude_job_id)
+    return {"ok": ok, "reason": reason, "refusal": refusal}
+
+
 def can_admit(scope: str | None, now: datetime | None = None,
               exclude_job_id: str | None = None) -> tuple[bool, str]:
     """Whether one more autonomous sweep/task may start in `scope` (a project
@@ -531,12 +684,24 @@ def can_admit(scope: str | None, now: datetime | None = None,
     sliver of budget and overshoots (its true cost is unknown until it runs).
     Chat rows are excluded from the window (ADMISSION_EXCLUDED_ROLES), so this
     never gates interactive chat and interactive spend never refuses a sweep. The
-    reserved headroom is the chats' to use in full. (research rec 2)"""
+    reserved headroom is the chats' to use in full. (research rec 2)
+
+    Kept as the two-value form every existing caller uses. `admission()` is the
+    same decision with the structured refusal attached."""
+    ok, reason, _ = _admission(scope, now=now, exclude_job_id=exclude_job_id)
+    return ok, reason
+
+
+def _admission(scope: str | None, now: datetime | None = None,
+               exclude_job_id: str | None = None) -> tuple[bool, str, dict | None]:
+    """The one implementation. Returns (ok, reason, refusal-or-None)."""
     cfg = load_config()
+    rows = window_rows(now, exclude_roles=ADMISSION_EXCLUDED_ROLES)
     usage = window_usage(now, exclude_roles=ADMISSION_EXCLUDED_ROLES)
+    hours = max(1, round(WINDOW_S / 3600))
     app_total = float(cfg.get("app_total") or 0)
     if app_total <= 0:
-        return True, "uncapped (no app_total)"
+        return True, "uncapped (no app_total)", None
     nominal = float(cfg.get("nominal_task_tokens") or _DEFAULT_CONFIG["nominal_task_tokens"])
     # Reserve one nominal task for the run about to start PLUS one per in-flight
     # coordinator sweep whose spend has not billed yet, so N concurrent sweeps
@@ -553,15 +718,26 @@ def can_admit(scope: str | None, now: datetime | None = None,
     fraction = _autonomy_budget_fraction(cfg)
     autonomous_ceiling = app_total * fraction
     if usage["app"] + reserve > autonomous_ceiling:
-        return False, (
-            f"autonomous budget spent: {usage['app']} of {int(autonomous_ceiling)} tokens "
-            f"used in the last {usage['window_s']//3600}h, and the next task needs "
-            f"{int(reserve)} more")
+        reason = (
+            f"refused: autonomous work has used {fmt_tokens(usage['app'])} of the "
+            f"{fmt_tokens(autonomous_ceiling)} tokens it may spend in a {hours} hour "
+            f"window, and the next task needs {fmt_tokens(reserve)} more")
+        return False, reason, _refusal(
+            "app_ceiling", reason, scope=scope, used=usage["app"],
+            limit=autonomous_ceiling, window_s=WINDOW_S,
+            next_at=_next_under(rows, autonomous_ceiling - reserve, WINDOW_S))
     if scope:
         used_scope = usage["by_project"].get(scope, 0)
+        scope_rows = [r for r in rows if r["project"] == scope]
         ceil = _project_params(cfg, scope).get("ceil")
         if ceil is not None and used_scope >= float(ceil):
-            return False, f"project ceil reached: {scope} {used_scope}/{int(float(ceil))}"
+            reason = (
+                f"refused: the {scope} scope has used {fmt_tokens(used_scope)} of its "
+                f"{fmt_tokens(float(ceil))} token allowance for the last {hours} hours")
+            return False, reason, _refusal(
+                "scope_ceiling", reason, scope=scope, used=used_scope,
+                limit=float(ceil), window_s=WINDOW_S,
+                next_at=_next_under(scope_rows, float(ceil), WINDOW_S))
         # Enforce the weighted max-min allocation so configured floors/weights/ceil
         # actually gate (they were previously display-only; review F10). A scope
         # that has already spent its computed allowance for this window yields to
@@ -572,9 +748,15 @@ def can_admit(scope: str | None, now: datetime | None = None,
         demanders = set(usage["by_project"]) | set(cfg.get("projects", {})) | {scope}
         allowance = plan_budgets(usage["by_project"], demanders, cfg).get(scope)
         if allowance is not None and used_scope >= allowance:
-            return False, (f"scope allocation reached: {scope} "
-                           f"{int(used_scope)}/{int(allowance)} tokens this window")
-    return True, "ok"
+            reason = (
+                f"refused: the {scope} scope has used {fmt_tokens(used_scope)} of the "
+                f"{fmt_tokens(allowance)} tokens allocated to it for the last "
+                f"{hours} hours")
+            return False, reason, _refusal(
+                "scope_allocation", reason, scope=scope, used=used_scope,
+                limit=allowance, window_s=WINDOW_S,
+                next_at=_next_under(scope_rows, allowance, WINDOW_S))
+    return True, "ok", None
 
 
 # ---------------------------------------------------------------------------
@@ -604,9 +786,11 @@ def _main(argv: list[str]) -> int:
         record(args.project, args.tokens, agent=args.agent, job_id=args.job_id,
                task_id=args.task_id, run=args.run, role=args.role)
     elif args.cmd == "admit":
-        ok, reason = can_admit(args.project, exclude_job_id=args.exclude_job)
-        print(json.dumps({"ok": ok, "reason": reason}))
-        return 0 if ok else 1
+        # The shell reads BOTH: `.reason` is what it logs and puts on the Job's
+        # `evidence.halted`, `.refusal` is the structured record under it.
+        verdict = admission(args.project, exclude_job_id=args.exclude_job)
+        print(json.dumps(verdict))
+        return 0 if verdict["ok"] else 1
     elif args.cmd == "status":
         print(json.dumps(status(), indent=2))
     elif args.cmd == "prune":

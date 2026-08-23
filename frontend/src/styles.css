@@ -2860,6 +2860,15 @@ p.chat-workpanel__note { margin: 0; }
   color: var(--muted); font-size: var(--fs-xs);
 }
 .chat-ticket-card__runstep > svg { flex: 0 0 auto; color: var(--faint); }
+/* Why a run stopped before it worked anything. A SENTENCE, not a chip: it names
+   a limit and a number, so it has to wrap rather than truncate the figure the
+   reader opened the card for. Neutral ink; the state word above it is the only
+   thing that carries the tone. */
+.chat-ticket-card__runwhy {
+  display: flex; align-items: flex-start; gap: var(--space-1);
+  color: var(--muted); font-size: var(--fs-xs); line-height: 1.45;
+}
+.chat-ticket-card__runwhy > svg { flex: 0 0 auto; color: var(--faint); margin-top: 2px; }
 .chat-ticket-card__meta { color: var(--muted); font-size: var(--fs-xs); }
 /* The one hue in the Run group, and it is LIVE: still going. It goes the moment
    the run ends, because a clock that keeps its tone says the work has not. */

@@ -33,9 +33,14 @@ import {
 // a fraction of a cap. One bar on the page, below the chart: a single track
 // segmented by source, largest first.
 //
-// Chat turns ARE metered (role="chat"), reported but never counted against the
-// cap — admission already reserves interactive headroom, so gating on chat spend
-// too would double-count that reserve.
+// CHAT TURNS ARE METERED AND ARE NOT PART OF THE HEADLINE. They are excluded
+// from admission (admission already reserves interactive headroom, so gating on
+// chat spend too would double-count that reserve), so counting them into `Used`
+// showed a pool that looked catastrophically blown while the guard that matters
+// was fine: 265M against a 5M cap on 2026-08-23, 53x, with 1.97M of autonomous
+// spend underneath it. `Used` is now what the guard counts and chat/compaction
+// are their own stat and their own view. Same rule as everywhere else on this
+// page: the number on the screen is the number the decision used.
 
 const ENDPOINT = "/api/usage";
 
@@ -75,6 +80,19 @@ function clockTick(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
   return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+// The excluded roles, named in the stat's own label rather than in a legend
+// somewhere else. "Chat" alone when that is all there is, because
+// "Chat + compaction" on a day with no compaction names a thing that did not
+// happen.
+function excludedLabel(data: UsageStatus): string {
+  const roles = Object.entries(data.excluded?.by_role ?? {})
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k]) => k);
+  if (roles.length === 0) return "Chat";
+  return roles.map((r) => r[0].toUpperCase() + r.slice(1)).join(" + ");
 }
 
 type Row = {
@@ -333,7 +351,7 @@ export default function Usage() {
         <section>
           <Stack gap="sm">
             <SectionLabel icon={<Gauge aria-hidden size={14} />}>
-              App-wide window
+              Autonomous usage
               {/* The cap is a property of the 5h budget window only, so the
                   control to edit it appears only there — offering it on a 30-day
                   view would imply that view is bounded by it. */}
@@ -345,7 +363,11 @@ export default function Usage() {
             </SectionLabel>
 
             <div className="ws-stat-strip">
-              <Stat label="Used" value={fmtTokens(data.app_used)} sub="tokens this window" />
+              <Stat
+                label="Autonomous"
+                value={fmtTokens(data.app_used)}
+                sub="tokens counted against the cap"
+              />
               {data.capped && data.app_remaining != null && (
                 <Stat label="Remaining" value={fmtTokens(data.app_remaining)} sub="until the cap" />
               )}
@@ -354,6 +376,14 @@ export default function Usage() {
               ) : (
                 <Stat label="Sources" value={String(rows.length)} sub="apps with usage" />
               )}
+              {/* NAMED, not folded in. This is real spend the operator should
+                  see and no guard will ever refuse a run over, so it sits beside
+                  the headline saying which it is rather than inside it. */}
+              <Stat
+                label={excludedLabel(data)}
+                value={fmtTokens(data.excluded?.total ?? 0)}
+                sub="not counted against the cap"
+              />
             </div>
 
             {series && series.points.length > 0 && series.projects.length > 0 && (
@@ -420,8 +450,8 @@ export default function Usage() {
                   <>
                     <span>
                       {data.capped && data.app_total != null
-                        ? `${fmtTokens(data.app_used)} of ${fmtTokens(data.app_total)} used this window`
-                        : `${fmtTokens(data.app_used)} total across ${rows.length} ${rows.length === 1 ? "source" : "sources"}`}
+                        ? `${fmtTokens(data.app_used)} of ${fmtTokens(data.app_total)} autonomous tokens used this window`
+                        : `${fmtTokens(data.app_used)} autonomous across ${rows.length} ${rows.length === 1 ? "source" : "sources"}`}
                     </span>
                     <span>
                       {data.capped && data.app_total != null && data.app_total > 0
@@ -470,8 +500,12 @@ export default function Usage() {
         <section>
           {rows.length === 0 ? (
             <StateBlock
-              title="No usage in this window"
-              hint="Nothing has been billed in this window. Try a longer one."
+              title="No autonomous usage in this window"
+              hint={
+                (data.excluded?.total ?? 0) > 0
+                  ? `No autonomous work has been billed in this window. ${fmtTokens(data.excluded.total)} of chat spend is not counted against the cap. Try a longer window, or the By Chat view.`
+                  : "Nothing has been billed in this window. Try a longer one."
+              }
             />
           ) : (
             <Stack gap="lg">

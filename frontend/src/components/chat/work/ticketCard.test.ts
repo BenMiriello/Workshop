@@ -23,6 +23,8 @@ function run(over: Partial<WorkRun> = {}): WorkRun {
     exit_code: 0,
     files: null,
     commits: null,
+    halted: null,
+    refusal: null,
     ...over,
   };
 }
@@ -414,5 +416,86 @@ describe("the run's state word", () => {
     expect(runStatusLabel("awaiting_input")).toBe("awaiting input");
     expect(runStatusLabel("done")).toBe("done");
     expect(runStatusLabel(undefined)).toBe("unknown");
+  });
+});
+
+// THE ELEVENTH STATE: a run a guard turned away. It is stored `cancelled`, the
+// same word an operator's own cancellation leaves, and before this the card
+// showed `an agent  job_17  cancelled  0s` and nothing else -- which is what a
+// crash looks like. Measured 2026-08-23: the operator pressed "File and run"
+// twice and went to read a log file on the host to find out why nothing moved.
+describe("a run a budget guard refused", () => {
+  const REASON =
+    "refused: the development scope has used 1.97M of its 1.50M token allowance "
+    + "for the last 5 hours";
+  const refusedRun = run({
+    status: "cancelled",
+    started_at: "2026-08-15T11:59:59Z",
+    ended_at: "2026-08-15T12:00:00Z",
+    halted: REASON,
+    refusal: {
+      by: "usage-budget",
+      kind: "scope_ceiling",
+      reason: REASON,
+      scope: "development",
+      used: 1_972_531,
+      limit: 1_500_000,
+      window_s: 18000,
+      next_admissible_at: "2026-08-15T13:30:00Z",
+    },
+  });
+  const plan = ticketCardPlan(input({
+    ticket: ticket({ status: "todo" as TaskStatus, run: refusedRun }),
+  }));
+
+  it("reads `refused`, not `cancelled`", () => {
+    expect(plan.run?.label).toBe("refused");
+    expect(plan.run?.refused).toBe(true);
+  });
+
+  it("is WARN, because a guard doing its job is not a broken thing", () => {
+    expect(plan.run?.kind).toBe("warn");
+  });
+
+  it("prints the server's sentence verbatim: one wording, not two", () => {
+    expect(plan.run?.stopped).toBe(REASON);
+  });
+
+  it("says when the window next lets a run in", () => {
+    expect(plan.run?.nextAdmissible).toMatch(/^Admissible again about /);
+  });
+
+  it("leaves the TICKET's own status alone (ADR 0009: two entities, two sections)", () => {
+    expect(plan.status).toEqual({ label: "todo", kind: "stopped" });
+  });
+
+  it("says nothing about admissibility once that instant has passed", () => {
+    const later = ticketCardPlan(input({
+      ticket: ticket({ status: "todo" as TaskStatus, run: refusedRun }),
+      nowMs: Date.parse("2026-08-15T14:00:00Z"),
+    }));
+    expect(later.run?.nextAdmissible).toBeNull();
+  });
+});
+
+describe("a sweep that stopped early without a guard refusing it", () => {
+  // Out of wall clock, or asked to yield. The reason still reaches the card,
+  // because a zero-second run raises the same question either way; but it is
+  // not a refusal and must not claim to be one.
+  const plan = ticketCardPlan(input({
+    ticket: ticket({
+      status: "todo" as TaskStatus,
+      run: run({ status: "cancelled", halted: "out of wall-clock budget: 12s left" }),
+    }),
+  }));
+
+  it("keeps the stored state word", () => {
+    expect(plan.run?.label).toBe("cancelled");
+    expect(plan.run?.refused).toBe(false);
+  });
+
+  it("still says why it stopped", () => {
+    expect(plan.run?.stopped).toBe("out of wall-clock budget: 12s left");
+    expect(plan.run?.nextAdmissible).toBeNull();
   });
 });

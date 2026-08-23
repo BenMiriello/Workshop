@@ -3,7 +3,7 @@ import {
 } from "react";
 import { Link } from "react-router-dom";
 import {
-  ArrowUpRight, ChevronRight, FileDiff, Ticket as TicketGlyph,
+  ArrowUpRight, ChevronRight, FileDiff, ShieldAlert, Ticket as TicketGlyph,
 } from "lucide-react";
 import { Button, Card, Clamp, Notice, Skeleton, StatusDot, StatusPill, Tag, catFor, shortHttpError } from "@workshop/ui";
 import { AgentAvatar } from "./AgentAvatar";
@@ -404,6 +404,26 @@ export default function TicketCard({
                     <div className="chat-ticket-card__runstep">
                       <FileDiff size={12} strokeWidth={1.8} aria-hidden />
                       {receiptText(plan.run.receipt)}
+                    </div>
+                  )}
+                  {/* WHY IT STOPPED, for a run that stopped before working
+                      anything. Without this the card read `an agent  job_17
+                      cancelled  0s` and nothing else, which is what a crash
+                      looks like; the actual reason (a budget guard refusing)
+                      lived only in a log file on the host. The sentence is the
+                      server's, printed verbatim: one wording, one set of
+                      numbers, on the log line and here.
+
+                      The icon is a shield because that is what happened. It is
+                      NOT a danger tone: the state word beside it already
+                      carries `warn`, and nothing is broken when a guard works. */}
+                  {plan.run.stopped && (
+                    <div className="chat-ticket-card__runwhy">
+                      <ShieldAlert size={12} strokeWidth={1.8} aria-hidden />
+                      <span>
+                        {plan.run.stopped}
+                        {plan.run.nextAdmissible && ` ${plan.run.nextAdmissible}`}
+                      </span>
                     </div>
                   )}
                 </div>

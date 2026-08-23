@@ -3,7 +3,10 @@ import { usePoll, StatusKind, shortHttpError, timeAbsolute, Button, Card, PageHe
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft, HelpCircle, ListChecks } from "lucide-react";
 
-import { type Job, jobIsLive, jobStatusKind, runHref } from "../lib/jobs";
+import {
+  type Job, jobIsLive, jobRefusal, jobStatusKind, nextAdmissibleText, runHref,
+  runOutcome,
+} from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
 
 // One RUN's detail: its binding, trigger, timing, outcome, and freeform
@@ -288,7 +291,12 @@ export default function JobDetail() {
       title={job?.title || "Run"}
       meta={job && (
         <>
-          <StatusDot status={jobStatusKind(job.status)}>{job.status}</StatusDot>
+          {/* The OUTCOME, not the raw status: a run a guard refused is stored
+              `cancelled`, which is also what an operator's own cancellation
+              leaves. One helper decides that a refusal reads as `refused`. */}
+          <StatusDot status={runOutcome(job.status, jobRefusal(job.evidence)).kind}>
+            {runOutcome(job.status, jobRefusal(job.evidence)).label}
+          </StatusDot>
           {job.started_at && <span>started {timeAbsolute(job.started_at)}</span>}
           {duration(job) && <span>{duration(job)}</span>}
           <code className="ws-mono">{id}</code>
@@ -330,6 +338,9 @@ export default function JobDetail() {
     );
   } else {
     const dur = duration(job);
+    // What a guard said when it turned this run away, if that is how it ended.
+    const refusal = jobRefusal(job.evidence);
+    const refusalNext = nextAdmissibleText(refusal?.next_admissible_at);
     const waiting = waitingTasks(job);
     const isAwaiting = job.status === "awaiting_input" && waiting.length > 0;
     const receipt = asReceipt(job.evidence);
@@ -428,12 +439,26 @@ export default function JobDetail() {
             </Stack>
           </section>
         )}
+        {/* A GUARD REFUSED THIS RUN, which is not a failure and not an operator
+            cancellation. A LINE, not a region: the run record is on screen and
+            one thing beside it needs saying, and `warn` rather than `danger`
+            because nothing is broken. The sentence is composed once, on the
+            server, and printed here verbatim. */}
+        {refusal && (
+          <Notice tone="warn">
+            {refusal.reason}
+            {refusalNext ? ` ${refusalNext}` : ""}
+          </Notice>
+        )}
+
         <section>
           <SectionLabel>Overview</SectionLabel>
           <Card compact>
             <Stack gap="sm">
               <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                <StatusPill status={statusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
+                <StatusPill status={runOutcome(job.status, refusal).kind}>
+                  {runOutcome(job.status, refusal).label}
+                </StatusPill>
                 {/* Plain text. This was `<Tag hue={catFor(job.trigger)}>`, which
                     the design system explicitly forbids: a run's trigger is
                     AGENCY, and catFor is the categorical scale. It was also the

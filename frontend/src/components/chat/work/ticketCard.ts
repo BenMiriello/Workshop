@@ -44,7 +44,7 @@
 // left no receipt (`run.receipt === null`).
 
 import type { StatusKind } from "@workshop/ui";
-import { jobIsLive, jobStatusKind } from "../../../lib/jobs";
+import { jobIsLive, nextAdmissibleText, runOutcome } from "../../../lib/jobs";
 import { pickupNote, type Pickup } from "../../../lib/scopePickup";
 import {
   description, taskStatusKind, taskStatusLabel, ticketKey, title as taskTitle,
@@ -93,6 +93,16 @@ export type TicketCardRun = {
   /** Null when the run left NO receipt. That is not the same fact as a receipt
    *  that counted zero, and only the second one is worth printing. */
   receipt: { files: number | null; commits: number | null } | null;
+  /** WHY IT STOPPED, when it stopped before working anything: the sentence the
+   *  guard (or the sweep) recorded, ready to print. Null on every run that
+   *  actually ran. */
+  stopped: string | null;
+  /** True when a GUARD refused it, which is what makes `label`/`kind` read
+   *  `refused` / warn rather than `cancelled` / stopped. */
+  refused: boolean;
+  /** When the window next lets a run in, in the reader's clock. Null when the
+   *  server could not derive one, or when the instant has already passed. */
+  nextAdmissible: string | null;
 };
 
 export type TicketCardNote =
@@ -161,7 +171,11 @@ export function clockText(seconds: number): string {
 }
 
 /** The run's state word. Only `awaiting_input` carries an underscore, and an
- *  underscore reads poorly in prose. */
+ *  underscore reads poorly in prose.
+ *
+ *  Kept as the STATUS-only spelling. A run a guard refused does not use it: the
+ *  card asks `lib/jobs.runOutcome` instead, which is the one place that knows
+ *  `cancelled` + a refusal reads as `refused`. */
 export function runStatusLabel(status?: string): string {
   return (status || "unknown").replace(/_/g, " ");
 }
@@ -191,10 +205,13 @@ function runFor(run: WorkRun, nowMs: number): TicketCardRun {
       clock = { live: false, text: clockText((endedMs - startedMs) / 1000) };
     }
   }
+  // The refusal decides the state word AND the status kind together, so the two
+  // cannot disagree; the sentence under them is the server's, verbatim.
+  const outcome = runOutcome(run.status, run.refusal);
   return {
     id: run.id,
-    label: runStatusLabel(run.status),
-    kind: jobStatusKind(run.status),
+    label: outcome.label,
+    kind: outcome.kind,
     live,
     agent: run.agent_name || null,
     trigger: run.trigger || null,
@@ -206,6 +223,13 @@ function runFor(run: WorkRun, nowMs: number): TicketCardRun {
     receipt: run.files == null && run.commits == null
       ? null
       : { files: run.files, commits: run.commits },
+    // The refusal's own sentence when there is one, and otherwise whatever the
+    // sweep recorded about stopping early ("out of wall-clock budget", "asked to
+    // yield"). Both were invisible here, and both are the answer to the question
+    // a zero-second run raises.
+    stopped: run.refusal?.reason || run.halted || null,
+    refused: !!run.refusal,
+    nextAdmissible: nextAdmissibleText(run.refusal?.next_admissible_at, nowMs),
   };
 }
 

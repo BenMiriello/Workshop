@@ -66,7 +66,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from routes.api_models import Task
+from routes.api_models import JobRefusal, Task
 
 
 # ------------------------------------------------------------------ providers
@@ -589,6 +589,13 @@ class RunSummary(BaseModel):
     exit_code: int | None = None
     files: int | None = None
     commits: int | None = None
+    # WHY IT STOPPED. `halted` is the sentence a sweep closed with when it
+    # stopped before working anything; `refusal` is present only when a GUARD is
+    # what stopped it, and it is what lets the card say "refused" (a working
+    # guard, nothing broken) instead of "cancelled" (indistinguishable from a
+    # crash, which is how the operator read it on 2026-08-23).
+    halted: str | None = None
+    refusal: JobRefusal | None = None
 
 
 class WorkTask(Task):

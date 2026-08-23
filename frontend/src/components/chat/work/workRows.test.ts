@@ -49,6 +49,8 @@ function ticket(
           exit_code: null,
           files: null,
           commits: null,
+          halted: null,
+          refusal: null,
         }
       : null,
   };

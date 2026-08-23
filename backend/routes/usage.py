@@ -2,8 +2,13 @@
 
 `GET /usage` returns `services.usage_ledger.status()`: the app-wide 5h window
 budget (total/used/remaining) plus a per-project breakdown (used, allowance,
-remaining, share_of_app). Read-only. Interactive chat turns are never metered,
-so they never appear here; only autonomous sweeps write to the ledger.
+remaining, share_of_app). Read-only.
+
+THE HEADLINE IS ADMISSION-RELEVANT SPEND. Interactive chat turns and compaction
+are metered but are never gated, so they are reported under `excluded` rather
+than added to `used`. Reported together they read as a blown budget: 265M
+against a 5M pool on 2026-08-23, 53x the cap, while the only figure any guard
+was reading was the 1.97M underneath it.
 """
 from __future__ import annotations
 
@@ -46,19 +51,35 @@ class ProjectUsage(BaseModel):
     share_of_app: float
 
 
+class ExcludedUsage(BaseModel):
+    """The spend the admission guard does not count, kept separate and named.
+
+    Chat and compaction ARE metered (that is the point: the operator should see
+    what a conversation cost) and are excluded from admission, because chat is
+    declared unmetered and is never gated. Folding them into one `used` total is
+    what made this page read 265M against a 5M pool while the guard that decides
+    anything was looking at 1.97M."""
+
+    total: int
+    by_role: dict[str, int]
+    roles: list[str]
+
+
 class UsageStatus(BaseModel):
     """A trailing window. Only the 5h window carries a cap (`capped: true`);
     the rest are reporting-only lookbacks.
 
-    Interactive chat turns are never metered, so they never appear here. Only
-    autonomous sweeps write to the ledger, which is why a busy chat day can read
-    as an idle one."""
+    `app_used` and every project's `used` are ADMISSION-RELEVANT spend: the same
+    figure `can_admit` reads, so the number on the screen is the number the
+    decision used. Everything the guard ignores is in `excluded`, with its roles
+    named."""
 
     window_s: int
     capped: bool
     app_total: int | None = None
     app_used: int
     app_remaining: int | None = None
+    excluded: ExcludedUsage
     projects: dict[str, ProjectUsage]
 
 
@@ -112,8 +133,15 @@ async def get_usage(window: str = "5h") -> dict:
 @router.get("/timeseries", response_model=UsageTimeseries, response_model_exclude_unset=True)
 async def get_usage_timeseries(window: str = "5h") -> dict:
     """Per-interval per-project token usage across a trailing window, for the
-    chart. Pure read; no side effects."""
-    return usage_ledger.timeseries(window_s=_resolve_window(window))
+    chart. Pure read; no side effects.
+
+    Admission-relevant rows only, matching `GET /usage`'s headline. The chart and
+    the totals it sits under have to be one measurement; chat spend has its own
+    view (`/usage/chat-timeseries`), where it is legible instead of swamping
+    every other series."""
+    return usage_ledger.timeseries(
+        window_s=_resolve_window(window),
+        exclude_roles=usage_ledger.ADMISSION_EXCLUDED_ROLES)
 
 
 @router.get("/chat-timeseries", response_model=ChatTimeseries, response_model_exclude_unset=True)

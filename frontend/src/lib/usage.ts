@@ -1,8 +1,12 @@
 import { shortHttpError } from "@workshop/ui";
 // Usage API — the rolling 5-hour token budget for autonomous background work.
 // Backed by GET /api/usage (backend routes/usage -> services.usage_ledger.status).
-// Interactive chat turns are never metered, so they never appear here; only
-// autonomous sweeps (cron, project/agent Ralph, drained events) write tokens.
+//
+// THE HEADLINE IS WHAT THE GUARD COUNTS. Chat turns and compaction ARE metered,
+// and they are excluded from admission, so they arrive under `excluded` rather
+// than inside `app_used`. Reported as one total they read as a catastrophe:
+// 265M against a 5M pool on 2026-08-23, 53x the cap, while every guard in the
+// system was looking at the 1.97M of autonomous spend underneath it.
 
 // Selectable lookback. Only "5h" is the BUDGET window; the rest are
 // reporting-only, because the cap is defined as a rolling 5h ceiling and is
@@ -18,12 +22,21 @@ export type ProjectUsage = {
   share_of_app: number; // 0..1 fraction of the window's app-wide usage
 };
 
+// Spend the admission guard does not count, kept separate and labelled by role.
+export type ExcludedUsage = {
+  total: number;
+  by_role: Record<string, number>;
+  roles: string[];
+};
+
 export type UsageStatus = {
   window_s: number; // trailing window length in seconds (18000 = 5h)
   capped: boolean; // true only for the 5h budget window
   app_total: number | null; // app-wide ceiling; null when uncapped
+  // ADMISSION-RELEVANT spend: the figure can_admit reads, not the whole ledger.
   app_used: number;
   app_remaining: number | null;
+  excluded: ExcludedUsage;
   projects: Record<string, ProjectUsage>;
 };
 

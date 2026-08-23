@@ -196,9 +196,14 @@ def _enrich(job: dict, names: dict[str, str], cache: dict | None = None) -> dict
     detail = str((ev or {}).get("summary") or "").strip()
     if detail:
         j["summary"] = detail[:240]
+    halted = str((ev or {}).get("halted") or "").strip()
     if job.get("status") == "failed":
-        halted = str((ev or {}).get("halted") or "").strip()
         j["error"] = (detail or halted)[:240] or "Failed (no detail recorded)."
+    # A run that stopped before it worked anything explains itself with the same
+    # line a worker would have used. Without this the feed showed `cancelled`
+    # and nothing else for a run a guard refused, which reads as a crash.
+    elif halted and not detail:
+        j["summary"] = halted[:240]
     j["title"] = _title(job, agent_disp, tctx)
     # A compact "where / who / from" subtitle for the feed row.
     bits: list[str] = []

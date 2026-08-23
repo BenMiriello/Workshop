@@ -9,6 +9,7 @@
 // `InboxItem` moved here from `InboxStrip`, which no longer exists. It is the
 // server's row and the type says so.
 
+import type { JobRefusal } from "../../../lib/jobs";
 import type { Task } from "../../../lib/tasks";
 
 export type InboxKind = "notify" | "question" | "review";
@@ -54,6 +55,12 @@ export type WorkRun = {
   // says "4 files, 2 commits" and the run page holds the names.
   files: number | null;
   commits: number | null;
+  // WHY IT STOPPED, when it stopped before working anything. `halted` is the
+  // sentence; `refusal` is set only when a GUARD is what stopped it, and is what
+  // turns the card's state word from `cancelled` (which reads as a crash) into
+  // `refused` (a guard doing its job).
+  halted: string | null;
+  refusal: JobRefusal | null;
 };
 
 // A ticket as this surface reads it: the ticket, plus its latest run or null.

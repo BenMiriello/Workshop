@@ -272,7 +272,45 @@ class TestRunSummary:
             f"/chat/threads/{t['id']}/work").json()["filed"][0]["run"]
         assert set(run) == {"id", "status", "started_at", "ended_at",
                             "agent_name", "trigger", "exit_code",
-                            "files", "commits"}
+                            "files", "commits", "halted", "refusal"}
+
+    def test_a_refused_run_carries_what_refused_it(self, env):
+        """The chat's run card had no way to say why a run did nothing.
+
+        A run a guard turned away closes `cancelled` with the reason in
+        `evidence`, and this summary dropped everything that was not a receipt.
+        So the card read `an agent  job_17  cancelled  0s`, which is what a crash
+        looks like (2026-08-23), and the reason existed only in
+        `.runtime/queue-runner.log` on the host."""
+        t = chat_store.create_thread(context_key="project:demo")
+        tk = _file_ticket(env["root"], t["id"])
+        reason = ("refused: the development scope has used 1.97M of its 1.50M "
+                  "token allowance for the last 5 hours")
+        env["runs"][tk["id"]] = [{
+            "id": "j7", "status": "cancelled",
+            "evidence": {"halted": reason, "refusal": {
+                "by": "usage-budget", "kind": "scope_ceiling", "reason": reason,
+                "scope": "development", "used": 1972531, "limit": 1500000,
+                "window_s": 18000,
+                "next_admissible_at": "2026-08-23T23:11:19+00:00"}},
+        }]
+        run = env["client"].get(
+            f"/chat/threads/{t['id']}/work").json()["filed"][0]["run"]
+        assert run["halted"] == reason
+        assert run["refusal"]["scope"] == "development"
+        assert run["refusal"]["used"] == 1972531
+        assert run["refusal"]["limit"] == 1500000
+        assert run["refusal"]["next_admissible_at"].startswith("2026-08-23T23:11")
+
+    def test_a_run_that_worked_carries_no_refusal(self, env):
+        t = chat_store.create_thread(context_key="project:demo")
+        tk = _file_ticket(env["root"], t["id"])
+        env["runs"][tk["id"]] = [{"id": "j8", "status": "done",
+                                  "evidence": {"kind": "receipt", "files": ["a"],
+                                               "commits": []}}]
+        run = env["client"].get(
+            f"/chat/threads/{t['id']}/work").json()["filed"][0]["run"]
+        assert run["halted"] is None and run["refusal"] is None
 
     def test_a_scope_row_carries_its_run_too(self, env):
         """The panel renders filed and scope rows with one row component, and

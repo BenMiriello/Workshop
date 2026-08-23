@@ -54,10 +54,45 @@ def test_chat_rows_are_accounted_but_not_admitted(ledger):
 
     # Reporting still sees every token.
     assert ledger.window_usage(now=now)["app"] == 10_000_000
-    assert ledger.status(now=now)["app_used"] == 10_000_000
     # Admission does not.
     assert ledger.window_usage(
         now=now, exclude_roles=ledger.ADMISSION_EXCLUDED_ROLES)["app"] == 0
+    # AND NEITHER DOES THE HEADLINE ON THE PAGE. `status().app_used` used to be
+    # the whole ledger, so the Usage page showed a pool that looked
+    # catastrophically blown while the only figure any guard was reading was
+    # fine: measured 2026-08-23, app_used 265,430,033 against an app_total of
+    # 5,000,000, 53x the cap, of which 1,972,531 was the autonomous spend.
+    st = ledger.status(now=now)
+    assert st["app_used"] == 0, "a chat row moved the admission-relevant total"
+    assert st["app_remaining"] == 1_000_000
+    # The chat spend is not hidden, it is NAMED.
+    assert st["excluded"]["total"] == 10_000_000
+    assert st["excluded"]["by_role"] == {"chat": 10_000_000}
+
+
+def test_a_chat_row_does_not_move_the_admission_relevant_total(ledger):
+    """The headline figure and the guard's figure must be the same measurement.
+
+    A worker row and a chat row of the same size land in one window; only the
+    worker row may move `app_used`, and the chat row has to still be visible
+    under `excluded` rather than dropped."""
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    ledger.update_config(app_total=1_000_000, autonomy_budget_fraction=1.0)
+    ledger.record("alpha", 40_000, role="worker", ts=_iso(now - timedelta(minutes=5)))
+    before = ledger.status(now=now)
+    ledger.record("alpha", 900_000, role="chat", chat="t1",
+                  ts=_iso(now - timedelta(minutes=4)))
+    ledger.record("alpha", 60_000, role="compaction", chat="t1",
+                  ts=_iso(now - timedelta(minutes=3)))
+    after = ledger.status(now=now)
+
+    assert after["app_used"] == before["app_used"] == 40_000
+    assert after["projects"]["alpha"]["used"] == 40_000
+    assert after["projects"]["alpha"]["remaining"] == 960_000
+    # Reported, labelled, and separable by role.
+    assert after["excluded"]["total"] == 960_000
+    assert after["excluded"]["by_role"] == {"chat": 900_000, "compaction": 60_000}
+    assert set(after["excluded"]["roles"]) == set(ledger.ADMISSION_EXCLUDED_ROLES)
     ok, reason = ledger.can_admit("workshop", now=now)
     assert ok, reason
 
@@ -73,7 +108,12 @@ def test_worker_rows_still_gate_admission(ledger):
     assert not ok
     # The reason states the real numbers, not the reserved fraction. The old
     # string said "autonomous budget 65% used", where 65 was the config fraction.
-    assert "900000" in reason and "1000000" in reason
+    # The SENTENCE rounds them for a reader; the structured refusal beside it
+    # carries them exactly, and asserting that is what stops this test from
+    # breaking every time the wording is improved.
+    assert "900K" in reason and "1.00M" in reason
+    refusal = ledger.admission("workshop", now=now)["refusal"]
+    assert refusal["used"] == 900_000 and refusal["limit"] == 1_000_000
     assert "65%" not in reason and "%" not in reason
     assert "—" not in reason
 
@@ -191,7 +231,10 @@ def test_can_admit_denies_when_scope_over_allowance(ledger):
     # only the per-scope allocation should deny.
     ledger.record("a", 210, ts=_iso(now - timedelta(hours=1)))
     ok_a, reason_a = ul.can_admit("a", now=now)
-    assert ok_a is False and "allocation" in reason_a
+    assert ok_a is False
+    # WHICH limit refused it is a field, not a substring of the sentence.
+    assert ul.admission("a", now=now)["refusal"]["kind"] == "scope_allocation"
+    assert "allocated to it" in reason_a
     # b has spent nothing -> still admissible under its own 200 allowance.
     ok_b, _ = ul.can_admit("b", now=now)
     assert ok_b is True
@@ -228,6 +271,14 @@ def test_can_admit_reserves_interactive_headroom(ledger):
     # value, not usage, and told the operator nothing about why it stopped.
     assert ok is False
     assert "700" in reason and "650" in reason
+    # And the structured half says the same thing in figures, so a reader that
+    # needs the exact numbers does not have to parse the sentence back.
+    verdict = ul.admission("solo", now=now)
+    assert verdict["ok"] is False
+    assert verdict["refusal"]["kind"] == "app_ceiling"
+    assert verdict["refusal"]["used"] == 700
+    assert verdict["refusal"]["limit"] == 650
+    assert verdict["refusal"]["reason"] == verdict["reason"]
 
 
 def test_compaction_does_not_count_against_the_autonomous_ceiling(ledger):
@@ -245,8 +296,13 @@ def test_compaction_does_not_count_against_the_autonomous_ceiling(ledger):
         ledger.record("workshop", 500_000, role="compaction", chat="thread-1",
                       ts=_iso(now - timedelta(minutes=10)))
 
-    # Reporting still sees every token: this is accounting, not amnesia.
-    assert ledger.status(now=now)["app_used"] == 10_000_000
+    # Reporting still sees every token: this is accounting, not amnesia. It
+    # reports them as EXCLUDED rather than in the headline, because the headline
+    # is what the guard counts.
+    assert ledger.window_usage(now=now)["app"] == 10_000_000
+    st = ledger.status(now=now)
+    assert st["app_used"] == 0
+    assert st["excluded"]["by_role"] == {"compaction": 10_000_000}
     # Admission does not.
     assert ledger.window_usage(
         now=now, exclude_roles=ledger.ADMISSION_EXCLUDED_ROLES)["app"] == 0

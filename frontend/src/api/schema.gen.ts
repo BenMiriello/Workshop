@@ -8275,6 +8275,11 @@ export interface paths {
          * Get Usage Timeseries
          * @description Per-interval per-project token usage across a trailing window, for the
          *     chart. Pure read; no side effects.
+         *
+         *     Admission-relevant rows only, matching `GET /usage`'s headline. The chart and
+         *     the totals it sits under have to be one measurement; chat spend has its own
+         *     view (`/usage/chat-timeseries`), where it is legible instead of swamping
+         *     every other series.
          */
         get: operations["get_usage_timeseries_usage_timeseries_get"];
         put?: never;
@@ -11655,6 +11660,26 @@ export interface components {
             /** Ts */
             ts: string;
         };
+        /**
+         * ExcludedUsage
+         * @description The spend the admission guard does not count, kept separate and named.
+         *
+         *     Chat and compaction ARE metered (that is the point: the operator should see
+         *     what a conversation cost) and are excluded from admission, because chat is
+         *     declared unmetered and is never gated. Folding them into one `used` total is
+         *     what made this page read 265M against a 5M pool while the guard that decides
+         *     anything was looking at 1.97M.
+         */
+        ExcludedUsage: {
+            /** By Role */
+            by_role: {
+                [key: string]: number;
+            };
+            /** Roles */
+            roles: string[];
+            /** Total */
+            total: number;
+        };
         /** ExplainResponse */
         ExplainResponse: {
             /** Architecture Hits */
@@ -12175,6 +12200,7 @@ export interface components {
             log_tail?: string | null;
             /** Missing Keys */
             missing_keys?: string[] | null;
+            refusal?: components["schemas"]["JobRefusal"] | null;
             /** Reviewer */
             reviewer?: string | null;
             /** Summary */
@@ -12186,6 +12212,41 @@ export interface components {
             upload_ref?: string | null;
             /** Url */
             url?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * JobRefusal
+         * @description A GUARD said no, and this is what it said.
+         *
+         *     Carried on `JobEvidence.refusal` by any run an admission guard turned away
+         *     before it worked anything. A refusal is not a failure and not an operator
+         *     cancellation: nothing is broken, the guard did its job, and the operator
+         *     needs to know what refused the run and what would change it -- which, before
+         *     this, only `.runtime/queue-runner.log` on the host knew.
+         *
+         *     `reason` is the WHOLE sentence, composed once in `services/usage_ledger`, so
+         *     the log line, this record and the run card all read identically. The rest is
+         *     what a sentence cannot carry: exact figures where the sentence rounds, and an
+         *     instant the UI renders in the reader's own timezone.
+         */
+        JobRefusal: {
+            /** By */
+            by?: string | null;
+            /** Kind */
+            kind?: string | null;
+            /** Limit */
+            limit?: number | null;
+            /** Next Admissible At */
+            next_admissible_at?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Scope */
+            scope?: string | null;
+            /** Used */
+            used?: number | null;
+            /** Window S */
+            window_s?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -14637,8 +14698,11 @@ export interface components {
             exit_code?: number | null;
             /** Files */
             files?: number | null;
+            /** Halted */
+            halted?: string | null;
             /** Id */
             id?: string | null;
+            refusal?: components["schemas"]["JobRefusal"] | null;
             /** Started At */
             started_at?: string | null;
             /** Status */
@@ -16707,9 +16771,10 @@ export interface components {
          * @description A trailing window. Only the 5h window carries a cap (`capped: true`);
          *     the rest are reporting-only lookbacks.
          *
-         *     Interactive chat turns are never metered, so they never appear here. Only
-         *     autonomous sweeps write to the ledger, which is why a busy chat day can read
-         *     as an idle one.
+         *     `app_used` and every project's `used` are ADMISSION-RELEVANT spend: the same
+         *     figure `can_admit` reads, so the number on the screen is the number the
+         *     decision used. Everything the guard ignores is in `excluded`, with its roles
+         *     named.
          */
         UsageStatus: {
             /** App Remaining */
@@ -16720,6 +16785,7 @@ export interface components {
             app_used: number;
             /** Capped */
             capped: boolean;
+            excluded: components["schemas"]["ExcludedUsage"];
             /** Projects */
             projects: {
                 [key: string]: components["schemas"]["ProjectUsage"];
