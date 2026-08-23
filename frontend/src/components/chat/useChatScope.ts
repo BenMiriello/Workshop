@@ -89,6 +89,14 @@ export function useChatScope({
   const [providerNonce, setProviderNonce] = useState(0);
 
   useEffect(() => {
+    // Capture the one-shot URL intents synchronously before any await. Both this
+    // effect and useChatThread's loader effect run in the same React flush (this
+    // one first, per call order). useChatThread reads and nulls these refs
+    // synchronously in its own synchronous prefix, so by the time this effect's
+    // first await resolves the refs are already null. Capturing here closes the
+    // window: the values live in local variables before the async portion begins.
+    const linked = linkedThreadRef.current;
+    const startingNew = startNewRef.current;
     let cancelled = false;
     (async () => {
       let list: Provider[] = [];
@@ -111,7 +119,6 @@ export function useChatScope({
       }
       if (cancelled) return;
       if (effectiveMode === "data" && list.length) {
-        const linked = linkedThreadRef.current;
         let linkedThreadHome: string | null = null;
         if (linked) {
           // Read-only peek: the loader still fetches and adopts this thread.
@@ -123,7 +130,7 @@ export function useChatScope({
           contextKey,
           knownScopes: list.map((p) => p.key),
           linkedThreadHome,
-          startNew: startNewRef.current,
+          startNew: startingNew,
           remembered: readProvider(contextKey),
         });
         setActiveProvider(next);
