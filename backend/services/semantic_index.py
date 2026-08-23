@@ -130,34 +130,74 @@ def __getattr__(name):
 
 # Below this cosine score, a hit is not a hit and the search returns nothing.
 #
-# MEASURED, not guessed, against the real 3,407-chunk index on 2026-08-12. Seven
-# genuine questions about this codebase scored 0.637 to 0.726 at the top. Seven
-# nonsense or off-corpus queries ("banana helicopter tuesday", "recipe for
-# sourdough starter", a pure-stopword string) scored 0.443 to 0.516. 0.58 sits in
-# the middle of a 0.120 gap with room on both sides.
-#
 # THE FLOOR IS THE POINT. Cosine similarity from this model has a high,
-# uninformative baseline: nonsense still scores ~0.5, so a search with no
-# threshold ALWAYS returns five confident-looking results. That is the failure
-# mode of the thing this replaces, rebuilt with better maths, and it is worse
-# than saying nothing because the passages read as relevant.
+# uninformative baseline, so a search with no threshold ALWAYS returns five
+# confident-looking results. That is the failure mode of the thing this
+# replaces, rebuilt with better maths, and it is worse than saying nothing
+# because the passages read as relevant.
 #
-# Two alternatives were tried and rejected on measurement. A z-score over the
-# corpus is actively wrong: "banana helicopter tuesday" scored z=5.49, higher
-# than two real questions, because a nonsense query drags the mean down. And
-# nomic's `search_query:` / `search_document:` task prefixes raise every score
-# but move the margin by +0.001, so they buy nothing here and would cost a full
-# re-embed.
-MIN_SCORE = 0.58
+# RE-MEASURED FOR BGE ON 2026-08-23, against the real 12,532-chunk index.
+# Commit 7ce3cae swapped nomic for BAAI/bge-small-en-v1.5 on 2026-08-20 and its
+# own message said "MIN_SCORE was tuned for nomic and needs re-measuring for
+# bge (noted)"; it never was, and at the inherited 0.58 fifteen of eighteen
+# nonsense queries cleared the floor. "banana helicopter tuesday" scored 0.647.
+# The tool's contract that an empty result is an answer was simply false.
+#
+# What the 48-query probe found, and it is not the clean gap nomic had:
+#
+#   full natural-language questions with an answer here  0.740 - 0.858 (n=18)
+#   real but SHORT or oblique questions                  0.657 - 0.792 (n=12)
+#     eight of those twelve landed BELOW the 0.740 above: "bwrap" 0.718,
+#     "cursor not-allowed" 0.713, "512 token window" 0.703, "Plaid" 0.700,
+#     "why did we stop using nomic" 0.657 -- and that last one retrieved the
+#     right doc, so it is a real answer sitting in the nonsense band
+#   off-corpus questions in plain English                0.543 - 0.683 (n=14)
+#   degenerate token strings and pure stopwords          0.705 - 0.733 (n=4)
+#     ("xxxx yyyy zzzz wwww vvvv", "zqxjv mmmm plrt gggh")
+#
+# THE BANDS OVERLAP. There is no value that admits every real query and rejects
+# every nonsense one, because bge scores a two-word real query about the same
+# as a sentence about wombats. 0.735 would separate all 36 of the first probe's
+# queries and reject seven real ones from the second. So the floor is set at
+# 0.65: the highest value that rejected NOTHING real in 30 real queries. It
+# admits 7 of 18 nonsense queries, against 15 of 18 at the inherited 0.58.
+#
+# The direction of the remaining error is deliberate. A hit below the floor is
+# INVISIBLE -- the agent is told nothing has been written about it, which is
+# the exact failure that cost this repo its whole document corpus on
+# 2026-08-23 -- while a weak hit above the floor arrives with its score and its
+# source and can be dismissed by the reader. Err toward the readable failure.
+#
+# Two alternatives were tried on nomic and rejected on measurement, and neither
+# re-opens with bge. A z-score over the corpus is actively wrong: a nonsense
+# query drags the mean down, so "banana helicopter tuesday" scored z=5.49,
+# higher than two real questions. And task prefixes moved the margin by +0.001
+# for the cost of a full re-embed.
+MIN_SCORE = 0.65
 
 # How far a superseded doc drops in the RANKING (never in admission; see
-# `search`). Sized against the measured spread, not picked round: real answers
-# to real questions score 0.637-0.726 and nonsense scores 0.443-0.516, so the
-# informative band is about 0.09 wide. 0.05 is enough to put a superseded chunk
-# behind any current chunk that answered the same question comparably well,
-# while leaving a clearly-better historical passage ahead of a weak current one
-# -- which is right, because sometimes the history IS the answer.
-_SUPERSEDED_PENALTY = 0.05
+# `search`). Sized against the measured spread, not picked round.
+#
+# RESIZED FOR BGE, 2026-08-23, same probe as MIN_SCORE above. It had to move:
+# 0.05 was sized against nomic's 0.09-wide informative band, and bge's
+# competitive band is much TIGHTER -- the spread between the first and eighth
+# hit of a real question measured 0.015 to 0.077, mean 0.038 over eight
+# questions. A 0.05 penalty is larger than that whole spread, so it stopped
+# demoting a superseded chunk and started burying it, which is not what this is
+# for.
+#
+# 0.03 is checked against both behaviours it has to preserve, on the live index:
+#
+#   - "is an app the same thing as a project": docs/workshop-v1/00-overview.md
+#     (superseded) scores 0.788 RAW and beats app-is-the-entity-2026-08-20.md
+#     at 0.787 -- the original defect, still there. Demoted to 0.758 it sits
+#     behind the model of record and behind two other current chunks.
+#   - "what did the v1 workshop design say about assistants and builders":
+#     the same superseded doc scores 0.777 against a best current chunk of
+#     0.745. Demoted to 0.747 it is still first, which is right, because that
+#     question's answer IS the history. At 0.05 it would have fallen behind
+#     three current chunks and the question would have gone unanswered.
+_SUPERSEDED_PENALTY = 0.03
 
 # At most this many chunks from one document in a single answer. Adjacent
 # chunks of a file are near-identical in embedding space, so without a cap one
@@ -487,13 +527,36 @@ def collect_chats() -> list[Chunk]:
                 continue
             who = "Operator" if ev.get("role") == "user" else "Assistant"
             line = f"{who}: {content}"
-            if not buf_ts:
-                buf_ts = ev.get("ts") or ""
+            ts = ev.get("ts") or ""
+            # A MESSAGE LONGER THAN A CHUNK IS SPLIT, NOT TRUNCATED. This
+            # collector used to flush the buffer and then keep only
+            # `line[:CHUNK_CHARS]`, dropping the rest of the message on the
+            # floor -- measured 2026-08-23 at 7,094,963 chat characters on
+            # disk against 1,357,375 in the index (19.1%), 779 messages cut,
+            # the worst losing 572,856 characters. What it ate was the LONG
+            # messages, which are the designs, the decisions and the
+            # operator's direction, while `routes/chat.py` told the model
+            # compacted messages "are still in the transcript, and they are
+            # searchable". `_split` is the same paragraph-aware splitter
+            # every other collector uses (`collect_tickets`'s docstring:
+            # "split like every other collector"), and it BOUNDS each piece
+            # at CHUNK_CHARS -- which matters twice over, because the 512-
+            # token window of the embedding model made the 27 pre-existing
+            # oversized chunks (up to 19,870 characters) semantically dead
+            # past their first ~2,000.
+            if len(line) > CHUNK_CHARS:
+                if buf:
+                    out.append(Chunk("chat", tid, title, scope, buf_ts, buf))
+                    buf, buf_ts = "", ""
+                for piece in _split(line):
+                    out.append(Chunk("chat", tid, title, scope, ts, piece))
+                continue
             if len(buf) + len(line) + 2 > CHUNK_CHARS and buf:
                 out.append(Chunk("chat", tid, title, scope, buf_ts, buf))
-                buf, buf_ts = line[:CHUNK_CHARS], ev.get("ts") or ""
-            else:
-                buf = f"{buf}\n\n{line}" if buf else line
+                buf, buf_ts = "", ""
+            buf = f"{buf}\n\n{line}" if buf else line
+            if not buf_ts:
+                buf_ts = ts
         if buf:
             out.append(Chunk("chat", tid, title, scope, buf_ts, buf))
     return out
@@ -1307,7 +1370,12 @@ def search(query: str, *, limit: int = 8,
     """Ranked passages for a query, hybrid: vector when the embedder answers,
     BM25 lexical always available so a search degrades instead of raising.
 
-    Returns `{"hits": [...], "mode": str, "rebuilding": bool}`. `mode` is
+    Returns `{"hits": [...], "mode": str, "rebuilding": bool, "searched": int,
+    "corpus": int}`. `searched` is how many chunks the filters actually left in
+    play and `corpus` is how many are in the index; they differ whenever a
+    scope or a `share` policy excluded something, and a caller that reports the
+    second as if it were the first tells a model it looked at 6,089 passages
+    when the policy let it see 2. `mode` is
     `"semantic"`, `"lexical"`, or `"lexical (embedder unavailable: <reason>)"`
     so a caller (and the model reading the MCP tool's output) knows how much
     to trust the result. `rebuilding` is true when a background rebuild is in
@@ -1324,7 +1392,8 @@ def search(query: str, *, limit: int = 8,
     is the defect this module exists to remove."""
     query = (query or "").strip()
     if not query:
-        return {"hits": [], "mode": "semantic", "rebuilding": False}
+        return {"hits": [], "mode": "semantic", "rebuilding": False,
+                "searched": 0, "corpus": 0}
 
     # Self-healing, off the request path (design doc sec 7.2/7.4): a write
     # left a marker, so a background thread catches the index up while THIS
@@ -1339,12 +1408,15 @@ def search(query: str, *, limit: int = 8,
 
     meta, vecs = load()
     if not meta:
-        return {"hits": [], "mode": "semantic", "rebuilding": rebuilding}
+        return {"hits": [], "mode": "semantic", "rebuilding": rebuilding,
+                "searched": 0, "corpus": 0}
 
     scopes = _scope_set(scope)
     mask = _keep_mask(meta, kinds, scopes, from_scope)
-    if not mask.any():
-        return {"hits": [], "mode": "semantic", "rebuilding": rebuilding}
+    searched = int(mask.sum())
+    if not searched:
+        return {"hits": [], "mode": "semantic", "rebuilding": rebuilding,
+                "searched": 0, "corpus": len(meta)}
 
     mode = "semantic"
     scores: np.ndarray | None = None
@@ -1424,7 +1496,8 @@ def search(query: str, *, limit: int = 8,
         })
         if len(hits) >= limit:
             break
-    return {"hits": hits, "mode": mode, "rebuilding": rebuilding}
+    return {"hits": hits, "mode": mode, "rebuilding": rebuilding,
+            "searched": searched, "corpus": len(meta)}
 
 
 def status() -> dict:

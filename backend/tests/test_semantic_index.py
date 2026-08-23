@@ -613,3 +613,238 @@ class TestEmbedNormalisation:
         monkeypatch.setattr(httpx, "Client", FakeClient)
         out = si.embed(["anything"])
         assert not np.isnan(out).any()
+
+
+class TestChatChunkingKeepsTheWholeMessage:
+    """The 2026-08-23 defect: `collect_chats` was the only collector that did not
+    use `_split`. On a flush it kept `line[:CHUNK_CHARS]` and threw the rest of
+    the message away, so 7,094,963 characters of transcript on disk were
+    1,357,375 in the index (19.1%), 779 messages were cut, and the longest lost
+    572,856 characters. What it ate was the LONG messages -- the designs, the
+    decisions and the operator's direction -- while routes/chat.py told the
+    model that compacted messages "are still in the transcript, and they are
+    searchable".
+    """
+
+    @pytest.fixture()
+    def fake_log(self, monkeypatch):
+        from services import chat_log
+
+        store: dict[str, list[dict]] = {}
+        monkeypatch.setattr(chat_log, "list_thread_ids", lambda: list(store))
+        monkeypatch.setattr(chat_log, "read_meta",
+                            lambda tid: {"title": "T", "context_key": "workshop"})
+        monkeypatch.setattr(chat_log, "read_events", lambda tid: store[tid])
+        return store
+
+    def test_the_tail_of_a_long_message_survives(self, fake_log):
+        """Asserted the way the defect was measured: a probe taken from deep
+        inside the message, not from its first chunk."""
+        body = " ".join(f"sentence{i} about the storage model" for i in range(2000))
+        # A short message first, deliberately: the old code only truncated when
+        # the buffer was already non-empty, so a thread that OPENS with a long
+        # message kept it whole (as one of the 27 oversized, mostly unembedded
+        # chunks). The real transcripts that lost 572,856 characters looked
+        # like this -- a question, then an answer.
+        fake_log["t1"] = [
+            {"kind": "message", "role": "user", "ts": "2026-08-01",
+             "content": "what is the storage model"},
+            {"kind": "message", "role": "assistant", "ts": "2026-08-01",
+             "content": body},
+        ]
+        text = "\n".join(c.text for c in si.collect_chats())
+        assert len(body) > 20 * si.CHUNK_CHARS, "the probe must be past the first chunk"
+        for offset in (2000, 20000, len(body) - 200):
+            probe = body[offset:offset + 120]
+            assert " ".join(probe.split()) in " ".join(text.split()), \
+                f"the message is truncated at or before character {offset}"
+
+    def test_no_chunk_exceeds_the_cap(self, fake_log):
+        """Bounded, not merely un-truncated. 27 chat chunks in the live index
+        were over the cap (the largest 19,870 characters) and the embedding
+        model's window is 512 tokens, so everything past their first ~2,000
+        characters was semantically dead even though it was stored."""
+        fake_log["t1"] = [
+            {"kind": "message", "role": "user", "ts": "t", "content": "x" * 50000},
+            {"kind": "message", "role": "assistant", "ts": "t", "content": "short reply"},
+            {"kind": "message", "role": "user", "ts": "t",
+             "content": "\n\n".join(["para " + "y" * 900] * 40)},
+        ]
+        chunks = si.collect_chats()
+        assert chunks
+        assert max(len(c.text) for c in chunks) <= si.CHUNK_CHARS
+
+    def test_short_messages_are_still_grouped(self, fake_log):
+        """The split must not turn a chat log into one chunk per line: 8,000
+        one-line chunks would rank noise above substance."""
+        fake_log["t1"] = [{"kind": "message", "role": "user", "ts": "t",
+                           "content": f"line {i}"} for i in range(200)]
+        chunks = si.collect_chats()
+        assert len(chunks) < 20, f"{len(chunks)} chunks for 200 short lines"
+
+    def test_a_long_message_does_not_swallow_the_buffered_short_ones(self, fake_log):
+        fake_log["t1"] = [
+            {"kind": "message", "role": "user", "ts": "t", "content": "the small question"},
+            {"kind": "message", "role": "assistant", "ts": "t", "content": "z" * 5000},
+        ]
+        text = "\n".join(c.text for c in si.collect_chats())
+        assert "the small question" in text
+
+
+class TestItReportsWhatItActuallySearched:
+    """DEFECT 2, 2026-08-23: the MCP tool said "No passages in the workshop are
+    relevant to that (6089 indexed)" for searches the share policy had narrowed
+    to as few as 2 passages. A tool that overstates its own coverage is how an
+    agent concludes there is no prior art when there is."""
+
+    @pytest.fixture(autouse=True)
+    def _tmp_index(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(si, "index_dir", lambda: tmp_path)
+        monkeypatch.setattr(si, "_resolve_chunk_scope", lambda kind, raw: raw)
+
+    def _corpus(self, monkeypatch):
+        meta = [
+            {"kind": "note", "ref": f"n{i}", "title": "N", "scope": s, "ts": "",
+             "text": "alpha", "digest": str(i)}
+            for i, s in enumerate(("workshop", "project:a", "project:b", "development"))
+        ]
+        si._save(meta, np.ones((4, 2), dtype=np.float32))
+        monkeypatch.setattr(si, "embed",
+                            lambda t: np.array([[1.0, 0.0]], dtype=np.float32))
+
+    def test_an_unfiltered_search_reports_the_whole_corpus(self, monkeypatch):
+        self._corpus(monkeypatch)
+        res = si.search("q", min_score=0.5)
+        assert res["searched"] == 4 and res["corpus"] == 4
+
+    def test_a_filtered_search_reports_only_what_was_in_play(self, monkeypatch):
+        self._corpus(monkeypatch)
+        res = si.search("q", scope={"project:a"}, min_score=0.5)
+        assert res["searched"] == 1, "the scope filter left one chunk, not four"
+        assert res["corpus"] == 4
+
+    def test_a_search_that_filtered_everything_out_still_says_how_big_it_was(self, monkeypatch):
+        self._corpus(monkeypatch)
+        res = si.search("q", scope={"project:nothing"}, min_score=0.5)
+        assert res["hits"] == []
+        assert res["searched"] == 0 and res["corpus"] == 4
+
+    def test_the_counts_are_present_on_every_early_return(self, monkeypatch):
+        monkeypatch.setattr(si, "embed",
+                            lambda t: np.array([[1.0, 0.0]], dtype=np.float32))
+        for res in (si.search(""), si.search("nothing is indexed yet")):
+            assert "searched" in res and "corpus" in res, res
+
+
+class TestTheFloorIsWhereTheMeasurementPutIt:
+    """DEFECT 4, 2026-08-23. MIN_SCORE was 0.58, measured on 2026-08-12 against a
+    3,407-chunk NOMIC index. Commit 7ce3cae replaced nomic with
+    BAAI/bge-small-en-v1.5 on 2026-08-20 and said so in its own message
+    ("MIN_SCORE was tuned for nomic and needs re-measuring for bge (noted)").
+    It was not re-measured, and at 0.58 fifteen of eighteen nonsense queries
+    cleared the floor -- "banana helicopter tuesday" at 0.647 -- so the tool's
+    contract that an empty result is an answer was false.
+
+    The 2026-08-23 re-measurement is pinned below AS DATA: top-hit scores from
+    the live 12,532-chunk bge index for 30 real queries and 18 nonsense ones.
+    The tests then assert the error rates the MIN_SCORE comment claims, so
+    moving the floor does not just move a number -- it reports what the move
+    costs in recall and buys in silence. A unit test that fabricated vectors
+    would prove nothing about a threshold whose entire justification is
+    measured cosine values; the live re-probe belongs in
+    scripts/verify_memory.py, which has a real index to probe.
+    """
+
+    # Full natural-language questions with an answer in the corpus.
+    REAL_QUESTIONS = [0.740, 0.766, 0.773, 0.776, 0.777, 0.778, 0.782, 0.783,
+                      0.793, 0.796, 0.800, 0.801, 0.802, 0.813, 0.819, 0.820,
+                      0.835, 0.858]
+    # Real too, and each returned the right passage, but short or oblique:
+    # "bwrap", "Plaid", "512 token window", "cursor not-allowed",
+    # "why did we stop using nomic" (0.657, and it found the right doc).
+    REAL_BUT_TERSE = [0.657, 0.668, 0.696, 0.700, 0.703, 0.713, 0.718, 0.723,
+                      0.743, 0.768, 0.783, 0.792]
+    # Off-corpus in plain English, plus four degenerate token strings at the top
+    # ("xxxx yyyy zzzz wwww vvvv" 0.733, "zqxjv mmmm plrt gggh" 0.731, a pure
+    # stopword string 0.705) which no agent generates.
+    NONSENSE = [0.733, 0.731, 0.705, 0.683, 0.675, 0.664, 0.658, 0.647, 0.634,
+                0.631, 0.615, 0.604, 0.594, 0.586, 0.583, 0.577, 0.576, 0.543]
+
+    @property
+    def real(self):
+        return self.REAL_QUESTIONS + self.REAL_BUT_TERSE
+
+    def test_it_is_not_still_the_nomic_value(self):
+        assert si.MIN_SCORE != 0.58, "0.58 was tuned for nomic, which 7ce3cae removed"
+
+    def test_it_rejects_nothing_that_was_measured_as_real(self):
+        """A hit below the floor is INVISIBLE: the agent is told nothing has been
+        written about it, which is the exact failure that cost this repo its
+        whole document corpus on 2026-08-23. A weak hit above the floor at least
+        arrives with its score and its source."""
+        lost = [s for s in self.real if s < si.MIN_SCORE]
+        assert not lost, (f"floor {si.MIN_SCORE} silently drops {len(lost)} of "
+                          f"{len(self.real)} measured real queries: {lost}")
+
+    def test_it_rejects_most_of_the_measured_nonsense(self):
+        """THE BANDS OVERLAP -- bge scores a two-word real query about the same
+        as a sentence about wombats -- so there is no value that admits every
+        real query and rejects every nonsense one. What the floor must still do
+        is cut the bulk of it: 15 of 18 cleared 0.58."""
+        admitted = [s for s in self.NONSENSE if s >= si.MIN_SCORE]
+        assert len(admitted) <= 7, (
+            f"floor {si.MIN_SCORE} admits {len(admitted)} of {len(self.NONSENSE)} "
+            "nonsense queries; 7 is what the comment on MIN_SCORE claims")
+        assert len(admitted) < 15, "no better than the stale nomic floor"
+
+    def test_the_two_claims_are_consistent_with_each_other(self):
+        """If this ever fails, the corpus has moved and the floor needs
+        re-measuring rather than nudging."""
+        assert min(self.real) >= si.MIN_SCORE > sorted(self.NONSENSE)[len(self.NONSENSE) // 2]
+
+
+class TestTheSupersededPenaltyIsSizedToThisModel:
+    """0.05 was sized against nomic's 0.09-wide informative band. On bge the
+    competitive band is much tighter: the spread between the first and eighth
+    hit of a real question measured 0.015 to 0.077, mean 0.038 over eight
+    questions on 2026-08-23. A penalty larger than that whole spread stops
+    demoting a superseded chunk and starts burying it."""
+
+    MEAN_TOP8_SPREAD = 0.038
+
+    def test_it_is_smaller_than_the_competitive_spread(self):
+        assert si._SUPERSEDED_PENALTY < self.MEAN_TOP8_SPREAD
+
+    def test_it_still_breaks_the_tie_it_exists_for(self):
+        """Measured 2026-08-23 for "is an app the same thing as a project":
+        docs/workshop-v1/00-overview.md (superseded) 0.788, beating
+        app-is-the-entity-2026-08-20.md at 0.787 -- the retired model ahead of
+        the model of record by 0.001."""
+        assert 0.788 - si._SUPERSEDED_PENALTY < 0.787
+
+    def test_it_leaves_a_clearly_better_historical_passage_in_front(self):
+        """Sometimes the history IS the answer. For "what did the v1 workshop
+        design say about assistants and builders" the same superseded doc scored
+        0.777 against a best current chunk of 0.745."""
+        assert 0.777 - si._SUPERSEDED_PENALTY > 0.745
+
+    def test_it_never_touches_admission(self, tmp_path, monkeypatch):
+        """The penalty applies to ORDER only; the floor test runs on the RAW
+        score, so a question whose only answer is historical still gets one.
+
+        Built as a live search rather than read off the source, with a chunk
+        whose raw score clears the floor and whose demoted score does not."""
+        monkeypatch.setattr(si, "index_dir", lambda: tmp_path)
+        monkeypatch.setattr(si, "_resolve_chunk_scope", lambda kind, raw: raw)
+        raw = si.MIN_SCORE + si._SUPERSEDED_PENALTY / 2
+        assert raw - si._SUPERSEDED_PENALTY < si.MIN_SCORE <= raw, "bad fixture"
+        si._save([{"kind": "doc", "ref": "docs/old.md", "title": "Old", "scope": "",
+                   "ts": "", "text": "the historical answer", "digest": "1",
+                   "status": "superseded"}],
+                 np.array([[raw, 0.0]], dtype=np.float32))
+        monkeypatch.setattr(si, "embed",
+                            lambda t: np.array([[1.0, 0.0]], dtype=np.float32))
+        hits = si.search("a question only history answers")["hits"]
+        assert len(hits) == 1, "a demoted chunk must still be admitted on its raw score"
+        assert hits[0]["status"] == "superseded", \
+            "and it must arrive LABELLED, or the reader cannot see the demotion"

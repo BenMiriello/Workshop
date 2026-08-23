@@ -21,7 +21,11 @@ default):
     Overrides `reach` outright.
   - `private` -- found only by a search running AS the item's own scope. An
     ancestor's search -- which would normally reach downward into it -- does
-    not. `reachable()` is the one place this rule is expressed; every caller
+    not. On a kind that HAS no scope (a doc lives in `docs/`, not in the
+    tree) there is no own-scope to be private to, so `private` falls back to
+    `inherit` there rather than matching nothing; see `reachable()` for the
+    measured reason that is spelled out instead of left to emerge.
+    `reachable()` is the one place this rule is expressed; every caller
     (`semantic_index._keep_mask`, `knowledge._plaintext_search`) calls through
     it rather than re-deriving the rule.
 
@@ -172,6 +176,24 @@ def reachable(*, share: str, item_scope: str, from_scope: str | None, in_reach: 
     if share == "open":
         return True
     if share == "private":
+        # PRIVATE NEEDS A SCOPE TO BE PRIVATE TO. `private` means "found only
+        # from inside its OWN scope". A doc has no scope -- it lives in
+        # `docs/`, not in the tree, and `semantic_index` calls that "placeless,
+        # not unreachable" -- so `item_scope` is "" and the equality below can
+        # never be true from anywhere. Left to emerge from the string compare,
+        # `doc: private` did not restrict documents, it ERASED them: on
+        # 2026-08-23 the whole 215-document corpus, including the model of
+        # record, returned zero hits from every real (scoped) search while
+        # scoring 0.787 from an unscoped one.
+        #
+        # So a scopeless kind resolves `private` to the tree's own rule
+        # instead, which for a placeless item means "found". No value of this
+        # setting -- and no future kind that turns out to have no scope --
+        # can express "findable from nowhere", because that is not a
+        # restriction anyone would choose; it is a corpus deletion with no
+        # undo and no error message. A kind that HAS scopes is unaffected.
+        if not item_scope:
+            return in_reach
         return bool(from_scope) and from_scope == item_scope
     return in_reach  # "inherit": the tree's own rule, unchanged
 

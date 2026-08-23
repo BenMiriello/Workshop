@@ -134,10 +134,27 @@ export default function Settings({ tab = "account" }: { tab?: SettingsTab }) {
 // Memory page.
 //
 // Commits on change, like the other view-preference controls on this page
-// (AppearanceSection above): each is a low-stakes default for items that don't
-// exist yet, so a misclick costs nothing already written. Operator, 2026-08-20:
-// "having to click an edit button to edit the contents is probably not the
-// right way that we want to do this."
+// (AppearanceSection above). Operator, 2026-08-20: "having to click an edit
+// button to edit the contents is probably not the right way that we want to do
+// this."
+//
+// THESE ARE NOT DEFAULTS FOR ITEMS THAT DON'T EXIST YET. This comment used to
+// say each control was "a low-stakes default for items that don't exist yet, so
+// a misclick costs nothing already written", and that reasoning is what let one
+// misclick here cost everything already written: a default is resolved at
+// SEARCH time against the whole corpus, not stamped onto an item at write time,
+// so every existing note, document and transcript of that kind changes what it
+// answers the instant this control moves. On 2026-08-23 documents sat at "Its
+// scope only" and all 215 of them, including the platform's model of record,
+// returned nothing from every real search, because a document has no scope and
+// "only from its own scope" therefore matched nowhere. Write the copy for a
+// control that retunes the entire corpus, because that is what it is.
+//
+// The erasure itself is fixed in memory_policy.reachable(): a kind with no
+// scope falls back to the tree's rule rather than to a comparison that cannot
+// hold. One consequence lands in this copy -- for documents all three values
+// now behave identically -- and the documents hint says so rather than
+// implying a difference the code does not have.
 // ----------------------------------------------------------------------------
 type ShareDraft = { note: ShareValue; doc: ShareValue; chat: ShareValue };
 
@@ -198,27 +215,28 @@ function MemorySection() {
     {
       key: "note",
       label: "notes",
-      hint: "A note is meant to be found, so a new one defaults to reaching parent scopes too.",
+      hint: "Applies to every note you already have, not just the next one. A note is meant to be found, so the default lets it reach parent scopes too.",
     },
     {
       key: "doc",
       label: "documents",
-      hint: "Documents live in the docs folder, not in a scope, so this only matters once you scope one yourself.",
+      hint: "Documents sit outside the scope tree, so every chat's search finds all of them whichever of these you pick. Nothing here can hide a document.",
     },
     {
       key: "chat",
       label: "chat transcripts",
-      hint: "A transcript is the biggest, least curated thing here, so a new chat defaults to its own scope only. File a note if you want the substance to travel further, or change one chat's own default from its card on the Memory page.",
+      hint: "Applies to every transcript you already have, not just the next one. A transcript is the biggest, least curated thing here, so the default keeps it to its own scope. File a note if you want the substance to travel further, or change one chat's own setting from its card on the Memory page.",
     },
   ];
 
   return (
     <Section icon={Library}>
       <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
-        Defaults for what a new item lets other chats' searches find. This is a
+        What each kind of writing lets other chats' searches find. This is a
         search filter, not a lock: everything here runs as one user, so it never
         stops anything from being read. It only decides whether a chat's search
-        reaches outside its own scope.
+        reaches outside its own scope. Changing one of these retunes what every
+        existing item of that kind answers, not just the next one you write.
       </p>
 
       {kinds.map(({ key, label, hint }) => (

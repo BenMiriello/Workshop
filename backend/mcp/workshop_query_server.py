@@ -291,6 +291,12 @@ def _run_search(args: dict) -> str:
                                    scope=scopes,
                                    from_scope=_caller_scope_key(caller_raw))
     hits, mode, rebuilding = result["hits"], result["mode"], result["rebuilding"]
+    # What the scope and `share` filters actually left in play, NOT the index
+    # total. A tool that reports the total overstates its own coverage: on
+    # 2026-08-23 this line said "6089 indexed" for searches the policy had
+    # narrowed to as few as 2 passages, which is how an agent concludes there
+    # is no prior art when there is.
+    searched, corpus = result.get("searched", 0), result.get("corpus", 0)
 
     rebuild_note = ("\n(the index is rebuilding in the background; these results "
                      "are from what is on disk right now)" if rebuilding else "")
@@ -302,13 +308,24 @@ def _run_search(args: dict) -> str:
             return f"The search index is empty: {why}.{rebuild_note}"
         # An empty result is a real answer, and saying so plainly stops the model
         # from reading it as a malfunction and retrying the same query.
+        #
+        # COVERAGE IS STATED HONESTLY, and when it is partial the model is told
+        # so it can widen the search rather than conclude the workshop is
+        # silent on the subject.
+        if searched < corpus:
+            reach = (f"{searched} of {corpus} indexed passages were searchable "
+                     f"from this scope and none is relevant")
+        else:
+            reach = (f"none of the {corpus} indexed passages is relevant")
         return (f"No passages in the workshop are relevant to that "
-                f"({st['chunks']} indexed, mode: {mode}). Nothing has been "
-                f"written about it.{rebuild_note}")
+                f"({reach}, mode: {mode}). Nothing reachable from here has "
+                f"been written about it.{rebuild_note}")
 
     # The mode is surfaced up front, not buried in a footer: a model that does
     # not know it got a degraded (lexical) result over-trusts it.
-    out = [f"{len(hits)} passage(s) for: {query}  [mode: {mode}]{rebuild_note}", ""]
+    out = [f"{len(hits)} passage(s) for: {query}  "
+           f"[mode: {mode}; searched {searched} of {corpus} indexed passages]"
+           f"{rebuild_note}", ""]
     for h in hits:
         where = h["ref"]
         if h["kind"] == "chat":

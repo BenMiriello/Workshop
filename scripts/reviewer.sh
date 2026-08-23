@@ -30,6 +30,9 @@
 #                                                // outside lib/storage.ts. ABSOLUTE, tree is at zero
 #     "response_model":      "ok|fail|skipped"  // ADR 0023: routes/ lacking response_model=, ratcheted
 #                                                // per-file against scripts/response_model_baseline.json
+#     "memory_reachable":    "ok|fail|skipped"  // scripts/verify_memory.py: the memory acceptance
+#                                                // harness, run when the diff touches the retrieval
+#                                                // path (index / share policy / scope tree / query tool)
 #   }
 #
 # This gate judges the DIFF and executed evidence ONLY. The worker's own
@@ -51,6 +54,9 @@
 #     pinned baseline (ADR 0024; see check_module_layout.py's own header)
 #   - no new process-local mutable global in backend/ (tenancy clause; see
 #     check_no_process_globals.py's own header)
+#   - the memory acceptance harness passes, when the diff touches the retrieval
+#     path (scripts/verify_memory.py; see 4.6c-vi for why it is gated on that
+#     path rather than run every time)
 #   - no routes/ file touched by this diff has MORE routes lacking
 #     response_model= than the pinned baseline (ADR 0023; see
 #     check_response_model.py's own header)
@@ -613,6 +619,41 @@ if printf '%s\n' "$CHANGED_ALL" \
   fi
 fi
 
+# 4.6c-vi The memory system still answers (scripts/verify_memory.py). GATES,
+# and it is here because the memory acceptance harness existed for a week
+# wired into nothing at all: reviewer.sh ran check_one_definition,
+# check_no_app_names and field_occupancy and never ran this, so on 2026-08-23
+# every scoped search in the system returned zero documents -- the platform's
+# own model of record unfindable by every agent including the operator's chat
+# -- and no gate said a word. A harness nobody runs is a harness that reports
+# whatever it likes.
+#
+# Gated on the diff touching the retrieval path (the index, the share policy,
+# the scope tree, the tool the agents call, or the harness itself), because
+# this drives the REAL stores and takes seconds, not milliseconds; it is not
+# free enough to run on a CSS change. `--retrieval` runs the "can an agent
+# still find things" subset rather than the whole harness -- see
+# RETRIEVAL_CHECKS in verify_memory.py: the learnings checks carry a standing
+# unrelated finding, and a gate that fails on day one for reasons outside the
+# diff is a gate somebody switches off. The `-x` venv guard is the same one
+# 4.6d uses and degrades the same way: a worktree with no backend venv reports
+# ambiguous rather than a pass, since a check that never ran must not read as
+# clean.
+MEMORY_REACHABLE_CHECK="skipped"
+if printf '%s\n' "$CHANGED_ALL" \
+   | grep -qE '^(backend/services/(semantic_index|memory_policy|knowledge|scope_tree)\.py|backend/mcp/workshop_query_server\.py|scripts/verify_memory\.py)$'; then
+  if [[ -x "$WORKSHOP/backend/.venv/bin/python" && -f "$WORKSHOP/scripts/verify_memory.py" ]]; then
+    if (cd "$WORKSHOP/backend" && "$WORKSHOP/backend/.venv/bin/python" \
+          "$WORKSHOP/scripts/verify_memory.py" --retrieval) >/dev/null 2>&1; then
+      MEMORY_REACHABLE_CHECK="ok"
+    else
+      MEMORY_REACHABLE_CHECK="fail"
+    fi
+  else
+    AMBIGUOUS+=("memory_reachable_check_unavailable")
+  fi
+fi
+
 # 4.6d Field-occupancy ratchet (R2) and doc-status ratchet (R1) are measurement,
 # not gates — R2 is explicit that a newly-introduced zero-occupancy field must
 # be reported loudly, not fail the build on first introduction (a design that
@@ -758,6 +799,10 @@ if [[ "$ROUTES_ANSWER_CHECK" == "fail" ]]; then
   REASONS+=("route_returns_5xx")
   COMPLETE="false"
 fi
+if [[ "$MEMORY_REACHABLE_CHECK" == "fail" ]]; then
+  REASONS+=("memory_acceptance_failed")
+  COMPLETE="false"
+fi
 if [[ "$DUPLICATE_HELPERS_CHECK" == "fail" ]]; then
   REASONS+=("duplicate_helper")
   COMPLETE="false"
@@ -826,7 +871,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK
+export RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK MEMORY_REACHABLE_CHECK
 RESULT_JSON=$(python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -881,6 +926,10 @@ out = {
     # backend to probe"; the latter also lands in `ambiguous`, which is what
     # distinguishes them for a strict sweep.
     "routes_answer": os.environ.get("ROUTES_ANSWER_CHECK", "skipped"),
+    # scripts/verify_memory.py, the memory acceptance harness. GATES. "skipped"
+    # means the diff did not touch the retrieval path; "unavailable" lands in
+    # `ambiguous` instead, never in a pass.
+    "memory_reachable": os.environ.get("MEMORY_REACHABLE_CHECK", "skipped"),
     # executed machine-checkable acceptance assertions (empty unless the caller
     # passed REVIEWER_CRITERIA_FILE); surfaced so the Work UI shows what was checked.
     "criteria":  criteria,
@@ -900,7 +949,7 @@ PYEOF
 printf '%s\n' "$RESULT_JSON"
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi
