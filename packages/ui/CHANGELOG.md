@@ -12,6 +12,37 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.25 - 2026-08-22 - the chrome around an open file
+
+**Additive.** The file viewer and editor had two near-identical headers (the
+Files tab's and Memory's) and neither matched the mockup it is judged by. This
+is that header, once, as a primitive:
+`docs/platform-redesign/shell-mockup-spec-2026-08-22.md` section 6.
+
+- **New: `DocumentBar`.** The header a file wears while it is open. Desktop 46px
+  with the path in mono `--faint`, the filename in mono `--fg`, a 6px `--warn`
+  dirty dot, then right-aligned actions; a phone gets 44px and a COMBINED
+  back-plus-filename control (a 13px chevron immediately followed by the name,
+  both `--accent`, one tap target) in place of the path. The `path` and `meta`
+  slots are desktop only; on a phone the name has the width.
+- **New: `documentBar(input)` plus `DocumentBarInput` / `DocumentBarModel` /
+  `DocumentForm`.** The pure rule for what the header shows, from four booleans
+  (`writable`, `hasRenderedForm`, `form`, `dirty`). It is what keeps a markdown
+  document and a source file consistent: same header, toggle on or off. Tested
+  in `documentBar.test.ts`.
+- **THE DIRTY DOT IS CONDITIONAL.** The mockup draws it unconditionally because
+  its editor has exactly one state, "editing with unsaved changes". Here `dirty`
+  is a real boolean from `useEditMode`, so the dot renders only when the document
+  is dirty, and it REPLACES the sticky ActionBar's "unsaved" pill on this
+  surface rather than sitting beside it.
+- **New CSS: `.ws-doc`, `.ws-doc--full`, `.ws-doc__body`, `.ws-docbar*`.** The
+  document surface. `--doc-gutter-w` is 40px on a phone and 56px on a desktop
+  and is applied to `.cm-gutters` from the stylesheet, so `Editor` itself is
+  unchanged. `.ws-doc--full` is the phone takeover: the document escapes
+  `<main>`'s page inset, the editor loses its side borders and fills the
+  viewport below the bars.
+- No export was removed or renamed, and nothing changed shape.
+
 ## 0.5.24 - 2026-08-22 - the file browser, measured against the mockup
 
 **Additive, plus two corrections.** `FileDrill` and `FileTree` shipped earlier

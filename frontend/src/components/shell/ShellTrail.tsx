@@ -20,9 +20,16 @@
 
 import { Link } from "react-router-dom";
 import { useCrumbs } from "../appNav";
+import { useTakeover } from "./takeover";
 
 export function ShellTrail() {
   const crumbs = useCrumbs();
+  // An open document is a FULL content takeover (shell-mockup-spec-2026-08-22.md
+  // section 6): the shell collapses its page toolbar and the page drops its own
+  // header, so a trail above the file would be the last piece of chrome left
+  // standing between the top of the screen and the thing you opened.
+  const takeover = useTakeover();
+  if (takeover) return null;
   if (crumbs.length < 2) return null;
   const last = crumbs.length - 1;
   return (

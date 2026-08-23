@@ -7,9 +7,19 @@
 // THERE IS NO VIEW/EDIT TOGGLE, and that is the design (sec 4): a file gets a
 // rendered view only when its rendered form DIFFERS from its source. `main.py`
 // has one form, so its highlighted source IS its view, and the editor is simply
-// live on a file you may write. Markdown in Memory is the other case and a
-// different ticket owns it. Editing still commits explicitly: typing opens the
-// sticky ActionBar (frontend/CLAUDE.md rule 7), nothing saves by accident.
+// live on a file you may write. Markdown in Memory is the other case, and it
+// draws THE SAME CHROME with a toggle in it: `DocumentBar` from the kit, whose
+// state comes from the pure `documentBar()` rule, so the two surfaces cannot
+// drift the way they had by 2026-08-22.
+//
+// THE HEADER CARRIES SAVE, AND THERE IS NO STICKY ActionBar HERE. Editing still
+// commits explicitly, which is what frontend/CLAUDE.md rule 7 requires; the bar
+// that carries the commit is the document's own header rather than a bar stuck
+// to the bottom of the page. Shipping both would put two Saves and two "unsaved"
+// markers on one screen, and on a phone an open document hides the bottom bar
+// (shell-mockup-spec-2026-08-22.md section 6), which would leave the ActionBar's
+// Save unreachable exactly when it mattered. The unsaved DOT in the header is
+// the "unsaved" pill's replacement, and the dot going out is what says it saved.
 //
 // TWO INDEPENDENT AXES, never conflated: `editable` is about the BYTES (text,
 // small enough to open) and `writable` is about the LOCATION (does this
@@ -23,18 +33,20 @@
 // are parked for retirement in sec 8; nothing new should be built on them.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ChevronUp, FolderTree, Lock } from "lucide-react";
+import { FolderTree, Lock } from "lucide-react";
 import {
-  ActionBar, Badge, Button, Card, DetailLayout, FileDrill, FileTree, Notice, Row, SectionLabel,
-  Skeleton, Stack, StateBlock, drillTrail, formatBytes, shortHttpError, timeAgo, useEditMode,
+  Badge, Button, Card, DetailLayout, DocumentBar, FileDrill, FileTree, Notice, SectionLabel,
+  Skeleton, Stack, StateBlock, cx, documentBar, drillTrail, formatBytes, shortHttpError, timeAgo,
+  useEditMode,
   type FileDrillTrail, type FileTreeAdapter, type FileTreeNode,
 } from "@workshop/ui";
 import { Editor, languageForPath } from "@workshop/ui/editor";
 import type { components } from "../../../api/schema.gen";
 import type { AppRecord } from "../../../lib/apps";
 import { useIsWide } from "../../../lib/useMediaQuery";
+import { useContentTakeover } from "../../../components/shell/takeover";
 import { AppTabPage } from "./AppTabShell";
-import { ancestorIdsFor, fileIconFor, folderNodesFor, viewModeFor } from "./filePath";
+import { ancestorIdsFor, fileIconFor, fileNameOf, folderNodesFor, parentPath, viewModeFor } from "./filePath";
 
 type FileLevel = components["schemas"]["FileTree"];
 type FileContent = components["schemas"]["FileContent"];
@@ -63,15 +75,21 @@ async function readFailure(r: Response): Promise<{ message: string; reason: stri
 function FilePane({
   workspace,
   path,
-  actions,
+  onBack,
+  backLabel,
+  takeover,
 }: {
   workspace: string;
   path: string;
-  /** Chrome that belongs to the page rather than the file. On a phone this is
-   *  the Up control, which is why it sits above the four states below and not
-   *  only beside a file that loaded: a file that failed still has a level to
-   *  walk back out to. */
-  actions?: ReactNode;
+  /** Back to the level this file is in. Present only on a phone, where it IS
+   *  the header: the combined chevron-plus-filename control replaces the Up bar
+   *  while a document is open (shell-mockup-spec-2026-08-22.md sections 4.1
+   *  and 6). A desktop has the tree beside the file and needs no back. */
+  onBack?: () => void;
+  backLabel?: string;
+  /** The document owns the whole content area. Same boolean the shell is told
+   *  about, so the two halves of the takeover cannot disagree. */
+  takeover?: boolean;
 }) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -118,48 +136,48 @@ function FilePane({
     edit.set("content", next);
   };
 
+  // The four states all wear the same header, so the way out of a file that
+  // failed to load is exactly the way out of one that opened.
+  const frame = (body: ReactNode, bar?: ReactNode, meta?: ReactNode) => (
+    <div className={cx("ws-doc", takeover && "ws-doc--full")}>
+      <DocumentBar
+        name={fileNameOf(path)}
+        path={parentPath(path)}
+        dirty={edit.dirty}
+        onBack={onBack}
+        backLabel={backLabel}
+        meta={meta}
+      >
+        {bar}
+      </DocumentBar>
+      <div className="ws-doc__body">{body}</div>
+    </div>
+  );
+
   if (err) {
-    return (
-      <Stack gap="sm">
-        {actions}
-        <StateBlock
-          variant="error"
-          title="Couldn't load this file"
-          hint={<code>{endpoint} ({err})</code>}
-          action={<Button size="sm" onClick={load}>Retry</Button>}
-        />
-      </Stack>
+    return frame(
+      <StateBlock
+        variant="error"
+        title="Couldn't load this file"
+        hint={<code>{endpoint} ({err})</code>}
+        action={<Button size="sm" onClick={load}>Retry</Button>}
+      />,
     );
   }
   if (!file) {
-    return (
-      <Stack gap="sm">
-        {actions}
-        <Card><Stack gap="sm"><Skeleton width="70%" /><Skeleton width="50%" /></Stack></Card>
-      </Stack>
-    );
+    return frame(<Card><Stack gap="sm"><Skeleton width="70%" /><Skeleton width="50%" /></Stack></Card>);
   }
 
   const mode = viewModeFor(file);
   const canWrite = mode === "editable";
+  // A source file has ONE form, so `hasRenderedForm` is false and no toggle is
+  // drawn. That is the rule in file-viewer section 4, not a special case here.
+  const bar = documentBar({
+    writable: canWrite, hasRenderedForm: false, form: "source", dirty: edit.dirty,
+  });
 
-  return (
+  return frame(
     <Stack>
-      <Row between wrap>
-        <Row>
-          {actions}
-          <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{path}</span>
-        </Row>
-        <Row>
-          {mode === "readonly" && (
-            <Badge><Lock size={12} strokeWidth={1.8} aria-hidden /> read only</Badge>
-          )}
-          <span className="ws-card__meta">
-            {formatBytes(file.size)}{file.modified ? ` · edited ${timeAgo(file.modified)}` : ""}
-          </span>
-        </Row>
-      </Row>
-
       {mode === "binary" && (
         <Notice tone="info">This file is binary, so it can't be shown here.</Notice>
       )}
@@ -186,25 +204,46 @@ function FilePane({
           onChange={canWrite ? onChange : undefined}
           path={path}
           editable={canWrite}
-          height="65vh"
+          height={takeover ? undefined : "65vh"}
           ariaLabel={path}
         />
       )}
-
-      {(edit.editing || edit.flash) && (
-        <ActionBar flash={edit.flash ? "Saved" : undefined}>
-          {edit.editing && (
-            <>
-              <Button variant="primary" onClick={save} loading={edit.saving} disabled={!edit.dirty}>
-                Save
-              </Button>
-              <Button variant="ghost" onClick={edit.cancel} disabled={edit.saving}>Cancel</Button>
-              {edit.dirty && <Badge>unsaved</Badge>}
-            </>
-          )}
-        </ActionBar>
+    </Stack>,
+    <>
+      {bar.discard && (
+        <Button
+          className="ws-docbar__discard"
+          size="sm"
+          variant="ghost"
+          onClick={edit.cancel}
+          disabled={edit.saving}
+        >
+          Discard
+        </Button>
       )}
-    </Stack>
+      {bar.save && (
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={save}
+          loading={edit.saving}
+          disabled={!bar.saveEnabled}
+        >
+          Save
+        </Button>
+      )}
+    </>,
+    // The file's own facts, and the one line that says a path refuses writes.
+    // Desktop only: on a phone the name has the width and this is not what you
+    // opened the file to read.
+    <>
+      {mode === "readonly" && (
+        <Badge><Lock size={12} strokeWidth={1.8} aria-hidden /> read only</Badge>
+      )}
+      <span>
+        {formatBytes(file.size)}{file.modified ? ` \u00b7 edited ${timeAgo(file.modified)}` : ""}
+      </span>
+    </>,
   );
 }
 
@@ -321,20 +360,30 @@ function FilesBody({ app }: { app: AppRecord }) {
   // column (components/shell/places.ts) and the path these tab routes hang off.
   const leaveFiles = useCallback(() => { navigate(`/apps/${app.slug}`); }, [navigate, app.slug]);
 
+  // The shell half of the takeover: while a file is open on a phone, the page
+  // toolbar collapses to zero and its caret is not drawn (spec sections 1.1 and
+  // 6). Declared here rather than inside FilePane so it is raised for exactly
+  // the render that shows one, and never on a desktop, where the tree sits
+  // beside the file and nothing is in the way.
+  useContentTakeover(!isWide && !!selected);
+
   if (noTree) return <StateBlock title="No files here" hint={noTree} />;
 
   if (!isWide) {
     // The tree IS the page here. One level, no rail, no nested scroller.
+    //
+    // AN OPEN FILE IS A FULL CONTENT TAKEOVER (mockup spec section 6). The Up
+    // bar is gone because the header's combined back-plus-filename control IS
+    // the way out, the page toolbar collapses (the shell reads the declaration
+    // above), and there is no bottom action bar because the header carries Save.
     return selected ? (
       <FilePane
         key={selected}
         workspace={workspace}
         path={selected}
-        actions={
-          <Button size="sm" variant="ghost" onClick={upFromFile} aria-label={`Up to ${upTo.label}`}>
-            <ChevronUp aria-hidden /> Up
-          </Button>
-        }
+        onBack={upFromFile}
+        backLabel={upTo.label}
+        takeover
       />
     ) : (
       <FileDrill

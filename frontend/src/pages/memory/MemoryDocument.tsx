@@ -27,17 +27,40 @@
 //
 // The pattern for the split itself is frontend/src/pages/apps/notes/NoteView.tsx,
 // which is where this app already did it correctly: `useEditMode` for the draft,
-// the kit `Editor` while editing, `Markdown` when not, and a sticky `ActionBar`
-// with Save primary and Cancel ghost (frontend/CLAUDE.md rule 7).
+// the kit `Editor` while editing, `Markdown` when not.
+//
+// ---- THE TWO SHAPES ON THIS PAGE, AND WHY THEY DIFFER ----------------------
+//
+// A DOCUMENT IS A FILE and wears the kit's `DocumentBar`: the same header the
+// Files tab draws, measured in shell-mockup-spec-2026-08-22.md section 6, with
+// the same pure `documentBar()` rule deciding what is in it. That is the point
+// of the shared chrome: a markdown file in Memory and a source file in an app
+// are the same surface with the toggle switched on.
+//
+// THE HEADER CARRIES THE ACTIONS THERE, and there is no sticky `ActionBar` on
+// it. rule 7 requires an EXPLICIT COMMIT for a content write, not one particular
+// container for it; the header is that commit, permanently on screen. Two Saves
+// and two "unsaved" markers on one screen is the duplication this repo keeps
+// deleting, and on a phone an open document hides the bottom bar (spec section
+// 6), so the ActionBar's Save would be unreachable exactly when it mattered. The
+// unsaved DOT replaces the "unsaved" pill, and the dot going out is the receipt.
+//
+// A NOTE IS A RECORD, not a file. It has no path and no filename; it has a
+// title, a hook, a type, a pinned flag, an author and backlinks, and its edit
+// mode is a FORM over five fields of which the markdown body is one. So it keeps
+// the record-page shape (frontend/CLAUDE.md, "A record page is not a list page")
+// and its `ActionBar`, which is rule 7's own case. Giving it a filename header
+// would have meant printing its title twice, in mono, above itself.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Pencil, Pin, Trash2 } from "lucide-react";
+import { Eye, Lock, Pencil, Pin, Trash2 } from "lucide-react";
 import {
   ActionBar,
   Badge,
   Button,
   Checkbox,
   ConfirmDialog,
+  DocumentBar,
   Field,
   Input,
   Notice,
@@ -50,8 +73,11 @@ import {
   StatusDot,
   Tag,
   catFor,
+  cx,
+  documentBar,
   timeAbsolute,
   useEditMode,
+  type DocumentForm,
 } from "@workshop/ui";
 import { Markdown } from "@workshop/ui/markdown";
 import { Editor } from "@workshop/ui/editor";
@@ -61,16 +87,18 @@ import { backlinksFor } from "../../lib/refs";
 import { scopeHref, scopeLabel } from "../../lib/tasks";
 import { useResolvedRefs } from "../../lib/useResolvedRefs";
 import { getJson, sendJson } from "./api";
-import { baseName, titleOfMarkdown } from "./memoryTree";
+import { baseName, dirName } from "./memoryTree";
 import { NOTE_TYPES, authorLabel, chatRefsIn, noteTypeLabel, type NoteType } from "./notes";
 
 type NoteDetail = components["schemas"]["NoteDetail"];
 type NoteSummary = components["schemas"]["NoteSummary"];
 type FileContent = components["schemas"]["FileContent"];
 
-/** The editor's height in the document pane. A number rather than a stretch
- *  because the pane scrolls: an editor that grows without bound pushes the
- *  ActionBar off the end of a long document. */
+/** The editor's height when the document is one pane among others (a note's
+ *  form, or a desktop document beside the tree). A fixed height rather than a
+ *  stretch because the page scrolls: an editor that grows without bound pushes
+ *  everything under it off the end of a long document. In the phone takeover it
+ *  is not used at all; `.ws-doc--full` sizes the editor to the viewport. */
 const EDITOR_HEIGHT = "60vh";
 
 // ---- Shared pieces ---------------------------------------------------------
@@ -387,16 +415,33 @@ export function NoteDocument({
 export function DocDocument({
   path,
   onChanged,
-  actions,
+  onBack,
+  backLabel,
+  takeover,
 }: {
   path: string;
   onChanged: () => void;
-  actions?: React.ReactNode;
+  /** Back to the level this document is in. Present only on a phone, where the
+   *  combined chevron-plus-filename control in the header IS the way out and
+   *  replaces the Up bar (shell-mockup-spec-2026-08-22.md sections 4.1 and 6). */
+  onBack?: () => void;
+  backLabel?: string;
+  /** The document owns the whole content area. The same boolean the shell is
+   *  told about, so the two halves of the takeover cannot disagree. */
+  takeover?: boolean;
 }) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [saveErr, setSaveErr] = useState<string | null>(null);
+  // WHICH FORM IS ON SCREEN, and it is independent of whether an edit is open
+  // (file-viewer-and-editor-2026-08-22.md section 4: `form` is the reader's
+  // choice, `editable` is the backend's fact). Switching back to the rendered
+  // view therefore does NOT throw a draft away: it renders what you have
+  // written so far, and Save stays in the header while it is dirty. A toggle
+  // that silently discarded an edit would need a confirm dialog to be safe, and
+  // this needs none.
+  const [form, setForm] = useState<DocumentForm>("rendered");
 
   useEffect(() => {
     let live = true;
@@ -449,65 +494,104 @@ export function DocDocument({
 
   // Two different facts, kept apart (section 4). `writable` is about the
   // LOCATION and comes from the workspace; `editable` and `truncated` are about
-  // the BYTES. An Edit control is offered only when all three agree, and where
-  // it is not offered there is no dimmed button and no refusal cursor: one
-  // muted line says what the file is.
+  // the BYTES. Where a write is refused there is no dimmed Edit control and no
+  // refusal cursor: the header says "read only" and one muted line says why.
   const canEdit = file.writable && file.editable && !file.truncated;
-  const title = titleOfMarkdown(file.content, baseName(path));
+  const bar = documentBar({ writable: canEdit, hasRenderedForm: true, form, dirty: edit.dirty });
+  // The draft is the document once an edit is open, in EITHER form.
+  const body = edit.editing ? edit.draft.content : file.content;
+
+  const toggle = bar.toggle;
+
+  const goForm = (to: DocumentForm) => {
+    // Entering the source form on a writable file is entering the edit. The
+    // editor is live from there on, exactly as the Files tab's is.
+    if (to === "source" && !edit.editing) edit.begin();
+    setForm(to);
+  };
 
   return (
-    <Stack gap="lg">
-      <Row between wrap style={{ gap: "var(--space-3)", alignItems: "flex-start" }}>
-        <Stack gap="sm">
-          <h2 className="ws-memory__title">{title}</h2>
-          <span className="ws-memory__path">{path}</span>
-        </Stack>
-        {!edit.editing && (
-          <Row wrap style={{ gap: "var(--space-2)" }}>
-            {actions}
-            {canEdit && <Button onClick={edit.begin}><Pencil aria-hidden /> Edit</Button>}
-          </Row>
+    <div className={cx("ws-doc", takeover && "ws-doc--full")}>
+      <DocumentBar
+        name={baseName(path)}
+        path={dirName(path)}
+        dirty={edit.dirty}
+        onBack={onBack}
+        backLabel={backLabel}
+        meta={!canEdit ? <Badge><Lock size={12} strokeWidth={1.8} aria-hidden /> read only</Badge> : null}
+      >
+        {toggle && (
+          <Button size="sm" variant="ghost" onClick={() => goForm(toggle.to)}>
+            {toggle.to === "source"
+              ? <><Pencil aria-hidden /> {toggle.label}</>
+              : <><Eye aria-hidden /> {toggle.label}</>}
+          </Button>
         )}
-      </Row>
+        {bar.discard && (
+          <Button
+            className="ws-docbar__discard"
+            size="sm"
+            variant="ghost"
+            disabled={edit.saving}
+            onClick={() => { edit.cancel(); setForm("rendered"); }}
+          >
+            Discard
+          </Button>
+        )}
+        {bar.save && (
+          <Button
+            size="sm"
+            variant="primary"
+            loading={edit.saving}
+            disabled={!bar.saveEnabled}
+            onClick={() => { void edit.save().catch(() => {}); }}
+          >
+            Save
+          </Button>
+        )}
+      </DocumentBar>
 
-      {!canEdit && (
-        <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
-          {file.truncated
-            ? "This file is too large to show in full, so it is read only here."
-            : !file.editable
-              ? "This file is not text, so it cannot be edited here."
-              : "This file is read only."}
-        </p>
-      )}
-      {saveErr && <Notice tone="error" detail={saveErr}>That didn't save.</Notice>}
+      <div className="ws-doc__body">
+        <Stack gap="sm">
+          {!canEdit && (
+            <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
+              {file.truncated
+                ? "This file is too large to show in full, so it is read only here."
+                : !file.editable
+                  ? "This file is not text, so it cannot be edited here."
+                  : "This file is read only."}
+            </p>
+          )}
+          {/* A save that failed leaves the document on screen, so it is a line
+              beside content and never a region that replaces it. */}
+          {saveErr && <Notice tone="error" detail={saveErr}>That didn't save.</Notice>}
 
-      {edit.editing ? (
-        <>
-          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-            Saving edits the file on disk. It is not committed, so commit it yourself when ready.
-          </p>
-          <Editor
-            value={edit.draft.content}
-            onChange={(v) => edit.patch({ content: v })}
-            path={path}
-            profile="prose"
-            height={EDITOR_HEIGHT}
-            ariaLabel={`${title}, markdown source`}
-          />
-          <ActionBar flash={edit.flash ? "Saved" : undefined}>
-            <Button variant="primary" loading={edit.saving} onClick={() => { void edit.save().catch(() => {}); }}>
-              Save
-            </Button>
-            <Button variant="ghost" onClick={edit.cancel}>Cancel</Button>
-            {edit.dirty && <Badge>unsaved</Badge>}
-          </ActionBar>
-        </>
-      ) : file.content.trim() ? (
-        <Markdown>{file.content}</Markdown>
-      ) : (
-        <p className="ws-muted" style={{ margin: 0 }}>This document is empty.</p>
-      )}
-      {!edit.editing && edit.flash && <p className="ws-muted" style={{ margin: 0 }}>Saved. Not committed.</p>}
-    </Stack>
+          {form === "source" ? (
+            <>
+              <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+                Saving edits the file on disk. It is not committed, so commit it yourself when ready.
+              </p>
+              <Editor
+                value={body}
+                onChange={canEdit ? (v) => {
+                  // Live, so the first keystroke is what opens the edit.
+                  if (!edit.editing) edit.begin();
+                  edit.patch({ content: v });
+                } : undefined}
+                path={path}
+                profile="prose"
+                editable={canEdit}
+                height={takeover ? undefined : EDITOR_HEIGHT}
+                ariaLabel={`${baseName(path)}, markdown source`}
+              />
+            </>
+          ) : body.trim() ? (
+            <Markdown>{body}</Markdown>
+          ) : (
+            <p className="ws-muted" style={{ margin: 0 }}>This document is empty.</p>
+          )}
+        </Stack>
+      </div>
+    </div>
   );
 }

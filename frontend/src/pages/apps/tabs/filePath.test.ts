@@ -1,7 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
-  ancestorIdsFor, breadcrumbsFor, fileIconFor, folderNodesFor, parentPath, viewModeFor,
+  ancestorIdsFor, breadcrumbsFor, fileIconFor, fileNameOf, folderNodesFor, parentPath, viewModeFor,
 } from "./filePath";
+
+describe("fileNameOf", () => {
+  it("is the last segment", () => {
+    expect(fileNameOf("src/pages/apps/AppFilesTab.tsx")).toBe("AppFilesTab.tsx");
+  });
+
+  it("is the whole path when the file is at the root", () => {
+    // The header draws parentPath ahead of it, and at the root that is "", so
+    // the name has to carry the file on its own.
+    expect(fileNameOf("README.md")).toBe("README.md");
+  });
+
+  it("is empty for an empty path rather than undefined", () => {
+    expect(fileNameOf("")).toBe("");
+    expect(fileNameOf("/")).toBe("");
+  });
+});
 
 describe("breadcrumbsFor", () => {
   it("is empty at the root", () => {

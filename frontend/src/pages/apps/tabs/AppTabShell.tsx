@@ -6,6 +6,7 @@
 import type { ReactNode } from "react";
 import { PageHeader, StateBlock, Card, Stack, Skeleton, Button } from "@workshop/ui";
 import { useApp, type AppRecord } from "../../../lib/apps";
+import { useTakeover } from "../../../components/shell/takeover";
 
 export function AppTabPage({
   slug, title, sub, actions, children,
@@ -17,6 +18,12 @@ export function AppTabPage({
   children: (app: AppRecord) => ReactNode;
 }) {
   const { app, err, reload } = useApp(slug);
+  // A DOCUMENT TAKEOVER OWNS THE CONTENT AREA (shell-mockup-spec-2026-08-22.md
+  // section 6). The shell drops its page toolbar for it, so the page's own
+  // header goes too: on a 390px screen the point of the takeover is that the
+  // file starts at the top, and "Files" above an open file is a label for a
+  // page you can no longer see. Only the Files tab ever raises it.
+  const takeover = useTakeover();
 
   // `.ws-page` opts this generic tab back into the standard content measure
   // (frontend/CLAUDE.md "Page width"). Its shell runs full-bleed under
@@ -48,7 +55,7 @@ export function AppTabPage({
 
   return (
     <div className="ws-page">
-      <PageHeader title={title} sub={sub} actions={actions?.(app)} />
+      {!takeover && <PageHeader title={title} sub={sub} actions={actions?.(app)} />}
       {children(app)}
     </div>
   );

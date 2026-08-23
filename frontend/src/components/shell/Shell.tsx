@@ -16,9 +16,21 @@ import { Dock } from "./Dock";
 import { MobileBars } from "./MobileBars";
 import { PageColumn } from "./PageColumn";
 import { ShellTrail } from "./ShellTrail";
+import { TakeoverProvider } from "./takeover";
 import { useShell } from "./useShell";
 
+// The takeover provider sits ABOVE the frame because `useShell` reads it: an
+// open document force-collapses the phone's page toolbar (mockup spec section
+// 6), and that read has to happen in the same render as the declaration.
 export function Shell({ children }: { children: ReactNode }) {
+  return (
+    <TakeoverProvider>
+      <ShellFrame>{children}</ShellFrame>
+    </TakeoverProvider>
+  );
+}
+
+function ShellFrame({ children }: { children: ReactNode }) {
   const shell = useShell();
   const { pathname } = useLocation();
 

@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.5.24
+Version: 0.5.25
 
 ## @workshop/ui
 
@@ -46,6 +46,8 @@ Source: `src/index.ts`
 - DEFAULT_PALETTE
 - DetailLayout
 - Divider
+- documentBar
+- DocumentBar
 - drillCursor
 - drillInto
 - drillParent
@@ -145,6 +147,10 @@ Source: `src/index.ts`
 - type Capability
 - type CatHue
 - type Crumb
+- type DocumentBarInput
+- type DocumentBarModel
+- type DocumentBarProps
+- type DocumentForm
 - type EditMode
 - type FileDrillProps
 - type FileDrillTrail

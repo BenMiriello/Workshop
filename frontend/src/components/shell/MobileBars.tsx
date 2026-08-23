@@ -18,6 +18,14 @@
 // `title + caret` conventionally means "open a menu", not "expand the bar
 // below". That is the one learnable element in this design and it was adopted
 // knowingly, with the caret carrying the state.
+//
+// AN OPEN DOCUMENT COLLAPSES THE TOOLBAR TO ZERO (spec section 6: the editor is
+// a full content takeover, and section 1.1: "It force-collapses to 0 while a
+// document is open"). It collapses rather than unmounts, so the bar animates
+// shut on the way in and back open on the way out, which is the same 40px-to-0
+// transition the caret already drives. `documentOpen` is DERIVED
+// (shell/takeover.tsx), so it never overwrites the remembered open/closed
+// preference: closing the document restores whatever it was.
 
 import { Link } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
@@ -32,10 +40,13 @@ import type { Shell } from "./useShell";
 const initials = (name: string | null | undefined, email: string) => monogram(name || email || "");
 
 export function MobileBars({ shell }: { shell: Shell }) {
-  const { place, page, tabsOpen, fullScreen, hasPageList } = shell;
-  // No pages to switch between (an app with one screen), or one conversation
-  // taking the whole screen: the title is a label, not a control.
-  const togglable = hasPageList && !fullScreen;
+  const { place, page, tabsOpen, fullScreen, hasPageList, documentOpen } = shell;
+  // No pages to switch between (an app with one screen), one conversation
+  // taking the whole screen, or an open document taking it: the title is a
+  // label, not a control. A caret is the toolbar's state (spec section 1.1), so
+  // while the toolbar is force-collapsed there is no state for it to carry and
+  // no toggle it could perform.
+  const togglable = hasPageList && !fullScreen && !documentOpen;
   const { user } = useAuth();
 
   return (

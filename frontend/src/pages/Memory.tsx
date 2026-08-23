@@ -11,6 +11,7 @@ import { orderScopes } from "../lib/devMode";
 import { useIsWide } from "../lib/useMediaQuery";
 import AttachmentViewer from "../components/chat/AttachmentViewer";
 import { useDirectoryPage } from "../components/shell/directory";
+import { useContentTakeover } from "../components/shell/takeover";
 
 import {
   getPolicy,
@@ -328,6 +329,19 @@ function Library() {
     </Button>
   ) : null;
 
+  // AN OPEN DOCUMENT IS A FULL CONTENT TAKEOVER ON A PHONE
+  // (shell-mockup-spec-2026-08-22.md section 6): the page toolbar collapses to
+  // zero, the Up bar is gone because the document's own header carries the way
+  // back, and this page's search row goes with them. It applies to a DOCUMENT
+  // and not to a note, which keeps the record shape and its own Up control
+  // (see MemoryDocument.tsx for why the two differ).
+  const docTakeover = !isWide && !applied && selected?.kind === "doc";
+  useContentTakeover(!!docTakeover);
+  const goUp = useCallback(() => {
+    if (upTrail) setTrail(upTrail);
+    clearSelection();
+  }, [upTrail, clearSelection]);
+
   let pane: JSX.Element;
   if (applied) {
     pane = (
@@ -355,7 +369,9 @@ function Library() {
         key={selected.path}
         path={selected.path}
         onChanged={() => onChanged("Saved. Not committed, so commit it yourself when ready.")}
-        actions={upAction}
+        onBack={!isWide ? goUp : undefined}
+        backLabel={upTrail ? drillCursor(upTrail).label : undefined}
+        takeover={docTakeover}
       />
     );
   } else if (!isWide) {
@@ -404,6 +420,10 @@ function Library() {
         <MemoryTreeView source={source} selected={selected} onSelect={select} />,
         host,
       )}
+      {/* The page's own controls, and they go while a document has the screen:
+          a takeover means the document starts at the top, not under a search
+          field it cannot use. */}
+      {!docTakeover && (
       <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end", marginBottom: "var(--space-4)" }}>
         <Field label="Search" inline>
           <form
@@ -433,7 +453,8 @@ function Library() {
           <Plus aria-hidden /> New note
         </Button>
       </Row>
-      {notice && (
+      )}
+      {notice && !docTakeover && (
         <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>{notice}</p>
       )}
       {pane}

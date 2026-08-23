@@ -73,6 +73,15 @@ export {
   type FileTreeLevel, type FileTreeLevels, type FileTreeLevelState, type FileTreeRow,
   type FileTreeIntent,
 } from "./fileTree";
+// The chrome around an open file: the header the Files tab and Memory both
+// draw, plus the pure rule for what it shows. The BODY is @workshop/ui/editor,
+// which is a subpath because it carries CodeMirror; this carries nothing, so it
+// lives here and a surface that renders markdown rather than an editor can
+// still use it.
+export { DocumentBar, type DocumentBarProps } from "./DocumentBar";
+export {
+  documentBar, type DocumentBarInput, type DocumentBarModel, type DocumentForm,
+} from "./documentBar";
 export { ChartFrame, ChartTooltip, CHART_SERIES, CHART_TARGET } from "./chart";
 export { useEditMode, type EditMode } from "./useEditMode";
 

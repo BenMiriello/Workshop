@@ -30,6 +30,15 @@ export function parentPath(path: string): string {
   return i < 0 ? "" : path.slice(0, i);
 }
 
+/** The file's own name: the last segment of a path, and the whole path when
+ *  there is only one segment. The document header draws this in mono beside the
+ *  directory that holds it (`parentPath`), which is the mockup's split of a
+ *  path into a --faint prefix and a --fg name. */
+export function fileNameOf(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
 /** The branch ids the tree has to have open for `path` to be on screen,
  *  outermost first. This is what `FileTree`'s `defaultOpenIds` takes, so a
  *  link straight to `?path=src/pages/x.tsx` opens with its folders already

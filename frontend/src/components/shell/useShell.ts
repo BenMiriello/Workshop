@@ -34,6 +34,7 @@ import {
 import { appPlaces } from "../../apps/registry";
 import { userStorage } from "../../lib/storage";
 import { buildPlaces, pageFor, placeFor, type ShellPage, type ShellPlace } from "./places";
+import { useTakeover } from "./takeover";
 import {
   EMPTY_MEMORY,
   STORAGE_KEY,
@@ -94,6 +95,10 @@ export type Shell = {
    *  it is the mechanism that will hold more rows later.) */
   hasPageList: boolean;
   tabsOpen: boolean;
+  /** A document is open and owns the content area (mockup spec section 6). The
+   *  page toolbar is force-collapsed while it is, and the caret that toggles
+   *  the toolbar is not drawn: a control that cannot move is worse than none. */
+  documentOpen: boolean;
   /** Tapping a dock tile or a menu row. Switches place, or toggles the column
    *  when it is the place you are already in. */
   selectPlace: (place: ShellPlace) => void;
@@ -172,10 +177,16 @@ export function useShell(): Shell {
     setMemory((m) => rememberPath(m, place, pathname));
   }, [place, pathname]);
 
+  // A DOCUMENT OWNS THE PHONE'S SCREEN while it is open (mockup spec section 6:
+  // "the page toolbar collapses to 0"). The page declares it (takeover.tsx);
+  // this only reads it, and ANDs it in rather than writing to `memory`, so
+  // closing the document restores whatever the toolbar was before it opened.
+  const documentOpen = useTakeover();
+
   const columnOpen = readColumnOpen(memory, place) && !fullScreen;
   const hasPageList = place.pages.length > 1;
   const key = tabsKey(place.id, page?.id ?? null);
-  const tabsOpen = readTabsOpen(memory, key) && !fullScreen && hasPageList;
+  const tabsOpen = readTabsOpen(memory, key) && !fullScreen && hasPageList && !documentOpen;
 
   const selectPlace = useCallback(
     (next: ShellPlace) => {
@@ -221,6 +232,7 @@ export function useShell(): Shell {
     fullScreen,
     hasPageList,
     tabsOpen,
+    documentOpen,
     selectPlace,
     hrefFor,
     selectPage,

@@ -3161,6 +3161,144 @@ span.ws-filterchip__open { cursor: default; }
   min-height: 0;
 }
 
+/* ---- DOCUMENT CHROME (.ws-doc, .ws-docbar) --------------------------------
+   The header and body box around a file that is open, measured in
+   docs/platform-redesign/shell-mockup-spec-2026-08-22.md section 6. DocumentBar.tsx
+   carries the reasoning; this is the geometry.
+
+   Every off-grid value in the mockup is snapped to the scale that exists, the
+   same way bar one snaps its 14px padding to --space-3 (design rule 6: use the
+   steps). Mockup, then what is drawn: padding 14/20 -> --space-3/--space-4,
+   gap 9 -> --space-2, radius 6 -> --radius-sm, control 27/28 -> --control-h-sm.
+   The two HEIGHTS are the bar's own box rather than spacing, so they are named
+   here like --bar1-h is on the shell.
+
+   NO COLOUR IS THE MOCKUP'S. It is dark-only and none of its hexes appear in
+   palettes.css (design doc 7.3). --accent / --accent-fg / --fg / --faint /
+   --warn / --border are solved for light and dark across all eight palettes. */
+.ws-doc {
+  --docbar-h: 44px;
+  --doc-gutter-w: 40px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ws-docbar {
+  flex: 0 0 auto;
+  height: var(--docbar-h);
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+/* THE COMBINED BACK-PLUS-FILENAME CONTROL. A chevron immediately followed by
+   the name, both accent, and ONE tap target: a back button standing next to a
+   label is two targets and reads as two things. */
+.ws-docbar__back {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  min-width: 0;
+  height: var(--control-h-sm);
+  margin-left: calc(var(--space-1) * -1);
+  padding: 0 var(--space-1);
+  border: none; background: transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  color: var(--accent);
+  cursor: pointer;
+}
+.ws-docbar__back:hover { background: var(--accent-soft); }
+.ws-docbar__back:focus-visible { box-shadow: var(--focus-ring); }
+.ws-docbar__back svg { flex: none; }
+.ws-docbar__back .ws-docbar__name { color: inherit; }
+.ws-docbar__path,
+.ws-docbar__name {
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ws-docbar__path { flex: 0 1 auto; color: var(--faint); }
+.ws-docbar__name { flex: 0 1 auto; color: var(--fg); }
+/* The dirty dot, and it is drawn ONLY when the document is dirty. --warn is
+   the amber the mockup drew by hand, solved for both modes. */
+.ws-docbar__dot {
+  flex: none;
+  width: 6px; height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--warn);
+}
+.ws-docbar__meta {
+  display: none;
+  flex: 0 1 auto;
+  align-items: center; gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--fs-xs); color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ws-docbar__actions {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: var(--space-2);
+}
+/* Radius 6 and a semibold Save, which is where this bar's controls differ from
+   a page's. They are still kit Buttons: `primary` is already the filled accent
+   with --accent-fg ink and `ghost` is already the quiet one. */
+.ws-docbar__actions .ws-btn { border-radius: var(--radius-sm); }
+.ws-docbar__actions .ws-btn--primary { font-weight: var(--fw-semi); }
+/* Quiet: --muted ink at rest, --fg on hover over a subtle background. Chrome is
+   muted at rest and the label names the action, the same rule a back control
+   follows everywhere else in the app. */
+.ws-docbar__actions .ws-btn--ghost { --_fg: var(--muted); }
+.ws-docbar__actions .ws-btn--ghost:hover { --_fg: var(--fg); }
+/* NO DISCARD ON MOBILE (spec section 6). Hidden rather than branched in JS so
+   there is one DOM and one breakpoint: `display: none` also takes it out of the
+   accessibility tree, so nothing reaches a control that is not on screen. */
+.ws-docbar__discard { display: none; }
+
+/* The body. Its padding is the gap the mockup leaves above and below the text.
+   It is NOT a scroller: the editor scrolls inside its own height, and a
+   scroller wrapping a scroller is what the phone file tree was just fixed for. */
+.ws-doc__body {
+  min-width: 0;
+  padding: var(--space-3) 0 var(--space-5);
+}
+/* THE GUTTER IS 40px ON A PHONE AND 56px ON A DESKTOP, right-aligned. Set from
+   here rather than in Editor.tsx's theme so the editor component itself is
+   unchanged and an editor outside a document surface keeps CodeMirror's own
+   measure. CodeMirror mounts its stylesheet at the top of <head> precisely so
+   that later sheets can override it. */
+.ws-doc .cm-gutters { min-width: var(--doc-gutter-w); }
+.ws-doc .cm-lineNumbers .cm-gutterElement { text-align: right; }
+
+/* THE PHONE TAKEOVER. Opening a document takes the whole content area (spec
+   section 6): the shell collapses the page toolbar and hides the Up bar, and
+   this is the content half of it. <main> is the scroller and carries the page
+   inset, so the document escapes that inset rather than every other surface
+   losing its padding, and the header's hairline reaches both edges the way the
+   bars above it do. Set by the SAME boolean that declares the takeover, so the
+   two halves cannot disagree. */
+.ws-doc--full {
+  margin: calc(var(--space-4) * -1) calc(var(--page-pad-x) * -1) 0;
+}
+/* The BODY keeps the page's inset, because prose and notices read against an
+   edge badly; only the editor goes edge to edge, by pulling back out of it. */
+.ws-doc--full .ws-doc__body { padding-inline: var(--page-pad-x); }
+.ws-doc--full .ws-editor { margin-inline: calc(var(--page-pad-x) * -1); }
+/* Full bleed means no side border and no corner to round against the edge. */
+.ws-doc--full .cm-editor { border-inline: 0; border-radius: 0; }
+/* The editor fills what is left of the viewport instead of taking a fraction of
+   it: bar one, this bar, and the body's own padding are the only things above
+   and below it. `100dvh` rather than `100vh` because a phone's URL bar moves. */
+.ws-doc--full .ws-editor {
+  height: calc(100dvh - var(--bar1-h) - var(--docbar-h) - var(--space-3) - var(--space-5));
+}
+
+@media (min-width: 900px) {
+  .ws-doc { --docbar-h: 46px; --doc-gutter-w: 56px; }
+  .ws-docbar { padding: 0 var(--space-4); }
+  .ws-docbar__meta { display: inline-flex; }
+  .ws-docbar__discard { display: inline-flex; }
+  .ws-doc__body { padding: var(--space-5) 0 var(--space-6); }
+}
+
 /* ---- THE 16px FLOOR: nothing zooms the page when you focus it ------------- */
 /* iOS Safari zooms the viewport in whenever you focus a text field whose
    computed font-size is below 16px, and it does not zoom back out. Every size
