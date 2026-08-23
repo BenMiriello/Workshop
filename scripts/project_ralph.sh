@@ -1124,7 +1124,10 @@ while (( n < MAX_TASKS )); do
     # refused this and what would change it. The SENTENCE is not composed here:
     # `usage_ledger` decides the wording once and this only forwards it.
     HALT_REFUSAL=$(printf '%s' "$ADMIT_OUT" | jq -c '.refusal // empty' 2>/dev/null)
-    log "usage budget refused scope=$BILL_SCOPE: $ADMIT_WHY (task=$TASK_ID left ready)"
+    # The reason NAMES the refusal now ("refused: the development scope has
+    # used ..."), so the old "usage budget refused scope=X: " prefix printed the
+    # word twice. Say where it happened and let the sentence say what happened.
+    log "admission scope=$BILL_SCOPE: $ADMIT_WHY (task=$TASK_ID left ready)"
     break
   fi
   n=$((n+1))
