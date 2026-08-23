@@ -20,16 +20,24 @@
 
 import { Link } from "react-router-dom";
 import { useCrumbs } from "../appNav";
-import { useTakeover } from "./takeover";
+import { usePageChrome } from "./takeover";
 
 export function ShellTrail() {
   const crumbs = useCrumbs();
-  // An open document is a FULL content takeover (shell-mockup-spec-2026-08-22.md
-  // section 6): the shell collapses its page toolbar and the page drops its own
-  // header, so a trail above the file would be the last piece of chrome left
-  // standing between the top of the screen and the thing you opened.
-  const takeover = useTakeover();
-  if (takeover) return null;
+  // TWO CASES WHERE THE CONTENT AREA IS NOT THIS TRAIL'S TO SIT ABOVE, both
+  // declared by the page and read here as one answer (takeover.tsx):
+  //
+  //   * an open document is a FULL content takeover
+  //     (shell-mockup-spec-2026-08-22.md section 6): the shell collapses its
+  //     page toolbar and the page drops its own header, so a trail above the
+  //     file would be the last piece of chrome left standing between the top of
+  //     the screen and the thing you opened;
+  //   * a directory page on a phone draws its tree as the content (section 4),
+  //     and the trail is a repeat of bar one. Measured 2026-08-22:
+  //     /apps/birds/files led with "Apps / Birds" under a bar one reading
+  //     "Birds".
+  const chrome = usePageChrome();
+  if (!chrome) return null;
   if (crumbs.length < 2) return null;
   const last = crumbs.length - 1;
   return (

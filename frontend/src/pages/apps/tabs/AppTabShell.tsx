@@ -6,7 +6,7 @@
 import type { ReactNode } from "react";
 import { PageHeader, StateBlock, Card, Stack, Skeleton, Button } from "@workshop/ui";
 import { useApp, type AppRecord } from "../../../lib/apps";
-import { useTakeover } from "../../../components/shell/takeover";
+import { usePageChrome } from "../../../components/shell/takeover";
 
 export function AppTabPage({
   slug, title, sub, actions, children,
@@ -18,12 +18,22 @@ export function AppTabPage({
   children: (app: AppRecord) => ReactNode;
 }) {
   const { app, err, reload } = useApp(slug);
-  // A DOCUMENT TAKEOVER OWNS THE CONTENT AREA (shell-mockup-spec-2026-08-22.md
-  // section 6). The shell drops its page toolbar for it, so the page's own
-  // header goes too: on a 390px screen the point of the takeover is that the
-  // file starts at the top, and "Files" above an open file is a label for a
-  // page you can no longer see. Only the Files tab ever raises it.
-  const takeover = useTakeover();
+  // THE PAGE'S CONTENT OWNS THE SCREEN IN TWO CASES, and the tab declares which
+  // (components/shell/takeover.tsx); this reads them as one answer.
+  //
+  //   * A DOCUMENT TAKEOVER (shell-mockup-spec-2026-08-22.md section 6). The
+  //     shell drops its page toolbar for it, so the page's own header goes too:
+  //     on a 390px screen the point of the takeover is that the file starts at
+  //     the top, and "Files" above an open file is a label for a page you can no
+  //     longer see.
+  //   * A DIRECTORY PAGE ON A PHONE (section 4, "The tree IS the page
+  //     content"). The h1 read "Files" directly under a page tab already
+  //     reading "Files", above a description nobody needs twice. Measured
+  //     2026-08-22: ~290px of it before the first row.
+  //
+  // Only the Files tab raises either, and only on a phone. Every other tab, and
+  // every tab on a desktop, keeps its header exactly as it was.
+  const chrome = usePageChrome();
 
   // `.ws-page` opts this generic tab back into the standard content measure
   // (frontend/CLAUDE.md "Page width"). Its shell runs full-bleed under
@@ -34,7 +44,7 @@ export function AppTabPage({
   if (err && !app) {
     return (
       <div className="ws-page">
-        <PageHeader title={title} />
+        {chrome && <PageHeader title={title} />}
         <StateBlock
           variant="error"
           title="Couldn't load this app"
@@ -47,7 +57,7 @@ export function AppTabPage({
   if (!app) {
     return (
       <div className="ws-page">
-        <PageHeader title={title} />
+        {chrome && <PageHeader title={title} />}
         <Card><Stack gap="sm"><Skeleton width="60%" /><Skeleton width="40%" /></Stack></Card>
       </div>
     );
@@ -55,7 +65,7 @@ export function AppTabPage({
 
   return (
     <div className="ws-page">
-      {!takeover && <PageHeader title={title} sub={sub} actions={actions?.(app)} />}
+      {chrome && <PageHeader title={title} sub={sub} actions={actions?.(app)} />}
       {children(app)}
     </div>
   );

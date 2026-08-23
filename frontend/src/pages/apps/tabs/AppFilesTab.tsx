@@ -44,7 +44,7 @@ import { Editor, languageForPath } from "@workshop/ui/editor";
 import type { components } from "../../../api/schema.gen";
 import type { AppRecord } from "../../../lib/apps";
 import { useIsWide } from "../../../lib/useMediaQuery";
-import { useContentTakeover } from "../../../components/shell/takeover";
+import { useContentTakeover, useDirectoryContent } from "../../../components/shell/takeover";
 import { AppTabPage } from "./AppTabShell";
 import { ancestorIdsFor, fileIconFor, fileNameOf, folderNodesFor, parentPath, viewModeFor } from "./filePath";
 
@@ -429,6 +429,18 @@ function FilesBody({ app }: { app: AppRecord }) {
 
 export default function AppFilesTab() {
   const { appSlug = "" } = useParams();
+  const isWide = useIsWide();
+  // THE TREE IS THE PAGE ON A PHONE, so there is no page header above it
+  // (shell-mockup-spec-2026-08-22.md section 4; the rule and its reasoning are
+  // in components/shell/pageChrome.ts). The h1 said "Files" under a tab already
+  // reading "Files" and the trail said "Birds" under a bar one already reading
+  // "Birds": ~290px of repeats before the first row, measured 2026-08-22.
+  //
+  // DECLARED HERE, NOT IN `FilesBody`, so it is true while the app record is
+  // still loading. `FilesBody` only mounts once that resolves, and a header
+  // that appears for the length of a fetch and then vanishes is worse than
+  // either state on its own.
+  useDirectoryContent(!isWide);
   return (
     <AppTabPage slug={appSlug} title="Files" sub="The app's linked project tree.">
       {(app) => <FilesBody app={app} />}

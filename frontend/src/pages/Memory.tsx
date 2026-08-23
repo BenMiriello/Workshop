@@ -1,17 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   RefreshCw, Plus, Trash2, FileText, FolderTree, ChevronUp,
   ShieldCheck, Lock, Globe, GitBranch,
 } from "lucide-react";
-import { Button, Card, CardGrid, PageHeader, SectionLabel, Row, Stack, Segmented, Select, Input, Textarea, Field, Modal, ConfirmDialog, StateBlock, Skeleton, StatusDot, Table, TableScroll, Tag, Checkbox, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, type SegmentedOption, shortHttpError, timeAbsolute, formatBytes } from "@workshop/ui";
+import { Button, Card, CardGrid, PageActionBar, PageHeader, SectionLabel, Row, Stack, Segmented, Select, Input, Textarea, Field, Modal, ConfirmDialog, StateBlock, Skeleton, StatusDot, Table, TableScroll, Tag, Checkbox, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, type SegmentedOption, shortHttpError, timeAbsolute, formatBytes } from "@workshop/ui";
 import { scopeLabel } from "../lib/tasks";
 import { orderScopes } from "../lib/devMode";
 import { useIsWide } from "../lib/useMediaQuery";
 import AttachmentViewer from "../components/chat/AttachmentViewer";
 import { useDirectoryPage } from "../components/shell/directory";
-import { useContentTakeover } from "../components/shell/takeover";
+import { useContentTakeover, useDirectoryContent } from "../components/shell/takeover";
+import { directoryChrome } from "../components/shell/pageChrome";
 
 import {
   getPolicy,
@@ -188,6 +189,7 @@ function reachSetFrom(nodes: ScopeNode[], root: string): Set<string> {
 
 export default function Notes() {
   const [searchParams] = useSearchParams();
+  const wide = useIsWide();
   // Honour ?tab=. `?tab=docs` is a still-live deep link (routes/refs.py's doc
   // resolver hands it out) from before Notes and Documents merged; it now just
   // means "open the Library", where its `?path=` selects the document.
@@ -196,23 +198,74 @@ export default function Notes() {
     urlTab === "vault" || urlTab === "files" || urlTab === "chats" ? (urlTab as Tab) : "library",
   );
 
+  // ON A PHONE THIS PAGE IS ITS TREE (shell-mockup-spec-2026-08-22.md section
+  // 4). The declaration drops the page's own header and the shell's breadcrumb;
+  // the rule and the reasoning are in components/shell/pageChrome.ts. Measured
+  // 2026-08-22: title, a two-line description, the Segmented, a Search field, a
+  // Refresh and a New note stacked to roughly 600px before the first row, on a
+  // 390px screen whose bar one already said "Workshop" and whose selected tab
+  // already said "Memory".
+  useDirectoryContent(!wide);
+
+  // Is the content area showing a RECORD rather than the tree? Read from the
+  // URL, because that is where the Library keeps its selection, so the bottom
+  // bar can be decided here without reaching into the Library's state. Only the
+  // Library has records; the other three views are plain collections.
+  const record =
+    tab === "library" &&
+    !!(searchParams.get("note") || searchParams.get("path") || (searchParams.get("q") ?? "").trim());
+  const chrome = directoryChrome({ wide, documentOpen: record });
+
+  // THE VIEW SWITCH, ON A PHONE, IS NOT A SEGMENTED AT THE TOP OF THE PAGE.
+  //
+  // Where this is going: HANDOFF 6.8 and design doc 6.1 both say Memory's
+  // Notes/Vault/Documents tabs are REMOVED and become FOLDERS in the one tree,
+  // at which point this control does not exist at all. Building that is a
+  // bigger change than this ticket (the vault, the attachment index and the
+  // chat list resolve through three different endpoints and only the first is
+  // shaped like a directory), so nothing here deletes what the tabs reach.
+  //
+  // What it does do is stop them occupying the top of a phone screen, which is
+  // the one place the spec reserves for the tree. A `Select` in the bottom
+  // action bar is one tap, sits at the thumb next to the primary action, and
+  // commits on change like every other view preference (frontend/CLAUDE.md
+  // "When does a control commit?"). It is rendered by whichever view is on
+  // screen so there is only ever one bottom bar in the content region.
+  const viewSwitch = chrome.actionBar ? (
+    <Select
+      aria-label="Memory view"
+      value={tab}
+      onChange={(e) => setTab(e.target.value as Tab)}
+      style={{ flex: "1 1 auto", minWidth: 0 }}
+    >
+      {TABS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+    </Select>
+  ) : null;
+
   return (
     <div>
-      <PageHeader
-        title="Memory"
-        sub="Notes and documents by scope, plus the chats, the vault and everything attached. What agents read and write."
-      />
-      <div style={{ marginBottom: "var(--space-4)" }}>
-        <Segmented<Tab> ariaLabel="Memory view" value={tab} onChange={setTab} options={TABS} />
-      </div>
-      {tab === "vault" ? (
-        <VaultNotes />
-      ) : tab === "files" ? (
-        <Files />
-      ) : tab === "chats" ? (
-        <Chats />
+      {chrome.header && (
+        <>
+          <PageHeader
+            title="Memory"
+            sub="Notes and documents by scope, plus the chats, the vault and everything attached. What agents read and write."
+          />
+          <div style={{ marginBottom: "var(--space-4)" }}>
+            <Segmented<Tab> ariaLabel="Memory view" value={tab} onChange={setTab} options={TABS} />
+          </div>
+        </>
+      )}
+      {tab === "library" ? (
+        <Library viewSwitch={viewSwitch} />
       ) : (
-        <Library />
+        // The three collection views keep their own filters; only the switch
+        // between views moves. The padding is what the bar needs: it sits
+        // outside the scroller (see PageActionBar), so it cannot lengthen the
+        // page itself and would otherwise cover the last row.
+        <div style={chrome.actionBar ? { paddingBottom: "var(--ws-pagebar-h)" } : undefined}>
+          {tab === "vault" ? <VaultNotes /> : tab === "files" ? <Files /> : <Chats />}
+          {chrome.actionBar && <PageActionBar>{viewSwitch}</PageActionBar>}
+        </div>
       )}
     </div>
   );
@@ -224,7 +277,7 @@ export default function Notes() {
  *  state: a scope with 4,000 notes reports itself instead of freezing the tab. */
 const DRILL_MAX_ROWS = 100;
 
-function Library() {
+function Library({ viewSwitch }: { viewSwitch?: ReactNode }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const isWide = useIsWide();
@@ -337,6 +390,14 @@ function Library() {
   // (see MemoryDocument.tsx for why the two differ).
   const docTakeover = !isWide && !applied && selected?.kind === "doc";
   useContentTakeover(!!docTakeover);
+
+  // What this view draws around the tree. `documentOpen` is "the pane is a
+  // RECORD", which a bare `?scope=` is not: selecting a scope still leaves the
+  // tree on screen, so the bottom bar stays with it.
+  const chrome = directoryChrome({
+    wide: isWide,
+    documentOpen: !!applied || selected?.kind === "note" || selected?.kind === "doc",
+  });
   const goUp = useCallback(() => {
     if (upTrail) setTrail(upTrail);
     clearSelection();
@@ -415,15 +476,31 @@ function Library() {
   }
 
   return (
-    <div>
+    <div style={chrome.actionBar ? { paddingBottom: "var(--ws-pagebar-h)" } : undefined}>
       {host && createPortal(
         <MemoryTreeView source={source} selected={selected} onSelect={select} />,
         host,
       )}
-      {/* The page's own controls, and they go while a document has the screen:
-          a takeover means the document starts at the top, not under a search
-          field it cannot use. */}
-      {!docTakeover && (
+      {/* THE PAGE'S OWN CONTROLS, AND THEY ARE DESKTOP ONLY NOW
+          (components/shell/pageChrome.ts).
+
+          SEARCH HAS NO HOME ON A PHONE YET. The mockup puts search in bar one
+          and design doc 8.4 defers drawing it until a search backend exists, on
+          the grounds that a dead control is worse than an absent one. So it is
+          not moved to the bottom bar and not given a page of its own; it waits
+          for the surface it belongs on. `?q=` still resolves on a phone (a link
+          from an agent, or a desktop tab reopened on the phone) and the results
+          list carries its own "Clear search", so nothing addressed by URL
+          becomes unreachable.
+
+          REFRESH MOVES TO THE BOTTOM BAR rather than being dropped: FileDrill
+          keeps every level it has loaded, so without it a phone has no way to
+          see a note an agent wrote while the page was open.
+
+          A takeover drops the row on a desktop too, which is what it always
+          did: the document starts at the top, not under a search field it
+          cannot use. */}
+      {chrome.controls && (
       <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end", marginBottom: "var(--space-4)" }}>
         <Field label="Search" inline>
           <form
@@ -458,6 +535,34 @@ function Library() {
         <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>{notice}</p>
       )}
       {pane}
+      {/* THE PRIMARY ACTION AT THE THUMB. A phone has no page header, so it
+          has no inline primary action either; the bottom action bar is where
+          that action lives (shell-mockup-spec-2026-08-22.md sections 4 and 6,
+          and the bar is the one thing section 6 names as hidden by a document
+          takeover, which is what says it exists). It goes
+          when a document has the screen, because the document's own header
+          carries Save and a second bar over the last line of a note is not a
+          bar the reader wants. Tickets has done it this way since 2026-08-14.
+
+          The view switch is rendered here rather than beside it so that only
+          one bar is ever mounted in the content region; see `viewSwitch` in
+          `Notes` for what happens to it when the tabs become folders. */}
+      {chrome.actionBar && (
+        <PageActionBar>
+          {viewSwitch}
+          <Button
+            icon
+            aria-label="Refresh Memory"
+            onClick={() => setGeneration((n) => n + 1)}
+            style={{ flex: "0 0 auto" }}
+          >
+            <RefreshCw aria-hidden />
+          </Button>
+          <Button variant="primary" onClick={() => { setNotice(null); setCreating(true); }}>
+            <Plus aria-hidden /> New note
+          </Button>
+        </PageActionBar>
+      )}
       {creating && (
         <CreateNote
           scopes={scopeTree.map((n) => n.key)}
