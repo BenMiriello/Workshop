@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Pencil, Plus, Trash2, Wrench } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Lock, Pencil, Plus, Trash2, Wrench } from "lucide-react";
 import {
   ActionBar,
   Button,
@@ -8,6 +8,7 @@ import {
   Input,
   Notice,
   PageHeader,
+  Row,
   SectionLabel,
   Select,
   SettingsRow,
@@ -19,60 +20,61 @@ import {
   Tag,
   Textarea,
   catFor,
+  shortHttpError,
   useEditMode,
 } from "@workshop/ui";
-import type { components } from "../../api/schema.gen";
+import {
+  BLANK_TOOL,
+  TOOL_KINDS,
+  canSave,
+  capRows,
+  catalogSummary,
+  createBody,
+  draftFromTool,
+  provenanceLabel,
+  updateBody,
+  type ToolDraft,
+  type ToolRecord,
+} from "../../lib/tools";
 
-// Settings -> Tools. The full catalog of declared capabilities: platform tools
-// that ship with the system, app tools declared by installed apps, and user
-// tools the operator created at runtime. Only user tools are editable or
-// deletable -- platform and app tools are read-only by design (they can only
-// be used, not edited: docs/platform-redesign/tools-are-declared-2026-08-23.md
-// sec 2.2).
+// Settings -> Tools. Every capability this instance can name, who owns each,
+// and CRUD for the ones the operator owns.
 //
-// The page shows provenance clearly so the operator sees at a glance which
-// category each tool belongs to, without needing a separate "platform" or "yours"
-// indicator beyond the provenance Tag.
+// WHAT THIS PAGE OWNS, and the McpServers question. That page is deliberately
+// read-only because the switch it might have grown (per-chat on/off) already
+// exists in the chat, and "does not grow a second, disagreeing switch". The
+// same test, applied here, splits the other way for HALF the surface and the
+// same way for the other half:
 //
-// NOT an enforcement point. The catalog here is an enumeration and an owner
-// record; it does not grant any tool to any agent. services/llm_router.tool_flags
-// is the only thing that grants a tool.
-
-type ToolRecord = components["schemas"]["ToolRecord"];
+//   - The RECORD is owned here. `.runtime/tools.json` has no other editor, so a
+//     form on this page is the first and only switch for a user tool. It writes.
+//   - The GRANT is not, and there is no control for it anywhere on this screen.
+//     `llm_router.tool_flags` is the one enforcement point, narrowed by role
+//     (agent_authority) and by the persona ceiling. A per-tool "enabled" toggle
+//     here would look like it granted something and would grant nothing, which
+//     is the disagreeing switch in its worst form: one that lies about a
+//     capability. Declaring a tool grants nothing (doc section 2.3), and the
+//     page says so in its own words rather than implying otherwise with a
+//     control.
+//
+// Platform and app tools carry no Edit button, because a dead control is worse
+// than an absent one, and no disabled cursor, because the forbidden-cursor
+// keyword check_design.sh bans says "broken" where the truth is "not yours".
+// They say what is true instead: used, not edited.
+//
+// The pure rules (argv parsing, the write bodies, the counts, the row cap) are
+// in ../../lib/tools.ts with tests. This file is the arrangement.
 
 const ENDPOINT = "/api/tools";
-const OVERFLOW_AT = 20;
-
-type ToolDraft = {
-  id: string;
-  title: string;
-  description: string;
-  kind: string;
-  command: string;
-};
-
-const BLANK: ToolDraft = {
-  id: "",
-  title: "",
-  description: "",
-  kind: "command",
-  command: "",
-};
-
-function recordToDraft(t: ToolRecord): ToolDraft {
-  return {
-    id: t.id,
-    title: t.title,
-    description: t.description,
-    kind: t.kind,
-    command: (t.spec.command ?? []).join(" "),
-  };
-}
 
 type FormTarget = { mode: "create" } | { mode: "edit"; tool: ToolRecord };
 
-// ToolForm: create or edit a user tool. Always enters editing mode on mount,
-// since the component exists only when the form is open.
+async function failure(r: Response): Promise<string> {
+  return shortHttpError(r.status, r.statusText, await r.text().catch(() => ""));
+}
+
+/** Create or edit a user tool. Mounted only while the form is open, so it
+ *  enters edit mode on mount: there is no read-only state to sit in. */
 function ToolForm({
   initial,
   isCreate,
@@ -81,9 +83,11 @@ function ToolForm({
 }: {
   initial: ToolDraft;
   isCreate: boolean;
-  onSave: (d: ToolDraft) => Promise<void>;
+  onSave: (draft: ToolDraft) => Promise<void>;
   onCancel: () => void;
 }) {
+  // A rejected save is a LINE beside the form that is still on screen, never a
+  // region: the fields, and the id that was refused, stay right there to fix.
   const [saveErr, setSaveErr] = useState<string | null>(null);
 
   const edit = useEditMode<ToolDraft>(initial, async (draft) => {
@@ -91,83 +95,92 @@ function ToolForm({
     try {
       await onSave(draft);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setSaveErr(msg);
+      setSaveErr(e instanceof Error ? e.message : String(e));
       throw e;
     }
   });
 
-  // Always start in editing mode. The component only mounts when the form is open.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { edit.begin(); }, []);
+  const { begin } = edit;
+  useEffect(() => { begin(); }, [begin]);
 
   return (
     <Stack>
       {isCreate && (
         <SettingsRow
           label="id"
-          hint="Letters, digits, dots, hyphens, underscores. Cannot match a platform tool id."
+          hint="The name an allowlist writes. It cannot be changed later, and it cannot be one a platform or app tool already holds."
         >
           <Input
             value={edit.draft.id}
             onChange={(e) => edit.set("id", e.target.value)}
-            placeholder="my-tool"
+            placeholder="preview"
+            aria-label="Tool id"
             autoFocus
           />
         </SettingsRow>
       )}
-      <SettingsRow label="title">
+      {!isCreate && (
+        <SettingsRow label="id" hint="An id cannot change. Renaming a tool is deleting one and declaring another.">
+          <span className="ws-mono">{edit.draft.id}</span>
+        </SettingsRow>
+      )}
+      <SettingsRow label="title" hint="The human label, shown in this list.">
         <Input
           value={edit.draft.title}
           onChange={(e) => edit.set("title", e.target.value)}
-          placeholder="My tool"
+          placeholder="Preview a page"
+          aria-label="Tool title"
           autoFocus={!isCreate}
         />
       </SettingsRow>
-      <SettingsRow label="description">
+      <SettingsRow label="description" hint="Read by a person here, and by a model deciding whether to reach for it.">
         <Textarea
           value={edit.draft.description}
           onChange={(e) => edit.set("description", e.target.value)}
           rows={3}
+          aria-label="Tool description"
         />
       </SettingsRow>
-      <SettingsRow label="kind">
+      <SettingsRow
+        label="kind"
+        hint="command is a declared command line. builtin names a tool the harness already has. mcp names a tool on an MCP server."
+      >
         <Select
           value={edit.draft.kind}
           onChange={(e) => edit.set("kind", e.target.value)}
+          aria-label="Tool kind"
         >
-          <option value="command">command</option>
-          <option value="builtin">builtin</option>
-          <option value="mcp">mcp</option>
+          {TOOL_KINDS.map((k) => (
+            <option key={k} value={k}>{k}</option>
+          ))}
         </Select>
       </SettingsRow>
       {edit.draft.kind === "command" && (
-        <SettingsRow label="command" hint="Shell command with arguments. Runs in the turn sandbox.">
+        <SettingsRow
+          label="command"
+          hint="The argv, run in the turn's own sandbox. Quote an argument that contains a space."
+        >
           <Input
             value={edit.draft.command}
             onChange={(e) => edit.set("command", e.target.value)}
-            placeholder="/path/to/script arg1"
+            placeholder='scripts/shoot.sh "/settings/tools"'
+            aria-label="Tool command line"
+            className="ws-mono"
           />
         </SettingsRow>
       )}
-      {saveErr && (
-        <Notice tone="error" detail={saveErr}>
-          Couldn't save tool.
-        </Notice>
-      )}
+
+      {saveErr && <Notice tone="error">{saveErr}</Notice>}
+
       <ActionBar flash={edit.flash ? "Saved" : undefined}>
-        <Button variant="ghost" onClick={onCancel} disabled={edit.saving}>
-          Cancel
-        </Button>
+        <Button variant="ghost" onClick={onCancel} disabled={edit.saving}>Cancel</Button>
         <Button
           variant="primary"
           loading={edit.saving}
-          disabled={isCreate ? !edit.draft.id.trim() : !edit.dirty}
-          onClick={() => {
-            void edit.save().catch(() => {});
-          }}
+          disabled={!canSave(edit.draft, isCreate, edit.dirty)}
+          onClick={() => { void edit.save().catch(() => {}); }}
         >
-          Save
+          {isCreate ? "Create tool" : "Save"}
         </Button>
       </ActionBar>
     </Stack>
@@ -178,101 +191,80 @@ export default function Tools() {
   const [tools, setTools] = useState<ToolRecord[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [formTarget, setFormTarget] = useState<FormTarget | null>(null);
+  const [form, setForm] = useState<FormTarget | null>(null);
   const [deleting, setDeleting] = useState<ToolRecord | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadErr(null);
     try {
       const r = await fetch(ENDPOINT);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) throw new Error(await failure(r));
       setTools(((await r.json()) as { tools: ToolRecord[] }).tools);
     } catch (e) {
+      // A failed read is not an empty catalog. Say which it is.
       setLoadErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
-  const handleSave = useCallback(
-    async (draft: ToolDraft) => {
-      const isCreate = formTarget?.mode === "create";
-      const toolId = isCreate
-        ? draft.id
-        : (formTarget as { mode: "edit"; tool: ToolRecord }).tool.id;
-      const spec =
-        draft.kind === "command" && draft.command.trim()
-          ? { command: draft.command.trim().split(/\s+/) }
-          : {};
-      const body = isCreate
-        ? {
-            id: draft.id,
-            title: draft.title,
-            description: draft.description,
-            kind: draft.kind,
-            spec,
-          }
-        : {
-            title: draft.title,
-            description: draft.description,
-            kind: draft.kind,
-            spec,
-          };
+  const save = useCallback(async (draft: ToolDraft) => {
+    const editing = form?.mode === "edit" ? form.tool : null;
+    const r = await fetch(editing ? `${ENDPOINT}/${encodeURIComponent(editing.id)}` : ENDPOINT, {
+      method: editing ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(editing ? updateBody(draft, editing) : createBody(draft)),
+    });
+    // The registry's refusal is the message worth showing: a 409 names the
+    // conflicting id and its provenance, which is the whole reason the write
+    // was refused. Never replace it with "could not save".
+    if (!r.ok) throw new Error(await failure(r));
+    setForm(null);
+    await load();
+  }, [form, load]);
 
-      const r = await fetch(isCreate ? ENDPOINT : `${ENDPOINT}/${toolId}`, {
-        method: isCreate ? "POST" : "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) {
-        const j = (await r.json().catch(() => ({}))) as { detail?: string };
-        throw new Error(j.detail ?? `HTTP ${r.status}`);
-      }
-      setFormTarget(null);
-      await load();
-    },
-    [formTarget, load],
-  );
-
-  const handleDelete = useCallback(async () => {
+  const remove = useCallback(async () => {
     if (!deleting) return;
     setDeleteBusy(true);
     setDeleteErr(null);
     try {
-      const r = await fetch(`${ENDPOINT}/${deleting.id}`, { method: "DELETE" });
+      const r = await fetch(`${ENDPOINT}/${encodeURIComponent(deleting.id)}`, { method: "DELETE" });
       if (!r.ok) {
-        const j = (await r.json().catch(() => ({}))) as { detail?: string };
-        setDeleteErr(j.detail ?? `HTTP ${r.status}`);
+        setDeleteErr(await failure(r));
         return;
       }
       setDeleting(null);
       await load();
+    } catch (e) {
+      setDeleteErr(e instanceof Error ? e.message : String(e));
     } finally {
       setDeleteBusy(false);
     }
   }, [deleting, load]);
 
-  const editingId =
-    formTarget?.mode === "edit" ? formTarget.tool.id : null;
+  const initialDraft = useMemo(
+    () => (form?.mode === "edit" ? draftFromTool(form.tool) : BLANK_TOOL),
+    [form],
+  );
+
+  const all = tools ?? [];
+  const shown = capRows(all, expanded);
+  const summary = catalogSummary(all);
 
   return (
     <div>
       <PageHeader
         title="Tools"
+        sub="Every capability this system can name, and who owns each one."
         actions={
-          formTarget === null ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setFormTarget({ mode: "create" })}
-            >
+          form === null ? (
+            <Button size="sm" variant="ghost" onClick={() => setForm({ mode: "create" })}>
               <Plus size={16} strokeWidth={1.8} aria-hidden /> New tool
             </Button>
           ) : undefined
@@ -280,184 +272,184 @@ export default function Tools() {
       />
 
       <Stack>
-        <section>
-          <SectionLabel icon={<Wrench size={14} strokeWidth={1.8} aria-hidden />}>
-            Catalog
-          </SectionLabel>
-
-          {formTarget?.mode === "create" && (
-            <Card style={{ marginBottom: "var(--space-4)" }}>
+        {form !== null && (
+          <section>
+            <SectionLabel>{form.mode === "create" ? "New tool" : `Editing ${form.tool.id}`}</SectionLabel>
+            <Card>
               <ToolForm
-                initial={BLANK}
-                isCreate={true}
-                onSave={handleSave}
-                onCancel={() => setFormTarget(null)}
+                key={form.mode === "edit" ? form.tool.id : "new"}
+                initial={initialDraft}
+                isCreate={form.mode === "create"}
+                onSave={save}
+                onCancel={() => setForm(null)}
               />
             </Card>
-          )}
+          </section>
+        )}
+
+        <section>
+          <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+            <SectionLabel icon={<Wrench size={14} strokeWidth={1.8} aria-hidden />}>Catalog</SectionLabel>
+            {summary && (
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{summary}</span>
+            )}
+          </Row>
 
           <Card>
+            {/* loading */}
             {loading && !tools && (
               <Stack gap="sm">
-                <Skeleton width="60%" />
-                <Skeleton width="45%" />
-                <Skeleton width="52%" />
+                <Skeleton width="62%" /><Skeleton width="48%" /><Skeleton width="55%" />
               </Stack>
             )}
 
+            {/* error */}
             {loadErr && (
               <StateBlock
                 variant="error"
                 title="Couldn't load tools"
                 hint={`GET ${ENDPOINT} failed (${loadErr}).`}
-                action={
-                  <Button size="sm" variant="ghost" onClick={() => void load()}>
-                    Try again
-                  </Button>
-                }
+                action={<Button size="sm" variant="ghost" onClick={() => void load()}>Try again</Button>}
               />
             )}
 
-            {!loadErr && tools && tools.length === 0 && (
+            {/* empty */}
+            {!loadErr && tools && all.length === 0 && (
               <StateBlock
                 title="No tools declared"
-                hint="Platform tools appear here once the registry is seeded. Use New tool to declare your own."
+                hint="Every install ships platform tools, so an empty catalog usually means the registry could not be read. Use New tool to declare one of your own."
               />
             )}
 
-            {!loadErr && tools && tools.length > 0 && (
-              <TableScroll
-                className={tools.length > OVERFLOW_AT ? "tools-scroll" : undefined}
-              >
-                <Table>
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Kind</th>
-                      <th>Provenance</th>
-                      <th>Description</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tools.map((t) => (
-                      <tr key={t.id}>
-                        <td>
-                          <span
-                            className="ws-mono"
-                            style={{ fontSize: "var(--fs-sm)" }}
-                          >
-                            {t.id}
-                          </span>
-                          {t.title && t.title !== t.id && (
-                            <span
-                              className="ws-muted"
-                              style={{
-                                display: "block",
-                                fontSize: "var(--fs-xs)",
-                              }}
-                            >
-                              {t.title}
-                            </span>
-                          )}
-                        </td>
-                        <td>
-                          <Tag hue={catFor(t.kind)}>{t.kind}</Tag>
-                        </td>
-                        <td>
-                          <Tag hue={catFor(t.provenance)}>{t.provenance}</Tag>
-                        </td>
-                        <td>
-                          <span
-                            className="ws-muted"
-                            style={{ fontSize: "var(--fs-sm)" }}
-                          >
-                            {t.description}
-                          </span>
-                        </td>
-                        <td>
-                          {t.editable && (
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                gap: "var(--space-2)",
-                              }}
-                            >
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() =>
-                                  setFormTarget({ mode: "edit", tool: t })
-                                }
-                                disabled={formTarget !== null}
-                              >
-                                <Pencil
-                                  size={14}
-                                  strokeWidth={1.8}
-                                  aria-hidden
-                                />{" "}
-                                Edit
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="danger-ghost"
-                                onClick={() => {
-                                  setDeleteErr(null);
-                                  setDeleting(t);
-                                }}
-                                disabled={formTarget !== null}
-                              >
-                                <Trash2
-                                  size={14}
-                                  strokeWidth={1.8}
-                                  aria-hidden
-                                />{" "}
-                                Delete
-                              </Button>
-                            </span>
-                          )}
-                        </td>
+            {/* content */}
+            {!loadErr && all.length > 0 && (
+              <Stack gap="sm">
+                <TableScroll>
+                  <Table>
+                    <thead>
+                      <tr>
+                        <th>Tool</th>
+                        <th>Kind</th>
+                        <th>Owner</th>
+                        <th>Description</th>
+                        <th>Editing</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              </TableScroll>
-            )}
+                    </thead>
+                    <tbody>
+                      {shown.rows.map((t) => (
+                        <tr key={t.id}>
+                          <td>
+                            <span>{t.title || t.id}</span>
+                            <span
+                              className="ws-mono ws-muted"
+                              style={{ display: "block", fontSize: "var(--fs-xs)" }}
+                            >
+                              {t.id}
+                            </span>
+                          </td>
+                          <td><span className="ws-muted">{t.kind}</span></td>
+                          <td><Tag hue={catFor(t.provenance)}>{provenanceLabel(t.provenance)}</Tag></td>
+                          <td>
+                            <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+                              {t.description}
+                            </span>
+                          </td>
+                          <td>
+                            {t.editable ? (
+                              <Row style={{ gap: "var(--space-2)", flexWrap: "nowrap" }}>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  aria-label={`Edit ${t.id}`}
+                                  onClick={() => setForm({ mode: "edit", tool: t })}
+                                >
+                                  <Pencil size={14} strokeWidth={1.8} aria-hidden /> Edit
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="danger-ghost"
+                                  aria-label={`Delete ${t.id}`}
+                                  onClick={() => { setDeleteErr(null); setDeleting(t); }}
+                                >
+                                  <Trash2 size={14} strokeWidth={1.8} aria-hidden /> Delete
+                                </Button>
+                              </Row>
+                            ) : (
+                              // Not a disabled button: a control that cannot act
+                              // is worse than no control. The sentence is the
+                              // API's own ("can be used but not edited").
+                              <span
+                                className="ws-muted"
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "var(--space-2)",
+                                  fontSize: "var(--fs-xs)",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                <Lock size={14} strokeWidth={1.8} aria-hidden />
+                                Used, not edited
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </TableScroll>
 
-            {deleteErr && (
-              <div style={{ marginTop: "var(--space-3)" }}>
-                <Notice tone="error" detail={deleteErr}>
-                  Couldn't delete tool.
-                </Notice>
-              </div>
+                {/* overflow */}
+                {shown.hidden > 0 && (
+                  <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                    <Button size="sm" variant="ghost" onClick={() => setExpanded(true)}>
+                      Show all {all.length}
+                    </Button>
+                    <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                      {shown.hidden} more not shown
+                    </span>
+                  </Row>
+                )}
+              </Stack>
             )}
           </Card>
+        </section>
 
-          {formTarget?.mode === "edit" && (
-            <Card style={{ marginTop: "var(--space-4)" }}>
-              <ToolForm
-                key={editingId}
-                initial={recordToDraft(formTarget.tool)}
-                isCreate={false}
-                onSave={handleSave}
-                onCancel={() => setFormTarget(null)}
-              />
-            </Card>
-          )}
+        <section>
+          <SectionLabel>What a record does, and does not, do</SectionLabel>
+          <Card>
+            <Stack gap="sm">
+              <span style={{ fontSize: "var(--fs-sm)" }}>
+                A tool here is a declaration with an owner: a name, what it does, and how it launches.
+                Declaring one grants it to nothing. Which tools an agent may actually call is decided
+                when its turn is built, narrowed by the agent's role and by its persona ceiling, so
+                there is no on/off switch on this page.
+              </span>
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                Platform tools ship with the system and app tools arrive with an installed app. Both
+                can be used but not edited. Your own tools live in `.runtime/tools.json` and this page
+                is the only editor they have.
+              </span>
+            </Stack>
+          </Card>
         </section>
       </Stack>
 
       <ConfirmDialog
-        open={!!deleting}
-        onCancel={() => {
-          setDeleting(null);
-          setDeleteErr(null);
-        }}
-        onConfirm={() => {
-          void handleDelete();
-        }}
+        open={deleting !== null}
+        onCancel={() => { setDeleting(null); setDeleteErr(null); }}
+        onConfirm={() => { void remove(); }}
         title="Delete this tool?"
-        body={`"${deleting?.title || deleting?.id}" will be removed from your declared tools. Any agent that references it by this id will stop finding it. This cannot be undone.`}
+        body={
+          <Stack gap="sm">
+            <span>
+              {`"${deleting?.title || deleting?.id}" stops being declared. `}
+              {`Any agent definition or allowlist naming ${deleting?.id} will no longer resolve to anything. `}
+              This cannot be undone.
+            </span>
+            {deleteErr && <Notice tone="error">{deleteErr}</Notice>}
+          </Stack>
+        }
         confirmLabel="Delete tool"
         busy={deleteBusy}
       />
