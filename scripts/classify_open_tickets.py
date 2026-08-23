@@ -52,7 +52,7 @@ from pathlib import Path
 WORKSHOP = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(WORKSHOP / "backend"))
 
-from services import task_scope, tasks  # noqa: E402
+from services import ownership, task_scope, tasks  # noqa: E402
 
 PARK_REASON = "host administration; not agent-executable"
 
@@ -181,6 +181,14 @@ def main() -> int:
     ap.add_argument("--reclassify", action="store_true",
                     help="also re-propose for tickets that already carry one")
     args = ap.parse_args()
+
+    # PIN THE OWNER FIRST. `tasks.list_tasks` resolves the relational branch
+    # through `tenancy.org_and_user()`, which raises `OwnerUnset` unless a
+    # request authenticated or an automation pass declared itself. This is an
+    # operator-run script with neither, so without this line every invocation
+    # died in the first `list_tasks` call below and the script had never once
+    # printed a proposal.
+    ownership.pin_operator()
 
     stores = _stores(args.scope)
     if not stores:
