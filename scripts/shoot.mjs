@@ -38,7 +38,12 @@ const ORIGIN = process.env.WS_ORIGIN || "http://127.0.0.1:8002";
 const target = process.argv[2] || "/";
 const W = parseInt(process.argv[3] || "390", 10);
 const H = parseInt(process.argv[4] || "800", 10);
-const out = process.argv[5] || path.join(ROOT, "scratch", "shot.png");
+// Resolve a relative out path against the REPO ROOT, not cwd: shoot.sh runs
+// node from scratch/browser (that is where the pinned playwright lives), so a
+// bare "scratch/x.png" would land in scratch/browser/scratch/ and the caller
+// would go looking for it in the wrong place. It did.
+const outArg = process.argv[5] || path.join(ROOT, "scratch", "shot.png");
+const out = path.isAbsolute(outArg) ? outArg : path.resolve(ROOT, outArg);
 
 if (!fs.existsSync(TOK_FILE)) {
   console.error("no session token at scratch/.tok -- run: bash scripts/shoot.sh --setup");
