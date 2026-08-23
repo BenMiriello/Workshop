@@ -76,6 +76,20 @@ describe("the shell mounts", () => {
     expect(app).toContain("ws-bar1__caret");
   });
 
+  it("draws the place-menu trigger closed, with nothing of the menu until it opens", () => {
+    // The tile IS the trigger, and a screen reader has to be told so before it
+    // is tapped. The panel, its scrim and its focus trap only exist while open,
+    // so the closed contract is the whole of what a first paint can carry.
+    const html = renderAt("/apps/finance");
+    const tile = /<button[^>]*ws-bar1__tile[^>]*>/.exec(html)?.[0] ?? "";
+    expect(tile).toContain('aria-haspopup="menu"');
+    expect(tile).toContain('aria-expanded="false"');
+    expect(html).not.toContain("ws-placemenu");
+    // And the page toolbar's caret is the OTHER expander, open by default on
+    // every page. Never default to closed.
+    expect(html).toMatch(/ws-bar1__titlebtn[^>]*aria-expanded="true"/);
+  });
+
   it("shows a trail only where the path goes deeper than the page column", () => {
     // A top-level page is already named by the column and the tab bar.
     expect(renderAt("/tickets")).not.toContain("ws-trail");

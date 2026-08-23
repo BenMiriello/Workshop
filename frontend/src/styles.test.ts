@@ -109,6 +109,74 @@ describe("the app shell cannot scroll its own chrome away", () => {
     expect(kitRule(".ws-tabbar__tab.is-active")).toContain("border-bottom-color: var(--accent)");
   });
 
+  it("keeps every page-toolbar label on one baseline", () => {
+    // The parent stretches and the tab centres, so the tab is the bar's full
+    // height and its underline lands on the BAR's bottom edge while the label
+    // stays where every other label is. `flex-end` gives the same underline and
+    // rides the labels low; it was that once.
+    expect(kitRule(".ws-tabbar")).toContain("align-items: stretch");
+    expect(kitRule(".ws-tabbar__tab")).toContain("align-items: center");
+    expect(kitRule(".ws-tabbar__tab")).toContain("padding-bottom: 2px");
+  });
+
+  it("changes nothing but colour when a page tab is selected", () => {
+    // Design doc section 11 lists raising the selected label as REJECTED, so
+    // the selected rule may only touch ink, weight and the underline.
+    const active = kitRule(".ws-tabbar__tab.is-active");
+    for (const raised of ["background", "box-shadow", "border-radius", "transform", "margin"]) {
+      expect(active, `selected tab must not set ${raised}`).not.toContain(raised);
+    }
+    expect(kitRule(".ws-tabbar__tab")).toContain("transition: color");
+  });
+
+  it("gives the page toolbar a stronger hairline than bar one", () => {
+    // So the two bars read as one block separated from the content, rather than
+    // as two stacked strips.
+    expect(kitRule(".ws-bar1")).toContain("border-bottom: 1px solid var(--border)");
+    expect(kitRule(".ws-tabbar")).toContain("border-bottom: 1px solid var(--border-strong)");
+  });
+});
+
+// The phone's place menu. Geometry:
+// docs/platform-redesign/shell-mockup-spec-2026-08-22.md section 3.
+describe("the place menu is a dropdown, not a drawer", () => {
+  it("never lets the scrim cover bar one", () => {
+    // The tile that opened the menu stays visible and stays live. Everything
+    // below the bar's hairline is covered; the bar itself never is.
+    const scrim = kitRule(".ws-placemenu__scrim");
+    expect(scrim).toContain("position: fixed");
+    expect(scrim).toContain("top: calc(env(safe-area-inset-top) + var(--bar1-h))");
+    expect(scrim).toContain("bottom: 0");
+  });
+
+  it("anchors the panel under the tile at the left edge", () => {
+    const panel = kitRule(".ws-placemenu");
+    expect(panel).toContain("position: fixed");
+    expect(panel).toContain("left: var(--space-2)");
+    expect(panel).toContain("width: var(--placemenu-w)");
+    // Capped at 520px, and at the room below the bar when that is less.
+    expect(panel).toContain("max-height: min(");
+    expect(panel).toContain("var(--placemenu-max-h)");
+    expect(panel).toContain("overflow-y: auto");
+  });
+
+  it("rises and fades rather than sliding in from an edge", () => {
+    // An earlier left slide-over was replaced during design and a dead
+    // `wsDrawerIn` keyframe survives in the mockup. A translateX here would be
+    // that drawer coming back.
+    expect(kitRule(".ws-placemenu")).toContain("animation: ws-rise");
+    const rise = kit.slice(kit.indexOf("@keyframes ws-rise"));
+    const frames = rise.slice(0, rise.indexOf("}") + 2);
+    expect(frames).toContain("translateY(10px)");
+    expect(frames).not.toContain("translateX");
+  });
+
+  it("spends no raw colour on the panel, which the dark-only mockup does", () => {
+    const panel = kitRule(".ws-placemenu") + kitRule(".ws-placemenu__scrim");
+    expect(panel).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(panel).not.toContain("rgba(");
+  });
+
   it("leaves main as the only scroller", () => {
     const main = kitRule(".ws-app .ws-app__body > main");
     expect(main).toContain("overflow-y: auto");

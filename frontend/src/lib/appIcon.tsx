@@ -167,11 +167,18 @@ export function AppGlyph({
   icon,
   name,
   size = 18,
+  textSize,
   className,
 }: {
   icon: AppIcon | string | null | undefined;
   name: string;
   size?: number;
+  /** The monogram's font size, when a glyph box wants a different one from the
+   *  0.62-of-the-icon default. A tile sized for a stroked lucide glyph is not
+   *  sized for two letters: the mockup's 32px menu tile carries a 16px icon and
+   *  a 14px letter, and 0.62 of 16 is 10, which reads as a caption. Takes a CSS
+   *  length so a caller passes a type token rather than a number. */
+  textSize?: number | string;
   className?: string;
 }) {
   const resolved = resolveAppIcon(icon, name);
@@ -193,7 +200,7 @@ export function AppGlyph({
     );
   }
   return (
-    <span aria-hidden className={className} style={{ fontSize: Math.round(size * 0.62) }}>
+    <span aria-hidden className={className} style={{ fontSize: textSize ?? Math.round(size * 0.62) }}>
       {resolved.text}
     </span>
   );

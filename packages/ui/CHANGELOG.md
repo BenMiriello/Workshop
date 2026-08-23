@@ -12,6 +12,33 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.23 - 2026-08-22 - the phone's place menu, and the page toolbar's baseline
+
+**Additive, plus one correction and one deletion.** No export changed, so
+`api/ui.api.md` is unmoved. The shell's phone surfaces were built from the prose
+design doc without the mockup being opened; this is the geometry, from
+`docs/platform-redesign/shell-mockup-spec-2026-08-22.md` sections 2 and 3.
+
+- **New: `.ws-placemenu`, `.ws-placemenu__scrim`, `__row`, `__row--platform`,
+  `__tile`, `__name`, `__group`, and the `ws-rise` keyframe.** The phone's place
+  menu is a DROPDOWN anchored under bar one's tile: a 300px panel that rises
+  10px and fades, over a scrim that starts at bar one's hairline and never
+  covers the bar. It is not a drawer and not a sheet, and the kit's generic
+  `Menu` does not produce it (no scrim, a 16rem cap, toolbar-sized rows). Markup
+  and focus behaviour live in the consumer, as the rest of the shell's do.
+- **New shell-local sizes on `.ws-shell`:** `--placemenu-w`, `--placemenu-max-h`,
+  `--placemenu-row-h`, `--placemenu-row-h-sm`, `--placemenu-tile`. Same kind of
+  value as `--bar1-h`: the panel's own box, not spacing.
+- **Fixed: `.ws-tabbar__tab` is `align-items: center`, not `flex-end`.** The
+  parent is `align-items: stretch`, so a centred tab is the bar's full height
+  and its 2px underline lands on the BAR's bottom edge while every label stays
+  on one baseline. `flex-end` drew the same underline and rode the labels low.
+- **Removed: `.ws-bar1__menuletter`.** It styled the rows of the generic `Menu`
+  that the phone's place menu used to be, and nothing emits it now. Recorded
+  here rather than treated as a breaking class removal: it was only ever written
+  by the Workshop shell's own mobile bar, and its one declaration (`font-size`)
+  never applied, because the glyph it wrapped sets its font size inline.
+
 ## 0.5.22 - 2026-08-22 - two classes that were referenced and never defined
 
 **Additive only.** Two new rules, one dead className removed from `Map`. No

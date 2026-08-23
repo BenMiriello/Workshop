@@ -2068,6 +2068,14 @@ span.ws-filterchip__open { cursor: default; }
   --pagecol-w: 252px;
   --bar1-h: 52px;
   --tabbar-h: 40px;
+  /* The phone's place-menu dropdown. Sizes, not spacing: they are the panel's
+     own box, the way --bar1-h is the bar's, so they are named here rather than
+     bent onto the --space-* grid. 300px in the mockup's 390px frame. */
+  --placemenu-w: 300px;
+  --placemenu-max-h: 520px;
+  --placemenu-row-h: 52px;
+  --placemenu-row-h-sm: 48px;
+  --placemenu-tile: 32px;
   /* Phone default. The desktop query below turns it into a row. */
   flex-direction: column;
 }
@@ -2245,11 +2253,6 @@ span.ws-filterchip__open { cursor: default; }
   font-family: inherit; font-size: var(--fs-md); font-weight: var(--fw-semi);
   cursor: pointer;
 }
-.ws-bar1__menuletter {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 16px;
-  font-size: var(--fs-xs); font-weight: var(--fw-semi);
-}
 .ws-bar1__titlebtn {
   display: flex; align-items: center; gap: var(--space-1);
   height: var(--rail-tile);
@@ -2297,7 +2300,14 @@ span.ws-filterchip__open { cursor: default; }
 .ws-tabbar::-webkit-scrollbar { display: none; height: 0; }
 .ws-tabbar__tab {
   flex: 0 0 auto;
-  display: flex; align-items: flex-end;
+  /* CENTRED, in a parent that is `align-items: stretch`. The tab is therefore
+     the bar's full height and its border-bottom lands on the BAR's own bottom
+     edge, while the label sits on one baseline with every other label. It was
+     `flex-end`, which pins the text to the bottom of the tab instead: the same
+     underline, but the labels ride low and a taller bar would drag them with
+     it. The 2px padding-bottom is what makes the underline read as attached to
+     the label rather than as a border on the bar. */
+  display: flex; align-items: center;
   padding-bottom: 2px;
   border-bottom: 2px solid transparent;
   font-size: var(--fs-base); font-weight: var(--fw-normal);
@@ -2307,6 +2317,113 @@ span.ws-filterchip__open { cursor: default; }
 }
 .ws-tabbar__tab:hover { color: var(--fg); }
 .ws-tabbar__tab.is-active { color: var(--fg); font-weight: var(--fw-semi); border-bottom-color: var(--accent); }
+
+/* ---- Phone: the place menu ----------------------------------------------
+   A DROPDOWN anchored under bar one's TILE. Not a drawer and not a sheet: an
+   earlier left slide-over was replaced during design, and the mockup still
+   carries a dead `wsDrawerIn` keyframe from it. Geometry:
+   docs/platform-redesign/shell-mockup-spec-2026-08-22.md section 3.
+
+   Every value below is a token. The mockup is a layout and behaviour spec and
+   was never a colour one (design doc 7.3: not one of its hexes appears in
+   palettes.css), and it is dark-only, so its hard-coded scrim and shadow are
+   replaced by --scrim and --shadow-lg, which are solved for both modes. */
+
+/* THE SCRIM NEVER COVERS BAR ONE. It starts at the bar's hairline and runs to
+   the bottom of the screen, so the tile you opened the menu with stays visible
+   and stays live -- and so tapping the title or the avatar has to be closed by
+   a pointerdown listener rather than by this element (see PlaceMenu.tsx). */
+.ws-placemenu__scrim {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  top: calc(env(safe-area-inset-top) + var(--bar1-h));
+  z-index: var(--z-dropdown);
+  background: var(--scrim);
+  animation: ws-fade var(--dur-fast) var(--ease-out);
+}
+.ws-placemenu {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  /* Under the TILE, at the left edge. Not centred, and not under the title:
+     the tile is the trigger, so the tile is the anchor. The panel hangs one
+     step outside bar one's own inset, exactly as the mockup does. */
+  left: var(--space-2);
+  top: calc(env(safe-area-inset-top) + var(--bar1-h) + var(--space-2));
+  box-sizing: border-box;
+  width: var(--placemenu-w);
+  /* A phone narrower than the mockup's 390px frame still gets its margins. */
+  max-width: calc(100vw - var(--space-4));
+  /* 520px, or whatever is left below the bar, whichever is smaller. The mockup
+     is a 390x800 frame and never meets a phone held sideways, where a fixed 520
+     would run off the bottom of a panel that cannot be scrolled to. */
+  max-height: min(
+    var(--placemenu-max-h),
+    calc(100dvh - env(safe-area-inset-top) - var(--bar1-h) - var(--space-5))
+  );
+  overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column;
+  /* Rows nearly touch: the gap separates the tap targets, it does not group
+     them. Below the 4px grid on purpose, as .ws-pagecol__list already is. */
+  gap: 2px;
+  padding: var(--space-2);
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  /* A RISE PLUS A FADE, not a slide from an edge: it is anchored to a control,
+     so it grows out of the control. */
+  animation: ws-rise var(--dur-base) var(--ease-in-out) both;
+}
+@keyframes ws-rise { from { opacity: 0; transform: translateY(10px); } }
+/* It is focused on open (focusing a ROW would ring an entry nobody chose), and
+   a panel wearing the global focus ring reads as a second selection. */
+.ws-placemenu:focus, .ws-placemenu:focus-visible { outline: none; }
+.ws-placemenu__row {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: var(--space-3);
+  height: var(--placemenu-row-h);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--fs-md);
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+/* Home and All chats: platform places, one step shorter than an app row. */
+.ws-placemenu__row--platform { height: var(--placemenu-row-h-sm); }
+.ws-placemenu__row:hover { background: var(--card-hover); }
+/* WHERE YOU ARE, not what you picked. Accent-soft on the row and on its tile,
+   with no check mark: the menu is navigation, so "current" is a location. */
+.ws-placemenu__row.is-current { background: var(--accent-soft); }
+.ws-placemenu__tile {
+  flex: 0 0 auto;
+  width: var(--placemenu-tile); height: var(--placemenu-tile);
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: var(--fw-semi);
+}
+.ws-placemenu__row.is-current .ws-placemenu__tile {
+  background: var(--accent-soft);
+  border-color: var(--border-strong);
+  color: var(--accent);
+}
+.ws-placemenu__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The uppercase mono motif, as everywhere else. The space above it is what
+   separates the group from the rows before it -- not a rule between them. */
+.ws-placemenu__group {
+  flex: 0 0 auto;
+  padding: var(--space-3) var(--space-2) var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--label-spacing);
+  text-transform: uppercase;
+  color: var(--faint);
+}
 
 /* ---- The trail -----------------------------------------------------------
    Not a bar across the top: a line at the head of the content column, and only
@@ -2333,7 +2450,13 @@ span.ws-filterchip__open { cursor: default; }
   .ws-pagecol.is-animating,
   .ws-pagecol.is-animating .ws-pagecol__inner,
   .ws-tabbar__slot,
+  .ws-placemenu__row,
   .ws-bar1__caret { transition: none; }
+  /* The duration tokens already collapse to 0ms under this query, so these
+     land settled either way; saying it here means a future literal duration
+     cannot quietly reintroduce the movement. */
+  .ws-placemenu,
+  .ws-placemenu__scrim { animation: none; }
 }
 
 /* ---- SEGMENTED CONTROL — sliding thumb ----------------------------------- */

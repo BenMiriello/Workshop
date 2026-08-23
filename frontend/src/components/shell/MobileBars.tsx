@@ -1,7 +1,8 @@
 // The phone shell: bar one, then the page toolbar, then content.
 //
 // Bar one is `place tile · place name + caret · avatar`. The tile opens the
-// place menu; the name and its animated caret toggle the page toolbar. There is
+// place menu (PlaceMenu.tsx owns that dropdown, its scrim and its focus
+// behaviour); the name and its animated caret toggle the page toolbar. There is
 // no separate Home button (Home is a row in the menu) and no hamburger (the
 // caret took its job). Search will sit between the caret and the avatar when it
 // has a backend; it is not drawn as a dead button until then.
@@ -20,9 +21,9 @@
 
 import { Link } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
-import { Menu, MenuItem } from "@workshop/ui";
-import { AppGlyph, monogram } from "../../lib/appIcon";
+import { monogram } from "../../lib/appIcon";
 import { useAuth } from "../../auth/AuthProvider";
+import { PlaceMenu } from "./PlaceMenu";
 import type { Shell } from "./useShell";
 
 /** The signed-in person's initials. Same two-letter rule as an app with no
@@ -40,38 +41,7 @@ export function MobileBars({ shell }: { shell: Shell }) {
   return (
     <div className="ws-bar1__wrap">
       <div className="ws-bar1">
-        <Menu
-          // No className: `ws-bar1__places` was never defined, so it did
-          // nothing. Every other ws-bar1__* class has a rule; this one was the
-          // odd one out.
-          label="Places"
-          trigger={
-            <button type="button" className="ws-bar1__tile" aria-label={`${place.name}. Switch place`}>
-              {place.Icon ? (
-                <place.Icon size={17} aria-hidden />
-              ) : (
-                <AppGlyph icon={place.icon} name={place.name} size={17} />
-              )}
-            </button>
-          }
-        >
-          {shell.places.map((p) => (
-            <MenuItem
-              key={p.id}
-              icon={
-                p.Icon ? (
-                  <p.Icon size={16} />
-                ) : (
-                  <AppGlyph icon={p.icon} name={p.name} size={16} className="ws-bar1__menuletter" />
-                )
-              }
-              active={p.id === place.id}
-              onSelect={() => shell.selectPlace(p)}
-            >
-              {p.name}
-            </MenuItem>
-          ))}
-        </Menu>
+        <PlaceMenu shell={shell} />
 
         {!togglable ? (
           <span className="ws-bar1__title">{place.name}</span>
