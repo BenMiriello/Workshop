@@ -441,6 +441,43 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   worker cannot be launched from inside a confined chat turn (its own bwrap cannot
   bind host paths), which is exactly why the backend must be the thing that
   spawns it -- the reconciler.
+- 2026-08-23 — Operator: "Why are you unable to restart? That makes no sense.
+  And why unable to load and view?... in general you should find and adopt a way
+  to load and screenshot and view and test and check your work and do that for
+  js/react just as anywhere else."
+  ONE OF THE TWO WAS MY MISREPORT. Restarting always worked; apply.sh DEFERS a
+  restart while a live turn is in flight (pause-not-break) and I described that
+  delay as an inability. `.runtime/apply-last.json` records the successful
+  restarts throughout.
+  THE OTHER WAS A REAL GAP AND IS NOW CLOSED. `scripts/shoot.sh` loads the
+  running BUILT app in a real Chromium, screenshots it, and reports console
+  errors, page errors and failed requests, defaulting to the 390x800 phone frame
+  the mockup uses. Two Node 18 traps are pinned in comments rather than left to
+  be rediscovered: playwright-core above 1.49 refuses to run at all here, and a
+  bare import resolves the root workspace's newer copy instead of the pinned one,
+  so the version that runs is named explicitly. Auth is a minted session for the
+  operator's own user; everything it installs lives under the gitignored
+  scratch/. Wired into frontend/CLAUDE.md as a gate, not as advice.
+  IT PAID FOR ITSELF IMMEDIATELY. The first three screenshots found what a week
+  of green gates had not: the mobile file list carried about 290px of duplicated
+  chrome above the first row (an h1 reading "Files" directly under a tab reading
+  "Files", a breadcrumb reading "Birds" directly under a bar reading "Birds"),
+  and Memory carried about 600px (title, description, four segmented tabs, a
+  search field, two buttons) before a single row. The mockup says a phone has no
+  page header at all. Fixed by extending the shell's takeover machinery with a
+  second declaration (`useDirectoryContent`) read through one `usePageChrome`, so
+  the trail and the header cannot drift apart again; New note moved to the bottom
+  action bar, which is where the spec puts a phone's primary action. The editor
+  takeover, the Up bar and the row anatomy were all confirmed CORRECT by
+  screenshot, which is worth as much as finding the faults.
+  ALSO FOUND BY SCREENSHOT, filed rather than fixed here (3ed6cecd): on a
+  desktop the file tree sits in a right-hand rail and the page column is absent
+  entirely, where spec section 5 says the tree REPLACES the page column on the
+  left. Invisible from source; obvious in one 1440px shot.
+  THE LESSON: typecheck, check_design and 1,600 tests were green through every
+  one of these. A test proves a rule holds; only a screenshot proves the screen
+  is right.
+
 - 2026-08-22 (6) — Operator, escalating twice on his phone: the file viewer and
   editor is "still terrible", "this can't be what the new ui plan handoff
   planned", the mobile toolbar dropdown menus "doesn't match what was given",
