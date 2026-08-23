@@ -67,7 +67,11 @@ def test_scope_dir_is_identical_before_and_after_for_tree_scopes(isolated_root):
         assert got == want, f"{key}: {got} != {want}"
         # And it is genuinely derived from the single mapping, not a coincidence.
         assert got == paths.scope_root(key) / "knowledge"
-        assert got.is_dir()  # scope_dir mkdirs on demand, unchanged
+        # A plain call is a READ and must not create the scope it names
+        # (test_knowledge_scope_dir_is_read_only.py is that rule in full);
+        # creating is opt-in, for the paths that are about to write.
+        assert not got.exists()
+        assert knowledge.scope_dir(key, create=True).is_dir()
 
 
 def test_state_file_helpers_resolve_under_runtime(isolated_root):

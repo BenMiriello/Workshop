@@ -103,7 +103,7 @@ def _parse_scope(scope_key: str) -> tuple[str, str]:
     return (scope.kind, scope.slug)
 
 
-def scope_dir(scope_key: str) -> Path:
+def scope_dir(scope_key: str, *, create: bool = False) -> Path:
     """The knowledge directory for a scope, created on demand.
 
     - `workshop`       -> shared/knowledge/
@@ -117,6 +117,16 @@ def scope_dir(scope_key: str) -> Path:
     durable, cross-agent, git-inspectable knowledge — the same class of thing as
     `workshop`, addressed on the other axis. An agent's own scope stays in
     `.runtime/` because it is that instance's episodic record.
+
+    `create` DEFAULTS TO FALSE, AND THAT IS THE POINT. This used to mkdir
+    unconditionally, so every READ created the directory it was about to read.
+    Listing an app that does not exist created `apps/<slug>/knowledge/`, and a
+    caller that sent the JavaScript string "undefined" left a permanent
+    `agent:undefined` scope in the operator's Memory tree (measured 2026-08-23).
+    `routes/notes_all.py::_scope_roots` enumerates scopes by which directories
+    exist and states "listing never creates a scope" — that invariant is only
+    true with this default. Pass `create=True` from a path that is about to
+    WRITE, and from nowhere else.
     """
     kind, slug = _parse_scope(scope_key)
     shared = _shared_knowledge_root()
@@ -143,7 +153,8 @@ def scope_dir(scope_key: str) -> Path:
         # workshop_root()/apps/<name>, runtime_dir()/agents/<slug>); the path is
         # byte-for-byte what it was, now derived from the single mapping.
         d = paths.scope_root(scope_key) / "knowledge"
-    d.mkdir(parents=True, exist_ok=True)
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
     return d
 
 
@@ -231,8 +242,8 @@ def _atomic_write(path: Path, text: str) -> None:
 
 
 # --- MEMORY.md index ---------------------------------------------------------
-def _index_path(scope_key: str) -> Path:
-    return scope_dir(scope_key) / "MEMORY.md"
+def _index_path(scope_key: str, *, create: bool = False) -> Path:
+    return scope_dir(scope_key, create=create) / "MEMORY.md"
 
 
 def _read_index(scope_key: str) -> dict:
@@ -261,7 +272,7 @@ def _write_index(scope_key: str, entries: dict) -> None:
     for note_id in sorted(entries):
         e = entries[note_id]
         lines.append(_index_line(note_id, e.get("title") or note_id, e.get("hook") or ""))
-    _atomic_write(_index_path(scope_key), "\n".join(lines) + "\n")
+    _atomic_write(_index_path(scope_key, create=True), "\n".join(lines) + "\n")
 
 
 # --- index cap (Claude Code 200-line always-loaded rule) ---------------------
@@ -291,7 +302,7 @@ def enforce_index_cap(scope_key: str, max_lines: int = 200) -> dict:
     if total <= max_lines:
         return {"scope": scope_key, "demoted": 0, "index_lines": total}
 
-    d = scope_dir(scope_key)
+    d = scope_dir(scope_key, create=True)
 
     def _recency(note_id: str) -> float:
         f = d / f"{note_id}.md"
@@ -975,7 +986,7 @@ def _put_note_sync(scope_key: str, note_id: str, title: str, content: str, hook:
     """
     _parse_scope(scope_key)
     _valid_note_id(note_id)
-    d = scope_dir(scope_key)
+    d = scope_dir(scope_key, create=True)
 
     stored_author, stored_type, stored_pinned, stored_chat = _stored_meta(scope_key, note_id)
     _atomic_write(d / f"{note_id}.md",
