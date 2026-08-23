@@ -1,6 +1,6 @@
 # workshop-backend
 
-FastAPI service exposing `/agents` (Letta-backed) and `/projects` (git-backed) for the Workshop UI.
+FastAPI service exposing `/agents` (definition-file backed) and `/projects` (git-backed) for the Workshop UI.
 
 ## Local setup
 
@@ -23,6 +23,4 @@ journalctl --user -u workshop-backend -f
 
 | Var | Default | Purpose |
 |---|---|---|
-| `LETTA_URL` | `http://127.0.0.1:8283` | Letta server |
-| `LETTA_SERVER_PASS` | `workshop-local` | Bearer for Letta |
 | `WORKSHOP_PROJECTS_ROOT` | `$HOME` | Where /projects scans for `.git` dirs |

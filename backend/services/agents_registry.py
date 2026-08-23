@@ -14,9 +14,7 @@ markdown file with YAML frontmatter:
     limits:
       max_iterations: 20
       budget: {max_wall_s: 3000}
-    memory: letta               # memory engine, or null
     project_slug: commute       # link / project scope (optional)
-    letta_agent_id: agent-...   # link to this agent's Letta agent
     ---
     <markdown body: persona / instructions>
 
@@ -83,8 +81,6 @@ def _projects_registry() -> Path:
 
 SUBSCRIPTIONS_PATH = Path(os.environ.get(
     "WORKSHOP_SUBSCRIPTIONS", str(WORKSHOP_ROOT / ".runtime" / "agent-subscriptions.json")))
-CHANNEL_MAP = Path(os.environ.get(
-    "WORKSHOP_CHANNEL_AGENT_MAP", str(WORKSHOP_ROOT / ".runtime" / "channel-agent-map.json")))
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
@@ -394,19 +390,6 @@ def _emit(fm: dict, body: str) -> str:
     return "---\n" + front + "\n---\n\n" + (body or "").strip() + "\n"
 
 
-# ---------------------------------------------------------------------------
-# Per-channel exclusion set
-# ---------------------------------------------------------------------------
-
-def per_channel_ids() -> set[str]:
-    """Letta agent ids that belong to per-channel bridge agents. These are never
-    registry members. Read authoritatively from the channel-agent map."""
-    try:
-        m = json.loads(CHANNEL_MAP.read_text())
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return set()
-    return {v for k, v in m.items() if isinstance(v, str) and not k.endswith(".name")}
-
 
 # ---------------------------------------------------------------------------
 # Definition-file discovery
@@ -428,7 +411,6 @@ def _project_dirs() -> dict[str, Path]:
 def _record_from_def(path: Path, scope: str, project_slug: str | None = None) -> dict:
     fm, body = _parse(path.read_text())
     slug = path.stem
-    letta_id = fm.get("letta_agent_id")
     rec: dict[str, Any] = {
         "slug": slug,
         "name": fm.get("name") or slug,
@@ -467,17 +449,16 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         # propagation engine (roles report 5.3: do not build sync now).
         "template": fm.get("template"),
         "project_slug": fm.get("project_slug") or project_slug,
-        "letta_agent_id": letta_id,
         "scope": scope,
         "definition": body.strip(),
         "definition_path": str(path),
         "retired": bool(fm.get("retired")),
         "source": "definition",
     }
-    # An agent that DECLARES a Letta agent is routed by that id; everything else
-    # is routed by its slug. This used to also require `runtime == "assistant"`,
-    # which asked the same question twice: a maker has no Letta agent to name.
-    rec["id"] = letta_id or slug
+    # An agent's id IS its slug. It used to be able to be a Letta agent id when
+    # the definition declared one; Letta was decommissioned 2026-08-16 and no
+    # definition has carried that field since, so the alternative is gone.
+    rec["id"] = slug
     return rec
 
 
@@ -701,7 +682,6 @@ def live_builder_slugs() -> set[str]:
 def list_agents(*, include_retired: bool = False) -> list[dict]:
     """Every Agent across both scopes. Per-channel agents are excluded. A
     maker's execution state is merged from build_agents.json."""
-    excluded = per_channel_ids()
     build_state = (_build_agents._load().get("build_agents") or {})
     live_slugs = _live_builder_slugs()
 
@@ -723,8 +703,6 @@ def list_agents(*, include_retired: bool = False) -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
     for slug, r in defs.items():
-        if r.get("letta_agent_id") in excluded:
-            continue
         if r.get("role") == "maker":
             st = build_state.get(slug)
             if st:
@@ -758,9 +736,9 @@ def list_agents(*, include_retired: bool = False) -> list[dict]:
 
 
 def get(slug: str) -> dict | None:
-    """Resolve an agent by slug, routing id, or linked Letta agent id."""
+    """Resolve an agent by slug or routing id."""
     for r in list_agents(include_retired=True):
-        if slug in (r.get("slug"), r.get("id"), r.get("letta_agent_id")):
+        if slug in (r.get("slug"), r.get("id")):
             return r
     return None
 
@@ -796,7 +774,7 @@ def _path_for(slug: str, project_slug: str | None) -> Path:
 
 def _build_fm(*, name: str, purpose: str, capabilities: list,
               triggers_list: list, limits: dict, memory: Any,
-              project_slug: str | None, letta_agent_id: str | None,
+              project_slug: str | None,
               role: str | None = None, latitude: str | None = None,
               autonomy: str | None = None, mentionable: bool = False,
               delegatable: bool = False,
@@ -836,8 +814,6 @@ def _build_fm(*, name: str, purpose: str, capabilities: list,
         fm["template"] = template
     if project_slug:
         fm["project_slug"] = project_slug
-    if letta_agent_id:
-        fm["letta_agent_id"] = letta_agent_id
     if retired:
         fm["retired"] = True
     return fm
@@ -870,7 +846,7 @@ def _assert_role_unique(role: str | None, project_slug: str | None,
 def create(*, slug: str, name: str, purpose: str = "",
            capabilities: list | None = None, triggers_list: list | None = None,
            limits: dict | None = None, memory: Any = None,
-           project_slug: str | None = None, letta_agent_id: str | None = None,
+           project_slug: str | None = None,
            role: str | None = None, latitude: str | None = None,
            autonomy: str | None = None,
            template: str | None = None, body: str = "") -> dict:
@@ -884,7 +860,7 @@ def create(*, slug: str, name: str, purpose: str = "",
     fm = _build_fm(name=name, purpose=purpose,
                    capabilities=capabilities or [], triggers_list=triggers_list or [],
                    limits=limits or dict(DEFAULT_LIMITS), memory=memory,
-                   project_slug=project_slug, letta_agent_id=letta_agent_id,
+                   project_slug=project_slug,
                    role=role, latitude=latitude,
                    autonomy=autonomy,
                    template=template)
@@ -920,7 +896,7 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             name=rec["name"], purpose=rec["purpose"],
             capabilities=rec.get("capabilities") or [], triggers_list=rec.get("triggers") or [],
             limits=rec.get("limits") or dict(DEFAULT_LIMITS), memory=rec.get("memory"),
-            project_slug=rec.get("project_slug"), letta_agent_id=rec.get("letta_agent_id"),
+            project_slug=rec.get("project_slug"),
             role=rec.get("role"),
             latitude=rec.get("latitude"), autonomy=rec.get("autonomy"),
             mentionable=bool(rec.get("mentionable")), delegatable=bool(rec.get("delegatable")),
@@ -980,8 +956,6 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
 
     if rec.get("project_slug"):
         fm.setdefault("project_slug", rec["project_slug"])
-    if rec.get("letta_agent_id"):
-        fm.setdefault("letta_agent_id", rec["letta_agent_id"])
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_emit(fm, new_body))
@@ -1213,7 +1187,7 @@ def regenerate_subscriptions() -> dict:
     for k, v in existing.items():
         if isinstance(k, str) and k.startswith("_"):
             out[k] = v
-    out.setdefault("_schema", "source (string) -> list of letta agent_ids subscribed")
+    out.setdefault("_schema", "source (string) -> list of agent ids subscribed")
     out.setdefault("_known_sources", list(known_sources()))
 
     for src in known_sources():

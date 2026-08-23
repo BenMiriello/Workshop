@@ -86,7 +86,6 @@ class Agent(BaseModel):
     # Fork provenance `<template-slug>@<version>`: a label, not a link.
     template: str | None = None
     project_slug: str | None = None
-    letta_agent_id: str | None = None
     scope: str | None = None
     definition: str = ""
     definition_path: str | None = None
@@ -1322,9 +1321,9 @@ def _agent_queue_snapshot(rec: dict) -> dict:
 
 @router.get("/{agent_id}", response_model=AgentDetail, response_model_exclude_unset=True)
 async def get_agent(agent_id: str):
-    """Unified detail, resolved from the registry (by slug, routing id, or linked
-    id). The assistant persona/instructions live in the definition body; there is
-    no separate Letta memory layer to enrich from. Enriched with the autonomy
+    """Unified detail, resolved from the registry (by slug or routing id). The
+    persona/instructions live in the definition body; there is no separate
+    memory layer to enrich from. Enriched with the autonomy
     preset (classified from the agent's triggers) plus the scope's queue counts
     and any pending `awaiting` prompts, plus the cross-link ids the UI uses to
     render the Involved-in section (B1)."""
@@ -1488,8 +1487,7 @@ async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
     """Write the declarative definition (name/purpose/triggers/limits/body) to the
     agent's markdown file via the registry. Trigger writes land in frontmatter and
     regenerate `.runtime/agent-subscriptions.json` as a union (non-registry
-    entries preserved). This is the Phase-2 trigger-write path; Letta metadata is
-    no longer the backing store for autonomy."""
+    entries preserved). The definition file is the backing store for autonomy."""
     rec = agents_registry.get(agent_id)
     if rec is None:
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")

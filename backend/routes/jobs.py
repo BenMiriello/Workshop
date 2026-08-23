@@ -39,14 +39,14 @@ _TRIGGER_LABELS = {
 
 
 def _name_map() -> dict[str, str]:
-    """agent-id/slug/letta-id -> human name, built once per request."""
+    """agent id / slug -> human name, built once per request."""
     m: dict[str, str] = {}
     try:
         for a in agents_registry.list_agents(include_retired=True):
             name = a.get("name") or a.get("slug")
             if not name:
                 continue
-            for key in (a.get("slug"), a.get("id"), a.get("letta_agent_id")):
+            for key in (a.get("slug"), a.get("id")):
                 if key:
                     m[key] = name
     except Exception:

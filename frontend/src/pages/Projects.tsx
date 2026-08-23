@@ -108,7 +108,7 @@ function ImportFromGitModal({
 }
 
 // Projects hub — operator-built things. Distinct from Apps (tools the operator
-// uses) and Agents (Letta workers). Each Project has its own code, manifest,
+// uses) and Agents (role-typed workers). Each Project has its own code, manifest,
 // state, and persistent vibe-coding session. See ADR-008 + projects-hub spec.
 
 const stateKind = (s: ProjectState): StatusKind => {

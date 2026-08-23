@@ -1,8 +1,9 @@
 """Build agents — Claude Code coding sessions surfaced as Agents.
 
-Two kinds of Agents per ADR-008:
-  - Data agents (Letta-backed)     → existing services/letta_*
-  - Build agents (Claude Code)     → THIS module
+Agents are typed by `role` (maker/reviewer/triager/keeper/broker). This
+module is the maker side: a Claude Code coding session. ADR-008 originally
+paired it with Letta-backed data agents; Letta was decommissioned 2026-08-16
+and `services/letta_*` no longer exists.
 
 A Build agent is a persistent (in concept) Claude Code session scoped to a
 cwd. The cwd is either a Project directory (link by project_slug) or a

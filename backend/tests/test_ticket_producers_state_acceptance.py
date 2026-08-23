@@ -43,10 +43,10 @@ class TestTheDraftProposalPrompt:
 
     def test_a_complete_reply_composes_into_a_ready_ticket(self):
         reply = json.dumps({"tickets": [{
-            "title": "Point LETTA_URL at the right instance",
-            "objective": "the backend talks to the running Letta",
-            "output": "the health endpoint reports letta ok and a test covers it",
-            "entry_points": "backend/services/letta_client.py",
+            "title": "Point the embed URL at the right instance",
+            "objective": "the backend talks to the running embedder",
+            "output": "the health endpoint reports the embedder ok and a test covers it",
+            "entry_points": "backend/services/semantic_index.py",
             "boundaries": "do not touch the agent registry",
             "confidence": "decided",
         }]})

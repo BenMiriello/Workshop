@@ -726,9 +726,9 @@ export interface paths {
         };
         /**
          * Get Agent
-         * @description Unified detail, resolved from the registry (by slug, routing id, or linked
-         *     id). The assistant persona/instructions live in the definition body; there is
-         *     no separate Letta memory layer to enrich from. Enriched with the autonomy
+         * @description Unified detail, resolved from the registry (by slug or routing id). The
+         *     persona/instructions live in the definition body; there is no separate
+         *     memory layer to enrich from. Enriched with the autonomy
          *     preset (classified from the agent's triggers) plus the scope's queue counts
          *     and any pending `awaiting` prompts, plus the cross-link ids the UI uses to
          *     render the Involved-in section (B1).
@@ -739,8 +739,7 @@ export interface paths {
          * @description Write the declarative definition (name/purpose/triggers/limits/body) to the
          *     agent's markdown file via the registry. Trigger writes land in frontmatter and
          *     regenerate `.runtime/agent-subscriptions.json` as a union (non-registry
-         *     entries preserved). This is the Phase-2 trigger-write path; Letta metadata is
-         *     no longer the backing store for autonomy.
+         *     entries preserved). The definition file is the backing store for autonomy.
          */
         put: operations["update_agent_definition_agents__agent_id__put"];
         post?: never;
@@ -8657,8 +8656,6 @@ export interface components {
             last_active?: string | null;
             /** Latitude */
             latitude?: string | null;
-            /** Letta Agent Id */
-            letta_agent_id?: string | null;
             limits?: components["schemas"]["AgentLimits"] | null;
             /** Memory */
             memory?: unknown;
@@ -8812,8 +8809,6 @@ export interface components {
             last_active?: string | null;
             /** Latitude */
             latitude?: string | null;
-            /** Letta Agent Id */
-            letta_agent_id?: string | null;
             limits?: components["schemas"]["AgentLimits"] | null;
             /**
              * Linked Chat Ids
