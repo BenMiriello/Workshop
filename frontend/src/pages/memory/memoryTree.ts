@@ -16,7 +16,9 @@
 //
 // The docs half of the tree IS paths, because docs/ is a real committed
 // directory. Both live under one root, which is what makes them one tree.
+import type { FileTreeNode } from "@workshop/ui";
 import type { components } from "../../api/schema.gen";
+import { scopeLabel } from "../../lib/tasks";
 
 export type ScopeNode = components["schemas"]["ScopeNode"];
 export type NoteRow = components["schemas"]["NoteRow"];
@@ -178,6 +180,73 @@ export function ancestorsOf(node: MemoryNode, tree: readonly ScopeNode[]): Memor
 /** Whether a node is a container (a branch in the tree) or a destination. */
 export function isBranch(node: MemoryNode): boolean {
   return node.kind === "root" || node.kind === "scope" || node.kind === "docs" || node.kind === "docdir";
+}
+
+// ---- The kit's vocabulary --------------------------------------------------
+// The tree on screen is the kit primitive (`FileTree` on a desktop, `FileDrill`
+// on a phone), which speaks `FileTreeNode`. These two rules are the whole
+// translation, and they are here rather than beside the fetching because they
+// are decidable and therefore testable.
+
+/** What a node reads as. Every branch a trail can contain is nameable without
+ *  another request, which is what lets the phone draw its trail synchronously. */
+export function nodeLabel(node: MemoryNode): string {
+  switch (node.kind) {
+    case "root": return "Memory";
+    case "docs": return "Documents";
+    case "scope": return scopeLabel(node.scope);
+    case "docdir": return baseName(node.path);
+    case "doc": return baseName(node.path);
+    case "note": return node.id;
+  }
+}
+
+/** A `MemoryNode` as the row the kit tree draws. A note and a doc carry a
+ *  stored title, which only the fetched row knows, so this labels a leaf from
+ *  its address and the level builder overrides it; every BRANCH is named
+ *  correctly from the node alone, which is what a trail needs. */
+export function memoryFileNode(node: MemoryNode): FileTreeNode {
+  const icon =
+    node.kind === "root" || node.kind === "scope"
+      ? "scope"
+      : node.kind === "docs" || node.kind === "docdir"
+        ? "folder"
+        : "doc";
+  return {
+    id: encodeMemoryNode(node),
+    label: nodeLabel(node),
+    kind: isBranch(node) ? "branch" : "leaf",
+    icon,
+  };
+}
+
+/**
+ * The branches between the root and `node`'s own level, outermost first: what
+ * the kit's `drillTrail` takes as its `ancestors`. The root is excluded because
+ * a trail always starts there.
+ *
+ * WHY MEMORY RECORDS AN EXPLICIT TRAIL LIKE EVERY OTHER CALLER, even though it
+ * is the one adapter that could answer "what contains this". `FileDrill` takes
+ * its trail from the caller because a `FileTreeNode` knows its own id and
+ * nothing about what encloses it, so the alternative here was an optional
+ * `parent` on `FileTreeAdapter` and a second way for the drill to find its way
+ * out. That was rejected on three counts. A second path through the kit is
+ * exactly the duplication this fold removes, and it would be a path only one
+ * caller ever exercised. `parentOf` is total only once the scope tree has
+ * loaded, so the kit would grow a fourth, asynchronous state purely to ask a
+ * question the caller can already answer synchronously. And a recorded trail is
+ * strictly more general: every caller can build one, only Memory could supply a
+ * parent. None of Memory's ancestry is wasted for it, because that ancestry is
+ * what this function turns into `drillTrail`'s `ancestors`, the same seam the
+ * Files tab fills from a path.
+ */
+export function drillAncestorsFor(
+  node: MemoryNode,
+  tree: readonly ScopeNode[],
+): FileTreeNode[] {
+  return ancestorsOf(node, tree)
+    .filter((n) => n.kind !== "root")
+    .map(memoryFileNode);
 }
 
 // ---- URL addressing --------------------------------------------------------

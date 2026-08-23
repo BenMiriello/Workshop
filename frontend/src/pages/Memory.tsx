@@ -5,7 +5,7 @@ import {
   RefreshCw, Plus, Trash2, FileText, FolderTree, ChevronUp,
   ShieldCheck, Lock, Globe, GitBranch,
 } from "lucide-react";
-import { Button, Card, CardGrid, PageHeader, SectionLabel, Row, Stack, Segmented, Select, Input, Textarea, Field, Modal, ConfirmDialog, StateBlock, Skeleton, StatusDot, Table, TableScroll, Tag, Checkbox, catFor, type SegmentedOption, shortHttpError, timeAbsolute, formatBytes } from "@workshop/ui";
+import { Button, Card, CardGrid, PageHeader, SectionLabel, Row, Stack, Segmented, Select, Input, Textarea, Field, Modal, ConfirmDialog, StateBlock, Skeleton, StatusDot, Table, TableScroll, Tag, Checkbox, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, type SegmentedOption, shortHttpError, timeAbsolute, formatBytes } from "@workshop/ui";
 import { scopeLabel } from "../lib/tasks";
 import { orderScopes } from "../lib/devMode";
 import { useIsWide } from "../lib/useMediaQuery";
@@ -26,17 +26,19 @@ import {
 
 import { getJson } from "./memory/api";
 import {
+  drillAncestorsFor,
+  encodeMemoryNode,
   isBranch,
   nodeForParams,
   paramsForNode,
-  parentOf,
+  parseMemoryNode,
   searchDocs,
   type DocRow,
   type MemoryNode,
   type NoteRow,
   type ScopeNode,
 } from "./memory/memoryTree";
-import { MemoryDrill, MemoryTreeView, createMemorySource, nodeLabel } from "./memory/MemoryTree";
+import { MEMORY_ROOT_NODE, MemoryTreeView, createMemorySource } from "./memory/MemoryTree";
 import { DocDocument, NoteDocument } from "./memory/MemoryDocument";
 import { NOTE_TYPES, freshNoteId, noteTypeLabel, type NoteType } from "./memory/notes";
 
@@ -62,6 +64,13 @@ import { NOTE_TYPES, freshNoteId, noteTypeLabel, type NoteType } from "./memory/
 //    shell's directory takeover (navigation-shell-2026-08-20.md sections 3.4 and
 //    8.1, built for this); on a phone it is this page's own content and drills
 //    in place with `Up`, and it does not touch the tab bar.
+//
+//    THE PHONE SHAPE IS THE KIT'S, not Memory's. Memory shipped its own
+//    `MemoryDrill` on 2026-08-22, the same day `FileDrill` landed in the kit
+//    doing the same job; the copy is deleted and this page renders the kit
+//    component over the SAME adapter its desktop tree reads. Two implementations
+//    of one navigator is exactly how the Files tab ended up stacking a tree
+//    above a file on a phone while this page did not.
 //
 //    A NOTE IS STILL A SCOPE AND AN ID. The tree did not turn Memory into a
 //    filesystem: `?scope=&note=` and `?path=` are still the addresses, which is
@@ -210,6 +219,10 @@ export default function Notes() {
 
 // ---- Library: the tree, and the document it opens --------------------------
 
+/** Rows a phone level draws before the rest becomes one line. The fourth list
+ *  state: a scope with 4,000 notes reports itself instead of freezing the tab. */
+const DRILL_MAX_ROWS = 100;
+
 function Library() {
   const [searchParams, setSearchParams] = useSearchParams();
   const isWide = useIsWide();
@@ -244,10 +257,10 @@ function Library() {
   const applied = (searchParams.get("q") ?? "").trim();
   const [query, setQuery] = useState(applied);
 
-  // THE PHONE'S CURSOR: which level the drill list is showing. It lives here
-  // rather than in the drill so that opening a document and coming back up does
-  // not lose your place, which is what `Up` is for.
-  const [cursor, setCursor] = useState<MemoryNode>({ kind: "root" });
+  // THE PHONE'S TRAIL: which level the kit's drill is listing, and the way back
+  // out of it. It lives here rather than in the drill so that opening a document
+  // and coming back up does not lose your place, which is what `Up` is for.
+  const [trail, setTrail] = useState<FileDrillTrail>(() => drillTrail(MEMORY_ROOT_NODE));
 
   const setParams = useCallback(
     (mutate: (next: URLSearchParams) => void) => {
@@ -297,12 +310,18 @@ function Library() {
   // page's content instead and mounting it twice would cost every request twice.
   const { host, setOpen } = useDirectoryPage({ pageId: "memory", label: "Memory", enabled: isWide });
 
-  // Walking up from a document on a phone means going to what contains it.
-  const upFrom = selected ? parentOf(selected, scopeTree) : null;
-  const upAction = !isWide && upFrom ? (
+  // Walking up from a document on a phone means going to what CONTAINS it, not
+  // back through history. The trail is rebuilt from the document's own ancestry,
+  // so a deep link walks up correctly on its first press without having been
+  // drilled into.
+  const upTrail = useMemo(
+    () => (selected ? drillTrail(MEMORY_ROOT_NODE, drillAncestorsFor(selected, scopeTree)) : null),
+    [selected, scopeTree],
+  );
+  const upAction = !isWide && upTrail ? (
     <Button
-      onClick={() => { setCursor(upFrom); clearSelection(); }}
-      aria-label={`Up to ${nodeLabel(upFrom)}`}
+      onClick={() => { setTrail(upTrail); clearSelection(); }}
+      aria-label={`Up to ${drillCursor(upTrail).label}`}
     >
       <ChevronUp aria-hidden /> Up
     </Button>
@@ -339,14 +358,22 @@ function Library() {
       />
     );
   } else if (!isWide) {
+    // The tree IS the page here: one level, no rail, no nested scroller. Same
+    // adapter the desktop tree reads, same component the Files tab drills with.
     pane = (
-      <MemoryDrill
-        source={source}
-        cursor={cursor}
-        onCursor={setCursor}
-        selected={selected}
-        onSelect={select}
-        scopeTree={scopeTree}
+      <FileDrill
+        adapter={source.adapter}
+        trail={trail}
+        onTrail={setTrail}
+        selectedId={selected ? encodeMemoryNode(selected) : null}
+        onSelect={(node) => {
+          const parsed = parseMemoryNode(node.id);
+          if (parsed) select(parsed);
+        }}
+        maxRows={DRILL_MAX_ROWS}
+        label="Memory"
+        emptyTitle="Nothing in Memory"
+        emptyHint="Write a note here with New note, or an agent will leave one as it works."
       />
     );
   } else {

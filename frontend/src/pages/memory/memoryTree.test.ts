@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   DOCS_ROOT,
   ancestorsOf,
+  drillAncestorsFor,
+  memoryFileNode,
+  nodeLabel,
   baseName,
   childScopes,
   dirName,
@@ -186,6 +189,67 @@ describe("ancestorsOf", () => {
   });
 });
 
+describe("the kit's vocabulary", () => {
+  it("names every branch a trail can contain, without another request", () => {
+    expect(nodeLabel({ kind: "root" })).toBe("Memory");
+    expect(nodeLabel({ kind: "docs" })).toBe("Documents");
+    expect(nodeLabel({ kind: "docdir", path: "docs/platform-redesign" })).toBe("platform-redesign");
+    expect(nodeLabel({ kind: "scope", scope: "project:birds" })).toBeTruthy();
+  });
+
+  it("labels a leaf from its address, which the level builder then overrides", () => {
+    expect(nodeLabel({ kind: "note", scope: "workshop", id: "how-to" })).toBe("how-to");
+    expect(nodeLabel({ kind: "doc", path: "docs/a/b.md" })).toBe("b.md");
+  });
+
+  it("carries the node's own id, so a row key is still an address", () => {
+    const node = memoryFileNode({ kind: "note", scope: "workshop", id: "how-to" });
+    expect(parseMemoryNode(node.id)).toEqual({ kind: "note", scope: "workshop", id: "how-to" });
+    expect(node.kind).toBe("leaf");
+  });
+
+  it("marks containers as branches and destinations as leaves", () => {
+    expect(memoryFileNode({ kind: "root" }).kind).toBe("branch");
+    expect(memoryFileNode({ kind: "scope", scope: "workshop" }).kind).toBe("branch");
+    expect(memoryFileNode({ kind: "docdir", path: "docs/a" }).kind).toBe("branch");
+    expect(memoryFileNode({ kind: "doc", path: "docs/a.md" }).kind).toBe("leaf");
+  });
+
+  it("hints a scope apart from a folder, so the two halves of the tree read apart", () => {
+    expect(memoryFileNode({ kind: "scope", scope: "workshop" }).icon).toBe("scope");
+    expect(memoryFileNode({ kind: "root" }).icon).toBe("scope");
+    expect(memoryFileNode({ kind: "docs" }).icon).toBe("folder");
+    expect(memoryFileNode({ kind: "docdir", path: "docs/a" }).icon).toBe("folder");
+    expect(memoryFileNode({ kind: "doc", path: "docs/a.md" }).icon).toBe("doc");
+  });
+});
+
+describe("drillAncestorsFor is the phone's trail", () => {
+  it("drops the root, which a trail always starts with anyway", () => {
+    expect(drillAncestorsFor({ kind: "note", scope: "agent:scout", id: "x" }, tree).map((n) => n.id))
+      .toEqual(["scope:workshop", "scope:project:birds", "scope:agent:scout"]);
+  });
+
+  it("ends on the level the document is IN, which is where Up lands", () => {
+    const trail = drillAncestorsFor({ kind: "doc", path: "docs/platform-redesign/deep/one.md" }, tree);
+    expect(trail.map((n) => n.id)).toEqual([
+      "docs",
+      "dir:docs/platform-redesign",
+      "dir:docs/platform-redesign/deep",
+    ]);
+    expect(trail[trail.length - 1].label).toBe("deep");
+  });
+
+  it("is empty for a document directly under the root's own children", () => {
+    expect(drillAncestorsFor({ kind: "scope", scope: "workshop" }, tree)).toEqual([]);
+  });
+
+  it("hands the kit branches only, since a leaf cannot be a level", () => {
+    const trail = drillAncestorsFor({ kind: "doc", path: "docs/decisions/0001-a.md" }, tree);
+    expect(trail.every((n) => n.kind === "branch")).toBe(true);
+  });
+});
+
 describe("branch or destination", () => {
   it("knows which nodes contain things", () => {
     expect(isBranch({ kind: "root" })).toBe(true);
@@ -237,6 +301,36 @@ describe("URL addressing keeps the links refs.py already handed out", () => {
       kind: "doc",
       path: "docs/a.md",
     });
+  });
+
+  // The two hrefs services/refs.py hands out, verbatim, walked the whole way a
+  // phone walks them: the query selects a document, and Up out of that document
+  // lands on the level it is IN, on the first press, without having drilled
+  // there. That is the one behaviour the fold onto the kit's FileDrill changed
+  // the mechanics of, so it is pinned here rather than assumed.
+  const readHref = (href: string) => {
+    const q = new URLSearchParams(href.slice(href.indexOf("?") + 1));
+    return nodeForParams({ scope: q.get("scope"), note: q.get("note"), path: q.get("path") });
+  };
+
+  it("opens /memory?scope=&note= and walks up to that note's scope", () => {
+    const node = readHref("/memory?scope=agent:scout&note=ports-abc");
+    expect(node).toEqual({ kind: "note", scope: "agent:scout", id: "ports-abc" });
+    const trail = drillAncestorsFor(node!, tree);
+    expect(trail[trail.length - 1].id).toBe("scope:agent:scout");
+  });
+
+  it("opens /memory?tab=docs&path= and walks up to that document's folder", () => {
+    const node = readHref("/memory?tab=docs&path=docs/platform-redesign/deep/one.md");
+    expect(node).toEqual({ kind: "doc", path: "docs/platform-redesign/deep/one.md" });
+    const trail = drillAncestorsFor(node!, tree);
+    expect(trail[trail.length - 1].id).toBe("dir:docs/platform-redesign/deep");
+  });
+
+  it("walks up to Documents from a doc sitting at the top of docs/", () => {
+    const node = readHref("/memory?tab=docs&path=docs/README.md");
+    const trail = drillAncestorsFor(node!, tree);
+    expect(trail.map((n) => n.id)).toEqual(["docs"]);
   });
 });
 

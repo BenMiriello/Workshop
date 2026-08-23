@@ -1,4 +1,5 @@
-// Memory's tree: the adapter, the desktop tree, and the phone's drill-in list.
+// Memory's tree: the adapter that turns three endpoints into levels, and the
+// desktop tree drawn over it.
 //
 // THE ADAPTER IS THE WHOLE POINT. `FileTree` in the kit renders nodes with lazy
 // children and knows nothing about HTTP, paths or scopes
@@ -14,35 +15,32 @@
 // memoryTree.ts, where the node vocabulary and every decidable rule live and are
 // tested. This file is the fetching and the rendering, and nothing else.
 //
-// TWO SHAPES, ONE SOURCE. On a desktop the tree is the kit primitive, drawn in
-// column two by the shell takeover. On a phone it is this file's drill-in list,
-// which is the page's own CONTENT and walks one level at a time with `Up`
-// (navigation-shell-2026-08-20.md section 4.4: "Up is structural and belongs to
-// the page. Back is history and belongs to the browser."). It does not touch the
-// tab bar. Both read the same `MemorySource`, so a level means the same thing on
-// both.
-import { useCallback, useEffect, useState } from "react";
-import { ChevronUp, FileText, Folder, Layers, MoreHorizontal } from "lucide-react";
+// TWO SHAPES, ONE ADAPTER, AND NO SECOND IMPLEMENTATION. On a desktop the tree
+// is the kit's `FileTree`, drawn in column two by the shell takeover. On a phone
+// it is the kit's `FileDrill`, which is the page's own CONTENT and walks one
+// level at a time with `Up` (navigation-shell-2026-08-20.md section 4.4: "Up is
+// structural and belongs to the page. Back is history and belongs to the
+// browser."). Memory built its own drill on 2026-08-22, the same day the kit
+// gained one; that copy is gone and Memory.tsx renders the kit component over
+// the SAME adapter, so a level cannot mean two things.
+import { useEffect, useState } from "react";
 import {
-  Button,
   FileTree,
   Skeleton,
-  StateBlock,
   type FileTreeAdapter,
   type FileTreeLevel,
   type FileTreeNode,
 } from "@workshop/ui";
-import { scopeLabel } from "../../lib/tasks";
 import { getJson } from "./api";
 import {
   DOCS_ROOT,
-  ancestorsOf,
   baseName,
   childScopes,
   docLevel,
+  drillAncestorsFor,
   encodeMemoryNode,
+  memoryFileNode,
   notesInScope,
-  parentOf,
   parseMemoryNode,
   type DocRow,
   type MemoryNode,
@@ -50,69 +48,32 @@ import {
   type ScopeNode,
 } from "./memoryTree";
 
-/** Rows a phone level draws before the rest becomes one line. The fourth list
- *  state: a scope with 4,000 notes reports itself instead of freezing the tab. */
-const DRILL_MAX_ROWS = 100;
-
-/** What a node reads as. Every branch a trail can contain is nameable without
- *  another request, which is what lets the phone draw its trail synchronously. */
-export function nodeLabel(node: MemoryNode): string {
-  switch (node.kind) {
-    case "root": return "Memory";
-    case "docs": return "Documents";
-    case "scope": return scopeLabel(node.scope);
-    case "docdir": return baseName(node.path);
-    case "doc": return baseName(node.path);
-    case "note": return node.id;
-  }
-}
-
 function scopeNode(key: string): FileTreeNode {
-  return { id: encodeMemoryNode({ kind: "scope", scope: key }), label: scopeLabel(key), kind: "branch", icon: "scope" };
+  return memoryFileNode({ kind: "scope", scope: key });
 }
 
+/** A note's row. The stored title is what a reader recognises, so it overrides
+ *  the id `memoryFileNode` can name it by; the address is unchanged. */
 function noteNode(note: NoteRow): FileTreeNode {
-  return {
-    id: encodeMemoryNode({ kind: "note", scope: note.scope, id: note.id }),
-    label: note.title || note.id,
-    kind: "leaf",
-    icon: "doc",
-  };
+  return { ...memoryFileNode({ kind: "note", scope: note.scope, id: note.id }), label: note.title || note.id };
 }
 
 function docDirNode(path: string): FileTreeNode {
-  return { id: encodeMemoryNode({ kind: "docdir", path }), label: baseName(path), kind: "branch", icon: "folder" };
+  return memoryFileNode({ kind: "docdir", path });
 }
 
 function docNode(doc: DocRow): FileTreeNode {
-  return {
-    id: encodeMemoryNode({ kind: "doc", path: doc.path }),
-    label: doc.title || baseName(doc.path),
-    kind: "leaf",
-    icon: "doc",
-  };
+  return { ...memoryFileNode({ kind: "doc", path: doc.path }), label: doc.title || baseName(doc.path) };
 }
 
-const DOCS_NODE: FileTreeNode = {
-  id: encodeMemoryNode({ kind: "docs" }),
-  label: "Documents",
-  kind: "branch",
-  icon: "folder",
-};
+const DOCS_NODE: FileTreeNode = memoryFileNode({ kind: "docs" });
 
-export const MEMORY_ROOT_NODE: FileTreeNode = {
-  id: encodeMemoryNode({ kind: "root" }),
-  label: "Memory",
-  kind: "branch",
-  icon: "scope",
-};
+export const MEMORY_ROOT_NODE: FileTreeNode = memoryFileNode({ kind: "root" });
 
 export type MemorySource = {
-  /** For the kit primitive. */
+  /** For both kit primitives: `FileTree` on a desktop, `FileDrill` on a phone.
+   *  One adapter, so neither shape can disagree about what a level contains. */
   adapter: FileTreeAdapter;
-  /** For the phone's level list, and for anything that has a `MemoryNode`
-   *  rather than a `FileTreeNode`. */
-  children: (node: MemoryNode) => Promise<FileTreeLevel>;
   /** The scope tree, cached. `Up` needs it to know a scope's parent. */
   scopes: () => Promise<ScopeNode[]>;
   /** The docs index, cached. A search over documents reads it; there is no
@@ -197,7 +158,7 @@ export function createMemorySource(): MemorySource {
     },
   };
 
-  return { adapter, children, scopes, docs };
+  return { adapter, scopes, docs };
 }
 
 // ---- Desktop: the kit primitive -------------------------------------------
@@ -242,9 +203,7 @@ export function MemoryTreeView({
     );
   }
 
-  const defaultOpenIds = selected
-    ? ancestorsOf(selected, scopeTree).filter((n) => n.kind !== "root").map(encodeMemoryNode)
-    : [];
+  const defaultOpenIds = selected ? drillAncestorsFor(selected, scopeTree).map((n) => n.id) : [];
 
   return (
     <FileTree
@@ -260,131 +219,5 @@ export function MemoryTreeView({
         if (parsed) onSelect(parsed);
       }}
     />
-  );
-}
-
-// ---- Phone: one level, with Up ---------------------------------------------
-
-type LevelState =
-  | { status: "loading" }
-  | { status: "ready"; nodes: FileTreeNode[] }
-  | { status: "error"; message: string };
-
-export function MemoryDrill({
-  source,
-  cursor,
-  onCursor,
-  selected,
-  onSelect,
-  scopeTree,
-}: {
-  source: MemorySource;
-  /** The branch being listed. */
-  cursor: MemoryNode;
-  onCursor: (node: MemoryNode) => void;
-  selected: MemoryNode | null;
-  onSelect: (node: MemoryNode) => void;
-  scopeTree: readonly ScopeNode[];
-}) {
-  const [level, setLevel] = useState<LevelState>({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    let live = true;
-    setLevel({ status: "loading" });
-    source.children(cursor).then(
-      (l) => { if (live) setLevel({ status: "ready", nodes: l.nodes }); },
-      (e: unknown) => {
-        if (live) setLevel({ status: "error", message: e instanceof Error ? e.message : String(e) });
-      },
-    );
-    return () => { live = false; };
-  }, [source, cursor, attempt]);
-
-  const up = parentOf(cursor, scopeTree);
-  const selectedId = selected ? encodeMemoryNode(selected) : null;
-  const retry = useCallback(() => setAttempt((n) => n + 1), []);
-
-  const trail = (
-    <div className="ws-memory__trail">
-      {up && (
-        <Button size="sm" variant="ghost" onClick={() => onCursor(up)} aria-label={`Up to ${nodeLabel(up)}`}>
-          <ChevronUp aria-hidden /> Up
-        </Button>
-      )}
-      <span className="ws-memory__trailname">{nodeLabel(cursor)}</span>
-    </div>
-  );
-
-  if (level.status === "loading") {
-    return (
-      <div aria-busy="true">
-        {trail}
-        <Skeleton width="70%" />
-        <Skeleton width="55%" />
-        <Skeleton width="62%" />
-      </div>
-    );
-  }
-
-  if (level.status === "error") {
-    return (
-      <div>
-        {trail}
-        <StateBlock
-          variant="error"
-          title={`Couldn't load ${nodeLabel(cursor)}`}
-          hint={level.message}
-          action={<Button size="sm" onClick={retry}>Retry</Button>}
-        />
-      </div>
-    );
-  }
-
-  if (level.nodes.length === 0) {
-    return (
-      <div>
-        {trail}
-        <StateBlock
-          title={`Nothing in ${nodeLabel(cursor)}`}
-          hint="Write a note here with New note, or an agent will leave one as it works."
-        />
-      </div>
-    );
-  }
-
-  const shown = level.nodes.slice(0, DRILL_MAX_ROWS);
-  const hidden = level.nodes.length - shown.length;
-
-  return (
-    <div>
-      {trail}
-      <div className="ws-memory__level" role="list">
-        {shown.map((node) => {
-          const parsed = parseMemoryNode(node.id);
-          if (!parsed) return null;
-          const isBranchRow = node.kind === "branch";
-          const Icon = isBranchRow ? (node.icon === "scope" ? Layers : Folder) : FileText;
-          return (
-            <button
-              key={node.id}
-              type="button"
-              role="listitem"
-              className={"ws-memory__row" + (node.id === selectedId ? " is-selected" : "")}
-              onClick={() => (isBranchRow ? onCursor(parsed) : onSelect(parsed))}
-            >
-              <Icon size={16} strokeWidth={1.8} aria-hidden />
-              <span className="ws-memory__rowlabel">{node.label}</span>
-            </button>
-          );
-        })}
-      </div>
-      {hidden > 0 && (
-        <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "var(--space-2)" }}>
-          <MoreHorizontal size={13} strokeWidth={1.8} aria-hidden /> {hidden} more not shown. Open a
-          narrower scope to see them.
-        </p>
-      )}
-    </div>
   );
 }

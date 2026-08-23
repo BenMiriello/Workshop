@@ -3063,11 +3063,10 @@ p.chat-workpanel__note { margin: 0; }
 .ws-pagerow__chev:hover { color: var(--fg); }
 
 /* ---- Memory ---------------------------------------------------------------
-   The tree in column two, the same tree drilled in place on a phone, and the
-   document beside it. */
+   The tree in column two, and the document beside it. The phone's one-level
+   drill is the kit's `.ws-drill`, so nothing here styles it. */
 .ws-memory__tree { padding-top: var(--space-1); }
-/* The phone's tree: one level at a time with Up walking the tree (section 4.4,
-   "Up is structural and belongs to the page"). Rows are full-width targets. */
+/* A flat result list: the search results, whose rows are full-width targets. */
 .ws-memory__level { display: flex; flex-direction: column; gap: 1px; }
 .ws-memory__row {
   display: flex; align-items: center; gap: var(--space-2);
@@ -3084,12 +3083,6 @@ p.chat-workpanel__note { margin: 0; }
 .ws-memory__row.is-selected svg { color: inherit; }
 .ws-memory__rowlabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-memory__more { margin-left: auto; color: var(--faint); }
-.ws-memory__trail {
-  display: flex; align-items: center; gap: var(--space-2);
-  margin-bottom: var(--space-2);
-  color: var(--muted); font-size: var(--fs-sm);
-}
-.ws-memory__trailname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The document body. The measure is the shell's, so nothing here caps width. */
 .ws-memory__title { margin: 0; font-size: var(--fs-xl); font-weight: var(--fw-semi); letter-spacing: -0.01em; }
 .ws-memory__path { color: var(--muted); font-size: var(--fs-xs); word-break: break-all; }
