@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate, useLocation, Link } from "react-router-dom";
 import { Trash2, Plus, Bot, Brain, MessageSquare, Clock, StickyNote, ListChecks, Activity } from "lucide-react";
 import type { Project } from "@shared/types";
 import { ActionBar, Badge, Button, Card, Checkbox, ConfirmDialog, Field, Input, Notice, PageHeader, Row, SectionLabel, Segmented, Select, Skeleton, StateBlock, StatusDot, StatusPill, Stack, Tag, Textarea, catFor, type SegmentedOption, useCrumbLabel, shortHttpError, timeAbsolute } from "@workshop/ui";
 import { type Job, jobStatusKind, runHref } from "../lib/jobs";
 import GrantPicker from "../components/GrantPicker";
 import TaskPanel from "../components/TaskPanel";
+import MakerPanel from "../components/MakerPanel";
 
 import {
   EVENT_SOURCES,
@@ -693,10 +694,17 @@ function ExistingAgent({ agentId }: { agentId: string }) {
             {/* Role + latitude + autonomy_mode as the primary chips (C10).
                 catFor gives each role its stable hue. */}
             {agent.role && <Tag hue={catFor(`role:${agent.role}`)}>{agent.role}</Tag>}
-            {agent.autonomy_mode && agent.autonomy_mode !== "reactive" && (
+            {/* A MAKER'S `autonomy_mode` IS NOT ITS SETTING, so it is not shown
+                on one. A maker declares no autonomy on its definition by design
+                (services/makers.py: that would be a second field answering "is
+                this on"), so the record sits at the `reactive` default and this
+                line read "reactive" directly above a panel reporting the same
+                agent working a ticket at run-to-review. The arm level is the
+                live setting and the panel below owns it. */}
+            {agent.role !== "maker" && agent.autonomy_mode && agent.autonomy_mode !== "reactive" && (
               <Tag hue={catFor(agent.autonomy_mode)}>{agent.autonomy_mode}</Tag>
             )}
-            {agent.autonomy_mode === "reactive" && (
+            {agent.role !== "maker" && agent.autonomy_mode === "reactive" && (
               <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>reactive</span>
             )}
             {agent.latitude && (
@@ -731,6 +739,17 @@ function ExistingAgent({ agentId }: { agentId: string }) {
       )}
 
       <Stack>
+        {/* --- What this maker is doing, and the controls for it. FIRST on the
+             page, above the role blurb and the definition, because "what is
+             working my tickets and is it actually running" is the question this
+             record exists to answer. Only a maker has one; every other role
+             renders exactly what it did before. The panel reads
+             GET /api/agents/{id}/maker, which 409s for a maker with no tree and
+             says so there rather than here. --- */}
+        {agent.role === "maker" && (
+          <MakerPanel agentId={agentId} canEdit={!editing} />
+        )}
+
         {/* --- Role card (C1). One-line description of what this role does,
              so the operator knows the agent's shape at a glance. Full role-
              shaped sub-panels (triager inbox, keeper store, broker verdicts,
@@ -1111,7 +1130,21 @@ function ExistingAgent({ agentId }: { agentId: string }) {
 }
 
 export default function AgentDetail() {
-  const { agentId = "" } = useParams();
-  if (agentId === "new") return <CreateAgent />;
-  return <ExistingAgent agentId={agentId} />;
+  // TWO ROUTES REACH THIS COMPONENT AND NEITHER ONE CARRIES `agentId`, which is
+  // what this read. `/agents/:slug` names its param `slug`, and `/agents/new` is
+  // a static path with no param at all, so `useParams()` never had the key and
+  // the id was the empty string on every visit: the page fetched
+  // `/api/agents/` (the LIST) into a single-record state and rendered an agent
+  // with no name, no purpose and "(no instructions yet)", while
+  // `/api/agents//jobs` 404'd beside it, and the create form was unreachable
+  // because "" is not "new". Found by opening a maker's page in a browser;
+  // nothing else in the tree could see it, because a param that is never
+  // supplied is valid TypeScript and there is no render harness.
+  //
+  // So the create case is decided by the PATH (which is what that route is) and
+  // the record case by the param (which is what that route is).
+  const { pathname } = useLocation();
+  const { slug = "" } = useParams();
+  if (slug === "new" || pathname.replace(/\/+$/, "") === "/agents/new") return <CreateAgent />;
+  return <ExistingAgent agentId={slug} />;
 }

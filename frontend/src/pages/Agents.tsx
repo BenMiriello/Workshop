@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePoll, shortHttpError, Badge, Button, Card, CardGrid, Field, Modal, PageHeader, Row, SectionLabel, Segmented, Select, Skeleton, Stack, StateBlock, StatusDot, StatusPill, Tag, catFor, type StatusKind, Notice } from "@workshop/ui";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Bot, Brain, Clock, SlidersHorizontal, ListChecks, Play, RotateCw, Power, Compass, FileStack } from "lucide-react";
+import { Plus, Bot, Brain, Clock, ListChecks, Play, RotateCw, Power, Compass, FileStack, MessageSquare, Ticket } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Project } from "@shared/types";
 
@@ -10,6 +10,9 @@ import { triggerSummary, nextScheduled, agentAgency, type UnifiedAgent } from ".
 import { latitudeDesc, type Latitude } from "../lib/tasks";
 import { type AutonomyMode } from "../lib/autonomy";
 import { runHref } from "../lib/jobs";
+import { ticketHref } from "../lib/tasks";
+import { scopeLabel } from "../lib/scope";
+import { armLevelName, makerPrimary, makerStatus, type MakerSummary } from "../lib/makers";
 
 // Roster item enriched with the O6/O7 autonomy fields the backend now returns on
 // GET /api/agents/ (autonomy preset + role + latitude). Kept local so the shared
@@ -25,6 +28,11 @@ type RosterAgent = UnifiedAgent & {
   // The chip is omitted in that case rather than rendering "standard": an agent
   // that never chose a latitude must not look like one that chose the default.
   latitude?: Latitude | null;
+  // THE ANSWER TO "WHAT IS DOING MY TICKETS", on the row itself. Present only
+  // on a maker with a tree, null on every other agent. The shape is the
+  // backend's own MakerSummary, taken from the generated client rather than
+  // hand-written (frontend/CLAUDE.md: "API response types are GENERATED").
+  maker?: MakerSummary | null;
 };
 
 function presetIcon(p: Preset): ReactNode {
@@ -266,8 +274,20 @@ export default function Agents() {
       .catch(() => setSup(null));
   }, []);
 
+  // The roster's maker blocks are LIVE state (activity, the ticket held, whether
+  // a worker is resident), so the list refreshes on the same cadence as the
+  // autonomy pill. Only the agents call: projects and the 200-row jobs feed are
+  // not live, and re-reading them every 15 seconds would be waste on a phone.
+  const loadRoster = useCallback(() => {
+    fetch("/api/agents/")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((rows) => { if (rows) setAgents(rows as RosterAgent[]); })
+      .catch(() => { /* the visible list stays; the next tick retries */ });
+  }, []);
+
   useEffect(() => { loadAll(); }, [loadAll]);
   usePoll(loadSup, 15_000);
+  usePoll(loadRoster, 15_000, { immediate: false });
 
   // Last Job per agent id, from a single jobs feed (most recent first already).
   const lastJobByAgent = useMemo(() => {
@@ -336,19 +356,36 @@ export default function Agents() {
         // At-a-glance strip, keyed on ROLE. It used to count `runtime` --
         // "Builders" vs "Assistants" -- but that axis described how an agent
         // executes, not what it is, and it is deleted. The entity model (6.1)
-        // types agents by role. Live/idle stays on makers: they hold the long
-        // sessions.
+        // types agents by role.
+        //
+        // The maker line counts LIVE STATE, not `a.state`. It used to read
+        // `a.state === "running"` and call the rest "idle", which is a field
+        // about the agent record rather than about the tree, so every maker
+        // read as idle while one of them was working a ticket. The counts below
+        // come from the same `maker` block the cards read.
         const makers = agents.filter((a) => a.role === "maker");
         const others = agents.filter((a) => a.role !== "maker");
-        const liveBuilds = makers.filter((a) => a.state === "running").length;
-        const idleBuilds = makers.length - liveBuilds;
-        const builderDot: StatusKind = liveBuilds > 0 ? "running" : "ok";
+        const working = makers.filter((a) => a.maker?.activity === "working").length;
+        // The state this whole feature exists to surface: the operator armed
+        // it, so he believes tickets are moving, and nothing is on the tree.
+        const stranded = makers.filter((a) => a.maker && a.maker.armed && !a.maker.runner_resident).length;
+        const armed = makers.filter((a) => a.maker?.armed).length;
+        const makerDot: StatusKind = working > 0 ? "running" : armed > 0 ? "ok" : "stopped";
         return (
           <Card style={{ marginBottom: "var(--space-5)", padding: "var(--space-4)" }}>
             <Row between wrap style={{ rowGap: "var(--space-4)" }}>
               <div>
-                <SectionLabel>Makers</SectionLabel>
-                <Row><StatusDot status={builderDot}>{liveBuilds} live · {idleBuilds} idle</StatusDot></Row>
+                <SectionLabel>Makers (they work the tickets)</SectionLabel>
+                <Row wrap style={{ gap: "var(--space-3)" }}>
+                  <StatusDot status={makerDot}>
+                    {working} working · {armed} armed · {makers.length} total
+                  </StatusDot>
+                  {stranded > 0 && (
+                    <StatusDot status="warn">
+                      {stranded} armed with no worker
+                    </StatusDot>
+                  )}
+                </Row>
               </div>
               <div>
                 <SectionLabel>Other roles</SectionLabel>
@@ -413,6 +450,69 @@ export default function Agents() {
             const Icon = isBuilder ? Bot : Brain;
             const when = activityLabel(a.last_active || a.created_at);
             const lastJob = lastJobByAgent.get(a.id);
+            // The live block, present only on a maker with a tree. Its two
+            // rules (which status kind, which first line) are pure and live in
+            // lib/makers.ts so they can be tested without a DOM.
+            const mk = a.maker ?? null;
+            const mkStatus = mk ? makerStatus(mk) : null;
+            const mkPrimary = mk ? makerPrimary(mk) : null;
+            // A maker's card opens the MAKER, not its work pane. The work pane
+            // is a code editor beside a chat; it does not say what the agent is
+            // doing, which ticket it holds or whether a worker is even resident.
+            // Those are on the agent's own page now, so that is where the card
+            // goes and the work pane moves to the corner button.
+            const cardHref = `/agents/${encodeURIComponent(a.id)}`;
+            const linkStyle = { display: "block", textDecoration: "none", color: "inherit" } as const;
+            const head = (
+              <Row between>
+                <h2 className="ws-card__title">
+                  <Icon size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
+                  {a.name}
+                </h2>
+                {/* Role is the type, and the only one: the `runtime`
+                    tag that used to sit here is deleted. An agent may
+                    genuinely have no role, and "no role" is the honest
+                    label for that. */}
+                {a.role
+                  ? <Tag hue={catFor(`role:${a.role}`)}>{a.role}</Tag>
+                  : <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>no role</span>}
+              </Row>
+            );
+            const body = (
+              <>
+                <p className="ws-card__meta">{a.purpose || (a.project_slug ? `linked to ${a.project_slug}` : "no project link")}</p>
+                {(mk || a.autonomy_mode || a.autonomy || a.latitude) && (
+                  <Row wrap style={{ gap: "var(--space-1)", marginBottom: "var(--space-1)" }}>
+                    {/* A MAKER'S SETTING IS ITS ARM LEVEL, and the record's own
+                        `autonomy_mode` is not it. A maker declares no autonomy
+                        on its definition by design (that would be a second
+                        setting answering "is this on"), so the field sits at its
+                        `reactive` default and the badge read "reactive" on a
+                        maker that was visibly working a ticket. The arm level is
+                        the live scope setting, so that is what a maker shows. */}
+                    {mk
+                      ? <Badge>{armLevelName(mk.arm_level)}</Badge>
+                      : a.autonomy_mode
+                        ? <Badge>{a.autonomy_mode}</Badge>
+                        : a.autonomy && <Badge>{presetIcon(a.autonomy)}{a.autonomy}</Badge>}
+                    {a.latitude && (
+                      <span title={latitudeDesc(a.latitude)}>
+                        <Badge>
+                          <Compass size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{a.latitude}
+                        </Badge>
+                      </span>
+                    )}
+                  </Row>
+                )}
+                {/* A maker has no triggers and is not manual: it is resident on a
+                    tree and works that tree's queue. Printing "Manual, on demand"
+                    over a maker mid-ticket was the trigger vocabulary being
+                    applied to an agent that does not use it. */}
+                <p className="ws-card__meta">
+                  {mk ? scopeLabel(mk.scope) : triggerSummary(a.triggers)}
+                </p>
+              </>
+            );
             return (
               <li key={a.id} className={isBuilder ? "ws-agent-card-cell" : undefined}>
                 {/* MARK THE EXCEPTION, NOT THE DEFAULT. Only an agent that
@@ -432,45 +532,53 @@ export default function Agents() {
                 >
                   {/* The card link stops above the last-run line, because that
                       line is a link of its own now and an <a> cannot contain
-                      one. It used to wrap the whole Card. */}
-                  <Link
-                    to={isBuilder
-                      ? `/agents/${encodeURIComponent(a.slug)}/chat`
-                      : `/agents/${encodeURIComponent(a.id)}`}
-                    style={{ display: "block", textDecoration: "none", color: "inherit" }}
-                  >
-                    <Row between>
-                      <h2 className="ws-card__title">
-                        <Icon size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
-                        {a.name}
-                      </h2>
-                      {/* Role is the type, and the only one: the `runtime`
-                          tag that used to sit here is deleted. An agent may
-                          genuinely have no role, and "no role" is the honest
-                          label for that. */}
-                      {a.role
-                        ? <Tag hue={catFor(`role:${a.role}`)}>{a.role}</Tag>
-                        : <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>no role</span>}
-                    </Row>
-                    <p className="ws-card__meta">{a.purpose || (a.project_slug ? `linked to ${a.project_slug}` : "no project link")}</p>
-                    {(a.autonomy_mode || a.autonomy || a.latitude) && (
-                      <Row wrap style={{ gap: "var(--space-1)", marginBottom: "var(--space-1)" }}>
-                        {/* Autonomy mode is the primary axis; if unset, fall
-                            back to the legacy preset badge for the transition. */}
-                        {a.autonomy_mode
-                          ? <Badge>{a.autonomy_mode}</Badge>
-                          : a.autonomy && <Badge>{presetIcon(a.autonomy)}{a.autonomy}</Badge>}
-                        {a.latitude && (
-                          <span title={latitudeDesc(a.latitude)}>
-                            <Badge>
-                              <Compass size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{a.latitude}
-                            </Badge>
-                          </span>
+                      one. It used to wrap the whole Card.
+
+                      A MAKER'S CARD IS SPLIT for the same reason: its lead line
+                      names the ticket it is working, and that ticket is a link,
+                      so it cannot sit inside the card's own link. The two halves
+                      go to the same place, so clicking anywhere still opens the
+                      maker. */}
+                  {a.role === "maker" ? (
+                    <>
+                      <Link to={cardHref} style={linkStyle}>{head}</Link>
+                      {/* WHAT IT IS DOING, AND ON WHICH TICKET. This is the
+                          line the operator went looking for and did not find.
+                          The status kind is truthful: armed with no worker
+                          resident is `warn`, never a green ok, because that is
+                          exactly the disconnected state this feature exists to
+                          make visible. */}
+                      <div style={{ margin: "var(--space-2) 0" }}>
+                        {mk && mkStatus && mkPrimary ? (
+                          <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                            <StatusDot status={mkStatus.kind}>{mkStatus.label}</StatusDot>
+                            <span style={{ fontSize: "var(--fs-sm)" }}>
+                              {mkPrimary.text}
+                              {mkPrimary.ticketId && (
+                                <>
+                                  {" "}
+                                  <Link to={ticketHref(mk.scope, mkPrimary.ticketId)}>
+                                    <Ticket size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
+                                    {mkPrimary.ticketLabel}
+                                  </Link>
+                                </>
+                              )}
+                            </span>
+                          </Row>
+                        ) : (
+                          <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                            <StatusDot status="stopped">No queue</StatusDot>
+                            <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+                              Not linked to a runnable tree, so it works no tickets.
+                            </span>
+                          </Row>
                         )}
-                      </Row>
-                    )}
-                    <p className="ws-card__meta">{triggerSummary(a.triggers)}</p>
-                  </Link>
+                      </div>
+                      <Link to={cardHref} style={linkStyle}>{body}</Link>
+                    </>
+                  ) : (
+                    <Link to={cardHref} style={linkStyle}>{head}{body}</Link>
+                  )}
                   {/* The run itself, not a description of it. This printed a
                       status and a time and went nowhere, on the one line of
                       the card that names a thing with its own page. */}
@@ -482,6 +590,10 @@ export default function Agents() {
                           {lastJob.status} · {activityLabel(lastJob.started_at)}
                         </Link>
                       </>
+                    ) : mk ? (
+                      // "next" is a schedule, and a maker has no schedule. What
+                      // there is to say is whether a worker is on the tree.
+                      <>worker: {mk.runner_resident ? "resident on the tree" : "not on the tree"}</>
                     ) : (
                       <>next: {nextScheduled(a.triggers)}</>
                     )}
@@ -491,14 +603,18 @@ export default function Agents() {
                   </p>
                 </Card>
                 {isBuilder && (
+                  // The corner button and the card swapped destinations. The
+                  // card now opens the agent, because that is where what it is
+                  // doing and the controls for it live; the work pane (files,
+                  // editor, chat) is the secondary thing and moves here.
                   <button
                     type="button"
                     className="ws-agent-card__workbench"
-                    onClick={() => nav(`/agents/${encodeURIComponent(a.id)}`)}
-                    title="Agent settings (triggers · runs · config)"
-                    aria-label="Agent settings"
+                    onClick={() => nav(`/agents/${encodeURIComponent(a.slug)}/chat`)}
+                    title="Open the work pane (files · editor · chat)"
+                    aria-label="Open the work pane"
                   >
-                    <SlidersHorizontal size={16} aria-hidden />
+                    <MessageSquare size={16} aria-hidden />
                   </button>
                 )}
               </li>

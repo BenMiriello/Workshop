@@ -11048,6 +11048,7 @@ export interface components {
             hostname?: string | null;
             /** Last Beat At */
             last_beat_at?: string | null;
+            lease?: components["schemas"]["LeaseRef"] | null;
             /** Pid */
             pid?: number | null;
             /** Principal */
@@ -12072,6 +12073,46 @@ export interface components {
         LauncherCards: {
             /** Apps */
             apps: components["schemas"]["LauncherCard"][];
+        };
+        /**
+         * LeaseRef
+         * @description The lease on a directory entry's subject, read at join time.
+         *
+         *     TYPED, not a `dict[str, Any]`. An opaque field satisfies the route-level
+         *     response_model check and still generates `Record<string, never>` in the
+         *     client, so the frontend hand-writes the shape and drifts from it -- which is
+         *     the defect ADR 0023 clause 6 exists to remove.
+         *
+         *     `state` has exactly two values (section 6): `held` or `expired`. `idle_since`
+         *     is the moment of the last work event on a lease whose work has not moved for
+         *     ten minutes, and null otherwise; it is a warning a client renders, not a
+         *     third state.
+         */
+        LeaseRef: {
+            /** Acquired At */
+            acquired_at?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Generation */
+            generation: number;
+            /** Holder Id */
+            holder_id: string;
+            /** Holder Kind */
+            holder_kind: string;
+            /** Idle Since */
+            idle_since?: string | null;
+            /** Last Renewed At */
+            last_renewed_at?: string | null;
+            /** Last Work At */
+            last_work_at?: string | null;
+            /** Principal User Id */
+            principal_user_id?: string | null;
+            /** State */
+            state: string;
+            /** Subject Id */
+            subject_id: string;
+            /** Subject Kind */
+            subject_kind: string;
         };
         /** LiveBody */
         LiveBody: {
