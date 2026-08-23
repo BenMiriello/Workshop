@@ -708,6 +708,28 @@ LAST_ITER_OUT=""   # path of the most recent iteration's --output-format json en
 LAST_RESULT=""     # last NON-EMPTY worker .result text seen, so the receipt summary
                    # is never blank when the task is accepted even if the FINAL
                    # iteration exited nonzero with a partial/absent envelope (Fix 2)
+
+# Per-run commit tracking: record only the commits THIS process observes being made
+# so the touches gate in project_ralph.sh can attribute files to the right worker
+# on a shared checkout where concurrent agents may also commit. Written to the
+# receipt as worker_commits; project_ralph.sh reads it to build evidence.files.
+WORKER_COMMITS_FILE="$DIR/.runtime/ralph-worker-commits-$$.lst"
+: > "$WORKER_COMMITS_FILE"  # create empty; cleaned up with the runtime dir on exit
+ITER_HEAD_PRE=""   # HEAD captured just before each claude invocation
+
+# Collect commits that appeared between ITER_HEAD_PRE and the current HEAD into
+# WORKER_COMMITS_FILE, then advance ITER_HEAD_PRE to the current HEAD so the next
+# call is idempotent. Called at every iteration exit point (continue or break) so
+# commits made by each iteration are captured before ITER_HEAD_PRE is reset.
+accum_worker_commits() {
+  local post
+  post=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+  if [[ -n "$ITER_HEAD_PRE" && -n "$post" && "$ITER_HEAD_PRE" != "$post" ]]; then
+    (cd "$DIR" && git rev-list --reverse "${ITER_HEAD_PRE}..${post}" 2>/dev/null) \
+      >> "$WORKER_COMMITS_FILE" || true
+  fi
+  ITER_HEAD_PRE="$post"
+}
 # Session id captured from iteration 1's result envelope, so iterations >=2 resume
 # THIS run's own session (--resume) instead of the cwd's most-recent session
 # (--continue), which could grab a chat's session started in $DIR between iters
@@ -821,6 +843,8 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   # bounded by PER_ITER_TIMEOUT, not by a step count.
   TURN_CAP=()
   [ -n "$MAX_TURNS_PER_ITER" ] && TURN_CAP=(--max-turns "$MAX_TURNS_PER_ITER")
+  # Snapshot HEAD before claude runs so accum_worker_commits can diff against it.
+  ITER_HEAD_PRE=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
   set +e
   # </dev/null so claude doesn't wait on (and warn about) stdin — that warning
   # would otherwise be merged into ITER_OUT by 2>&1 and corrupt the JSON.
@@ -1018,6 +1042,7 @@ print(sid)
   last_reviewer_json="$REVIEWER_JSON"
   if (( REVIEWER_EXIT != 0 )); then
     log "reviewer.sh failed with exit $REVIEWER_EXIT — treating as incomplete"
+    accum_worker_commits
     continue
   fi
   COMPLETE=$(echo "$REVIEWER_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('complete', False)))" 2>/dev/null || echo 0)
@@ -1040,6 +1065,9 @@ print(sid)
   # the PASS branches below hand the task to project_ralph.sh's committed-work
   # done-gate, which would otherwise release a perfectly good run back to todo.
   (( COMPLETE == 1 )) && maybe_autocommit
+  # Accumulate any commits this iteration made (including the autocommit above).
+  # Called unconditionally so the thrash/continue paths below are also covered.
+  accum_worker_commits
 
   if (( SAW_SENTINEL == 1 && COMPLETE == 1 )); then
     log "PASS — sentinel + reviewer approval"
@@ -1152,6 +1180,10 @@ print('|'.join(rs))
     break
   fi
 done
+# Capture commits from the last iteration for break paths that exit before the
+# mid-loop accum_worker_commits call (classifier, env-failure, block-for-decision,
+# thrash guards, iteration cap). A no-op when already advanced by the mid-loop call.
+accum_worker_commits
 
 if (( iter >= MAX_ITER && exit_code == 1 )); then
   log "iteration cap ($MAX_ITER) hit; final reviewer JSON: $last_reviewer_json"
@@ -1184,7 +1216,7 @@ if [[ -n "$RECEIPT_PATH" ]]; then
   ( RECEIPT_PATH="$RECEIPT_PATH" EXIT_CODE="$exit_code" ITERATIONS="$iter" \
     TOKENS="$RUN_TOKENS" SESSION_ID="$SESSION_ID" \
     REVIEWER_JSON="$last_reviewer_json" LAST_ITER_OUT="$LAST_ITER_OUT" \
-    LAST_RESULT="$LAST_RESULT" \
+    LAST_RESULT="$LAST_RESULT" WORKER_COMMITS_FILE="${WORKER_COMMITS_FILE:-}" \
     python3 - <<'PYEOF'
 import json, os
 path = os.environ["RECEIPT_PATH"]
@@ -1227,6 +1259,19 @@ try:
     reviewer = json.loads(os.environ.get("REVIEWER_JSON") or "null")
 except Exception:
     reviewer = None
+# Read the per-run commit list this ralph process accumulated.
+worker_commits_path = os.environ.get("WORKER_COMMITS_FILE", "")
+worker_commits: list[str] = []
+if worker_commits_path and os.path.isfile(worker_commits_path):
+    try:
+        seen: set[str] = set()
+        for line in open(worker_commits_path, encoding="utf-8", errors="replace"):
+            sha = line.strip()
+            if sha and sha not in seen:
+                seen.add(sha)
+                worker_commits.append(sha)
+    except Exception:
+        worker_commits = []
 receipt = {
     "exit_code": int(os.environ.get("EXIT_CODE") or 0),
     "iterations": int(os.environ.get("ITERATIONS") or 0),
@@ -1234,6 +1279,7 @@ receipt = {
     "session_id": os.environ.get("SESSION_ID") or "",
     "reviewer": reviewer,
     "summary": summary,
+    "worker_commits": worker_commits,
 }
 try:
     with open(path, "w", encoding="utf-8") as f:
