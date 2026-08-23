@@ -1343,6 +1343,78 @@ def ambient_digest(provider: "ContextProvider") -> str:
     return "=== ONGOING WORK (ambient, across chats) ===\n" + body
 
 
+def working_state_block(provider: "ContextProvider", exclude_chat: str = "") -> str:
+    """This SCOPE's working state: what the last session here was doing, the
+    decisions it made and why, what it finished, what it owes.
+
+    Written by compaction (`routes/chat._write_working_state`) into the scope's
+    `working-state` note, and read back here so a chat that did not exist when
+    that work happened can continue from it. Without this half, a compaction
+    summary helps only the one thread that produced it.
+
+    WHAT THIS OWNS, AND WHAT `ambient_digest` OWNS. The two are next to each
+    other in the prompt and they must not say the same thing twice:
+
+      - ONGOING WORK (ambient_digest, from `workspace_digest`) owns STATUS. It
+        is derived from the registries: which tickets are open, which jobs ran,
+        which are in flight. It is current by construction because it is read
+        from the stores on every turn, and it is cross-CHAT.
+      - WORKING STATE (this block) owns REASONING. Why a thing was decided,
+        what was done the quick way and what that owes, what is genuinely
+        undecided. None of that is in any registry, because no registry has a
+        field for it. It is a snapshot from the last compaction, so it is as
+        current as the last fold and no more.
+
+    So a ticket's existence and status comes from the digest; why the ticket
+    was written the way it was comes from here. The block text says so, because
+    the model is the one that has to not double-count them.
+
+    `exclude_chat` suppresses the block for the chat that last wrote the note.
+    That chat already carries the same text verbatim as its own compaction
+    summary (`=== EARLIER IN THIS CONVERSATION (summary) ===`), and paying the
+    budget twice for one body of text is the sort of thing that makes a context
+    window fill up for no reason.
+
+    Best-effort and self-contained, same shape as `ambient_digest` and
+    `learnings_context`: a missing or broken note store returns "" and never
+    breaks the chat path.
+    """
+    try:
+        from services import knowledge
+        text, wrote_it = knowledge.read_working_state(provider.knowledge_scope())
+    except Exception:
+        return ""
+    if not text:
+        return ""
+    if exclude_chat and wrote_it and wrote_it == exclude_chat:
+        return ""
+    return (
+        "=== WORKING STATE (this scope, from the last compaction) ===\n"
+        "What the last session working in this scope was doing, why, and what it "
+        "left owing. It was distilled from a conversation that is probably not "
+        "this one, so treat it as a handoff document you have read, not as "
+        "anything anyone said to you here. Where it disagrees with the "
+        "conversation below, the conversation wins: this is a snapshot and it "
+        "can be out of date.\n"
+        "It does NOT own ticket or job status; the ongoing-work digest does. It "
+        "owns the reasoning: why things were decided, what was done the quick "
+        "way, and what is still open.\n\n"
+        + _escape_markers(text)
+    )
+
+
+def _escape_markers(text: str) -> str:
+    """`origin.escape_markers`, imported lazily for the same reason every other
+    store in this file is: keeping this module importable without dragging the
+    whole services graph in. Falls back to the raw text rather than to nothing,
+    because a working state that cannot be escaped is still worth injecting."""
+    try:
+        from services import origin
+        return origin.escape_markers(text)
+    except Exception:
+        return text
+
+
 # ------------------------------------------------------- history in the true order
 
 def _split_reply(reply: dict, interrupts: list[dict]) -> list[dict] | None:

@@ -301,8 +301,16 @@ def enforce_index_cap(scope_key: str, max_lines: int = 200) -> dict:
             return 0.0
 
     # The archive note itself is never demoted; leave room for its own index line.
-    demotable = sorted((nid for nid in entries if nid != ARCHIVE_NOTE_ID), key=_recency)
-    keep = max(0, max_lines - _INDEX_HEADER_LINES - 1)
+    # Neither is the working-state note: demotion moves a file into `archive/`,
+    # where `get_note` (and therefore `read_working_state`, and therefore the
+    # prompt block) cannot see it, so a scope that crossed the cap would
+    # silently stop handing new chats its working state. It is the one note
+    # whose whole job is to be found by somebody who does not know it exists.
+    # It is rewritten on every fold, so in practice it is always among the most
+    # recent anyway; this is the guarantee, not the common case.
+    _RESERVED = (ARCHIVE_NOTE_ID, WORKING_STATE_NOTE_ID)
+    demotable = sorted((nid for nid in entries if nid not in _RESERVED), key=_recency)
+    keep = max(0, max_lines - _INDEX_HEADER_LINES - len(_RESERVED))
     to_demote = demotable[: max(0, len(demotable) - keep)]
     if not to_demote:
         return {"scope": scope_key, "demoted": 0, "index_lines": total}
@@ -926,6 +934,23 @@ def _with_meta(body: str, author: str, note_type_: str, pinned: bool | None,
 async def put_note(scope_key: str, note_id: str, title: str, content: str, hook: str = "",
                    author: str = "", note_type: str = "", pinned: bool | None = None,
                    chat_id: str = "") -> dict:
+    """Write a note. The async entry point, which is what every caller uses.
+
+    The work is entirely synchronous file IO and lives in `_put_note_sync`
+    below; this awaits nothing and never did. The split exists because the
+    compaction fold's landing (`routes/chat._land_fold`) is a synchronous
+    function called from inside a running event loop, so it can neither await
+    this nor `asyncio.run` it, and the alternative -- a second note-writing
+    implementation for sync callers -- is exactly the kind of parallel system
+    this repo is removing. One implementation, two doors."""
+    return _put_note_sync(scope_key, note_id, title, content, hook=hook,
+                          author=author, note_type=note_type, pinned=pinned,
+                          chat_id=chat_id)
+
+
+def _put_note_sync(scope_key: str, note_id: str, title: str, content: str, hook: str = "",
+                   author: str = "", note_type: str = "", pinned: bool | None = None,
+                   chat_id: str = "") -> dict:
     """Write a note (source of truth on disk).
 
     1. write `<note-id>.md` atomically,
@@ -1054,6 +1079,211 @@ async def delete_note(scope_key: str, note_id: str) -> dict:
                     scope_key, note_id, exc_info=True)
 
     return {"scope": scope_key, "note_id": note_id, "existed": existed}
+
+
+# --- working state (the compaction handoff) ----------------------------------
+# WHAT THIS IS. When a chat compacts, the messages it folds away are replaced by
+# a summary that lives on the thread record and nowhere else, so a NEW chat in
+# the same scope inherits nothing at all: every session started from zero and
+# re-derived what the last one had already worked out. The two hand-written
+# `docs/platform-redesign/HANDOFF-*.md` files exist because two agents happened
+# to remember to write one. This makes that automatic.
+#
+# WHY IT IS A NOTE AND NOT A NEW STORE. It is scope-keyed, durable, plaintext,
+# operator-readable and operator-editable, which is the definition of a note
+# here. This installation is already reducing eleven parallel memory
+# substrates; adding a twelfth to fix a memory problem would be the joke
+# writing itself. So it is `<scope>/working-state.md`, indexed in MEMORY.md,
+# rendered by the Memory page, searchable, backlinked, versioned -- all of it
+# for free, because it went into the store that already exists.
+#
+# HOW A READER TELLS IT APART FROM AN ORDINARY NOTE. Three ways, in descending
+# order of how much you have to already know:
+#   1. the note id is exactly `working-state`, one per scope, reserved;
+#   2. the body opens with `_WORKING_STATE_HEADER`, whose first sentence says
+#      it is machine-written and will be overwritten;
+#   3. its author marker is `derived:<model>` and its `chat:` field names the
+#      conversation whose compaction last wrote it.
+# An ordinary note is a durable claim about the world. This one is a snapshot
+# of a piece of work in progress, and the next compaction in this scope
+# replaces it wholesale.
+#
+# ONE PER SCOPE, UPDATED IN PLACE. `put_note` on a fixed id overwrites, so a
+# scope has exactly one current working state rather than a pile of dated
+# handoffs nobody reads. The history is not lost: the file is on disk, in git
+# for the tracked scopes, and every fold that produced one is in the chat
+# transcript it came from.
+WORKING_STATE_NOTE_ID = "working-state"
+WORKING_STATE_TITLE = "Working state (auto-written at compaction)"
+WORKING_STATE_HOOK = ("the last session's handoff for this scope: objective, "
+                      "decisions and why, done, not done, shortcuts owed, open questions")
+
+# The six sections, in order. Exported because three places must agree on them:
+# the summarizer prompt that asks for them (`routes/chat._summary_prompt`), the
+# reader that trims within them (`_bound_working_state`), and the tests that
+# check a fold round-trips them. A seventh section invented by the model is not
+# an improvement, it is the free prose this replaced coming back in disguise.
+WORKING_STATE_SECTIONS = (
+    "Objective",
+    "Decisions and why",
+    "Done",
+    "Not done",
+    "Shortcuts taken and what they owe",
+    "Open questions",
+)
+
+# THE BUDGET, in characters, at the repo's usual 4-chars-per-token proxy:
+# 4800 chars is ~1200 tokens.
+#
+# Why that number and not another. It is spent on EVERY turn of EVERY chat in
+# the scope, so it has to be justified against its neighbours in the same
+# prompt rather than picked for feeling generous:
+#   - the layered knowledge index gets 500 tokens for ALL note titles in the
+#     scope (DEFAULT_LAYERED_INDEX_TOKEN_BUDGET). The working state is not
+#     taken from that budget and does not compete with it: an index of titles
+#     and a body of current state are different things, and starving either to
+#     feed the other is how both stop being useful.
+#   - compaction leaves ~4000 tokens of the conversation verbatim
+#     (`_COMPACT_KEEP_TAIL_TOKENS`). The handoff must stay comfortably under
+#     that: a summary of old work that outweighs the live conversation is
+#     inverted priorities, and the model will read it as the more important of
+#     the two because it sits higher in the prompt.
+# 1200 sits between them. It carries roughly 800 words -- six sections with
+# real content in each, decisions with their reasons attached -- while costing
+# under a third of the verbatim tail. The summarizer is separately asked for
+# ~500 words, so this cap is headroom for a model that overshoots rather than
+# the target; in the normal case nothing is trimmed at all.
+#
+# It is a HARD cap, not a target, and that is the point: a running summary that
+# is re-fed to itself on every fold is exactly the shape of thing that grows
+# without bound, and the operator can also edit this note by hand to any length
+# he likes. Bounded at write AND at read, so neither path can be the one that
+# forgets.
+WORKING_STATE_MAX_CHARS = 4800
+
+_WORKING_STATE_TRIM_MARKER = "[trimmed to fit the working-state budget]"
+
+_WORKING_STATE_HEADER = """Written automatically when a chat in this scope compacts, and overwritten by
+the next compaction here. It is the handoff a new chat in this scope reads to
+continue the work without the old transcript.
+
+Edit it freely to correct what is wrong: the corrected text is what the next
+chat reads. But it is a snapshot of work in progress, not a durable record, so
+anything that must outlive this piece of work belongs in a note of its own.
+
+"""
+
+
+def _bound_working_state(text: str, max_chars: int = WORKING_STATE_MAX_CHARS) -> str:
+    """Trim a working state to `max_chars`, TAKING FROM THE FATTEST SECTION.
+
+    Not a tail truncation. The sections are ordered by what a reader needs
+    first, which puts "Shortcuts taken and what they owe" and "Open questions"
+    last, and those two are precisely the things nobody writes down and nobody
+    can reconstruct. Cutting the tail would delete them first and every time.
+
+    So: keep every heading, and drop the last bullet from whichever section
+    currently has the most text under it, until it fits. An over-long section
+    loses its least-recently-added items; the shape survives. One marker line
+    is appended so a reader (and the next fold, which is handed this text back)
+    can see that something was dropped rather than silently reading a partial
+    state as a complete one.
+    """
+    text = (text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    marker_cost = len(_WORKING_STATE_TRIM_MARKER) + 1
+    blocks: list[list[str]] = []
+    for line in text.split("\n"):
+        if line.startswith("## ") or not blocks:
+            blocks.append([line])
+        else:
+            blocks[-1].append(line)
+
+    def size() -> int:
+        return sum(len(ln) + 1 for b in blocks for ln in b) + marker_cost
+
+    while size() > max_chars:
+        fattest = max(blocks, key=lambda b: sum(len(ln) + 1 for ln in b[1:]))
+        if len(fattest) <= 1:
+            # Every section is down to its bare heading and it still does not
+            # fit, which means the headings themselves are the bulk (a model
+            # that emitted one enormous unbroken line, or a hand-edited note
+            # with no structure at all). Hard cut rather than loop forever.
+            return text[: max(0, max_chars - marker_cost)].rstrip() + "\n" + _WORKING_STATE_TRIM_MARKER
+        fattest.pop()
+    return ("\n".join(ln for b in blocks for ln in b).rstrip()
+            + "\n" + _WORKING_STATE_TRIM_MARKER)
+
+
+def _sections_only(body: str) -> str:
+    """The `## `-headed part of a working-state note, without the human-facing
+    header. The header explains the note to the OPERATOR reading the Memory
+    page; re-injecting it into every prompt would spend ~90 tokens a turn
+    telling a model about a file it is not being asked to maintain.
+
+    Falls back to the whole body when there is no heading at all, which is what
+    a hand-edited note may legitimately look like: better to inject the
+    operator's own words than nothing."""
+    body = (body or "").strip()
+    if body.startswith("## "):
+        return body
+    i = body.find("\n## ")
+    return body[i + 1:].strip() if i >= 0 else body
+
+
+def write_working_state(scope_key: str, sections: str, *, author: str = "",
+                        chat_id: str = "") -> dict:
+    """Write (or overwrite) this scope's working-state note. Synchronous, so
+    the fold's landing can call it without an event loop of its own.
+
+    `sections` is the structured text the summarizer produced. It is bounded
+    here, before it reaches disk, so a runaway summary cannot leave a note that
+    the read path then has to fight with on every turn.
+
+    RAISES on failure. The caller (`routes/chat._land_fold`) is the one that
+    must not fail, and it catches: a handoff that could not be written is worth
+    a log line and nothing more, because the fold it rode in on has already
+    done the thing the operator asked for."""
+    text = _bound_working_state(_sections_only(sections))
+    if not text:
+        raise ValueError("refusing to write an empty working state")
+    return _put_note_sync(
+        scope_key, WORKING_STATE_NOTE_ID, WORKING_STATE_TITLE,
+        _WORKING_STATE_HEADER + text + "\n",
+        hook=WORKING_STATE_HOOK, author=author,
+        # `reference` rather than `decision` or `fact`: the note POINTS AT the
+        # current state of a piece of work. The decisions inside it are real,
+        # but they are recorded here as part of a snapshot that expires, and
+        # typing the whole thing `decision` would rank an expiring snapshot
+        # alongside the standing decisions in `_TYPE_RANK`.
+        note_type="reference",
+        # Pinned: it is the one note in the scope whose whole purpose is to be
+        # found again by somebody who does not know it exists.
+        pinned=True,
+        chat_id=chat_id,
+    )
+
+
+def read_working_state(scope_key: str) -> tuple[str, str]:
+    """(sections, originating chat id) for this scope's working state.
+
+    `("", "")` when there is none, which is the normal state of a scope that
+    has never compacted. Bounded again on the way out: the note is editable by
+    hand and by any agent with note tools, and the prompt's budget is not
+    theirs to spend.
+
+    The chat id is returned alongside because the one caller that injects this
+    (`chat_context.working_state_block`) needs to know whether the chat it is
+    building a prompt for is the same one that last wrote the note -- in which
+    case that chat already carries this text verbatim as its own compaction
+    summary, and injecting it a second time would spend the budget saying the
+    same thing twice."""
+    body = get_note(scope_key, WORKING_STATE_NOTE_ID)
+    if not body or not body.strip():
+        return "", ""
+    _author, _type, _pinned, chat = _stored_meta(scope_key, WORKING_STATE_NOTE_ID)
+    return _bound_working_state(_sections_only(body)), chat
 
 
 # --- search + recall ---------------------------------------------------------

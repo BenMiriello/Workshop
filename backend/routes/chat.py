@@ -1513,7 +1513,15 @@ def _build_prompt(
     preamble: str = "",
     summary: str = "",
     tools_active: bool = False,
+    thread_id: str = "",
 ) -> str:
+    # `thread_id` is used for exactly one thing: telling the scope's working
+    # state apart from THIS thread's own compaction summary when they are the
+    # same text (see the WORKING STATE block below). Defaulted to "" rather
+    # than made required, because a caller that does not know which thread it
+    # is building for is asking for a prompt, not for that de-duplication, and
+    # the worst case of not knowing is one block injected twice rather than
+    # anything incorrect.
     # Layered prompt (see docs 01 §3 and agent-context-and-toolkit-2026-08-20):
     #   0. PLATFORM KERNEL (L0) — confidential, non-editable, highest authority.
     #   1. ROLE PREAMBLE (platform-owned safety/capability facts) — computed from
@@ -1589,6 +1597,33 @@ def _build_prompt(
         ambient_block = ""
     if ambient_block:
         parts.append(ambient_block)
+    # THIS SCOPE'S WORKING STATE, written by the last compaction that happened
+    # anywhere in this scope (routes/chat._write_working_state ->
+    # knowledge.write_working_state). It is what makes compaction worth
+    # something to a chat OTHER than the one that compacted: objective,
+    # decisions with their reasons, done, not done, shortcuts owed, open
+    # questions. Sits right after the ambient digest because the two are
+    # complementary and the block itself states which of them owns what: the
+    # digest owns ticket and job STATUS, this owns REASONING.
+    #
+    # Bounded to knowledge.WORKING_STATE_MAX_CHARS (~1200 tokens) at both the
+    # write and the read, and NOT taken from the knowledge index's 500-token
+    # budget, which is spent on note titles and would be emptied by one
+    # handoff. Best-effort like its neighbours; never blocks the reply.
+    try:
+        ws_block = chat_context.working_state_block(
+            provider,
+            # Suppress it for the chat that wrote it, but only when that chat
+            # is actually carrying the text: after a /clear the summary is
+            # gone and the note is the only copy left, and that chat needs it
+            # as much as any other.
+            exclude_chat=(thread_id if summary.strip() else ""),
+        )
+    except Exception as e:
+        log.warning("chat working state block failed for %s: %s", provider.key, e)
+        ws_block = ""
+    if ws_block:
+        parts.append(ws_block)
     # Ambient in-scope knowledge index (Phase 2): the note titles for this scope so
     # the model knows what it can recall. Small + cache-stable (bodies arrive via
     # retrieval in the reply region, not here). Best-effort; never blocks the reply.
@@ -2008,16 +2043,54 @@ def _summary_prompt(prev_summary: str, to_fold: list[dict]) -> str:
     in `_fold_summary` can measure the SAME prompt `call_cloud` actually saw,
     without duplicating it out of sync or re-plumbing `_summarize_sync`'s
     return type (tests monkeypatch that function directly)."""
+    headings = "\n".join(f"## {h}" for h in knowledge.WORKING_STATE_SECTIONS)
     return (
-        "You are compacting a chat transcript to reclaim context. Write a running "
-        "summary that preserves decisions made, facts established, the operator's "
-        "stated preferences, file paths and identifiers, and anything unfinished. "
-        "Keep what a reader would need to continue the conversation without the "
-        "original. Drop pleasantries and repetition. Write plainly, no em-dashes, "
-        "no emojis.\n\n"
-        + (f"=== SUMMARY SO FAR ===\n{prev_summary}\n\n" if prev_summary else "")
+        "You are compacting a chat transcript to reclaim context. What you write "
+        "replaces the folded messages, and it is also saved as this scope's "
+        "WORKING STATE: the handoff a different session reads later to continue "
+        "this work without the transcript. Write it as a handoff, not as a "
+        "story about a conversation.\n\n"
+        "Use EXACTLY these six headings, all of them, in this order, spelled "
+        "exactly like this:\n"
+        f"{headings}\n\n"
+        "Under each heading write short lines starting with '- '. A heading with "
+        "nothing under it gets the single line '- None.' Never add a heading, "
+        "rename one, drop one, reorder them, or write anything outside them.\n\n"
+        "What belongs under each:\n"
+        "- Objective: what this work is trying to achieve, one or two sentences.\n"
+        "- Decisions and why: THE MOST IMPORTANT SECTION. Every decision together "
+        "with the reason it was made. A decision recorded without its reason gets "
+        "re-litigated by the next session or silently reversed, so a line here "
+        "that does not say why is not finished. Include decisions to NOT do "
+        "something, which are the ones that get quietly undone.\n"
+        "- Done: what is actually finished, each with the identifiers that make it "
+        "checkable: file paths, function names, commit hashes, ticket ids. Not "
+        "'refactored the router', but which file and which function.\n"
+        "- Not done: what remains, and for anything blocked, what it is blocked on "
+        "and who or what would unblock it.\n"
+        "- Shortcuts taken and what they owe: work done the quick way that needs "
+        "revisiting, and what the real version would be. Stubs, hardcoded values, "
+        "copy-paste, skipped tests, a second code path added instead of changing "
+        "the first, anything deferred 'for now'. A shortcut nobody wrote down is "
+        "indistinguishable later from a deliberate design, which is how a codebase "
+        "accumulates parallel systems nobody chose.\n"
+        "- Open questions: things genuinely undecided, each with who owns the "
+        "answer (the operator, or this session).\n\n"
+        "Preserve file paths, identifiers and numbers verbatim, and preserve the "
+        "operator's stated preferences in his own words. Drop pleasantries, "
+        "repetition, and narration of the work as it happened. Write plainly, no "
+        "em-dashes, no emojis. Keep the whole thing under about 500 words: it is "
+        "carried in every later prompt, so its length is a cost paid on every "
+        "turn.\n\n"
+        "You are given the working state so far, if there is one, and the messages "
+        "to fold into it. Return the UPDATED working state: merge the new messages "
+        "in, move items from Not done to Done as they finish, drop what has stopped "
+        "being true, and keep everything from the earlier state that is still "
+        "true.\n\n"
+        + (f"=== WORKING STATE SO FAR ===\n{prev_summary}\n\n" if prev_summary else "")
         + f"=== MESSAGES TO FOLD IN ===\n{_fmt_for_summary(to_fold)}\n\n"
-        "=== OUTPUT ===\nThe updated summary only, no preamble."
+        "=== OUTPUT ===\nThe updated working state only. Start with the first "
+        "heading. No preamble, no closing remark."
     )
 
 
@@ -2153,7 +2226,54 @@ def _land_fold(thread_id: str, summary: str, folded_through: int) -> bool:
     if t is None:
         return False
     provider = chat_context.get_provider(t.get("context_key"))
+    _write_working_state(thread_id, t, summary)
     return _detach_live_session(thread_id, t, provider)
+
+
+def _write_working_state(thread_id: str, t: dict, summary: str) -> None:
+    """Save the fold's summary as this SCOPE's working state, so a chat that
+    does not exist yet can continue from it.
+
+    THIS IS THE HALF THAT MAKES COMPACTION WORTH ANYTHING TO ANYONE ELSE.
+    Everything above this line writes to the thread record: the summary, the
+    cut, the boundary. All of it is read only by the thread that produced it,
+    so a new chat in the same project inherits nothing at all and starts by
+    re-deriving what the last session already worked out. The two hand-written
+    `docs/platform-redesign/HANDOFF-*.md` files are what that looks like when
+    somebody remembers to do it manually.
+
+    It goes into the note store (`knowledge.write_working_state`), NOT into a
+    new table or file of its own: one note per scope at the reserved id
+    `working-state`, overwritten each time, so the scope has one current
+    working state rather than a pile of dated handoffs. That also buys the
+    Memory page, search, backlinks and hand-editing for free.
+
+    BEST EFFORT, ALWAYS. Nothing here may fail a fold. The operator pressed
+    compact to reclaim context; that has already happened by the time this
+    runs (`set_summary` is above), and a handoff that could not be filed is a
+    log line, not a failed operation. Logged at WARNING rather than debug
+    because unlike the other best-effort blocks in this file, nothing retries
+    this: the next fold writes the NEXT state, so a state lost here is lost.
+    """
+    try:
+        scope = knowledge.scope_for_context(t.get("context_key") or "")
+        knowledge.write_working_state(
+            scope, summary,
+            # `derived:<model>`, the origin vocabulary for "a model wrote
+            # this", so the Memory page and anything else reading provenance
+            # can tell it from a note the operator or an agent wrote. The
+            # model named is the one that actually produced the text.
+            author=origin.derived(llm_router.TIER_HAIKU),
+            # The originating chat, which `put_note` already records on every
+            # note. Read back by `chat_context.working_state_block` to avoid
+            # re-injecting this text into the very chat that is already
+            # carrying it verbatim as its own summary.
+            chat_id=thread_id,
+        )
+        log.info("compact: working state for scope %s written from %s (%d chars)",
+                 scope, thread_id, len(summary))
+    except Exception as e:
+        log.warning("compact: working-state note write failed for %s: %s", thread_id, e)
 
 
 # The provider-agnostic seam (see `services.compaction_adapter` and
@@ -2366,7 +2486,8 @@ async def thread_context(thread_id: str):
     # while turns sent the whole thing, which is how a chat could read 12% and
     # still be re-sending every message ever written in it.
     prompt = _build_prompt(provider, history, "", preamble=preamble,
-                           summary=(t.get("summary") or ""), tools_active=tools_active)
+                           summary=(t.get("summary") or ""), tools_active=tools_active,
+                           thread_id=str(t.get("id") or ""))
     used = max(1, round(len(prompt) / 4))
     return {
         "used_tokens": used,
@@ -2613,7 +2734,8 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     # The transcript goes as it is. `chat_store` already cut it at the last
     # /clear before handing it over, and nothing else may remove a message.
     prompt = _build_prompt(provider, history, content, preamble=preamble,
-                           summary=summary, tools_active=tools_active)
+                           summary=summary, tools_active=tools_active,
+                           thread_id=str(t.get("id") or ""))
     # Stated after the persona so it can override the ticket protocols the
     # persona carries, in the direction that removes capability.
     prompt = prompt + "\n\n" + chat_context.chat_mode_block(t.get("mode"))
