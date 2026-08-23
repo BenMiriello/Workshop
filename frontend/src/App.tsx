@@ -31,6 +31,7 @@ const AppPreview = lazyPage(() => import("./pages/AppPreview"));
 const Grants = lazyPage(() => import("./pages/settings/Grants"));
 const Trackers = lazyPage(() => import("./pages/settings/Trackers"));
 const McpServers = lazyPage(() => import("./pages/settings/McpServers"));
+const ToolsSettings = lazyPage(() => import("./pages/settings/Tools"));
 const CustomInstructions = lazyPage(() => import("./pages/settings/CustomInstructions"));
 const Marketplace = lazyPage(() => import("./pages/Marketplace"));
 const DeployDetail = lazyPage(() => import("./pages/DeployDetail"));
@@ -139,6 +140,7 @@ export default function App() {
           <Route path="/settings/grants" element={<Grants />} />
           <Route path="/settings/trackers" element={<Trackers />} />
           <Route path="/settings/mcp" element={<McpServers />} />
+          <Route path="/settings/tools" element={<ToolsSettings />} />
           <Route path="/settings/instructions" element={<CustomInstructions />} />
           <Route path="/apps" element={<Apps />} />
           <Route path="/marketplace" element={<Marketplace />} />

@@ -219,6 +219,7 @@ export function buildPlaces(
       { id: "apps", label: "Apps", to: "/settings/apps", Icon: icons.apps },
       { id: "trackers", label: "Trackers", to: "/settings/trackers", Icon: icons.trackers },
       { id: "mcp", label: "MCP", to: "/settings/mcp", Icon: icons.mcp },
+      { id: "tools", label: "Tools", to: "/settings/tools", Icon: icons.tools },
       { id: "access", label: "Access", to: "/settings/grants", Icon: icons.access },
       // Fleet concurrency, the autonomy brake, and the queue runner. This was
       // "This host" until 2026-08-20, when the GPU/broker/Ollama residency rows
