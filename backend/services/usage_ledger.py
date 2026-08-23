@@ -721,7 +721,7 @@ def _admission(scope: str | None, now: datetime | None = None,
         reason = (
             f"refused: autonomous work has used {fmt_tokens(usage['app'])} of the "
             f"{fmt_tokens(autonomous_ceiling)} tokens it may spend in a {hours} hour "
-            f"window, and the next task needs {fmt_tokens(reserve)} more")
+            f"window, and the next task needs {fmt_tokens(reserve)} more.")
         return False, reason, _refusal(
             "app_ceiling", reason, scope=scope, used=usage["app"],
             limit=autonomous_ceiling, window_s=WINDOW_S,
@@ -733,7 +733,7 @@ def _admission(scope: str | None, now: datetime | None = None,
         if ceil is not None and used_scope >= float(ceil):
             reason = (
                 f"refused: the {scope} scope has used {fmt_tokens(used_scope)} of its "
-                f"{fmt_tokens(float(ceil))} token allowance for the last {hours} hours")
+                f"{fmt_tokens(float(ceil))} token allowance for the last {hours} hours.")
             return False, reason, _refusal(
                 "scope_ceiling", reason, scope=scope, used=used_scope,
                 limit=float(ceil), window_s=WINDOW_S,
@@ -751,7 +751,7 @@ def _admission(scope: str | None, now: datetime | None = None,
             reason = (
                 f"refused: the {scope} scope has used {fmt_tokens(used_scope)} of the "
                 f"{fmt_tokens(allowance)} tokens allocated to it for the last "
-                f"{hours} hours")
+                f"{hours} hours.")
             return False, reason, _refusal(
                 "scope_allocation", reason, scope=scope, used=used_scope,
                 limit=allowance, window_s=WINDOW_S,

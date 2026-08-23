@@ -427,7 +427,7 @@ describe("the run's state word", () => {
 describe("a run a budget guard refused", () => {
   const REASON =
     "refused: the development scope has used 1.97M of its 1.50M token allowance "
-    + "for the last 5 hours";
+    + "for the last 5 hours.";
   const refusedRun = run({
     status: "cancelled",
     started_at: "2026-08-15T11:59:59Z",
