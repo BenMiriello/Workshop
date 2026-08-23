@@ -19,6 +19,7 @@ from middleware.compression import SSEAwareGZipMiddleware
 from routes import agents, projects, base_apps, relay, services, events, jobs, push, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes
 from routes import files as files_routes
 from routes import mcp as mcp_routes
+from routes import tools as tools_routes
 from routes import stores as stores_routes
 from routes import deploys as deploys_routes
 from routes import apps as apps_routes
@@ -359,6 +360,13 @@ app.include_router(usage.router, dependencies=_OPERATOR)  # rolling-window token
 # Settings -> MCP: which MCP servers exist, whether they connect, what they
 # cost. Machine-wide facts, so it hangs off settings rather than a chat.
 app.include_router(mcp_routes.router, dependencies=_OPERATOR)
+# Settings -> Tools: every capability this instance can name and who owns each
+# (docs/platform-redesign/tools-are-declared-2026-08-23.md). Beside /mcp for the
+# same reason: machine-wide facts, not a chat's. The router lists all three
+# provenances and writes only the user's own -- LISTING IS NOT GRANTING, and
+# services/llm_router.tool_flags stays the only thing that puts a tool on an
+# agent's argv.
+app.include_router(tools_routes.router, dependencies=_OPERATOR)
 
 # Platform per-user primitives — owner-scoped to the authenticated user. These
 # are the shell (chat, voice, push), NOT apps: apps build on them, so they mount

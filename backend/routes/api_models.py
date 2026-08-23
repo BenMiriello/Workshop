@@ -611,6 +611,66 @@ class DeletedOut(BaseModel):
     deleted: bool
 
 
+# ---- Tools (docs/platform-redesign/tools-are-declared-2026-08-23.md) --------
+# Shared because two routers serve the same enumeration: `/tools` (the tools
+# surface, with the user-owned CRUD) and `GET /agents/tools` (what an agent's
+# allowlist may name). One description, per this file's own rule.
+
+
+class ToolParam(BaseModel):
+    """One typed input a `command` tool accepts.
+
+    Read off `services/tool_registry.ToolParam`. A declared parameter list
+    rather than a raw JSON-Schema blob: a `dict` field here would generate
+    `Record<string, never>` in the client (see `scripts/check_opaque_fields.py`)
+    and the frontend would hand-write the shape anyway."""
+
+    name: str
+    type: str = "string"
+    description: str = ""
+    required: bool = False
+
+
+class ToolSpec(BaseModel):
+    """A tool's kind-specific launch detail. `extra="allow"` because the spec
+    grows per kind: the declared floor below is what the three current kinds
+    use, and an unrecognised key survives the round trip rather than being
+    dropped by the response model."""
+
+    model_config = ConfigDict(extra="allow")
+
+    app: str | None = None       # app provenance: the app that declared it
+    server: str | None = None    # mcp: the server exposing the tool
+    tool: str | None = None      # mcp: the tool's name on that server
+    command: list[str] | None = None   # command: the argv
+    params: list[ToolParam] | None = None
+
+
+class ToolRecord(BaseModel):
+    """A named capability an agent may be granted. Read off
+    `services/tool_registry.Tool.to_dict`.
+
+    ENUMERATION, NOT AUTHORITY: appearing here does not put a tool on any
+    agent's argv. `services/llm_router.tool_flags` remains the only thing that
+    grants a tool, and this record says what exists and who owns it."""
+
+    id: str
+    title: str
+    description: str = ""
+    kind: str          # builtin | mcp | command
+    provenance: str    # platform | app | user
+    spec: ToolSpec = ToolSpec()
+    scopes: list[str] = []
+    ceiling: list[str] = []
+    # provenance == "user". Derived, and sent so a client does not have to
+    # re-derive the rule; the API enforces it independently either way.
+    editable: bool = False
+
+
+class ToolsOut(BaseModel):
+    tools: list[ToolRecord]
+
+
 class TreeNode(BaseModel):
     """One entry in a working-tree listing. Recursive: `children` is present on
     a directory and absent on a file, `size` the other way round."""

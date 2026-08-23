@@ -122,8 +122,12 @@ class AppSpec:
     # indexed on every build (semantic_index.DEFAULT_KINDS).
     index_collectors: dict[str, Callable[[], Any]] = field(default_factory=dict)
     index_collectors_default: tuple[str, ...] = ()
-    # Tool handles this app offers to agents (routes/agents.py KNOWN_TOOLS).
-    tools: tuple[str, ...] = ()
+    # An app's TOOLS are declared in its manifest, not here: see
+    # `services/tool_registry.app_tools` and
+    # `docs/platform-redesign/tools-are-declared-2026-08-23.md`. The `tools`
+    # field that used to sit here fed `routes/agents.known_tools`, in the same
+    # made-up vocabulary as that route's deleted five-string platform list --
+    # not CLI tool names, not MCP tool names, and enforced by nothing.
     # Stores this app owns: (name, path_factory, type). The factory is called
     # lazily so a store whose directory does not exist yet costs nothing at
     # import time. `per_owner` stores resolve under the owner's runtime dir.
@@ -321,7 +325,6 @@ def _finance_spec() -> AppSpec:
         event_sources=("plaid",),
         event_verifiers={"plaid": finance_events.verify_webhook},
         event_dedup={"plaid": finance_events.dedup_key},
-        tools=("plaid",),
         edge_blocked_prefixes=("/plaid/webhook",),
         secret_env=("PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV", "PLAID_ENV_URL"),
         stores=(
@@ -807,15 +810,6 @@ def installed_index_collectors() -> tuple[dict[str, Callable[[], Any]], set[str]
     return collectors, default
 
 
-def installed_tools() -> list[str]:
-    out: list[str] = []
-    for spec in installed_specs():
-        for tool in spec.tools:
-            if tool not in out:
-                out.append(tool)
-    return out
-
-
 def installed_chat_model_tiers() -> dict[str, str]:
     return {s.id: s.chat_model_tier for s in installed_specs() if s.chat_model_tier}
 
@@ -934,6 +928,11 @@ def ensure_identity_manifests() -> None:
                 "api_prefixes": spec.identity.get("api_prefixes", []),
                 "provides": spec.identity.get("provides", []),
                 "needs": spec.identity.get("needs", []),
+                # A built-in app declares its tools in `identity` and they are
+                # seeded into its manifest here, so the manifest is the single
+                # place `services/tool_registry` has to read for every app,
+                # in-tree or not (tools-are-declared-2026-08-23.md sec 2.2).
+                "tools": spec.identity.get("tools", []),
             }
             manifests.upsert_manifest(spec.id, entry)
     except Exception as e:  # pragma: no cover - best-effort seeding

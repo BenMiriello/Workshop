@@ -379,10 +379,28 @@ class TestDoors789TheLoops:
         # had a live replacement. Nothing can be added back to a table that
         # does not exist.
         import importlib
-        for mod in ("routes.tools", "services.letta_tools",
-                    "services.letta_tools.cloud"):
+        for mod in ("services.letta_tools", "services.letta_tools.cloud"):
             with pytest.raises(ModuleNotFoundError):
                 importlib.import_module(mod)
+
+        # `routes/tools.py` exists again as of 2026-08-23 and this clause is
+        # written against what was actually forbidden rather than against a
+        # filename. The dead shim RAN a tool: `POST /tools/{name}` invoked the
+        # named tool over HTTP, outside the claim, lease, receipt, acceptance
+        # and budget that a ticket goes through. The new module is the tool
+        # REGISTRY (docs/platform-redesign/tools-are-declared-2026-08-23.md):
+        # it lists declarations and edits the user-owned ones, it executes
+        # nothing, and `services/llm_router.tool_flags` remains the only thing
+        # that puts a tool in front of a model. So the pin is that no path here
+        # invokes a named tool: a POST addressed to an individual tool is the
+        # shim's shape, and there must not be one.
+        from routes import tools as tools_routes
+
+        invoking = [
+            r.path for r in tools_routes.router.routes
+            if "POST" in getattr(r, "methods", set()) and "{" in getattr(r, "path", "")
+        ]
+        assert not invoking, f"a tool-invocation surface is back: {invoking}"
 
 
 # --------------------------------------------------------------------------

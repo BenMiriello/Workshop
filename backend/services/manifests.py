@@ -71,6 +71,16 @@ def _normalize_entry(app_id: str, raw: Any) -> dict[str, Any]:
     # unchanged) and capture the optional types in parallel maps.
     provides, provide_types = _split_typed(raw.get("provides"))
     needs, need_types = _split_typed(raw.get("needs"))
+    # Tool declarations (`docs/platform-redesign/tools-are-declared-2026-08-23.md`
+    # §2.2): an app's tools arrive and leave with the app, so the app declares
+    # them here rather than any platform file naming them. Passed through as raw
+    # dicts — `services/tool_registry` owns the record shape and normalizes each
+    # one, so a tool declared by an app and a tool declared by a person go
+    # through exactly one normalizer. Non-dict entries are dropped, per this
+    # layer's rule that a malformed entry costs itself and nothing else.
+    raw_tools = raw.get("tools")
+    tools = ([t for t in raw_tools if isinstance(t, (dict, str))]
+             if isinstance(raw_tools, list) else [])
     return {
         "title": str(raw.get("title") or app_id),
         "sensitivity": sensitivity,
@@ -80,6 +90,7 @@ def _normalize_entry(app_id: str, raw: Any) -> dict[str, Any]:
         "provide_types": provide_types,
         "need_types": need_types,
         "actions": actions,
+        "tools": tools,
         "ui": ui,
         "kit": str(raw.get("kit") or DEFAULT_KIT),
     }
