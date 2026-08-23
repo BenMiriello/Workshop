@@ -215,15 +215,23 @@ export default function QuestionView({
         )}
         <span className="chat-workpanel__spacer" />
         {/* Deferral, not closure: the item stays open on the server and comes
-            back on its own. */}
-        <button
-          type="button"
-          className="chat-workpanel__change"
-          disabled={busy}
-          onClick={() => { void work.snooze(item.id, "tomorrow"); onBack(); }}
-        >
-          Snooze
-        </button>
+            back on its own.
+
+            NOT OFFERED FOR A TICKET. A row about a ticket is READ off that
+            ticket rather than stored (`services/chat_work`), so there is no row
+            to defer: the ticket is still waiting, and the row comes back on the
+            next poll whatever this button did. Deferring a decision you owe is
+            what `Later` already is -- it closes the panel and changes nothing. */}
+        {!item.ticket_id && (
+          <button
+            type="button"
+            className="chat-workpanel__change"
+            disabled={busy}
+            onClick={() => { void work.snooze(item.id, "tomorrow"); onBack(); }}
+          >
+            Snooze
+          </button>
+        )}
         <button type="button" className="chat-workpanel__change" onClick={onClose}>
           Later
         </button>

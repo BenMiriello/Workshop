@@ -1,20 +1,17 @@
-"""The inbox as a stream: approve actually writes, snooze actually hides, and an
-autonomous run that ended with nobody watching actually shows up.
-
-Two defects, one surface (a third, the memory-promotion approve write path,
-was pinned here until the `memory_promotion` module it served was deleted —
-`PROMOTE_AT` could never be satisfied, see
-docs/platform-redesign/memory-consolidation-2026-08-16.md D9):
+"""The inbox as a stream: snooze actually hides, and a re-raise does not wake it.
 
   * **Snooze had to filter in the store.** `counts()` is built by calling
     `list_items` and the chat badge reads `counts()`, so a filter anywhere above
     the store leaves a badge counting rows the panel refuses to show.
-  * **The surface was empty.** Only blocked tickets raised anything, so an
-    autonomous run could fail at 3am and say so nowhere.
+
+The other half of this file was the finished-run producer, and it is gone with
+the producer (2026-08-22). It raised a `notify` per autonomous run that ended
+with nobody watching, which on the live record was 744 of 756 open items and
+nobody had ever actioned one. A finished run is on the run and on its ticket;
+see docs/platform-redesign/one-fact-one-place-2026-08-22.md §2.
 """
 from __future__ import annotations
 
-import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -26,7 +23,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from routes import inbox as inbox_routes  # noqa: E402
-from services import inbox, jobs, ownership  # noqa: E402
+from services import inbox, ownership  # noqa: E402
 
 
 @pytest.fixture
@@ -42,19 +39,14 @@ def store(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def client(store, monkeypatch):
-    # The listing reconciles on read. Those producers have their own tests; here
-    # they are noise that would raise unrelated rows into the assertions. The
-    # sequence moved into `inbox.reconcile` when the chat's aggregated work read
-    # started needing the same pass.
-    monkeypatch.setattr(inbox, "reconcile", lambda: None)
+def client(store):
     app = FastAPI()
     app.include_router(inbox_routes.router, prefix="/api")
     return TestClient(app)
 
 
 # ---------------------------------------------------------------------------
-# 2. Snooze filters in the store, so the badge cannot disagree with the panel
+# Snooze filters in the store, so the badge cannot disagree with the panel
 # ---------------------------------------------------------------------------
 
 def _in_an_hour():
@@ -110,7 +102,7 @@ def test_a_corrupt_stamp_cannot_hide_a_blocked_agent(store):
     assert [i["id"] for i in inbox.list_items()] == [item["id"]]
 
 
-def test_include_snoozed_is_how_a_reconciler_sees_everything(store):
+def test_include_snoozed_is_how_a_sweep_sees_everything(store):
     item = inbox.raise_item(kind="question", agent="a", scope="workshop", title="One")
     inbox.snooze_item(item["id"], _in_an_hour())
     assert inbox.list_items() == []
@@ -158,7 +150,7 @@ def test_a_bad_preset_is_refused(client, store):
 
 
 # ---------------------------------------------------------------------------
-# 3. Auto-unsnooze on activity
+# Auto-unsnooze on activity
 # ---------------------------------------------------------------------------
 
 def _reraise(**over):
@@ -169,11 +161,10 @@ def _reraise(**over):
     return inbox.raise_item(**kw)
 
 
-def test_the_reconcile_pass_does_not_wake_a_snoozed_item(store):
-    """`run_inbox.sync` re-raises every blocked task on EVERY inbox read, about
-    every twenty seconds. If a bare re-raise woke the item, snooze would be a
-    no-op for the only live producer and the row the operator just deferred
-    would be back before he looked away."""
+def test_a_bare_re_raise_does_not_wake_a_snoozed_item(store):
+    """An ambient agent re-raises what it is holding on every pass. If a bare
+    re-raise woke the item, snooze would be a no-op and the row the operator
+    just deferred would be back before he looked away."""
     item = _reraise()
     inbox.snooze_item(item["id"], _in_an_hour())
 
@@ -212,129 +203,3 @@ def test_a_woken_item_keeps_its_identity_rather_than_duplicating(store):
     again = _reraise(title="Bind a scope to a tracker (retry 2)")
     assert again["id"] == item["id"]
     assert len(inbox._load()) == 1
-
-
-# ---------------------------------------------------------------------------
-# 4. The producer: an autonomous run that ended with nobody watching
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def job_log(tmp_path, monkeypatch):
-    log = tmp_path / "jobs.jsonl"
-    monkeypatch.setattr(jobs, "JOBS_LOG", log)
-    monkeypatch.setattr(jobs, "_collapsed_cache", None)
-    return log
-
-
-def _write_jobs(log: Path, *records: dict) -> None:
-    log.write_text("".join(json.dumps(r) + "\n" for r in records))
-
-
-def _job(job_id="job_1", *, trigger="cron", status="done", ended="2026-08-12T12:00:00+00:00",
-         **over):
-    rec = {"id": job_id, "trigger": trigger, "status": status,
-           "started_at": "2026-08-12T11:00:00+00:00", "ended_at": ended}
-    rec.update(over)
-    return rec
-
-
-def _sweep_from(when: datetime, log: Path, *records: dict):
-    """Seed the watermark, then sweep. The first pass on any box only records
-    where it started, so a test that wants a result has to run a second one."""
-    _write_jobs(log, *records)
-    inbox._set_run_watermark(when)
-    return inbox.sweep_finished_runs(now=datetime(2026, 8, 12, 13, 0, tzinfo=timezone.utc))
-
-
-def test_the_first_pass_records_where_it_started_and_reports_nothing(store, job_log):
-    """This log holds months of history. Replaying it would bury the surface at
-    the exact moment it starts working."""
-    _write_jobs(job_log, _job("job_old", ended="2026-07-14T09:00:00+00:00", tasks_done=3))
-
-    out = inbox.sweep_finished_runs()
-
-    assert out == {"raised": 0, "watermark": "initialized"}
-    assert inbox.list_items() == []
-    # And the pass after it does not go back for them either.
-    assert inbox.sweep_finished_runs()["raised"] == 0
-    assert inbox.list_items() == []
-
-
-def test_a_failed_autonomous_run_raises_a_notify(store, job_log):
-    out = _sweep_from(
-        datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc), job_log,
-        _job("job_9", trigger="loop", status="failed", task_id="t7",
-             project_slug="birds", evidence={"halted": "tree busy"}))
-
-    assert out["raised"] == 1
-    items = inbox.list_items()
-    assert len(items) == 1
-    it = items[0]
-    assert it["kind"] == "notify"
-    assert it["run_id"] == "job_9"
-    assert it["ticket_id"] == "t7"
-    assert it["dedupe_key"] == "run:job_9"
-    assert it["scope"] == "project:birds"
-    assert "failed" in it["title"]
-    assert "tree busy" in it["body"]
-
-
-def test_a_run_the_operator_started_by_hand_raises_nothing(store, job_log):
-    """`manual` means he pressed the button and is watching it. Telling him it
-    finished is noise, and the autonomous tier is the loudest claim there is."""
-    out = _sweep_from(datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc), job_log,
-                      _job("job_m", trigger="manual", status="failed"))
-    assert out["raised"] == 0
-    assert inbox.list_items() == []
-
-
-def test_an_idle_sweep_tick_is_not_an_event(store, job_log):
-    """1880 of this box's 2336 terminal autonomous runs finished having touched
-    nothing. A notification for each would bury the one blocked agent the whole
-    surface exists to surface."""
-    out = _sweep_from(datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc), job_log,
-                      _job("job_idle", tasks_done=0, tasks_failed=0))
-    assert out["raised"] == 0
-    assert inbox.list_items() == []
-
-
-def test_a_run_that_moved_a_ticket_reports(store, job_log):
-    _sweep_from(datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc), job_log,
-                _job("job_w", trigger="loop", tasks_done=2))
-    items = inbox.list_items()
-    assert len(items) == 1
-    assert "2 ticket(s) done" in items[0]["body"]
-
-
-def test_a_run_still_in_flight_is_not_reported(store, job_log):
-    out = _sweep_from(datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc), job_log,
-                      {"id": "job_live", "trigger": "cron", "status": "running",
-                       "started_at": "2026-08-12T11:00:00+00:00"})
-    assert out["raised"] == 0
-
-
-def test_the_watermark_stops_the_same_run_reporting_twice(store, job_log):
-    when = datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc)
-    _sweep_from(when, job_log, _job("job_x", trigger="loop", status="failed"))
-    assert len(inbox.list_items()) == 1
-
-    # Every later pass reads the same log line again.
-    for _ in range(3):
-        assert inbox.sweep_finished_runs(
-            now=datetime(2026, 8, 12, 13, 0, tzinfo=timezone.utc))["raised"] == 0
-    assert len(inbox.list_items()) == 1
-
-
-def test_runs_that_ended_before_the_watermark_are_left_alone(store, job_log):
-    _sweep_from(datetime(2026, 8, 12, 12, 30, tzinfo=timezone.utc), job_log,
-                _job("job_before", status="failed", ended="2026-08-12T12:00:00+00:00"))
-    assert inbox.list_items() == []
-
-
-def test_an_unreadable_job_log_does_not_empty_the_inbox(store, job_log, monkeypatch):
-    inbox.raise_item(kind="question", agent="a", scope="workshop", title="Stuck")
-    inbox._set_run_watermark(datetime(2026, 8, 12, 10, 0, tzinfo=timezone.utc))
-    monkeypatch.setattr(jobs, "read", lambda **k: (_ for _ in ()).throw(OSError("gone")))
-
-    assert inbox.sweep_finished_runs()["raised"] == 0
-    assert len(inbox.list_items()) == 1

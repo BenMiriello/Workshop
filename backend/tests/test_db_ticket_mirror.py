@@ -459,7 +459,7 @@ def test_the_execution_fields_round_trip(scope):
     and every one was written into a store that dropped it on the floor.
 
     `awaiting` in particular is the general escalation primitive
-    (`services/run_inbox.py`): a run that blocked on those two scopes could not
+    (`services/tasks.py`): a run that blocked on those two scopes could not
     record what it was blocked on, so nothing could surface the question.
     """
     awaiting = {"question": "which bucket?", "ask": "which bucket?",

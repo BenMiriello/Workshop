@@ -1,19 +1,4 @@
-"""The agent inbox: things that need the operator, typed by what they need.
-
-Prior art is LangChain's Agent Inbox, and the load-bearing idea taken from it is
-that items are NOT typed by entity. A finished run, a blocked agent and a ticket
-awaiting approval are not three kinds of thing to be shown in three places —
-they are one kind of thing (something wants you) with three different verbs:
-
-    notify    FYI. The agent acted, or could not, and you should know.
-              Dismissible, and safe to ignore.
-    question  The agent is stuck and is asking rather than guessing.
-              Wants an answer.
-    review    The agent proposes something and wants approve / reject.
-
-This is what dissolves the "do we mix agents and jobs in one stack?" problem:
-nothing has to decide whether an entry is an agent or a job, because the entry
-is neither. It is a request for attention with a verb on it.
+"""The agent inbox: what an AMBIENT AGENT has to say, and nothing else.
 
 Ambient agents act on an event stream rather than on prompts, so they cannot
 reach the operator through a chat transcript — a transcript belongs to one
@@ -24,6 +9,21 @@ chat rather than being stored per chat (operator, 2026-07-31).
 Delivery is scope-bounded by `mentions.may_deliver_to`: an item surfaces in its
 own scope's chats and in broader ones, never sideways into an unrelated branch,
 so a top-level chat is not pinged by every agent beneath it.
+
+WHAT THIS STORE NO LONGER HOLDS, and why the module shrank (2026-08-22,
+docs/platform-redesign/one-fact-one-place-2026-08-22.md §2 and §3.1). It used to
+hold a COPY of every waiting ticket and a notification per finished autonomous
+run. Measured on the live record the day it was removed: 756 open items, of
+which 744 were "a run ended with nobody watching" that nobody has ever actioned,
+and every one of the 9 that genuinely wanted the operator was a projection of a
+ticket keyed `task:<scope>:<id>`. Because a copy of a ticket's status goes stale
+the instant the ticket moves, the whole store had to be rebuilt on EVERY read to
+be trusted, which is a query with a cache-invalidation problem bolted to it
+rather than a view.
+
+So the ticket is now read as the ticket (`services/chat_work`, "Needs you"),
+the run is read on the run and on its ticket, and what is left here is the one
+thing that has no entity behind it: an agent with something to say.
 """
 from __future__ import annotations
 
@@ -38,7 +38,36 @@ from services import ownership
 
 log = logging.getLogger(__name__)
 
+# The three verbs an item can carry. Items are NOT typed by entity, which is the
+# idea taken from LangChain's Agent Inbox and it is why nothing has to decide
+# whether an entry is an agent or a job:
+#
+#     notify    FYI. The agent acted, or could not, and you should know.
+#               Dismissible, and safe to ignore.
+#     question  The agent is stuck and is asking rather than guessing.
+#               Wants an answer.
+#     review    The agent proposes something and wants approve / reject.
+#
+# `notify` SURVIVES, and here is the decision and its bound (2026-08-22). It was
+# up for deletion because 746 of the 756 open items were notifications and 744 of
+# those were one dead producer announcing finished runs. That producer is gone.
+# The kind stays because the two items left standing after it went are real and
+# have no other home: an ambient agent that consolidated some notes, a builder
+# that has something to report, neither of which is a ticket and neither of which
+# belongs to a conversation.
+#
+# The bound, which is what stops it regrowing into 744 again: a `notify` is
+# raised BY AN AMBIENT AGENT ABOUT ITSELF, never derived from another entity's
+# state. If a fact lives on a run, a ticket, a deployment or a chat, it is read
+# from there. And a `notify` NEVER reaches a chat transcript: an FYI does not get
+# to interrupt a conversation. It is panel-only, it sorts below every question,
+# and the inline decision block cannot render one.
 KINDS = ("notify", "question", "review")
+
+# Questions and reviews sort above notifications. A notification is something the
+# operator may ignore, and letting a wall of them bury one blocked agent is the
+# exact failure this surface exists to prevent.
+_KIND_RANK = {"question": 0, "review": 1, "notify": 2}
 
 # Terminal states. An item is `open` until the operator deals with it; how it
 # closed is kept because "I answered that" and "I dismissed that" are different
@@ -162,17 +191,16 @@ def _refresh_on_reraise(item: dict, *, title: str, body: str,
     THE AUTO-UNSNOOZE RULE: a snoozed item wakes early when the thing it is
     about CHANGES. Not when it is merely re-raised.
 
-    That distinction is the whole rule. `run_inbox.sync` re-raises every blocked
-    task on every inbox read, roughly every twenty seconds, so "any re-raise
-    wakes it" would make snooze a no-op for the only live producer: the row
-    would come back on the next poll, which is the exact "I dealt with that and
-    it came straight back" failure dedupe exists to prevent. A verbatim re-raise
-    is the reconcile pass saying nothing new; different content is the entity
-    having moved, which is worth the operator's attention now.
+    That distinction is the whole rule. An ambient agent re-raises on every one
+    of its passes, so "any re-raise wakes it" would make snooze a no-op: the row
+    would come back within a tick, which is the exact "I dealt with that and it
+    came straight back" failure dedupe exists to prevent. A verbatim re-raise is
+    the agent saying nothing new; different content is the thing having moved,
+    which is worth the operator's attention now.
 
     Content is also written back, so the row states the current question rather
-    than the one first asked, and so the NEXT reconcile pass is verbatim again
-    and a re-snooze holds.
+    than the one first asked, and so the NEXT pass is verbatim again and a
+    re-snooze holds.
     """
     changed = False
     for field, value in (("title", title), ("body", body), ("options", options)):
@@ -236,9 +264,8 @@ def list_items(
     store, one truth, and the chat decides how much of it to show — rather than
     per-chat stores that would each hold a different partial picture and drift.
 
-    Questions and reviews sort above notifications: a notification is something
-    the operator may ignore, and letting a wall of them bury one blocked agent is
-    the exact failure this surface exists to prevent.
+    Ordering is `sort_items`, shared with the chat's work read so a stored notice
+    and a ticket-derived row interleave by the same rule.
 
     SNOOZED ITEMS ARE FILTERED HERE, not in the panel. `counts()` is built by
     calling this function and the chat badge reads `counts()`, so a filter in the
@@ -251,9 +278,21 @@ def list_items(
         items = [i for i in items if not is_snoozed(i, now)]
     if chat_scope:
         items = [i for i in items if surfaces_in_chat(i, chat_scope, chat_id)]
-    rank = {"question": 0, "review": 1, "notify": 2}
-    items.sort(key=lambda i: (rank.get(i.get("kind"), 3), i.get("created_at") or ""))
-    return items[:limit]
+    return sort_items(items)[:limit]
+
+
+def sort_items(items: list[dict]) -> list[dict]:
+    """Waiting order: by verb, then oldest first.
+
+    A function rather than a line inside `list_items` because the chat's work
+    read merges ticket-derived rows into this listing, and two surfaces sorting
+    the same rows differently is how a panel and the row a card links to stop
+    agreeing about which question is first.
+    """
+    return sorted(
+        items,
+        key=lambda i: (_KIND_RANK.get(i.get("kind"), 3), i.get("created_at") or ""),
+    )
 
 
 def counts(chat_scope: str | None = None, chat_id: str | None = None) -> dict[str, int]:
@@ -287,13 +326,8 @@ def snooze_item(item_id: str, until: datetime | str | None) -> dict | None:
     """Defer an item until `until`, or wake it now when `until` is None.
 
     Snooze is deferral, never closure: the item keeps its open state and its
-    dedupe key, so nothing re-raises a duplicate behind it and the block it
-    describes is still a block. It just stops asking for a while.
-
-    An item whose entity moves on while it sleeps is not left to surprise the
-    operator later: the reconcilers run on every inbox read, they see the woken
-    item on the first read after it wakes, and they close it there if its work is
-    done before the row ever renders.
+    dedupe key, so nothing re-raises a duplicate behind it and whatever it
+    describes is still true. It just stops asking for a while.
     """
     stamp: str | None
     if until is None:
@@ -312,179 +346,6 @@ def snooze_item(item_id: str, until: datetime | str | None) -> dict | None:
             _save(items)
             return it
     return None
-
-
-# ---------------------------------------------------------------------------
-# Producer: an autonomous run that ended with nobody watching
-# ---------------------------------------------------------------------------
-
-# `services.jobs` records how a run STARTED, and that is what decides whether
-# anyone was watching it end. `manual` is the operator pressing run: he is
-# looking at it, and telling him about it is noise. The other three are
-# self-starting, which is the same mapping the UI's agency axis uses
-# (`agencyFor`: cron/event/loop are the autonomous tier).
-AUTONOMOUS_TRIGGERS = ("cron", "event", "loop")
-
-_TERMINAL_VERB = {"done": "finished", "failed": "failed", "cancelled": "was cancelled"}
-
-
-def _run_sweep_path() -> Path:
-    return _dir() / "run_sweep.json"
-
-
-def _run_watermark() -> datetime | None:
-    try:
-        data = json.loads(_run_sweep_path().read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    return _parse_iso((data or {}).get("since")) if isinstance(data, dict) else None
-
-
-def _set_run_watermark(when: datetime) -> None:
-    _dir().mkdir(parents=True, exist_ok=True)
-    _run_sweep_path().write_text(
-        json.dumps({"since": when.astimezone(timezone.utc).isoformat()}) + "\n")
-
-
-def _worth_reporting(job: dict) -> bool:
-    """Did this run END IN SOMETHING? A sweep tick that found no work and exited
-    clean is not an event; it is the system idling.
-
-    This box's own log is the argument: of 2336 terminal autonomous runs, 1880
-    finished having touched nothing. Raising a notification for each would put
-    1880 rows in front of one blocked agent, which is the failure `list_items`
-    already sorts against. A run that FAILED always reports (something broke with
-    nobody watching, which is the whole point of the producer), and a run that
-    finished reports when it moved at least one ticket.
-    """
-    if job.get("status") != "done":
-        return True
-    return bool(job.get("tasks_done") or job.get("tasks_failed"))
-
-
-def _run_scope(job: dict) -> str:
-    slug = str(job.get("project_slug") or "").strip()
-    return f"project:{slug}" if slug else "workshop"
-
-
-def _run_title(job: dict) -> str:
-    verb = _TERMINAL_VERB.get(str(job.get("status")), str(job.get("status") or "ended"))
-    where = str(job.get("project_slug") or "").strip()
-    return f"Run {verb} in {where}" if where else f"Run {verb}"
-
-
-def _run_body(job: dict) -> str:
-    lines = []
-    done, failed = job.get("tasks_done") or 0, job.get("tasks_failed") or 0
-    if done or failed:
-        lines.append(f"{done} ticket(s) done, {failed} failed.")
-    ev = job.get("evidence")
-    if isinstance(ev, dict):
-        for key in ("halted", "reviewer", "gate", "summary"):
-            val = ev.get(key)
-            if val:
-                lines.append(str(val).strip().splitlines()[0][:200])
-                break
-    lines.append(f"Started by {job.get('trigger') or 'a trigger'}, nobody watching.")
-    return "\n".join(lines)
-
-
-def sweep_finished_runs(now: datetime | None = None) -> dict:
-    """Raise a `notify` for every autonomous run that reached a terminal state
-    since the last pass. Returns a small tally for logging.
-
-    WHY A SWEEP AND NOT A HOOK IN `jobs.finish`. The same reason `run_inbox`
-    reconciles on read: runs are closed by shell workers through the stdlib-only
-    `services.jobs` CLI shim, in another process, against a per-owner inbox store
-    that process has nobody pinned to. Reading the append-only job log is
-    idempotent, works whichever process wrote the terminal line, and self-heals
-    if a pass is ever missed.
-
-    THE WATERMARK IS SET, NOT REPLAYED, ON THE FIRST PASS. This log holds months
-    of history; importing it wholesale would bury the surface at the moment it
-    starts working. The first pass records where it started and reports nothing.
-
-    Never raises into the caller: the inbox listing must not fail because the
-    job log is unreadable.
-    """
-    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    since = _run_watermark()
-    if since is None:
-        _set_run_watermark(now)
-        return {"raised": 0, "watermark": "initialized"}
-
-    raised = 0
-    try:
-        from services import jobs
-        records = jobs.read(limit=1000)
-    except Exception as e:
-        log.warning("inbox: cannot read the job log: %s", e)
-        return {"raised": 0, "watermark": "held"}
-
-    high = since
-    for job in records:
-        if job.get("trigger") not in AUTONOMOUS_TRIGGERS:
-            continue
-        if job.get("status") not in ("done", "failed", "cancelled"):
-            continue
-        ended = _parse_iso(job.get("ended_at"))
-        if ended is None or ended <= since or ended > now:
-            continue
-        if ended > high:
-            high = ended
-        if not _worth_reporting(job):
-            continue
-        try:
-            raise_item(
-                kind="notify",
-                agent=str(job.get("agent_id") or "").strip() or "autonomous run",
-                scope=_run_scope(job),
-                title=_run_title(job),
-                body=_run_body(job),
-                ticket_id=str(job.get("task_id") or "") or None,
-                run_id=str(job.get("id") or "") or None,
-                dedupe_key=f"run:{job.get('id')}",
-            )
-            raised += 1
-        except Exception as e:
-            log.warning("inbox: cannot raise for run %s: %s", job.get("id"), e)
-
-    # Only when it moved: this runs on every inbox read, and an idle box would
-    # otherwise rewrite the same stamp every twenty seconds forever.
-    if high > since:
-        _set_run_watermark(high)
-    return {"raised": raised, "watermark": high.isoformat()}
-
-
-def reconcile() -> None:
-    """Run every producer that keeps the OPEN inbox honest, then return.
-
-    This is what an open-state read has always done before listing, and it lived
-    inline in `GET /inbox` while that route was the only reader. It is a function
-    now because it no longer is: `services.chat_work` serves the same items to
-    the chat's Work panel out of one aggregated read, and a second copy of this
-    sequence is how the two surfaces end up disagreeing about what is waiting.
-
-    Each producer is guarded separately. A reconcile failure must never empty the
-    operator's inbox, and one broken producer must not stop the other two.
-    """
-    # Blocked work asks through the inbox. Reconciled on read rather than raised
-    # at the moment of blocking, because the producers are shell sweeps in
-    # another process — see services/run_inbox.
-    try:
-        from routes.tasks_all import scope_roots
-        from services import run_inbox
-        run_inbox.sync(scope_roots())
-    except Exception as e:
-        log.warning("inbox: awaiting-task sync failed: %s", e)
-    # An autonomous run that ended with nobody watching. Reconciled from the job
-    # log for the same reason blocked work is: the runs are closed by shell
-    # workers in another process, against a per-owner store that process has
-    # nobody pinned to.
-    try:
-        sweep_finished_runs()
-    except Exception as e:
-        log.warning("inbox: finished-run sweep failed: %s", e)
 
 
 def resolve_item(item_id: str, *, answer: str | None = None,

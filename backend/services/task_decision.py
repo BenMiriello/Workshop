@@ -77,8 +77,9 @@ def verb_for(status: str | None, *, approved: bool) -> str:
 
 # The words that mean yes, kept small on purpose. Guessing at prose is how an
 # acceptance becomes a rework request, so the real fix is that both surfaces
-# OFFER the two choices as buttons (`run_inbox` sets them as options) and this
-# set only has to cover the operator typing the obvious word instead of tapping.
+# OFFER the two choices as buttons (`chat_work.needs_you_options` names them)
+# and this set only has to cover the operator typing the obvious word instead
+# of tapping.
 _APPROVAL_WORDS = {
     "accept", "accepted", "approve", "approved", "approve it", "lgtm",
     "looks good", "ship it", "yes", "y", "ok", "okay", "good", "done",

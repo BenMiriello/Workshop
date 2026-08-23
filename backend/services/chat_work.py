@@ -135,6 +135,138 @@ def _latest_run(task_id: str, names: dict[str, str]) -> dict | None:
     return _run_summary(found[0], names) if found else None
 
 
+# ---------------------------------------------------------------------------
+# "Needs you", read off the tickets themselves
+# ---------------------------------------------------------------------------
+#
+# A ticket's STATUS is the fact, and there is no second copy of it anywhere
+# (docs/platform-redesign/one-fact-one-place-2026-08-22.md §3.1):
+#
+#     in_review   finished, needs a decision   -> accept | send back
+#     blocked     stuck, needs an answer       -> answer (+ grant / rule / cancel)
+#
+# Everything that wants the operator is one of those two, so the panel, the badge
+# and the inline block all read tickets filtered by status. `services/run_inbox`
+# used to COPY that status into an inbox row, which went stale the moment a
+# ticket moved, which is why the inbox had to be rebuilt on every read to be
+# believable. Deriving it here means there is nothing to keep in step.
+#
+# The ROW SHAPE stays the inbox item's, and that is deliberate rather than
+# lazy: the panel, the question view and the inline decision block all read one
+# list of "things waiting on you", and an ambient agent's notice is still one of
+# those. Two shapes would mean two renderers for one column.
+
+NEEDS_YOU_STATUSES = ("in_review", "blocked")
+
+_ROW_PREFIX = "task:"
+
+
+def needs_you_id(scope: str, task_id: str) -> str:
+    """The row id for a waiting ticket. Derived, stable, and the only handle the
+    client needs: `POST /inbox/{id}/resolve` reads the ticket straight back out
+    of it, so answering never depends on a stored row existing."""
+    return f"{_ROW_PREFIX}{scope}:{task_id}"
+
+
+def parse_needs_you_id(item_id: str) -> tuple[str, str] | None:
+    """`(scope, task_id)` for a derived row id, or None for a stored item.
+
+    Split from the RIGHT: a scope key carries its own colon (`project:demo`,
+    `agent:ralph`) and a ticket id never does.
+    """
+    if not str(item_id or "").startswith(_ROW_PREFIX):
+        return None
+    head, _, task_id = str(item_id).rpartition(":")
+    scope = head[len(_ROW_PREFIX):]
+    if not scope or not task_id:
+        return None
+    return scope, task_id
+
+
+def needs_you_options(task: dict) -> list[str]:
+    """The taps this ticket offers, named for what they do.
+
+    `Approve`/`Decline` is reserved for a block carrying a structured proposal,
+    because that is the pair `routes/inbox` mints a grant from. A finished ticket
+    gets its own pair so the two are never confused: the words on the buttons are
+    the verbs in `services/task_decision`.
+    """
+    if (task.get("awaiting") or {}).get("proposal"):
+        return ["Approve", "Decline"]
+    if task.get("status") == "in_review":
+        return ["Accept", "Send back"]
+    return []
+
+
+def needs_you_ask(task: dict) -> str:
+    """What this ticket is ASKING, when it has something to say beyond its state.
+
+    EMPTY IS THE NORMAL CASE FOR A FINISHED TICKET, on purpose. "The work is
+    finished and waiting on you" is the definition of `in_review`, so every row
+    would carry the identical sentence, and a sentence every instance repeats is
+    not information (one-fact-one-place §3.3). With nothing here the row shows
+    the ticket's TITLE, which is the part that differs.
+
+    `blocked_reason` only counts on a ticket that is actually blocked: it is not
+    cleared eagerly, so reading it on a finished one would quote a block that has
+    already been dealt with.
+    """
+    aw = task.get("awaiting") or {}
+    ask = str(aw.get("ask") or aw.get("question") or "").strip()
+    if ask:
+        return ask
+    if task.get("status") == "blocked":
+        return str(task.get("blocked_reason") or "").strip()
+    return ""
+
+
+def _who_did_the_work(task: dict, run: dict | None, scope: str,
+                      names: dict[str, str]) -> str:
+    """WHOSE work this row is about: the agent of the run that produced the
+    state, which is who the operator would be answering.
+
+    NOT the assignee-or-owner the deleted `run_inbox` used. `tasks` defaults
+    `owner` to `operator` for any ticket with no delegate, so an operator-filed
+    ticket rendered as "operator asks" behind an `O` avatar: the surface telling
+    the operator he was asking himself. The run knows who actually did it.
+    """
+    name = (run or {}).get("agent_name")
+    if name:
+        return str(name)
+    assignee = str(task.get("assignee") or "").strip()
+    if assignee and assignee != tasks.DEFAULT_OWNER:
+        from routes.jobs import _display_agent
+        return _display_agent(assignee, names) or assignee
+    return scope
+
+
+def _needs_you_row(task: dict, scope: str, names: dict[str, str]) -> dict:
+    """One waiting ticket as a row of the "needs you" column."""
+    run = _latest_run(task["id"], names)
+    aw = task.get("awaiting") or {}
+    return {
+        "id": needs_you_id(scope, task["id"]),
+        "kind": "question",
+        "state": "open",
+        "agent": _who_did_the_work(task, run, scope, names),
+        "scope": scope,
+        "title": str(task.get("title") or task.get("text") or "").split("\n")[0][:120],
+        "body": needs_you_ask(task),
+        "options": needs_you_options(task),
+        # Left null on purpose. Delivery is by SCOPE, exactly as it was when
+        # these rows were stored: naming the originating chat here would pull a
+        # row out of every sibling chat in the same scope that can see the
+        # ticket today. Provenance decides the INLINE block, not the panel.
+        "chat_id": None,
+        "ticket_id": task["id"],
+        "run_id": (run or {}).get("id"),
+        "created_at": str(aw.get("since") or task.get("updated") or ""),
+        "resolved_at": None,
+        "answer": None,
+        "snoozed_until": None,
+    }
+
+
 def thread_work(thread_id: str) -> dict | None:
     """The whole work picture for one chat. None when the thread does not exist.
 
@@ -152,12 +284,7 @@ def thread_work(thread_id: str) -> dict | None:
     context_key = t.get("context_key") or "general"
     scope_key = task_scope_for(context_key)
 
-    # The same producers, in the same order, that `GET /inbox` runs before an
-    # open read. Called rather than copied: two surfaces reconciling differently
-    # is how a badge and a panel start counting different things.
-    inbox.reconcile()
-    items = inbox.list_items(
-        chat_scope=knowledge.scope_for_context(context_key), chat_id=thread_id)
+    chat_scope = knowledge.scope_for_context(context_key)
 
     from routes.tasks_all import _with_latitude, _with_triage, scope_roots
 
@@ -165,6 +292,7 @@ def thread_work(thread_id: str) -> dict | None:
     index: dict[str, tuple[dict, str]] = {}
     filed_raw: list[tuple[dict, str]] = []
     scope_raw: list[tuple[dict, str]] = []
+    waiting_raw: list[tuple[dict, str]] = []
     active_in_scope = 0
 
     for skey, root in scope_roots():
@@ -187,6 +315,12 @@ def thread_work(thread_id: str) -> dict | None:
                 active_in_scope += 1
                 if not filed_here:
                     scope_raw.append((r, skey))
+            # A block the operator DISMISSED in review stays a block; it just
+            # stops asking. That is the one thing that takes a waiting ticket
+            # out of this column without changing its status.
+            if r.get("status") in NEEDS_YOU_STATUSES \
+                    and not (r.get("awaiting") or {}).get("dismissed"):
+                waiting_raw.append((r, skey))
 
     lat_cache: dict[str, str | None] = {}
 
@@ -210,6 +344,16 @@ def thread_work(thread_id: str) -> dict | None:
     names = _name_map()
     for rec in (*filed, *scope_rows):
         rec["run"] = _latest_run(rec["id"], names)
+
+    # WHAT WANTS THE OPERATOR: the waiting tickets, plus whatever an ambient
+    # agent raised that has no ticket behind it. Both go through
+    # `surfaces_in_chat` unchanged, which is the rule that keeps this column
+    # readable, and through one sort, so the two cannot interleave differently
+    # in the panel and in the card that links to a row.
+    items = inbox.sort_items(
+        [row for row in (_needs_you_row(r, s, names) for r, s in waiting_raw)
+         if inbox.surfaces_in_chat(row, chat_scope, thread_id)]
+        + inbox.list_items(chat_scope=chat_scope, chat_id=thread_id))
 
     running = sum(1 for rec in (*filed, *scope_rows)
                   if (rec.get("run") or {}).get("status") == "running")

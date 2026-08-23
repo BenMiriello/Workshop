@@ -544,7 +544,7 @@ class Ticket(Base, Timestamps, SoftDelete):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False,
                                           server_default="0")
 
-    # THE BLOCK RECORD — the general escalation primitive (services/run_inbox).
+    # THE BLOCK RECORD: the general escalation primitive (services/tasks).
     # Whatever stopped the work writes the same shape, so one review surface
     # serves all of them. Genuinely nested (`options`, `proposal`, `context`)
     # and read whole by the inbox reconciler, so JSONB rather than a column per

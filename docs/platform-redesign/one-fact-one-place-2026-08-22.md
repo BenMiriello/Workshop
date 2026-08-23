@@ -166,6 +166,15 @@ derived from it. If it would drop something, the send refuses and says which.
 
 ## 6. Plan, ordered, each step a deletion
 
+**Steps 3, 4 and 5 shipped together on 2026-08-22** (they are one change: 3 is
+what deletes the copy, 4 is what empties the store, and 5 falls out of 3).
+`services/run_inbox.py` is gone, `inbox.reconcile()` and the finished-run sweep
+are gone, `services/chat_work` derives the "needs you" column from tickets whose
+status is `in_review` or `blocked`, and `POST /inbox/{id}/resolve` answers the
+TICKET when the id is the derived `task:<scope>:<id>`. The 753 open items the
+retired producers had written were CLOSED, not erased (756 open -> 3). `notify`
+survives, bounded: see the decision written at `KINDS` in `services/inbox.py`.
+
 1. **Delete the redundant prose.** `question_report` writes the label and the
    ticket ref and nothing else; `TicketDecision` drops its footnote and its
    restated heading, and shows the ticket TITLE and what happened instead. One

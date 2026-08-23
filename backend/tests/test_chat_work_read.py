@@ -314,27 +314,94 @@ class TestInbox:
         assert body["inbox"] == []
         assert body["counts"]["needs_you"] == 0
 
-    def test_the_reconcilers_run(self, env, monkeypatch):
-        """The inbox route reconciles before an open read, and this read has to
-        run the same pass or the panel shows a blocked agent one poll late and
-        the badge and the inbox page disagree."""
-        calls = []
+    def test_a_blocked_ticket_is_read_as_a_question_off_the_ticket(self, env):
+        """No producer, no copy, no reconcile pass: the `awaiting` record IS the
+        question, so it renders the moment the ticket carries it."""
         from services import inbox
-        monkeypatch.setattr(inbox, "reconcile", lambda: calls.append(1))
-        t = chat_store.create_thread(context_key="project:demo")
-        env["client"].get(f"/chat/threads/{t['id']}/work")
-        assert calls == [1]
-
-    def test_a_blocked_ticket_becomes_a_question_here(self, env):
-        """End to end through the real reconciler: run_inbox turns an `awaiting`
-        record into the question the panel renders."""
         t = chat_store.create_thread(context_key="project:demo")
         tk = _file_ticket(env["root"], t["id"], title="Needs a key")
         tasks.update(env["root"], tk["id"], status="blocked",
                      awaiting={"kind": "input", "ask": "Which API key?"})
+
         body = env["client"].get(f"/chat/threads/{t['id']}/work").json()
-        assert any("Which API key?" in (i.get("body") or "") for i in body["inbox"])
-        assert body["counts"]["needs_you"] >= 1
+
+        row = next(i for i in body["inbox"] if i["ticket_id"] == tk["id"])
+        assert row["body"] == "Which API key?"
+        assert body["counts"]["needs_you"] == 1
+        # Nothing was written to the inbox store to say any of that.
+        assert inbox.list_items(state="open") == []
+
+    def test_a_finished_ticket_needs_you_with_no_inbox_row_at_all(self, env):
+        """THE POINT OF THE WHOLE CHANGE. `in_review` is the fact; the row is
+        derived from it, and the store behind the panel stays empty."""
+        from services import chat_work as cw, inbox
+        t = chat_store.create_thread(context_key="project:demo")
+        tk = _file_ticket(env["root"], t["id"], title="Move the lock off /tmp")
+        tasks.update(env["root"], tk["id"], status="in_review")
+
+        body = env["client"].get(f"/chat/threads/{t['id']}/work").json()
+
+        assert inbox._load() == []
+        row = next(i for i in body["inbox"] if i["ticket_id"] == tk["id"])
+        assert row["id"] == cw.needs_you_id("project:demo", tk["id"])
+        assert row["options"] == ["Accept", "Send back"]
+        assert body["counts"]["needs_you"] == 1
+        # And it says NOTHING beyond its state: "the work is finished and
+        # waiting on you" is the definition of in_review, so every row would
+        # carry the same sentence. The row shows the title instead (§3.3).
+        assert row["body"] == ""
+        assert row["title"] == "Move the lock off /tmp"
+
+    def test_a_finished_run_leaves_no_inbox_item(self, env):
+        """A run that ended with nobody watching used to raise a `notify`, and
+        744 of those were open on the live record with none ever actioned. The
+        run is on the run and on its ticket; see one-fact-one-place §2."""
+        from services import inbox
+        t = chat_store.create_thread(context_key="project:demo")
+        tk = _file_ticket(env["root"], t["id"], title="Swept the queue")
+        env["runs"][tk["id"]] = [{"id": "j9", "status": "done", "trigger": "cron",
+                                  "ended_at": "2026-08-22T12:00:00+00:00",
+                                  "tasks_done": 2, "agent_id": "ralph"}]
+
+        body = env["client"].get(f"/chat/threads/{t['id']}/work").json()
+
+        assert inbox._load() == []
+        assert body["inbox"] == []
+        assert body["counts"]["needs_you"] == 0
+        # And the run is still reachable: it is on the ticket.
+        assert body["filed"][0]["run"]["id"] == "j9"
+
+    def test_the_row_names_who_did_the_work_not_the_operator(self, env):
+        """`run_inbox` set the row's agent to `assignee or owner`, and `tasks`
+        defaults `owner` to `operator`, so an operator-filed ticket read
+        "operator asks" behind an `O`: the surface telling him he is asking
+        himself. The run knows who actually did it."""
+        t = chat_store.create_thread(context_key="project:demo")
+        tk = _file_ticket(env["root"], t["id"], title="Move the lock off /tmp")
+        tasks.update(env["root"], tk["id"], status="in_review")
+        assert tasks.get_task(env["root"], tk["id"])["owner"] == "operator"
+        env["runs"][tk["id"]] = [{"id": "j9", "status": "done", "agent_id": "ralph"}]
+
+        body = env["client"].get(f"/chat/threads/{t['id']}/work").json()
+
+        row = next(i for i in body["inbox"] if i["ticket_id"] == tk["id"])
+        assert row["agent"] == "ralph"
+        assert row["run_id"] == "j9"
+
+    def test_a_dismissed_block_stops_asking_without_changing_status(self, env):
+        """Dismiss is the one thing that takes a waiting ticket out of this
+        column without moving it: the block stays a block, it just stops
+        asking."""
+        t = chat_store.create_thread(context_key="project:demo")
+        tk = _file_ticket(env["root"], t["id"], title="Needs a key")
+        tasks.update(env["root"], tk["id"], status="blocked",
+                     awaiting={"kind": "input", "ask": "Which API key?",
+                               "dismissed": True})
+
+        body = env["client"].get(f"/chat/threads/{t['id']}/work").json()
+
+        assert body["inbox"] == []
+        assert body["counts"]["needs_you"] == 0
 
 
 class TestRoute:

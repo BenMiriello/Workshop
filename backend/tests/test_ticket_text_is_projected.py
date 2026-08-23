@@ -34,7 +34,7 @@ def test_the_pair_is_what_is_stored(tmp_path):
 
 def test_reading_still_projects_text(tmp_path):
     """Every caller written against `text` (the TODO.md export, reconcile, dedup,
-    run_inbox, the shell CLI) keeps working, because the read still has it."""
+    the shell CLI) keeps working, because the read still has it."""
     tasks.add(tmp_path, text="Fix the flaky send\n\nObjective: sends stop dropping.")
     got = tasks.list_tasks(tmp_path)[0]
     assert got["text"] == tasks.join_text(got["title"], got["body"])

@@ -1,26 +1,31 @@
-"""Inbox routes: what agents need from the operator.
+"""Inbox routes: answering whatever is waiting on the operator.
 
 Global store, per-chat filter. The chat Work panel reaches this router at
 `POST /api/inbox/{id}/snooze` and `POST /api/inbox/{id}/resolve` — those are
 the two live surfaces. The whole-inbox read (`GET /inbox`) and the raw raise
 endpoint (`POST /inbox`, which mirrored `services.inbox.raise_item` over
-HTTP) had zero callers — every producer that raises an item (`run_inbox`,
-`services.inbox` itself) does so as a direct Python call — and were deleted
-(coherence-overhaul-2026-08-16 T5).
+HTTP) had zero callers (every producer that raises an item does so as a
+direct Python call) and were deleted (coherence-overhaul-2026-08-16 T5).
+
+TWO KINDS OF ID REACH `resolve`, and only one of them names a stored row.
+A waiting ticket is not copied into the inbox any more: it is read off the
+ticket by `services/chat_work`, which gives its row the derived id
+`task:<scope>:<id>`. So an answer to one of those is answered on the TICKET and
+there is nothing to close afterwards. Everything else is a stored item raised by
+an ambient agent, and closing the row is the whole of the act.
 """
 from __future__ import annotations
 
-import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from routes.tasks_all import _require_root
-from services import inbox, task_decision, tasks
+from routes.tasks_all import TaskReviewIn, _require_root, review_task
+from services import chat_work, inbox, task_decision, tasks
 
-log = logging.getLogger(__name__)
 # Bare prefix, NOT "/api/inbox". The edge proxy strips the leading `/api`
 # before it reaches this app, so every router here mounts at its bare path
 # (`/tasks`, `/notes`, `/chat`) and the frontend calls `/api/<same>`. Prefixing
@@ -53,10 +58,12 @@ def _is_approval(answer: str | None) -> bool:
     return str(answer or "").strip().lower() in _APPROVALS
 
 
-
-
 class InboxItem(BaseModel):
     """An item waiting on the operator. `kind` is question, review or notify.
+
+    Either a stored row raised by an ambient agent, or a waiting TICKET read as
+    one (`services/chat_work.needs_you_id`). The shape is the same because the
+    panel renders one column, and only the id says which it was.
 
     A SNOOZED item stays OPEN and keeps its dedupe key: it just stops surfacing
     until `snoozed_until`, and wakes early if the thing it is about changes.
@@ -102,64 +109,53 @@ async def snooze_inbox(item_id: str, body: SnoozeIn):
     return it
 
 
-async def _answer_the_task(item: dict, *, answer: str | None, dismissed: bool) -> dict | None:
-    """A task-derived item answers the TASK, not just the row on screen.
+async def _decide_the_ticket(item_id: str, scope: str, task_id: str, *,
+                             answer: str | None, dismissed: bool) -> dict:
+    """Answer a WAITING TICKET, whose row the client read straight off it.
 
-    Closing the inbox item was the whole of "resolve" until now, and the inbox
-    item is a projection: the block lives on the task, and only
-    `POST /tasks/{scope}/{id}/review` clears it, mints what the block proposed,
-    and writes the answer into the ticket body the next attempt reads. So
-    answering here reached nothing — the task stayed `awaiting`, run_inbox raised
-    the same question on its next pass twenty seconds later, and "Approve" on a
-    permission proposal granted nothing at all.
+    The row is derived (`services/chat_work.needs_you_id`), so there is nothing
+    to close when this returns: the ticket moves, and the next read of the work
+    payload simply does not derive a row for it any more. That is the whole point
+    of the derivation -- the copy that used to be closed here is what went stale
+    between the answer and the next reconcile.
 
-    The verbs map straight across:
-      Approve (on a block that proposed a grant) -> grant-and-continue
-      any other answer                           -> approve, with the answer as
-                                                    the note, which is what
-                                                    lands in the ticket body
-      dismiss (the X)                            -> dismiss: the block stays,
-                                                    it just stops asking
+    WHICH QUESTION IS THIS. A finished ticket and a stuck one ask different
+    things, and the answer to one is the wrong verb for the other. This used to
+    send every answer to `approve`, which on a FINISHED ticket meant "release the
+    block" -- so the operator's "Approve" un-accepted committed work, put it back
+    in the queue and refunded an attempt (2026-08-22). The ticket's own status
+    decides; nothing is assumed.
 
-    Returns the review result, or None when this is not a task item.
+      Approve, on a block carrying a structured proposal -> mint it and continue
+      any answer to a finished ticket -> accept, or send back with the note
+      any answer to a stuck one       -> release it, the note is the answer
+      dismiss (the X)                 -> the block stays, it just stops asking
     """
-    key = item.get("dedupe_key") or ""
-    if not key.startswith("task:"):
-        return None
-    scope = str(item.get("scope") or "").strip()
-    task_id = str(item.get("ticket_id") or "").strip()
-    if not scope or not task_id:
-        return None
-
-    from routes.tasks_all import TaskReviewIn, review_task
+    root = _require_root(scope)
+    task = tasks.get_task(root, task_id)
+    if task is None:
+        # A ticket that is gone cannot be answered, but a stale row must still be
+        # dismissable: the operator is clearing something off a surface, and
+        # refusing that leaves it there with no way to be rid of it.
+        if dismissed:
+            return _closed_row(item_id, scope, None, task_id,
+                               answer=answer, dismissed=True)
+        raise HTTPException(404, f"ticket not found: {task_id}")
 
     ans = str(answer or "").strip()
-    # WHICH QUESTION IS THIS. A finished ticket and a stuck one ask different
-    # things, and the answer to one is the wrong verb for the other. This used
-    # to send every answer to `approve`, which on a FINISHED ticket meant
-    # "release the block" — so the operator's "Approve" un-accepted committed
-    # work, put it back in the queue and refunded an attempt (2026-08-22).
-    # The status decides; nothing is assumed.
-    status = None
-    try:
-        found = tasks.get_task(_require_root(scope), task_id)
-        status = (found or {}).get("status")
-    except Exception as e:  # an unreadable scope must not swallow the answer
-        log.warning("inbox: cannot read %s/%s to route its answer: %s", scope, task_id, e)
+    status = task.get("status")
+    proposal = (task.get("awaiting") or {}).get("proposal")
 
     if dismissed:
         action, note = "dismiss", ""
-    elif _is_approval(ans) and any(
-        str(o).strip().lower() == "approve" for o in (item.get("options") or [])
-    ):
-        # run_inbox offers Approve/Decline ONLY when the block carried a
-        # structured proposal, so an Approve here is an approval of that
+    elif proposal and _is_approval(ans):
+        # The block proposed a grant, so an Approve here IS the approval of that
         # proposal and has to mint it. Defaults come from the block itself.
         action, note = "grant-and-continue", ""
     elif status == "in_review":
         # The work is finished. Taking it and sending it back are both real
-        # answers, so the words decide which — and both surfaces now offer them
-        # as buttons (`run_inbox` options) so the words rarely have to.
+        # answers, so the words decide which -- and both surfaces offer them as
+        # buttons (`chat_work.needs_you_options`) so the words rarely have to.
         action = "accept" if task_decision.reads_as_approval(ans) else "send-back"
         # A tapped button posts its own label. That is the decision, not a note:
         # writing it into the ticket body would leave the next attempt an answer
@@ -167,14 +163,47 @@ async def _answer_the_task(item: dict, *, answer: str | None, dismissed: bool) -
         note = "" if task_decision.is_bare_verb(ans) else ans
     else:
         action, note = "approve", ans
+
+    reviewed: dict | None
     try:
-        return await review_task(scope, task_id, TaskReviewIn(action=action, note=note or None))
+        reviewed = await review_task(scope, task_id,
+                                     TaskReviewIn(action=action, note=note or None))
     except HTTPException:
-        if dismissed:
-            # The block is already gone (answered elsewhere, or the task moved
-            # on). Dismissing a stale row must still clear it from the inbox.
-            return None
-        raise
+        if not dismissed:
+            raise
+        # The block is already gone (answered elsewhere, or the ticket moved on).
+        # Dismissing a stale row must still succeed; there is nothing left to do.
+        reviewed = None
+    row = _closed_row(item_id, scope, task, task_id, answer=answer, dismissed=dismissed)
+    if reviewed is not None:
+        # What actually happened to the WORK, so the caller can state it rather
+        # than infer it from a closed row.
+        row["review"] = reviewed
+    return row
+
+
+def _closed_row(item_id: str, scope: str, task: dict | None, task_id: str, *,
+                answer: str | None, dismissed: bool) -> dict:
+    """The row the client just closed, echoed back in the shape it read.
+
+    Built here rather than fetched, because a derived row is not stored anywhere
+    and the ticket it came from has, by this point, deliberately stopped being
+    one."""
+    title = ""
+    if task is not None:
+        title = str(task.get("title") or task.get("text") or "").split("\n")[0][:120]
+    return {
+        "id": item_id,
+        "kind": "question",
+        "state": "dismissed" if dismissed else "answered",
+        "scope": scope,
+        "title": title,
+        "body": "",
+        "options": [],
+        "ticket_id": task_id,
+        "answer": answer,
+        "resolved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
 
 
 @router.post("/{item_id}/resolve", response_model=InboxItem, response_model_exclude_unset=True)
@@ -182,20 +211,14 @@ async def resolve_inbox(item_id: str, body: ResolveIn):
     """Answer or dismiss. Both close the item; which one is recorded, because
     "I answered" and "I dismissed" are different facts and a run of dismissals
     is the signal that an agent is producing noise."""
-    # Read the item BEFORE resolving: resolving is what makes an approval
-    # actionable, and afterwards its dedupe key is no longer open to match on.
-    before = inbox.get_item(item_id)
-    # THE TASK FIRST. If the review is refused, the item stays open: an inbox row
-    # that closed on a write that did not happen is the failure this is fixing.
-    reviewed = None
-    if before:
-        reviewed = await _answer_the_task(
-            before, answer=body.answer, dismissed=body.dismissed)
+    derived = chat_work.parse_needs_you_id(item_id)
+    if derived is not None:
+        # A waiting ticket. The answer goes to the ticket and stops there: no
+        # row exists to close behind it, so no row can be left claiming a write
+        # that did not happen.
+        return await _decide_the_ticket(item_id, *derived,
+                                        answer=body.answer, dismissed=body.dismissed)
     it = inbox.resolve_item(item_id, answer=body.answer, dismissed=body.dismissed)
     if it is None:
         raise HTTPException(404, "item not found")
-    if reviewed is not None:
-        # What actually happened to the work, so the caller can say so rather
-        # than inferring it from a closed row.
-        it = {**it, "review": reviewed}
     return it

@@ -30,8 +30,8 @@ Canonical Task (version 2)::
                                        # _PROJECTED_KEYS). A ticket has been a
                                        # title and a body since 010a9a4; `text`
                                        # survives as the read shape the TODO.md
-                                       # export, reconcile, dedup, run_inbox and
-                                       # the shell CLI were written against.
+                                       # export, reconcile, dedup and the shell
+                                       # CLI were written against.
       "status": "todo"|"doing"|"in_review"|"blocked"|"parked"|"done"|"cancelled",
       "assignee": None|"agent:<slug>"|"operator",   # the delegate (human owns)
       "parent": str | None,
@@ -972,7 +972,7 @@ def _normalize(task: dict) -> dict:
     # it cannot drift from `awaiting`.
     rec["blocked_request"] = rec["awaiting"]
     # `text` mirror: title + body under the name every existing reader uses
-    # (TODO.md export, reconcile, dedup, run_inbox, the CLI). Projected from the
+    # (TODO.md export, reconcile, dedup, the CLI). Projected from the
     # canonical pair, never authoritative, so the two can never disagree.
     rec["text"] = join_text(rec["title"], rec["body"])
     # `exec` mirror: the workshop-private execution fields, gathered under one key
