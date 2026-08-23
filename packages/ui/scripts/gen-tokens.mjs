@@ -46,6 +46,10 @@ const COMPOSED = new Set(["focusRing", "shadowSm", "shadowCard", "shadowMd", "sh
    machine work: a color that never varies inside a view carries no
    information. `--live*` is the name application CSS should use.
 
+   `synInvalid` -> `danger`: the code layer's nine roles are eight tones and one
+   pointer. "This token is broken" is a thing the status vocabulary already
+   says, so it is said with the same tone rather than with a tenth color.
+
    The RN object copies the values, since it has no var() to point with. */
 const ALIASES = {
   accent: "you",
@@ -54,6 +58,7 @@ const ALIASES = {
   auto: "live",
   autoSoft: "live-soft",
   autoUp: "live-up",
+  synInvalid: "danger",
 };
 
 /* Tones emitted under a second, primary name BEFORE their aliases, so the alias

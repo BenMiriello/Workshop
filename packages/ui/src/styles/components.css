@@ -2994,6 +2994,28 @@ span.ws-filterchip__open { cursor: default; }
    own font-size/line-height yield to .ws-md). */
 .chat-bubble .ws-md { white-space: normal; }
 
+/* ---- EDITOR (.ws-editor) -------------------------------------------------- */
+/* The box a CodeMirror editor sits in (@workshop/ui/editor). The editor SURFACE
+   is themed in Editor.tsx from these same tokens, because EditorView.theme()
+   takes plain CSS strings and CodeMirror injects its own stylesheet; only the
+   container is here, and it exists for one reason: to make `height` on the
+   wrapper reach the editor.
+
+   `.cm-editor` sizes itself to its content unless something gives it a height,
+   so a wrapper with a fixed height would hold a short editor with dead space
+   under it. A flex column with a growing child fills a fixed height AND still
+   grows with content when the height is left off, which is the two modes the
+   component offers, with no conditional style. */
+.ws-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.ws-editor > .cm-editor {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* ---- RESPONSIVE ---------------------------------------------------------- */
 @media (max-width: 640px) {
   .ws-card-grid { grid-template-columns: 1fr; }

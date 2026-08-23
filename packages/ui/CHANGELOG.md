@@ -12,6 +12,62 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.18 - 2026-08-22 - The editor: `@workshop/ui/editor`, and the `--syn-*` color layer
+
+**Additive only.** P1 of
+`docs/platform-redesign/file-viewer-and-editor-2026-08-22.md`: one text and code
+editor for the whole system, on CodeMirror 6. Nothing consumes it yet; the file
+tree (P2) and the file API (P3) are separate.
+
+Added, at the new **`@workshop/ui/editor`** subpath:
+
+- `Editor`, `type EditorProps`: a CodeMirror 6 editor themed entirely from
+  tokens. Props: `value`, `onChange`, `path`, `profile`, `editable`, `height`,
+  `className`, `ariaLabel`. `editable={false}` removes `contenteditable`
+  (`EditorView.editable`) as well as refusing modification
+  (`EditorState.readOnly`), so **no virtual keyboard opens on a phone** for a
+  file you may not write. It is not drawn as a disabled control and it never
+  uses the refusal cursor: `editable` is a fact about the path, not a mode.
+- `languageForPath`, `type EditorProfile`, `type PathProfile`,
+  `type PathLanguage`: the path to language and profile table, as a pure
+  function (`src/editorProfile.ts`, tested in `editorProfile.test.ts`). Three
+  profiles and no fourth: `prose` (markdown, soft wrap, history, no line
+  numbers, no folding), `code` (language by extension, line numbers, folding,
+  bracket matching, indent, search, history) and `view` (highlighting only).
+  Adding a language later is a row in that table.
+
+The CodeMirror packages are **optional peer dependencies**, exactly as
+`maplibre-gl` is for `./map` and `react-markdown` is for `./markdown`:
+`@codemirror/state`, `@codemirror/view`, `@codemirror/language`,
+`@codemirror/commands`, `@codemirror/search`, `@codemirror/lang-markdown`,
+`@codemirror/language-data` and `@lezer/highlight`. **The core entry gains no
+dependency**, and a consumer that never opens a file installs none of them.
+
+Added tokens, generated across all eight schemes in both modes:
+
+- `--syn-comment`, `--syn-string`, `--syn-keyword`, `--syn-number`,
+  `--syn-function`, `--syn-type`, `--syn-property`, `--syn-punctuation`,
+  `--syn-invalid`.
+
+Nine roles, not the thirty a TextMate grammar offers. `--syn-comment` and
+`--syn-punctuation` are muted neutrals rather than a hue; `--syn-invalid` is
+emitted as `var(--danger)` and is not a tenth color. The six that carry a hue
+sit on a ring **anchored at the scheme's own base hue** and take the scheme's
+own `you` chroma trim, so a file read in Fern is green-led where the same file
+in Clay is terracotta-led, and a quiet scheme reads code as quietly as it reads
+everything else. Every one of them is solved to 4.5:1 against `--bg`, `--card`
+and `--bg-inset` by the same solver every other text tone uses, in all sixteen
+scheme x modes, and pinned in `palette.test.ts`.
+
+Added `.ws-editor` to `components.css`: the container only (a flex column, so
+`height` on the wrapper reaches the editor and its absence lets the editor grow
+with its content). The editor surface itself is themed in `Editor.tsx`, because
+`EditorView.theme()` takes plain CSS strings and CodeMirror injects its own
+stylesheet. Switching palette or theme therefore needs **no editor
+reconfiguration at all**; where reconfiguration is genuinely needed (profile,
+language, editability) it goes through a `Compartment`, never a teardown, so a
+change never costs the selection, the scroll position or the undo history.
+
 ## 0.5.17 - 2026-08-20 - App-facing capabilities: polling, time, bytes, HTTP errors, storage, breadcrumbs, native bridge
 
 **Additive only.** Stage 4b of the app-separation plan

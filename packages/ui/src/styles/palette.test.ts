@@ -296,3 +296,52 @@ describe("the designer's stops are what actually ship", () => {
     expect(contrast(iris.you, iris.card)).toBeGreaterThanOrEqual(AA_TEXT);
   });
 });
+
+describe("the code layer is legible and belongs to its scheme", () => {
+  // Nine roles, decided in docs/platform-redesign/file-viewer-and-editor-2026-08-22.md
+  // section 5.2. Six carry a hue, two are muted, one points at danger.
+  const SYN = [
+    "synComment", "synString", "synKeyword", "synNumber", "synFunction",
+    "synType", "synProperty", "synPunctuation", "synInvalid",
+  ];
+  const SYN_HUED = ["synKeyword", "synType", "synFunction", "synString", "synNumber", "synProperty"];
+
+  it.each(schemes)("%s %s — every syntax role clears AA where an editor paints", (_id, _mode, s) => {
+    // An editor's background is --bg-inset; a panel or a card can hold one too.
+    // Highlighting nobody can read is not highlighting.
+    for (const surface of [s.bg, s.card, s.bgInset]) {
+      for (const token of SYN) {
+        expect.soft(ratio(s[token], surface), `--${token} on ${surface}`).toBeGreaterThanOrEqual(AA_TEXT);
+      }
+    }
+  });
+
+  it.each(schemes)("%s %s — the six hued roles are six different colors", (_id, _mode, s) => {
+    // A file whose strings and numbers look alike is not legible in any scheme,
+    // which is why the hue offsets are fixed and only the anchor rotates.
+    expect(new Set(SYN_HUED.map((k) => s[k])).size).toBe(SYN_HUED.length);
+  });
+
+  it.each(schemes)("%s %s — comment and punctuation are muted, never a hue", (_id, _mode, s) => {
+    // They take the base hue at the SURFACE chroma, the same neutral the four
+    // elevation steps are built from, so they read as ink rather than as a
+    // seventh syntax color. A comment is dimmer than a brace: it is skippable.
+    for (const k of ["synComment", "synPunctuation"]) {
+      expect.soft(SYN_HUED.map((h) => s[h])).not.toContain(s[k]);
+    }
+    expect(ratio(s.synComment, s.bgInset)).toBeLessThan(ratio(s.synPunctuation, s.bgInset));
+    expect(ratio(s.synPunctuation, s.bgInset)).toBeLessThan(ratio(s.fg, s.bgInset));
+  });
+
+  it.each(schemes)("%s %s — invalid is the danger tone, not a tenth color", (_id, _mode, s) => {
+    expect(s.synInvalid).toBe(s.danger);
+  });
+
+  it.each(MODES)("%s — the keyword tone rotates with the scheme", (mode) => {
+    // The ring is anchored at the scheme's base hue, so a file read in Fern is
+    // green-led where the same file in Clay is terracotta-led. If every scheme
+    // agreed here, the code layer would be somebody else's theme bolted on.
+    const tones = SCHEMES.map((p) => buildScheme(p.id, mode).synKeyword);
+    expect(new Set(tones).size).toBe(SCHEMES.length);
+  });
+});

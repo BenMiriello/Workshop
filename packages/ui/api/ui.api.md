@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.5.17
+Version: 0.5.18
 
 ## @workshop/ui
 
@@ -172,6 +172,17 @@ Source: `src/Map.tsx`
 Source: `src/Markdown.tsx`
 
 - Markdown
+
+## @workshop/ui/editor
+
+Source: `src/Editor.tsx`
+
+- Editor
+- languageForPath
+- type EditorProfile
+- type EditorProps
+- type PathLanguage
+- type PathProfile
 
 ## Asset entry points
 

@@ -12,8 +12,11 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // EVERYTHING a consumer already has is external. The kit ships its own code and
 // nothing else: bundling react or lucide here would give a consuming app two
 // copies of React and break hooks. The heavy optional peers (maplibre, pmtiles,
-// protomaps, react-markdown, remark-gfm) are external for the same reason and
-// are only reachable through the ./map and ./markdown subpaths.
+// protomaps, react-markdown, remark-gfm, and the CodeMirror set) are external
+// for the same reason and are only reachable through the ./map, ./markdown and
+// ./editor subpaths. Two copies of @codemirror/state in one page is the same
+// class of bug as two Reacts: the facets are identity-keyed, so an extension
+// built against one copy is invisible to a view built against the other.
 const EXTERNAL = [
   /^react($|\/)/,
   /^react-dom($|\/)/,
@@ -23,6 +26,9 @@ const EXTERNAL = [
   /^protomaps-themes-base($|\/)/,
   /^react-markdown($|\/)/,
   /^remark-gfm($|\/)/,
+  /^@codemirror\//,
+  /^@lezer\//,
+  /^codemirror($|\/)/,
 ];
 
 export default defineConfig({
@@ -39,6 +45,7 @@ export default defineConfig({
         index: resolve(HERE, "src/index.ts"),
         Map: resolve(HERE, "src/Map.tsx"),
         Markdown: resolve(HERE, "src/Markdown.tsx"),
+        Editor: resolve(HERE, "src/Editor.tsx"),
         tokens: resolve(HERE, "src/styles/tokens.js"),
       },
       formats: ["es"],

@@ -212,6 +212,55 @@ export const SCHEMES = [
    the agency hues because fill-vs-outline already separates the vocabularies. */
 const OK_H = 148, WARN_H = 75, DANGER_H = 25;
 
+/* ---- THE CODE LAYER: `--syn-*` -------------------------------------------
+   Nine roles, not the thirty a TextMate grammar offers, decided in
+   docs/platform-redesign/file-viewer-and-editor-2026-08-22.md section 5.2. Two
+   of them are not a hue at all and one of them is not a new color:
+
+     comment / punctuation   MUTED. They are the parts of a file you read past,
+                             so they take a neutral at the base hue and the
+                             surface chroma, exactly like --muted and --faint.
+     invalid                 THE EXISTING DANGER TONE, emitted as an alias. A
+                             tenth hue for "this is broken" would be a second
+                             vocabulary for something status already says.
+
+   The other six DERIVE FROM THE SCHEME rather than importing somebody else's
+   theme, in two ways:
+
+     • The ring is ANCHORED AT THE SCHEME'S BASE HUE. `keyword` sits exactly on
+       it, because keywords are the most frequent colored token in a file and
+       that is what decides whether the file looks like it belongs in the
+       palette it is being read in. Everything else is an offset from there, so
+       the whole ring rotates with the scheme: the same file is cyan-led in
+       Lagoon and terracotta-led in Clay.
+     • The CHROMA is the scheme's own `you` trim, so a quiet scheme reads code
+       as quietly as it reads everything else.
+
+   The offsets are FIXED (roughly even, 55-65 degrees apart) and that is
+   deliberate: six roles have to stay separable in all sixteen scheme x modes,
+   and a file whose strings and numbers look alike is not legible in any of
+   them. Anchoring carries the identity; spacing carries the legibility.
+
+   Lightness and chroma are one stop per mode, at the `you` tier's own stops,
+   then walked to 4.5:1 by the same solver every other text tone uses. Equal L
+   across the ring is what makes a theme read as one thing (it is why Solarized
+   works), so the tones are levelled first and made legible second. */
+const SYN_HUES = { keyword: 0, type: 55, function: 115, string: 180, number: 240, property: 300 };
+
+/* Six roles need more separation than three agency tiers do. A quiet scheme
+   trims `you` chroma to ~0.55, and at 0.115 x 0.55 the six hues stop being six
+   and become one gray with opinions. The trim still applies, floored. */
+const SYN_C_FLOOR = 0.75;
+
+/* The two muted roles, as [L, chroma] at the base hue, per mode. `comment` is
+   dimmer than `punctuation` because a comment is skippable and a brace is not;
+   both sit below --fg, and both are solved to AA rather than left at the stop,
+   since they are still text somebody has to read. */
+const SYN_NEUTRAL = {
+  dark: { comment: [0.615, 0.020], punctuation: [0.735, 0.018] },
+  light: { comment: [0.545, 0.018], punctuation: [0.475, 0.016] },
+};
+
 export const DEFAULT_PALETTE = "iris";
 export const MODES = /** @type {const} */ (["light", "dark"]);
 
@@ -462,6 +511,20 @@ export function buildScheme(schemeId, mode) {
   const stoppedT = text(P.stopped, onSurfaces(P.stoppedSoft));
 
   const you = T(youT);
+
+  /* ---- the code layer, see SYN_HUES ------------------------------------
+     Every syntax tone is solved against the three surfaces, like every other
+     text tone: an editor paints on --bg-inset, and a token nobody can read is
+     not highlighting. Hue and chroma are never touched by the solver, so the
+     ring still reads as the scheme drew it. */
+  const synC = Math.max(SYN_C_FLOOR, s.yc || 1);
+  const synHue = (offset) => (((s.base + offset) % 360) + 360) % 360;
+  const synTone = (offset) => {
+    const h = synHue(offset);
+    return T(text(mode === "dark" ? [0.795, 0.115 * synC, h] : [0.545 - lightDrop(h), 0.145 * synC, h], surfaces));
+  };
+  const synMuted = ([L, C]) => T(text([L, C * bc, s.base], surfaces));
+
   const scrim = alpha(N(d.scrim), d.scrimAlpha);
   const shadowSeed = d.shadow ? N(d.shadow) : "#000000";
 
@@ -539,6 +602,19 @@ export function buildScheme(schemeId, mode) {
     dangerSolid: statusSolid(P.danger),
     dangerSoft: T(P.dangerSoft),
     dangerHover: step(dangerT, d.dangerHoverL, 1),
+
+    /* ---- the code layer: nine roles, six hues, one danger alias ---------- */
+    synComment: synMuted(SYN_NEUTRAL[mode].comment),
+    synPunctuation: synMuted(SYN_NEUTRAL[mode].punctuation),
+    synKeyword: synTone(SYN_HUES.keyword),
+    synType: synTone(SYN_HUES.type),
+    synFunction: synTone(SYN_HUES.function),
+    synString: synTone(SYN_HUES.string),
+    synNumber: synTone(SYN_HUES.number),
+    synProperty: synTone(SYN_HUES.property),
+    /* Not a tenth color. Emitted as `var(--danger)` in CSS (see ALIASES in
+       gen-tokens.mjs); the RN object carries the value, since it cannot point. */
+    synInvalid: T(dangerT),
 
     scrim,
     focusRing: alpha(you, d.focusAlpha),
