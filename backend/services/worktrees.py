@@ -10,6 +10,13 @@ success.
 The disk concept stays "worktree" (git's term); the URL path stays
 /api/worktrees/. The user-facing concept is the branch.
 
+LAYER. This module is branch RECORDS plus policy: which project a slug names,
+what a branch is called and where its worktree lives, when a merge or a publish
+is allowed and what happens after one. It speaks no git itself. Every git
+invocation goes through `services/git_service.py`, which takes a repository path
+and knows nothing about projects (section 13.1/13.2 of workspace-ownership-and-
+leases-2026-08-22.md). The GitHub remote surface stays in `services/github.py`.
+
 Public surface:
   create_branch(project_slug, branch_slug) -> dict
   allocate_task_worktree(project_slug, task_id) -> dict
@@ -33,6 +40,7 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from services import git_service
 from services.app_runner import _read_manifest_file as _read_app_manifest, AppError as _AppError
 from wsplatform import paths
 
@@ -66,21 +74,6 @@ _PLATFORM_DEFAULT_INPUTS: list[tuple[str, str]] = [
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _git_env() -> dict:
-    """Neutral committer env mirroring routes/projects.py::_git_init.
-
-    All merge commits land under the Workshop Projects identity so the history
-    reads consistently regardless of which operator triggered the merge.
-    """
-    return {
-        **os.environ,
-        "GIT_AUTHOR_NAME": "Workshop Projects",
-        "GIT_AUTHOR_EMAIL": "projects@workshop.local",
-        "GIT_COMMITTER_NAME": "Workshop Projects",
-        "GIT_COMMITTER_EMAIL": "projects@workshop.local",
-    }
 
 
 def _validate_slug(value: str, label: str) -> str:
@@ -140,7 +133,7 @@ def _canonical_branch(project_slug: str, project_dir: Path) -> str:
     repo = _project_repo(project_slug)
     if repo and repo.get("default_branch"):
         return repo["default_branch"]
-    return _main_branch(project_dir)
+    return git_service.main_branch(project_dir)
 
 
 def _branch_name(project_slug: str, branch_slug: str) -> str:
@@ -149,38 +142,6 @@ def _branch_name(project_slug: str, branch_slug: str) -> str:
 
 def _branch_path(project_slug: str, branch_slug: str) -> Path:
     return BRANCHES_ROOT / project_slug / branch_slug
-
-
-def _run(args: list[str], *, cwd: Path | None = None, check: bool = True,
-         timeout: int = 30) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        args,
-        cwd=str(cwd) if cwd else None,
-        env=_git_env(),
-        capture_output=True,
-        text=True,
-        check=check,
-        timeout=timeout,
-    )
-
-
-def _main_branch(project_dir: Path) -> str:
-    """Best-effort detection of the project's main branch name.
-
-    Prefers `main`, falls back to `master`, then to whatever HEAD points at.
-    """
-    for candidate in ("main", "master"):
-        r = subprocess.run(
-            ["git", "-C", str(project_dir), "rev-parse", "--verify", candidate],
-            capture_output=True, text=True, timeout=10,
-        )
-        if r.returncode == 0:
-            return candidate
-    r = subprocess.run(
-        ["git", "-C", str(project_dir), "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True, text=True, timeout=10,
-    )
-    return (r.stdout or "main").strip() or "main"
 
 
 def create_branch(project_slug: str, branch_slug: str) -> dict:
@@ -198,11 +159,8 @@ def create_branch(project_slug: str, branch_slug: str) -> dict:
         raise ValueError(f"branch dir already exists: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
-        _run(
-            ["git", "-C", str(project_dir), "worktree", "add", "-b", branch, str(target)],
-            timeout=60,
-        )
-    except subprocess.CalledProcessError as e:
+        git_service.worktree_add(project_dir, target, branch=branch)
+    except git_service.GitError as e:
         stderr = (e.stderr or "").strip()[:200]
         raise ValueError(f"git worktree add failed (exit {e.returncode}): {stderr}")
     return {
@@ -235,26 +193,20 @@ def allocate_task_worktree(project_slug: str, task_id: str) -> dict:
 
     repo = _project_repo(project_slug)
     if repo:
-        base = repo.get("default_branch") or _main_branch(project_dir)
+        base = repo.get("default_branch") or git_service.main_branch(project_dir)
         start_point = f"origin/{base}"
     else:
         start_point = _canonical_branch(project_slug, project_dir)
 
     try:
-        _run(
-            ["git", "-C", str(project_dir), "worktree", "add",
-             "-b", branch, str(target), start_point],
-            timeout=60,
-        )
-    except subprocess.CalledProcessError as e:
+        git_service.worktree_add(project_dir, target, branch=branch,
+                                 start_point=start_point)
+    except git_service.GitError as e:
         stderr = (e.stderr or "").strip()[:200]
         raise ValueError(f"git worktree add failed (exit {e.returncode}): {stderr}")
 
     # Lock the worktree so a crashed agent's stale index cannot block others.
-    subprocess.run(
-        ["git", "-C", str(project_dir), "worktree", "lock", str(target)],
-        env=_git_env(), capture_output=True, text=True, timeout=15,
-    )
+    git_service.worktree_lock(project_dir, target)
     return {"branch": branch, "branch_slug": branch_slug, "dir": str(target)}
 
 
@@ -267,44 +219,23 @@ def list_branches(project_slug: str) -> list[dict]:
     project_slug = _validate_slug(project_slug, "project_slug")
     project_dir = _project_dir(project_slug)
     try:
-        r = _run(["git", "-C", str(project_dir), "worktree", "list", "--porcelain"], timeout=15)
-    except subprocess.CalledProcessError:
+        entries = git_service.worktree_list(project_dir)
+    except git_service.GitError:
         return []
-    items: list[dict] = []
-    current: dict = {}
     prefix = f"wt/{project_slug}/"
-    for raw in (r.stdout or "").splitlines():
-        line = raw.rstrip()
-        if line.startswith("worktree "):
-            if current:
-                _maybe_append(current, items, prefix)
-            current = {"dir": line[len("worktree "):]}
-        elif line.startswith("HEAD "):
-            current["head"] = line[len("HEAD "):]
-        elif line.startswith("branch "):
-            ref = line[len("branch "):]
-            current["branch"] = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
-        elif line == "":
-            if current:
-                _maybe_append(current, items, prefix)
-                current = {}
-    if current:
-        _maybe_append(current, items, prefix)
+    items: list[dict] = []
+    for entry in entries:
+        branch = entry.get("branch") or ""
+        if not branch.startswith(prefix):
+            continue
+        items.append({
+            "project_slug": project_slug,
+            "branch_slug": branch[len(prefix):],
+            "branch": branch,
+            "dir": entry.get("dir", ""),
+            "head": entry.get("head"),
+        })
     return items
-
-
-def _maybe_append(current: dict, items: list[dict], prefix: str) -> None:
-    branch = current.get("branch") or ""
-    if not branch.startswith(prefix):
-        return
-    branch_slug = branch[len(prefix):]
-    items.append({
-        "project_slug": prefix.split("/")[1],
-        "branch_slug": branch_slug,
-        "branch": branch,
-        "dir": current.get("dir", ""),
-        "head": current.get("head"),
-    })
 
 
 def diff_branch(project_slug: str, branch_slug: str) -> dict:
@@ -317,28 +248,17 @@ def diff_branch(project_slug: str, branch_slug: str) -> dict:
     project_dir = _project_dir(project_slug)
     branch = _branch_name(project_slug, branch_slug)
     main = _canonical_branch(project_slug, project_dir)
-    base = f"{main}...{branch}"
-    short = subprocess.run(
-        ["git", "-C", str(project_dir), "diff", "--shortstat", base],
-        env=_git_env(), capture_output=True, text=True, timeout=15,
-    )
-    summary = (short.stdout or "").strip() or "no changes vs main"
-    name_status = subprocess.run(
-        ["git", "-C", str(project_dir), "diff", "--name-status", base],
-        env=_git_env(), capture_output=True, text=True, timeout=15,
-    )
+    summary = git_service.diff_stat(project_dir, main, branch, three_dot=True) \
+        or "no changes vs main"
     files: list[dict] = []
-    for line in (name_status.stdout or "").splitlines():
-        if not line.strip():
-            continue
-        parts = line.split("\t")
-        status = parts[0].strip()
-        path = parts[-1].strip()
-        diff_proc = subprocess.run(
-            ["git", "-C", str(project_dir), "diff", base, "--", path],
-            env=_git_env(), capture_output=True, text=True, timeout=15,
-        )
-        files.append({"path": path, "status": status, "diff": diff_proc.stdout})
+    for entry in git_service.diff_name_status(project_dir, main, branch, three_dot=True):
+        path = entry["path"]
+        files.append({
+            "path": path,
+            "status": entry["status"],
+            "diff": git_service.diff(project_dir, main, branch, three_dot=True,
+                                     paths=[path]),
+        })
     return {"summary": summary, "files": files}
 
 
@@ -367,63 +287,38 @@ def merge_branch(project_slug: str, branch_slug: str, *, message: str = "") -> d
             github.merge_pr(str(project_dir), head=branch, base=main)
         except ValueError as e:
             return {"ok": False, "reason": str(e)[:400]}
-        head = subprocess.run(
-            ["git", "-C", str(project_dir), "rev-parse", "HEAD"],
-            env=_git_env(), capture_output=True, text=True, timeout=10,
-        ).stdout.strip()
+        head = git_service.rev_parse(project_dir, "HEAD") or ""
         _reap_worktree(project_dir, project_slug, branch_slug, branch)
         return {"ok": True, "commit": head}
 
     # Make sure we're operating from main in the project's main worktree.
-    co = subprocess.run(
-        ["git", "-C", str(project_dir), "checkout", main],
-        env=_git_env(), capture_output=True, text=True, timeout=20,
-    )
-    if co.returncode != 0:
-        return {"ok": False, "reason": f"checkout {main} failed: {(co.stderr or '').strip()[:200]}"}
+    co = git_service.checkout(project_dir, main)
+    if not co["ok"]:
+        return {"ok": False, "reason": f"checkout {main} failed: {co['detail'][:200]}"}
 
-    ff = subprocess.run(
-        ["git", "-C", str(project_dir), "merge", "--ff-only", branch],
-        env=_git_env(), capture_output=True, text=True, timeout=30,
+    # Fast-forward when the history allows it, a merge commit under the neutral
+    # identity when it does not. git_service aborts a failed merge for us, so
+    # the working tree is clean either way.
+    result = git_service.merge(
+        project_dir, branch,
+        message=message.strip() or f"Merge branch {branch_slug} into {main}",
     )
-    if ff.returncode != 0:
-        msg = message.strip() or f"Merge branch {branch_slug} into {main}"
-        merge = subprocess.run(
-            ["git", "-C", str(project_dir), "merge", "--no-ff", "-m", msg, branch],
-            env=_git_env(), capture_output=True, text=True, timeout=60,
-        )
-        if merge.returncode != 0:
-            # Abort the in-progress merge so the working tree is clean again.
-            subprocess.run(
-                ["git", "-C", str(project_dir), "merge", "--abort"],
-                env=_git_env(), capture_output=True, text=True, timeout=20,
-            )
-            return {"ok": False, "reason": (merge.stderr or merge.stdout or "merge failed").strip()[:400]}
-
-    head = subprocess.run(
-        ["git", "-C", str(project_dir), "rev-parse", "HEAD"],
-        env=_git_env(), capture_output=True, text=True, timeout=10,
-    ).stdout.strip()
+    if not result["ok"]:
+        return {"ok": False, "reason": result["detail"][:400]}
 
     _reap_worktree(project_dir, project_slug, branch_slug, branch)
-    return {"ok": True, "commit": head}
+    return {"ok": True, "commit": result["commit"] or ""}
 
 
 def _reap_worktree(project_dir: Path, project_slug: str, branch_slug: str, branch: str) -> None:
     """Remove the branch worktree and delete its local ref after a merge."""
     target = _branch_path(project_slug, branch_slug)
-    subprocess.run(
-        ["git", "-C", str(project_dir), "worktree", "remove", "--force", str(target)],
-        env=_git_env(), capture_output=True, text=True, timeout=20,
-    )
+    git_service.worktree_remove(project_dir, target, force=True)
     if target.exists():
         # If worktree remove balked (e.g. already pruned), try to clean up the
         # leftover dir so a re-create with the same slug works.
         shutil.rmtree(target, ignore_errors=True)
-    subprocess.run(
-        ["git", "-C", str(project_dir), "branch", "-D", branch],
-        env=_git_env(), capture_output=True, text=True, timeout=15,
-    )
+    git_service.branch_delete(project_dir, branch, force=True)
 
 
 def discard_branch(project_slug: str, branch_slug: str) -> dict:
@@ -433,16 +328,10 @@ def discard_branch(project_slug: str, branch_slug: str) -> dict:
     project_dir = _project_dir(project_slug)
     branch = _branch_name(project_slug, branch_slug)
     target = _branch_path(project_slug, branch_slug)
-    subprocess.run(
-        ["git", "-C", str(project_dir), "worktree", "remove", "--force", str(target)],
-        env=_git_env(), capture_output=True, text=True, timeout=20,
-    )
+    git_service.worktree_remove(project_dir, target, force=True)
     if target.exists():
         shutil.rmtree(target, ignore_errors=True)
-    subprocess.run(
-        ["git", "-C", str(project_dir), "branch", "-D", branch],
-        env=_git_env(), capture_output=True, text=True, timeout=15,
-    )
+    git_service.branch_delete(project_dir, branch, force=True)
     return {"ok": True}
 
 
@@ -462,7 +351,7 @@ def publish_branch(project_slug: str, branch_slug: str, *,
         raise ValueError("project is not connected to GitHub; connect it first")
     branch = _branch_name(project_slug, branch_slug)
     remote_url = repo["remote_url"]
-    base = repo.get("default_branch") or _main_branch(project_dir)
+    base = repo.get("default_branch") or git_service.main_branch(project_dir)
 
     from services import github
 
@@ -481,12 +370,9 @@ def publish_branch(project_slug: str, branch_slug: str, *,
             "detail": rebase.get("detail", ""),
         }
 
-    push = subprocess.run(
-        ["git", "-C", str(project_dir), "push", "-u", "origin", branch],
-        env=_git_env(), capture_output=True, text=True, timeout=180,
-    )
-    if push.returncode != 0:
-        raise ValueError(f"git push failed: {(push.stderr or push.stdout or '').strip()[:300]}")
+    push = git_service.push(project_dir, "origin", branch, set_upstream=True)
+    if not push["ok"]:
+        raise ValueError(f"git push failed: {push['detail'][:300]}")
 
     pr_title = title.strip() or f"{branch_slug} ({project_slug})"
     pr_body = body.strip() or f"Publishes {branch} into {base}."
@@ -511,7 +397,7 @@ def cleanup_merged(project_slug: str) -> dict:
     repo = _project_repo(project_slug)
     if not repo:
         return {"removed": [], "kept": []}
-    base = repo.get("default_branch") or _main_branch(project_dir)
+    base = repo.get("default_branch") or git_service.main_branch(project_dir)
 
     from services import github
     removed: list[str] = []
@@ -524,10 +410,7 @@ def cleanup_merged(project_slug: str) -> dict:
             removed.append(branch_slug)
         else:
             kept.append(branch_slug)
-    subprocess.run(
-        ["git", "-C", str(project_dir), "worktree", "prune"],
-        env=_git_env(), capture_output=True, text=True, timeout=15,
-    )
+    git_service.worktree_prune(project_dir)
     return {"removed": removed, "kept": kept}
 
 
@@ -545,7 +428,7 @@ def repo_state(project_slug: str) -> dict:
     repo = _project_repo(project_slug)
     if not repo:
         return {"bound": False}
-    base = repo.get("default_branch") or _main_branch(project_dir)
+    base = repo.get("default_branch") or git_service.main_branch(project_dir)
     remote_url = repo.get("remote_url")
 
     from services import github

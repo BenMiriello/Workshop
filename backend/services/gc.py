@@ -21,10 +21,9 @@ from __future__ import annotations
 
 import json
 import logging
-import subprocess
 from pathlib import Path
 
-from services import worktrees
+from services import git_service, worktrees
 
 log = logging.getLogger("workshop.gc")
 
@@ -34,14 +33,6 @@ CHECKPOINT_KEEP = 50
 # Auto-checkpoint commits are recognizable by the subject prefix the checkpoint
 # helper writes (services/checkpoints.py): "checkpoint: ...".
 _CHECKPOINT_PREFIX = "checkpoint:"
-
-
-def _git(args: list[str], *, cwd: Path | None = None, timeout: int = 20) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", *args],
-        cwd=str(cwd) if cwd else None,
-        capture_output=True, text=True, timeout=timeout,
-    )
 
 
 # --------------------------------------------------------------------------
@@ -57,12 +48,6 @@ def _projects() -> dict:
         return {}
 
 
-def _branch_merged(project_dir: Path, branch: str, main: str) -> bool:
-    """True if `branch`'s tip is an ancestor of `main` (already merged)."""
-    r = _git(["-C", str(project_dir), "merge-base", "--is-ancestor", branch, main], cwd=None)
-    return r.returncode == 0
-
-
 def list_merged_worktrees() -> list[dict]:
     """Across all registered projects, list worktree branches already merged
     into main. Each item: project_slug, branch_slug, branch, dir, merged=True."""
@@ -75,7 +60,7 @@ def list_merged_worktrees() -> list[dict]:
         if not project_dir.exists():
             continue
         try:
-            main = worktrees._main_branch(project_dir)
+            main = git_service.main_branch(project_dir)
         except Exception:
             continue
         try:
@@ -87,7 +72,7 @@ def list_merged_worktrees() -> list[dict]:
             if not branch:
                 continue
             try:
-                if _branch_merged(project_dir, branch, main):
+                if git_service.is_ancestor(project_dir, branch, main):
                     out.append({
                         "project_slug": b.get("project_slug", slug),
                         "branch_slug": b.get("branch_slug"),
@@ -121,34 +106,21 @@ def reap_merged_worktrees(*, apply: bool = False) -> dict:
 # --------------------------------------------------------------------------
 # (2) Checkpoint thinning -- REPORT ONLY (no history rewrite by default).
 # --------------------------------------------------------------------------
-def _tagged_shas(repo: Path) -> set[str]:
-    r = _git(["-C", str(repo), "tag", "--format=%(objectname)"], cwd=None)
-    if r.returncode != 0:
-        return set()
-    return {s.strip() for s in r.stdout.splitlines() if s.strip()}
-
-
 def describe_checkpoint_thinning(repo: Path, *, keep: int = CHECKPOINT_KEEP) -> dict:
     """Identify auto-checkpoint commits beyond the most-recent `keep` that are
     candidates for squashing, EXCLUDING any tagged commit. Returns a description
     only -- nothing is rewritten (history-rewrite is blocked for agents). The
     operator can act on this report through a deliberate, non-agent path."""
-    if not (repo / ".git").exists() and not (repo.is_dir() and _git(
-            ["-C", str(repo), "rev-parse", "--is-inside-work-tree"], cwd=None).stdout.strip() == "true"):
+    if not (repo / ".git").exists() and not (repo.is_dir() and git_service.is_repo(repo)):
         return {"repo": str(repo), "is_repo": False, "total_checkpoints": 0,
                 "kept": 0, "squashable": 0, "candidates": []}
-    r = _git(["-C", str(repo), "log", "--format=%H%x1f%s", "-n", "5000"], cwd=None)
-    if r.returncode != 0:
-        return {"repo": str(repo), "is_repo": True, "total_checkpoints": 0,
-                "kept": 0, "squashable": 0, "candidates": []}
-    tagged = _tagged_shas(repo)
+    commits = git_service.log(repo, max_count=5000)
+    tagged = git_service.tag_shas(repo)
     checkpoints: list[tuple[str, str]] = []
-    for line in r.stdout.splitlines():
-        if "\x1f" not in line:
-            continue
-        sha, subject = line.split("\x1f", 1)
-        if subject.strip().startswith(_CHECKPOINT_PREFIX):
-            checkpoints.append((sha.strip(), subject.strip()))
+    for c in commits:
+        subject = c["subject"].strip()
+        if subject.startswith(_CHECKPOINT_PREFIX):
+            checkpoints.append((c["sha"], subject))
     total = len(checkpoints)
     # checkpoints[] is newest-first (git log order). Keep the first `keep`.
     kept = checkpoints[:keep]
