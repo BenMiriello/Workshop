@@ -141,3 +141,32 @@ describe("which scopes a chat gets a task queue for", () => {
     expect(scopeHasQueue("workshop", new Set(["workshop"]))).toBe(false);
   });
 });
+
+// An app scope had NO case in `scopeLabel`, so it fell through to the raw kind
+// and the Memory tree read "app: budget" beside "Project: budget" and
+// "Agent: masini" -- three capitalisations in one list. The backend's
+// `scope_tree.label()` has carried `"app": "App"` all along, so this was the
+// client half drifting from the server, which is exactly what the role tests
+// above were written to catch for a different kind.
+describe("an app scope is named like every other scope", () => {
+  it("capitalises the kind instead of leaking it", () => {
+    expect(scopeLabel("app:budget")).toBe("App: budget");
+  });
+
+  it("matches the label the backend renders for the same key", () => {
+    // backend services/scope_tree.label(): {"app": "App", ...}
+    expect(scopeLabel("app:birds")).toBe("App: birds");
+  });
+
+  it("reads consistently beside the project and agent kinds", () => {
+    const labels = ["app:budget", "project:budget", "agent:masini"].map(scopeLabel);
+    for (const l of labels) expect(l[0]).toBe(l[0].toUpperCase());
+  });
+
+  it("does not label the deleted `build:` kind", () => {
+    // `build:<slug>` is a deleted spelling (chatScope.ts, and the
+    // "does not recognise the deleted `build:` kind" test above), so the branch
+    // that rendered it "Build" named something that can no longer arrive here.
+    expect(scopeLabel("build:solo")).toBe("build: solo");
+  });
+});

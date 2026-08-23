@@ -99,10 +99,17 @@ export function scopeLabel(scope?: string): string {
   // `role` is the SECOND AXIS, not a tree node (see backend scope_tree's "TWO
   // AXES, NOT ONE"). It labels like any other kind; it just sits at the root of
   // the scope picker because it has no parent.
+  // `app` was MISSING here, so the Memory tree read "app: budget" beside
+  // "Project: budget" and "Agent: masini": three capitalisations in one list,
+  // and the one left out is the kind the platform is organised around
+  // (app-is-the-entity-2026-08-20.md). `build` is gone rather than relabelled:
+  // `build:<slug>` is a deleted spelling (see chatScope.ts and scope.test.ts's
+  // "does not recognise the deleted `build:` kind"), so it labelled a kind that
+  // can no longer reach this function.
   const kindLabel =
-    kind === "project" ? "Project"
+    kind === "app" ? "App"
+    : kind === "project" ? "Project"
     : kind === "agent" ? "Agent"
-    : kind === "build" ? "Build"
     : kind === "role" ? "Role"
     : kind;
   return `${kindLabel}: ${slug}`;

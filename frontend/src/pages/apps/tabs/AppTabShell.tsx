@@ -108,7 +108,7 @@ export function AppTabPage({
 const MAX_ROWS = 300;
 
 export function CollectionBody<T>({
-  items, err, reload, endpoint, emptyTitle, emptyHint, overflowHint, render,
+  items, err, reload, endpoint, emptyTitle, emptyHint, emptyAction, overflowHint, render,
 }: {
   items: T[] | null;
   err: string | null;
@@ -116,6 +116,10 @@ export function CollectionBody<T>({
   endpoint: string;
   emptyTitle: string;
   emptyHint: ReactNode;
+  /** The one thing to do from here when there is nothing yet. Optional: a tab
+   *  whose collection is filled from somewhere else (runs, deploys) has no
+   *  action to offer and must not grow a button that leads nowhere. */
+  emptyAction?: ReactNode;
   overflowHint: string;
   render: (items: T[]) => ReactNode;
 }) {
@@ -133,7 +137,7 @@ export function CollectionBody<T>({
     return <Card><Stack gap="sm"><Skeleton width="60%" /><Skeleton width="45%" /><Skeleton width="50%" /></Stack></Card>;
   }
   if (items.length === 0) {
-    return <StateBlock title={emptyTitle} hint={emptyHint} />;
+    return <StateBlock title={emptyTitle} hint={emptyHint} action={emptyAction} />;
   }
   if (items.length > MAX_ROWS) {
     return <StateBlock title="Too many to render" hint={overflowHint} />;
