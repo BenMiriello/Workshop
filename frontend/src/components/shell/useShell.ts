@@ -30,6 +30,7 @@ import {
   Rocket,
   Settings as SettingsIcon,
   Tags,
+  Wrench,
 } from "lucide-react";
 import { appPlaces } from "../../apps/registry";
 import { userStorage } from "../../lib/storage";
@@ -76,6 +77,7 @@ const ICONS = {
   trackers: Tags,
   mcp: Blocks,
   access: KeyRound,
+  tools: Wrench,
 };
 
 export type Shell = {

@@ -32,6 +32,7 @@ const Grants = lazyPage(() => import("./pages/settings/Grants"));
 const Trackers = lazyPage(() => import("./pages/settings/Trackers"));
 const McpServers = lazyPage(() => import("./pages/settings/McpServers"));
 const CustomInstructions = lazyPage(() => import("./pages/settings/CustomInstructions"));
+const Tools = lazyPage(() => import("./pages/settings/Tools"));
 const Marketplace = lazyPage(() => import("./pages/Marketplace"));
 const DeployDetail = lazyPage(() => import("./pages/DeployDetail"));
 const StoreDetail = lazyPage(() => import("./pages/StoreDetail"));
@@ -140,6 +141,7 @@ export default function App() {
           <Route path="/settings/trackers" element={<Trackers />} />
           <Route path="/settings/mcp" element={<McpServers />} />
           <Route path="/settings/instructions" element={<CustomInstructions />} />
+          <Route path="/settings/tools" element={<Tools />} />
           <Route path="/apps" element={<Apps />} />
           <Route path="/marketplace" element={<Marketplace />} />
           {/* Every app's routes come from src/apps/registry.tsx — the shell
