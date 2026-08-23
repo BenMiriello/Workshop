@@ -996,41 +996,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/apps/{app_id}/files": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** App Files Tree */
-        get: operations["app_files_tree_apps__app_id__files_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/apps/{app_id}/files/content": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** App Files Read */
-        get: operations["app_files_read_apps__app_id__files_content_get"];
-        /** App Files Write */
-        put: operations["app_files_write_apps__app_id__files_content_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/apps/{app_id}/notes": {
         parameters: {
             query?: never;
@@ -6530,10 +6495,20 @@ export interface paths {
          * List Scopes Tree
          * @description The same scope keys as `/scopes`, shaped as a tree instead of a flat
          *     list (design doc sec 11: "a scope filter shaped like the TREE, not a flat
-         *     list"). Each entry carries its `parent` (per `scope_tree.parent`, when that
-         *     parent is itself one of the visible scopes) and a `depth`, in root-first
+         *     list"). Each entry carries its `parent` and a `depth`, in root-first
          *     depth-first order, so a picker can convey containment by indentation alone
          *     without building a tree widget.
+         *
+         *     A PARENT THAT IS NOT VISIBLE IS SKIPPED, NOT DROPPED. This enumerates the
+         *     scopes that have a knowledge DIRECTORY, while `scope_tree.parent` answers
+         *     for the whole model, so a real parent can be absent here (an app with no
+         *     notes of its own still contains its project). Attaching such a child to the
+         *     root instead of to its nearest visible ancestor promotes it above scopes
+         *     that genuinely contain it: measured 2026-08-23, when `project:<slug>` moved
+         *     under `app:<slug>`, four projects whose app had no notes jumped from under
+         *     `workshop` to the top level, as siblings of `development`. Walking up keeps
+         *     containment truthful under partial visibility, and the `seen` guard means a
+         *     cycle in a hand-edited `.runtime/scope-tree.json` cannot hang the request.
          */
         get: operations["list_scopes_tree_notes_scopes_tree_get"];
         put?: never;
@@ -9183,69 +9158,6 @@ export interface components {
         AppDeployList: {
             /** Deploys */
             deploys: components["schemas"]["Deploy"][];
-        };
-        /** AppFileContent */
-        AppFileContent: {
-            /** Content */
-            content: string;
-            /** Editable */
-            editable: boolean;
-            /** Encoding */
-            encoding: string;
-            /** Modified */
-            modified?: string | null;
-            /** Path */
-            path: string;
-            /** Size */
-            size: number;
-            /** Truncated */
-            truncated: boolean;
-            /** Writable */
-            writable: boolean;
-        };
-        /** AppFileEntry */
-        AppFileEntry: {
-            /** Kind */
-            kind: string;
-            /** Modified */
-            modified?: string | null;
-            /** Name */
-            name: string;
-            /** Path */
-            path: string;
-            /** Size */
-            size?: number | null;
-        };
-        /** AppFileTree */
-        AppFileTree: {
-            /** Entries */
-            entries: components["schemas"]["AppFileEntry"][];
-            /** Filtered */
-            filtered?: string[] | null;
-            /** Path */
-            path: string;
-            /** Reason */
-            reason?: string | null;
-            /** Root */
-            root: string;
-        };
-        /** AppFileWriteIn */
-        AppFileWriteIn: {
-            /** Content */
-            content: string;
-            /** Path */
-            path: string;
-        };
-        /** AppFileWriteOut */
-        AppFileWriteOut: {
-            /** Modified */
-            modified: string;
-            /** Path */
-            path: string;
-            /** Size */
-            size: number;
-            /** Writable */
-            writable: boolean;
         };
         /**
          * AppGrant
@@ -19596,107 +19508,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AppDeployList"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    app_files_tree_apps__app_id__files_get: {
-        parameters: {
-            query?: {
-                path?: string;
-            };
-            header?: never;
-            path: {
-                app_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AppFileTree"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    app_files_read_apps__app_id__files_content_get: {
-        parameters: {
-            query: {
-                path: string;
-            };
-            header?: never;
-            path: {
-                app_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AppFileContent"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    app_files_write_apps__app_id__files_content_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                app_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AppFileWriteIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AppFileWriteOut"];
                 };
             };
             /** @description Validation Error */
