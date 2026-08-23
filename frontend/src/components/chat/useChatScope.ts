@@ -59,17 +59,22 @@ export type ChatScope = {
 
 export function useChatScope({
   contextKey, effectiveMode, scoped, initialThreadId, startNew,
-  startNewRef, linkedThreadRef, onError,
+  onError,
 }: {
   contextKey: string;
   effectiveMode: ChatMode;
   scoped?: boolean;
+  // The two URL intents, read straight from the PROPS. They used to be read
+  // from the one-shot refs (startNewRef / linkedThreadRef) that the thread
+  // loader consumes and nulls synchronously in the same effect flush, before
+  // this hook's async continuation (after `await listProviders`) ever got to
+  // read them. So the linked thread's real home scope was never learned and
+  // scope resolution silently fell back to a stale remembered provider, which
+  // it then persisted, wedging every later switch on that surface. The props
+  // carry the identical values, are never consumed, and resolving a thread's
+  // home twice is idempotent, so reading them here cannot race the loader.
   initialThreadId?: string;
   startNew?: boolean;
-  // The one-shot URL intents. READ here (the intent decides the scope) but never
-  // consumed — the thread loader does that, once, after the scope is settled.
-  startNewRef: React.MutableRefObject<boolean>;
-  linkedThreadRef: React.MutableRefObject<string | null>;
   onError: (problem: ChatProblem | null) => void;
 }): ChatScope {
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -111,7 +116,11 @@ export function useChatScope({
       }
       if (cancelled) return;
       if (effectiveMode === "data" && list.length) {
-        const linked = linkedThreadRef.current;
+        // The picked thread, from the STABLE prop, not the raced ref. This is
+        // the whole of the switching fix: the loader has already nulled
+        // linkedThreadRef by the time this line runs, so reading it here always
+        // saw null.
+        const linked = initialThreadId ?? null;
         let linkedThreadHome: string | null = null;
         if (linked) {
           // Read-only peek: the loader still fetches and adopts this thread.
@@ -123,7 +132,8 @@ export function useChatScope({
           contextKey,
           knownScopes: list.map((p) => p.key),
           linkedThreadHome,
-          startNew: startNewRef.current,
+          // The URL prop, not startNewRef.current, for the same anti-race reason.
+          startNew: !!startNew,
           remembered: readProvider(contextKey),
         });
         setActiveProvider(next);
@@ -132,7 +142,9 @@ export function useChatScope({
       if (!cancelled) setProvidersReady(true);
     })();
     return () => { cancelled = true; };
-    // The URL intents are refs on purpose: they are read, not depended on.
+    // initialThreadId and startNew are the URL intents, read straight from the
+    // props (and listed here as real deps) so scope resolution re-runs on every
+    // pick and never races the loader consuming their refs. onError is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextKey, effectiveMode, scoped, initialThreadId, startNew, providerNonce]);
 

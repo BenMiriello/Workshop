@@ -167,7 +167,7 @@ export default function Chat({
 
   const scopeState = useChatScope({
     contextKey, effectiveMode, scoped, initialThreadId, startNew,
-    startNewRef, linkedThreadRef, onError: setErr,
+    onError: setErr,
   });
   const {
     scope, selectedModel, setSelectedModel, setSelectedEffort, setSelectedPermissionMode,
