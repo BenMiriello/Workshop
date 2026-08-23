@@ -50,7 +50,18 @@ def _projects() -> dict:
 
 def list_merged_worktrees() -> list[dict]:
     """Across all registered projects, list worktree branches already merged
-    into main. Each item: project_slug, branch_slug, branch, dir, merged=True."""
+    into main. Each item: project_slug, branch_slug, branch, dir, merged=True.
+
+    CANONICAL "MERGED" CHECK: git_service.is_ancestor(project_dir, branch, main)
+    against the LOCAL main branch. worktrees.cleanup_merged uses the same check.
+    Two definitions existed briefly (cleanup_merged compared against
+    origin/<default_branch> via github.is_merged; this function used the local
+    main). Local main is canonical because (1) it works for both bound and
+    unbound projects; (2) merge_branch's github.merge_pr fast-forwards local
+    main to origin/<base> after every remote merge so both refs agree; (3) no
+    network call or fetched origin ref is needed. cleanup_merged now delegates
+    to this same check so one definition exists.
+    """
     out: list[dict] = []
     for slug, entry in _projects().items():
         pdir = entry.get("dir")
