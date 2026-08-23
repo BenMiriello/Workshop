@@ -156,6 +156,20 @@ release_presence() {
   PRESENCE_ID=""
 }
 trap 'revoke_grant; release_presence' EXIT
+# --- the control channel (workspace-ownership-and-leases sec 8, step B6) -----
+#
+# A sweep has no stdin, so steer and yield reach it through
+# `.runtime/control/<run-id>.json`, read at the TOP OF EACH ITERATION. Section 8
+# is explicit that this is the BETTER boundary for a sweep than mid-turn
+# injection: between tasks there is nothing half-applied.
+#
+# The reading itself lives in scripts/sweep_control.sh so it can be tested (and
+# so ralph.sh and queue_runner.sh can pick it up without a second copy). Every
+# call in there is guarded and the python behind it fails soft, so a malformed
+# or unreadable control file leaves CONTROL_YIELD=0 and CONTROL_STEER empty and
+# the sweep carries on. Sourcing is itself best-effort for the same reason.
+# shellcheck source=scripts/sweep_control.sh
+source "$WORKSHOP/scripts/sweep_control.sh" 2>/dev/null || { CONTROL_YIELD=0; CONTROL_STEER=""; control_read() { :; }; control_fold() { printf '%s' "${1:-}"; }; control_yield_snapshot() { :; }; }
 # A run-now targets exactly one task; never let it drain the queue.
 [[ -n "$TASK_ID_ARG" ]] && MAX_TASKS=1
 
@@ -1014,6 +1028,23 @@ HALT_REASON=""
 
 n=0
 while (( n < MAX_TASKS )); do
+  # THE CONTROL CHANNEL, READ FIRST (section 8). `yield` means snapshot,
+  # release, exit cleanly -- through the NORMAL finalize path below, not an
+  # exit here, so the Job is closed, the grant is revoked and presence (and
+  # with it the lease, section 6's join rule) is released exactly as on any
+  # other ending. `steer` is folded into this iteration's prompt once the task
+  # is known.
+  control_read "$PRESENCE_ID"
+  if (( CONTROL_YIELD == 1 )); then
+    # Section 9: the snapshot goes to a DANGLING ref (refs/wip/<run-id>), never
+    # to the branch. The tip does not move and the next holder starts from the
+    # HEAD it chose.
+    control_yield_snapshot "$PRESENCE_ID" "$DIR"
+    log "control: yield requested — snapshotted to refs/wip/$PRESENCE_ID and stopping"
+    HALT_REASON="asked to yield through the control channel"
+    break
+  fi
+
   REMAIN=$(tick_remaining)
   if (( REMAIN < RALPH_MAX_WALL + 30 )); then
     log "budget remaining ${REMAIN}s < per-task ${RALPH_MAX_WALL}s — stopping"
@@ -1048,6 +1079,14 @@ while (( n < MAX_TASKS )); do
   if [[ -z "$TASK_ID" ]]; then
     log "no ready tasks"
     break
+  fi
+
+  # What the operator sent while this run was working, folded into the prompt
+  # this iteration is about to run. Taken (and therefore consumed) above, so it
+  # is folded once rather than into every iteration after it.
+  if [[ -n "$CONTROL_STEER" ]]; then
+    TASK_TEXT=$(control_fold "$TASK_TEXT")
+    log "task=$TASK_ID control: folded a steered request into this iteration"
   fi
 
   # Usage-budget admission (Stage 5). Stop the sweep the moment this scope's

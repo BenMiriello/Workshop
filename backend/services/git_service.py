@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 # The neutral committer identity, mirroring routes/projects.py::_git_init. Every
@@ -77,15 +78,23 @@ def git_env() -> dict:
 
 
 def _run(repo: Path | str, args: list[str], *, check: bool = True,
-         timeout: int = DEFAULT_TIMEOUT) -> subprocess.CompletedProcess:
+         timeout: int = DEFAULT_TIMEOUT,
+         env_extra: dict | None = None) -> subprocess.CompletedProcess:
     """Run `git -C <repo> <args>` and return the completed process.
 
     `check=True` raises `GitError` (not `CalledProcessError`) so callers depend
     on this module's own failure type rather than on subprocess internals.
+
+    `env_extra` layers over `git_env()`. Exactly one caller needs it and the
+    reason is worth stating: `snapshot(include_untracked=True)` stages into a
+    THROWAWAY `GIT_INDEX_FILE` so it can capture untracked files without ever
+    touching the repository's real index. An `env=` kwarg on the call site
+    would have had to rebuild the committer identity too, which is how two
+    slightly different environments start existing.
     """
     proc = subprocess.run(
         ["git", "-C", str(repo), *args],
-        env=git_env(),
+        env={**git_env(), **(env_extra or {})},
         capture_output=True,
         text=True,
         check=False,
@@ -495,7 +504,8 @@ def merge(repo: Path | str, ref: str, *, message: str = "",
             "commit": rev_parse(repo, "HEAD"), "detail": ""}
 
 
-def snapshot(repo: Path | str, *, ref: str | None = None, message: str = "") -> dict:
+def snapshot(repo: Path | str, *, ref: str | None = None, message: str = "",
+             include_untracked: bool = False) -> dict:
     """Snapshot the working tree to a DANGLING commit without touching HEAD.
 
     Section 9 of workspace-ownership-and-leases-2026-08-22.md: yielding a
@@ -510,7 +520,20 @@ def snapshot(repo: Path | str, *, ref: str | None = None, message: str = "") -> 
     which is a success with `sha=None` and `clean=True`, not an error. Note that
     `stash create` captures tracked modifications only; an untracked file is not
     part of the snapshot.
+
+    `include_untracked=True` SWITCHES TO SECTION 9'S OTHER NAMED MECHANISM,
+    `git commit-tree`, and it exists because of what happens NEXT in the quiesce
+    (`services/control.quiesce`): the tree is restored and untracked files are
+    deleted. Snapshotting with `stash create` and then cleaning would destroy
+    every untracked file the holder had written, which is the opposite of "the
+    snapshot is what makes cleaning it safe". `git stash create` cannot help
+    here -- it takes a message and no options, so `-u` is read as the message
+    (verified against git 2.39) -- so the untracked-inclusive path stages into a
+    throwaway index and commits that tree directly. The real index, HEAD and the
+    branch are all untouched, exactly as with `stash create`.
     """
+    if include_untracked:
+        return _snapshot_commit_tree(repo, ref=ref, message=message)
     args = ["stash", "create"]
     if message:
         args.append(message)
@@ -527,6 +550,131 @@ def snapshot(repo: Path | str, *, ref: str | None = None, message: str = "") -> 
             return {"ok": False, "sha": sha, "ref": None, "clean": False,
                     "detail": _detail(u)}
     return {"ok": True, "sha": sha, "ref": ref, "clean": False, "detail": ""}
+
+
+def _snapshot_commit_tree(repo: Path | str, *, ref: str | None,
+                          message: str) -> dict:
+    """`snapshot(include_untracked=True)`: everything git would add, as a commit.
+
+    Section 9 names this alternative directly ("`git stash create`, or `git
+    commit-tree` into `refs/wip/<session-id>`"). The whole trick is
+    `GIT_INDEX_FILE`: `git add -A` runs against a temporary index in a temp
+    directory, so the repository's own `.git/index` is never written and a
+    holder's staged-versus-unstaged split survives the snapshot. `.gitignore` is
+    still honoured, which is what keeps `node_modules` out of it.
+
+    Same return shape as `snapshot`, including the clean case: when the staged
+    tree is identical to HEAD's there was nothing to record, so `sha` is None
+    and `clean` is True rather than a commit that says nothing happened.
+    """
+    head = rev_parse(repo, "HEAD")
+    head_tree = rev_parse(repo, "HEAD^{tree}") if head else None
+    with tempfile.TemporaryDirectory(prefix="workshop-snapshot-") as td:
+        env_extra = {"GIT_INDEX_FILE": str(Path(td) / "index")}
+        if head:
+            r = _run(repo, ["read-tree", "HEAD"], check=False, timeout=60,
+                     env_extra=env_extra)
+            if r.returncode != 0:
+                return {"ok": False, "sha": None, "ref": None, "clean": False,
+                        "detail": _detail(r)}
+        r = _run(repo, ["add", "-A"], check=False, timeout=180,
+                 env_extra=env_extra)
+        if r.returncode != 0:
+            return {"ok": False, "sha": None, "ref": None, "clean": False,
+                    "detail": _detail(r)}
+        w = _run(repo, ["write-tree"], check=False, timeout=60,
+                 env_extra=env_extra)
+        if w.returncode != 0:
+            return {"ok": False, "sha": None, "ref": None, "clean": False,
+                    "detail": _detail(w)}
+        tree = (w.stdout or "").strip()
+    if not tree:
+        return {"ok": False, "sha": None, "ref": None, "clean": False,
+                "detail": "git write-tree produced no tree"}
+    if head_tree and tree == head_tree:
+        return {"ok": True, "sha": None, "ref": None, "clean": True, "detail": ""}
+    args = ["commit-tree", tree]
+    if head:
+        args += ["-p", head]
+    args += ["-m", message or "workshop wip snapshot"]
+    c = _run(repo, args, check=False, timeout=60)
+    if c.returncode != 0:
+        return {"ok": False, "sha": None, "ref": None, "clean": False,
+                "detail": _detail(c)}
+    sha = (c.stdout or "").strip()
+    if not sha:
+        return {"ok": False, "sha": None, "ref": None, "clean": False,
+                "detail": "git commit-tree produced no commit"}
+    if ref:
+        u = _run(repo, ["update-ref", ref, sha], check=False, timeout=15)
+        if u.returncode != 0:
+            return {"ok": False, "sha": sha, "ref": None, "clean": False,
+                    "detail": _detail(u)}
+    return {"ok": True, "sha": sha, "ref": ref, "clean": False, "detail": ""}
+
+
+def git_dir(repo: Path | str) -> str | None:
+    """The absolute git directory for *repo*, or None if it is not a repo.
+
+    NOT `<repo>/.git`, and the difference is the whole reason this exists: in a
+    linked worktree `.git` is a FILE pointing at
+    `<main>/.git/worktrees/<name>`, and that is where the index -- and the lock
+    beside it -- actually lives. Anything that guessed `<repo>/.git/index.lock`
+    would look in the wrong place for exactly the trees this design is about.
+    """
+    r = _run(repo, ["rev-parse", "--absolute-git-dir"], check=False, timeout=10)
+    if r.returncode != 0:
+        return None
+    return (r.stdout or "").strip() or None
+
+
+def index_lock(repo: Path | str) -> str | None:
+    """The path of this repo's `index.lock` if one is present, else None."""
+    gd = git_dir(repo)
+    if not gd:
+        return None
+    lock = Path(gd) / "index.lock"
+    return str(lock) if lock.exists() else None
+
+
+def clear_index_lock(repo: Path | str) -> bool:
+    """Remove a leftover `index.lock`. True if one was there.
+
+    Section 9: a force-stopped holder leaves a killed git's lock behind, and
+    every subsequent write to that tree fails until it goes -- INCLUDING the
+    snapshot, which is why the quiesce clears it first rather than last.
+
+    THE PRECONDITION IS THE CALLER'S. Removing the lock of a git that is still
+    running corrupts the index, so this may only be called once the holder has
+    been stopped. It is not a periodic sweeper and nothing calls it on a read
+    path.
+    """
+    lock = index_lock(repo)
+    if not lock:
+        return False
+    try:
+        os.unlink(lock)
+    except OSError:
+        return False
+    return True
+
+
+def reset_hard(repo: Path | str, ref: str | None = None) -> dict:
+    """`git reset --hard [<ref>]`. Returns `{ok, detail}`.
+
+    WITH NO REF THE BRANCH TIP DOES NOT MOVE, which is the only reason this is
+    safe in the quiesce. `git reset --hard` resets the current branch head to
+    the commit given, and that commit defaults to HEAD -- so the tracked half of
+    the working tree and the index go back to what the branch already says,
+    while the branch itself, and HEAD, stay exactly where the holder left them.
+    Restoring with `checkout --force HEAD` would DETACH HEAD instead, handing
+    the next holder a tree in a state nobody chose.
+    """
+    args = ["reset", "--hard"]
+    if ref:
+        args.append(ref)
+    r = _run(repo, args, check=False, timeout=120)
+    return {"ok": r.returncode == 0, "detail": _detail(r)}
 
 
 def checkout(repo: Path | str, ref: str, *, create: bool = False,

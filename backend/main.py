@@ -27,6 +27,7 @@ from routes import git as git_routes
 from routes import changes as changes_routes
 from routes import branches as branches_routes
 from routes import presence as presence_routes
+from routes import control as control_routes
 from services import app_registry
 import asyncio
 import datetime as _dt
@@ -367,6 +368,14 @@ app.include_router(branches_routes.router, dependencies=_OPERATOR)  # /branches
 # by shelling scripts/presence.py, so this router holds no state and a restart
 # loses nothing. /presence/directory is the read-time join.
 app.include_router(presence_routes.router, dependencies=_OPERATOR)  # /presence
+# The three verbs of the control channel (workspace-ownership-and-leases
+# 2026-08-22 sec 8 and 9, steps B6 and B7): queue, steer, preempt. ABOVE
+# /presence and /branches in the layering -- it reads the directory to know who
+# is working and writes the worktree timeline to record what it did, and neither
+# of those knows this router exists. It holds NO queue of its own: a chat's
+# requests are chat_queue entries and a sweep's are the control file
+# scripts/project_ralph.sh reads at the top of each iteration.
+app.include_router(control_routes.router, dependencies=_OPERATOR)  # /control
 app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], dependencies=_OPERATOR)
 # Grants + Stores (Phase 4). /base-apps/grants stays as a thin alias in base_apps
 # until Phase 5; this is the real grants router (/grants, /grants/mint,
