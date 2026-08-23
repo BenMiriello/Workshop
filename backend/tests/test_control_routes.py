@@ -214,3 +214,18 @@ class TestPreemptOverTheWire:
         assert body["yield_requested_by"] == "benmiriello"
         assert body["yield_reason"] == "I need this branch"
         assert body["yield_requested_at"]
+
+    def test_a_session_id_that_is_not_a_chat_thread_answers_empty(self, client):
+        """Asking who is waiting for an unknown session has an answer.
+
+        `chat_queue.read` validates through `chat_log._check_id` and raises on
+        anything that is not a thread key, which reached this route as a 500 --
+        found by the agent building the holder UI, against a real session id
+        that was not uuid4 hex. `scripts/check_routes_answer.py` gates 5xx on
+        every GET route, so a raise here fails that gate too.
+        """
+        r = client.get("/control/not-a-thread-id")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["session_id"] == "not-a-thread-id"
+        assert body["requests"] == []

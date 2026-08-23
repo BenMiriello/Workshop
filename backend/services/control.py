@@ -102,7 +102,7 @@ PREEMPT_GRACE_SEC = leases.PREEMPT_GRACE_SEC
 
 STEER_COPY_CHAT = (
     "Sent to the agent. It will see this while it is working, but when it acts "
-    "on it is not guaranteed — in practice it finishes the plan it is on "
+    "on it is not guaranteed: in practice it finishes the plan it is on "
     "first.")
 STEER_COPY_CHAT_QUEUED = (
     "The turn in flight cannot be spoken to, so this is waiting for it to "
@@ -201,8 +201,23 @@ def pending(holder_id: str, *, holder_kind: str | None = None) -> list[dict]:
     """What is waiting for this session, oldest first. FIFO, no priority."""
     kind = _resolved_kind(holder_id, holder_kind)
     if kind == "chat":
-        return [_request(e, verb="queue") for e in chat_queue.read(holder_id)]
+        return [_request(e, verb="queue") for e in _chat_waiting(holder_id)]
     return [_request(r, verb="queue") for r in run_control.pending(holder_id)]
+
+
+def _chat_waiting(holder_id: str) -> list[dict]:
+    """What is queued for a chat, or nothing if that is not a chat id.
+
+    `chat_queue.read` validates the id through `chat_log._check_id` and RAISES
+    on anything that is not a thread key, which reached the route as a 500 for
+    the ordinary case of asking about a session that does not exist. Asking who
+    is waiting for an unknown session has an answer, and the answer is nobody.
+    `scripts/check_routes_answer.py` gates 5xx here, so this is also the gate.
+    """
+    try:
+        return list(chat_queue.read(holder_id))
+    except ValueError:
+        return []
 
 
 def cancel(holder_id: str, request_id: str, *,
@@ -211,7 +226,7 @@ def cancel(holder_id: str, request_id: str, *,
     cancellable, and this is the only way one leaves undelivered."""
     kind = _resolved_kind(holder_id, holder_kind)
     if kind == "chat":
-        before = {e.get("client_id") for e in chat_queue.read(holder_id)}
+        before = {e.get("client_id") for e in _chat_waiting(holder_id)}
         if request_id not in before:
             return False
         chat_queue.drop(holder_id, [request_id])

@@ -60,6 +60,14 @@ export const WIRE_KINDS = {
   ping: "liveness",
   /** A turn-level error carrying a detail, as distinct from a socket drop. */
   error: "problem",
+  /** A write that failed because the tree is mounted read-only, carrying the
+   *  offer to branch (`services/build_streaming._maybe_write_blocked`). It is
+   *  shown rather than ignored because the alternative is a write failing in
+   *  silence: the model sees EROFS, the operator sees nothing. Taking the offer
+   *  is not wired yet, so this reports the fact and names the default; it
+   *  cannot fire at all while WORKSHOP_TREE_LEASE_MOUNT is off, which is
+   *  everywhere today. */
+  write_blocked: "problem",
   /** The turn began. The client already knows: it dispatched `runStarted` when
    *  the operator hit send, before this could arrive. */
   started: "ignored",

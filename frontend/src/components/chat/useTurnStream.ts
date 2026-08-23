@@ -275,6 +275,24 @@ export function useTurnStream({
           }
         } catch { /* ignore */ }
       },
+      write_blocked: (e) => {
+        // The tree is mounted read-only because this session does not hold its
+        // lease, so a write came back EROFS. Reported, not swallowed: a write
+        // failing where only the model can see it is the whole reason the
+        // read-only mount needed an observable event in the first place.
+        try {
+          const d = JSON.parse((e as MessageEvent).data || "{}");
+          const offer = d.payload || {};
+          const detail = offer.default?.detail;
+          if (!detail) return;
+          const path = offer.blocked_path;
+          cb.current.onError({
+            text: path ? `${detail} The write to ${path} did not happen.`
+                       : detail,
+            endpoint: `/api/chat/turns/${turnId}/stream`,
+          });
+        } catch { /* ignore */ }
+      },
       // Defined below, once `finish` exists.
       done: () => { void finish(); },
       end: () => { void finish(); },
