@@ -57,7 +57,7 @@ from services import tenancy, worktrees
 __all__ = [
     "ChangesUnavailable", "ChangeNotFound", "BranchUnknown", "NothingToReview",
     "CHANGE_STATUSES", "GATE_STATUSES",
-    "open_change", "get_change", "list_changes", "update_change",
+    "open_change", "get_change", "list_changes", "update_change", "mark_merged",
     "delete_change", "diff_for", "refresh_change", "change_for_branch",
 ]
 
@@ -315,6 +315,36 @@ def update_change(change_id: UUID | str, **fields: Any) -> dict:
         if change_repo.get_change(s, org_id, change_id) is None:
             raise ChangeNotFound(str(change_id))
         row = change_repo.update_change(s, org_id, change_id, **fields)
+    return _shape(row)
+
+
+def mark_merged(change_id: UUID | str, commit: str) -> dict:
+    """Record that this change merged, as the commit that did it. Step C5.
+
+    This is the writer `update_change` refuses to be. `status`, `merged_sha` and
+    `merged_at` move together in one transaction, because
+    `ck_change_merged_is_recorded` makes "merged without a recorded sha" a
+    constraint violation rather than a merely inconsistent row, and because a
+    change that says merged while pointing at nothing is exactly the
+    self-reported completion this whole design exists to remove.
+
+    It does NOT perform the merge and must not learn how: merging is a branch
+    operation and belongs to `services/worktrees.py`. The caller merges first
+    and records second, so a failed merge can never leave a change claiming it
+    landed. `services/work_review.py` is that caller.
+    """
+    if not commit or not str(commit).strip():
+        raise ValueError("a merged change must record the commit that merged it")
+    org_id, user_id = _require_db()
+    with tenant_session(org_id, user_id) as s:
+        if change_repo.get_change(s, org_id, change_id) is None:
+            raise ChangeNotFound(str(change_id))
+        row = change_repo.update_change(
+            s, org_id, change_id,
+            status="merged",
+            merged_sha=str(commit).strip(),
+            merged_at=datetime.now(timezone.utc),
+        )
     return _shape(row)
 
 

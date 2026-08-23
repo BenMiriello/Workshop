@@ -15,7 +15,7 @@ from pydantic import BaseModel
 import logging
 
 from routes.api_models import Job, Task
-from services import (jobs, tasks, task_scope, task_decision, agents_registry,
+from services import (jobs, tasks, task_scope, task_decision, work_review, agents_registry,
                       usage_ledger)
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE, Page, PageMeta
 
@@ -338,6 +338,18 @@ async def act_on_job_task(job_id: str, task_id: str, body: JobTaskAction) -> dic
     # job-clear pass below still drops the ghost card from Home's attention strip
     # instead of 409-ing forever.
     request = task.get("awaiting") or {}
+    # Accepting merges the change, exactly as the /review route does. Both
+    # surfaces answer the same question and must not diverge again: the word
+    # `approve` meaning two opposite things in these two routers is the 2026-08-22
+    # defect that `task_decision` exists to have ended. See work_review.
+    if _ACTIONS[body.action] == task_decision.ACCEPT:
+        try:
+            work_review.merge_for_task(task_id, message=f"Merge change for {task_id}")
+        except work_review.MergeRefused as e:
+            raise HTTPException(
+                409,
+                f"this work cannot be merged, so it is not accepted: {e}. "
+                "Reject it with a note, or resolve the branch first.")
     try:
         updated = tasks.apply_decision(
             root, task_id, _ACTIONS[body.action],

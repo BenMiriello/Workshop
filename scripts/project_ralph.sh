@@ -306,6 +306,23 @@ PYEOF
 )
 }
 
+# Open the CHANGE a finished branch produces (C1/C2 of changes-and-review). Echoes
+# the change id on success, nothing on failure. Best-effort by contract: the work
+# is committed on the branch either way, so a bookkeeping failure must never cost
+# it. See backend/services/work_review.py.
+open_change_for_task() {  # $1=branch_slug $2=task_id $3=title
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
+import sys
+from services import work_review
+slug, branch_slug, task_id, title = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+c = work_review.open_for_task(slug, branch_slug, task_id=task_id, title=title,
+                              summary="Opened by the unattended sweep on its success leg. "
+                                      "The summary is the author's claim; read the diff.")
+print(c["id"] if c else "")
+PYEOF
+)
+}
+
 # Reap worktrees whose branch already merged into the canonical base. Best-effort.
 cleanup_merged_worktrees() {
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$WT_SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
@@ -328,8 +345,33 @@ PYEOF
 publish_or_park() {  # $1=branch_slug $2=title $3=body
   [[ "$WT_MODE" != "1" ]] && return 0
   local out
+  if [[ "$REPO_BOUND" != "1" && "$SUPERVISED" == "1" ]]; then
+    # SUPERVISED, local-only: the branch stays UNMERGED and produces a change.
+    #
+    # This is the point of worktree isolation, and until now it was thrown away.
+    # A supervised sweep used to merge its branch into the trunk on success and
+    # THEN set the ticket in_review, so "the operator is the final gate" governed
+    # a status while the code had already landed, and declining unlanded nothing.
+    # Now the work sits on its own branch, complete and diffable, and ACCEPTING
+    # it is what merges it (services/work_review.merge_for_task, reached from the
+    # review route). An unsupervised sweep still merges below: landing work
+    # without a person is what autonomous MEANS.
+    local change_id
+    change_id=$(open_change_for_task "$1" "$TASK_ID" "$2")
+    local aug; aug=$(printf '%s' "$EVIDENCE" | jq -c \
+      --arg branch "wt/$WT_SLUG/$1" --arg change "$change_id" \
+      '. + {branch: $branch, change: $change}' 2>/dev/null)
+    [[ -n "$aug" ]] && EVIDENCE="$aug"
+    if [[ -n "$change_id" ]]; then
+      python3 "$PTASKS" note "$DIR" "$TASK_ID" "change opened on branch wt/$WT_SLUG/$1; accepting it merges the branch" --kind acceptance >/dev/null 2>>"$LOG"
+      log "task=$TASK_ID change=$change_id opened on wt/$WT_SLUG/$1 (unmerged, awaiting review)"
+    else
+      log "task=$TASK_ID no change opened for wt/$WT_SLUG/$1; branch left unmerged with its commits intact"
+    fi
+    return 0
+  fi
   if [[ "$REPO_BOUND" != "1" ]]; then
-    # Local-only path: merge into base, no remote push or PR.
+    # Local-only path, UNSUPERVISED: merge into base, no remote push or PR.
     out=$(merge_task_worktree_local "$1")
     if [[ "$out" == "conflict" ]]; then
       python3 "$PTASKS" note "$DIR" "$TASK_ID" "local merge conflict: branch does not merge cleanly into the canonical base; parked (not looping)" --kind acceptance >/dev/null 2>>"$LOG"

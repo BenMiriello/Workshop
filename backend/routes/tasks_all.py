@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 from routes.api_models import (DeletedOut, Job, LabelCount, Readiness, Task,
                                TaskLink)
 from services import (tasks, task_scope, task_dedup, task_decision, jobs, ownership,
+                      work_review,
                       knowledge, learnings, permissions, ticket_readiness,
                       latitude as latitude_svc)
 from wsplatform.http import DEFAULT_PAGE, MAX_PAGE, Page, PageMeta
@@ -1161,6 +1162,27 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
             "to return it for rework.")
 
     if action in ("dismiss", "deny", "accept", "send-back"):
+        # ACCEPTING FINISHED WORK MERGES IT (step C5 of changes-and-review).
+        #
+        # A supervised sweep now leaves its branch unmerged and opens a change,
+        # so the trunk does not carry the work until a person takes it. That
+        # makes acceptance the merge, and it has to happen BEFORE the status
+        # moves: a ticket marked `done` over a branch that did not land is
+        # exactly the self-reported completion this design removes. A ticket
+        # with no change (work committed straight to the tree, or a file-backed
+        # scope) merges nothing and proceeds unchanged, which is every ticket
+        # that existed before this shipped.
+        if action == "accept":
+            try:
+                merge = work_review.merge_for_task(
+                    task_id, message=f"Merge change for {task_id}")
+            except work_review.MergeRefused as e:
+                raise HTTPException(
+                    409,
+                    f"this work cannot be merged, so it is not accepted: {e}. "
+                    "Send it back with a note, or resolve the branch first.")
+            if merge["merged"]:
+                out["merged"] = merge
         try:
             updated = tasks.apply_decision(root, task_id, verb, note=note, question=question)
         except tasks.DecisionRefused as e:
