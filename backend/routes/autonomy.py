@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException
 
 from routes import autonomy_models as am
 from services import (agent_slots, autonomy_override, jobs, makers,
-                      scope_execution, task_scope, work_driver)
+                      merge_policy, scope_execution, task_scope, work_driver)
 from pydantic import BaseModel, Field
 from wsplatform import paths
 
@@ -384,6 +384,29 @@ class ScopeExecutionMode(BaseModel):
     mode: str = Field(description="reactive | supervised | autonomous")
 
 
+class ScopeMergePolicy(BaseModel):
+    """The per-scope merge policy, step C7 of changes-and-review-2026-08-22.md.
+
+    BESIDE the execution mode above and never folded into it: "may this scope's
+    work RUN unattended" and "may this scope's work LAND unattended" are
+    different questions, and an autonomous scope whose merges still wait for a
+    person is a perfectly coherent, and currently the only, configuration.
+    """
+    scope: str
+    policy: str = Field(
+        description="manual | auto_when_green | auto_when_green_and_low_risk")
+
+
+class ScopeMergePolicyOut(BaseModel):
+    scope: str
+    policy: str
+    # True when this scope may land work on the SCOPE's authority. False for
+    # every scope unless the operator deliberately said otherwise: a change can
+    # still carry its own `auto_merge`, which is a person approving one diff.
+    auto_merges: bool
+    requires_low_risk: bool
+
+
 def _scope_root(scope_key: str):
     root = task_scope.root_for_context(scope_key)
     return root if root is not None else paths.workshop_root()
@@ -425,3 +448,48 @@ async def set_scope_execution(body: ScopeExecutionMode):
         "armed": scope_execution.is_armed(body.scope),
         "ceiling": scope_execution.stage_ceiling(body.scope),
     }
+
+
+@router.get("/agents/autonomy/merge-policy", response_model=ScopeMergePolicyOut)
+async def get_merge_policy(scope: str) -> ScopeMergePolicyOut:
+    """May this scope's finished work merge without a person, and on what terms?
+
+    `manual` for every scope that has not been told otherwise, and nothing in
+    this tree tells any scope otherwise. Section 8 of the design doc records the
+    open question that makes that the right default: `auto_when_green_and_low_risk`
+    is the one place in the design where the system merges code nobody looked
+    at, and whether it should exist at all in a single-operator system is the
+    operator's call, not this endpoint's.
+    """
+    # Same validation as the execution mode above: `_scope_root` is what proves
+    # the scope EXISTS (and passes the developer-mode gate). A policy reported
+    # for a scope that resolves to nothing would be a setting for nowhere.
+    _scope_root(scope)
+    return ScopeMergePolicyOut(
+        scope=scope,
+        policy=merge_policy.get_policy(scope),
+        auto_merges=merge_policy.allows_auto_merge(scope),
+        requires_low_risk=merge_policy.requires_low_risk(scope))
+
+
+@router.post("/agents/autonomy/merge-policy", response_model=ScopeMergePolicyOut)
+async def set_merge_policy(body: ScopeMergePolicy) -> ScopeMergePolicyOut:
+    """Set it. A store write and nothing else, unlike the execution mode.
+
+    Arming execution has a mechanism to make follow (a runner starts), which is
+    why that endpoint goes through `work_driver.set_execution`. A merge policy
+    has none: it is read at the moment a change becomes eligible and never
+    before, so there is nothing to converge and no second writer to coordinate
+    with.
+    """
+    if body.policy not in merge_policy.POLICIES:
+        raise HTTPException(status_code=422,
+                            detail=f"policy must be one of {merge_policy.POLICIES}")
+    _scope_root(body.scope)
+    policy = await asyncio.to_thread(merge_policy.set_policy, body.scope,
+                                     body.policy)
+    return ScopeMergePolicyOut(
+        scope=body.scope,
+        policy=policy,
+        auto_merges=merge_policy.allows_auto_merge(body.scope),
+        requires_low_risk=merge_policy.requires_low_risk(body.scope))

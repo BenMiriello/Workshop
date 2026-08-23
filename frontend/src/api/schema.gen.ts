@@ -137,6 +137,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/autonomy/merge-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Merge Policy
+         * @description May this scope's finished work merge without a person, and on what terms?
+         *
+         *     `manual` for every scope that has not been told otherwise, and nothing in
+         *     this tree tells any scope otherwise. Section 8 of the design doc records the
+         *     open question that makes that the right default: `auto_when_green_and_low_risk`
+         *     is the one place in the design where the system merges code nobody looked
+         *     at, and whether it should exist at all in a single-operator system is the
+         *     operator's call, not this endpoint's.
+         */
+        get: operations["get_merge_policy_agents_autonomy_merge_policy_get"];
+        put?: never;
+        /**
+         * Set Merge Policy
+         * @description Set it. A store write and nothing else, unlike the execution mode.
+         *
+         *     Arming execution has a mechanism to make follow (a runner starts), which is
+         *     why that endpoint goes through `work_driver.set_execution`. A merge policy
+         *     has none: it is read at the moment a change becomes eligible and never
+         *     before, so there is nothing to converge and no second writer to coordinate
+         *     with.
+         */
+        post: operations["set_merge_policy_agents_autonomy_merge_policy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/autonomy/override": {
         parameters: {
             query?: never;
@@ -3109,7 +3146,19 @@ export interface paths {
         delete: operations["delete_change_changes__change_id__delete"];
         options?: never;
         head?: never;
-        /** Patch Change */
+        /**
+         * Patch Change
+         * @description Patch the authored fields, and — for `auto_merge` — act on the decision.
+         *
+         *     ARMING A CHANGE THAT IS ALREADY GREEN MUST MERGE IT. Auto-merge means "merge
+         *     when the checks pass", and the checks may have passed an hour ago; a switch
+         *     that only takes effect on the NEXT gate run would sit there looking armed
+         *     while the thing it was armed for had already happened. So the same
+         *     evaluation the gate writer performs runs here too, on the record as it is
+         *     after the patch. It is best-effort: the patch itself succeeded, and a merge
+         *     that cannot happen leaves the change exactly where it was, which is what the
+         *     response then shows.
+         */
         patch: operations["patch_change_changes__change_id__patch"];
         trace?: never;
     };
@@ -4846,6 +4895,137 @@ export interface paths {
         put: operations["put_agent_concurrency_concurrency_put"];
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Channels
+         * @description Every run with a control channel on disk.
+         *
+         *     RUNS ONLY, and the asymmetry is honest rather than an omission: a run's
+         *     channel is a file, so the set of them is enumerable, while a chat's requests
+         *     live in its own thread's queue and "every chat with something waiting" is a
+         *     question `GET /chat/threads` already answers. Listing both here would mean
+         *     walking every thread on the box to build a view nothing asks for.
+         */
+        get: operations["list_channels_control_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Channel
+         * @description What is waiting for this session, oldest first.
+         *
+         *     A session with nothing waiting is an empty channel and a 200, not a 404: the
+         *     question "is anything queued for you" has an answer for every session,
+         *     including ones that have never been written to.
+         */
+        get: operations["get_channel_control__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/{session_id}/preempt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preempt Session
+         * @description Stop this session, quiesce its tree, and grant the lease to another.
+         *
+         *     A 403 means the request carried no human action. That is not a permission
+         *     check against the caller's identity -- there is one operator here and no
+         *     identity to check -- it is the shape of the request refusing to let an agent
+         *     take a tree away from another agent. Queue and steer are the answer to
+         *     urgency; section 8 kept them for exactly this.
+         *
+         *     The response is the whole story: whether the holder yielded inside the grace
+         *     or had to be stopped, what the quiesce did, where the snapshot went, and
+         *     that the branch tip did not move.
+         */
+        post: operations["preempt_session_control__session_id__preempt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/{session_id}/requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Request
+         * @description Queue or steer a request into a session that is already working.
+         *
+         *     `queue` is the default because it is section 8's default: the holder takes
+         *     it when it finishes, and nothing is interrupted. `steer` tries to reach the
+         *     work in flight and falls back to the queue when it cannot -- a command turn
+         *     never reads its input, and a message that could not be delivered is still
+         *     owed to whoever wrote it.
+         */
+        post: operations["submit_request_control__session_id__requests_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control/{session_id}/requests/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Cancel Request
+         * @description Take a queued request back out before it is delivered.
+         *
+         *     Section 8: queued requests are FIFO and CANCELLABLE. Cancelling something
+         *     that is not there is `false` and a 200, not a 404 -- the caller's intent
+         *     (it should not go) is satisfied either way, and a request that drained a
+         *     millisecond earlier is not an error.
+         */
+        delete: operations["cancel_request_control__session_id__requests__request_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -10077,6 +10257,11 @@ export interface components {
         Change: {
             /** App Id */
             app_id?: string | null;
+            /**
+             * Auto Merge
+             * @default false
+             */
+            auto_merge: boolean;
             /** Base Ref */
             base_ref: string;
             /** Base Sha */
@@ -10093,8 +10278,12 @@ export interface components {
             head_sha: string;
             /** Id */
             id: string;
+            /** Merge Basis */
+            merge_basis?: string | null;
             /** Merged At */
             merged_at?: string | null;
+            /** Merged By */
+            merged_by?: string | null;
             /** Merged Sha */
             merged_sha?: string | null;
             /** Project Slug */
@@ -10211,6 +10400,8 @@ export interface components {
         ChangePatchIn: {
             /** App Id */
             app_id?: string | null;
+            /** Auto Merge */
+            auto_merge?: boolean | null;
             /** Closed Reason */
             closed_reason?: string | null;
             /** Gates */
@@ -10616,6 +10807,117 @@ export interface components {
             window_tokens: number;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * ControlAccepted
+         * @description What actually happened to the request.
+         *
+         *     `delivered` means THE BYTES REACHED THE RUNNING TURN, which is the only
+         *     thing this system can observe. It does not mean the model has read them:
+         *     measured behaviour (`chat-message-ordering-audit-2026-08-05.md` section 2)
+         *     is that it addresses a steered message at the end of its current plan,
+         *     skipping the step boundaries in between. `detail` is the string to show, and
+         *     it is written to say that rather than to imply "now".
+         */
+        ControlAccepted: {
+            /** Delivered */
+            delivered: boolean;
+            /** Detail */
+            detail: string;
+            /** Holder Id */
+            holder_id: string;
+            /** Holder Kind */
+            holder_kind: string;
+            /** Pending */
+            pending?: components["schemas"]["ControlRequest"][];
+            /** Queued */
+            queued: boolean;
+            /** Request Id */
+            request_id: string;
+            /** Verb */
+            verb: string;
+        };
+        /** ControlCancelled */
+        ControlCancelled: {
+            /** Cancelled */
+            cancelled: boolean;
+            /** Request Id */
+            request_id: string;
+            /** Session Id */
+            session_id: string;
+        };
+        /**
+         * ControlChannel
+         * @description What is waiting for one session, and whether it has been asked to stop.
+         */
+        ControlChannel: {
+            /** Holder Kind */
+            holder_kind: string;
+            /** Requests */
+            requests?: components["schemas"]["ControlRequest"][];
+            /** Session Id */
+            session_id: string;
+            /** Yield Reason */
+            yield_reason?: string | null;
+            /** Yield Requested At */
+            yield_requested_at?: string | null;
+            /** Yield Requested By */
+            yield_requested_by?: string | null;
+        };
+        /** ControlChannelList */
+        ControlChannelList: {
+            /** Channels */
+            channels: components["schemas"]["ControlChannel"][];
+            /** Count */
+            count: number;
+        };
+        /**
+         * ControlRequest
+         * @description One request waiting for a session.
+         *
+         *     `id` is what cancels it, and it is deliberately the same field for both
+         *     backends: a chat queue entry's `client_id` and a control file request's
+         *     `id`. A caller should not have to know which store answered in order to take
+         *     its own message back out.
+         *
+         *     NOTE WHAT IS ABSENT: there is no priority, rank, tier or position field.
+         *     Order is the list's order, oldest first.
+         */
+        ControlRequest: {
+            /** Actor */
+            actor?: string | null;
+            /** At */
+            at?: string | null;
+            /** Id */
+            id: string;
+            /** Text */
+            text: string;
+            /** Verb */
+            verb: string;
+        };
+        /**
+         * ControlRequestIn
+         * @description A request for a busy session.
+         *
+         *     `verb` is `queue` (the default) or `steer`. `yield` is not accepted here: it
+         *     is not something a caller asks of a holder directly, it is what preempt asks
+         *     first, and a route that let anything write it would be a stop with none of
+         *     section 9's quiesce behind it.
+         */
+        ControlRequestIn: {
+            /** Actor */
+            actor?: string | null;
+            /** Request Id */
+            request_id?: string | null;
+            /** Text */
+            text: string;
+            /**
+             * Verb
+             * @default queue
+             */
+            verb: string;
+            /** Worktree Id */
+            worktree_id?: string | null;
         };
         /** CreateProjectIn */
         CreateProjectIn: {
@@ -13116,6 +13418,81 @@ export interface components {
             /** Model */
             model?: string | null;
         };
+        /**
+         * PreemptIn
+         * @description Take the lease away from whoever holds it.
+         *
+         *     `human_action` NAMES THE LIVE HUMAN INTERACTION THAT AUTHORIZED THIS and has
+         *     no default, which is section 8's rule in the only place it can be enforced.
+         *     A value like `"take-over confirmed in the lease card"` is what the UI's
+         *     `ConfirmDialog` sends. An agent has queue and steer beside this route and no
+         *     honest value to put here.
+         */
+        PreemptIn: {
+            /** Actor */
+            actor: string;
+            /**
+             * Grace Sec
+             * @default 30
+             */
+            grace_sec: number;
+            /** Human Action */
+            human_action: string;
+            /** New Holder Id */
+            new_holder_id: string;
+            /**
+             * New Holder Kind
+             * @default chat
+             */
+            new_holder_kind: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /** Repo Path */
+            repo_path?: string | null;
+            /** Subject Id */
+            subject_id: string;
+            /**
+             * Subject Kind
+             * @default worktree
+             */
+            subject_kind: string;
+            /** Worktree Id */
+            worktree_id?: string | null;
+        };
+        /** PreemptResult */
+        PreemptResult: {
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Forced */
+            forced: boolean;
+            /** Grace Sec */
+            grace_sec: number;
+            /** Holder Id */
+            holder_id?: string | null;
+            /** Holder Kind */
+            holder_kind?: string | null;
+            lease?: components["schemas"]["LeaseRef"] | null;
+            /** Preempted */
+            preempted: boolean;
+            quiesce?: components["schemas"]["QuiesceResult"] | null;
+            /**
+             * Stop Detail
+             * @default
+             */
+            stop_detail: string;
+            /** Subject Id */
+            subject_id: string;
+            /** Subject Kind */
+            subject_kind: string;
+            /** Yielded */
+            yielded: boolean;
+        };
         /** PrefsBody */
         PrefsBody: {
             /** Barge In */
@@ -13797,6 +14174,45 @@ export interface components {
             /** Ts */
             ts: string;
         };
+        /**
+         * QuiesceResult
+         * @description What the handover did to the tree (section 9).
+         *
+         *     `head_before` and `head_after` are both here so "the branch did not move"
+         *     is CHECKABLE rather than asserted: a preempted holder's work goes to
+         *     `snapshot_ref`, a dangling `refs/wip/<session>`, and the branch tip and HEAD
+         *     are untouched. `snapshot_sha` is null when the tree was already clean, which
+         *     is `tree_was_clean`, not a failure.
+         */
+        QuiesceResult: {
+            /** Clean */
+            clean: boolean;
+            /** Cleared Index Lock */
+            cleared_index_lock: boolean;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Head After */
+            head_after?: string | null;
+            /** Head Before */
+            head_before?: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Removed */
+            removed?: string[];
+            /** Repo */
+            repo: string;
+            /** Restored */
+            restored: boolean;
+            /** Snapshot Ref */
+            snapshot_ref?: string | null;
+            /** Snapshot Sha */
+            snapshot_sha?: string | null;
+            /** Tree Was Clean */
+            tree_was_clean: boolean;
+        };
         /** ReadIn */
         ReadIn: {
             /** Identity */
@@ -14361,6 +14777,35 @@ export interface components {
         ScopeList: {
             /** Scopes */
             scopes: string[];
+        };
+        /**
+         * ScopeMergePolicy
+         * @description The per-scope merge policy, step C7 of changes-and-review-2026-08-22.md.
+         *
+         *     BESIDE the execution mode above and never folded into it: "may this scope's
+         *     work RUN unattended" and "may this scope's work LAND unattended" are
+         *     different questions, and an autonomous scope whose merges still wait for a
+         *     person is a perfectly coherent, and currently the only, configuration.
+         */
+        ScopeMergePolicy: {
+            /**
+             * Policy
+             * @description manual | auto_when_green | auto_when_green_and_low_risk
+             */
+            policy: string;
+            /** Scope */
+            scope: string;
+        };
+        /** ScopeMergePolicyOut */
+        ScopeMergePolicyOut: {
+            /** Auto Merges */
+            auto_merges: boolean;
+            /** Policy */
+            policy: string;
+            /** Requires Low Risk */
+            requires_low_risk: boolean;
+            /** Scope */
+            scope: string;
         };
         /**
          * ScopeNode
@@ -17433,6 +17878,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AutonomyToggled"];
+                };
+            };
+        };
+    };
+    get_merge_policy_agents_autonomy_merge_policy_get: {
+        parameters: {
+            query: {
+                scope: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScopeMergePolicyOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_merge_policy_agents_autonomy_merge_policy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScopeMergePolicy"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScopeMergePolicyOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -25779,6 +26288,159 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConcurrencySnapshot"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_channels_control_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlChannelList"];
+                };
+            };
+        };
+    };
+    get_channel_control__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlChannel"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preempt_session_control__session_id__preempt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreemptIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreemptResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_request_control__session_id__requests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControlRequestIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_request_control__session_id__requests__request_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlCancelled"];
                 };
             };
             /** @description Validation Error */

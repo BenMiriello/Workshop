@@ -34,10 +34,15 @@ __all__ = [
 # new sha, not a new change. `project_slug`/`branch_slug` are NOT: they are the
 # identity of the branch this record was opened for, and a change that could be
 # repointed at another branch would silently relabel a reviewed diff.
+# `auto_merge` is here because pre-approval is a decision a person makes and
+# unmakes on an open change (design doc sec 6). `merged_by`/`merge_basis` are
+# here because the merge writer sets them in the SAME statement as `status`,
+# `merged_sha` and `merged_at`; `services/changes.update_change` refuses them
+# from every other caller, for the reason it refuses the rest of the outcome.
 UPDATABLE = (
     "app_id", "worktree_id", "base_ref", "base_sha", "head_sha", "title", "summary",
-    "ticket_ids", "status", "gates", "remote", "merged_sha", "merged_at",
-    "closed_reason",
+    "ticket_ids", "status", "gates", "remote", "auto_merge", "merged_sha",
+    "merged_at", "merged_by", "merge_basis", "closed_reason",
 )
 
 # Columns whose value is JSON and therefore needs an explicit cast: psycopg

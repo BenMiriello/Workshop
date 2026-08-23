@@ -34,10 +34,15 @@ would collide with the agent doing it:
     other caller; this module does not know what a reviewer is, and the
     validation of the `gates` shape stays here because its writers are scripts
     rather than HTTP callers.
-  * merging, auto-merge, `merge_policy`, and the low-risk classifier -- steps
-    C5 and C7. There is no merge entry point in this module and no route for
-    one, because a verb that exists and does nothing is worse than one that
-    does not exist: a caller cannot tell it apart from a real one.
+  * merging itself, the auto-merge DECISION, `merge_policy` and the low-risk
+    classifier -- steps C5 and C7, in `services/work_review.py`,
+    `services/auto_merge.py` and `services/merge_policy.py`. There is still no
+    merge entry point in this module, because a verb that exists and does
+    nothing is worse than one that does not exist: a caller cannot tell it
+    apart from a real one. What C7 added HERE is only record-keeping -- the
+    `auto_merge` flag a person sets, and the `merged_by`/`merge_basis` the
+    merge writer records -- because this module owns the row and nothing else
+    may write it.
 
 POSTGRES ONLY, and it fails closed. A change is work data, and ADR 0019 puts
 work data in Postgres under RLS. There is no file store to fall back to and one
@@ -53,13 +58,14 @@ from uuid import UUID
 
 from db import app_repo, change_repo
 from db.engine import tenant_session
-from db.models import CHANGE_STATUSES, GATE_STATUSES
+from db.models import CHANGE_STATUSES, GATE_STATUSES, MERGE_ACTORS
 from services import tenancy, worktrees
 
 __all__ = [
     "ChangesUnavailable", "ChangeNotFound", "BranchUnknown", "NothingToReview",
-    "CHANGE_STATUSES", "GATE_STATUSES",
+    "CHANGE_STATUSES", "GATE_STATUSES", "MERGE_ACTORS",
     "open_change", "get_change", "list_changes", "update_change", "mark_merged",
+    "merge_gates",
     "delete_change", "diff_for", "refresh_change", "change_for_branch",
 ]
 
@@ -126,8 +132,11 @@ def _shape(row: dict) -> dict:
         "status": row["status"],
         "gates": list(row["gates"] or []),
         "remote": row["remote"],
+        "auto_merge": bool(row.get("auto_merge")),
         "merged_sha": row["merged_sha"],
         "merged_at": _iso(row["merged_at"]),
+        "merged_by": row.get("merged_by"),
+        "merge_basis": row.get("merge_basis"),
         "closed_reason": row["closed_reason"],
         "created_at": _iso(row.get("created_at")),
         "updated_at": _iso(row.get("updated_at")),
@@ -139,6 +148,33 @@ def _default_title(branch_slug: str) -> str:
     title. Not empty: `title` is what a reviewer sees in a list, and a blank one
     makes the list unusable."""
     return branch_slug.replace("-", " ").strip().capitalize() or branch_slug
+
+
+def merge_gates(existing: list, fresh: list[dict]) -> list[dict]:
+    """This run's results supersede the previous run's, name by name.
+
+    The column is a list and stays one -- names come from more than one
+    producer and the order is the order they were produced in -- but a check
+    that ran again is the SAME question answered later, not a second question.
+    A reviewer surface showing `typecheck:python` twenty times, nineteen of
+    them stale, is worse than one showing its current answer. Gate names this
+    run did not produce are kept untouched, so a future producer's entries are
+    not collateral damage of a reviewer re-run.
+
+    IT LIVES HERE, WITH THE COLUMN, and not with either producer. It is the
+    rule for the whole `gates` column: `services/change_gates.py` (C3) and
+    `services/claim_check.py` (C6) both write it and must supersede by exactly
+    the same rule, and two copies would be two rules with the second one
+    drifting. It was C3's for one day, which made C6 import C3 for it -- and
+    that edge, once C7's reader needed C6's advisory list, closed a cycle
+    between the three (measured: `scripts/check_module_layout.py`). The
+    validation of the gate SHAPE already lives here for the same reason (see
+    `_validated_gates`); the supersede rule is the other half of that.
+    """
+    names = {g["name"] for g in fresh}
+    kept = [g for g in (existing or [])
+            if isinstance(g, dict) and g.get("name") not in names]
+    return kept + fresh
 
 
 def _validated_gates(gates: list[dict]) -> list[dict]:
@@ -302,12 +338,18 @@ def update_change(change_id: UUID | str, **fields: Any) -> dict:
     That writer is step C5 and does not exist yet.
     """
     org_id, user_id = _require_db()
-    merge_outcome = {"merged_sha", "merged_at"} & set(fields)
+    merge_outcome = {"merged_sha", "merged_at", "merged_by",
+                     "merge_basis"} & set(fields)
     if fields.get("status") == "merged" or merge_outcome:
         raise ValueError(
-            "the merge outcome (status='merged', merged_sha, merged_at) is "
-            "written by whatever performs the merge, together, and is not "
-            "patchable")
+            "the merge outcome (status='merged', merged_sha, merged_at, "
+            "merged_by, merge_basis) is written by whatever performs the "
+            "merge, together, and is not patchable")
+    if "auto_merge" in fields:
+        # Pre-approval is a yes or a no and nothing in between: a truthy string
+        # from a JSON body must not become a third state that reads as armed on
+        # one code path and unarmed on another.
+        fields["auto_merge"] = bool(fields["auto_merge"])
     if "gates" in fields:
         fields["gates"] = _validated_gates(fields["gates"] or [])
     if "remote" in fields:
@@ -322,8 +364,16 @@ def update_change(change_id: UUID | str, **fields: Any) -> dict:
 
 
 def mark_merged(change_id: UUID | str, commit: str, *,
-                base_sha: str | None = None) -> dict:
+                base_sha: str | None = None,
+                merged_by: str = "operator", basis: str = "") -> dict:
     """Record that this change merged, as the commit that did it. Step C5.
+
+    `merged_by` is one of `db.models.MERGE_ACTORS` and `basis` is the prose
+    reason, and they move with the rest of the outcome (step C7). A record in
+    which an auto-merge is indistinguishable from an acceptance a person made
+    is a record that lies about who decided, so the actor is a REQUIRED part of
+    recording a merge rather than a field a caller may forget: the default is
+    `operator`, which is what every pre-C7 caller meant.
 
     This is the writer `update_change` refuses to be. `status`, `merged_sha` and
     `merged_at` move together in one transaction, because
@@ -339,6 +389,9 @@ def mark_merged(change_id: UUID | str, commit: str, *,
     """
     if not commit or not str(commit).strip():
         raise ValueError("a merged change must record the commit that merged it")
+    if merged_by not in MERGE_ACTORS:
+        raise ValueError(
+            f"unknown merge actor {merged_by!r}; one of {list(MERGE_ACTORS)}")
     org_id, user_id = _require_db()
     with tenant_session(org_id, user_id) as s:
         if change_repo.get_change(s, org_id, change_id) is None:
@@ -347,6 +400,8 @@ def mark_merged(change_id: UUID | str, commit: str, *,
             "status": "merged",
             "merged_sha": str(commit).strip(),
             "merged_at": datetime.now(timezone.utc),
+            "merged_by": merged_by,
+            "merge_basis": (basis or "").strip() or None,
         }
         if base_sha:
             fields["base_sha"] = str(base_sha).strip()

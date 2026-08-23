@@ -296,7 +296,8 @@ def test_the_merge_outcome_is_not_patchable(project, tenant):
 
     _branch_with_commits(project, "not-merged")
     change = changes.open_change("proj", "not-merged")
-    for patch in ({"status": "merged"}, {"merged_sha": "0" * 40}):
+    for patch in ({"status": "merged"}, {"merged_sha": "0" * 40},
+                  {"merged_by": "operator"}, {"merge_basis": "because"}):
         with pytest.raises(ValueError):
             changes.update_change(change["id"], **patch)
 
@@ -434,3 +435,60 @@ def test_a_deleted_change_frees_the_branch_to_open_a_new_one(project, tenant):
 
     second = changes.open_change("proj", "reusable")
     assert second["id"] != first["id"]
+
+
+# --- C7: pre-approval, and who merged it ------------------------------------
+
+def test_pre_approval_is_off_until_somebody_sets_it(project, tenant):
+    """A change nobody armed never merges itself. The default is the whole
+    safety property of step C7, so it is asserted on the stored row rather
+    than trusted to a Python constant."""
+    from services import changes
+
+    _branch_with_commits(project, "not-armed")
+    change = changes.open_change("proj", "not-armed")
+    assert change["auto_merge"] is False
+    assert change["merged_by"] is None and change["merge_basis"] is None
+
+    armed = changes.update_change(change["id"], auto_merge=True)
+    assert armed["auto_merge"] is True
+    # and it can be taken back: pre-approval is a stored decision, not a
+    # one-way switch.
+    assert changes.update_change(change["id"], auto_merge=False)["auto_merge"] \
+        is False
+
+
+def test_a_merged_change_records_which_kind_of_decision_merged_it(project, tenant):
+    """An auto-merge that reads the same as a human acceptance is a lie in the
+    record. The actor and the basis land in the same transaction as the sha."""
+    from services import changes
+
+    _branch_with_commits(project, "auto-merged")
+    change = changes.open_change("proj", "auto-merged")
+    merged = changes.mark_merged(
+        change["id"], "c0ffee0", merged_by="change_auto_merge",
+        basis="every non-advisory gate passed")
+
+    assert merged["status"] == "merged"
+    assert merged["merged_by"] == "change_auto_merge"
+    assert merged["merge_basis"] == "every non-advisory gate passed"
+
+
+def test_a_merge_with_no_actor_named_is_the_operator(project, tenant):
+    """Every caller that predates C7 meant a person, and says so now."""
+    from services import changes
+
+    _branch_with_commits(project, "hand-merged")
+    change = changes.open_change("proj", "hand-merged")
+    assert changes.mark_merged(change["id"], "c0ffee1")["merged_by"] == "operator"
+
+
+def test_an_unknown_merge_actor_is_refused(project, tenant):
+    """A closed vocabulary, refused in the service as well as in the schema:
+    a merge whose attribution nothing can interpret is worse than none."""
+    from services import changes
+
+    _branch_with_commits(project, "who-merged-it")
+    change = changes.open_change("proj", "who-merged-it")
+    with pytest.raises(ValueError):
+        changes.mark_merged(change["id"], "c0ffee2", merged_by="somebody")

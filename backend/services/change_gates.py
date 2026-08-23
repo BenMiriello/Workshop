@@ -52,8 +52,17 @@ from typing import Any, NamedTuple
 
 from services import ownership
 
-__all__ = ["gates_from_reviewer", "record_reviewer_run", "merge_gates",
-           "GATE_CHECKS"]
+__all__ = ["gates_from_reviewer", "record_reviewer_run",
+           "GATE_CHECKS", "GATE_NAMES", "VERDICT_GATE", "STUB_GATE",
+           "CRITERIA_GATE"]
+
+# The three gates this module produces that are not entries in GATE_CHECKS:
+# the reviewer's own verdict, the new-stub scan, and the ticket's executed
+# acceptance criteria. Named rather than spelled inline so `GATE_NAMES` below
+# is the ONE list of what a complete reviewer run puts on a change.
+VERDICT_GATE = "reviewer"
+STUB_GATE = "no_new_stubs"
+CRITERIA_GATE = "acceptance_criteria"
 
 
 class _Check(NamedTuple):
@@ -155,6 +164,20 @@ GATE_CHECKS: tuple[_Check, ...] = (
            ("duplicate_helpers_check_unavailable",)),
 )
 
+# EVERY gate name a complete reviewer run puts on a change, in the order
+# `gates_from_reviewer` produces them. Derived from the table above rather than
+# re-listed, so a new check becomes part of "a complete run" by being added in
+# one place.
+#
+# PUBLISHED FOR C7. Auto-merge has to be able to tell "this change passed its
+# checks" from "this change was only partly checked", and an ABSENT gate is the
+# second one. Without this list the classifier could only look at the gates that
+# happen to be present, and a change carrying one green gate and nothing else
+# would read as green -- which is how a check that never ran becomes an
+# approval. `services/auto_merge.py` requires every name here to be present.
+GATE_NAMES: tuple[str, ...] = (
+    VERDICT_GATE, STUB_GATE, *(c.gate for c in GATE_CHECKS), CRITERIA_GATE)
+
 # reviewer.sh's own vocabulary for a check outcome -> the `gates` vocabulary
 # (`db/models.GATE_STATUSES`). `skip` and `skipped` are both emitted: the
 # hardcoding check defaults to the former, everything else to the latter.
@@ -214,16 +237,16 @@ def _stub_gate(payload: dict, at: str) -> dict:
     if not isinstance(hits, list):
         hits = []
     if int(payload.get("diff_files") or 0) == 0 and not hits:
-        return {"name": "no_new_stubs", "status": "skipped", "at": at,
+        return {"name": STUB_GATE, "status": "skipped", "at": at,
                 "detail": "nothing changed, so no file was scanned for stubs"}
     if hits:
         shown = "; ".join(
             f"{h.get('file')}:{h.get('line')} {h.get('marker')}"
             for h in hits[:5] if isinstance(h, dict))
         more = "" if len(hits) <= 5 else f" (+{len(hits) - 5} more)"
-        return {"name": "no_new_stubs", "status": "fail", "at": at,
+        return {"name": STUB_GATE, "status": "fail", "at": at,
                 "detail": f"{len(hits)} new stub marker(s): {shown}{more}"}
-    return {"name": "no_new_stubs", "status": "pass", "at": at,
+    return {"name": STUB_GATE, "status": "pass", "at": at,
             "detail": "no TODO/FIXME/NotImplementedError/placeholder was "
                       "introduced in the changed files"}
 
@@ -235,16 +258,16 @@ def _criteria_gate(payload: dict, at: str) -> dict:
     a reviewer wants and an absent gate would hide."""
     results = payload.get("criteria") or []
     if not isinstance(results, list) or not results:
-        return {"name": "acceptance_criteria", "status": "skipped", "at": at,
+        return {"name": CRITERIA_GATE, "status": "skipped", "at": at,
                 "detail": "the ticket declared no machine-checkable "
                           "acceptance criteria"}
     failed = [c for c in results if isinstance(c, dict) and not c.get("pass")]
     passed = len(results) - len(failed)
     if failed:
         first = str(failed[0].get("criterion") or "criterion")[:160]
-        return {"name": "acceptance_criteria", "status": "fail", "at": at,
+        return {"name": CRITERIA_GATE, "status": "fail", "at": at,
                 "detail": f"{passed}/{len(results)} passed; first failure: {first}"}
-    return {"name": "acceptance_criteria", "status": "pass", "at": at,
+    return {"name": CRITERIA_GATE, "status": "pass", "at": at,
             "detail": f"{passed}/{len(results)} declared criteria passed, executed"}
 
 
@@ -269,7 +292,8 @@ def _verdict_gate(payload: dict, at: str) -> dict:
         detail = (f"verdict {verdict} at latitude {latitude}"
                   + (f": {', '.join(reasons)}" if reasons else ""))
     status = "pass" if (verdict == "approve" and payload.get("complete")) else "fail"
-    return {"name": "reviewer", "status": status, "at": at, "detail": detail[:600]}
+    return {"name": VERDICT_GATE, "status": status, "at": at,
+            "detail": detail[:600]}
 
 
 def gates_from_reviewer(payload: dict) -> list[dict]:
@@ -311,28 +335,6 @@ def gates_from_reviewer(payload: dict) -> list[dict]:
                       "detail": detail})
     gates.append(_criteria_gate(payload, at))
     return gates
-
-
-def merge_gates(existing: list, fresh: list[dict]) -> list[dict]:
-    """This run's results supersede the previous run's, name by name.
-
-    The column is a list and stays one -- names come from more than one
-    producer and the order is the order they were produced in -- but a check
-    that ran again is the SAME question answered later, not a second question.
-    A reviewer surface showing `typecheck:python` twenty times, nineteen of
-    them stale, is worse than one showing its current answer. Gate names this
-    run did not produce are kept untouched, so a future producer's entries are
-    not collateral damage of a reviewer re-run.
-
-    PUBLIC because it is the rule for the whole column, not for this producer:
-    `services/claim_check.py` (step C6) writes the same column and must
-    supersede by exactly the same rule. Two copies of this would be two rules,
-    and the second one would be the one that drifts.
-    """
-    names = {g["name"] for g in fresh}
-    kept = [g for g in (existing or [])
-            if isinstance(g, dict) and g.get("name") not in names]
-    return kept + fresh
 
 
 def record_reviewer_run(payload: dict, *, change_id: str | None = None,
@@ -380,12 +382,49 @@ def record_reviewer_run(payload: dict, *, change_id: str | None = None,
             print("[change_gates] no change id and no project/branch; "
                   "gates not recorded", file=sys.stderr)
             return None
-        return changes.update_change(
-            current["id"], gates=merge_gates(current.get("gates"), gates))
+        written = changes.update_change(
+            current["id"],
+            gates=changes.merge_gates(current.get("gates"), gates))
     except Exception as exc:
         print(f"[change_gates] gates not recorded ({type(exc).__name__}: {exc})",
               file=sys.stderr)
         return None
+    _consider_auto_merge(written["id"])
+    return written
+
+
+def _consider_auto_merge(change_id: str) -> None:
+    """"Merge when the checks pass" -- so this is the moment to ask (step C7).
+
+    The gates were just written, which makes this the one instant at which the
+    record and the checks are known to describe the same commit. Whether
+    anything happens is entirely `services/auto_merge.py`'s decision, and by
+    default the answer is no: a change nobody pre-approved, in a scope with no
+    merge policy, fails its first condition and nothing moves.
+
+    THE TWO GATE LISTS ARE HANDED OVER, not imported by the reader. `auto_merge`
+    takes the required set and the advisory set as arguments precisely so it
+    does not have to name either checker -- importing both made the three
+    modules a cycle (`change_gates -> auto_merge -> claim_check ->
+    change_gates`). This is the side that knows what a complete run produces,
+    so this is the side that says so, and it asks C6 for its own published
+    list rather than repeating the name.
+
+    A FUNCTION-LOCAL IMPORT, for the reason the caller above gives about
+    `changes`: `auto_merge` sits ABOVE this module and a module-scope edge
+    upward would put the gate writer inside the layer it reports to. And a
+    BEST-EFFORT call, for the reason the module docstring gives: recording a
+    verdict may never change it, so nothing auto-merge does can fail this
+    function.
+    """
+    try:
+        from services import auto_merge, claim_check
+
+        auto_merge.consider(change_id, GATE_NAMES, claim_check.ADVISORY_GATES,
+                            trigger="reviewer gates recorded")
+    except Exception as exc:  # noqa: BLE001 - a gate write cannot fail on this
+        print(f"[change_gates] auto-merge not considered for {change_id} "
+              f"({type(exc).__name__}: {exc})", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:

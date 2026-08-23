@@ -38,7 +38,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
-    CheckConstraint, DateTime, Enum as SAEnum, Float, ForeignKey,
+    Boolean, CheckConstraint, DateTime, Enum as SAEnum, Float, ForeignKey,
     ForeignKeyConstraint, Index, Integer, String, Text, UniqueConstraint, func,
     text,
 )
@@ -1198,6 +1198,21 @@ CHANGE_STATUSES = ("draft", "ready", "changes_requested", "approved",
 # is a different fact from one that passed.
 GATE_STATUSES = ("pass", "fail", "running", "skipped")
 
+# WHAT MERGED THIS CHANGE. Step C7 of changes-and-review-2026-08-22.md.
+# An auto-merge that reads the same as a human approval is a lie in the record:
+# the whole point of a change is that the row is evidence, and "a person looked
+# at this and took it" and "the machine took it because every gate was green"
+# are different facts a reviewer must be able to tell apart months later.
+#   operator            a person accepted the work (the C5 path).
+#   change_auto_merge   the change itself carried auto-merge (design sec 6,
+#                       "per change"), so a human pre-approved THIS diff.
+#   scope_merge_policy  the scope's `merge_policy` took it (design sec 6,
+#                       "per scope"). Nobody looked at this diff.
+# NULLABLE, and null means "merged before this column existed" rather than
+# "unknown actor": backfilling a guess onto historical rows would manufacture
+# exactly the certainty this vocabulary exists to avoid.
+MERGE_ACTORS = ("operator", "change_auto_merge", "scope_merge_policy")
+
 
 class Change(Base, Timestamps, SoftDelete):
     """One branch's worth of work, reviewable on its own.
@@ -1279,12 +1294,31 @@ class Change(Base, Timestamps, SoftDelete):
     # is the requirement: the same record either way, never two code paths.
     remote: Mapped[dict | None] = mapped_column(JSONB)
 
+    # PRE-APPROVAL (design doc sec 6, step C7). "Merge this as soon as the
+    # gates are green" -- the standard mechanism under its standard name, set
+    # by a person who has READ the diff and does not want to babysit the
+    # checks. FALSE by default and false for every row that existed before it:
+    # a change nobody marked never merges itself.
+    auto_merge: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"))
+
     merged_sha: Mapped[str | None] = mapped_column(String(40))
     merged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Which of MERGE_ACTORS took it, and the conditions that were true when it
+    # did. `merge_basis` is prose on purpose: it is read by a person asking
+    # "why did this land without me", and the answer is a sentence.
+    merged_by: Mapped[str | None] = mapped_column(String(32))
+    merge_basis: Mapped[str | None] = mapped_column(Text)
     closed_reason: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         CheckConstraint(_one_of("status", CHANGE_STATUSES), name="ck_change_status"),
+        # Null (merged before C7, or not merged at all) or one of the known
+        # actors. NOT "merged implies non-null": rows merged before this column
+        # existed are honestly unattributed and must not be rewritten.
+        CheckConstraint(
+            "merged_by IS NULL OR " + _one_of("merged_by", MERGE_ACTORS),
+            name="ck_change_merged_by"),
         # A merged change names what it merged as, and nothing else does. Both
         # halves: without the first a change can claim `merged` with no commit
         # behind it, which is the same "status with no artifact" defect this

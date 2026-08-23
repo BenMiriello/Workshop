@@ -20,16 +20,20 @@ class _Changes:
         self._raise_on_list = raise_on_list
         self.marked: list[tuple[str, str]] = []
         self.base_shas: list[str | None] = []
+        self.actors: list[tuple[str, str]] = []
 
     def list_changes(self, *, ticket_id=None, **_):
         if self._raise_on_list:
             raise self._raise_on_list
         return [c for c in self._found if ticket_id in (c.get("ticket_ids") or [])]
 
-    def mark_merged(self, change_id, commit, *, base_sha=None):
+    def mark_merged(self, change_id, commit, *, base_sha=None,
+                    merged_by="operator", basis=""):
         self.marked.append((str(change_id), str(commit)))
         self.base_shas.append(base_sha)
-        return {"id": change_id, "status": "merged", "merged_sha": commit}
+        self.actors.append((merged_by, basis))
+        return {"id": change_id, "status": "merged", "merged_sha": commit,
+                "merged_by": merged_by, "merge_basis": basis}
 
 
 class _Worktrees:
@@ -118,6 +122,21 @@ def test_accepting_merges_the_branch_and_records_the_commit(monkeypatch):
         "the base is pinned so the accepted diff stays recoverable"
     assert worktrees.state_calls == [("development", "task-abc")], \
         "and it is read BEFORE the merge, not after"
+
+
+def test_a_person_accepting_is_recorded_as_the_operator(monkeypatch):
+    """The C5 path has one actor and it is a human. C7 adds two more, and the
+    whole point of the column is that they do not read the same -- so the
+    default here is pinned rather than left to whatever the last caller passed.
+    """
+    changes = _Changes(found=[_change()])
+    worktrees = _Worktrees({"ok": True, "commit": "deadbee"})
+    _wire(monkeypatch, changes, worktrees)
+
+    work_review.merge_for_task("abc")
+
+    assert changes.actors == [("operator", "")], \
+        "an acceptance is the operator's, with no machine basis behind it"
 
 
 def test_a_conflict_refuses_the_acceptance_rather_than_completing_it(monkeypatch):

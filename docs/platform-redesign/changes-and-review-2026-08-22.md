@@ -1,8 +1,8 @@
 # The Change: what gets reviewed, and how work becomes merged
 
 - Date: 2026-08-22
-- Status: **C1 through C6 are BUILT** (C3 and C6 on 2026-08-23; the rest
-  2026-08-22 evening). C7 (auto-merge) is not.
+- Status: **C1 through C7 are BUILT** (C3, C6 and C7 on 2026-08-23; the rest
+  2026-08-22 evening). C7 is built FAIL-CLOSED and is enabled nowhere.
   Section 8 carries what each step turned out to need.
 - Answers the question left open by
   [`workspace-ownership-and-leases-2026-08-22.md`](workspace-ownership-and-leases-2026-08-22.md)
@@ -240,13 +240,45 @@ change), and the sweep helper that opens a change must call
   costs a millisecond and therefore actually runs, and the gate records which
   layer answered.
 - **C7. Auto-merge per change, then `merge_policy` per scope** (§6), with the
-  fail-closed low-risk classifier.
+  fail-closed low-risk classifier. BUILT (2026-08-23), and turned on NOWHERE.
+  `services/auto_merge.py` owns the decision and merges through
+  `work_review.merge_change` -- the same call a human acceptance makes, so
+  there is one merge implementation and a conflict still parks exactly as it
+  did. `services/merge_policy.py` is `scope_execution`'s twin: same scope key,
+  same JSON under `.runtime`, `manual` by default and `manual` for every way of
+  failing to read the file. The change record gained three columns
+  (`auto_merge`, `merged_by`, `merge_basis`, migration `d3f5a90c71b2`) because
+  an auto-merge that reads the same as a human acceptance is a lie in the
+  record. Four things this step turned out to need. First, "every gate green"
+  is not enough on its own: an ABSENT gate reads as green to any classifier
+  that only looks at what is present, so `change_gates.GATE_NAMES` was
+  published and a complete reviewer run is now a precondition -- one lonely
+  passing gate is not a clean bill of health. Second, `skipped` must not block
+  (most reviewer checks legitimately do not apply) and must not COUNT either,
+  which is also what stops a change whose only green gate is the advisory
+  claim-to-diff check from qualifying. Third, `running` is not `pass`:
+  merge-when-checks-pass is not merge-while-they-are-running. Fourth, the scope
+  key has to be derived root-first (`build_agents._project_dir` ->
+  `task_scope.key_for_root`, the same inversion `makers.scope_for` makes),
+  because the platform repo's scope key is `development` and never
+  `project:development` -- asking the other way round would have answered None
+  for the one scope most likely to be configured, and the control would have
+  looked set while doing nothing. The low-risk thresholds
+  (`LOW_RISK_MAX_FILES`, `LOW_RISK_MAX_CHANGED_LINES`) are policy, not physics:
+  they are the operator's call and are currently set at their most conservative
+  useful values.
 
 **Open, and genuinely the operator's:** whether `auto_when_green_and_low_risk` should
 exist at all in a single-operator system, or whether per-change auto-merge is enough.
 The argument for the scope policy is that it is the only thing that makes a long
 unattended run useful overnight. The argument against is that it is the one place in
 this design where the system merges code nobody looked at.
+
+Building C7 did not answer that. Per-change auto-merge is the decided half and is
+built fully; the scope policy is built and left OFF, defaulting to `manual`, adopted
+by no scope and set in no config. That is not an answer, it is what lets the question
+stay open safely: if the answer is "no", the `auto_when_green_and_low_risk` branch and
+its classifier can be deleted without touching the half that is decided.
 
 ## 9. Research appendix
 

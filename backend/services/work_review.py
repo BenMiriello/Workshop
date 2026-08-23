@@ -53,7 +53,8 @@ from services import changes, worktrees
 
 log = logging.getLogger(__name__)
 
-__all__ = ["MergeRefused", "open_for_task", "merge_for_task", "change_for_task"]
+__all__ = ["MergeRefused", "open_for_task", "merge_for_task", "merge_change",
+           "change_for_task"]
 
 
 class MergeRefused(Exception):
@@ -129,10 +130,34 @@ def merge_for_task(task_id: str, *, message: str = "") -> dict:
     if change is None:
         return {"merged": False, "reason": "no change: nothing to merge",
                 "commit": "", "change_id": ""}
+    return merge_change(change, message=message)
 
+
+def merge_change(change: dict, *, message: str = "",
+                 merged_by: str = "operator", basis: str = "") -> dict:
+    """Merge ONE change, and record who decided to.
+
+    THE SINGLE MERGE PATH. `merge_for_task` (a person accepting work) and
+    `services/auto_merge.py` (step C7, a pre-approved change landing on its
+    own) both come through here, and neither has its own copy of "pin the base,
+    merge the branch, record the outcome". A second implementation of that
+    sequence is how the two paths would end up disagreeing about what a merged
+    change's row says -- which is the whole thing `merged_by` exists to keep
+    honest.
+
+    `merged_by` is one of `db.models.MERGE_ACTORS` and `basis` is the prose
+    reason, passed straight to `changes.mark_merged`. The default is `operator`
+    because that is what every caller before C7 meant.
+
+    Raises `MergeRefused` when the merge did not happen. A CONFLICT arrives
+    here as `merge_branch` returning `ok: False`, and it stays exactly what it
+    was: the branch is untouched, the change is untouched, and the caller
+    decides (the API refuses the acceptance with a 409; the sweep parks the
+    ticket; auto-merge simply does not merge and says why).
+    """
+    change_id = str(change.get("id") or "")
     project_slug = change.get("project_slug") or ""
     branch_slug = change.get("branch_slug") or ""
-    change_id = str(change.get("id") or "")
     if not project_slug or not branch_slug:
         raise MergeRefused(
             f"change {change_id} does not name a branch, so it cannot be merged")
@@ -155,7 +180,8 @@ def merge_for_task(task_id: str, *, message: str = "") -> dict:
 
     commit = str(result.get("commit") or "")
     try:
-        changes.mark_merged(change_id, commit, base_sha=base_sha or None)
+        changes.mark_merged(change_id, commit, base_sha=base_sha or None,
+                            merged_by=merged_by, basis=basis)
     except Exception as e:  # noqa: BLE001
         # The code IS merged. Losing the bookkeeping must not un-merge it or
         # refuse the acceptance; it must be loud instead.

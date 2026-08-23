@@ -318,3 +318,46 @@ def test_a_branch_with_no_open_change_is_logged_not_raised(project, tenant):
         payload, project_slug="proj", branch_slug="opened-later")
     assert written is not None and written["id"] == opened["id"]
     assert [g["name"] for g in written["gates"]][0] == "reviewer"
+
+
+# --- C7: the gate write is where auto-merge gets considered -------------------
+
+def test_recording_gates_asks_whether_the_change_may_now_merge(monkeypatch):
+    """"Merge when the checks pass" has to be asked the moment they pass.
+
+    The gate write is that moment and the only one at which the record and the
+    checks are known to describe the same commit, so `record_reviewer_run` is
+    the primary trigger. Whether anything happens is auto_merge's decision, and
+    by default it is no.
+    """
+    from services import auto_merge, change_gates, claim_check
+
+    asked: list[tuple] = []
+    monkeypatch.setattr(auto_merge, "consider",
+                        lambda cid, required, advisory, **kw:
+                        asked.append((cid, required, advisory, kw)) or {})
+
+    change_gates._consider_auto_merge("abc-123")
+
+    assert asked and asked[0][0] == "abc-123"
+    assert asked[0][1] == change_gates.GATE_NAMES, (
+        "the side that knows what a complete run produces is the side that "
+        "says so; auto_merge does not import this module")
+    assert asked[0][2] == claim_check.ADVISORY_GATES, (
+        "and the advisory list is C6's published one, not a name repeated here")
+    assert "trigger" in asked[0][3], "the record says what asked for the merge"
+
+
+def test_a_broken_auto_merge_cannot_fail_the_gate_write(monkeypatch, capsys):
+    """`record_reviewer_run` raises nothing, which is what lets reviewer.sh call
+    it without guarding the result. C7 hangs a merge off that call and must not
+    take the contract away: the reviewer's verdict is already made."""
+    from services import auto_merge, change_gates
+
+    def _boom(change_id, required, advisory, **kw):
+        raise RuntimeError("auto-merge fell over")
+    monkeypatch.setattr(auto_merge, "consider", _boom)
+
+    change_gates._consider_auto_merge("abc-123")  # must not raise
+
+    assert "auto-merge not considered" in capsys.readouterr().err

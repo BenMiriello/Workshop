@@ -9,7 +9,8 @@ should be true; a change says here is the code that makes it true.
     POST   /changes                                      open one for a branch
     GET    /changes/{id}
     PATCH  /changes/{id}                                 title/summary/tickets/
-                                                         status/gates/remote
+                                                         status/gates/remote/
+                                                         auto_merge
     DELETE /changes/{id}                                 soft delete
     GET    /changes/{id}/diff                            the review payload
     POST   /changes/{id}/refresh                         re-read the branch
@@ -20,11 +21,18 @@ and a tag -- a bare `APIRouter()` is a bug by that section's own rule -- and
 every route declares a `response_model`, so every one of these is drivable from
 the generated client, a script or an agent without a bespoke path.
 
-THERE IS NO MERGE ROUTE HERE, deliberately. `POST /changes/{id}/merge` is the
-right shape and the design names it, but merging is step C5. A route that
-exists and refuses, or exists and does nothing, is indistinguishable to a
-caller from one that works, and the generated client would publish it as a
-capability this system does not have. It arrives with the behaviour.
+THERE IS STILL NO MERGE ROUTE HERE, deliberately. `POST /changes/{id}/merge` is
+the right shape and the design names it, but a merge on THIS resource would be a
+second way to merge beside accepting the ticket, and two of them would be two
+answers to "what does merging mean for the ticket". Accepting is still what
+merges (step C5, `routes/tasks_all.py` and `routes/jobs.py` through
+`services/work_review.py`).
+
+WHAT C7 ADDS IS A STORED DECISION, NOT A VERB: `auto_merge` on the change is
+pre-approval -- merge this as soon as the gates are green -- and the merge it
+eventually causes goes through that same acceptance path. Setting it while the
+gates are ALREADY green merges immediately, because otherwise the switch would
+read as armed for something that had already happened.
 
 Gated with the rest of the platform control surface in `main.py`
 (`dependencies=_OPERATOR`).
@@ -34,7 +42,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from services import claim_check
+from services import auto_merge, change_gates, claim_check
 from services import changes as changes_svc
 
 router = APIRouter(prefix="/changes", tags=["changes"])
@@ -87,8 +95,17 @@ class Change(BaseModel):
     status: str
     gates: list[ChangeGate] = Field(default_factory=list)
     remote: ChangeRemote | None = None
+    # PRE-APPROVAL (step C7, design doc sec 6): merge this as soon as the gates
+    # are green. False unless a person set it.
+    auto_merge: bool = False
     merged_sha: str | None = None
     merged_at: str | None = None
+    # WHO TOOK IT, and on what grounds. `operator` / `change_auto_merge` /
+    # `scope_merge_policy` (db.models.MERGE_ACTORS). Null on a change that has
+    # not merged, and on one that merged before the column existed -- which is
+    # honestly "not recorded" rather than "a person did it".
+    merged_by: str | None = None
+    merge_basis: str | None = None
     closed_reason: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
@@ -121,6 +138,11 @@ class ChangePatchIn(BaseModel):
     status: str | None = None
     gates: list[ChangeGate] | None = None
     remote: ChangeRemote | None = None
+    # Setting this true is the pre-approval itself (step C7). It is a PATCH
+    # rather than a verb of its own because it is a stored decision a person can
+    # take back, not an action: `auto_merge: false` has to be as reachable as
+    # `true`, and a POST /auto-merge with no counterpart is a one-way switch.
+    auto_merge: bool | None = None
     closed_reason: str | None = None
     app_id: str | None = None
     worktree_id: str | None = None
@@ -234,12 +256,30 @@ def get_change(change_id: str) -> Change:
 
 @router.patch("/{change_id}", response_model=Change)
 def patch_change(change_id: str, body: ChangePatchIn) -> Change:
+    """Patch the authored fields, and — for `auto_merge` — act on the decision.
+
+    ARMING A CHANGE THAT IS ALREADY GREEN MUST MERGE IT. Auto-merge means "merge
+    when the checks pass", and the checks may have passed an hour ago; a switch
+    that only takes effect on the NEXT gate run would sit there looking armed
+    while the thing it was armed for had already happened. So the same
+    evaluation the gate writer performs runs here too, on the record as it is
+    after the patch. It is best-effort: the patch itself succeeded, and a merge
+    that cannot happen leaves the change exactly where it was, which is what the
+    response then shows.
+    """
     fields = body.model_dump(exclude_unset=True)
     if "gates" in fields and fields["gates"] is not None:
         fields["gates"] = [dict(g) for g in fields["gates"]]
     if "remote" in fields and fields["remote"] is not None:
         fields["remote"] = dict(fields["remote"])
-    return Change(**_guard(changes_svc.update_change, change_id, **fields))
+    row = _guard(changes_svc.update_change, change_id, **fields)
+    if fields.get("auto_merge"):
+        outcome = auto_merge.consider(change_id, change_gates.GATE_NAMES,
+                                      claim_check.ADVISORY_GATES,
+                                      trigger="operator armed the change")
+        if outcome.get("merged"):
+            row = _guard(changes_svc.get_change, change_id)
+    return Change(**row)
 
 
 @router.delete("/{change_id}", response_model=ChangeDeleted)

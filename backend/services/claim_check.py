@@ -47,8 +47,9 @@ WHICH LAYER produced it so a reviewer knows whether they are reading a fact or
 a judgement.
 
 LAYERING. Above `changes` (which it reads through its published surface) and
-beside `change_gates` (whose `merge_gates` it reuses so there is exactly one
-rule for how a gate list is superseded). Nothing below imports this and nothing
+beside `change_gates` (whose column it writes, superseding by
+`changes.merge_gates` so there is exactly one rule for how a gate list is
+superseded). Nothing below imports this and nothing
 in `services/` imports it at all -- its callers are `routes/changes.py`, the
 sweep and its own CLI -- so unlike `change_gates` it can name `changes` and
 `llm_router` at module scope without joining or widening the backend's import
@@ -72,7 +73,6 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 
 from services import changes, llm_router, ownership
-from services.change_gates import merge_gates
 
 __all__ = ["ClaimCheck", "GATE_NAME", "ADVISORY_GATES", "judge",
            "check_change", "record_claim_check"]
@@ -548,7 +548,8 @@ def record_claim_check(*, change_id: str | None = None,
                               use_model=use_model, model=model)
         return changes.update_change(
             change["id"],
-            gates=merge_gates(change.get("gates"), [result.as_gate()]))
+            gates=changes.merge_gates(change.get("gates"),
+                                      [result.as_gate()]))
     except Exception as exc:
         print(f"[claim_check] claim check not recorded "
               f"({type(exc).__name__}: {exc})", file=sys.stderr)
