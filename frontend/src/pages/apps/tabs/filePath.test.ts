@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { breadcrumbsFor, parentPath, viewModeFor } from "./filePath";
+import { ancestorIdsFor, breadcrumbsFor, fileIconFor, parentPath, viewModeFor } from "./filePath";
 
 describe("breadcrumbsFor", () => {
   it("is empty at the root", () => {
@@ -33,20 +33,64 @@ describe("parentPath", () => {
   });
 });
 
+describe("ancestorIdsFor", () => {
+  it("opens nothing for a file at the root", () => {
+    expect(ancestorIdsFor("main.py")).toEqual([]);
+    expect(ancestorIdsFor("")).toEqual([]);
+  });
+
+  it("lists every folder on the way down, outermost first", () => {
+    expect(ancestorIdsFor("src/pages/apps/Files.tsx")).toEqual([
+      "src",
+      "src/pages",
+      "src/pages/apps",
+    ]);
+  });
+});
+
+describe("fileIconFor", () => {
+  const code = { language: "Python", profile: "code" as const };
+  const prose = { language: "Markdown", profile: "prose" as const };
+  const plain = { language: null, profile: "code" as const };
+
+  it("is code when the editor would open it as code", () => {
+    expect(fileIconFor("backend/main.py", code)).toBe("code");
+  });
+
+  it("is a doc for the prose profile", () => {
+    expect(fileIconFor("docs/README.md", prose)).toBe("doc");
+  });
+
+  it("is a plain file when nothing claims the extension", () => {
+    expect(fileIconFor("build/out.bin", plain)).toBe("file");
+    expect(fileIconFor(".gitignore", plain)).toBe("file");
+  });
+
+  it("calls out images and data by extension, over the language", () => {
+    expect(fileIconFor("assets/logo.svg", { language: "XML", profile: "code" })).toBe("image");
+    expect(fileIconFor("a/b/config.yaml", { language: "YAML", profile: "code" })).toBe("data");
+    expect(fileIconFor("PHOTO.JPG", plain)).toBe("image");
+  });
+});
+
 describe("viewModeFor", () => {
   it("is editable when nothing stops it", () => {
-    expect(viewModeFor({ editable: true, truncated: false, encoding: "utf-8" })).toBe("editable");
+    expect(viewModeFor({ editable: true, truncated: false, encoding: "utf-8", writable: true })).toBe("editable");
   });
 
   it("binary wins even if also reported truncated", () => {
-    expect(viewModeFor({ editable: true, truncated: true, encoding: "binary" })).toBe("binary");
+    expect(viewModeFor({ editable: true, truncated: true, encoding: "binary", writable: true })).toBe("binary");
   });
 
   it("truncated blocks editing on an otherwise-editable file", () => {
-    expect(viewModeFor({ editable: true, truncated: true, encoding: "utf-8" })).toBe("truncated");
+    expect(viewModeFor({ editable: true, truncated: true, encoding: "utf-8", writable: true })).toBe("truncated");
   });
 
-  it("readonly when the backend says so", () => {
-    expect(viewModeFor({ editable: false, truncated: false, encoding: "utf-8" })).toBe("readonly");
+  it("readonly when the bytes can't be edited", () => {
+    expect(viewModeFor({ editable: false, truncated: false, encoding: "utf-8", writable: true })).toBe("readonly");
+  });
+
+  it("readonly when the workspace does not permit a write here", () => {
+    expect(viewModeFor({ editable: true, truncated: false, encoding: "utf-8", writable: false })).toBe("readonly");
   });
 });
