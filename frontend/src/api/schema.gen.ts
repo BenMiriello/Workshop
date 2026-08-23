@@ -4762,6 +4762,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/files/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** File Content */
+        get: operations["file_content_files_content_get"];
+        /** File Write */
+        put: operations["file_write_files_content_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/files/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** File Tree */
+        get: operations["file_tree_files_tree_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/finance/balances": {
         parameters: {
             query?: never;
@@ -4912,6 +4947,345 @@ export interface paths {
         get: operations["get_transactions_finance_transactions_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/ahead-behind": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ahead Behind
+         * @description How far `ref` is ahead of / behind `upstream`.
+         */
+        get: operations["get_ahead_behind_git_ahead_behind_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Branches
+         * @description Local branch names, optionally filtered by a refname glob.
+         */
+        get: operations["list_branches_git_branches_get"];
+        put?: never;
+        /**
+         * Create Branch
+         * @description Create a branch, optionally at a start point. 400 when git refuses.
+         */
+        post: operations["create_branch_git_branches_post"];
+        /**
+         * Delete Branch
+         * @description Delete a branch. Best-effort: `ok: false` when git refused.
+         */
+        delete: operations["delete_branch_git_branches_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Checkout
+         * @description Check out a ref, optionally creating it.
+         */
+        post: operations["checkout_git_checkout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/clean": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clean
+         * @description Remove untracked files (or report what would go, under `dry_run`).
+         */
+        post: operations["clean_git_clean_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/commit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Commit
+         * @description Commit the index (plus tracked modifications when `all`).
+         */
+        post: operations["commit_git_commit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Diff
+         * @description Summary + changed paths for `a..b` (or `a...b`), plus the unified patch
+         *     when `unified` is set. `path_filter` limits the patch to one path.
+         */
+        get: operations["get_diff_git_diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/is-ancestor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Is Ancestor
+         * @description Whether `ancestor` is already contained in `descendant`.
+         */
+        get: operations["get_is_ancestor_git_is_ancestor_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Log
+         * @description Commits newest-first. An empty repository answers with [].
+         */
+        get: operations["get_log_git_log_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge
+         * @description Merge a ref into the checked-out branch, fast-forward preferred. A merge
+         *     that cannot complete is aborted before this answers.
+         */
+        post: operations["merge_git_merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/push": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push
+         * @description Push a ref to a remote. Git's transport only: anything that needs a pull
+         *     request goes through the GitHub service instead.
+         */
+        post: operations["push_git_push_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/rev-parse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Rev Parse
+         * @description Resolve a rev to a sha, or to its short symbolic name.
+         */
+        get: operations["get_rev_parse_git_rev_parse_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Snapshot
+         * @description Snapshot the working tree to a dangling commit without moving HEAD.
+         */
+        post: operations["snapshot_git_snapshot_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Status
+         * @description Working-tree status: the branch, whether it is clean, and every entry.
+         */
+        get: operations["get_status_git_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/worktrees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Worktrees
+         * @description Every worktree of the repository, the main one included.
+         */
+        get: operations["list_worktrees_git_worktrees_get"];
+        put?: never;
+        /**
+         * Add Worktree
+         * @description Add a worktree, creating a branch there when one is named.
+         */
+        post: operations["add_worktree_git_worktrees_post"];
+        /**
+         * Remove Worktree
+         * @description Remove a worktree. A LOCKED worktree refuses even this, by design.
+         */
+        delete: operations["remove_worktree_git_worktrees_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/worktrees/lock": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Lock Worktree
+         * @description Lock a worktree so a crashed holder's stale index cannot wedge siblings.
+         */
+        post: operations["lock_worktree_git_worktrees_lock_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/worktrees/prune": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prune Worktrees
+         * @description Drop administrative metadata for worktrees whose directory is gone.
+         */
+        post: operations["prune_worktrees_git_worktrees_prune_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8065,18 +8439,6 @@ export interface components {
             [key: string]: unknown;
         };
         /**
-         * AheadBehind
-         * @description Counts against `origin/<base>`. Both read 0 when the rev-list could not
-         *     run, which is indistinguishable from being level -- an honest limitation of
-         *     the underlying command, recorded here rather than papered over.
-         */
-        AheadBehind: {
-            /** Ahead */
-            ahead: number;
-            /** Behind */
-            behind: number;
-        };
-        /**
          * AllNotes
          * @description `scopes` is how many scopes were actually READ, not how many exist, so a
          *     filtered request reports the size of what it looked at.
@@ -8088,6 +8450,19 @@ export interface components {
             notes: components["schemas"]["NoteRow"][];
             /** Scopes */
             scopes: number;
+        };
+        /**
+         * Ancestry
+         * @description True when `ancestor` is contained in `descendant` (already merged).
+         *     False also covers "one of those refs does not exist".
+         */
+        Ancestry: {
+            /** Ancestor */
+            ancestor: string;
+            /** Descendant */
+            descendant: string;
+            /** Is Ancestor */
+            is_ancestor: boolean;
         };
         /** App */
         App: {
@@ -8194,6 +8569,8 @@ export interface components {
             size: number;
             /** Truncated */
             truncated: boolean;
+            /** Writable */
+            writable: boolean;
         };
         /** AppFileEntry */
         AppFileEntry: {
@@ -8236,6 +8613,8 @@ export interface components {
             path: string;
             /** Size */
             size: number;
+            /** Writable */
+            writable: boolean;
         };
         /**
          * AppGrant
@@ -9019,6 +9398,15 @@ export interface components {
             /** Preview */
             preview?: string | null;
         };
+        /** BranchCreateBody */
+        BranchCreateBody: {
+            /** Name */
+            name: string;
+            /** Repo */
+            repo: string;
+            /** Start Point */
+            start_point?: string | null;
+        };
         /** BranchCreated */
         BranchCreated: {
             /** Branch */
@@ -9048,14 +9436,12 @@ export interface components {
             /** Ok */
             ok: boolean;
         };
-        /**
-         * BranchList
-         * @description Empty rather than an error when the relational store is unreachable: a
-         *     chat renders without this, it just cannot be branched.
-         */
-        BranchList: {
-            /** Branches */
-            branches: components["schemas"]["Branch"][];
+        /** BranchRecord */
+        BranchRecord: {
+            /** Branch */
+            branch: string;
+            /** Repo */
+            repo: string;
         };
         /**
          * BranchRow
@@ -9309,6 +9695,33 @@ export interface components {
             /** Window S */
             window_s: number;
         };
+        /** CheckoutBody */
+        CheckoutBody: {
+            /**
+             * Create
+             * @default false
+             */
+            create: boolean;
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
+            /** Ref */
+            ref: string;
+            /** Repo */
+            repo: string;
+        };
+        /** CheckoutResult */
+        CheckoutResult: {
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Ok */
+            ok: boolean;
+        };
         /**
          * CheckpointReport
          * @description One repo's checkpoint-thinning description. REPORT ONLY: nothing here is
@@ -9332,6 +9745,39 @@ export interface components {
             total_checkpoints?: number | null;
         } & {
             [key: string]: unknown;
+        };
+        /** CleanBody */
+        CleanBody: {
+            /**
+             * Directories
+             * @default true
+             */
+            directories: boolean;
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /**
+             * Ignored
+             * @default false
+             */
+            ignored: boolean;
+            /** Repo */
+            repo: string;
+        };
+        /**
+         * CleanResult
+         * @description `removed` is what git reported; under `dry_run` it is what it WOULD
+         *     remove and nothing was touched.
+         */
+        CleanResult: {
+            /** Dry Run */
+            dry_run: boolean;
+            /** Removed */
+            removed: string[];
+            /** Repo */
+            repo: string;
         };
         /**
          * CleanupResult
@@ -9364,6 +9810,33 @@ export interface components {
             /** Session Reset */
             session_reset: boolean;
         };
+        /** CommitBody */
+        CommitBody: {
+            /**
+             * All
+             * @default false
+             */
+            all: boolean;
+            /**
+             * Allow Empty
+             * @default false
+             */
+            allow_empty: boolean;
+            /** Message */
+            message: string;
+            /** Repo */
+            repo: string;
+        };
+        /**
+         * CommitLog
+         * @description Newest first. An empty repository has no HEAD and answers with [].
+         */
+        CommitLog: {
+            /** Commits */
+            commits: components["schemas"]["CommitRecord"][];
+            /** Repo */
+            repo: string;
+        };
         /**
          * CommitOut
          * @description `ok: false` with a `reason` at HTTP 200 is an ADR 0023 clause 3 violation
@@ -9378,6 +9851,33 @@ export interface components {
             ok: boolean;
             /** Reason */
             reason?: string | null;
+        };
+        /** CommitRecord */
+        CommitRecord: {
+            /** Author */
+            author: string;
+            /** Date */
+            date: string;
+            /** Sha */
+            sha: string;
+            /** Subject */
+            subject: string;
+        };
+        /**
+         * CommitResult
+         * @description `ok: false` with a `detail` is the ordinary "nothing staged" answer, not
+         *     an outage.
+         */
+        CommitResult: {
+            /** Commit */
+            commit?: string | null;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Ok */
+            ok: boolean;
         };
         /**
          * CompactResult
@@ -9646,6 +10146,15 @@ export interface components {
             /** Delegates */
             delegates: components["schemas"]["NativeSubagent"][];
         };
+        /**
+         * Deleted
+         * @description Best-effort teardown. `ok: false` means git refused, which for a delete
+         *     is usually "it was already gone".
+         */
+        Deleted: {
+            /** Ok */
+            ok: boolean;
+        };
         /** DeletedOut */
         DeletedOut: {
             /** Deleted */
@@ -9889,6 +10398,22 @@ export interface components {
         DiffOut: {
             /** Files */
             files: components["schemas"]["routes__agents__DiffFile"][];
+            /** Summary */
+            summary: string;
+        };
+        /**
+         * DiffResult
+         * @description `summary` is the `--shortstat` line ("" when nothing changed). `patch` is
+         *     populated only when the request asked for the unified text, which is why it
+         *     is excluded when unset rather than sent as an empty string.
+         */
+        DiffResult: {
+            /** Files */
+            files: components["schemas"]["routes__git__DiffFile"][];
+            /** Patch */
+            patch?: string | null;
+            /** Repo */
+            repo: string;
             /** Summary */
             summary: string;
         };
@@ -10260,6 +10785,40 @@ export interface components {
             /** Word Count */
             word_count: number;
         };
+        /** FileContent */
+        FileContent: {
+            /** Content */
+            content: string;
+            /** Editable */
+            editable: boolean;
+            /** Encoding */
+            encoding: string;
+            /** Modified */
+            modified?: string | null;
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
+            /** Truncated */
+            truncated: boolean;
+            /** Workspace */
+            workspace: string;
+            /** Writable */
+            writable: boolean;
+        };
+        /** FileEntry */
+        FileEntry: {
+            /** Kind */
+            kind: string;
+            /** Modified */
+            modified?: string | null;
+            /** Name */
+            name: string;
+            /** Path */
+            path: string;
+            /** Size */
+            size?: number | null;
+        };
         /** FileOut */
         FileOut: {
             /** Content */
@@ -10267,10 +10826,31 @@ export interface components {
             /** Path */
             path: string;
         };
-        /** FileWriteIn */
-        FileWriteIn: {
-            /** Content */
-            content: string;
+        /** FileTree */
+        FileTree: {
+            /** Entries */
+            entries: components["schemas"]["FileEntry"][];
+            /** Filtered */
+            filtered?: string[] | null;
+            /** Path */
+            path: string;
+            /** Root */
+            root: string;
+            /** Workspace */
+            workspace: string;
+        };
+        /** FileWriteOut */
+        FileWriteOut: {
+            /** Modified */
+            modified: string;
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
+            /** Workspace */
+            workspace: string;
+            /** Writable */
+            writable: boolean;
         };
         /** FilterIn */
         FilterIn: {
@@ -11157,21 +11737,27 @@ export interface components {
             /** Scope */
             scope: string;
         };
-        /**
-         * MergeResult
-         * @description A fast-forward is attempted first and a real merge commit only if that
-         *     fails. On failure the in-progress merge is ABORTED before answering, so the
-         *     working tree is clean and `reason` describes a merge that left nothing
-         *     behind. The route turns `ok: false` into a 409, so this body is the success
-         *     case in practice.
-         */
-        MergeResult: {
-            /** Commit */
-            commit?: string | null;
-            /** Ok */
-            ok: boolean;
-            /** Reason */
-            reason?: string | null;
+        /** MergeBody */
+        MergeBody: {
+            /**
+             * Allow Merge Commit
+             * @default true
+             */
+            allow_merge_commit: boolean;
+            /**
+             * Message
+             * @default
+             */
+            message: string;
+            /**
+             * Prefer Fast Forward
+             * @default true
+             */
+            prefer_fast_forward: boolean;
+            /** Ref */
+            ref: string;
+            /** Repo */
+            repo: string;
         };
         /**
          * MergedWorktree
@@ -12081,6 +12667,33 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** PushBody */
+        PushBody: {
+            /** Ref */
+            ref: string;
+            /**
+             * Remote
+             * @default origin
+             */
+            remote: string;
+            /** Repo */
+            repo: string;
+            /**
+             * Set Upstream
+             * @default false
+             */
+            set_upstream: boolean;
+        };
+        /** PushResult */
+        PushResult: {
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Ok */
+            ok: boolean;
+        };
         /**
          * PushStatus
          * @description The device-token registry is live and free; actual remote SENDING is the
@@ -12431,6 +13044,11 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** RepoBody */
+        RepoBody: {
+            /** Repo */
+            repo: string;
+        };
         /**
          * RepoState
          * @description The canonical-state view. An UNBOUND project (no GitHub remote) answers
@@ -12448,6 +13066,22 @@ export interface components {
             remote_url?: string | null;
             /** Worktrees */
             worktrees?: components["schemas"]["WorktreeState"][] | null;
+        };
+        /**
+         * RepoStatus
+         * @description `branch` is null on a detached HEAD. `clean` is the whole point of the
+         *     call: a caller deciding whether a workspace can be handed over reads it and
+         *     nothing else.
+         */
+        RepoStatus: {
+            /** Branch */
+            branch?: string | null;
+            /** Clean */
+            clean: boolean;
+            /** Entries */
+            entries: components["schemas"]["StatusEntry"][];
+            /** Repo */
+            repo: string;
         };
         /** RescopeThread */
         RescopeThread: {
@@ -12539,6 +13173,19 @@ export interface components {
             ok: boolean;
             /** Retired */
             retired: string;
+        };
+        /**
+         * RevParse
+         * @description `sha` is null when the rev does not resolve; that is an answer, not an
+         *     error.
+         */
+        RevParse: {
+            /** Repo */
+            repo: string;
+            /** Rev */
+            rev: string;
+            /** Sha */
+            sha?: string | null;
         };
         /** RevokeIn */
         RevokeIn: {
@@ -13035,6 +13682,39 @@ export interface components {
             /** Waiting */
             waiting: number;
         };
+        /** SnapshotBody */
+        SnapshotBody: {
+            /**
+             * Message
+             * @default
+             */
+            message: string;
+            /** Ref */
+            ref?: string | null;
+            /** Repo */
+            repo: string;
+        };
+        /**
+         * SnapshotResult
+         * @description Section 9: a yield snapshots to a DANGLING commit, so `sha` is reachable
+         *     from nothing unless `ref` was requested, and HEAD never moved. A clean tree
+         *     is a success with no sha.
+         */
+        SnapshotResult: {
+            /** Clean */
+            clean: boolean;
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Ok */
+            ok: boolean;
+            /** Ref */
+            ref?: string | null;
+            /** Sha */
+            sha?: string | null;
+        };
         /** SpawnTask */
         SpawnTask: {
             /** Acceptance */
@@ -13153,6 +13833,17 @@ export interface components {
             permission_mode?: string | null;
             /** Sent At */
             sent_at?: string | null;
+        };
+        /**
+         * StatusEntry
+         * @description One porcelain line: git's two-character code verbatim (`??` untracked,
+         *     ` M` unstaged modification, `M ` staged) and the path it applies to.
+         */
+        StatusEntry: {
+            /** Path */
+            path: string;
+            /** Status */
+            status: string;
         };
         /**
          * StoppedRuntime
@@ -14821,13 +15512,71 @@ export interface components {
             /** Updated */
             updated: string;
         };
+        /** WorktreeAddBody */
+        WorktreeAddBody: {
+            /** Branch */
+            branch?: string | null;
+            /** Path */
+            path: string;
+            /** Repo */
+            repo: string;
+            /** Start Point */
+            start_point?: string | null;
+        };
+        /** WorktreeAdded */
+        WorktreeAdded: {
+            /** Branch */
+            branch?: string | null;
+            /** Dir */
+            dir: string;
+            /** Repo */
+            repo: string;
+        };
+        /** WorktreeList */
+        WorktreeList: {
+            /** Repo */
+            repo: string;
+            /** Worktrees */
+            worktrees: components["schemas"]["WorktreeRecord"][];
+        };
+        /** WorktreeLockBody */
+        WorktreeLockBody: {
+            /** Path */
+            path: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /** Repo */
+            repo: string;
+        };
+        /**
+         * WorktreeRecord
+         * @description One entry of `git worktree list --porcelain`, main worktree included.
+         *     `branch` is the short name or null on a detached HEAD.
+         */
+        WorktreeRecord: {
+            /** Branch */
+            branch?: string | null;
+            /** Detached */
+            detached: boolean;
+            /** Dir */
+            dir: string;
+            /** Head */
+            head?: string | null;
+            /** Locked */
+            locked: boolean;
+            /** Prunable */
+            prunable: boolean;
+        };
         /**
          * WorktreeState
          * @description `task_id` is the branch slug: a branch is named after the ticket that
          *     owns it, so the two are the same string by construction.
          */
         WorktreeState: {
-            ahead_behind: components["schemas"]["AheadBehind"];
+            ahead_behind: components["schemas"]["routes__worktrees__AheadBehind"];
             /** Branch Slug */
             branch_slug: string;
             /** Dir */
@@ -14958,6 +15707,15 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * BranchList
+         * @description Empty rather than an error when the relational store is unreachable: a
+         *     chat renders without this, it just cannot be branched.
+         */
+        routes__chat_models__BranchList: {
+            /** Branches */
+            branches: components["schemas"]["Branch"][];
+        };
+        /**
          * InboxItem
          * @description Something waiting on the operator. `kind` is question, review or notify,
          *     and they rank in that order because a blocked agent must not be buried under
@@ -15007,9 +15765,74 @@ export interface components {
             /** Reason */
             reason?: string | null;
         };
+        /** FileWriteIn */
+        routes__files__FileWriteIn: {
+            /** Content */
+            content: string;
+            /** Path */
+            path: string;
+            /** Workspace */
+            workspace: string;
+        };
+        /**
+         * AheadBehind
+         * @description Zeros when either side is missing, so a caller never has to special-case
+         *     an unborn or unfetched branch.
+         */
+        routes__git__AheadBehind: {
+            /** Ahead */
+            ahead: number;
+            /** Behind */
+            behind: number;
+        };
+        /** BranchList */
+        routes__git__BranchList: {
+            /** Branches */
+            branches: string[];
+            /** Repo */
+            repo: string;
+        };
+        /**
+         * DiffFile
+         * @description `status` is git's letter (A/M/D/R100/...); for a rename `path` is the
+         *     new path.
+         */
+        routes__git__DiffFile: {
+            /** Path */
+            path: string;
+            /** Status */
+            status: string;
+        };
+        /**
+         * MergeResult
+         * @description A failed merge has already been ABORTED by the service, so the working
+         *     tree is clean when this comes back false. `conflicts` is captured before the
+         *     abort, which is the only moment those paths are knowable.
+         */
+        routes__git__MergeResult: {
+            /** Commit */
+            commit?: string | null;
+            /** Conflict */
+            conflict: boolean;
+            /** Conflicts */
+            conflicts: string[];
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Fast Forward */
+            fast_forward: boolean;
+            /** Ok */
+            ok: boolean;
+        };
         /**
          * InboxItem
          * @description An item waiting on the operator. `kind` is question, review or notify.
+         *
+         *     Either a stored row raised by an ambient agent, or a waiting TICKET read as
+         *     one (`services/chat_work.needs_you_id`). The shape is the same because the
+         *     panel renders one column, and only the id says which it was.
          *
          *     A SNOOZED item stays OPEN and keeps its dedupe key: it just stops surfacing
          *     until `snoozed_until`, and wakes early if the thing it is about changes.
@@ -15139,6 +15962,11 @@ export interface components {
             /** Snippet */
             snippet: string;
         };
+        /** FileWriteIn */
+        routes__projects__FileWriteIn: {
+            /** Content */
+            content: string;
+        };
         /** RegisterBody */
         routes__push__RegisterBody: {
             /**
@@ -15178,6 +16006,18 @@ export interface components {
             days: number;
         };
         /**
+         * AheadBehind
+         * @description Counts against `origin/<base>`. Both read 0 when the rev-list could not
+         *     run, which is indistinguishable from being level -- an honest limitation of
+         *     the underlying command, recorded here rather than papered over.
+         */
+        routes__worktrees__AheadBehind: {
+            /** Ahead */
+            ahead: number;
+            /** Behind */
+            behind: number;
+        };
+        /**
          * DiffFile
          * @description One changed file with its FULL patch text. `status` is git's name-status
          *     letter (M, A, D, R...).
@@ -15189,6 +16029,22 @@ export interface components {
             path: string;
             /** Status */
             status: string;
+        };
+        /**
+         * MergeResult
+         * @description A fast-forward is attempted first and a real merge commit only if that
+         *     fails. On failure the in-progress merge is ABORTED before answering, so the
+         *     working tree is clean and `reason` describes a merge that left nothing
+         *     behind. The route turns `ok: false` into a 409, so this body is the success
+         *     case in practice.
+         */
+        routes__worktrees__MergeResult: {
+            /** Commit */
+            commit?: string | null;
+            /** Ok */
+            ok: boolean;
+            /** Reason */
+            reason?: string | null;
         };
     };
     responses: never;
@@ -21399,7 +22255,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BranchList"];
+                    "application/json": components["schemas"]["routes__chat_models__BranchList"];
                 };
             };
             /** @description Validation Error */
@@ -23592,6 +24448,103 @@ export interface operations {
             };
         };
     };
+    file_content_files_content_get: {
+        parameters: {
+            query: {
+                workspace: string;
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileContent"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    file_write_files_content_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["routes__files__FileWriteIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileWriteOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    file_tree_files_tree_get: {
+        parameters: {
+            query: {
+                workspace: string;
+                path?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileTree"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_balances_finance_balances_get: {
         parameters: {
             query?: {
@@ -23797,6 +24750,664 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ahead_behind_git_ahead_behind_get: {
+        parameters: {
+            query: {
+                repo: string;
+                upstream: string;
+                ref?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["routes__git__AheadBehind"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_branches_git_branches_get: {
+        parameters: {
+            query: {
+                repo: string;
+                pattern?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["routes__git__BranchList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_branch_git_branches_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BranchCreateBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BranchRecord"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_branch_git_branches_delete: {
+        parameters: {
+            query: {
+                repo: string;
+                name: string;
+                force?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    checkout_git_checkout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckoutBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckoutResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clean_git_clean_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CleanBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CleanResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    commit_git_commit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CommitBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_diff_git_diff_get: {
+        parameters: {
+            query: {
+                repo: string;
+                a?: string | null;
+                b?: string | null;
+                three_dot?: boolean;
+                unified?: boolean;
+                path_filter?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiffResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_is_ancestor_git_is_ancestor_get: {
+        parameters: {
+            query: {
+                repo: string;
+                ancestor: string;
+                descendant: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ancestry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_log_git_log_get: {
+        parameters: {
+            query: {
+                repo: string;
+                ref?: string | null;
+                max_count?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitLog"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merge_git_merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["routes__git__MergeResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    push_git_push_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_rev_parse_git_rev_parse_get: {
+        parameters: {
+            query: {
+                repo: string;
+                rev?: string;
+                abbrev_ref?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevParse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    snapshot_git_snapshot_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnapshotBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_status_git_status_get: {
+        parameters: {
+            query: {
+                repo: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_worktrees_git_worktrees_get: {
+        parameters: {
+            query: {
+                repo: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorktreeList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_worktree_git_worktrees_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorktreeAddBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorktreeAdded"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_worktree_git_worktrees_delete: {
+        parameters: {
+            query: {
+                repo: string;
+                path: string;
+                force?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lock_worktree_git_worktrees_lock_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorktreeLockBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prune_worktrees_git_worktrees_prune_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
                 };
             };
             /** @description Validation Error */
@@ -25483,7 +27094,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FileWriteIn"];
+                "application/json": components["schemas"]["routes__projects__FileWriteIn"];
             };
         };
         responses: {
@@ -25892,7 +27503,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["FileWriteIn"];
+                "application/json": components["schemas"]["routes__projects__FileWriteIn"];
             };
         };
         responses: {
@@ -28118,7 +29729,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MergeResult"];
+                    "application/json": components["schemas"]["routes__worktrees__MergeResult"];
                 };
             };
             /** @description Validation Error */

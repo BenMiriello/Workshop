@@ -24,7 +24,6 @@ this list.
 from __future__ import annotations
 
 from datetime import timezone
-from pathlib import Path
 from typing import Any
 
 from services import tenancy
@@ -292,23 +291,19 @@ def agents_for_app(app_id: str) -> list[dict]:
 # tree), while content read/write raise `AppFilesNoRoot`, since "read this
 # file" with no file root at all is an honest 404, not an empty success.
 
-def _file_root_for_app(app: dict) -> tuple[Path | None, str, str | None]:
-    """(root, display_name, reason). `reason` is set exactly when `root` is
-    None -- the app genuinely has no file tree. Never falls back to another
-    app's or the platform's tree."""
-    from services import app_files, app_links
+def _workspace_for_app(app: dict) -> tuple["app_files.Workspace | None", str, str | None]:
+    """(workspace, display_name, reason). `reason` is set exactly when the
+    workspace is None -- the app genuinely has no file tree. The resolution
+    itself lives in `services/app_files.resolve("app:<slug>")`, which composes
+    `app_links.linked_project_slug` with `build_agents._project_dir`; this
+    function adds no second mapping, it only chooses what to show when there
+    is none. Never falls back to another app's or the platform's tree."""
+    from services import app_files
 
-    project_slug = app_links.linked_project_slug(app["slug"])
-    if not project_slug:
-        return None, app["slug"], "this app has no linked project, so it has no file tree"
-    root = app_files.project_root(project_slug)
-    if root is None:
-        return None, app["slug"], (
-            f"the app's linked project {project_slug!r} has no directory registered")
-    if not root.is_dir():
-        return None, app["slug"], (
-            f"the app's linked project directory does not exist on disk: {root}")
-    return root, root.name, None
+    try:
+        return app_files.resolve(f"app:{app['slug']}"), "", None
+    except app_files.WorkspaceNotFound as e:
+        return None, app["slug"], str(e)
 
 
 def file_tree_for_app(app_id: str, path: str) -> dict:
@@ -319,27 +314,27 @@ def file_tree_for_app(app_id: str, path: str) -> dict:
     from services import app_files
 
     app = _app_or_404(app_id)
-    root, display, reason = _file_root_for_app(app)
-    if root is None:
+    ws, display, reason = _workspace_for_app(app)
+    if ws is None:
         return {"path": path, "root": display, "entries": [], "reason": reason}
-    return app_files.list_tree(root, display, path)
+    return app_files.list_tree(ws, path)
 
 
 def file_content_for_app(app_id: str, path: str) -> dict:
     from services import app_files
 
     app = _app_or_404(app_id)
-    root, _display, reason = _file_root_for_app(app)
-    if root is None:
+    ws, _display, reason = _workspace_for_app(app)
+    if ws is None:
         raise AppFilesNoRoot(reason)
-    return app_files.read_file(root, path)
+    return app_files.read_file(ws, path)
 
 
 def write_file_for_app(app_id: str, path: str, content: str) -> dict:
     from services import app_files
 
     app = _app_or_404(app_id)
-    root, _display, reason = _file_root_for_app(app)
-    if root is None:
+    ws, _display, reason = _workspace_for_app(app)
+    if ws is None:
         raise AppFilesNoRoot(reason)
-    return app_files.write_file(root, path, content)
+    return app_files.write_file(ws, path, content)

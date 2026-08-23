@@ -165,9 +165,14 @@ class AppFileContent(BaseModel):
     content: str
     size: int
     modified: str | None = None
+    # About the BYTES: is this text, and small enough to put in an editor.
     editable: bool
     truncated: bool
     encoding: str  # "utf-8" | "binary"
+    # About the LOCATION: does the workspace permit a write here at all
+    # (services/app_files.is_writable). Served by the backend so the frontend
+    # never guesses it -- see file-viewer-and-editor-2026-08-22.md sec 6.
+    writable: bool
 
 
 class AppFileWriteIn(BaseModel):
@@ -179,6 +184,7 @@ class AppFileWriteOut(BaseModel):
     path: str
     size: int
     modified: str
+    writable: bool
 
 
 # --- helpers --------------------------------------------------------------
@@ -365,6 +371,8 @@ async def app_files_write(app_id: str, body: AppFileWriteIn) -> dict:
         raise _unavailable()
     except apps_svc.AppFilesNoRoot as e:
         raise HTTPException(404, str(e))
+    except app_files_svc.AppFileReadOnlyError as e:
+        raise HTTPException(403, str(e))
     except app_files_svc.AppFilePathError as e:
         raise HTTPException(400, str(e))
     except app_files_svc.AppFileBinaryError as e:
