@@ -54,11 +54,17 @@ class BranchRow(BaseModel):
 
 
 class BranchCreated(BaseModel):
+    """`worktree_id` is the durable record this branch got (step B2). It is
+    OPTIONAL because record-keeping is additive: an installation with no
+    relational store still allocates the tree, and answers without an id rather
+    than refusing. `/branches/{worktree_id}` is where it is then addressable."""
+
     project_slug: str
     branch_slug: str
     branch: str
     dir: str
     created: str
+    worktree_id: str | None = None
 
 
 class DiffFile(BaseModel):

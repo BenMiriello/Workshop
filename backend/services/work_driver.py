@@ -31,6 +31,13 @@ It also owns the runner's PROCESS FACTS (lock, pidfile, residency probe), which
 lived in routes/autonomy.py. A route module should not own process management,
 and two callers needed it.
 
+And it owns THE PER-TREE LOCK ITSELF, not just the runner's use of it.
+`workspace-ownership-and-leases-2026-08-22.md` §15 (step B2) is explicit that
+the worktree record folds into "work_driver's existing per-tree lock rather than
+adding a third", so `tree_lock()` is that lock generalized by a `kind` prefix
+and `services/worktrees.py` calls it. There is one flock derivation in this
+codebase and it is `queue_key`.
+
 Composition with the global brake: an engaged override means no new runner is
 started here. Running ones are NOT killed, because queue_runner.sh re-reads the
 brake every iteration and idles on its own — that is the existing contract and
@@ -46,6 +53,8 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from services import autonomy_override, scope_execution
@@ -76,8 +85,60 @@ def queue_key(dir_str: str) -> str:
     return hashlib.md5((dir_str + "\n").encode()).hexdigest()[:12]
 
 
+def _lock_file(dir_str: str, kind: str) -> Path:
+    return WORKSHOP_ROOT / ".runtime" / f"{kind}-{queue_key(dir_str)}.lock"
+
+
 def lock_path(dir_str: str) -> Path:
-    return WORKSHOP_ROOT / ".runtime" / f"queue-runner-{queue_key(dir_str)}.lock"
+    return _lock_file(dir_str, "queue-runner")
+
+
+@contextmanager
+def tree_lock(dir_str: str | Path, *, kind: str = "worktree",
+              timeout: float = 30.0) -> Iterator[None]:
+    """Hold the per-tree lock for `dir_str` for the length of a block.
+
+    THE ONE PER-TREE LOCK PRIMITIVE, and it is the one that was already here.
+    `workspace-ownership-and-leases-2026-08-22.md` §15 (step B2) says to fold
+    the worktree record's mutual exclusion into "work_driver's existing per-tree
+    lock rather than adding a third", so this is that lock generalized rather
+    than a second implementation of it: same `queue_key` derivation, same
+    `.runtime/<kind>-<key>.lock` path, same flock, and `lock_path`/`is_resident`
+    now go through the same `_lock_file`.
+
+    KIND, NOT A SECOND MECHANISM. `queue-runner` is held for the entire
+    RESIDENCY of a sweep -- minutes to hours -- so serializing a record write
+    against that same file would not be mutual exclusion, it would be a wait for
+    the sweep to exit. The `kind` prefix keeps the derivation shared while
+    letting "a runner lives here" and "this tree is being mutated right now" be
+    two different questions, which they are.
+
+    Blocking with a bound, not spinning: a caller that cannot get the lock
+    within `timeout` raises `TimeoutError` rather than proceeding, because
+    proceeding is how two allocations of the same slug collide.
+    """
+    target = os.path.realpath(str(dir_str))
+    lock = _lock_file(target, kind)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock), os.O_CREAT | os.O_RDWR, 0o644)
+    deadline = time.monotonic() + max(0.0, timeout)
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"could not take the {kind} lock for {target} within "
+                        f"{timeout:g}s ({lock})")
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def pid_path(dir_str: str) -> Path:

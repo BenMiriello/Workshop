@@ -395,6 +395,20 @@ def worktree_lock(repo: Path | str, path: Path | str, *, reason: str = "") -> bo
     return _run(repo, args, check=False, timeout=15).returncode == 0
 
 
+def worktree_unlock(repo: Path | str, path: Path | str) -> bool:
+    """Unlock a worktree. The other half of `worktree_lock`, and the reason it
+    exists: `git worktree remove --force` REFUSES a locked worktree ("cannot
+    remove a locked working tree"), and so does `git worktree prune`. Without
+    this, a tree that was locked at allocation can only be removed by deleting
+    the directory behind git's back, which leaves the administrative metadata
+    saying the branch is still checked out -- and then `branch -D` fails too.
+
+    Best-effort: False when git refused (not locked, unknown worktree).
+    """
+    return _run(repo, ["worktree", "unlock", str(path)],
+                check=False, timeout=15).returncode == 0
+
+
 def worktree_remove(repo: Path | str, path: Path | str, *, force: bool = True) -> bool:
     """Remove a worktree. Best-effort: False when git refused, never raises.
 
