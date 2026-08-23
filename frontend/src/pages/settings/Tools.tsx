@@ -326,9 +326,9 @@ export default function Tools() {
               <Stack gap="sm">
                 <TableScroll>
                   {/* The kit's 520px floor is a sensible default for a six
-                      column diagnostics table. This one has three, and on a
-                      phone the floor pushed the Edit and Delete controls off
-                      the right edge of a row the operator owns. */}
+                      column diagnostics table. This one has two, and the floor
+                      alone was enough to push the Owner column off the right
+                      edge of a phone. */}
                   <Table style={{ minWidth: 0 }}>
                     <thead>
                       <tr>
@@ -340,20 +340,21 @@ export default function Tools() {
                       {/* Two rows per tool: the columns you scan, then the
                           description on its own full-width line. A description
                           is written for a model as well as a person, so as a
-                          fifth column it set the table's width and pushed the
-                          rest off a phone. */}
+                          column of its own it set the table's width and pushed
+                          everything else off a phone. */}
                       {shown.rows.flatMap((t) => [
                         <tr key={t.id}>
                           <td>
                             <span className="ws-wrap">{t.title || t.id}</span>
                             {/* The id is what an allowlist writes, so it is on
-                                the row rather than behind a disclosure. Kind
-                                rides with it instead of taking a column of its
-                                own: three columns is what fits a phone before
-                                the table starts scrolling sideways. */}
-                            {/* ws-wrap: an id like mcp__workshop__list_attachments
-                                is one unbreakable token, and it sets the
-                                column's min-content width if it is allowed to. */}
+                                the row rather than behind a disclosure, and kind
+                                rides with it rather than taking a column: two
+                                columns is what fits a phone without the table
+                                scrolling sideways.
+                                ws-wrap because an id like
+                                mcp__workshop__list_attachments is one
+                                unbreakable token, and it sets the column's
+                                min-content width if it is allowed to. */}
                             <span className="ws-muted ws-wrap" style={{ display: "block", fontSize: "var(--fs-xs)" }}>
                               <span className="ws-mono">{t.id}</span>
                               {" \u00b7 "}
@@ -369,43 +370,43 @@ export default function Tools() {
                             {/* flex-start, or the Stack stretches a Tag into a
                                 480px bar on a wide screen. */}
                             <Stack gap="sm" style={{ alignItems: "flex-start" }}>
-                            <Tag hue={catFor(t.provenance)}>{provenanceLabel(t.provenance)}</Tag>
-                            {t.editable ? (
-                              <Row wrap style={{ gap: "var(--space-2)" }}>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  aria-label={`Edit ${t.id}`}
-                                  onClick={() => setForm({ mode: "edit", tool: t })}
+                              <Tag hue={catFor(t.provenance)}>{provenanceLabel(t.provenance)}</Tag>
+                              {t.editable ? (
+                                <Row wrap style={{ gap: "var(--space-2)" }}>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    aria-label={`Edit ${t.id}`}
+                                    onClick={() => setForm({ mode: "edit", tool: t })}
+                                  >
+                                    <Pencil size={14} strokeWidth={1.8} aria-hidden /> Edit
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="danger-ghost"
+                                    aria-label={`Delete ${t.id}`}
+                                    onClick={() => { setDeleteErr(null); setDeleting(t); }}
+                                  >
+                                    <Trash2 size={14} strokeWidth={1.8} aria-hidden /> Delete
+                                  </Button>
+                                </Row>
+                              ) : (
+                                // Not a disabled button: a control that cannot
+                                // act is worse than no control. The sentence is
+                                // the API's own ("can be used but not edited").
+                                <span
+                                  className="ws-muted"
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "var(--space-2)",
+                                    fontSize: "var(--fs-xs)",
+                                  }}
                                 >
-                                  <Pencil size={14} strokeWidth={1.8} aria-hidden /> Edit
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="danger-ghost"
-                                  aria-label={`Delete ${t.id}`}
-                                  onClick={() => { setDeleteErr(null); setDeleting(t); }}
-                                >
-                                  <Trash2 size={14} strokeWidth={1.8} aria-hidden /> Delete
-                                </Button>
-                              </Row>
-                            ) : (
-                              // Not a disabled button: a control that cannot act
-                              // is worse than no control. The sentence is the
-                              // API's own ("can be used but not edited").
-                              <span
-                                className="ws-muted"
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: "var(--space-2)",
-                                  fontSize: "var(--fs-xs)",
-                                }}
-                              >
-                                <Lock size={14} strokeWidth={1.8} aria-hidden />
-                                Used, not edited
-                              </span>
-                            )}
+                                  <Lock size={14} strokeWidth={1.8} aria-hidden />
+                                  Used, not edited
+                                </span>
+                              )}
                             </Stack>
                           </td>
                         </tr>,
