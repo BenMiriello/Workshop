@@ -13,6 +13,21 @@
 > (`_ROLE_WRITES`). The rest of R0-R4 (triage loop, template catalog) has not
 > been verified built or unbuilt by this pass. See
 > `coherence-overhaul-2026-08-16.md` R1.
+>
+> **Correction, 2026-08-23:** the paragraph above left "not verified" standing for
+> six days and a later session read it as "not built", then rebuilt a piece of §6
+> from scratch. Verified now: **R0 to R3 are substantially built** (role enum and
+> validators, the `ROLE_HANDLERS` dispatch table that replaced the hardcoded
+> `role == "memory"` branch, `services/triager.py` plus `scripts/triager_run.sh`,
+> all three templates and both groups under `agents/_templates/`, and the three
+> adoption routes with an adoption UI carrying all four list states). What is NOT
+> built is R4's two surfaces, and what has never HAPPENED is any of it running:
+> nothing has been adopted, and the triager has never fired once. Two structural
+> deviations to know before building on this doc: templates live at
+> `agents/_templates/`, not `shared/agent-templates/`, and there is no
+> `scripts/roles/` directory, so the `<role>_run.sh` contract in §3 is
+> unimplemented as written. Full reassessment, with the measurements:
+> `agents-and-memory-reassessment-2026-08-23.md`.
 
 Owns the output deliverable for operator asks D1-D6 and E1-E5 from
 `operator-asks-2026-07-16.md`. Companion to

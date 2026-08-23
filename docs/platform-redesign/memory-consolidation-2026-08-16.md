@@ -1,8 +1,21 @@
 # Memory consolidation: eleven substrates to four, and a keeper that runs (2026-08-16)
 
-Status: **plan, being implemented.** Build log at the end of this doc records what
+Status: **plan, PARTLY implemented.** Build log at the end of this doc records what
 has landed and in which commit; per R1 of the coherence overhaul, a doc that does not
 say when it landed is how the next pass ends up rebuilding it beside itself.
+
+> **Correction, 2026-08-23.** The build log below reads as though T1 landed. It did
+> not. M1, M2, M4, M5 and M6 landed. **M3's scheduler and M7 did not**, and the
+> difference is not cosmetic: `prune_stale` and `maintain` have zero callers outside
+> their own CLI, so the learnings garbage collector has never archived a single row
+> in its whole life, and `memory_keeper`'s watermark has been frozen at
+> `2026-07-18T18:00:01Z` for 36 days because its only scheduler is a commented-out
+> crontab line on a machine with no crontab. Two regressions also landed on top of
+> this work and were fixed on 2026-08-23 in `cf565ee`: a defaults change made all
+> 215 documents unreachable from every scoped search, and `collect_chats` was
+> discarding 81% of the chat corpus at chunk time. Both were invisible because
+> `scripts/verify_memory.py` tested a code path no agent uses. Read
+> `agents-and-memory-reassessment-2026-08-23.md` before building on this doc.
 
 Written 2026-08-16 at the operator's direction
 ("a proper system for memory management without junk extra old systems or
