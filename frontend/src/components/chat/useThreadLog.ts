@@ -42,8 +42,9 @@ const POLL_MS = 60_000;
 // thread — and painted nothing until all of it had arrived and been parsed.
 // `tail=INITIAL_TAIL` asks for only the newest events of the current branch
 // path (backend/routes/chat.py `_tail_page`), which the operator can start
-// reading immediately; the rest loads outward on demand (see `loadOlder`
-// below and LoadOlderNote). 30 is a round number a bit above one ordinary
+// reading immediately; the rest pages in on its own in the background (see
+// `loadOlder` below, driven by Chat.tsx's background-load effect). 30 is a
+// round number a bit above one ordinary
 // exchange (a message, a multi-step reply, maybe a follow-up), chosen so the
 // common case needs no second fetch at all; it is not load-bearing on
 // correctness; any positive size behaves the same way. A branch change also
@@ -109,7 +110,8 @@ export type ThreadLog = {
   branch: { id: string | null; name: string; count: number; head: string | null };
   /** Fetch the next page further into this thread's past and PREPEND it.
    *  No-op while a page is already in flight, or before anything has loaded
-   *  at all. See LoadOlderNote and threadStore's `hasMoreOlder`. */
+   *  at all. Driven automatically by Chat.tsx's background-load effect until
+   *  `hasMoreOlder` (threadStore) is false; there is no manual control. */
   loadOlder: () => void;
   /** A `loadOlder` page is in flight. */
   loadingOlder: boolean;

@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { WifiOff, ArrowDown, Paperclip, Unplug } from "lucide-react";
 import WorkPanel from "./chat/work/WorkPanel";
 import { useChatWork } from "./chat/work/useChatWork";
-import { chatBadgeCount } from "./chat/work/workRows";
+import { chatBadge } from "./chat/work/workRows";
 import { ChatWorkProvider, type ChatWorkAccess } from "./chat/work/TicketCard";
 import ChatComposer from "./chat/ChatComposer";
 import { useAttachments, dragHasFiles, filesFromTransfer } from "./chat/useAttachments";
@@ -266,6 +266,9 @@ export default function Chat({
   // panel is closed, and a panel that stays mounted purely to hold a poll is a
   // poll wearing a component.
   const work = useChatWork(activeId);
+  // The toolbar's one number, and it needs the thread id: "is this row about
+  // this conversation" is not answerable from the payload alone.
+  const workBadge = chatBadge(work.data, activeId);
 
   // Changing the scope MOVES this conversation. It does not walk away from it.
   //
@@ -540,6 +543,31 @@ export default function Chat({
     holdForOlder();
     void loadOlder();
   }, [holdForOlder, loadOlder]);
+
+  // LOAD THE REST IN THE BACKGROUND. Opening a long thread reads only its newest
+  // slice (useThreadLog's INITIAL_TAIL), which is what makes it instant. The rest
+  // of the history then pages in ON ITS OWN, one window at a time, prepended above
+  // the fold with the scroll held (onLoadOlder wraps holdForOlder) so the view
+  // never jumps. There is no control to click and nothing to wait on: by the time
+  // the operator scrolls up, the history is already there.
+  //
+  // The loop is this one effect re-arming itself: it fires a page, `loadingOlder`
+  // goes true then false, `hasMoreOlder` updates, and the effect runs again for
+  // the next page until there is no more. A short delay between pages keeps the
+  // newest slice smooth and lets each prepend commit rather than loading a whole
+  // thread in one burst. A failed page backs off to a slow retry instead of a
+  // tight loop, and recovers on its own without ever surfacing a button.
+  //
+  // Operator, 2026-08-23: a manual "load earlier messages" button is the wrong
+  // answer to slow loading. Show the newest first, then load the rest without
+  // making the user ask.
+  useEffect(() => {
+    if (!activeId || !hydrated) return;
+    if (!state.hasMoreOlder || loadingOlder) return;
+    const delay = olderError ? 5000 : 200;
+    const t = setTimeout(() => { onLoadOlder(); }, delay);
+    return () => clearTimeout(t);
+  }, [activeId, hydrated, state.hasMoreOlder, loadingOlder, olderError, onLoadOlder]);
 
   const pipeline = useSendPipeline({
     scope, selectedModel, selectedEffort: scopeState.selectedEffort,
@@ -1049,11 +1077,12 @@ export default function Chat({
       onChooseProvider={chooseScope}
       turnActive={turnActive}
       drawer={drawer}
-      // TWO NUMBERS, ONE BADGE. `workCount` is what the badge prints (this
-      // chat's unfinished filed work unioned with what is waiting here); the
-      // needs-you count only picks the tooltip's wording. See chatBadgeCount.
-      workCount={chatBadgeCount(work.data)}
-      needsYouCount={work.data.counts.needs_you}
+      // TWO NUMBERS, ONE BADGE, both about THIS chat. `count` is what the
+      // badge prints; `needsYou` only picks the tooltip's wording. Neither is
+      // `counts.needs_you`, which is scope-pointed and was the same 13 in every
+      // development chat. See chatBadge.
+      workCount={workBadge.count}
+      needsYouCount={workBadge.needsYou}
       onWorkClick={() => requestAnimationFrame(() => setWorkOpen(drawer !== "work"))}
       onBack={back}
       onOpenWorkbench={() => navigate(`/agents/${slug}/chat`)}
@@ -1231,10 +1260,6 @@ export default function Chat({
       onScroll={onLogScroll}
       loading={logLoading}
       error={chatProblem}
-      hasMoreOlder={state.hasMoreOlder}
-      loadingOlder={loadingOlder}
-      olderError={olderError}
-      onLoadOlder={onLoadOlder}
       blocks={transcript}
       isBuild={build}
       inFlight={turnActive || pipeline.starting}

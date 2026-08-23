@@ -5,7 +5,6 @@ import type { TranscriptBlock } from "./transcriptBlocks";
 import { logPlaceholder } from "./chatLogState";
 import type { ChatProblem } from "./chatProblem";
 import ChatProblemBlock from "./ChatProblemBlock";
-import LoadOlderNote from "./LoadOlderNote";
 import MessageList, { SentAttachments, type AnswerPermissionFor } from "./MessageList";
 import FoldingNote from "./FoldingNote";
 import type { FoldMode } from "./useCompaction";
@@ -59,13 +58,13 @@ import { VoiceReply } from "./VoiceTurn";
 // Scroll behaviour is not here — it belongs to useLogScroll, which owns the one
 // writer of "am I at the bottom" and every rule that depends on it.
 //
-// THE OVERFLOW STATE IS AT THE TOP, NOW. Opening a thread fetches only its
+// THE OVERFLOW IS HANDLED WITHOUT A CONTROL. Opening a thread fetches only its
 // newest slice (`INITIAL_TAIL` in useThreadLog), not the whole log, so a long
-// conversation has history above the fold this tab has not asked for yet.
-// `LoadOlderNote` is that state: shown only when the server says there is
-// more (`hasMoreOlder`), it pages one more window into the past and PREPENDS
-// it, preserving where the operator was reading (useLogScroll's
-// `holdForOlder`). Everything below this point in the file is unchanged by
+// conversation has history above the fold this tab has not asked for yet. That
+// history pages in ON ITS OWN, in the background (Chat.tsx's background-load
+// effect drives `loadOlder`), prepended and scroll-held (useLogScroll's
+// `holdForOlder`), so there is no "load earlier" button and nothing to wait on.
+// Everything below this point in the file is unchanged by
 // that: it renders `blocks` in the order the selector produced them, and the
 // selector's rules (docs/decisions/0018) hold over a partial window exactly
 // as they do over the whole log — a cut whose other half is not (yet) loaded
@@ -80,7 +79,6 @@ export default function ChatLog({
   answerPermission, liveTurnId, renderBranch, branchHead,
   queued, folding, onStop, stopping, onStopFold, foldStopping,
   voiceOn, vsnap,
-  hasMoreOlder, loadingOlder, olderError, onLoadOlder,
 }: {
   scrollRef: RefObject<HTMLDivElement>;
   onScroll: () => void;
@@ -89,14 +87,6 @@ export default function ChatLog({
    *  four list states, so when there is nothing else to show this is where that
    *  failure is rendered; the host suppresses its own copy. */
   error: ChatProblem | null;
-  /** The server says there is more history above what is loaded. Drives
-   *  whether `LoadOlderNote` shows at all. */
-  hasMoreOlder: boolean;
-  /** A `loadOlder` page is in flight. */
-  loadingOlder: boolean;
-  /** The last `loadOlder` page failed, in a sentence, or null. */
-  olderError: string | null;
-  onLoadOlder: () => void;
   blocks: TranscriptBlock[];
   isBuild: boolean;
   inFlight: boolean;
@@ -164,13 +154,11 @@ export default function ChatLog({
 
   return (
     <div className="chat-log" ref={scrollRef} onScroll={onScroll}>
-      {/* Above everything, including the loading/empty/error placeholder: it
-          answers a different question ("is there more before what you can
-          see") than that one does ("has what you can see arrived"), and both
-          can be true in a long thread that failed to page further back. */}
-      {(hasMoreOlder || loadingOlder || !!olderError) && (
-        <LoadOlderNote loading={loadingOlder} error={olderError} onLoad={onLoadOlder} />
-      )}
+      {/* No "load earlier messages" control. Opening a long thread reads only the
+          newest slice so it is instant, and the rest of the history pages in on
+          its own in the background (Chat.tsx's background-load effect), prepended
+          above with the scroll held. The operator never asks for history and
+          never waits on it. Operator, 2026-08-23. */}
       {placeholder === "loading" ? (
         <div className="chat-empty">Loading...</div>
       ) : placeholder === "error" && error ? (

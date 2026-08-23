@@ -547,12 +547,6 @@ input[type="range"].grad::-moz-range-thumb {
   margin: 0.2rem 0 var(--space-2); font-size: 0.72rem; color: var(--muted);
 }
 
-/* The "load earlier messages" control, at the very top of a tail-loaded
-   thread. Centred rather than left-aligned like `.chat-queued-note`: it sits
-   above everything rather than beside one thing, so it reads as a control for
-   the whole log instead of a note about the block under it. */
-.chat-older { display: flex; justify-content: center; margin: 0 0 var(--space-3); }
-
 /* Positions the floating jump-to-latest pill against the log rather than the
    whole panel, so it sits just above wherever the log currently ends instead
    of the composer, which may or may not be nearby. */
