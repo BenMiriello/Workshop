@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from services import agent_slots
+from services import tool_registry as _tool_registry
 
 
 log = logging.getLogger("workshop.llm_router")
@@ -284,7 +285,7 @@ _MCP_BLOCK_STARTUP_ENV = {"MCP_CONNECTION_NONBLOCKING": "false"}
 # and this async chat has no suspend/resume for it, so the honest move is to
 # take it away: the model must ask in prose (the one channel that actually
 # reaches the operator) or via a ui-card. Bare name; --disallowedTools denies it.
-BASELINE_DISALLOWED_TOOLS: tuple[str, ...] = ("AskUserQuestion",)
+BASELINE_DISALLOWED_TOOLS: tuple[str, ...] = _tool_registry.BASELINE_DISALLOW_IDS
 
 
 def _merged_disallowed(disallowed_tools: list[str] | None) -> list[str]:

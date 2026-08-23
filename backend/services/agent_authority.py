@@ -47,6 +47,8 @@ as a security boundary until that lands.
 """
 from __future__ import annotations
 
+from services import tool_registry as _tool_registry
+
 # Everything an agent can write that we can name. `nothing` is not a target; it
 # is the empty set, and belongs to broker.
 WRITE_TARGETS = ("tree", "tasks", "notes", "learnings", "verdict")
@@ -85,14 +87,14 @@ _ROLE_WRITES: dict[str, frozenset[str]] = {
 # never reads the data it adjudicates — does not get a search tool over
 # everything, which is exactly what a "grant it to all five roles" reading of
 # this would have done. Do not widen it to a role with an empty write set.
-_READ_TOOLS = ("Read", "Grep", "Glob", "mcp__workshop__search")
+_READ_TOOLS = _tool_registry.READ_TOOL_IDS
 
-SEARCH_TOOL = "mcp__workshop__search"
+SEARCH_TOOL = _tool_registry.WORKSHOP_SEARCH_TOOL_ID
 _TARGET_TOOLS: dict[str, tuple[str, ...]] = {
     # Bash rides with tree access: a maker runs tests and git. It is also the
     # widest grant here by far, which is exactly why it is tied to the one role
     # whose job is to change the tree.
-    "tree": ("Write", "Edit", "MultiEdit", "Bash"),
+    "tree": _tool_registry.TREE_WRITE_IDS,
     # tasks/notes/learnings/verdict are written through our own protocol blocks
     # and endpoints, not through a tool, so they imply no additional tool.
     "tasks": (),

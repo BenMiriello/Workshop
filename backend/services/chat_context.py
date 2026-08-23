@@ -43,6 +43,7 @@ def operator_name() -> str:
 # The three pickable models surfaced in the composer's model selector, full ids.
 # Sourced from llm_router so they never drift from the actual call tiers.
 from services import llm_router as _llm  # noqa: E402
+from services import tool_registry as _tool_registry  # noqa: E402
 from wsplatform import paths
 
 PICKABLE_MODELS: list[str] = [
@@ -2004,14 +2005,8 @@ _general = ContextProvider()
 # without grepping. Exact-match allowlist, same read-only `workshop` server.
 # Build/project/agent chats get these for free (full toolset, no allowlist);
 # they must be named here for the narrow general chat.
-WORKSHOP_TOOLKIT = [
-    "mcp__workshop__where_is",
-    "mcp__workshop__list_attachments",
-    "mcp__workshop__get_file",
-]
-_general.allowed_tools = [
-    "mcp__workshop__query", "mcp__workshop__search", *WORKSHOP_TOOLKIT,
-]
+WORKSHOP_TOOLKIT = list(_tool_registry.WORKSHOP_TOOLKIT_IDS)
+_general.allowed_tools = list(_tool_registry.GENERAL_ALLOWLIST_IDS)
 _general.mcp_servers = ["workshop"]
 
 # Platform providers — always present, no app required: the general assistant.
@@ -2116,7 +2111,7 @@ def is_build_provider(provider: ContextProvider) -> bool:
 # Built-in web tools every data/assistant chat gets (no MCP server needed).
 # Operator rule: ALL agents can search + fetch the web, on top of whatever MCP
 # tools the provider declares. Build/project agents already run the full toolset.
-WEB_TOOLS = ["WebSearch", "WebFetch"]
+WEB_TOOLS = list(_tool_registry.WEB_TOOL_IDS)
 
 # The CLI's subagent tool, granted on the same footing as web. Every chat is
 # told (chat_mode_block, DELEGATION_RULE) that it can push a big read into an
@@ -2124,7 +2119,7 @@ WEB_TOOLS = ["WebSearch", "WebFetch"]
 # data chat had no such tool and the instruction was simply false. Verified
 # against CLI 2.1.143: `--tools Agent` enables it, the emitted tool_use name is
 # `Agent`, and `Task` is the older accepted spelling.
-SUBAGENT_TOOL = "Agent"
+SUBAGENT_TOOL = _tool_registry.SUBAGENT_TOOL_ID
 
 
 def effective_allowed_tools(provider: ContextProvider) -> list[str]:

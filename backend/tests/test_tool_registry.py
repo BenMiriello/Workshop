@@ -319,3 +319,67 @@ def test_the_api_refuses_to_create_edit_or_delete_a_platform_tool(client, tools_
     assert "WebSearch" in r.json()["detail"]
 
     assert not tools_file.exists(), "no refused write reached the store"
+
+
+# ---- stage 3: declaration sources read the registry (not private lists) ----
+
+class TestDeclarationSourcesUseTheRegistry:
+    """Every name any of the four declaration sources can produce is in
+    PLATFORM_TOOLS, so a fifth private list cannot be added silently.
+
+    doc §5 step 3: `agent_authority`, `chat_context`, `agents_registry`, and
+    `llm_router` are the four sources. This class pins that invariant.
+    """
+
+    def test_group_constants_are_subsets_of_platform_tools(self):
+        """The named group constants in tool_registry are the one definition of
+        each tool name; each must name a tool that actually exists."""
+        ids = tr.PLATFORM_TOOL_IDS
+        groups: list[tuple[str, tuple[str, ...]]] = [
+            ("WEB_TOOL_IDS", tr.WEB_TOOL_IDS),
+            ("SUBAGENT_TOOL_ID", (tr.SUBAGENT_TOOL_ID,)),
+            ("WORKSHOP_SEARCH_TOOL_ID", (tr.WORKSHOP_SEARCH_TOOL_ID,)),
+            ("WORKSHOP_TOOLKIT_IDS", tr.WORKSHOP_TOOLKIT_IDS),
+            ("GENERAL_ALLOWLIST_IDS", tr.GENERAL_ALLOWLIST_IDS),
+            ("READ_TOOL_IDS", tr.READ_TOOL_IDS),
+            ("TREE_WRITE_IDS", tr.TREE_WRITE_IDS),
+            ("PERSONA_CEILING_IDS", tuple(tr.PERSONA_CEILING_IDS)),
+            ("BASELINE_DISALLOW_IDS", tr.BASELINE_DISALLOW_IDS),
+        ]
+        for name, group in groups:
+            for tid in group:
+                assert tid in ids, (
+                    f"{tid!r} is in tool_registry.{name} but has no PLATFORM_TOOLS entry; "
+                    "add it to PLATFORM_TOOLS before putting it in a group constant"
+                )
+
+    def test_agent_authority_produces_only_registered_names(self):
+        """tools_for_role yields only names the registry knows, for every role."""
+        from services import agent_authority as aa
+        ids = tr.PLATFORM_TOOL_IDS
+        for role in ("maker", "reviewer", "triager", "keeper", "broker", None):
+            for tid in aa.tools_for_role(role):
+                assert tid in ids, (
+                    f"agent_authority.tools_for_role({role!r}) yields {tid!r}, "
+                    "which has no PLATFORM_TOOLS entry"
+                )
+
+    def test_persona_ceiling_is_fully_registered(self):
+        """Every tool the persona ceiling blocks must be in the registry."""
+        from services import agents_registry
+        ids = tr.PLATFORM_TOOL_IDS
+        for tid in agents_registry._PERSONA_TOOL_CEILING:
+            assert tid in ids, (
+                f"agents_registry._PERSONA_TOOL_CEILING includes {tid!r}, "
+                "which has no PLATFORM_TOOLS entry"
+            )
+
+    def test_baseline_disallow_is_registered(self):
+        """The one tool always denied in async turns must be in the registry."""
+        from services import llm_router
+        ids = tr.PLATFORM_TOOL_IDS
+        for tid in llm_router.BASELINE_DISALLOWED_TOOLS:
+            assert tid in ids, (
+                f"llm_router.BASELINE_DISALLOWED_TOOLS includes {tid!r}, "
+                "which has no PLATFORM_TOOLS entry"
+            )

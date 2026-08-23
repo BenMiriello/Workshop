@@ -183,22 +183,10 @@ class Tool:
 # --------------------------------------------------------------------------- #
 # PLATFORM: a literal tuple in source.
 #
-# Seeded with the tools that GENUINELY EXIST on this instance today, read off
-# the two places that already grant them, so the enumeration starts true and
-# stage 3 (making those places read from here) is a no-op rather than a change:
-#
-#   `chat_context.WEB_TOOLS` + `chat_context.SUBAGENT_TOOL` — the CLI builtins
-#     every data/assistant chat is granted on top of its provider's MCP tools
-#     (`chat_context.effective_allowed_tools`). Build/project chats have them
-#     via the full toolset.
-#   the workshop MCP server's own tools — `chat_context.WORKSHOP_TOOLKIT` plus
-#     the `query`/`search` pair in `_general.allowed_tools`, and
-#     `spawn_background`, which the server exposes only to a chat-bound turn.
-#     Their descriptions are imported from the server rather than rewritten.
-#
-# Nothing is invented here. No `preview`, no screenshot tool: those are doc §3
-# and stage 5, and a catalog that lists a capability the platform does not have
-# is worse than one that lists nothing.
+# Stage 1: seeded with the tools that GENUINELY EXIST on this instance today.
+# Stage 3 (build order, doc §5): the four declaration sources now read the
+# named group constants below rather than maintaining their own copies, so a
+# name cannot disagree between sources.
 #
 # The ids ARE the CLI/MCP names, because the id is "the thing an allowlist
 # names" and an allowlist here is an exact-match list of exactly these strings.
@@ -313,9 +301,175 @@ PLATFORM_TOOLS: tuple[Tool, ...] = (
         scopes=("chat",),
         ceiling=(_mcp_id(_wqs.SPAWN_TOOL_NAME),),
     ),
+    # ---- CLI builtins -------------------------------------------------------
+    # These add description and eligibility to tools the harness already has.
+    # Names are the CLI's own allowlist vocabulary (verified against the four
+    # declaration sources; see named groups below).
+    Tool(
+        id="Read",
+        title="Read a file",
+        description="Read the contents of a file from the local filesystem.",
+        kind="builtin",
+        provenance="platform",
+        ceiling=("Read",),
+    ),
+    Tool(
+        id="Grep",
+        title="Search file contents",
+        description="Search file contents with regular expressions (ripgrep).",
+        kind="builtin",
+        provenance="platform",
+        ceiling=("Grep",),
+    ),
+    Tool(
+        id="Glob",
+        title="Find files by pattern",
+        description="Find files matching a glob pattern, sorted by modification time.",
+        kind="builtin",
+        provenance="platform",
+        ceiling=("Glob",),
+    ),
+    Tool(
+        id="Write",
+        title="Write a file",
+        description="Write or overwrite a file on the local filesystem.",
+        kind="builtin",
+        provenance="platform",
+        ceiling=("Write",),
+    ),
+    Tool(
+        id="Edit",
+        title="Edit a file",
+        description="Make an exact string replacement in a file.",
+        kind="builtin",
+        provenance="platform",
+        ceiling=("Edit",),
+    ),
+    Tool(
+        id="MultiEdit",
+        title="Edit a file (multiple changes)",
+        description="Make multiple exact string replacements in a file in one call.",
+        kind="builtin",
+        provenance="platform",
+        ceiling=("MultiEdit",),
+    ),
+    Tool(
+        id="Bash",
+        title="Run a shell command",
+        description="Execute a bash command and return its output.",
+        kind="builtin",
+        provenance="platform",
+        ceiling=("Bash",),
+    ),
+    Tool(
+        id="BashOutput",
+        title="Read streaming bash output",
+        description="Read buffered output from a long-running bash session.",
+        kind="builtin",
+        provenance="platform",
+        ceiling=("BashOutput",),
+    ),
+    Tool(
+        id="KillShell",
+        title="Kill a shell session",
+        description="Terminate a running bash shell session by its pid.",
+        kind="builtin",
+        provenance="platform",
+        ceiling=("KillShell",),
+    ),
+    Tool(
+        id="NotebookEdit",
+        title="Edit a notebook cell",
+        description="Insert, replace, or delete a cell in a Jupyter notebook.",
+        kind="builtin",
+        provenance="platform",
+        ceiling=("NotebookEdit",),
+    ),
+    Tool(
+        id="Task",
+        title="Delegate to a subagent (legacy name)",
+        description=(
+            "Older accepted spelling of Agent: push work into an isolated "
+            "context and bring back the summary. Kept for backwards compatibility "
+            "with definitions that still use this name."
+        ),
+        kind="builtin",
+        provenance="platform",
+        ceiling=("Task",),
+    ),
+    Tool(
+        id="AskUserQuestion",
+        title="Ask the user a question",
+        description=(
+            "Surface a question to the user for an interactive answer. Denied in "
+            "async chat turns (no one is watching to reply), so the model must "
+            "ask in prose instead."
+        ),
+        kind="builtin",
+        provenance="platform",
+        ceiling=("AskUserQuestion",),
+    ),
 )
 
 PLATFORM_TOOL_IDS: frozenset[str] = frozenset(t.id for t in PLATFORM_TOOLS)
+
+# --------------------------------------------------------------------------- #
+# Named groups — stage 3 of the build order (doc §5).
+#
+# These are the SINGLE DEFINITION of every tool name the four declaration
+# sources consume. The sources import these constants rather than maintaining
+# their own lists, so a name cannot be misspelled or silently added in one
+# place and not another. Each group is a subset of PLATFORM_TOOL_IDS (verified
+# by test_tool_registry.TestDeclarationSourcesUseTheRegistry).
+#
+# consumers:
+#   WEB_TOOL_IDS, SUBAGENT_TOOL_ID   → chat_context.WEB_TOOLS / SUBAGENT_TOOL
+#   WORKSHOP_TOOLKIT_IDS              → chat_context.WORKSHOP_TOOLKIT
+#   GENERAL_ALLOWLIST_IDS             → chat_context._general.allowed_tools
+#   READ_TOOL_IDS                     → agent_authority._READ_TOOLS
+#   TREE_WRITE_IDS                    → agent_authority._TARGET_TOOLS["tree"]
+#   PERSONA_CEILING_IDS               → agents_registry._PERSONA_TOOL_CEILING
+#   BASELINE_DISALLOW_IDS             → llm_router.BASELINE_DISALLOWED_TOOLS
+# --------------------------------------------------------------------------- #
+
+WEB_TOOL_IDS: tuple[str, ...] = ("WebSearch", "WebFetch")
+SUBAGENT_TOOL_ID: str = "Agent"
+WORKSHOP_SEARCH_TOOL_ID: str = _mcp_id(_wqs.SEARCH_TOOL_NAME)
+
+# Workshop tools offered to every chat (not spawn, which is chat-scope only).
+WORKSHOP_TOOLKIT_IDS: tuple[str, ...] = (
+    _mcp_id(_wqs.WHERE_IS_TOOL_NAME),
+    _mcp_id(_wqs.LIST_ATTACHMENTS_TOOL_NAME),
+    _mcp_id(_wqs.GET_FILE_TOOL_NAME),
+)
+
+# Full allowlist for the general/assistant chat provider.
+GENERAL_ALLOWLIST_IDS: tuple[str, ...] = (
+    _mcp_id(_wqs.TOOL_NAME),
+    _mcp_id(_wqs.SEARCH_TOOL_NAME),
+    *WORKSHOP_TOOLKIT_IDS,
+)
+
+# Tools agent_authority grants to any role that has writes (reads are shared).
+READ_TOOL_IDS: tuple[str, ...] = (
+    "Read", "Grep", "Glob", _mcp_id(_wqs.SEARCH_TOOL_NAME)
+)
+
+# Tools agent_authority grants specifically for "tree" writes.
+TREE_WRITE_IDS: tuple[str, ...] = ("Write", "Edit", "MultiEdit", "Bash")
+
+# Hard ceiling for app-persona tool declarations (agents_registry). A persona
+# file may not hold any of these — they are too broad for an app assistant that
+# runs without a scoped working directory.
+PERSONA_CEILING_IDS: frozenset[str] = frozenset({
+    "Bash", "BashOutput", "KillShell",
+    "Edit", "MultiEdit", "Write", "NotebookEdit",
+    "Read", "Glob", "Grep",
+    "Task", SUBAGENT_TOOL_ID,
+})
+
+# The one tool the harness always denies in async chat turns.
+BASELINE_DISALLOW_IDS: tuple[str, ...] = ("AskUserQuestion",)
 
 
 # --------------------------------------------------------------------------- #

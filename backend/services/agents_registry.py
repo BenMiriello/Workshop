@@ -59,6 +59,7 @@ import yaml
 from services import triggers
 from services import build_agents as _build_agents
 from services import latitude as _latitude
+from services import tool_registry as _tool_registry
 from wsplatform import paths
 
 log = logging.getLogger("workshop.agents_registry")
@@ -505,12 +506,7 @@ class AppPersonaMissing(RuntimeError):
 # by agents as well as people, and "no app persona has Bash today" is a fact
 # about the current contents of a directory, not a property of the system.
 # Filtered at the parser — the one place every reader of a persona goes through.
-_PERSONA_TOOL_CEILING = frozenset({
-    "Bash", "BashOutput", "KillShell",
-    "Edit", "MultiEdit", "Write", "NotebookEdit",
-    "Read", "Glob", "Grep",
-    "Task", "Agent",
-})
+_PERSONA_TOOL_CEILING = _tool_registry.PERSONA_CEILING_IDS
 
 
 def _cap_persona_tools(key: str, tools: list[str]) -> list[str]:
