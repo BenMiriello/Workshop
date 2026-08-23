@@ -228,3 +228,25 @@ def test_can_admit_reserves_interactive_headroom(ledger):
     # value, not usage, and told the operator nothing about why it stopped.
     assert ok is False
     assert "700" in reason and "650" in reason
+
+
+def test_compaction_does_not_count_against_the_autonomous_ceiling(ledger):
+    """A chat folding its own history is chat overhead, not autonomous work.
+
+    Measured 2026-08-22: 2,801,736 of the 3,374,976 tokens the admission window
+    counted were compaction, against an allowance of 3,250,000, so a long
+    conversation summarising itself starved the autonomous loop to a standstill
+    for hours. Its writer already said "Reported, never gated"; the role was
+    simply missing from the exclusion list.
+    """
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    ledger.update_config(app_total=1_000_000, autonomy_budget_fraction=1.0)
+    for _ in range(20):
+        ledger.record("workshop", 500_000, role="compaction", chat="thread-1",
+                      ts=_iso(now - timedelta(minutes=10)))
+
+    # Reporting still sees every token: this is accounting, not amnesia.
+    assert ledger.status(now=now)["app_used"] == 10_000_000
+    # Admission does not.
+    assert ledger.window_usage(
+        now=now, exclude_roles=ledger.ADMISSION_EXCLUDED_ROLES)["app"] == 0

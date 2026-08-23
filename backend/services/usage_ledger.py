@@ -23,7 +23,9 @@ DO write here (role="chat") so the operator can see what conversation cost, but
 they are excluded from the admission window (`ADMISSION_EXCLUDED_ROLES`). They
 have to be: chat is declared unmetered and is never gated, so counting its spend
 against the autonomous ceiling meant the operator's own conversation refused
-every sweep. Reporting (`window_usage`, `status`, `timeseries`) still counts
+every sweep. `compaction` is exempt on the same grounds and for the same
+measured reason: it is a chat folding its own history, and it was 83% of the
+"autonomous" spend that starved the loop on 2026-08-22. Reporting (`window_usage`, `status`, `timeseries`) still counts
 every row; only `can_admit` filters.
 
 Pure stdlib so it is importable both inside the FastAPI app and from shell
@@ -46,7 +48,24 @@ WINDOW_S = 5 * 3600  # rolling 5-hour window, matching Claude's usage windows
 # Interactive chat is never gated by admission, so counting it there let the
 # operator's own conversation refuse every autonomous sweep. Reporting is
 # unaffected: only `can_admit` passes this to `window_usage`.
-ADMISSION_EXCLUDED_ROLES = ("chat",)
+#
+# `compaction` is here for the SAME reason and was missing, which had the SAME
+# effect one step removed. Compacting a thread is overhead of an interactive
+# conversation, not work anybody chose to spend the autonomy budget on: it is
+# the summarizer folding a chat's own history, billed to the chat's scope, and
+# the operator cannot decline it. Its writer (`routes/chat.py`, the
+# `role="compaction"` record) says in its own comment "Reported, never gated
+# (same posture as the turn/voice metering)" -- and it WAS gated, because the
+# role was not on this list.
+#
+# Measured 2026-08-22, with the loop refusing every sweep for hours: of the
+# 3,374,976 non-chat tokens the admission window counted, 2,801,736 (83%) were
+# compaction over 315 rows, against an autonomous allowance of 3,250,000. So a
+# long conversation compacting itself was, on its own, enough to starve the
+# autonomous loop to a standstill. Same family as billing a sweep to the
+# basename of its directory: a cost attributed to the wrong budget, and the
+# symptom is the loop silently doing nothing.
+ADMISSION_EXCLUDED_ROLES = ("chat", "compaction")
 
 LEDGER_PATH = paths.env_path("WORKSHOP_USAGE_LEDGER", "usage.jsonl")
 BUDGET_CONFIG_PATH = paths.env_path("WORKSHOP_USAGE_BUDGET", "usage-budget.json")
