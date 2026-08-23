@@ -441,6 +441,54 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   worker cannot be launched from inside a confined chat turn (its own bwrap cannot
   bind host paths), which is exactly why the backend must be the thing that
   spawns it -- the reconciler.
+- 2026-08-22 (6) — Operator, escalating twice on his phone: the file viewer and
+  editor is "still terrible", "this can't be what the new ui plan handoff
+  planned", the mobile toolbar dropdown menus "doesn't match what was given",
+  and then "ffs why didn't you LOOK at it?!". He was right on every count.
+  ROOT CAUSE, and it is a process defect rather than a code one. The shell
+  design has TWO layers of source: the prose doc
+  `navigation-shell-2026-08-20.md`, and `navigation-shell-source/`, whose README
+  says of `workshop-shell-mockup.dc.html` that it "is the artifact the
+  implementation is measured against". The mockup is 62KB of inline-styled HTML
+  plus a logic class and needs a design-tool runtime to render, so it went
+  unread, and three surfaces were built from prose that carries INTENT while the
+  mockup carries GEOMETRY. Every defect he saw followed from that.
+  FIXED BY FIRST MAKING THE SPEC READABLE: `shell-mockup-spec-2026-08-22.md`
+  extracts the mockup into measurements, states precedence (the design doc wins
+  on what to build, the spec wins on how it looks and moves, tokens always win
+  on colour), lists in section 7 every place the three sources disagree with a
+  ruling, and in section 8 everything the mockup draws that is explicitly not to
+  be built. The mockup's own editor is a PLACEHOLDER, not a design, because the
+  operator had already said the editor would be a package.
+  THEN BUILT TO IT, in three passes. (1) The phone place menu was the kit's
+  GENERIC Menu; it is now the specified dropdown: anchored under the tile, scrim
+  starting below bar one so bar one is never covered, 10px rise plus fade, Home
+  row then a mono section label then app rows, and no ref pill, no Settings row
+  and no Agents group because the design doc supersedes the mockup on all three.
+  That pass also found the page toolbar's tabs were `align-items: flex-end`
+  inside a stretch parent, so every label rode low. (2) The file browser: the Up
+  bar is now its own 40px row with the word "Up" in accent mono and a
+  non-tappable trail, and rows are 52px full-bleed with ZERO indentation, folder
+  in sans with a child count and a chevron, file in mono with a relative time and
+  none. Sans-versus-mono IS the folder/file distinction in this design. Desktop
+  rows corrected to 27px and indent 8+15d, disclosure triangles removed. (3) The
+  editor chrome: one shared kit `DocumentBar`, and opening a document on a phone
+  is now a real full takeover (page toolbar collapses, Up bar hides, page header
+  and breadcrumb drop). Two duplications were resolved rather than shipped: the
+  header's Save REPLACES the sticky ActionBar on file surfaces, and the amber
+  dirty dot replaces the "unsaved" pill, because two Saves and two unsaved
+  markers on one screen is the entropy this effort exists to remove.
+  ALSO FIXED, from the same session: focusing any text field zoomed the page on
+  iOS, which he called essential. Every `--fs-*` token is below iOS's 16px
+  threshold. Plain inputs turned out to be already floored by an existing rule in
+  `frontend/src/styles.css`, so the real culprits were `.cm-content`, which is a
+  contenteditable div and not an `<input>`, and CodeMirror's search field at
+  ~11px, the smallest in the app. Floored on `(pointer: coarse)` rather than a
+  width breakpoint, because a large phone in landscape exceeds 900px.
+  THE LESSON, recorded because it will recur: when a design has source material
+  that needs a runtime to view, extract it to text BEFORE building, and treat a
+  prose design doc as intent rather than geometry.
+
 - 2026-08-22 (5) — Operator: research, think, design and DECIDE the file tree and
   file viewer/editor, find a package rather than building it custom, make it work
   on web and the mobile app, file tickets for every phase, and build it with
