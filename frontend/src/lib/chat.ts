@@ -52,6 +52,15 @@ export type ChatSegment =
   // and the message would render below text written after it. A sealed segment
   // never absorbs more text; the next character starts a new segment.
   | ({ t: "text"; text: string; sealed?: boolean } & CutAfter)
+  // The model's REASONING, captured from the partial-message stream
+  // (build_streaming --include-partial-messages). It is its own kind, never
+  // `text`, so it is never part of the answer and never reaches AnswerBody: it
+  // renders as a foldable "Thought" disclosure inside the work section, the same
+  // channel ChatGPT and Claude fold reasoning into. `sealed` behaves as it does
+  // for text (a mid-turn message closes the run). Coalesced like text while it
+  // streams. Absent on every turn recorded before this shipped, which reads as a
+  // turn that simply showed no reasoning.
+  | ({ t: "thinking"; text: string; sealed?: boolean } & CutAfter)
   // A tool call, and how it went. The last four fields are what let a settled
   // turn distinguish its steps at all: before them every step rendered
   // identically, so a command that failed looked exactly like a file that was

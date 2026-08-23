@@ -168,6 +168,17 @@ export function useTurnStream({
           event: { kind: "text", content: String(p.content || ""), parent: p.parent as string | null },
         });
       },
+      // The model's reasoning, folded into its own thinking segment. Same shape
+      // as text on the wire; the reducer keeps it a separate kind so it never
+      // joins the answer.
+      thinking: (e) => {
+        markAlive();
+        const p = parse(e);
+        cb.current.dispatch({
+          type: "turnDelta", turnId,
+          event: { kind: "thinking", content: String(p.content || ""), parent: p.parent as string | null },
+        });
+      },
       tool: (e) => {
         markAlive();
         const p = parse(e);

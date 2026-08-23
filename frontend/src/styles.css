@@ -1161,6 +1161,26 @@ input[type="range"].grad::-moz-range-thumb {
 }
 .chat-work__meta { flex: 0 0 auto; opacity: 0.8; }
 .chat-work__list { display: flex; flex-direction: column; gap: 0.2rem; }
+/* THE REASONING FOLD. Same neutral, muted disclosure as the work toggle: the
+   model's thinking is not the answer and not something it said to the operator,
+   so it sits closed with a Brain icon and a chevron, both neutral at rest, and
+   opens onto the reasoning. Mirrors .chat-work__toggle so the two folds read as
+   the same kind of control. */
+.chat-think__toggle {
+  display: flex; align-items: center; gap: 0.3rem; width: 100%; min-width: 0;
+  background: none; border: none; padding: 0.15rem 0; margin: 0;
+  color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer;
+  text-align: left;
+}
+.chat-think__toggle:hover { color: var(--fg); }
+.chat-think__chev { flex: 0 0 auto; transition: transform var(--dur-fast) var(--ease-in-out); }
+.chat-think.is-open .chat-think__chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .chat-think__chev { transition: none; } }
+.chat-think__icon { flex: 0 0 auto; }
+.chat-think__label { flex: 0 0 auto; }
+/* Reasoning renders muted, a step in from the toggle, so it reads as an aside
+   rather than as more of the answer. */
+.chat-think__body { color: var(--muted); font-size: var(--fs-sm); padding-left: 1rem; }
 /* Interim narration is a block like any other in TurnWork's list (WorkText next
    to StepRun), but it carried no spacing of its own: `.chat-work` gets a bottom
    margin when it isn't last, `.chat-work__text` got none at all. Two narration

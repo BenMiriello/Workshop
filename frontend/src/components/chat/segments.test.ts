@@ -15,6 +15,45 @@ const feed = (evs: StreamEvent[]): ChatSegment[] =>
 const launch = (id = "tu_agent", agent = "general-purpose"): StreamEvent =>
   ({ kind: "tool", name: "Agent", input: "Read the tree and report", id, agent });
 
+describe("thinking segments", () => {
+  it("folds reasoning into its own kind, kept apart from the answer text", () => {
+    const segs = feed([
+      { kind: "thinking", content: "Let me work " },
+      { kind: "thinking", content: "through this." },
+      { kind: "text", content: "The answer is 42." },
+    ]);
+    expect(segs.map((s) => s.t)).toEqual(["thinking", "text"]);
+    expect(segs[0]).toMatchObject({ t: "thinking", text: "Let me work through this." });
+    expect(segs[1]).toMatchObject({ t: "text", text: "The answer is 42." });
+  });
+
+  it("does not merge thinking into a trailing text run, or the reverse", () => {
+    const segs = feed([
+      { kind: "text", content: "one moment" },
+      { kind: "thinking", content: "actually reconsider" },
+    ]);
+    expect(segs.map((s) => s.t)).toEqual(["text", "thinking"]);
+  });
+
+  it("nests a subagent's reasoning inside its chip, not at the top level", () => {
+    const segs = feed([
+      launch("tu_1"),
+      { kind: "thinking", content: "the delegate reasons", parent: "tu_1" },
+      { kind: "text", content: "the delegate narrates", parent: "tu_1" },
+    ]);
+    expect(segs).toHaveLength(1);
+    const agent = segs[0] as Extract<ChatSegment, { t: "agent" }>;
+    expect(agent.steps.map((s) => s.t)).toEqual(["thinking", "text"]);
+  });
+
+  it("seals a thinking run so a mid-turn message cannot merge into it", () => {
+    let segs = feed([{ kind: "thinking", content: "first thought" }]);
+    segs = sealTrailingText(segs);
+    segs = applyStreamEvent(segs, { kind: "thinking", content: "second thought" });
+    expect(segs.map((s) => s.t)).toEqual(["thinking", "thinking"]);
+  });
+});
+
 describe("subagent segments", () => {
   it("renders a launch as one agent segment, not a tool chip", () => {
     const segs = feed([launch("tu_1", "work-reviewer")]);

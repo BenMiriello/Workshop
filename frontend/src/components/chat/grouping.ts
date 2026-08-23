@@ -194,6 +194,9 @@ export type TurnItem =
 
 export type TurnBlock =
   | { t: "prose"; text: string }
+  // The model's reasoning, folded away by default. Its own block so it renders
+  // as a "Thought" disclosure and never joins the prose or the step count.
+  | { t: "thinking"; text: string }
   // A contiguous stretch of machine work between two prose blocks.
   | { t: "run"; items: TurnItem[] };
 
@@ -238,6 +241,14 @@ export function buildTurnBlocks(work: ChatSegment[]): TurnBlock[] {
     if (seg.t === "text") {
       closeRun();
       if (seg.text.trim()) blocks.push({ t: "prose", text: seg.text });
+      continue;
+    }
+    if (seg.t === "thinking") {
+      // Reasoning is neither prose nor a step: it ends the current run and
+      // becomes its own foldable block, so it never inflates the step count and
+      // never reads as something the model said to the operator.
+      closeRun();
+      if (seg.text.trim()) blocks.push({ t: "thinking", text: seg.text });
       continue;
     }
     if (seg.t === "tool") {

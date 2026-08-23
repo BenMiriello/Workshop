@@ -891,6 +891,23 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
         })
     if t == "system":
         return ("meta", {"subtype": ev.get("subtype")})
+    # A PARTIAL-MESSAGE FRAME (from --include-partial-messages). The whole reason
+    # we ask for these is the model's reasoning: the final `assistant` message
+    # carries the thinking block with its text redacted to "", so the only place
+    # the reasoning text lives is the `thinking_delta` chunks here. We take those
+    # and NOTHING ELSE from this stream — text_delta and input_json_delta would
+    # duplicate what the whole `assistant` message already delivers, so they fall
+    # through to `meta` and are ignored. `parent` rides along so a subagent's
+    # reasoning nests under its chip rather than joining the parent's work.
+    if t == "stream_event":
+        se = ev.get("event") or {}
+        if se.get("type") == "content_block_delta":
+            d = se.get("delta") or {}
+            if d.get("type") == "thinking_delta":
+                txt = d.get("thinking") or ""
+                if txt:
+                    return ("thinking", {"content": txt, "parent": parent})
+        return ("meta", {"type": t})
     return ("meta", {"type": t})
 
 
@@ -936,11 +953,11 @@ def seal_open_text(turn: "Turn") -> None:
     segment by the time the reply is cut. Sealing makes the boundary real. Every
     open subagent gets the same treatment, because a chip cut in half has a text
     step on each side of the cut."""
-    if turn.segments and turn.segments[-1].get("t") == "text":
+    if turn.segments and turn.segments[-1].get("t") in ("text", "thinking"):
         turn.segments[-1]["sealed"] = True
     for host in turn.agent_segs.values():
         steps = host.get("steps") or ()
-        if steps and steps[-1].get("t") == "text":
+        if steps and steps[-1].get("t") in ("text", "thinking"):
             steps[-1]["sealed"] = True
 
 
@@ -1009,6 +1026,19 @@ def _seg_text(turn: "Turn", s: str) -> None:
         turn.segments[-1]["text"] += s
     else:
         turn.segments.append({"t": "text", "text": s})
+
+
+def _seg_thinking(turn: "Turn", s: str) -> None:
+    """One run of the model's reasoning, coalesced exactly as text is. A thinking
+    segment is its OWN kind, so it never merges with the answer text beside it and
+    never reaches _turn_content: reasoning is a foldable channel, not the reply."""
+    if not s:
+        return
+    if turn.segments and turn.segments[-1].get("t") == "thinking" \
+            and not turn.segments[-1].get("sealed"):
+        turn.segments[-1]["text"] += s
+    else:
+        turn.segments.append({"t": "thinking", "text": s})
 
 
 def _seg_tool(turn: "Turn", name, inp, tool_id: str = "") -> None:
@@ -1123,7 +1153,8 @@ def _agent_step(turn: "Turn", parent: str, seg: dict) -> bool:
     if host is None:
         return False
     steps = host.setdefault("steps", [])
-    if seg.get("t") == "text" and steps and steps[-1].get("t") == "text" \
+    t = seg.get("t")
+    if t in ("text", "thinking") and steps and steps[-1].get("t") == t \
             and not steps[-1].get("sealed"):
         steps[-1]["text"] += seg.get("text") or ""
     else:
@@ -1155,6 +1186,11 @@ def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:
         text = payload.get("content", "")
         if not (nested and _agent_step(turn, nested, {"t": "text", "text": text})):
             _seg_text(turn, text)
+        return False
+    if kind == "thinking":
+        text = payload.get("content", "")
+        if not (nested and _agent_step(turn, nested, {"t": "thinking", "text": text})):
+            _seg_thinking(turn, text)
         return False
     if kind == "tool":
         step = {"t": "tool", "name": payload.get("name") or "?", "input": payload.get("input") or ""}
@@ -1993,6 +2029,16 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
         "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--verbose",
+        # Stream the model's reasoning. The CLI emits a thinking block whose
+        # `thinking` field is EMPTY in the final assembled `assistant` message
+        # (only a signature survives), so the reasoning text exists only as
+        # `thinking_delta` chunks on the partial-message stream. Without this
+        # flag those chunks are never sent and the reasoning is lost. With it,
+        # the extra `stream_event` frames are additive: text and tool still come
+        # from the whole `assistant` message exactly as before, and _parse_stream_event
+        # mines these frames ONLY for thinking_delta (everything else is `meta`,
+        # ignored), so nothing is double-counted. See _parse_stream_event.
+        "--include-partial-messages",
         # Re-emit stdin user messages on stdout once read. This is what turns
         # "the bytes reached the process" into "the turn has read it" — the
         # difference between a chat that is waiting and one that looks broken.
@@ -2568,7 +2614,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                     state["last_ctx"] = ctx
             _push(turn, "result", payload)
         else:
-            if kind in ("text", "tool", "tool_result", "permission"):
+            if kind in ("text", "tool", "tool_result", "permission", "thinking"):
                 saw_tool = _segment_ingest(turn, kind, payload)
                 if kind == "tool_result" and payload.get("is_error"):
                     _maybe_write_blocked(turn, meta, payload)

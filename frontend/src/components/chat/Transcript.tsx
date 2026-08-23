@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Bot, ChevronRight, Wrench } from "lucide-react";
+import { Bot, Brain, ChevronRight, Wrench } from "lucide-react";
 import { ChatMarkdown as Markdown } from "./ChatMarkdown";
 import type { ChatSegment } from "../../lib/chat";
 import ApprovalBlock from "./ApprovalBlock";
@@ -652,6 +652,42 @@ function SettledWork({
   );
 }
 
+// The model's reasoning, folded away by default.
+//
+// Reasoning is not the answer and it is not narration to the operator, so it
+// gets its own disclosure, collapsed even on the latest turn: a reader who wants
+// to see how the turn thought opens it, and everyone else reads the answer. This
+// is the "Thought" fold ChatGPT and Claude both use. Neutral at rest, like every
+// other control here: the Brain icon and the chevron carry no hue.
+//
+// It stays closed while the turn streams too, deliberately. Live progress is
+// carried by the steps and the working indicator; the reasoning is there to open
+// after the fact, not a third thing scrolling past as it is written.
+function Thought({ text, cfg }: { text: string; cfg: ModelDisplay }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <div className={`chat-think${open ? " is-open" : ""}`}>
+      <button
+        type="button"
+        className="chat-think__toggle"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={id}
+      >
+        <ChevronRight size={13} aria-hidden className="chat-think__chev" />
+        <Brain size={12} aria-hidden className="chat-think__icon" />
+        <span className="chat-think__label">{open ? "Hide reasoning" : "Thought"}</span>
+      </button>
+      <Reveal open={open} id={id}>
+        <div className="chat-think__body">
+          <ElidedContent source={text} cfg={cfg} render={(s) => <Markdown>{s}</Markdown>} />
+        </div>
+      </Reveal>
+    </div>
+  );
+}
+
 // A turn's work as blocks: prose the model wrote, and the runs of steps between
 // them. There is no wrapper around the whole thing, because there never was one
 // worth naming: the old `.chat-work` div was whatever remained after the answer
@@ -686,6 +722,8 @@ function TurnWork({ work, cfg, nowMs, expanded, openGroups, streaming, onAnswerP
           // model wrote halfway through a turn and then talked itself out of
           // must not be a live control, and card outcomes persist server-side.
           ? <WorkText key={`p${i}`} text={b.text} cfg={cfg} expanded={expanded} />
+          : b.t === "thinking"
+          ? <Thought key={`t${i}`} text={b.text} cfg={cfg} />
           : <StepRun key={`r${i}`} items={b.items} cfg={cfg} nowMs={nowMs} openGroups={openGroups}
                      arrived={arrived}
                      current={!!streaming && endsOnRun && i === lastRun}
@@ -721,6 +759,11 @@ export function AssistantTurn({
   const work = segments.slice(0, cut);
   const answer = segments.slice(cut);
   const clock = nowMs ?? 0;
+  // A turn that only REASONED before answering has no steps to summarise, so it
+  // must not wear a "Steps" toggle that opens onto a lone Thought. Show the
+  // Thought fold directly. The common case (reasoning alongside tool calls)
+  // keeps the reasoning inside the work section, in order, where it happened.
+  const onlyThinking = work.length > 0 && work.every((s) => s.t === "thinking");
   return (
     <>
       {/* ONE TOGGLE AT THE TOP OF THE BUBBLE, on every turn, which is 4a's
@@ -738,10 +781,13 @@ export function AssistantTurn({
           It opens itself while the turn is still being written, because live
           progress has to be legible without a click, and settles closed once the
           turn is done. */}
-      {work.length > 0 && (
-        <SettledWork work={work} cfg={cfg} nowMs={clock} tookMs={tookMs}
-                     streaming={streaming} expanded={isLatest}
-                     onAnswerPermission={onAnswerPermission} />
+      {work.length > 0 && (onlyThinking
+        ? work.map((s, i) => (s.t === "thinking" && s.text.trim()
+            ? <Thought key={`t${i}`} text={s.text} cfg={cfg} />
+            : null))
+        : <SettledWork work={work} cfg={cfg} nowMs={clock} tookMs={tookMs}
+                       streaming={streaming} expanded={isLatest}
+                       onAnswerPermission={onAnswerPermission} />
       )}
       {answer.map((s, i) =>
         s.t === "text" && s.text.trim() ? (

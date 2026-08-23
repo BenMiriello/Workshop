@@ -314,6 +314,7 @@ export function initialThreadState(threadId: string | null = null): ThreadState 
 function segWeight(s: ChatSegment | undefined): number {
   if (!s) return 0;
   if (s.t === "text") return s.text.length;
+  if (s.t === "thinking") return s.text.length;
   if (s.t === "tool") return s.name.length + s.input.length;
   // An approval changes weight exactly once, when it is answered, so its state
   // is the whole signal. Without it a resolved approval looks identical to a

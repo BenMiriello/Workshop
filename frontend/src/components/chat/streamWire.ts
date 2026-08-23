@@ -36,6 +36,9 @@
 export const WIRE_KINDS = {
   /** Assistant text, appended to the live segments. */
   text: "delta",
+  /** The model's reasoning, streamed from the partial-message channel and folded
+   *  into its own thinking segment. Never part of the answer. */
+  thinking: "delta",
   /** A tool call starting. */
   tool: "delta",
   /** A tool's result; only a subagent's own closes a segment. */

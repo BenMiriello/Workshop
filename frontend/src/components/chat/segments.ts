@@ -18,6 +18,9 @@ export type StreamEvent =
   // and only ever shown when the chip is opened.
   | { kind: "tool"; name?: string; input?: string; detail?: string | null; id?: string; agent?: string | null; parent?: string | null }
   | { kind: "text"; content?: string; parent?: string | null }
+  // The model's reasoning. Folded into a thinking segment, kept separate from
+  // text so it is never part of the answer. `parent` nests it under a subagent.
+  | { kind: "thinking"; content?: string; parent?: string | null }
   // A tool's result. For an Agent call it closes the subagent segment; for any
   // other top-level call it closes THAT STEP, setting its outcome and duration.
   // `is_error` is the field the whole disclosure rule turns on: a failed step is
@@ -58,9 +61,12 @@ function intoAgent(segs: ChatSegment[], parent: string, step: ChatSegment): Chat
   const host = segs[i] as Extract<ChatSegment, { t: "agent" }>;
   const steps = host.steps;
   const last = steps[steps.length - 1];
+  // Text and thinking each coalesce with a run of their own kind. A subagent's
+  // reasoning merges into its trailing thinking step exactly as its text merges
+  // into its trailing text step, and the two never merge into each other.
   const nextSteps =
-    step.t === "text" && last && last.t === "text" && !last.sealed
-      ? [...steps.slice(0, -1), { t: "text" as const, text: last.text + step.text }]
+    (step.t === "text" || step.t === "thinking") && last && last.t === step.t && !last.sealed
+      ? [...steps.slice(0, -1), { t: step.t, text: last.text + step.text }]
       : [...steps, step];
   const copy = segs.slice();
   copy[i] = { ...host, steps: nextSteps };
@@ -78,6 +84,19 @@ function pushText(segs: ChatSegment[], content: string): ChatSegment[] {
   return [...segs, { t: "text", text: content }];
 }
 
+/** Append reasoning to the open thinking run, or start one. Mirrors pushText;
+ *  the two never merge, so reasoning never becomes answer text. */
+function pushThinking(segs: ChatSegment[], content: string): ChatSegment[] {
+  if (!content) return segs;
+  const last = segs[segs.length - 1];
+  if (last && last.t === "thinking" && !last.sealed) {
+    const copy = segs.slice();
+    copy[copy.length - 1] = { t: "thinking", text: last.text + content };
+    return copy;
+  }
+  return [...segs, { t: "thinking", text: content }];
+}
+
 /** Close every open text run, because a message just landed here.
  *
  *  THE COUNTER IS NOT ENOUGH ON ITS OWN. Text streams into the trailing text
@@ -93,13 +112,13 @@ function pushText(segs: ChatSegment[], content: string): ChatSegment[] {
 export function sealTrailingText(segs: ChatSegment[]): ChatSegment[] {
   const last = segs[segs.length - 1];
   if (!last) return segs;
-  if (last.t === "text") {
+  if (last.t === "text" || last.t === "thinking") {
     if (last.sealed) return segs;
     return [...segs.slice(0, -1), { ...last, sealed: true }];
   }
   if (last.t === "agent") {
     const step = last.steps[last.steps.length - 1];
-    if (!step || step.t !== "text" || step.sealed) return segs;
+    if (!step || (step.t !== "text" && step.t !== "thinking") || step.sealed) return segs;
     return [...segs.slice(0, -1), {
       ...last,
       steps: [...last.steps.slice(0, -1), { ...step, sealed: true }],
@@ -123,6 +142,15 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
       if (nested) return nested;
     }
     return pushText(segs, content);
+  }
+  if (ev.kind === "thinking") {
+    const content = ev.content || "";
+    if (parent) {
+      // A subagent's reasoning nests under its chip, the same as its text.
+      const nested = intoAgent(segs, parent, { t: "thinking", text: content });
+      if (nested) return nested;
+    }
+    return pushThinking(segs, content);
   }
   if (ev.kind === "permission") {
     const id = ev.id || "";

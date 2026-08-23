@@ -107,6 +107,23 @@ describe("what breaks a group", () => {
     expect(got.map((i) => i.t)).toEqual(["group", "step", "group"]);
   });
 
+  it("reasoning breaks the group, becomes its own block, and is not a step", () => {
+    const think = (s: string): ChatSegment => ({ t: "thinking", text: s });
+    const blocks = buildTurnBlocks([read("a"), read("b"), think("weighing it up"), read("c")]);
+    expect(blocks.map((b) => b.t)).toEqual(["run", "thinking", "run"]);
+    expect((blocks[1] as { text: string }).text).toBe("weighing it up");
+    // Reasoning is not a step and not narration, so it changes neither count.
+    const work = [read("a"), think("weighing it up"), read("c")];
+    expect(turnWorkSummary(work)).toBe("2 steps");
+    expect(workNarrationPreview(work)).toBe("");
+  });
+
+  it("drops whitespace-only reasoning without drawing a block", () => {
+    const think = (s: string): ChatSegment => ({ t: "thinking", text: s });
+    const blocks = buildTurnBlocks([read("a"), think("   "), read("b")]);
+    expect(blocks.map((b) => b.t)).toEqual(["run", "run"]);
+  });
+
   it("nothing else breaks a group, including a failure or a running step", () => {
     // Both used to stand alone under the allowlist rule. They no longer need
     // to: the group names its failures in the header and opens onto every step

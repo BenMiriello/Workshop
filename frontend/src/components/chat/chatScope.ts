@@ -188,6 +188,8 @@ export function estimateContextTokens(messages: ChatMsg[], draft: string): numbe
     for (const s of m.meta?.segments || []) {
       chars +=
         s.t === "text" ? s.text.length
+          // Reasoning is real output the window carried, so it counts like text.
+          : s.t === "thinking" ? s.text.length
           // An approval is a control, not content the model read. Its label is
           // the only text of it that exists, and counting the tool input twice
           // (once here, once when the call goes through) would overstate the
