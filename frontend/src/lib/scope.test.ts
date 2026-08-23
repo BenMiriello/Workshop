@@ -143,23 +143,23 @@ describe("which scopes a chat gets a task queue for", () => {
 });
 
 // An app scope had NO case in `scopeLabel`, so it fell through to the raw kind
-// and the Memory tree read "app: budget" beside "Project: budget" and
+// and the Memory tree read "app: widgets" beside "Project: widgets" and
 // "Agent: masini" -- three capitalisations in one list. The backend's
 // `scope_tree.label()` has carried `"app": "App"` all along, so this was the
 // client half drifting from the server, which is exactly what the role tests
 // above were written to catch for a different kind.
 describe("an app scope is named like every other scope", () => {
   it("capitalises the kind instead of leaking it", () => {
-    expect(scopeLabel("app:budget")).toBe("App: budget");
+    expect(scopeLabel("app:widgets")).toBe("App: widgets");
   });
 
   it("matches the label the backend renders for the same key", () => {
     // backend services/scope_tree.label(): {"app": "App", ...}
-    expect(scopeLabel("app:birds")).toBe("App: birds");
+    expect(scopeLabel("app:gizmo")).toBe("App: gizmo");
   });
 
   it("reads consistently beside the project and agent kinds", () => {
-    const labels = ["app:budget", "project:budget", "agent:masini"].map(scopeLabel);
+    const labels = ["app:widgets", "project:widgets", "agent:masini"].map(scopeLabel);
     for (const l of labels) expect(l[0]).toBe(l[0].toUpperCase());
   });
 

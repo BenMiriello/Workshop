@@ -144,7 +144,15 @@ _AMBIGUOUS: dict[str, tuple[str, ...]] = {
     ),
     "budget": (r"token budget", r"budget\.remaining", r"wall[- ]clock budget", r"per-scope budget",
                r"injection budget", r"reconnect budget", r"budget ceiling"),
-    "notes": (r"notes_all", r"notes and docs", r"knowledge", r"release notes"),
+    # `/api/notes` is the PLATFORM cross-scope knowledge feed
+    # (routes/notes_all.py, prefix "/notes"). The notes APP is a different
+    # router with a different prefix: routes/notes.py serves "/notes-app", and
+    # that is what `.runtime/apps.json` lists as its only api_prefix. Without
+    # this the Memory page is flagged for reading the knowledge store, which is
+    # platform code calling a platform route. The negative lookahead keeps the
+    # app's own prefix counted.
+    "notes": (r"notes_all", r"notes and docs", r"knowledge", r"release notes",
+              r"/api/notes(?!-app)"),
     "environment": (r"environment variable", r"deployment target", r"\benv\b", r"environments are"),
     "commute": (),
     "birds": (),
@@ -199,7 +207,17 @@ def scan(apps: list[str]) -> dict:
     content_pat = {a: _app_content_patterns(a) for a in apps}
     import_short = {a: re.escape(a.removesuffix("-app")) for a in apps}
     literal_pat = {a: _literal_patterns(a) for a in apps}
-    ambiguous = {a: [re.compile(p, re.I) for p in _AMBIGUOUS.get(a, ())] for a in apps}
+    # Keyed by the full app id AND by the short form the frontend uses, because
+    # they differ for exactly the app whose name is an ordinary English word:
+    # the id is `notes-app`, the short form is `notes`, and the table is written
+    # under `notes`. Looking up only the full id meant that entry never applied
+    # to anything, so `notes_all` and the platform knowledge route were counted
+    # as naming the notes APP for as long as the entry has existed.
+    ambiguous = {
+        a: [re.compile(p, re.I)
+            for p in (*_AMBIGUOUS.get(a, ()), *_AMBIGUOUS.get(a.removesuffix("-app"), ()))]
+        for a in apps
+    }
 
     content: dict[str, list[str]] = {a: [] for a in apps}
     imports: list[dict] = []
@@ -232,8 +250,12 @@ def scan(apps: list[str]) -> dict:
 
         for i, line in enumerate(body.splitlines(), 1):
             stripped = line.strip()
-            if stripped.startswith(("#", "//", "*")):
-                continue  # a comment is prose, and prose is not a dependency
+            # A comment is prose, and prose is not a dependency. `/*` and `/**`
+            # are here because a JSDoc block's OPENING line starts with a slash,
+            # not a star, so it was the one comment line in every such block
+            # that got scanned as code.
+            if stripped.startswith(("#", "//", "*", "/*")):
+                continue
             for app in apps:
                 if not any(p.search(line) for p in literal_pat[app]):
                     continue

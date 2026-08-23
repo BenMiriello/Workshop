@@ -26,8 +26,8 @@ APP OVER PROJECT, NOT THE OTHER WAY AROUND. This diagram used to show
 `app-is-the-entity-2026-08-20.md` makes the app the one container the user
 names and the project the build view of it, so the containing node is the app.
 Until 2026-08-23 neither edge existed and the two sat as unrelated SIBLINGS,
-which put eight rows in the operator's Memory tree for four things and hid
-`project:commute`'s notes from the Commute app entirely.
+which put eight rows in the operator's Memory tree for four things and hid a
+project's notes from the app that owns it entirely.
 
 `development` is the developer's environment: the only scope whose work target
 is the running application. It exists only when
@@ -280,7 +280,7 @@ def _default_parent(scope: Scope) -> str | None:
         # what the operator named; the project is how it gets built. So the
         # project hangs off the app, which also means `reach("app:X")` finally
         # includes the notes filed to `project:X` -- the measured symptom on
-        # 2026-08-23 was two real Commute notes that its own app could not see.
+        # 2026-08-23 was two real notes an app could not see in its own tree.
         candidate = f"app:{scope.slug}"
         try:
             parse(candidate)

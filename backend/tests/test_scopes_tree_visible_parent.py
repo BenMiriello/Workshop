@@ -38,25 +38,25 @@ def _parent_of(rows, key):
 
 
 def test_an_invisible_parent_is_skipped_not_dropped(monkeypatch):
-    # app:budget has no knowledge dir, so it is not listed; project:budget must
+    # app:widgets has no knowledge dir, so it is not listed; project:widgets must
     # still land under workshop rather than becoming a root.
     rows = _tree(
         monkeypatch,
-        visible=["workshop", "project:budget"],
-        parents={"workshop": None, "project:budget": "app:budget", "app:budget": "workshop"},
+        visible=["workshop", "project:widgets"],
+        parents={"workshop": None, "project:widgets": "app:widgets", "app:widgets": "workshop"},
     )
-    assert _parent_of(rows, "project:budget") == "workshop"
+    assert _parent_of(rows, "project:widgets") == "workshop"
     assert [r["key"] for r in rows if r["depth"] == 0] == ["workshop"]
 
 
 def test_a_visible_parent_is_used_directly(monkeypatch):
     rows = _tree(
         monkeypatch,
-        visible=["workshop", "app:birds", "project:birds"],
-        parents={"workshop": None, "app:birds": "workshop", "project:birds": "app:birds"},
+        visible=["workshop", "app:gizmo", "project:gizmo"],
+        parents={"workshop": None, "app:gizmo": "workshop", "project:gizmo": "app:gizmo"},
     )
-    assert _parent_of(rows, "project:birds") == "app:birds"
-    assert _parent_of(rows, "app:birds") == "workshop"
+    assert _parent_of(rows, "project:gizmo") == "app:gizmo"
+    assert _parent_of(rows, "app:gizmo") == "workshop"
 
 
 def test_a_scope_with_no_visible_ancestor_is_a_root(monkeypatch):

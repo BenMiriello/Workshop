@@ -366,18 +366,18 @@ class TestAnAppContainsItsBuildView:
 
     Until 2026-08-23 neither edge existed and the two were unrelated siblings,
     which put eight rows in the Memory tree for four things and left two real
-    `project:commute` notes unreachable from the Commute app.
+    `project:widgets` notes unreachable from an app.
     """
 
     def test_a_linked_project_hangs_off_its_app(self, monkeypatch):
         monkeypatch.setattr(scope_tree, "_project_is_an_apps_build_view",
-                            lambda slug: slug == "budget")
-        assert scope_tree.parent("project:budget") == "app:budget"
+                            lambda slug: slug == "widgets")
+        assert scope_tree.parent("project:widgets") == "app:widgets"
 
     def test_the_app_stays_at_the_root(self, monkeypatch):
         monkeypatch.setattr(scope_tree, "_project_is_an_apps_build_view",
-                            lambda slug: slug == "budget")
-        assert scope_tree.parent("app:budget") == scope_tree.WORKSHOP_SCOPE
+                            lambda slug: slug == "widgets")
+        assert scope_tree.parent("app:widgets") == scope_tree.WORKSHOP_SCOPE
 
     def test_an_unlinked_project_stays_at_the_root(self, monkeypatch):
         monkeypatch.setattr(scope_tree, "_project_is_an_apps_build_view",
@@ -386,14 +386,14 @@ class TestAnAppContainsItsBuildView:
 
     def test_the_app_reaches_the_project_it_contains(self, monkeypatch):
         monkeypatch.setattr(scope_tree, "_existing_scopes",
-                            lambda: ["app:budget", "project:budget"])
+                            lambda: ["app:widgets", "project:widgets"])
         monkeypatch.setattr(scope_tree, "_project_is_an_apps_build_view",
-                            lambda slug: slug == "budget")
-        assert scope_tree.reach("app:budget") == ["app:budget", "project:budget"]
+                            lambda slug: slug == "widgets")
+        assert scope_tree.reach("app:widgets") == ["app:widgets", "project:widgets"]
 
     def test_the_project_does_not_reach_upward_to_its_app(self, monkeypatch):
         monkeypatch.setattr(scope_tree, "_existing_scopes",
-                            lambda: ["app:budget", "project:budget"])
+                            lambda: ["app:widgets", "project:widgets"])
         monkeypatch.setattr(scope_tree, "_project_is_an_apps_build_view",
-                            lambda slug: slug == "budget")
-        assert scope_tree.reach("project:budget") == ["project:budget"]
+                            lambda slug: slug == "widgets")
+        assert scope_tree.reach("project:widgets") == ["project:widgets"]

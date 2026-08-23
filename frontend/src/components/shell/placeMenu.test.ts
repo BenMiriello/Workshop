@@ -8,8 +8,8 @@ import { menuFocusMove, placeMenuRows, placeMenuSections } from "./placeMenu";
 const icons = new Proxy({} as Record<string, typeof Bot>, { get: () => Bot });
 
 const APPS = [
-  { id: "finance", name: "Finance", home: "/apps/finance" },
-  { id: "birds", name: "Birds", home: "/apps/birds" },
+  { id: "widgets", name: "Widgets", home: "/apps/widgets" },
+  { id: "gizmo", name: "Gizmo", home: "/apps/gizmo" },
 ];
 
 const places = buildPlaces(APPS, icons);
@@ -18,7 +18,7 @@ describe("placeMenuSections", () => {
   it("puts Home and All chats above the apps, in the dock's order", () => {
     const { platform, apps } = placeMenuSections(places, "home");
     expect(platform.map((r) => r.place.id)).toEqual(["home", "chats"]);
-    expect(apps.map((r) => r.place.id)).toEqual(["app:finance", "app:birds"]);
+    expect(apps.map((r) => r.place.id)).toEqual(["app:widgets", "app:gizmo"]);
   });
 
   it("has no Settings row: the avatar owns settings", () => {
@@ -30,8 +30,8 @@ describe("placeMenuSections", () => {
   });
 
   it("marks exactly the place you are in", () => {
-    const rows = placeMenuRows(placeMenuSections(places, "app:birds"));
-    expect(rows.filter((r) => r.current).map((r) => r.place.id)).toEqual(["app:birds"]);
+    const rows = placeMenuRows(placeMenuSections(places, "app:gizmo"));
+    expect(rows.filter((r) => r.current).map((r) => r.place.id)).toEqual(["app:gizmo"]);
   });
 
   it("marks nothing when you are somewhere the menu does not draw", () => {
