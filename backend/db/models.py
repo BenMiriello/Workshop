@@ -870,6 +870,133 @@ class Run(Base, Timestamps):
     )
 
 
+# --- changes -----------------------------------------------------------------
+# docs/platform-redesign/changes-and-review-2026-08-22.md, step C1.
+#
+# THE POINT OF THE TABLE. A ticket says what should be true; a change says here
+# is the code that makes it true. Until this row existed, `in_review` meant a
+# worker had SAID it was finished and the operator was asked to accept an
+# assertion with no artifact behind it. A change is the artifact: a branch that
+# is ahead of its base, the tickets it claims to satisfy, its head sha, and the
+# machine-check results that answer the questions a person should not have to.
+
+CHANGE_STATUSES = ("draft", "ready", "changes_requested", "approved",
+                   "merged", "closed")
+
+# A gate's outcome. `running` exists because a gate is recorded when it starts
+# (C3 writes these); `skipped` is a gate that did not apply to this diff, which
+# is a different fact from one that passed.
+GATE_STATUSES = ("pass", "fail", "running", "skipped")
+
+
+class Change(Base, Timestamps, SoftDelete):
+    """One branch's worth of work, reviewable on its own.
+
+    STATUS IS A CHECK, NOT A NATIVE ENUM, matching every other controlled
+    vocabulary in this file (`priority` is the single deliberate exception and
+    it earns it by needing declaration-order sorting; a change status is never
+    sorted by rank). The design doc writes `enum(draft, ready, ...)` to mean
+    the value set, and this is that value set.
+
+    HOW A CHANGE NAMES ITS BRANCH. `worktree_id` is the design's column and it
+    is the forward slot for B2's worktree record, which does not exist yet --
+    so it is nullable and carries no foreign key, and wiring it up (plus the
+    composite `_org_ref` against `worktree`) is B2's job, not a second
+    migration's afterthought. What addresses a branch TODAY is the
+    `(project_slug, branch_slug)` pair that every published entry point in
+    `services/worktrees.py` takes, so the record carries it: without it a
+    change could not re-derive its own diff, and a record that cannot produce
+    its payload is exactly the assertion-without-artifact this table replaces.
+
+    TICKET IDS ARE TEXT, NOT A UUID ARRAY OR A JOIN TABLE. They are the ids the
+    rest of this system passes around (`services/tasks`, `TODO.md`, every shell
+    worker), and Postgres holds `ticket` rows only for the two relational
+    scopes (`services.task_scope.RELATIONAL_SCOPES`) -- an app's tickets are
+    still file-backed. A FK array would therefore be a promise the data cannot
+    keep for most changes. A change carrying SEVERAL tickets is the normal
+    case, not an edge one: it merges as one unit, which is why
+    `workspace-ownership-and-leases-2026-08-22.md` sec 10 defaults a session to
+    a new branch rather than joining an existing one.
+    """
+    __tablename__ = "change"
+
+    id: Mapped[uuid.UUID] = _pk()
+    org_id: Mapped[uuid.UUID] = _org_fk()
+
+    # The app this change is work on. Nullable: a project slug does not
+    # necessarily have an `app` row (the two registries are still unlinked --
+    # see app-is-the-entity-2026-08-20.md sec 9).
+    app_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+
+    # See the class docstring: the forward slot for B2's worktree record.
+    worktree_id: Mapped[uuid.UUID | None] = mapped_column(PgUUID(as_uuid=True))
+
+    # The branch, addressed the way `services/worktrees.py` addresses one.
+    project_slug: Mapped[str] = mapped_column(String(64), nullable=False)
+    branch_slug: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # What it merges into, and where it is now. `head_sha` is a full 40-char
+    # object name, never an abbreviation: an abbreviation is ambiguous the day
+    # the repository grows.
+    base_ref: Mapped[str] = mapped_column(String(255), nullable=False)
+    head_sha: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    # THE AUTHOR'S CLAIM, and the review surface labels it as one (design doc
+    # sec 5.1). The diff is the primary object; this is secondary by design.
+    summary: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+
+    ticket_ids: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default=text("'{}'::text[]"))
+
+    status: Mapped[str] = mapped_column(String(20), nullable=False,
+                                        server_default="draft")
+
+    # `[{name, status, detail, at}]`, typed as ChangeGate (routes/changes.py).
+    # A list rather than a dict keyed by name because a gate can legitimately
+    # be recorded more than once for one change (a re-run after a fix), and the
+    # order is the order they were produced in.
+    gates: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+
+    # `{kind, url, number}` when the change is mirrored to a remote pull
+    # request, NULL when it is purely local. Typed as ChangeRemote. Local-first
+    # is the requirement: the same record either way, never two code paths.
+    remote: Mapped[dict | None] = mapped_column(JSONB)
+
+    merged_sha: Mapped[str | None] = mapped_column(String(40))
+    merged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_reason: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        CheckConstraint(_one_of("status", CHANGE_STATUSES), name="ck_change_status"),
+        # A merged change names what it merged as, and nothing else does. Both
+        # halves: without the first a change can claim `merged` with no commit
+        # behind it, which is the same "status with no artifact" defect this
+        # whole table exists to remove.
+        CheckConstraint(
+            "(status = 'merged') = (merged_sha IS NOT NULL AND merged_at IS NOT NULL)",
+            name="ck_change_merged_is_recorded"),
+        _org_target("change"),
+        _org_ref("change", "app_id", "app", ondelete="SET NULL (app_id)"),
+        # ONE BRANCH PRODUCES ONE CHANGE (design doc sec 3), but only while it
+        # is open: a merged or closed branch is reaped and its slug becomes
+        # reusable, so the uniqueness is over the live, unfinished set.
+        Index("uq_change_open_branch", "org_id", "project_slug", "branch_slug",
+              unique=True,
+              postgresql_where=text(
+                  "deleted_at IS NULL AND status NOT IN ('merged', 'closed')")),
+        Index("ix_change_status", "org_id", "status", "updated_at",
+              postgresql_where=_ALIVE),
+        Index("ix_change_app", "org_id", "app_id",
+              postgresql_where=text("app_id IS NOT NULL AND deleted_at IS NULL")),
+        # "which change carries this ticket" is the query C2's status
+        # derivation runs on every ticket, so the array is indexed for
+        # containment rather than scanned.
+        Index("ix_change_tickets", "ticket_ids", postgresql_using="gin"),
+    )
+
+
 # --- chat --------------------------------------------------------------------
 # ADR 0020. The load-bearing idea is that a transcript is a TREE, not a list,
 # and that the tree is RECORDED rather than reconstructed. Both halves matter:

@@ -23,6 +23,7 @@ from routes import stores as stores_routes
 from routes import deploys as deploys_routes
 from routes import apps as apps_routes
 from routes import git as git_routes
+from routes import changes as changes_routes
 from services import app_registry
 import asyncio
 import datetime as _dt
@@ -337,6 +338,10 @@ app.include_router(worktrees.router, prefix="/worktrees", tags=["worktrees"], de
 # 2026-08-22 sec 13.1). Below /worktrees in the layering: /worktrees resolves a
 # project slug and calls the same service, this one takes the repo path.
 app.include_router(git_routes.router, dependencies=_OPERATOR)  # /git
+# The reviewable artifact a branch produces (changes-and-review-2026-08-22 C1).
+# ABOVE /worktrees in the layering: it calls that service's published surface
+# for the branch state and the diff, and nothing below it knows what a change is.
+app.include_router(changes_routes.router, dependencies=_OPERATOR)  # /changes
 app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], dependencies=_OPERATOR)
 # Grants + Stores (Phase 4). /base-apps/grants stays as a thin alias in base_apps
 # until Phase 5; this is the real grants router (/grants, /grants/mint,

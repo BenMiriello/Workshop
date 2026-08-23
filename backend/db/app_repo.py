@@ -25,7 +25,8 @@ from sqlalchemy.orm import Session
 from db.ids import uuid7
 
 __all__ = [
-    "upsert_app", "get_app", "get_app_by_slug", "list_apps", "update_app",
+    "upsert_app", "get_app", "get_app_by_slug", "get_app_by_project_slug",
+    "list_apps", "update_app",
     "delete_app", "list_chats_for_app", "set_thread_app_id",
     "count_chats_for_app",
 ]
@@ -83,6 +84,26 @@ def get_app_by_slug(s: Session, org_id: UUID | str, slug: str) -> dict | None:
         "SELECT * FROM app WHERE org_id = :org AND slug = :slug "
         "AND deleted_at IS NULL"),
         {"org": str(org_id), "slug": slug}).one_or_none())
+
+
+def get_app_by_project_slug(s: Session, org_id: UUID | str,
+                            project_slug: str) -> dict | None:
+    """The app whose working tree is this project, if any.
+
+    The reverse of the `project_slug` bridge column, riding the index that
+    already exists for it (`ix_app_project_slug`). A caller that starts from a
+    working tree -- anything branch- or change-shaped -- has a project slug and
+    needs the app row; a caller that starts from the UI has the app id. Both
+    directions belong here rather than in a hand-written query per caller.
+
+    Returns None when no app is linked to that tree, which is the normal state
+    for a project that is not an app (the two registries are still unlinked;
+    see app-is-the-entity-2026-08-20.md sec 9).
+    """
+    return _row(s.execute(text(
+        "SELECT * FROM app WHERE org_id = :org AND project_slug = :p "
+        "AND deleted_at IS NULL ORDER BY created_at LIMIT 1"),
+        {"org": str(org_id), "p": project_slug}).one_or_none())
 
 
 def list_apps(s: Session, org_id: UUID | str, *, kind: str | None = None,

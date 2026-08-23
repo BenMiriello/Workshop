@@ -25,6 +25,7 @@ Public surface:
   merge_branch(project_slug, branch_slug, *, message="") -> dict
   discard_branch(project_slug, branch_slug) -> dict
   diff_branch(project_slug, branch_slug) -> dict
+  branch_state(project_slug, branch_slug) -> dict
   publish_branch(project_slug, branch_slug, *, title="", body="") -> dict
   cleanup_merged(project_slug) -> dict
   repo_state(project_slug) -> dict
@@ -260,6 +261,42 @@ def diff_branch(project_slug: str, branch_slug: str) -> dict:
                                      paths=[path]),
         })
     return {"summary": summary, "files": files}
+
+
+def branch_state(project_slug: str, branch_slug: str) -> dict:
+    """Where a branch stands against the base it will merge into.
+
+    `{project_slug, branch_slug, branch, base_ref, head_sha, ahead, behind,
+    exists}`. `exists` is False when the ref does not resolve at all, and then
+    `head_sha` is None and the counts are zero.
+
+    PUBLISHED FOR THE LAYER ABOVE. `services/changes.py` has to ask "is this
+    branch ahead of its base, and at what sha" before it can open a change, and
+    the two things that answer it here -- which project a slug names, and what
+    this project's canonical base ref is -- are branch-record policy that lives
+    in this module (`_project_dir`, `_canonical_branch`). Exposing the answer
+    is what stops the layer above reaching into those internals or growing its
+    own second definition of "the base branch", which is the drift
+    workspace-ownership-and-leases-2026-08-22.md sec 13.2 exists to prevent.
+    """
+    project_slug = _validate_slug(project_slug, "project_slug")
+    branch_slug = _validate_slug(branch_slug, "branch_slug")
+    project_dir = _project_dir(project_slug)
+    branch = _branch_name(project_slug, branch_slug)
+    base = _canonical_branch(project_slug, project_dir)
+    head_sha = git_service.rev_parse(project_dir, branch, verify=True)
+    counts = ({"ahead": 0, "behind": 0} if head_sha is None
+              else git_service.ahead_behind(project_dir, base, branch))
+    return {
+        "project_slug": project_slug,
+        "branch_slug": branch_slug,
+        "branch": branch,
+        "base_ref": base,
+        "head_sha": head_sha,
+        "ahead": counts["ahead"],
+        "behind": counts["behind"],
+        "exists": head_sha is not None,
+    }
 
 
 def merge_branch(project_slug: str, branch_slug: str, *, message: str = "") -> dict:
