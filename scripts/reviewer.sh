@@ -115,6 +115,25 @@ export WORKSHOP
 ROOT=${REVIEWER_ROOT:-$WORKSHOP}
 BASELINE=${1:-HEAD}
 LOG=$WORKSHOP/.runtime/reviewer.log
+
+# A BASELINE THE WORKSHOP REPO CAN RESOLVE. Most gates below inspect $ROOT, but
+# the three whole-tree ones (no-hardcoding, module-layout, no-app-names) measure
+# $WORKSHOP by construction, and their `--since` mode resolves the ref with
+# `git archive` IN $WORKSHOP. On a per-project run (REVIEWER_ROOT=projects/<slug>,
+# a separate git repo -- seven of them exist) $BASELINE is a sha from THAT repo,
+# which the workshop repo has never heard of: all three would exit 2, read as
+# `fail`, and reject a project run over workshop debt it could not have touched.
+# That is the same "blamed for what it did not cause" defect the --since work of
+# 2026-08-23 exists to remove, so it must not be reintroduced by the fix.
+#
+# The workshop's own HEAD is the honest answer for that case: a project run
+# changed nothing in the workshop tree, so it made none of these metrics worse,
+# and HEAD-vs-working-tree says exactly that. When ROOT is the workshop (the
+# normal case) $BASELINE resolves and this is a no-op.
+WS_BASELINE="$BASELINE"
+if ! git -C "$WORKSHOP" rev-parse --verify --quiet "${BASELINE}^{commit}" >/dev/null 2>&1; then
+  WS_BASELINE="HEAD"
+fi
 STRICT=${REVIEWER_STRICT:-0}
 
 mkdir -p "$(dirname "$LOG")"
@@ -335,7 +354,7 @@ unset _APPS_CORE _APPS_FORBIDDEN _APPS_RELEVANT _apf
 # for identity references that existed at its own base commit.
 HARDCODE_CHECK="skip"
 if [[ -x "$WORKSHOP/scripts/check_no_hardcoding.sh" ]]; then
-  if bash "$WORKSHOP/scripts/check_no_hardcoding.sh" --since "$BASELINE" >/dev/null 2>&1; then
+  if bash "$WORKSHOP/scripts/check_no_hardcoding.sh" --since "$WS_BASELINE" >/dev/null 2>&1; then
     HARDCODE_CHECK="ok"
   else
     HARDCODE_CHECK="fail"
@@ -402,7 +421,7 @@ fi
 MODULE_LAYOUT_CHECK="skipped"
 if printf '%s\n' "$CHANGED_ALL" | grep -qE '^backend/.*\.py$'; then
   if [[ -f "$WORKSHOP/scripts/check_module_layout.py" && -f "$WORKSHOP/scripts/module_layout_baseline.json" ]]; then
-    if python3 "$WORKSHOP/scripts/check_module_layout.py" --since "$BASELINE" >/dev/null 2>&1; then
+    if python3 "$WORKSHOP/scripts/check_module_layout.py" --since "$WS_BASELINE" >/dev/null 2>&1; then
       MODULE_LAYOUT_CHECK="ok"
     else
       MODULE_LAYOUT_CHECK="fail"
@@ -517,7 +536,7 @@ fi
 # app-separation-and-github-2026-08-20.md.
 NO_APP_NAMES_CHECK="skipped"
 if [[ -f "$WORKSHOP/scripts/check_no_app_names.py" && -f "$WORKSHOP/scripts/no_app_names_baseline.json" ]]; then
-  if python3 "$WORKSHOP/scripts/check_no_app_names.py" --since "$BASELINE" >/dev/null 2>&1; then
+  if python3 "$WORKSHOP/scripts/check_no_app_names.py" --since "$WS_BASELINE" >/dev/null 2>&1; then
     NO_APP_NAMES_CHECK="ok"
   else
     NO_APP_NAMES_CHECK="fail"
