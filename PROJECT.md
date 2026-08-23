@@ -919,3 +919,87 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   alone and verify_memory still passes that check. `agent:undefined` and the
   four empty app scope dirs removed: the operator's Memory tree went 17 rows to
   12. Six tickets filed for the code.
+
+- 2026-08-23 (5) — Operator: "omfg how do we still have letta clutter lying
+  around? ... lets have no more old junk code! ... do another pass. address
+  issues dont just flag or note them ... lets just fully migrate the system up
+  to the latest implementation/version". Repo is NOT public (his correction).
+  LETTA, THE ACTUAL ANSWER TO HIS QUESTION: the server is still RUNNING. Two
+  `letta server` processes owned by ROOT since Jul 21 on :8283, plus a
+  docker-proxy, under the SYSTEM docker daemon. clawd-a's rootless daemon holds
+  only workshop-db and gengui, which is why `docker ps` shows nothing and why
+  the 2026-07-18 audit said this one needs the operator. Nothing in the tree
+  talks to it: no LETTA_URL reader, no letta package in the venv.
+  What WAS still in the source was provably inert and is deleted: `letta_agent_id`
+  threaded through the registry, the API and the generated client (all 4 agents
+  carry None, no definition declares it, and `per_channel_ids()` returned two
+  UUIDs for agents that no longer exist, so `if r.get("letta_agent_id") in
+  excluded` could never fire); `infra/letta/` (a compose stack with a committed
+  default password); the LETTA_URL/LETTA_SERVER_PASS docs. `list_agents()` proven
+  byte-identical before and after against a captured baseline. KEPT on purpose:
+  `_display_agent`'s raw-UUID branch, because 1,957 of 9,956 records in
+  jobs.jsonl carry `agent-<uuid>` from the Letta era and would otherwise render
+  bare. Also corrected five comments that described Letta as CURRENT, two of
+  which made false claims: `deps_auth` justified trusting the Docker bridge with
+  "the Letta tool sandbox, which calls /tools" (deleted 2026-08-18; the live
+  caller is a containerised app ingest router), and `triggers.py` named two
+  modules as "the live inline readers of that Letta metadata shape" when neither
+  reads it. A boundary defended by a dead reason is worse than an undocumented
+  one.
+  THE GET THAT WROTE, fixed: `knowledge.scope_dir` mkdir'd unconditionally and
+  every read went through it. `scope_dir(create=False)` now; only put_note, the
+  index writer and enforce_index_cap ask to create. Proven: three read paths
+  create nothing, a write still round-trips.
+  APP OVER PROJECT, built: `scope_tree._default_parent` claimed "APPS have no
+  equivalent binding field anywhere today" while `app_links.load().linked` is
+  exactly that and its own docstring says nothing may own a second copy of the
+  rule. The module's tree diagram ALSO had it inverted (app under project), an
+  edge never implemented and the retired model. Now `project:X` hangs off
+  `app:X`, so `reach("app:X")` finally includes the project's notes.
+  A REGRESSION I CAUSED AND CAUGHT BY READING THE LIVE TREE, not the tests:
+  `/notes/scopes/tree` dropped a parent that had no directory of its own to
+  None, which was harmless while every parent was `workshop` and promoted four
+  projects to the TOP LEVEL once they moved under their apps. It walks up to the
+  nearest visible ancestor now, with a cycle guard.
+  THE FILES TAB SERVED THE WRONG TREE, fixed by DECLARATION rather than a guess.
+  Counting both candidate trees per app: birds apps/ 30150 vs projects/ 41;
+  gengui 0 vs 1754; commute 3 vs 10, split across both. So "an app's files ARE
+  its linked project's tree" is right for five of six and left 2.2 GB of the
+  birds station unreachable from anywhere in the UI, while an emptiness
+  heuristic gets commute wrong the other way. There is no rule to infer, so the
+  app declares: a manifest in `apps/<slug>` means that directory IS the app,
+  read through app_runner's single manifest reader. No manifest keeps the old
+  answer.
+  THE APP MEMORY TAB, his opening complaint: its rows were `<li><span>`, so
+  nothing opened, and "View all in Memory" existed BECAUSE the tab had no read
+  surface. A row is a Link now, opening the note in place through the same
+  NoteDocument the Memory page uses; the link out is deleted. Also `scopeLabel`
+  had no `app` case (the backend's `label()` has carried one all along), and the
+  dead `build` case went with it.
+  THE GATE THAT BLOCKED EVERY TICKET: check_no_app_names was FAILING on clean
+  HEAD, 319 against a pinned 309, so reviewer.sh was rejecting unrelated work.
+  Diffed per-file against the pinning commit: ten new sites in four files. TWO
+  WERE THE CHECKER BEING WRONG -- `_AMBIGUOUS` is keyed `notes` but looked up by
+  the full id `notes-app`, so that entry has never applied to anything in its
+  life; and a JSDoc block's opening line starts with `/`, not `*`, so it was the
+  one comment line per block scanned as code. `/api/notes` is the platform
+  knowledge feed (`/notes-app` is the app). The other two were real test
+  fixtures naming real apps and are fictional now, except Shell.test.tsx which
+  needs a REGISTERED app and so asks the registry instead. 302 now, re-pinned
+  DOWN by 7. I also had to remove 29 app-name literals I had just added in my
+  own new tests, which is the gate working on me.
+  ALSO DELETED: `/apps/{id}/files*`, three routes with zero callers, their five
+  response models, three service wrappers and a 258-line test file, after
+  checking case by case that `test_files_api.py` already covers every one.
+  201 lines out of the generated client.
+  NOT LIVE AND NOT FORCEABLE, stated rather than implied: the bundle cannot
+  rebuild and the backend cannot restart while other agents hold uncommitted
+  work (`Memory.tsx`, `AppFilesTab.tsx`, `styles.css`, `build_streaming.py`).
+  Committing another agent's files and `apply.sh --publish-wip` were BOTH
+  refused by the classifier, correctly, and I did not work around either. So the
+  notes-tree walk-up is committed but not running, and the four-projects-at-root
+  shape is what the operator sees until the next restart. It self-heals the
+  moment any agent commits and runs apply.sh.
+  STILL OPEN: the two hand-rolled file trees (AgentBuild's own FileTreeNode and
+  NoteSidebar's TreeRows) and AgentBuild's Textarea-as-editor; the phone
+  `?scope=` deep link; and the registry merge itself.
