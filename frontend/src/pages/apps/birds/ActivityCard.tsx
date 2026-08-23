@@ -157,8 +157,10 @@ function DayScope({ day, activeDays, onAll, onPick }: {
   day: string | null; activeDays: Set<string>; onAll: () => void; onPick: (date: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // `bird-dayscope` was never defined in any stylesheet, so it styled nothing;
+  // the inline position below is the actual styling.
   return (
-    <div className="bird-dayscope" style={{ position: "relative" }}>
+    <div style={{ position: "relative" }}>
       <div className="ws-segmented" role="group" aria-label="Activity day scope">
         <button type="button" aria-pressed={day === null} onClick={() => { setOpen(false); onAll(); }}>
           All days

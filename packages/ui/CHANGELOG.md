@@ -12,6 +12,27 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.22 - 2026-08-22 - two classes that were referenced and never defined
+
+**Additive only.** Two new rules, one dead className removed from `Map`. No
+export moved and no class was renamed.
+
+A `className` that no rule matches renders UNSTYLED, and nothing caught it:
+`tsc` sees a string, the design gate looks for inline hex and emoji, and the
+tests cover pure modules with no DOM. `scripts/check_undefined_css.py` now gates
+this repo-wide at zero.
+
+- `.ws-chat-card` now sets `min-width: 0`. `Chats.tsx` had always passed the
+  class WITH a comment explaining that it carries exactly this, to stop a long
+  snippet setting the card's min-content width and giving the page a horizontal
+  scroll on a phone. The rule was never written, so the bug its own comment
+  described was live the whole time.
+- `.ws-bc__link` joins the existing `.ws-link` rule instead of being a BEM child
+  with no rule and no `.ws-bc` parent. Four pages use it for a quiet "view all"
+  link beside a section heading; it had been rendering as a default browser link.
+- `Map` no longer passes `ws-meta`, which was defined nowhere. Its inline tokens
+  were already doing the styling.
+
 ## 0.5.21 - 2026-08-22 - text fields stop zooming an iOS page in
 
 **Additive only.** Two new tokens and one coarse-pointer block. No export moved,

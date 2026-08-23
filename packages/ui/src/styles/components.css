@@ -108,6 +108,12 @@
  * interacting is the part that is yours. See frontend/CLAUDE.md, "A link is
  * underlined, not tinted".
  */
+/* A quiet "go to the full list" link beside a section heading, used on four
+   pages. It was referenced as `.ws-bc__link` with NO rule anywhere and no
+   `.ws-bc` parent to belong to, so it rendered as a default browser link. It
+   joins the existing link rule rather than getting a fifth spelling of one:
+   same ink, thinned underline, accent on hover. */
+.ws-bc__link,
 .ws-link,
 .ws-sectionhead__link {
   color: inherit;
@@ -118,11 +124,13 @@
   text-underline-offset: 0.15em;
   border-radius: var(--radius-sm);
 }
+.ws-bc__link:hover,
 .ws-link:hover,
 .ws-sectionhead__link:hover {
   color: var(--you);
   text-decoration-color: currentColor;
 }
+.ws-bc__link:focus-visible,
 .ws-link:focus-visible,
 .ws-sectionhead__link:focus-visible { box-shadow: var(--focus-ring); outline: none; }
 .ws-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -566,6 +574,20 @@ a.ws-btn { text-decoration: none; }
    height never depends on whether/how long last_message is. */
 /* Snippet + message count share one row: the snippet takes the slack and clamps,
    the count never shrinks and sits at the baseline of the snippet's last line. */
+/* THE CARD ITSELF. It is a grid item in a raw inline grid on the Chats page,
+   and a grid item's default `min-width: auto` makes it as wide as its widest
+   unbreakable content. A long scope tag or snippet therefore set the card's
+   min-content width and pushed the row past the viewport, giving the whole page
+   a horizontal scroll on a phone. Every other card grid sets this on `.ws-*-grid
+   > li`; this grid has no such rule to hang it on, so the card carries it.
+
+   Chats.tsx has ALWAYS passed this class and said in a comment exactly why. The
+   rule was never written, so the class did nothing and the bug its own comment
+   describes has been live the whole time. Found 2026-08-22 by auditing for class
+   names a component references that no stylesheet defines; scripts/check_undefined_css.py
+   now gates that. */
+.ws-chat-card { min-width: 0; }
+
 .ws-chat-card__last {
   display: flex;
   align-items: flex-end;

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Rocket, RefreshCw, ExternalLink, Ban, Power } from "lucide-react";
-import { Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill, Badge, Tag, Skeleton, Field, Input, Modal, ConfirmDialog, type StatusKind, TableScroll, Table, timeAgo, shortHttpError } from "@workshop/ui";
+import { Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill, Badge, Tag, Skeleton, Field, Input, Modal, ConfirmDialog, type StatusKind, TableScroll, Table, Segmented, timeAgo, shortHttpError } from "@workshop/ui";
 
 import { shortSha } from "../lib/sha";
 
@@ -163,19 +163,17 @@ export default function Deploys() {
       )}
 
       <Row wrap between style={{ marginBottom: "var(--space-4)" }}>
-        <Row wrap style={{ gap: "var(--space-2)" }}>
-          {chips.map((c) => (
-            <button
-              key={c.key}
-              type="button"
-              className={"ws-chip" + (filter === c.key ? " is-active" : "")}
-              onClick={() => setFilter(c.key)}
-              aria-pressed={filter === c.key}
-            >
-              {c.label}
-            </button>
-          ))}
-        </Row>
+        {/* The kit's own filter control, not a hand-rolled button row. These
+            were `.ws-chip`, a class NO stylesheet has ever defined, so they
+            rendered as five unstyled browser buttons and there was no way to
+            see which filter was active except by reading the list. Found
+            2026-08-22 by the undefined-class audit. */}
+        <Segmented
+          options={chips.map((c) => ({ value: c.key, label: c.label }))}
+          value={filter}
+          onChange={setFilter}
+          ariaLabel="Filter deployments"
+        />
         <Field>
           <Input
             placeholder="Filter by project / name / branch"

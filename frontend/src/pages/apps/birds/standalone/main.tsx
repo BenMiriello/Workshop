@@ -103,7 +103,9 @@ function Gate() {
 
   const shell = (children: React.ReactNode) => (
     <div className="ws-root" style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "1rem" }}>
-      <div className="ws-card ws-card--pad-lg" style={{ width: "100%", maxWidth: 360 }}>{children}</div>
+      {/* `ws-card--pad-lg` is not a class the kit has; it styled nothing. The
+          padding is a token here, beside the other inline geometry. */}
+      <div className="ws-card" style={{ width: "100%", maxWidth: 360, padding: "var(--space-5)" }}>{children}</div>
     </div>
   );
 

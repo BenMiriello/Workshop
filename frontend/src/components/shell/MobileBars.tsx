@@ -41,7 +41,9 @@ export function MobileBars({ shell }: { shell: Shell }) {
     <div className="ws-bar1__wrap">
       <div className="ws-bar1">
         <Menu
-          className="ws-bar1__places"
+          // No className: `ws-bar1__places` was never defined, so it did
+          // nothing. Every other ws-bar1__* class has a rule; this one was the
+          // odd one out.
           label="Places"
           trigger={
             <button type="button" className="ws-bar1__tile" aria-label={`${place.name}. Switch place`}>

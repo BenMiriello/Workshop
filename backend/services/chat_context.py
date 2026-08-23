@@ -437,7 +437,20 @@ DELEGATION_RULE = (
     "survives the turn). A subagent is context isolation for THIS reply; a Ticket "
     "or a Workshop agent is durability. Size is not the test.\n\n"
     "NEVER file a ticket merely to get an isolated context, and never delegate "
-    "work whose result you will not check."
+    "work whose result you will not check.\n\n"
+    "WAITING, WATCHING AND BEING WOKEN. You do not have to block a turn on a "
+    "slow thing, and you must never promise to come back later in a reply that "
+    "is about to end. Pick by what you are waiting for: ONE outcome (a build, a "
+    "deploy, a long command) is Bash with run_in_background true, which "
+    "re-invokes you when it exits, so do NOT poll or sleep for it; ONE EVENT PER "
+    "OCCURRENCE (a log line, a file change, a queue moving) is the Monitor tool; "
+    "a prompt at a wall-clock time is CronCreate, which is SESSION-ONLY and dies "
+    "with this session, so anything that must genuinely outlive it is a Ticket "
+    "or the Workshop's own scheduler instead. Most of these are DEFERRED tools: "
+    "only their names are in your prompt, and ToolSearch fetches a schema on "
+    "demand (`select:Monitor,CronCreate`). Fetch the one you need when you need "
+    "it rather than up front. Full table, and the traps that have actually bitten "
+    "agents here: docs/agent-tooling-and-wakeups.md."
 )
 
 

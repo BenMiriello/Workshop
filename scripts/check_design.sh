@@ -302,6 +302,15 @@ else
   bash "$WORKSHOP/scripts/ui_sync.sh" --warn
 fi
 
+# A className no stylesheet defines renders UNSTYLED, and nothing else here sees
+# it: tsc sees a string, the checks above look for inline hex and emoji, and the
+# test suite covers pure modules with no DOM. Five live cases the first time this
+# ran, one of which had been giving the Chats page a horizontal scroll on a phone
+# for as long as the class had existed.
+if ! python3 "$WORKSHOP/scripts/check_undefined_css.py"; then
+  design_status=1
+fi
+
 # The automation only helps if it is switched on, and core.hooksPath is local
 # config that no clone or fresh checkout inherits. Say so rather than let a tree
 # silently stop rebuilding.
