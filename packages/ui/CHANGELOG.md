@@ -12,6 +12,26 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.5.23 - 2026-08-22 - useEditMode saves() catches and exposes saveError
+
+**Additive only (patch).** One new field on `EditMode<T>`, no export removed or
+renamed.
+
+`save()` previously propagated a rejecting `onSave` as an unhandled promise
+rejection at the call site. The CONTRACT is now explicit: `save()` never rejects.
+If `onSave` throws, the error is captured in the new `saveError: string | null`
+field and the hook stays in edit mode so the user can fix and retry. A
+successful save or a call to `begin()` / `cancel()` clears `saveError`.
+
+Migration: replace `void edit.save().catch((e) => setErr(...))` at the call site
+with a `<Notice>` that renders when `edit.saveError` is set. If your `onSave`
+was catching and rethrowing so the hook would stay in edit mode, remove the
+try/catch: the hook now handles that itself.
+
+Also exports `runSave<T>(draft, onSave)` as a tested pure async function — the
+save step isolated from React state, returning `null` on success or the error
+string on failure.
+
 ## 0.5.22 - 2026-08-22 - two classes that were referenced and never defined
 
 **Additive only.** Two new rules, one dead className removed from `Map`. No

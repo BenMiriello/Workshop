@@ -161,9 +161,9 @@ export function NoteDocument({
   const [loaded, setLoaded] = useState<NoteLoaded | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const [saveErr, setSaveErr] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [delErr, setDelErr] = useState<string | null>(null);
 
   // Two reads, because the store answers two questions in two places: the
   // per-note GET carries the body and the provenance, and title/hook/updated
@@ -209,24 +209,16 @@ export function NoteDocument({
 
   const onSave = useCallback(
     async (draft: NoteDraft) => {
-      setSaveErr(null);
-      try {
-        await sendJson(`${base}/${encodeURIComponent(noteId)}`, "PUT", {
-          title: draft.title.trim(),
-          content: draft.content,
-          hook: draft.hook.trim(),
-          // `author` is deliberately omitted: an edit does not reassign who
-          // wrote the note. The two facets ARE sent, since the operator just
-          // chose them.
-          note_type: draft.type,
-          pinned: draft.pinned,
-        });
-      } catch (e) {
-        setSaveErr(e instanceof Error ? e.message : String(e));
-        // Rethrown so `useEditMode` keeps the draft and stays in edit mode: a
-        // save that failed must not look like one that worked.
-        throw e;
-      }
+      await sendJson(`${base}/${encodeURIComponent(noteId)}`, "PUT", {
+        title: draft.title.trim(),
+        content: draft.content,
+        hook: draft.hook.trim(),
+        // `author` is deliberately omitted: an edit does not reassign who
+        // wrote the note. The two facets ARE sent, since the operator just
+        // chose them.
+        note_type: draft.type,
+        pinned: draft.pinned,
+      });
       setLoaded((prev) => (prev ? { ...prev, ...draft, title: draft.title.trim(), hook: draft.hook.trim() } : prev));
       onChanged();
     },
@@ -242,7 +234,7 @@ export function NoteDocument({
       setConfirmDel(false);
       onDeleted();
     } catch (e) {
-      setSaveErr(e instanceof Error ? e.message : String(e));
+      setDelErr(e instanceof Error ? e.message : String(e));
       setConfirmDel(false);
     } finally {
       setDeleting(false);
@@ -293,7 +285,7 @@ export function NoteDocument({
         )}
       </Row>
 
-      {saveErr && <Notice tone="error" detail={saveErr}>That didn't save.</Notice>}
+      {edit.saveError && <Notice tone="error" detail={edit.saveError}>That didn't save.</Notice>}
 
       {edit.editing ? (
         <>
@@ -345,7 +337,7 @@ export function NoteDocument({
             ariaLabel="Note body, markdown source"
           />
           <ActionBar flash={edit.flash ? "Saved" : undefined}>
-            <Button variant="primary" loading={edit.saving} onClick={() => { void edit.save().catch(() => {}); }}>
+            <Button variant="primary" loading={edit.saving} onClick={() => { void edit.save(); }}>
               Save
             </Button>
             <Button variant="ghost" onClick={edit.cancel}>Cancel</Button>
@@ -369,6 +361,7 @@ export function NoteDocument({
         </>
       )}
 
+      {delErr && <Notice tone="error" detail={delErr}>Couldn't delete this note.</Notice>}
       <ConfirmDialog
         open={confirmDel}
         onCancel={() => setConfirmDel(false)}
@@ -396,8 +389,6 @@ export function DocDocument({
   const [file, setFile] = useState<FileContent | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const [saveErr, setSaveErr] = useState<string | null>(null);
-
   useEffect(() => {
     let live = true;
     setFile(null);
@@ -418,15 +409,9 @@ export function DocDocument({
 
   const onSave = useCallback(
     async (draft: { content: string }) => {
-      setSaveErr(null);
-      try {
-        // The docs write route, unchanged: it writes into the working tree and
-        // does not commit, which is the contract the copy below states.
-        await sendJson("/api/documents/file", "PUT", { path, content: draft.content });
-      } catch (e) {
-        setSaveErr(e instanceof Error ? e.message : String(e));
-        throw e;
-      }
+      // The docs write route, unchanged: it writes into the working tree and
+      // does not commit, which is the contract the copy below states.
+      await sendJson("/api/documents/file", "PUT", { path, content: draft.content });
       setFile((prev) => (prev ? { ...prev, content: draft.content } : prev));
       onChanged();
     },
@@ -479,7 +464,7 @@ export function DocDocument({
               : "This file is read only."}
         </p>
       )}
-      {saveErr && <Notice tone="error" detail={saveErr}>That didn't save.</Notice>}
+      {edit.saveError && <Notice tone="error" detail={edit.saveError}>That didn't save.</Notice>}
 
       {edit.editing ? (
         <>
@@ -495,7 +480,7 @@ export function DocDocument({
             ariaLabel={`${title}, markdown source`}
           />
           <ActionBar flash={edit.flash ? "Saved" : undefined}>
-            <Button variant="primary" loading={edit.saving} onClick={() => { void edit.save().catch(() => {}); }}>
+            <Button variant="primary" loading={edit.saving} onClick={() => { void edit.save(); }}>
               Save
             </Button>
             <Button variant="ghost" onClick={edit.cancel}>Cancel</Button>

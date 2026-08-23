@@ -75,7 +75,6 @@ function FilePane({
 }) {
   const [file, setFile] = useState<FileContent | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [saveErr, setSaveErr] = useState<string | null>(null);
   const endpoint =
     `/api/files/content?workspace=${encodeURIComponent(workspace)}&path=${encodeURIComponent(path)}`;
 
@@ -94,7 +93,6 @@ function FilePane({
   useEffect(() => { load(); }, [load]);
 
   const edit = useEditMode({ content: file?.content ?? "" }, async (draft) => {
-    setSaveErr(null);
     const r = await fetch("/api/files/content", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -103,12 +101,6 @@ function FilePane({
     if (!r.ok) throw new Error((await readFailure(r)).message);
     setFile((f) => (f ? { ...f, content: draft.content } : f));
   });
-
-  const save = () => {
-    void edit.save().catch((e: unknown) => {
-      setSaveErr(e instanceof Error ? e.message : String(e));
-    });
-  };
 
   // The editor is live, so the first keystroke is what opens the edit. `begin`
   // seeds the draft from the current file and `set` applies over it: React
@@ -170,11 +162,11 @@ function FilePane({
       )}
       {/* A save that failed leaves the editor on screen with the text still in
           it, so this is a line beside content, not a region that replaces it. */}
-      {saveErr && (
+      {edit.saveError && (
         <Notice
           tone="error"
-          detail={saveErr}
-          action={<Button size="sm" variant="ghost" onClick={save} loading={edit.saving}>Retry</Button>}
+          detail={edit.saveError}
+          action={<Button size="sm" variant="ghost" onClick={() => { void edit.save(); }} loading={edit.saving}>Retry</Button>}
         >
           Couldn't save this file.
         </Notice>
@@ -195,7 +187,7 @@ function FilePane({
         <ActionBar flash={edit.flash ? "Saved" : undefined}>
           {edit.editing && (
             <>
-              <Button variant="primary" onClick={save} loading={edit.saving} disabled={!edit.dirty}>
+              <Button variant="primary" onClick={() => { void edit.save(); }} loading={edit.saving} disabled={!edit.dirty}>
                 Save
               </Button>
               <Button variant="ghost" onClick={edit.cancel} disabled={edit.saving}>Cancel</Button>
