@@ -441,6 +441,48 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   worker cannot be launched from inside a confined chat turn (its own bwrap cannot
   bind host paths), which is exactly why the backend must be the thing that
   spawns it -- the reconciler.
+- 2026-08-23 (3) — Operator: "Have subagents build the remaining phases."
+  All three remaining tool stages built by supervised subagents, plus a finding
+  that mattered more than any of them.
+  THE FINDING: FOUR tickets were sitting blocked, every one on
+  "touches violation: wrote outside the task's declared globs", and every one
+  naming files that were provably ANOTHER agent's (a worktree migration,
+  check_no_app_names.py, workshop_public_app.py, two HANDOFF docs, schema.gen.ts).
+  touches is a POST-HOC check on the committed git diff, so on a shared checkout
+  a concurrent agent's commits land inside the worker's diff and the gate blames
+  the worker. Two of the four (the desktop file tree, the MemoryDrill fold) had
+  their work COMPLETE and in HEAD at the moment they were blocked, verified
+  commit by commit, so the gate is not merely noisy: it parks finished work and
+  burns the attempts. Both closed on the evidence; the defect is filed (5d557e2a)
+  as its own ticket rather than worked around. Same family as the 2026-08-22 note
+  that a worker's reviewer judged another agent's commits because its baseline
+  predated them.
+  STAGE 3 found a FIFTH private tool list nobody had catalogued: `tool_flags`
+  carried its own literal {Write, Edit, MultiEdit} deciding the write-boundary
+  nudge. The unification was proven rather than asserted, with a harness
+  evaluating all sources at the pre-refactor commit and on the live tree across
+  every role, provider and narrowing case: every value identical, and the argv
+  matrix byte-identical. One genuine disagreement was left standing and named
+  (build_streaming's _WRITE_TOOLS includes NotebookEdit and tool_flags does not),
+  because resolving it is a behaviour question, not a cleanup.
+  STAGE 4: a declared command tool now runs. It rides the EXISTING workshop MCP
+  server rather than a second one, so its name is an ordinary
+  mcp__workshop__<id> arriving on the argv tool_flags already builds, which is
+  what keeps the single enforcement point single. The deny list is checked at
+  registration (the good error, naming the pattern) AND at run time on the
+  resolved argv (the load-bearing one, since a tool declared before a pattern was
+  added would otherwise slip through). Proven live: the tool listed, ran confined
+  at /workspace, and both refusals fired.
+  STAGE 6: the Tools page. Its own report is the best argument for the screenshot
+  rule: typecheck, check_design and 1,305 tests were green over a five-column
+  layout that put the Owner column, the one thing the page exists to answer, off
+  the right edge of a phone. Four rounds of shoot-and-look fixed it.
+  ALSO: an orphaned uncommitted docstring edit on tool_registry.py had blocked
+  apply.sh from restarting the backend across several agents. Landed rather than
+  reverted, after proving by AST comparison that it changes zero executable code.
+  Reverting would have destroyed someone's work; leaving it would have kept the
+  backend stale indefinitely.
+
 - 2026-08-23 (2) — Operator: the screenshot tool was too stack-specific to make
   permanent as written ("better just to build in generalized tools and inform the
   system a default way to configure the rest"); tool call definitions must be
