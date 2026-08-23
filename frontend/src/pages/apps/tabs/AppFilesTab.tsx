@@ -31,15 +31,17 @@
 // addressed by workspace reference rather than by app id. The older
 // `/api/apps/{id}/files*` routes are the same service through a second door and
 // are parked for retirement in sec 8; nothing new should be built on them.
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { FolderTree, Lock } from "lucide-react";
+import { Lock } from "lucide-react";
 import {
-  Badge, Button, Card, DetailLayout, DocumentBar, FileDrill, FileTree, Notice, SectionLabel,
+  Badge, Button, Card, DocumentBar, Field, FileDrill, FileTree, Input, Modal, Notice,
   Skeleton, Stack, StateBlock, cx, documentBar, drillTrail, formatBytes, shortHttpError, timeAgo,
   useEditMode,
   type FileDrillTrail, type FileTreeAdapter, type FileTreeNode,
 } from "@workshop/ui";
+import { useDirectoryPage } from "../../../components/shell/directory";
 import { Editor, languageForPath } from "@workshop/ui/editor";
 import type { components } from "../../../api/schema.gen";
 import type { AppRecord } from "../../../lib/apps";
@@ -247,21 +249,122 @@ function FilePane({
   );
 }
 
+// ---- toolbar inside the directory panel ------------------------------------
+
+function DirToolbar({
+  filter,
+  onFilter,
+  onNew,
+}: {
+  filter: string;
+  onFilter: (v: string) => void;
+  onNew: () => void;
+}) {
+  const [filterOpen, setFilterOpen] = useState(false);
+  const toggleFilter = () => {
+    if (filterOpen) onFilter("");
+    setFilterOpen((p) => !p);
+  };
+  return (
+    <>
+      <div className="ws-pagecol__dirtoolbar__row">
+        <Button size="sm" onClick={onNew}>New</Button>
+        <Button size="sm" variant="ghost" onClick={toggleFilter}>Filter</Button>
+      </div>
+      {filterOpen && (
+        <div className="ws-pagecol__dirtoolbar__filter">
+          <Input
+            value={filter}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => onFilter(e.target.value)}
+            placeholder="Filter files"
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+function NewFileModal({
+  open,
+  onClose,
+  workspace,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  workspace: string;
+  onCreated: (path: string) => void;
+}) {
+  const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const create = async () => {
+    if (!path.trim()) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/files/content", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace, path: path.trim(), content: "" }),
+      });
+      if (!r.ok) {
+        const { message } = await readFailure(r);
+        throw new Error(message);
+      }
+      onCreated(path.trim());
+      setPath("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="New file"
+      actions={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" loading={busy} onClick={() => { void create(); }}>Create</Button>
+        </>
+      }
+    >
+      {err && <Notice tone="error">{err}</Notice>}
+      <Field label="Path">
+        <Input
+          data-autofocus
+          value={path}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPath(e.target.value)}
+          onKeyDown={(e: React.KeyboardEvent) => { if (e.key === "Enter") void create(); }}
+          placeholder="src/hello.py"
+        />
+      </Field>
+    </Modal>
+  );
+}
+
 // ---- the tree ---------------------------------------------------------------
 //
-// TWO SHAPES, ONE ADAPTER. A wide screen gets the two-pane `DetailLayout`: the
-// tree in the rail, the file beside it. A phone gets the tree AS THE PAGE,
-// drilled one level at a time, with Up walking back out of it
-// (docs/platform-redesign/navigation-shell-2026-08-20.md section 8.6, "the file
-// tree is the page content and drills in place, with Up walking the tree").
+// TWO SHAPES, ONE ADAPTER. On a wide screen the tree lives in column two via
+// the directory takeover (`useDirectoryPage`): the page column slides the list
+// out and the tree in, and the file fills the content column beside it. On a
+// phone the tree IS the page, drilled one level at a time with Up walking back
+// out (docs/platform-redesign/navigation-shell-2026-08-20.md section 8.6).
 //
-// It used to render `DetailLayout` unconditionally, which on a phone stacks the
-// rail above the main column: the picker and the file it picked ended up in one
-// page scroll, with the tree additionally scrolling inside a 65vh card. Two
-// nested scrollers, and the file you opened below the fold. Reported 2026-08-22.
-// So the drill is a DIFFERENT TREE, not the same one restyled, which is exactly
-// what `useIsWide` is for (see lib/useMediaQuery.ts): rendering both and hiding
-// one in CSS would mount every row twice and fetch every level twice.
+// The wide screen used to render `DetailLayout` with the tree in the rail
+// (right-hand card). That put the tree in the content area, not in column two,
+// and violated shell-mockup-spec-2026-08-22.md section 5. Fixed 2026-08-23.
+//
+// It also used to render `DetailLayout` unconditionally, which on a phone
+// stacked the rail above the main column: picker + file in one page scroll with
+// the tree scrolling inside a 65vh card. Two nested scrollers, file below the
+// fold. Reported 2026-08-22. The drill is a DIFFERENT TREE, not the same one
+// restyled, which is exactly what `useIsWide` is for (lib/useMediaQuery.ts).
 //
 // Up is STRUCTURAL, not Back (section 8.1). From an open file it goes to the
 // level that file is IN, whether you drilled there or arrived on a deep link,
@@ -360,6 +463,39 @@ function FilesBody({ app }: { app: AppRecord }) {
   // column (components/shell/places.ts) and the path these tab routes hang off.
   const leaveFiles = useCallback(() => { navigate(`/apps/${app.slug}`); }, [navigate, app.slug]);
 
+  // Wide: tree in column two via directory takeover. The tree IS the navigator,
+  // so it opens automatically (calling onNeedColumn to open the column too).
+  const { host, toolbarHost, setOpen } = useDirectoryPage({
+    pageId: "files",
+    label: "Files",
+    enabled: isWide,
+    hasToolbar: true,
+  });
+
+  const [filter, setFilter] = useState("");
+  const [newFileOpen, setNewFileOpen] = useState(false);
+
+  useEffect(() => {
+    if (isWide && host) setOpen(true);
+  }, [isWide, host, setOpen]);
+
+  // Filtered adapter: only wraps when a filter is typed. A new adapter object
+  // resets the tree, which is acceptable for a deliberate filter action.
+  const filteredAdapter = useMemo<FileTreeAdapter>(() => {
+    if (!filter.trim()) return adapter;
+    const term = filter.toLowerCase();
+    return {
+      root: adapter.root,
+      children: async (node: FileTreeNode) => {
+        const result = await adapter.children(node);
+        return {
+          ...result,
+          nodes: result.nodes.filter((n: FileTreeNode) => n.label.toLowerCase().includes(term)),
+        };
+      },
+    };
+  }, [adapter, filter]);
+
   // The shell half of the takeover: while a file is open on a phone, the page
   // toolbar collapses to zero and its caret is not drawn (spec sections 1.1 and
   // 6). Declared here rather than inside FilePane so it is raised for exactly
@@ -400,30 +536,43 @@ function FilesBody({ app }: { app: AppRecord }) {
     );
   }
 
+  // Wide: tree portalled into column two, file in the content area.
   return (
-    <DetailLayout
-      rail={
-        <Stack gap="sm">
-          <SectionLabel icon={<FolderTree aria-hidden />}>Files</SectionLabel>
-          <Card compact style={{ maxHeight: "65vh", overflow: "auto" }}>
-            <FileTree
-              adapter={adapter}
-              selectedId={selected}
-              onSelect={onSelect}
-              defaultOpenIds={openIds}
-              label={`${app.name} files`}
-              emptyTitle="No files here"
-              emptyHint="Add a file to this app's project tree and it shows up here."
-            />
-          </Card>
-        </Stack>
+    <>
+      {host && createPortal(
+        <FileTree
+          adapter={filteredAdapter}
+          selectedId={selected}
+          onSelect={onSelect}
+          defaultOpenIds={openIds}
+          label={`${app.name} files`}
+          emptyTitle="No files here"
+          emptyHint="Add a file to this app's project tree and it shows up here."
+        />,
+        host,
+      )}
+      {toolbarHost && createPortal(
+        <DirToolbar filter={filter} onFilter={setFilter} onNew={() => setNewFileOpen(true)} />,
+        toolbarHost,
+      )}
+      <NewFileModal
+        open={newFileOpen}
+        onClose={() => setNewFileOpen(false)}
+        workspace={workspace}
+        onCreated={(path) => {
+          setNewFileOpen(false);
+          setParams((prev) => {
+            const next = new URLSearchParams(prev);
+            next.set("path", path);
+            return next;
+          }, { replace: true });
+        }}
+      />
+      {selected
+        ? <FilePane key={selected} workspace={workspace} path={selected} />
+        : <StateBlock title="No file open" hint="Pick a file in the tree to read or edit it." />
       }
-      main={
-        selected
-          ? <FilePane key={selected} workspace={workspace} path={selected} />
-          : <StateBlock title="No file open" hint="Pick a file in the tree to read or edit it." />
-      }
-    />
+    </>
   );
 }
 
