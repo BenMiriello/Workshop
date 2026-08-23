@@ -10,8 +10,8 @@ just two things:
      forwarding the cookie and the CSRF header so the backend can enforce identity.
 
 CRITICAL: it proxies ONLY a safe surface. The backend's internal/ingest endpoints
-(/tools, /relay, /services, /events, /plaid/webhook, and every */webhook,
-*/ingest, /location/owntracks, /birds/analyze, /birds/live/publish) are gated by
+(/relay, /events, /plaid/webhook, and every */webhook, */ingest,
+/location/owntracks, /birds/analyze, /birds/live/publish) are gated by
 require_loopback / require_internal_caller. Because this proxy reaches the backend
 FROM loopback, forwarding those paths would let a public visitor inherit loopback
 trust. So they are explicitly BLOCKED here (404) and never reach the backend. The
@@ -75,7 +75,7 @@ _BLOCKED_PREFIXES = (
     # per-prefix and they cannot be separated from the ingest they share a
     # router with without giving them their own authed prefix, which a raw JSONL
     # tail does not earn.
-    "/tools", "/relay", "/events", "/auto-pr",
+    "/relay", "/events", "/auto-pr",
 )
 
 # An app's own unauthenticated ingest paths are declared on its AppSpec
