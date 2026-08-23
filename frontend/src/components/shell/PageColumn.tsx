@@ -82,6 +82,13 @@ export function PageColumn({ shell }: { shell: Shell }) {
                   className={"ws-pagerow" + (active ? " is-active" : "")}
                   aria-current={active ? "page" : undefined}
                   tabIndex={rowsFocusable ? undefined : -1}
+                  // THE TRIGGER (mockup spec section 5): "tapping the page you
+                  // are ALREADY on opens its tree". Only on the directory row,
+                  // and only when the tree is hidden, so every other row is an
+                  // ordinary link and this one still is when it is not the page
+                  // you are on. The navigation is suppressed because there is
+                  // none to make: it is the route you are already at.
+                  onClick={isDirRow ? (e) => { e.preventDefault(); setOpen(true); } : undefined}
                 >
                   <Icon size={14} aria-hidden />
                   <span className="ws-pagerow__label">{p.label}</span>
@@ -117,14 +124,20 @@ export function PageColumn({ shell }: { shell: Shell }) {
           className={"ws-pagecol__dir" + (takeover ? " is-in" : "")}
           aria-hidden={takeover ? undefined : true}
         >
+          {/* THE BACK HEADER, 46px and the whole row (mockup spec section 5).
+              Not a page row: it is the panel's own header, so it spans the
+              column and carries the hairline that separates it from the tree
+              rather than sitting inset as a pill. No ref beside the title:
+              design doc section 8.2 rejects the pill and there is no branch
+              here to name. */}
           <button
             type="button"
-            className="ws-pagerow ws-pagecol__dirhead is-active"
+            className="ws-pagecol__dirhead"
             onClick={() => setOpen(false)}
             tabIndex={takeover && columnOpen ? undefined : -1}
             aria-label={`Back to the ${place.name} pages`}
           >
-            <ChevronLeft size={14} aria-hidden />
+            <ChevronLeft size={15} aria-hidden />
             <span className="ws-pagerow__label">{registration?.label ?? place.name}</span>
           </button>
           <div className="ws-pagecol__dirbody" ref={setHost} />

@@ -363,7 +363,11 @@ function Library({ viewSwitch }: { viewSwitch?: ReactNode }) {
   // and portals its own tree into the slot the shell provides, so the shell
   // knows nothing about scopes or notes. Off on a phone, where the tree is this
   // page's content instead and mounting it twice would cost every request twice.
-  const { host, setOpen } = useDirectoryPage({ pageId: "memory", label: "Memory", enabled: isWide });
+  const { host, open: treeOpen, setOpen } = useDirectoryPage({
+    pageId: "memory",
+    label: "Memory",
+    enabled: isWide,
+  });
 
   // Walking up from a document on a phone means going to what CONTAINS it, not
   // back through history. The trail is rebuilt from the document's own ancestry,
@@ -464,10 +468,16 @@ function Library({ viewSwitch }: { viewSwitch?: ReactNode }) {
       <StateBlock
         icon={<FolderTree aria-hidden />}
         title={selected?.kind === "scope" ? `Nothing open in ${scopeLabel(selected.scope)}` : "Nothing open"}
-        hint="Open the tree to pick a note or a document, or write a new note."
+        // Arriving here opens the tree in column two, so the control that asks
+        // for it is drawn only when it is not already on screen beside this.
+        hint={treeOpen
+          ? "Pick a note or a document in the tree, or write a new note."
+          : "Open the tree to pick a note or a document, or write a new note."}
         action={
           <Row wrap style={{ gap: "var(--space-2)" }}>
-            <Button size="sm" onClick={() => setOpen(true)}><FolderTree aria-hidden /> Open the tree</Button>
+            {!treeOpen && (
+              <Button size="sm" onClick={() => setOpen(true)}><FolderTree aria-hidden /> Open the tree</Button>
+            )}
             <Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus aria-hidden /> New note</Button>
           </Row>
         }

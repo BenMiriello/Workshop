@@ -5,6 +5,11 @@
 // was drawn for is not: "The takeover interaction (section 3.4) is still built,
 // because Memory needs it."
 //
+//   Arriving at a directory page turns column two INTO its tree, and after
+//   that tapping the page you are already on is the toggle back in. Arrival is
+//   part of it because an app place opens with the column collapsed, so there
+//   is no row there to tap a second time; see `directoryEntry.ts`.
+//
 //   Tapping a directory page (Memory) while already on it replaces the page
 //   column's contents with a tree. The row rises to the top of column two and
 //   stays as a header carrying a back control; the rest of the page list
@@ -34,9 +39,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import { NO_DIRECTORY, enterDirectory, setDirectoryOpen } from "./directoryEntry";
 
 /** What a directory page tells the shell about itself. Two strings, so the
  *  registration effect compares by value and cannot loop. */
@@ -73,17 +80,15 @@ export function DirectoryProvider({
   onNeedColumn?: () => void;
 }) {
   const [registration, setRegistration] = useState<DirectoryRegistration | null>(null);
-  const [openState, setOpenState] = useState(false);
+  // Whether the tree is over the page list, and which page that answer was
+  // decided for. The rule is in `directoryEntry.ts` and is tested there.
+  const [entry, setEntry] = useState(NO_DIRECTORY);
   const [host, setHost] = useState<HTMLElement | null>(null);
 
-  const setOpen = useCallback(
-    (next: boolean) => {
-      setOpenState(next);
-      if (next) onNeedColumn?.();
-    },
-    [onNeedColumn],
-  );
-  const open = openState;
+  const setOpen = useCallback((next: boolean) => {
+    setEntry((prev) => setDirectoryOpen(prev, next));
+  }, []);
+  const open = entry.open;
 
   const register = useCallback((reg: DirectoryRegistration | null) => {
     setRegistration((prev) => {
@@ -91,7 +96,20 @@ export function DirectoryProvider({
       if (prev && reg && prev.pageId === reg.pageId && prev.label === reg.label) return prev;
       return reg;
     });
+    setEntry((prev) => enterDirectory(prev, reg?.pageId ?? null));
   }, []);
+
+  // THE TREE HAS TO BRING ITS COLUMN WITH IT. It is drawn inside column two,
+  // and column two is collapsed by default on an app place, so opening the tree
+  // without this shows nothing at all -- which is exactly the defect this
+  // replaced. It runs on the EDGE (closed -> open) so that a manual close is
+  // not immediately re-opened by the next render, and it OPENS rather than
+  // toggles so it can never shut a column that was already open.
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpen.current) onNeedColumn?.();
+    wasOpen.current = open;
+  }, [open, onNeedColumn]);
 
   const value = useMemo(
     () => ({ registration, register, open, setOpen, host, setHost }),

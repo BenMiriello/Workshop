@@ -3034,22 +3034,31 @@ p.chat-workpanel__note { margin: 0; }
   visibility: hidden;
   transition: transform var(--dur-slow) var(--ease-out), visibility 0s linear var(--dur-slow);
 }
-/* The page's row, risen to the top of the column and now a back control. It
-   keeps the active treatment because you have not gone anywhere: the document
-   is still on screen behind it. */
+/* The page's row, risen to the top of the column and now a back control.
+   Section 5's geometry: 46px, the WHOLE row tappable, a 15px chevron-left in
+   --accent, the title at 14px/600, and a bottom hairline separating it from the
+   tree. It is the panel's header rather than a page row, so it spans the column
+   instead of sitting inset as a pill, and it is the only accent in the panel:
+   the tree's own rows own the rest (packages/ui .ws-tree). */
 .ws-pagecol__dirhead {
   flex: 0 0 auto;
-  width: calc(100% - var(--space-4));
-  margin: var(--space-3) var(--space-2) var(--space-2);
-  border: 0;
+  display: flex; align-items: center; gap: var(--space-2);
+  height: 46px;
+  padding: 0 var(--space-3);
+  border: 0; border-bottom: 1px solid var(--border);
+  background: none;
   font-family: inherit;
+  font-size: var(--fs-base); font-weight: var(--fw-semi);
+  color: var(--fg);
   text-align: left;
   cursor: pointer;
 }
+.ws-pagecol__dirhead svg { flex: 0 0 auto; color: var(--accent); }
+.ws-pagecol__dirhead:hover { background: var(--card-hover); }
 .ws-pagecol__dirbody {
   flex: 1 1 auto; min-height: 0;
   overflow: auto;
-  padding: 0 var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2) var(--space-3);
 }
 /* The symmetric half: with the page list restored the row still reads active
    and carries a right-pointing chevron back into the tree. A control, so it is

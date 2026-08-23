@@ -32,10 +32,11 @@
 // `/api/apps/{id}/files*` routes are the same service through a second door and
 // are parked for retirement in sec 8; nothing new should be built on them.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { FolderTree, Lock } from "lucide-react";
 import {
-  Badge, Button, Card, DetailLayout, DocumentBar, FileDrill, FileTree, Notice, SectionLabel,
+  Badge, Button, Card, DocumentBar, FileDrill, FileTree, Notice,
   Skeleton, Stack, StateBlock, cx, documentBar, drillTrail, formatBytes, shortHttpError, timeAgo,
   useEditMode,
   type FileDrillTrail, type FileTreeAdapter, type FileTreeNode,
@@ -44,6 +45,7 @@ import { Editor, languageForPath } from "@workshop/ui/editor";
 import type { components } from "../../../api/schema.gen";
 import type { AppRecord } from "../../../lib/apps";
 import { useIsWide } from "../../../lib/useMediaQuery";
+import { useDirectoryPage } from "../../../components/shell/directory";
 import { useContentTakeover, useDirectoryContent } from "../../../components/shell/takeover";
 import { AppTabPage } from "./AppTabShell";
 import { ancestorIdsFor, fileIconFor, fileNameOf, folderNodesFor, parentPath, viewModeFor } from "./filePath";
@@ -367,6 +369,17 @@ function FilesBody({ app }: { app: AppRecord }) {
   // beside the file and nothing is in the way.
   useContentTakeover(!isWide && !!selected);
 
+  // The desktop tree lives in column two. Off on a phone, where the tree is
+  // this page's content instead and mounting it twice would fetch every level
+  // twice. Declared before the early returns below, because a hook is not
+  // allowed to be conditional and the registration has to be dropped when this
+  // page stops being a directory.
+  const { host, open: treeOpen, setOpen: setTreeOpen } = useDirectoryPage({
+    pageId: "files",
+    label: "Files",
+    enabled: isWide && !noTree,
+  });
+
   if (noTree) return <StateBlock title="No files here" hint={noTree} />;
 
   if (!isWide) {
@@ -400,30 +413,46 @@ function FilesBody({ app }: { app: AppRecord }) {
     );
   }
 
+  // THE TREE IS COLUMN TWO ON A DESKTOP, not a rail on the far right
+  // (shell-mockup-spec-2026-08-22.md section 5). This page declares itself a
+  // directory and portals its own tree into the slot the shell provides, so the
+  // shell never learns what a workspace is; arriving here is what slides the
+  // tree in over the page list. It replaced a `DetailLayout` whose rail put the
+  // picker to the RIGHT of the file it picked, which is the reading order
+  // backwards and left column two empty on a route that has one.
   return (
-    <DetailLayout
-      rail={
-        <Stack gap="sm">
-          <SectionLabel icon={<FolderTree aria-hidden />}>Files</SectionLabel>
-          <Card compact style={{ maxHeight: "65vh", overflow: "auto" }}>
-            <FileTree
-              adapter={adapter}
-              selectedId={selected}
-              onSelect={onSelect}
-              defaultOpenIds={openIds}
-              label={`${app.name} files`}
-              emptyTitle="No files here"
-              emptyHint="Add a file to this app's project tree and it shows up here."
-            />
-          </Card>
-        </Stack>
-      }
-      main={
-        selected
-          ? <FilePane key={selected} workspace={workspace} path={selected} />
-          : <StateBlock title="No file open" hint="Pick a file in the tree to read or edit it." />
-      }
-    />
+    <>
+      {host && createPortal(
+        <FileTree
+          adapter={adapter}
+          selectedId={selected}
+          onSelect={onSelect}
+          defaultOpenIds={openIds}
+          label={`${app.name} files`}
+          emptyTitle="No files here"
+          emptyHint="Add a file to this app's project tree and it shows up here."
+        />,
+        host,
+      )}
+      {selected ? (
+        <FilePane key={selected} workspace={workspace} path={selected} />
+      ) : (
+        <StateBlock
+          icon={<FolderTree aria-hidden />}
+          title="No file open"
+          hint="Pick a file in the tree to read or edit it."
+          // Only when the tree is not already showing. A button that asks for
+          // what is on screen beside it is a dead control.
+          action={
+            treeOpen ? undefined : (
+              <Button size="sm" onClick={() => setTreeOpen(true)}>
+                <FolderTree aria-hidden /> Open the tree
+              </Button>
+            )
+          }
+        />
+      )}
+    </>
   );
 }
 
