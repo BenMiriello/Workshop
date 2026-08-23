@@ -265,6 +265,36 @@ Only the token subpath is importable there. The React primitives are react-dom a
 
 **Never edit the generated file.** Change the route, run `npm run gen:api-types`, commit both.
 
+## Look at it. In a browser. Before you say it is done
+
+**`bash scripts/shoot.sh <path> [width] [height] [out.png]`** loads the running
+built app in a real Chromium, screenshots it, and reports console errors, page
+errors and failed requests. Run `bash scripts/shoot.sh --setup` once per machine
+to install the browser and mint a session. It defaults to a 390x800 phone frame,
+because that is what the operator reviews on and where things break first.
+
+**Read the PNG.** Screenshotting and not looking is worse than not screenshotting,
+because it produces a confident report about a screen nobody saw.
+
+This is not optional polish, it is a gate, and it exists because of a measured
+failure. On 2026-08-22 three surfaces were built to a written spec, passed
+`npm run typecheck`, passed `check_design.sh`, passed 1,600 tests, and were
+wrong: a file list with 290px of duplicated chrome above it (an h1 reading
+"Files" directly under a tab reading "Files"), tab labels riding low because a
+flex child was bottom-aligned, and a menu of entirely the wrong shape. Not one
+of those is visible to a type checker or a unit test, and every one of them is
+obvious in a screenshot. The operator saw all three within minutes of opening
+the app and asked why an agent working on a React app could not simply look.
+
+So: **for any change to what a page LOOKS like, shoot it at 390 wide and at 1440
+wide before you report it done, and say what you saw.** A test proves a rule
+holds. A screenshot is the only thing that proves the screen is right.
+
+Two practical notes. The tool reads the BUILT origin, so run `bash
+scripts/apply.sh` first or you will be looking at your previous change. And the
+390px shot emulates touch, matching the app's own 900px WIDE breakpoint, so a
+mobile-only regression shows up there and nowhere else.
+
 ## Before you commit UI
 
 Run `bash scripts/check_design.sh` (from repo root) — it flags raw hex, emoji, and `not-allowed` cursors in `.tsx`, and confirms the foundation imports are intact. It is part of the completion gate; a UI change that fails it is **not** done. Also run `npm run typecheck` from the repo root.
