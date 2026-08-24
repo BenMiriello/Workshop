@@ -186,3 +186,137 @@ C rides along with the providers work. D is last and optional.
 - Should the operator's own chat count against anything at all? Today it is
   excluded from admission and that is correct, but it means the headline number in
   Settings describes only autonomous work, which has surprised him once already.
+
+---
+
+# Revision 2, same day, after operator response
+
+Three corrections from the operator, one of which overturns the ordering above.
+
+## R1. "We don't know what the work is going to cost. Don't assume a guess is reliable."
+
+Correct, and it demotes section 4A. A p80 of history is still a guess: ticket cost
+here ranges from 168,643 to 1,045,598, a 6x spread, and the estimator has no way to
+know which kind it just claimed before it runs it. Sizing the reservation better
+narrows the error; it does not remove it. Any design whose correctness DEPENDS on
+the estimate is wrong.
+
+So the estimate stops being a safety mechanism and becomes only a scheduling hint.
+
+## R2. The real fix is that a run can stop at the cap and resume
+
+If a run can be paused at the boundary and resumed later without losing work or
+context, then every problem in this document dissolves at once:
+
+- The cap becomes genuinely HARD. Overshoot is impossible, because the run stops
+  at the line rather than discovering the line after crossing it.
+- A wrong estimate becomes harmless, which is exactly what R1 requires.
+- No utilization is wasted. Work can start whenever there is any budget at all,
+  run to the cap, pause, and continue in the next window. The "drain to 50% first"
+  idea becomes unnecessary rather than merely imperfect.
+- Nothing is redone. Today an over-run is parked and its work is discarded.
+
+**Preemption removes the need for estimation.** That is the whole argument, and it
+is why this is now first and 4A is second.
+
+FEASIBILITY, checked rather than assumed. `scripts/ralph.sh` already runs a task as
+a LOOP of iterations, already keeps that run's own `SESSION_ID` (`:737`), already
+passes `--resume "$SESSION_ID"` between iterations (`:825`, `:949`), and already
+auto-commits work a worker left uncommitted (`:342`). An iteration boundary is
+therefore already a checkpoint with committed code and a resumable model session.
+Pausing is using machinery that exists across a boundary it does not currently
+cross, not building new machinery.
+
+The shape:
+- Before each iteration, compare remaining budget against the cost of the last
+  iteration (a much better predictor than the cost of a whole task, because it is
+  one step of the same work, and it is the only estimate that stays a hint).
+- If the next iteration would cross the cap, stop: commit, record `SESSION_ID`,
+  the branch, and the iteration number on the ticket, and set it to a resumable
+  state rather than parked.
+- When budget returns, the sweep prefers resumable tickets and continues with
+  `--resume`.
+
+STATE THE LIMITS HONESTLY, because this is not free. A model session can expire or
+grow too large to resume, and a very long pause makes that likelier. So resume must
+be best-effort with a stated fallback: if the session cannot be resumed, the work is
+still committed and the ticket still carries its branch, so the next attempt starts
+from real code rather than from nothing. That is strictly better than today even
+when resume fails.
+
+## R3. Soft caps, "a little soft at most", or hard
+
+With R2 in place the right answer is: **hard cap, soft landing.** The number is
+never exceeded, and the thing that would have exceeded it is paused instead of
+killed. Softness is not needed as slack in the limit; what was actually wanted from
+softness was not losing the work, and preemption gives that directly.
+
+Keep one small allowance and no more: the iteration in flight when the boundary is
+reached is allowed to finish, because killing it mid-write is what loses work. That
+is bounded by one iteration, which is measurable and reportable, and it is the only
+softness in the design.
+
+## R4. Weekly and monthly: we have none
+
+Measured 2026-08-24. `WINDOW_S = 5 * 3600` (`usage_ledger.py:45`) is the ONLY
+enforced period. There is no weekly limit, no monthly limit, and no daily one. The
+24h / 7d / 30d ranges in `status()` (`:525-528`) are REPORTING lookbacks for the
+Usage page and gate nothing.
+
+One piece of luck worth recording: `prune()` (`:359`) deletes rows older than the
+window and **has no live caller**, only its own CLI and a test. So the ledger has
+4,876 rows going back to 2026-07-15, about 40 days. Had that inert mechanism been
+wired, there would be no history to enforce a monthly limit against and none to
+estimate costs from. Do not wire it without first raising its retention.
+
+## R5. What the two limits are FOR, which decides how many there should be
+
+This is the argument against the six-period rule table, and it is simple:
+
+> A **short** window limits the RATE. It answers "how fast should this go".
+> A **long** window limits the BUDGET. It answers "how much am I willing to spend".
+
+They are different questions, so both are worth having. A third and fourth period
+answer neither question better; they interpolate between two answers already given.
+That is why the recommendation is exactly two by default, with more available and
+not encouraged.
+
+Setting them follows from that split:
+- The short one is set from impatience, not from money. "About two tasks per
+  session" is what 1.5M currently expresses at a measured ~800k per task.
+- The long one is set from money, and should be the number the operator actually
+  cares about. It is the only limit that should ever be denominated in currency,
+  and it is the strongest argument for the money-not-tokens change: nobody has an
+  intuition for 30 million tokens a month, and everybody has one for a dollar
+  figure.
+
+## R6. Session window versus rolling, for the short limit
+
+The operator's read is right and it is worth saying why, because it is not obvious.
+
+A rolling window's budget dribbles back continuously, in amounts far smaller than a
+unit of work. That is precisely the condition that produces the observed failure: a
+little frees up, something starts, it is not enough. A session window returns the
+whole allowance at once, so when work becomes possible it becomes fully possible.
+**A rolling window is the worst shape for a workload whose unit is large and
+indivisible**, which is what a coding task is.
+
+It also has a legible contract, which matters more here than accuracy: "you have
+1.5M until 4:11 PM, then a fresh 1.5M" is something the operator can plan around,
+where "1,793,129 of 1,500,000, decaying continuously" is not.
+
+The classic objection is the boundary burst, 2x the nominal rate across the seam.
+With a hard cap and preemption that is bounded and visible rather than dangerous,
+and the long-period limit is what actually stops sustained overspend. So: session
+window for the short limit, and the monthly is what keeps it honest.
+
+## R7. Revised order
+
+1. **Pause at the cap and resume** (R2). Makes the cap hard, makes estimation
+   unnecessary, stops discarding work. Everything else is smaller.
+2. **Switch the short limit to a session window** (R6), keeping 1.5M per scope.
+3. **Add a monthly limit** (R4, R5), in money once money exists, tokens until then.
+4. **Size the reservation from history** (4A), now only a scheduling hint: prefer a
+   task that plausibly fits the remaining session over one that plainly does not.
+5. Configurable periods beyond those two: available, not encouraged, advanced
+   disclosure. The operator has twice declined to request this, so it is last.
