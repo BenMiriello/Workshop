@@ -6059,7 +6059,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Recall */
+        /**
+         * Recall
+         * @description DEPRECATED. No frontend callers. Use GET /api/memory/search (semantic_index.search)
+         *     for ranked semantic search. This runs the same plaintext path as /{scope}/search.
+         */
         post: operations["recall_knowledge_recall_post"];
         delete?: never;
         options?: never;
@@ -6112,7 +6116,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Search */
+        /**
+         * Search
+         * @description DEPRECATED. No frontend callers. Use GET /api/memory/search (semantic_index.search)
+         *     for ranked semantic search. This runs the same plaintext path as ?q= on the notes list.
+         */
         post: operations["search_knowledge__scope_key__search_post"];
         delete?: never;
         options?: never;
@@ -6296,6 +6304,75 @@ export interface paths {
         put: operations["put_scopes_memory_policy_scopes_put"];
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/memory/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search */
+        get: operations["search_memory_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/memory/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Index Status */
+        get: operations["index_status_memory_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/model-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Providers */
+        get: operations["list_providers_model_providers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/model-providers/{provider_id}/credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Credential */
+        put: operations["set_credential_model_providers__provider_id__credential_put"];
+        post?: never;
+        /** Clear Credential */
+        delete: operations["clear_credential_model_providers__provider_id__credential_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -10893,13 +10970,6 @@ export interface components {
              */
             title: string;
         };
-        /** CredentialIn */
-        CredentialIn: {
-            /** Provider */
-            provider: string;
-            /** Token */
-            token: string;
-        };
         /**
          * CredentialRow
          * @description A credential is NOT a service and is kept in its own key rather than
@@ -11934,6 +12004,23 @@ export interface components {
             title?: string | null;
             /** Url */
             url: string;
+        };
+        /** IndexStatus */
+        IndexStatus: {
+            /** By Kind */
+            by_kind: {
+                [key: string]: number;
+            };
+            /** Chunks */
+            chunks: number;
+            /** Dim */
+            dim: number;
+            /** Embedder Error */
+            embedder_error: string;
+            /** Embedder Ok */
+            embedder_ok: boolean;
+            /** Model */
+            model: string;
         };
         /** IngestHelp */
         IngestHelp: {
@@ -14873,6 +14960,19 @@ export interface components {
             /** Query */
             query: string;
         };
+        /** SearchResult */
+        SearchResult: {
+            /** Corpus */
+            corpus: number;
+            /** Hits */
+            hits: components["schemas"]["routes__memory__SearchHit"][];
+            /** Mode */
+            mode: string;
+            /** Rebuilding */
+            rebuilding: boolean;
+            /** Searched */
+            searched: number;
+        };
         /** SearchResults */
         SearchResults: {
             /** Count */
@@ -17612,6 +17712,33 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** SearchHit */
+        routes__memory__SearchHit: {
+            /** Kind */
+            kind: string;
+            /** Ref */
+            ref: string;
+            /** Scope */
+            scope?: string | null;
+            /** Score */
+            score: number;
+            /**
+             * Status
+             * @default
+             */
+            status: string;
+            /** Text */
+            text: string;
+            /** Title */
+            title?: string | null;
+            /** Ts */
+            ts?: string | null;
+        };
+        /** CredentialIn */
+        routes__model_providers_routes__CredentialIn: {
+            /** Value */
+            value: string;
+        };
         /** Backlinks */
         routes__notes__Backlinks: {
             /** Backlinks */
@@ -17670,6 +17797,13 @@ export interface components {
         routes__refs__ResolveIn: {
             /** Refs */
             refs: string[];
+        };
+        /** CredentialIn */
+        routes__trackers__CredentialIn: {
+            /** Provider */
+            provider: string;
+            /** Token */
+            token: string;
         };
         /** ResolveIn */
         routes__trackers__ResolveIn: {
@@ -28675,6 +28809,144 @@ export interface operations {
             };
         };
     };
+    search_memory_search_get: {
+        parameters: {
+            query: {
+                q: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    index_status_memory_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexStatus"];
+                };
+            };
+        };
+    };
+    list_providers_model_providers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>[];
+                };
+            };
+        };
+    };
+    set_credential_model_providers__provider_id__credential_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["routes__model_providers_routes__CredentialIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_credential_model_providers__provider_id__credential_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_all_notes_get: {
         parameters: {
             query?: {
@@ -31435,7 +31707,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CredentialIn"];
+                "application/json": components["schemas"]["routes__trackers__CredentialIn"];
             };
         };
         responses: {
