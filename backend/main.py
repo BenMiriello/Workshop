@@ -16,7 +16,7 @@ from middleware.compression import SSEAwareGZipMiddleware
 # location/birds/health/…) are NOT imported here; they mount from the installed-
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
-from routes import agents, projects, base_apps, relay, services, events, jobs, push, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes
+from routes import agents, projects, base_apps, relay, services, events, jobs, push, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes, memory as memory_routes
 from routes import files as files_routes
 from routes import mcp as mcp_routes
 from routes import model_providers_routes
@@ -346,6 +346,7 @@ app.include_router(docs_index.router, dependencies=_OPERATOR)  # docs index, rea
 app.include_router(files_routes.router, dependencies=_OPERATOR)  # one file API over a resolved workspace root (/files)
 app.include_router(refs_routes.router, dependencies=_OPERATOR)  # ref resolve + backlinks (/refs)
 app.include_router(memory_policy_routes.router, dependencies=_OPERATOR)  # what other chats see (/memory-policy)
+app.include_router(memory_routes.router, dependencies=_OPERATOR)         # semantic search + index status (/memory)
 app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_OPERATOR)
 app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
 app.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"], dependencies=_OPERATOR)

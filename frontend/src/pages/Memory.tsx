@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   RefreshCw, Plus, Trash2, FileText, FolderTree, ChevronUp,
-  ShieldCheck, Lock, Globe, GitBranch,
+  ShieldCheck, Lock, Globe, GitBranch, MessageSquare, CheckSquare,
 } from "lucide-react";
 import { Button, Card, CardGrid, PageActionBar, PageHeader, SectionLabel, Row, Stack, Segmented, Select, Input, Textarea, Field, Modal, ConfirmDialog, StateBlock, Skeleton, StatusDot, Table, TableScroll, Tag, Checkbox, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, type SegmentedOption, shortHttpError, timeAbsolute, formatBytes } from "@workshop/ui";
 import { scopeLabel } from "../lib/tasks";
@@ -26,7 +26,6 @@ import {
   type ShareValue,
 } from "../lib/memoryPolicy";
 
-import { getJson } from "./memory/api";
 import {
   drillAncestorsFor,
   encodeMemoryNode,
@@ -34,10 +33,7 @@ import {
   nodeForParams,
   paramsForNode,
   parseMemoryNode,
-  searchDocs,
-  type DocRow,
   type MemoryNode,
-  type NoteRow,
   type ScopeNode,
 } from "./memory/memoryTree";
 import { MEMORY_ROOT_NODE, MemoryTreeView, createMemorySource } from "./memory/MemoryTree";
@@ -147,6 +143,30 @@ type StoredFile = {
   source?: string;
 };
 type FilesResp = { files: StoredFile[]; count: number; scopes: string[] };
+
+type SemanticHit = {
+  score: number;
+  kind: string;
+  ref: string;
+  title: string | null;
+  scope: string | null;
+  ts: string | null;
+  text: string;
+  status: string;
+};
+type SemanticResult = {
+  hits: SemanticHit[];
+  mode: string;
+  rebuilding: boolean;
+  searched: number;
+  corpus: number;
+};
+type IndexStatus = {
+  chunks: number;
+  model: string;
+  embedder_ok: boolean;
+  embedder_error: string;
+};
 
 const OVERFLOW_AT = 100;
 
@@ -433,7 +453,6 @@ function Library({ viewSwitch }: { viewSwitch?: ReactNode }) {
   if (applied) {
     pane = (
       <SearchResults
-        source={source}
         query={applied}
         onSelect={select}
         onClear={() => { setQuery(""); setParams((next) => next.delete("q")); }}
@@ -635,58 +654,69 @@ function Library({ viewSwitch }: { viewSwitch?: ReactNode }) {
           }}
         />
       )}
+      <IndexStatusFooter />
     </div>
   );
 }
 
 // ---- Search results --------------------------------------------------------
-// A query is not containment, so this is a list and never a tree. Notes are
-// filtered server-side by `GET /api/notes?q=` (which delegates to
-// knowledge.search); documents have no search route, so their titles and paths
-// are matched against the index the tree already holds.
+// A query is not containment, so this is a list and never a tree. Results come
+// from GET /api/memory/search, which calls semantic_index.search with no
+// from_scope (the operator owns every scope). The old path called knowledge.search
+// as an id filter with limit=1000 and ranked by directory order; there is no
+// ranking to preserve there, so this is a full replacement.
+
+const KIND_ICON: Record<string, typeof FileText> = {
+  note: FileText,
+  doc: FileText,
+  chat: MessageSquare,
+  ticket: CheckSquare,
+};
+
+function hitNoteId(ref: string): string {
+  const name = ref.split("/").pop() ?? ref;
+  return name.replace(/\.md$/, "");
+}
 
 function SearchResults({
-  source,
   query,
   onSelect,
   onClear,
 }: {
-  source: ReturnType<typeof createMemorySource>;
   query: string;
   onSelect: (node: MemoryNode) => void;
   onClear: () => void;
 }) {
-  const [notes, setNotes] = useState<NoteRow[] | null>(null);
-  const [docs, setDocs] = useState<DocRow[] | null>(null);
+  const navigate = useNavigate();
+  const [result, setResult] = useState<SemanticResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let live = true;
-    setNotes(null);
-    setDocs(null);
+    setResult(null);
     setErr(null);
-    Promise.all([
-      getJson<{ notes?: NoteRow[] }>(`/api/notes?q=${encodeURIComponent(query)}`).then((j) => j.notes ?? []),
-      source.docs(),
-    ]).then(
-      ([n, d]) => { if (live) { setNotes(n); setDocs(d); } },
-      (e: unknown) => { if (live) setErr(e instanceof Error ? e.message : String(e)); },
-    );
+    fetch(`/api/memory/search?q=${encodeURIComponent(query)}&limit=20`)
+      .then(async (r) => {
+        if (!r.ok) throw await httpFail(r);
+        return r.json() as Promise<SemanticResult>;
+      })
+      .then((j) => { if (live) setResult(j); })
+      .catch((e: unknown) => { if (live) setErr(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
-  }, [source, query, attempt]);
+  }, [query, attempt]);
 
   if (err) {
     return (
       <StateBlock
         variant="error"
         title="Couldn't search Memory"
-        hint={err}
+        hint={<><code>/api/memory/search</code> ({err})</>}
         action={<Button size="sm" onClick={() => setAttempt((n) => n + 1)}>Retry</Button>}
       />
     );
   }
-  if (!notes || !docs) {
+  if (!result) {
     return (
       <Stack gap="sm">
         {[0, 1, 2, 3].map((i) => <Skeleton key={i} width="70%" />)}
@@ -694,64 +724,164 @@ function SearchResults({
     );
   }
 
-  const docHits = searchDocs(docs, query);
-  const total = notes.length + docHits.length;
-  if (total === 0) {
+  const { hits, corpus } = result;
+  if (hits.length === 0) {
     return (
       <StateBlock
         title="Nothing matches"
-        hint={<>Nothing in notes or documents matches <strong>{query}</strong>. Clear the search to browse the tree instead.</>}
+        hint={<>No results for <strong>{query}</strong> in {corpus} indexed chunks. Clear the search to browse the tree.</>}
         action={<Button size="sm" onClick={onClear}>Clear search</Button>}
       />
     );
   }
 
-  const noteRows = notes.slice(0, OVERFLOW_AT);
-  const docRows = docHits.slice(0, Math.max(0, OVERFLOW_AT - noteRows.length));
-  const hidden = total - noteRows.length - docRows.length;
+  const shown = hits.slice(0, OVERFLOW_AT);
+  const hidden = hits.length - shown.length;
 
   return (
     <Stack gap="lg">
       <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
         <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-          {total} {total === 1 ? "result" : "results"} for {query}
+          {hits.length} {hits.length === 1 ? "result" : "results"} for {query}
+          {result.rebuilding && " (index rebuilding)"}
         </span>
         <Button size="sm" onClick={onClear}>Clear search</Button>
       </Row>
       <div className="ws-memory__level" role="list">
-        {noteRows.map((n) => (
-          <button
-            key={`note:${n.scope}:${n.id}`}
-            type="button"
-            role="listitem"
-            className="ws-memory__row"
-            onClick={() => onSelect({ kind: "note", scope: n.scope, id: n.id })}
-          >
-            <FileText size={16} strokeWidth={1.8} aria-hidden />
-            <span className="ws-memory__rowlabel">{n.title || n.id}</span>
-            <span className="ws-memory__more"><Tag hue={catFor(n.scope)}>{scopeLabel(n.scope)}</Tag></span>
-          </button>
-        ))}
-        {docRows.map((d) => (
-          <button
-            key={`doc:${d.path}`}
-            type="button"
-            role="listitem"
-            className="ws-memory__row"
-            onClick={() => onSelect({ kind: "doc", path: d.path })}
-          >
-            <FileText size={16} strokeWidth={1.8} aria-hidden />
-            <span className="ws-memory__rowlabel">{d.title || d.path}</span>
-            <span className="ws-memory__more">{d.path}</span>
-          </button>
-        ))}
+        {shown.map((h, i) => {
+          const Icon = KIND_ICON[h.kind] ?? FileText;
+          const excerpt = h.text.length > 140 ? h.text.slice(0, 140).trimEnd() + "…" : h.text;
+          if (h.kind === "note" && h.scope) {
+            return (
+              <button
+                key={i}
+                type="button"
+                role="listitem"
+                className="ws-memory__row"
+                onClick={() => onSelect({ kind: "note", scope: h.scope!, id: hitNoteId(h.ref) })}
+              >
+                <Icon size={16} strokeWidth={1.8} aria-hidden />
+                <span className="ws-memory__rowlabel">
+                  {h.title || hitNoteId(h.ref)}
+                  {h.status === "superseded" && <span className="ws-muted"> (superseded)</span>}
+                </span>
+                <span className="ws-memory__more ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                  <Tag hue={catFor(h.scope!)}>{scopeLabel(h.scope!)}</Tag>
+                  {" "}{h.score.toFixed(2)}
+                </span>
+                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)", gridColumn: "1 / -1" }}>
+                  {excerpt}
+                </span>
+              </button>
+            );
+          }
+          if (h.kind === "doc") {
+            return (
+              <button
+                key={i}
+                type="button"
+                role="listitem"
+                className="ws-memory__row"
+                onClick={() => onSelect({ kind: "doc", path: h.ref })}
+              >
+                <Icon size={16} strokeWidth={1.8} aria-hidden />
+                <span className="ws-memory__rowlabel">
+                  {h.title || h.ref}
+                  {h.status === "superseded" && <span className="ws-muted"> (superseded)</span>}
+                </span>
+                <span className="ws-memory__more ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                  {h.score.toFixed(2)}
+                </span>
+                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)", gridColumn: "1 / -1" }}>
+                  {excerpt}
+                </span>
+              </button>
+            );
+          }
+          if (h.kind === "chat" && h.scope) {
+            return (
+              <button
+                key={i}
+                type="button"
+                role="listitem"
+                className="ws-memory__row"
+                onClick={() => navigate(`/chat/${encodeURIComponent(h.scope!)}?thread=${encodeURIComponent(h.ref)}`)}
+              >
+                <Icon size={16} strokeWidth={1.8} aria-hidden />
+                <span className="ws-memory__rowlabel">{h.title || h.ref}</span>
+                <span className="ws-memory__more ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                  <Tag hue={catFor(h.scope!)}>{scopeLabel(h.scope!)}</Tag>
+                  {" "}{h.score.toFixed(2)}
+                </span>
+                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)", gridColumn: "1 / -1" }}>
+                  {excerpt}
+                </span>
+              </button>
+            );
+          }
+          if (h.kind === "ticket") {
+            return (
+              <button
+                key={i}
+                type="button"
+                role="listitem"
+                className="ws-memory__row"
+                onClick={() => navigate(`/tickets/${encodeURIComponent(h.scope || "workshop")}/${encodeURIComponent(h.ref)}`)}
+              >
+                <Icon size={16} strokeWidth={1.8} aria-hidden />
+                <span className="ws-memory__rowlabel">{h.title || h.ref}</span>
+                <span className="ws-memory__more ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                  {h.scope && <Tag hue={catFor(h.scope)}>{scopeLabel(h.scope)}</Tag>}
+                  {" "}{h.score.toFixed(2)}
+                </span>
+                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)", gridColumn: "1 / -1" }}>
+                  {excerpt}
+                </span>
+              </button>
+            );
+          }
+          return (
+            <div key={i} role="listitem" className="ws-memory__row">
+              <Icon size={16} strokeWidth={1.8} aria-hidden />
+              <span className="ws-memory__rowlabel">{h.title || h.ref}</span>
+              <span className="ws-memory__more ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{h.score.toFixed(2)}</span>
+            </div>
+          );
+        })}
       </div>
       {hidden > 0 && (
         <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
-          Showing the first {OVERFLOW_AT} of {total}. Narrow the search to see the rest.
+          Showing the first {OVERFLOW_AT} of {hits.length}. Narrow the search to see the rest.
         </p>
       )}
     </Stack>
+  );
+}
+
+// ---- Index status footer ---------------------------------------------------
+// The operator has no way to tell whether the semantic index is fresh or how
+// much is in it. This tiny footer answers both, by calling GET /api/memory/status
+// on mount (the call is cheap: it reads two already-cached files).
+
+function IndexStatusFooter() {
+  const [status, setStatus] = useState<IndexStatus | null>(null);
+
+  useEffect(() => {
+    fetch("/api/memory/status")
+      .then((r) => (r.ok ? (r.json() as Promise<IndexStatus>) : Promise.reject()))
+      .then(setStatus)
+      .catch(() => {});
+  }, []);
+
+  if (!status) return null;
+  return (
+    <p
+      className="ws-muted"
+      style={{ fontSize: "var(--fs-xs)", marginTop: "var(--space-4)", marginBottom: 0 }}
+    >
+      {status.chunks.toLocaleString()} chunks indexed | {status.model}
+      {!status.embedder_ok && <> | embedder offline: {status.embedder_error}</>}
+    </p>
   );
 }
 
