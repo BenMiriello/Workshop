@@ -160,9 +160,9 @@ describe("addTasksAndRun honours the server's pickup answer", () => {
   // so the test fails if the handler goes back to deciding for itself.
 
   it("runs a scope the server calls runnable even where the local list would not", async () => {
-    expect(scopeIsRunnable("app:budget")).toBe(false); // local says no...
-    const res = await UI_CARD_ACTIONS.addTasksAndRun(state("app:budget"), ctx({
-      scope: "app:budget", runnable: true, automatic: false, why: "nothing polls it",
+    expect(scopeIsRunnable("app:zzfixture")).toBe(false); // local says no...
+    const res = await UI_CARD_ACTIONS.addTasksAndRun(state("app:zzfixture"), ctx({
+      scope: "app:zzfixture", runnable: true, automatic: false, why: "nothing polls it",
     })); // ...server says yes, and the server wins.
     // It gets past the guard and fails later on the network, which is fine here.
     // What must NOT happen is the pre-flight refusal.

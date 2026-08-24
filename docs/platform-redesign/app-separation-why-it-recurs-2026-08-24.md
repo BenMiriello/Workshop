@@ -141,22 +141,71 @@ about: what a stranger receives.
 accept, including me.** After it exists, the claim is a command with an exit
 code.
 
-## 5. Two smaller corrections found while measuring
+## 5. CORRECTION, and what the gate actually cannot see
 
-**The gate counts prose that describes the violation.** The current failure,
-302 -> 305, is three lines in the module docstring of
-`backend/tests/test_app_workspace_declaration.py`. All three are prose recording
-a measurement ("birds apps/ 30150 files projects/ 41 (a scaffold)"). An agent
-documented the problem carefully and thereby blocked every reviewer run.
+**An earlier revision of this section claimed the gate counts docstring prose.
+That was wrong and is retracted.** The failure was real (302 -> 305) but I
+attributed it by grepping app names in files added since the pin, found three
+hits in a docstring, and matched the coincidence of the number three instead of
+asking the checker which sites it counted. `--json` names them: three
+`"app:budget"` fixture strings at
+`frontend/src/components/chat/uiCardActions.test.ts:163-165`. The checker never
+counted the docstring; its patterns match quoted strings and paths, not prose.
+Renamed to a fictional id, the count is 302 and the gate passes. Recorded rather
+than quietly edited, because attributing by count coincidence is exactly the
+kind of reasoning this document exists to warn about.
 
-A docstring cannot couple the platform to an app. The three counts measure
-coupling. So `literal_sites` should count code and split prose into its own
-pinned `prose_sites` count: same visibility, no ability to stop the queue, and
-no incentive to leave the measurement undocumented. This is a correction, not a
-weakening, and it re-pins DOWN.
+The real finding is better, and it is that **the three counts under-report in
+four measured ways**. Each was verified on 2026-08-24.
 
-**The checker counts itself.** `check_no_app_names.py` contains 11 literal
+**It cannot see a dynamic import.** `frontend/src/apps/registry.tsx` reaches app
+pages 15 times through `lazyPage(() => import(...))`, and the gate reports **1**
+import site for that file. So `imports 20` means "20 that this matcher can see",
+and the number most likely to move at extraction is the one least well measured.
+
+**It cannot see an identifier.** `packages/ui/src/native/types.ts:97` declares
+`interface CommuteActivityState`. The platform kit names an app in a type and
+the gate is blind to it, because it matches quoted strings and paths only.
+
+**It does not scan where one app's build lives.** `frontend/springer.html` and
+`frontend/vite.springer.config.ts` are a birds-only build sitting in the
+frontend root with 15 app-name occurrences, unscanned because the platform
+scan starts at `frontend/src/`.
+
+**It does not count platform code that depends on an app.**
+`backend/routes/owntracks.py` is platform code serving `/location` and importing
+`services.location`, and neither file appears in the 102. Building a tree with
+all 102 app-source files removed therefore fails on the BACKEND as well, with
+`ImportError: cannot import name 'location' from 'services'`, one exception
+class too narrow for `app_registry._has_module` to catch. **So driving `content`
+to zero would not by itself make a clone build.** That is the sharpest argument
+in this document for section 4: a count can be satisfied while the requirement
+is not, and only the clone knows the difference.
+
+**And the checker counts itself**: `check_no_app_names.py` contains 11 literal
 sites, being the list of apps it watches. It is the one file that must name them.
+
+### 5.1 The coupling no gate sees at all: CSS
+
+App pages use platform class names defined in one legacy stylesheet.
+`.muted` is used **222** times under `frontend/src/pages/apps` and defined once
+in `frontend/src/styles.css`, zero times in the kit. `.card` is used 58 times,
+same story. About 22 class names and roughly 320 use sites in total.
+
+This matters because it is invisible in exactly the way the July failure was
+invisible: gitignore the app directories and the build stays green, extract them
+and they render unstyled in production. No typecheck, no lint and no count
+catches it, and the fresh-clone assertion catches it only if it renders and
+looks.
+
+**And the kit already carries one app's CSS.** `packages/ui/src/styles/components.css:3680`
+opens `/* ---- NOTES app (pages/apps/notes) ---- */`, 92 lines that no kit
+component renders. So the app cited everywhere as the clean-app existence proof
+is partly clean because its layout CSS was pushed into the platform kit. That is
+the failure mode this whole effort exists to prevent, achieved while passing
+every gate, and it means **stage 4b can be "passed" by making the kit worse**.
+Any promotion must be judged on whether the kit would want it with no apps
+installed.
 
 ## 6. What is actually left, honestly
 
