@@ -19,6 +19,7 @@ from middleware.compression import SSEAwareGZipMiddleware
 from routes import agents, projects, base_apps, relay, services, events, jobs, push, autonomy, chat, worktrees, auth, voice, voice_stream, knowledge, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers, refs as refs_routes, memory_policy as memory_policy_routes
 from routes import files as files_routes
 from routes import mcp as mcp_routes
+from routes import model_providers_routes
 from routes import tools as tools_routes
 from routes import stores as stores_routes
 from routes import deploys as deploys_routes
@@ -401,6 +402,10 @@ app.include_router(mcp_routes.router, dependencies=_OPERATOR)
 # services/llm_router.tool_flags stays the only thing that puts a tool on an
 # agent's argv.
 app.include_router(tools_routes.router, dependencies=_OPERATOR)
+# Settings -> Models: the provider catalog and the operator's own API key store.
+# Stage 1: list, add, remove. The key is stored encrypted and never returned
+# (docs/platform-redesign/providers-credentials-and-limits-2026-08-23.md §3b).
+app.include_router(model_providers_routes.router, dependencies=_OPERATOR)
 
 # Platform per-user primitives — owner-scoped to the authenticated user. These
 # are the shell (chat, voice, push), NOT apps: apps build on them, so they mount

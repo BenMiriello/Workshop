@@ -239,6 +239,36 @@ def test_resolve_defaults_to_the_default_provider(single):
     assert mc.resolve(6).provider_id == "claude_cli"
 
 
+# ---- key_tail ---------------------------------------------------------------
+
+
+def test_key_tail_returns_only_last_four_chars(hosted):
+    mc.set_credential(1, "anthropic_api", "sk-ant-secret1234")
+    tail = mc.key_tail(1, "anthropic_api")
+    assert tail == "1234"
+    assert len(tail) == 4
+    assert "sk-ant" not in tail
+
+
+def test_key_tail_absent_when_no_credential(hosted):
+    assert mc.key_tail(1, "anthropic_api") is None
+
+
+def test_list_endpoint_payload_carries_no_key_material(hosted):
+    """The shape GET /model-providers serializes never contains a stored key value."""
+    import json
+
+    mc.set_credential(1, "anthropic_api", "sk-ant-verysecret9999")
+    rows = mc.status(1)
+    payload = [{**r, "last4": mc.key_tail(1, r["id"])} for r in rows]
+    payload_str = json.dumps(payload)
+    assert "sk-ant-verysecret9999" not in payload_str
+    assert "verysecret" not in payload_str
+    for row in payload:
+        if row["last4"] is not None:
+            assert len(row["last4"]) <= 4
+
+
 # ---- the old path refuses too ----------------------------------------------
 
 
