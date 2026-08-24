@@ -1362,6 +1362,14 @@ print(len(crit))
     fi
   fi
 
+  # Any outcome that is NOT an environment failure clears this task's
+  # consecutive-env-failure count (see the rc=5 leg). A real API outage fails
+  # every task and then every task succeeds, so every counter resets and the
+  # outage costs nothing; only a task or runner that can never start accumulates.
+  if [[ "$RC" != "5" ]]; then
+    rm -f "$WORKSHOP/.runtime/env-fails/$TASK_ID" 2>/dev/null || true
+  fi
+
   case "$RC" in
     0)
       # ralph's reviewer gate passed. Apply the task's own acceptance policy.
@@ -1448,10 +1456,39 @@ print(len(crit))
       # attempt back and STOP the sweep so we do not hammer a down API. The sweep
       # still tallies a failure so the circuit breaker cools this scope off for a
       # window (it keys on tasks_failed). (review F4)
+      # RESTORING THE ATTEMPT IS RIGHT FOR AN OUTAGE AND WRONG FOREVER. An API
+      # or auth failure is not the task's fault, so the attempt is given back and
+      # the sweep backs off; a real outage clears and the task runs. But nothing
+      # counted how many times in a row ONE task took this path, so a task that
+      # can never start retries every poll indefinitely. Measured 2026-08-24:
+      # fae54a3e took it six times in a row in ten minutes, always "attempt 1/3",
+      # while a second runner on the same tree completed work normally, which is
+      # what proves it was that task or that runner rather than the API.
+      #
+      # So: still never burn an attempt, but count consecutive env failures per
+      # task and park after ENV_FAIL_MAX so it stops consuming every poll and
+      # becomes visible as a parked ticket. Any non-env outcome clears the count,
+      # which is what keeps a genuine outage costless: it fails everything, then
+      # everything succeeds and every counter resets.
+      ENV_FAIL_MAX=${ENV_FAIL_MAX:-3}
+      ENV_FAIL_DIR="$WORKSHOP/.runtime/env-fails"
+      mkdir -p "$ENV_FAIL_DIR" 2>/dev/null || true
+      ENV_FAIL_FILE="$ENV_FAIL_DIR/$TASK_ID"
+      ENV_FAIL_N=$(( $(cat "$ENV_FAIL_FILE" 2>/dev/null || echo 0) + 1 ))
+      echo "$ENV_FAIL_N" > "$ENV_FAIL_FILE" 2>/dev/null || true
+      if (( ENV_FAIL_N >= ENV_FAIL_MAX )); then
+        python3 "$PTASKS" note "$DIR" "$TASK_ID" "parked after $ENV_FAIL_N consecutive environment failures (the worker exited before producing any output, so no attempt was ever burned). This is an environment or runner problem, not a fault in the ticket: check the 'said:' text on the ENV FAILURE lines in .runtime/ralph.log. Un-park once the cause is fixed." --kind acceptance >/dev/null 2>>"$LOG"
+        ptasks_tx set-status "$DIR" "$TASK_ID" parked --expect-claim-token "${CLAIM_TOKEN:-}" || true
+        rm -f "$ENV_FAIL_FILE" 2>/dev/null || true
+        job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"; FAILED=$((FAILED+1))
+        log "task=$TASK_ID ENV FAILURE x$ENV_FAIL_N: PARKED (never burned an attempt); stopping sweep to back off"
+        rm -f "$RECEIPT_FILE" 2>/dev/null || true
+        break
+      fi
       python3 "$PTASKS" note "$DIR" "$TASK_ID" "environment failure (API/auth); attempt restored, sweep backing off" --kind acceptance >/dev/null 2>>"$LOG"
       ptasks_tx set-status "$DIR" "$TASK_ID" todo --restore-attempt --expect-claim-token "${CLAIM_TOKEN:-}" || true
       job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"; FAILED=$((FAILED+1))
-      log "task=$TASK_ID ENV FAILURE: released (attempt restored); stopping sweep to back off"
+      log "task=$TASK_ID ENV FAILURE $ENV_FAIL_N/$ENV_FAIL_MAX: released (attempt restored); stopping sweep to back off"
       rm -f "$RECEIPT_FILE" 2>/dev/null || true
       break ;;
     6)

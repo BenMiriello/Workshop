@@ -988,7 +988,17 @@ print(sid)
   # breaker on good work. (review F4)
   if (( iter == 1 && CLAUDE_EXIT != 0 && CLAUDE_EXIT != 124 && ITER_TOKENS == 0 )) \
      && ! grep -q '"result"' "$ITER_OUT" 2>/dev/null; then
-    log "ENV FAILURE on iter 1 (claude exit=$CLAUDE_EXIT, no result envelope, ${ITER_DUR}s) — releasing without burning an attempt"
+    # LOG WHAT IT ACTUALLY SAID. This path releases the attempt and the sweep
+    # retries on the next poll, so an env failure that does not clear loops
+    # forever; before 2026-08-24 it discarded the process output every time, so
+    # the loop could fail every 60s for hours and leave no evidence of why.
+    # Measured that day: task fae54a3e failed on this path six times in a row,
+    # "claude exit=1, output bytes=163, tokens=0, dur=0s", and the 163 bytes
+    # naming the cause were thrown away on each one. First 800 bytes, flattened
+    # to one line: enough for an auth, quota or argv error, and bounded so a
+    # stack trace cannot flood the log on a tight retry.
+    ENV_FAIL_SAY=$(head -c 800 "$ITER_OUT" 2>/dev/null | tr '\n' ' ' | tr -s ' ')
+    log "ENV FAILURE on iter 1 (claude exit=$CLAUDE_EXIT, no result envelope, ${ITER_DUR}s) — releasing without burning an attempt; said: ${ENV_FAIL_SAY:-<no output>}"
     exit_code=5
     break
   fi
