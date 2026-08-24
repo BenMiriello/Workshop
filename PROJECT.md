@@ -1003,3 +1003,21 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   STILL OPEN: the two hand-rolled file trees (AgentBuild's own FileTreeNode and
   NoteSidebar's TreeRows) and AgentBuild's Textarea-as-editor; the phone
   `?scope=` deep link; and the registry merge itself.
+
+- 2026-08-23 — Operator: redesign chat branching to the standard edit/retry model.
+  Edit on a user message prefills the composer and submitting forks a new branch;
+  Retry on an assistant message regenerates the whole block as a new branch; branch
+  switching is a LIST picker inside the in-bubble branch control (icon + count, each
+  row is that branch's opening text and last-message time). No rewind verb, no
+  toolbar BranchPicker, no inline pager, no confirm dialogs. Supersedes ticket 202cd90d.
+- 2026-08-24 - Operator, for the record: a rolling 5h window can free a little
+  budget, admit a task, and have it run out mid-flight, so less work gets done.
+  Measured cause is NOT the window: admission reserves a flat 150k while real runs
+  cost 750k-1.05M (median ~800k), a 5-7x under-reserve, which is why development
+  overshot to 1,972,531 against a 1,500,000 ceiling. Proposal:
+  docs/platform-redesign/limiting-usage-2026-08-24.md. Reserve the measured p80
+  rather than a constant (this alone fixes it, and it beats a fixed 50% headroom
+  rule, which would cut utilization permanently); make an over-run yield rather
+  than die; express limits as one AND-composed rule list with several periods; and
+  offer the limiter SHAPE (rolling, Claude-style session, none) as a setting over
+  one accounting layer. Not implemented, operator said not necessarily now.
