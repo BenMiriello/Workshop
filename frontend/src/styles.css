@@ -3228,6 +3228,17 @@ p.chat-workpanel__note { margin: 0; }
 .ws-memory__row.is-selected svg { color: inherit; }
 .ws-memory__rowlabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-memory__more { margin-left: auto; color: var(--faint); }
+/* A search result carries a one-line excerpt beneath its label. The row is
+   FLEX, so the excerpt claims its own line with flex-basis; the markup's
+   gridColumn does nothing in a flex container and was removed with this rule.
+   Only a row that actually has an excerpt wraps, so tree rows keep their
+   single-line shape. */
+.ws-memory__row:has(.ws-memory__excerpt) { flex-wrap: wrap; }
+.ws-memory__excerpt {
+  flex-basis: 100%;
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* The document body. The measure is the shell's, so nothing here caps width. */
 .ws-memory__title { margin: 0; font-size: var(--fs-xl); font-weight: var(--fw-semi); letter-spacing: -0.01em; }
 .ws-memory__path { color: var(--muted); font-size: var(--fs-xs); word-break: break-all; }

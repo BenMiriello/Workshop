@@ -769,7 +769,7 @@ function SearchResults({
                   <Tag hue={catFor(h.scope!)}>{scopeLabel(h.scope!)}</Tag>
                   {" "}{h.score.toFixed(2)}
                 </span>
-                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)", gridColumn: "1 / -1" }}>
+                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)" }}>
                   {excerpt}
                 </span>
               </button>
@@ -792,7 +792,7 @@ function SearchResults({
                 <span className="ws-memory__more ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                   {h.score.toFixed(2)}
                 </span>
-                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)", gridColumn: "1 / -1" }}>
+                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)" }}>
                   {excerpt}
                 </span>
               </button>
@@ -813,7 +813,7 @@ function SearchResults({
                   <Tag hue={catFor(h.scope!)}>{scopeLabel(h.scope!)}</Tag>
                   {" "}{h.score.toFixed(2)}
                 </span>
-                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)", gridColumn: "1 / -1" }}>
+                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)" }}>
                   {excerpt}
                 </span>
               </button>
@@ -834,7 +834,7 @@ function SearchResults({
                   {h.scope && <Tag hue={catFor(h.scope)}>{scopeLabel(h.scope)}</Tag>}
                   {" "}{h.score.toFixed(2)}
                 </span>
-                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)", gridColumn: "1 / -1" }}>
+                <span className="ws-muted ws-memory__excerpt" style={{ fontSize: "var(--fs-xs)" }}>
                   {excerpt}
                 </span>
               </button>
