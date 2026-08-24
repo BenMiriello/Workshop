@@ -12,6 +12,17 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.6.2
+
+### Fixed
+
+- `useEditMode.save()` no longer leaves a rejecting `onSave` as an unhandled
+  promise rejection. It catches, exposes the message as `saveError`, and stays
+  in edit mode so the draft is not lost. `begin()` and `cancel()` clear it.
+  Additive: `save()` never rejected usefully before, so existing call sites that
+  wrapped it in `.catch(() => {})` remain correct and the guard is now dead code
+  they may drop at their leisure.
+
 ## 0.6.1 - 2026-08-23 - an overlay can start below chrome the shell does not own
 
 **Additive.** One new modifier. Nothing existing moved: `--bare`, `--dropdown`,

@@ -193,8 +193,11 @@ export default function NoteView({
             spellCheck={false}
             aria-label="Note content"
           />
+          {edit.saveError && (
+            <Notice tone="error" detail={edit.saveError}>Couldn't save this note.</Notice>
+          )}
           <ActionBar flash={edit.flash ? "Saved" : undefined}>
-            <Button variant="primary" loading={edit.saving} onClick={edit.save}>
+            <Button variant="primary" loading={edit.saving} onClick={() => { void edit.save(); }}>
               Save
             </Button>
             <Button variant="ghost" onClick={edit.cancel}>
