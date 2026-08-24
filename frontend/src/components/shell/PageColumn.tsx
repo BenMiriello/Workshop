@@ -40,7 +40,7 @@ import type { Shell } from "./useShell";
 
 export function PageColumn({ shell }: { shell: Shell }) {
   const { place, page, columnOpen, animating } = shell;
-  const { registration, open, setOpen, setHost } = useDirectory();
+  const { registration, open, setOpen, setHost, setToolbarHost } = useDirectory();
 
   // A takeover only exists for the page you are ON. That is section 3.4's own
   // wording ("tapping a directory page while already on it"), and it is also
@@ -140,6 +140,9 @@ export function PageColumn({ shell }: { shell: Shell }) {
             <ChevronLeft size={15} aria-hidden />
             <span className="ws-pagerow__label">{registration?.label ?? place.name}</span>
           </button>
+          {registration?.hasToolbar && (
+            <div className="ws-pagecol__dirtoolbar" ref={setToolbarHost} />
+          )}
           <div className="ws-pagecol__dirbody" ref={setHost} />
         </div>
       </div>

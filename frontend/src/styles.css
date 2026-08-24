@@ -3174,6 +3174,24 @@ p.chat-workpanel__note { margin: 0; }
   overflow: auto;
   padding: 6px 6px 12px;
 }
+.ws-pagecol__dirtoolbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+}
+.ws-pagecol__dirtoolbar__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  height: 34px;
+}
+.ws-pagecol__dirtoolbar__filter {
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+.ws-pagecol__dirtoolbar .ws-btn--ghost { --_fg: var(--faint); }
+.ws-pagecol__dirtoolbar .ws-btn--ghost:hover { --_fg: var(--fg); }
 /* The symmetric half: with the page list restored the row still reads active
    and carries a right-pointing chevron back into the tree. A control, so it is
    neutral at rest and --fg on hover (design rule 3). */

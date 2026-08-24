@@ -52,6 +52,9 @@ export type DirectoryRegistration = {
   pageId: string;
   /** What that header row reads, and what the back control names. */
   label: string;
+  /** Whether the page needs the 34px directory toolbar slot rendered between
+   *  the back header and the tree body. Memory does not; Files does. */
+  hasToolbar?: boolean;
 };
 
 type DirectoryState = {
@@ -64,6 +67,10 @@ type DirectoryState = {
    *  the column has mounted, which is one render. */
   host: HTMLElement | null;
   setHost: (el: HTMLElement | null) => void;
+  /** The element for the directory toolbar (above the tree body), when the page
+   *  declared `hasToolbar`. Null when the slot is not rendered. */
+  toolbarHost: HTMLElement | null;
+  setToolbarHost: (el: HTMLElement | null) => void;
 };
 
 const DirectoryContext = createContext<DirectoryState | null>(null);
@@ -84,6 +91,7 @@ export function DirectoryProvider({
   // decided for. The rule is in `directoryEntry.ts` and is tested there.
   const [entry, setEntry] = useState(NO_DIRECTORY);
   const [host, setHost] = useState<HTMLElement | null>(null);
+  const [toolbarHost, setToolbarHost] = useState<HTMLElement | null>(null);
 
   const setOpen = useCallback((next: boolean) => {
     setEntry((prev) => setDirectoryOpen(prev, next));
@@ -93,7 +101,12 @@ export function DirectoryProvider({
   const register = useCallback((reg: DirectoryRegistration | null) => {
     setRegistration((prev) => {
       if (prev === reg) return prev;
-      if (prev && reg && prev.pageId === reg.pageId && prev.label === reg.label) return prev;
+      if (
+        prev && reg &&
+        prev.pageId === reg.pageId &&
+        prev.label === reg.label &&
+        prev.hasToolbar === reg.hasToolbar
+      ) return prev;
       return reg;
     });
     setEntry((prev) => enterDirectory(prev, reg?.pageId ?? null));
@@ -112,8 +125,8 @@ export function DirectoryProvider({
   }, [open, onNeedColumn]);
 
   const value = useMemo(
-    () => ({ registration, register, open, setOpen, host, setHost }),
-    [registration, register, open, host],
+    () => ({ registration, register, open, setOpen, host, setHost, toolbarHost, setToolbarHost }),
+    [registration, register, open, host, toolbarHost],
   );
 
   return <DirectoryContext.Provider value={value}>{children}</DirectoryContext.Provider>;
@@ -126,6 +139,7 @@ export function useDirectory(): DirectoryState {
   const fallbackRegister = useCallback(() => {}, []);
   const fallbackSetOpen = useCallback(() => {}, []);
   const fallbackSetHost = useCallback(() => {}, []);
+  const fallbackSetToolbarHost = useCallback(() => {}, []);
   const fallback = useMemo<DirectoryState>(
     () => ({
       registration: null,
@@ -134,8 +148,10 @@ export function useDirectory(): DirectoryState {
       setOpen: fallbackSetOpen,
       host: null,
       setHost: fallbackSetHost,
+      toolbarHost: null,
+      setToolbarHost: fallbackSetToolbarHost,
     }),
-    [fallbackRegister, fallbackSetOpen, fallbackSetHost],
+    [fallbackRegister, fallbackSetOpen, fallbackSetHost, fallbackSetToolbarHost],
   );
   return ctx ?? fallback;
 }
@@ -152,14 +168,14 @@ export function useDirectory(): DirectoryState {
  * the page can close it after opening a document.
  */
 export function useDirectoryPage(reg: DirectoryRegistration & { enabled?: boolean }) {
-  const { register, host, open, setOpen } = useDirectory();
-  const { pageId, label, enabled = true } = reg;
+  const { register, host, toolbarHost, open, setOpen } = useDirectory();
+  const { pageId, label, hasToolbar, enabled = true } = reg;
 
   useEffect(() => {
     if (!enabled) return;
-    register({ pageId, label });
+    register({ pageId, label, hasToolbar });
     return () => register(null);
-  }, [register, pageId, label, enabled]);
+  }, [register, pageId, label, hasToolbar, enabled]);
 
-  return { host: enabled ? host : null, open, setOpen };
+  return { host: enabled ? host : null, toolbarHost: enabled ? toolbarHost : null, open, setOpen };
 }
