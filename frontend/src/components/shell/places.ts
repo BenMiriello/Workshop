@@ -227,7 +227,6 @@ export function buildPlaces(
       // and the loopback service-probe grid (one machine's daemons, absent from
       // any production deploy) were removed. See pages/Settings.tsx.
       { id: "agents", label: "Agents", to: "/settings/agents", Icon: icons.agents },
-      { id: "tools", label: "Tools", to: "/settings/tools", Icon: icons.tools },
     ],
   };
 
