@@ -170,6 +170,13 @@ def set_credential(principal_id: int, provider_id: str, value: str) -> None:
     secrets_store.set_values(_slug(principal_id), {_key_name(provider_id): value})
 
 
+def key_tail(principal_id: int, provider_id: str) -> str | None:
+    """The last 4 characters of a stored key, for UI masking. Never more."""
+    from services import secrets_store
+    val = (secrets_store.load(_slug(principal_id)) or {}).get(_key_name(provider_id)) or ""
+    return val[-4:] if len(val) >= 4 else None
+
+
 def clear_credential(principal_id: int, provider_id: str) -> None:
     from services import secrets_store
 
