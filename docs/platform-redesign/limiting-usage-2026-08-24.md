@@ -28,12 +28,31 @@ Measured 2026-08-24, `nominal_task_tokens` in `.runtime/usage-budget.json` is
 - 1,045,598
 - 168,643 (one small ticket)
 
-Median around 800,000. **Admission under-reserves by five to seven times.**
+**RETRACTED 2026-08-24, and the retraction matters: these six are the TOP of the
+distribution, not the middle.** Measured over all 168 `billed` lines in
+`.runtime/ralph.log`, not a hand-picked sample:
 
-So the sequence is: the window frees up 200k, admission asks "is there room for
-150k", says yes, starts a task that costs 800k, and the ceiling ends up 31% over
-(`1,972,531` against `1,500,000` was exactly one under-reserved task overshooting).
-Then everything is refused for hours while it decays.
+    count 168   min 24,559   median 107,284   p80 231,965   max 1,045,598
+
+So the spread is **42.6x**, not 6x, and the nominal reserve of 150,000 is **ABOVE
+the median**, not five to seven times below it. The claim that admission
+under-reserves by five to seven times is false and is withdrawn. Two further
+claims in earlier revisions go with it: "a rolling window returns budget in
+dribbles" (it is a sliding-window log, so budget returns in the lumps it was
+spent) and "decayed only 180,000 in five hours" (does not reproduce).
+
+**The conclusion survives the correction, and is strengthened by it.** The point
+was never that the constant is too small. It is that cost is unpredictable, and a
+42x spread makes that case far better than a 6x one would: no estimate, p80 or
+otherwise, can be right often enough to be the thing correctness rests on. That
+is the argument for pause-and-resume, which makes the estimate not matter, and
+against tuning the reserve, which cannot.
+
+One more measured correction: the `1,972,531` against `1,500,000` overshoot is a
+PER-SCOPE ceiling breach, and in `_admission` the reserve is applied only on the
+app-wide branch. The two scope branches consult no reserve at all. So the
+reservation fix was aimed at a constant that is not in the code path of the
+failure that justified it.
 
 **Any limiter has this failure with a 5x-wrong cost estimate.** Switching from a
 rolling window to a fixed window, a session window or a token bucket does not fix
