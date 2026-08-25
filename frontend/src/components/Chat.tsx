@@ -81,6 +81,9 @@ export type { ChatMode, ChatVariant };
 // Short enough that a dropped stream is picked back up before the operator
 // notices the work stopped moving; it only runs while a run is in flight.
 const LIVENESS_MS = 5_000;
+// Keep at least this many screens of history loaded so a short thread is always
+// scrollable; past it, older pages load on approach (useLogScroll's onNearTop).
+const MIN_FILL_SCREENS = 1.5;
 
 export type ChatProps = {
   contextKey: string;
@@ -505,6 +508,11 @@ export default function Chat({
   // turn from it directly, not from the transcript — without it the log stops
   // following mid-utterance, which is the one time the operator is not touching
   // the screen to scroll it themselves.
+  // `onNearTop` must call `onLoadOlder`, which is defined below and depends on
+  // `holdForOlder` returned by this very hook. Forward through a ref so the hook
+  // gets a stable callback now and the real function once it exists.
+  const loadOlderRef = useRef<() => void>();
+  const onNearTop = useCallback(() => loadOlderRef.current?.(), []);
   const {
     scrollRef, composerRef, inputRef, showJumpToLatest, onLogScroll, followLatest, holdForOlder,
   } = useLogScroll({
@@ -533,6 +541,9 @@ export default function Chat({
     // append at the tail, which does not touch `order[0]`), which is the one
     // moment `holdForOlder`'s captured geometry needs to be applied.
     oldestSeq: state.order.length ? state.order[0] : null,
+    // Page older history in as the operator nears the top, rather than eagerly
+    // on open. See the effect below.
+    onNearTop,
   });
 
   // Capture scroll geometry BEFORE the fetch that will grow the log upward,
@@ -543,31 +554,44 @@ export default function Chat({
     holdForOlder();
     void loadOlder();
   }, [holdForOlder, loadOlder]);
+  // Forwarded to useLogScroll's onNearTop (declared above onLoadOlder because it
+  // needs holdForOlder, which this hook returns).
+  loadOlderRef.current = onLoadOlder;
 
-  // LOAD THE REST IN THE BACKGROUND. Opening a long thread reads only its newest
-  // slice (useThreadLog's INITIAL_TAIL), which is what makes it instant. The rest
-  // of the history then pages in ON ITS OWN, one window at a time, prepended above
-  // the fold with the scroll held (onLoadOlder wraps holdForOlder) so the view
-  // never jumps. There is no control to click and nothing to wait on: by the time
-  // the operator scrolls up, the history is already there.
+  // OLDER HISTORY LOADS ON DEMAND, NOT ALL AT ONCE ON OPEN. Opening a thread
+  // reads only its newest slice (useThreadLog's INITIAL_TAIL), which is what
+  // makes it instant. The rest pages in as the operator scrolls toward the top
+  // (useLogScroll's onNearTop → onLoadOlder), one window at a time, prepended
+  // with the scroll held so the view keeps its place.
   //
-  // The loop is this one effect re-arming itself: it fires a page, `loadingOlder`
-  // goes true then false, `hasMoreOlder` updates, and the effect runs again for
-  // the next page until there is no more. A short delay between pages keeps the
-  // newest slice smooth and lets each prepend commit rather than loading a whole
-  // thread in one burst. A failed page backs off to a slow retry instead of a
-  // tight loop, and recovers on its own without ever surfacing a button.
+  // It used to page the WHOLE thread in eagerly, one window every 200ms, the
+  // moment a thread opened. On a long chat that grew the log by tens of
+  // thousands of pixels over several seconds while the operator was reading the
+  // newest messages, and each prepended page's blocks reflowed as they clamped
+  // to their preview height — so the view juddered up and down repeatedly as
+  // history filled in above the fold. Reported repeatedly as flicker on load,
+  // worst on the longest threads. Loading on approach removes the whole eager
+  // fill: a thread opened at the bottom loads nothing more until he scrolls up.
+  //
+  // This effect covers only the ONE case scroll cannot: a thread whose newest
+  // slice does not fill the viewport, so there is nothing to scroll and
+  // onNearTop can never fire. It tops the log up to a small buffer past one
+  // screen, then stops. A failed page backs off; the scroll path recovers it too.
   //
   // Operator, 2026-08-23: a manual "load earlier messages" button is the wrong
-  // answer to slow loading. Show the newest first, then load the rest without
-  // making the user ask.
+  // answer to slow loading. Loading on approach still asks nothing of him.
   useEffect(() => {
     if (!activeId || !hydrated) return;
     if (!state.hasMoreOlder || loadingOlder) return;
+    const el = scrollRef.current;
+    // Only fill when the content is too short to scroll to. Once past this it is
+    // the scroll handler's job, so a long thread opened at its foot loads nothing.
+    if (el && el.scrollHeight > el.clientHeight * MIN_FILL_SCREENS) return;
     const delay = olderError ? 5000 : 200;
     const t = setTimeout(() => { onLoadOlder(); }, delay);
     return () => clearTimeout(t);
-  }, [activeId, hydrated, state.hasMoreOlder, loadingOlder, olderError, onLoadOlder]);
+  }, [activeId, hydrated, state.hasMoreOlder, loadingOlder, olderError, onLoadOlder,
+      transcript.length, scrollRef]);
 
   const pipeline = useSendPipeline({
     scope, selectedModel, selectedEffort: scopeState.selectedEffort,

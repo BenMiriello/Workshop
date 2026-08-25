@@ -49,6 +49,10 @@ import { userStorage } from "../../lib/storage";
 //    parked above where it belongs.
 
 const SCROLL_STORE_PREFIX = "ws-chat-scroll:";
+// How close to the top, in screens, triggers the next older page. Two screens
+// is enough that the page has committed by the time the operator scrolls into
+// it, without loading history he is nowhere near.
+const OLDER_PREFETCH_SCREENS = 2;
 // The two thresholds and the rule that picks between them live in their own
 // module, pure and tested. See scrollRestore.ts for why they are two numbers.
 type ScrollPos = ScrollPosRule;
@@ -130,6 +134,15 @@ export function useLogScroll({
   // says "older content just landed above the fold", which is the one moment
   // `holdForOlder`'s captured geometry needs to be applied.
   oldestSeq = null,
+  // Older history is paged in ON DEMAND as the operator scrolls toward the top,
+  // not eagerly on open. This fires from the scroll handler when the view comes
+  // within a couple of screens of the top; the caller pages the next window (and
+  // no-ops if there is nothing more or a page is already in flight). Loading the
+  // WHOLE thread up front is what made a long chat judder on open: every page
+  // prepended above the fold grew the log by thousands of pixels and each one's
+  // blocks reflowed as they clamped, so the view jumped repeatedly while the
+  // history filled in above it. See Chat.tsx.
+  onNearTop,
 }: {
   input: string;
   inputFocused: boolean;
@@ -138,6 +151,7 @@ export function useLogScroll({
   restoreKey?: string | null;
   expanded?: boolean;
   oldestSeq?: number | null;
+  onNearTop?: () => void;
 }): LogScroll {
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
@@ -185,6 +199,11 @@ export function useLogScroll({
   // most recently 2026-08-20, on desktop Firefox and Safari.
   const programmaticRef = useRef(false);
   const scrollEndCleanupRef = useRef<(() => void) | null>(null);
+  // Held in a ref so `onLogScroll` can stay a `[]` callback (it is the one
+  // writer of atBottomRef and must not be re-created) while still calling the
+  // latest `onNearTop`.
+  const onNearTopRef = useRef(onNearTop);
+  onNearTopRef.current = onNearTop;
   const scrollToBottom = useCallback((smooth = false) => {
     const el = scrollRef.current;
     if (!el) return;
@@ -228,12 +247,21 @@ export function useLogScroll({
   // settles its own outcome when it ends, and reading its intermediate frames
   // here is what produced the race this guard exists to close.
   const onLogScroll = useCallback(() => {
-    if (programmaticRef.current) return;
+    // A scroll we are driving ourselves (a follow, or the older-page position
+    // hold) is not the operator moving the view; reading its frames here is what
+    // produced the races these guards exist to close.
+    if (programmaticRef.current || holdingOlderRef.current) return;
     const el = scrollRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     const atBottom = distance < FOLLOW_SLOP;
     atBottomRef.current = atBottom;
+    // Page older history in just before the operator reaches it. Within two
+    // screens of the top and there is more behind: ask for the next window. The
+    // caller no-ops when nothing is left or a page is already loading, so this is
+    // safe to call on every scroll event. A prepend moves the top further away
+    // again, so this naturally fires once per page as he keeps scrolling up.
+    if (el.scrollTop < el.clientHeight * OLDER_PREFETCH_SCREENS) onNearTopRef.current?.();
     // Remember where this thread is left. Skipped while a restore is settling —
     // those are our own programmatic scrolls converging on the target, not the
     // operator moving the view, and saving them would just rewrite the target
@@ -275,29 +303,53 @@ export function useLogScroll({
     requestAnimationFrame(() => { if (atBottomRef.current) scrollToBottom(true); });
   }, [scrollToBottom]);
 
-  // PRESERVE READING POSITION WHEN OLDER CONTENT IS PREPENDED. The browser
-  // keeps `scrollTop` fixed in PIXELS when something is inserted above the
-  // viewport, which shoves whatever the operator was reading further down the
-  // screen — the classic infinite-scroll-upward jump. `holdForOlder` captures
-  // the geometry right before the fetch that will grow the log upward; the
-  // layout effect below applies the correction once that content has actually
-  // painted (a real DOM commit, keyed on `oldestSeq` changing — not a fixed
-  // delay, which would race the render).
-  const olderHoldRef = useRef<{ top: number; height: number } | null>(null);
+  // PRESERVE READING POSITION WHEN OLDER CONTENT IS PREPENDED, by holding the
+  // distance from the BOTTOM constant. `overflow-anchor: none` on `.chat-log`
+  // means the browser does NOT adjust scrollTop when content is inserted above
+  // the viewport, so without this the prepended page shoves whatever the operator
+  // was reading down the screen — the classic infinite-scroll-upward jump.
+  //
+  // THE INVARIANT IS THE BOTTOM, NOT A HEIGHT DELTA. Two things move when a page
+  // pages in: the page itself prepends, and then each of its blocks clamps to its
+  // preview height a few frames later (an async measure per block, ~6000px of
+  // total shrink on a long thread). BOTH happen entirely ABOVE the viewport, and
+  // neither changes the content BELOW it — so the distance from the bottom of the
+  // scroller to the current view is the one thing that stays true across the
+  // whole settle. Earlier versions added the height the log GAINED onto scrollTop
+  // once, which was right for the prepend and then wrong the instant the blocks
+  // clamped under it, jumping the view by the shrink. Re-deriving scrollTop from
+  // the bottom each frame until the height goes quiet absorbs the clamp reflow
+  // for free, the same way `settleRestore` handles reflow on open.
+  const olderHoldRef = useRef<{ fromBottom: number } | null>(null);
+  const holdingOlderRef = useRef(false);
   const holdForOlder = useCallback(() => {
     const el = scrollRef.current;
-    if (el) olderHoldRef.current = { top: el.scrollTop, height: el.scrollHeight };
+    if (el) olderHoldRef.current = { fromBottom: el.scrollHeight - el.scrollTop - el.clientHeight };
   }, []);
   useLayoutEffect(() => {
     const hold = olderHoldRef.current;
     olderHoldRef.current = null;
     const el = scrollRef.current;
     if (!hold || !el) return;
-    // The content grew by exactly this many pixels above where the operator
-    // was; shifting scrollTop by the same amount keeps the same pixel of the
-    // same message under the same point on screen, rather than re-deriving a
-    // "where was I" from geometry that has already changed underneath it.
-    el.scrollTop = hold.top + (el.scrollHeight - hold.height);
+    // Hold the bottom-relative position while the prepended page commits and its
+    // blocks settle. `holdingOlderRef` marks these programmatic scrolls so
+    // `onLogScroll` does not read them as the operator moving the view (which
+    // would re-fire the older-page load and cascade). Bounded by a stable height
+    // or a short cap, so a page that never settles cannot loop forever.
+    holdingOlderRef.current = true;
+    let lastH = -1, stable = 0;
+    const start = performance.now();
+    const step = () => {
+      const e = scrollRef.current;
+      if (!e) { holdingOlderRef.current = false; return; }
+      e.scrollTop = Math.max(0, e.scrollHeight - e.clientHeight - hold.fromBottom);
+      const h = e.scrollHeight;
+      stable = h === lastH ? stable + 1 : 0;
+      lastH = h;
+      if (stable >= 2 || performance.now() - start > 500) { holdingOlderRef.current = false; return; }
+      requestAnimationFrame(step);
+    };
+    step();
     // Not a follow: the operator was reading further up, at rest, and this
     // does not touch atBottomRef or the jump-to-latest affordance either way.
     // eslint-disable-next-line react-hooks/exhaustive-deps
