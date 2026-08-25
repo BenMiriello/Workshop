@@ -744,6 +744,37 @@ describe("a pending send's place in the log", () => {
     expect(shape(selectTranscript(sent))).toEqual(["user:a", "live:*", "pending:also"]);
   });
 
+  it("puts a mid-turn tail send ABOVE the indicator once the run has streamed work", () => {
+    // The reported jump: a message sent while a turn is actively writing showed at
+    // the very BOTTOM (below the working indicator) for one round trip, then moved
+    // UP to its recorded cut position the instant the log committed it. Reported
+    // five plus times: "it shows my message at the bottom at first before moving
+    // it up." The run has emitted work, so the send lands at that work's tail --
+    // after it, above the indicator that carries on below -- which is exactly
+    // where the commit will place it, so nothing jumps.
+    let s = stateOf([user("go")]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "working on it" } });
+    s = threadReducer(s, { type: "sendStarted", clientId: "c1", text: "also do this", ts: "2026-08-24T00:00:00Z" });
+    expect(shape(selectTranscript(s))).toEqual([
+      "user:go", "live:working on it", "pending:also do this", "live:*",
+    ]);
+  });
+
+  it("renders the pending mid-turn send where the commit will, so it does not move", () => {
+    // The same send, once the server has recorded its cut and committed the
+    // message: it sits after the streamed work and above the trailing indicator.
+    // The pending frame above must match this frame, block for block, or the
+    // message visibly relocates when the log catches up.
+    let s = stateOf([user("go"), user("also do this", { during_turn: "r1", cut_id: "c1" })]);
+    s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "working on it" } });
+    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" } });
+    expect(shape(selectTranscript(s))).toEqual([
+      "user:go", "live:working on it", "user:also do this", "live:*",
+    ]);
+  });
+
   it("the FIRST send in a chat sits above the indicator, even with a stale active turn", () => {
     // Reported repeatedly: a message sent in a NEW chat shows at the bottom, then
     // moves to the top once read. Mechanism: `duringActiveTurn` is captured from

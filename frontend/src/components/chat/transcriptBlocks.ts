@@ -573,8 +573,10 @@ export function composeTranscript(
   // earlier one pushes it right).
   //
   // A send at the tail splits again, by `duringActiveTurn`. One sent while a
-  // turn was already running joined that turn and belongs where every mid-turn
-  // message belongs: below the working indicator, same as `atTail` always did.
+  // turn was already running joined that turn and belongs where that turn
+  // recorded its cut: at the run's CURRENT tail, after the work streamed so far
+  // and above the working indicator that carries on below it (`atTail`, placed
+  // just below where the live blocks land — see the block after the live push).
   // One sent while nothing was running is what STARTED the turn, so it belongs
   // ABOVE the indicator, same as the committed floor `workingPieceIndex`
   // enforces once this send lands in the log. Without the split, a fresh send
@@ -609,13 +611,48 @@ export function composeTranscript(
   // Only when the committed half agrees the run is still writing. See the
   // liveTurnId note in selectCommitted: the snapshot can name a run whose reply
   // is already committed above, and rendering its draft prints that reply twice.
-  if (state.activeTurn && committed.liveTurnId === state.activeTurn.turnId) {
+  const liveTurn = state.activeTurn;
+  const liveShown = !!(liveTurn && committed.liveTurnId === liveTurn.turnId);
+  if (liveTurn && liveShown) {
     out.push(...liveBlocks(
-      state.activeTurn.turnId, state.activeTurn.segments, committed.heldForActiveTurn,
-      state.activeTurn.cutHead,
+      liveTurn.turnId, liveTurn.segments, committed.heldForActiveTurn,
+      liveTurn.cutHead,
     ));
   }
-  out.push(...atTail);
+
+  // A TAIL SEND DURING A RUNNING TURN LANDS AT THE RUN'S CURRENT TAIL, NOT BELOW
+  // THE WHOLE LIVE BLOCK. The server records its cut at whatever the run has
+  // emitted so far, so once committed the message renders AFTER that work and
+  // ABOVE the working indicator, which carries on below it (the empty trailing
+  // stretch `cutPieces` emits, see `liveBlocks`). Pushing the still-pending
+  // bubble below the entire live block instead left it at the very bottom for one
+  // round trip and then jumped it up to that recorded position the instant the
+  // log committed it -- "it shows my message at the bottom at first before moving
+  // it up", reported five plus times. Placing it above the indicator from the
+  // first frame, in the same spot the commit will put it, is what stops the jump.
+  //
+  // Only when the run has actually emitted work at its tail. A message that beat
+  // all output stays below the indicator, dim, exactly as its committed `cut_head`
+  // form does: `workingPieceIndex` keeps the indicator first when the run has
+  // streamed nothing, and a tail send then belongs under it (the case pinned by
+  // "still renders below the working indicator when it joined a turn already
+  // running"). `liveBlocks` always ends on the working stretch, so the last block
+  // is the indicator: demote it, drop the messages in, and re-open the indicator
+  // below them -- the same three-part shape the committed cut produces.
+  if (atTail.length) {
+    const wi = out.length - 1;
+    const indicator = out[wi];
+    if (liveTurn && liveShown && indicator?.kind === "live"
+        && indicator.working && indicator.segments.length) {
+      out[wi] = { ...indicator, working: false };
+      out.push(...atTail, {
+        kind: "live", key: `${liveTurn.turnId}:tail`,
+        turnId: liveTurn.turnId, segments: [], working: true,
+      });
+    } else {
+      out.push(...atTail);
+    }
+  }
 
   return out;
 }

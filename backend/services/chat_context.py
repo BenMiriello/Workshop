@@ -1787,6 +1787,106 @@ def contained_project_dir(slug: str) -> _Path:
     return candidate
 
 
+# ------------------------------------------------------- TODO.md summary
+# The generated TODO.md export is the single largest thing a build/project/dev
+# chat used to inline: on the platform's own `development` scope it runs to ~260
+# tickets and ~590 KB (~150k tokens), each ticket carrying its full
+# Objective/Output/Start-from/Boundaries body. Pushing all of that into EVERY
+# turn's cache-stable prefix is what makes a brand-new chat open at a third of
+# the window before the operator has typed anything.
+#
+# It is also redundant three ways over. The open-ticket TITLES are already in the
+# ONGOING WORK digest (`workspace_digest`, capped small). The full bodies are
+# reachable on demand through the `query` MCP tool and `project_tasks.py
+# list-json`/`next-ready`, which is the entire point of those tools: the agent
+# PULLS the one ticket it is about to work, instead of every ticket being PUSHED
+# on every turn. So the live block drops to a status roll-up plus the few tickets
+# that are actually in flight, blocked, or next-ready — the state a continuing
+# session needs at a glance — and names where the rest lives.
+#
+# Parsed from the rendered TODO.md rather than re-loaded from the `.tasks.json`
+# store on purpose: the export is regenerated on every store mutation so it is
+# current, parsing it is side-effect free (loading the store calls reconcile(),
+# which can WRITE the export — not something the read-only chat hot path should
+# do every turn), and it also covers the roots that only ever have a hand-kept
+# TODO.md with no store behind it.
+
+# Reverse of tasks._STATUS_BOX: the checklist box char -> status name.
+_TODO_BOX_STATUS = {
+    " ": "todo", "~": "doing", "?": "in_review", "!": "blocked",
+    "x": "done", "-": "cancelled", "d": "draft", "p": "parked",
+}
+_TODO_ITEM_RE = re.compile(r"^\s*- \[(.)\]\s+(.*\S)\s*$")
+_TODO_TAG_RE = re.compile(r"\s{2,}\((?:draft|doing|blocked|in_review|parked|cancelled)\)\s*$")
+_TODO_TITLE_MAX = 100
+_TODO_LIST_CAP = 8
+
+
+def _todo_title(raw: str) -> str:
+    t = _TODO_TAG_RE.sub("", raw).strip()
+    return t if len(t) <= _TODO_TITLE_MAX else t[: _TODO_TITLE_MAX - 1].rstrip() + "…"
+
+
+def todo_summary_block(todo_md: str) -> str:
+    """A compact status roll-up of a scope's TODO.md export, in place of inlining
+    the whole thing. Counts every checklist item by status and lists only the
+    tickets a continuing session needs at a glance (in flight, blocked, then the
+    next ready ones), capped. Returns "" for a TODO.md with no checklist items."""
+    counts: dict[str, int] = {}
+    in_flight: list[str] = []   # doing / in_review, rendered "[<box>] <title>"
+    blocked: list[str] = []
+    ready: list[str] = []       # todo
+    for line in todo_md.splitlines():
+        m = _TODO_ITEM_RE.match(line)
+        if not m:
+            continue  # continuation/body lines and headings are skipped
+        box = m.group(1)
+        status = _TODO_BOX_STATUS.get(box)
+        if status is None:
+            continue
+        counts[status] = counts.get(status, 0) + 1
+        if status in ("doing", "in_review"):
+            bucket, entry = in_flight, f"[{box}] {_todo_title(m.group(2))}"
+        elif status == "blocked":
+            bucket, entry = blocked, f"[!] {_todo_title(m.group(2))} (blocked)"
+        elif status == "todo":
+            bucket, entry = ready, f"[ ] {_todo_title(m.group(2))}"
+        else:
+            continue
+        if len(bucket) < _TODO_LIST_CAP:
+            bucket.append(entry)
+    total = sum(counts.values())
+    if not total:
+        return ""
+
+    # Counts, most actionable first, only the non-zero ones.
+    order = [("todo", "open"), ("doing", "doing"), ("in_review", "in review"),
+             ("blocked", "blocked"), ("parked", "parked"), ("draft", "draft"),
+             ("done", "done"), ("cancelled", "cancelled")]
+    tally = ", ".join(f"{counts[s]} {label}" for s, label in order if counts.get(s))
+
+    out = [
+        f"This scope's task store holds {total} tickets ({tally}). The full "
+        "TODO.md export (every ticket's Objective/Output/Start-from/Boundaries) "
+        "is NOT inlined here; it runs to hundreds of KB. Pull only what you need:",
+        "  - `mcp__workshop__query` lists open tickets, recent runs and note "
+        "titles for this scope; the top open titles are also in ONGOING WORK above.",
+        "  - `python3 ~/workshop/scripts/project_tasks.py list-json .` prints the "
+        "structured store, `next-ready .` the next actionable ticket; read one in "
+        "full via the query tool. TODO.md is a generated export; never edit it.",
+    ]
+    # The few tickets a continuing session actually needs to see, with status.
+    picks: list[str] = list(in_flight) + list(blocked)
+    remaining = max(0, _TODO_LIST_CAP - len(picks))
+    if remaining:
+        picks += ready[:remaining]
+    if picks:
+        picks = [f"  - {p}" for p in picks]
+        out.append("In flight / blocked / next-ready here:")
+        out.extend(picks)
+    return "\n".join(out)
+
+
 class ProjectContextProvider(ContextProvider):
     """Build-mode provider for a single Project. Routes call_cloud with cwd
     set to the project directory and the full default agentic toolset enabled
@@ -1864,7 +1964,9 @@ class ProjectContextProvider(ContextProvider):
         if brief:
             parts.append("=== PROJECT.md (brief) ===\n" + brief)
         if todo:
-            parts.append("=== TODO.md ===\n" + todo)
+            summary = todo_summary_block(todo)
+            if summary:
+                parts.append("=== TODO.md (status roll-up; export not inlined) ===\n" + summary)
         return "\n\n".join(parts)
 
 
@@ -1982,7 +2084,9 @@ class MakerAgentContextProvider(ContextProvider):
         if brief:
             parts.append("=== PROJECT.md (brief) ===\n" + brief)
         if todo:
-            parts.append("=== TODO.md ===\n" + todo)
+            summary = todo_summary_block(todo)
+            if summary:
+                parts.append("=== TODO.md (status roll-up; export not inlined) ===\n" + summary)
         return "\n\n".join(parts)
 
 

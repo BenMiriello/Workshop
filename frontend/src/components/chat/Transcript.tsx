@@ -312,17 +312,31 @@ export function ElidedContent({
   // so the bottom of the Nth is exactly where the block should end, whatever
   // produced those lines. Clipping still happens, but now it clips at a place
   // where there is nothing to clip. See clampCut.ts.
+  // THE OBSERVER IS CREATED ONCE, NOT REBUILT PER TOKEN, AND ITS WORK IS
+  // COALESCED TO ONE MEASURE PER FRAME. A streaming reply is open (unclamped)
+  // while it is the latest turn, so its height grows as content lands, and the
+  // ResizeObserver already reports exactly that -- there is no need to also
+  // depend on `source`. Depending on it used to re-run this whole effect on
+  // EVERY streamed token: it disconnected and rebuilt the observer and forced a
+  // synchronous layout read (a `getClientRects` walk over the whole, growing
+  // block) each time, which is O(reply length) of reflow per token. On a long
+  // reply that is O(n^2), on the main thread, and it is worst exactly where the
+  // operator reported the judder: a long or long-running chat, on a phone (slow
+  // layout). Coalescing the observer's notifications through one rAF means a
+  // burst of tokens costs a single read on the next frame instead of one each.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    let raf = 0;
     const measure = () => {
+      raf = 0;
       // NOT WHILE THE TOGGLE IS ANIMATING. The observer watches this element,
-      // whose height is what the animation changes, so it would fire every
-      // frame and run the range walk each time. The lines have not moved, only
-      // the cap over them, so there is nothing to re-measure.
+      // whose height is what the animation changes, so it would run the range
+      // walk on the settling frames. The lines have not moved, only the cap over
+      // them; once the height settles the observer fires again and we re-measure.
       if (animRef.current) return;
-      // Cheap gate next. The range walk is a full layout read and this runs on
-      // every token of a streaming reply; most blocks are nowhere near the fold.
+      // Cheap gate next. The range walk is a full layout read; most blocks are
+      // nowhere near the fold.
       const lh = parseFloat(getComputedStyle(el).lineHeight) || 20;
       if (el.scrollHeight <= lh * (cfg.previewLines + 1) + 2) {
         setOverflowing(false);
@@ -337,11 +351,12 @@ export function ElidedContent({
       setOverflowing(worthClamping(bottoms.length, cfg.previewLines));
       setClampH(cutHeight(bottoms, el.getBoundingClientRect().top, cfg.previewLines));
     };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
     measure();
-    const ro = new ResizeObserver(measure);
+    const ro = new ResizeObserver(schedule);
     ro.observe(el);
-    return () => ro.disconnect();
-  }, [source, cfg.previewLines]);
+    return () => { if (raf) cancelAnimationFrame(raf); ro.disconnect(); };
+  }, [cfg.previewLines]);
 
   const clamped = overflowing && !open;
   return (
