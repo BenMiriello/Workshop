@@ -28,7 +28,10 @@ distinction lives in one line of help text, not in a new word.
   The reasoning-effort collision is handled by calling the other one "reasoning
   effort" wherever it is shown, which is what it already is (§5).
 - A settings-owned **policy table** maps each band to a **starting tier** and a
-  **ceiling tier**. Global default, per-scope override, per-ticket pin.
+  **ceiling tier**. Global default and per-scope override. There is no per-ticket
+  model field: a human pin lives on the planned run instead, so the model is
+  recorded once rather than in two places
+  (`planning-a-run-before-it-runs-2026-08-25.md`).
 - A run that fails for a reason a stronger model could fix **escalates one tier
   on its next attempt**, up to the band's ceiling. It adds no attempt and no run:
   the retry already happens today.
@@ -626,26 +629,48 @@ argued:
 
 ## 8. For the operator to decide
 
-Four things. Everything else in this document is either measured or follows from
-something measured.
+One thing. The other two listed here earlier were answered on 2026-08-25 and are
+recorded below as settled.
 
-1. **The three default rows.** `small -> haiku, ceiling sonnet`,
-   `standard -> sonnet, ceiling opus`, `large -> opus, ceiling opus` is a spend
-   posture, not a fact. Notably `standard` starting on Sonnet is a *raise* from
-   today, where 73% of tickets route to nothing; it will cost more per ticket and
-   is expected to cost less per completed ticket. That trade is a judgement call
-   and it is his.
+1. **The three default rows.** `quick -> haiku, ceiling sonnet`,
+   `standard -> sonnet, ceiling opus`, `deep -> opus, ceiling opus` is a spend
+   posture, not a fact. `standard` starting on Sonnet is a raise from today,
+   where 73% of tickets route to nothing; it costs more per ticket and is
+   expected to cost less per completed ticket.
 
-2. **Whether the ticket keeps a `model` pin at all** (rung 1 of §3.3). It is the
-   escape hatch that makes the policy table safe to be wrong about, and it is
-   also the field most likely to be set once and then quietly outlive its reason.
-   The alternative is that the only per-ticket control is the band.
+### Answered 2026-08-25
 
-3. **Whether the drafting model proposes a band at filing time.** Yes means most
-   tickets arrive with a band nobody chose, and a machine's guess in a field whose
-   entire value is that it is a human decision. No means the field stays mostly
-   unset and the default carries the work, which §7's second falsifier says is
-   an acceptable resting state.
+**The drafting agent sets `effort` when it files the ticket.** This was listed as
+a question and should not have been. The operator: "I didn't think this was up
+for debate... I thought it was totally reasonable to ask the agent creating the
+ticket to set that, partially because it also needs to be able to think through
+like is this ticket too big, or is it complete, and is it a complete plan, do we
+need to split it up." That reframes the field: sizing is not only a routing input,
+it is part of deciding whether the ticket is well formed at all, which is work the
+drafting agent is already doing. The operator can change it afterwards.
+
+He also placed it in the ordinary tracker tradition rather than treating it as
+new: "I'm talking about the usual sort of ticket size numbering system that most
+people use, even though it's imperfect and usually means different things for
+different people." So `effort` is this system's story-point field, with the
+known imprecision accepted rather than designed around.
+
+Two consequences he raised, recorded here because they shape later work:
+
+- **One number is the starting point, and it may not be the end state.** "Maybe
+  we want to build a system that just sort of extrapolates from one number, or
+  maybe we have a system that is capable of working with just one number such as
+  for the instance where we just import tickets, because we want to be compliant
+  with external systems, but then we can have our own internal notation that is
+  more expressive." So the single band is the interchange format, and a richer
+  internal representation is allowed later provided it degrades to one number for
+  an imported or exported ticket. Nothing here forecloses that.
+- **The per-ticket `model` pin is deleted**, and that is the second answered
+  question. It does not move to the ticket at all. See
+  `planning-a-run-before-it-runs-2026-08-25.md`: the model is stored on a planned
+  run associated with the ticket, so it is set once rather than in two places,
+  re-resolves from this document's policy table before execution unless a person
+  pinned it, and rung 1 of the §3.3 ladder is removed accordingly.
 
 Decided here, and not offered as questions: one dimension rather than two (§4);
 escalation on measured failure rather than a second declared dimension (§3.4);
@@ -664,7 +689,7 @@ Sequenced. 2 blocks 3 blocks 4; 6 blocks on 2; 1 and 5 are independent.
 
 | id | title | priority |
 |---|---|---|
-| `ce1a5770` | Rename the ticket effort field to effort, with bands small/standard/large | medium |
+| `ce1a5770` | ~~Rename the ticket effort field~~ CANCELLED 2026-08-25, no rename | - |
 | `372c72f7` | One resolver decides which model runs a ticket, from a stored policy table | high |
 | `0e68c881` | The sweep asks the resolver which model to run, instead of its own case statement | high |
 | `2c7c245e` | A run that fails the reviewer retries one tier up, capped by the band ceiling | medium |

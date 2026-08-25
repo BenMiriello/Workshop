@@ -195,10 +195,10 @@ Same two real turns, evaluated under each candidate unit:
 |---|---:|---:|
 | what chat records today (raw sum over frames) | 27,063,556 | 10,652,929 |
 | raw sum, deduplicated by message id | 17,318,761 | 5,587,648 |
-| **effective** (fresh + cache_creation + 0.1x cache_read + output), deduplicated | **2,302,137** | **782,141** |
+| **cost-weighted** (components priced at published API rates), deduplicated | **2,302,137** | **782,141** |
 | fresh-only (fresh + cache_creation + output), deduplicated | 633,624 | 248,196 |
 
-- today vs effective: **11.8x** and **13.6x**
+- today vs cost-weighted: **11.8x** and **13.6x**
 - today vs fresh-only: **42.7x** and **42.9x**
 - of which duplicate frames alone: 1.54x / 1.59x; cache weighting alone: 7.5x / 7.1x
 
@@ -208,8 +208,8 @@ that makes a monthly cap meaningless today, and it is the whole argument of
 section 0.
 
 Sanity check on the recommendation: the 716 real chat rows have median 4.07M
-today; at the measured ~12.6x that is ~323k effective, against a worker-run
-median of 107,284 effective (already in this unit, from `.runtime/ralph.log`,
+today; at the measured ~12.6x that is ~323k cost-weighted, against a worker-run
+median of 107,284 (already cost-weighted, from `.runtime/ralph.log`,
 n=168). A heavy chat turn costing two to ten worker runs is a believable number.
 6.4M is not.
 
@@ -268,37 +268,67 @@ the SSE stream, and then discards.
 
 ## 5. Decision: the unit for budget and admission
 
-**Recommended: effective tokens** = `fresh_input + cache_creation + output +
-0.1 x cache_read`, summed over distinct API calls.
+**Store the four raw components. Derive dollars from a versioned price table.
+Denominate budgets in dollars.** There is no Workshop token unit.
 
-Rejected, with reasons:
+This corrects an earlier draft of this section, which proposed a composite
+"effective tokens" = `input + cache_creation + output + 0.1 x cache_read`. That
+is withdrawn. The reasons it is withdrawn are the reasons not to re-propose it:
 
-- **Raw sum (today).** Ranks a cache-heavy 200-call agentic turn 7x above a chat
-  turn doing the same work, so any cap set from experience with one workload is
-  wrong for the other. It is also the only option that gets *worse* as prompt
-  caching improves, which inverts the incentive: making the system cheaper makes
-  it look more expensive.
-- **Fresh-only (exclude cache_read).** Simple and defensible, but 43x below what
-  we record now, and it reports a turn that made 200 cached calls as costing
-  nearly nothing. Cache reads are real API calls against a real rate limit.
-- **Normalized cost units (money).** The right long-run answer and the one
-  `limiting-usage` §R5 correctly wants for the monthly limit — nobody has an
-  intuition for 30M tokens and everybody has one for a dollar. But it needs a
-  model catalogue and a price table that do not exist yet, and it must not block
-  the fix. **Sequence it second, and make it cheap to reach** — see §6, which
-  stores components precisely so money is a pure function of stored history.
-- **Effective tokens.** Matches the resource that actually runs out on a
-  subscription; is what `ralph.sh` already does, so adopting it means the worker
-  history stays valid and only the chat side moves; is within ~2x of the money
-  ordering for a single model family, so a cap set in it behaves sensibly; and is
-  computable from stored components with no external table.
+- **It is not what the field does.** The OpenTelemetry GenAI semantic conventions
+  define four raw counters (`gen_ai.usage.input_tokens`, `output_tokens`,
+  `cache_read.input_tokens`, `cache_write.input_tokens`) and the metric
+  `gen_ai.client.token.usage` splits only by `gen_ai.token.type` in
+  {input, output}. There is no weighted unit and no cost metric in the registry.
+  Anthropic's own published sum is unweighted. Langfuse, LangSmith, Helicone,
+  Braintrust and Portkey all store raw components and derive dollars from a
+  versioned price table. None normalizes to one token unit.
+- **It has been tried and retired.** GitHub Agentic Workflows shipped this exact
+  composite, named Effective Tokens, with weights 1.0 input / 0.1 cache / 4.0
+  output. They deprecated it on 2026-06-05 and replaced it with a dollar-derived
+  credit. Adopting a unit another vendor withdrew two months ago is not a
+  defensible position.
+- **The weights were wrong anyway.** Output is 4x to 5x input, not 1x, and
+  cache_creation is 1.25x, not 1x.
+- **This document's own dependency already said so.** `limiting-usage` §4 ends
+  "And count money, not tokens", and R5 says the monthly limit "is the only limit
+  that should ever be denominated in currency."
 
-**Conversion on our data: what the chat writers record today is 11.8x to 13.6x
-the recommended unit.** State that plainly wherever a pre-fix number is shown.
+Dollars are the correct denominator for a specific published reason, not a
+preference: usage past a plan's allowance bills at standard API rates. That is
+the only unit a subscription plan and a token ledger share.
 
-The 0.1 weight is a constant in one place with the measurement behind it, not a
-tuned parameter. When money lands, it is derived from the price table rather than
-asserted.
+**Raw sum, which is what we record today, stays rejected.** It ranks a
+cache-heavy agentic turn about 12x above a chat turn doing the same work, and it
+is the only option that gets worse as prompt caching improves, so making the
+system cheaper makes it look more expensive. The measured gap between what the
+chat writers record and a cost-weighted view is 11.8x to 13.6x, which is the
+evidence that the current column is unusable rather than merely imprecise.
+
+**Fresh-only, excluding cache reads, also stays rejected.** Cache reads are real
+API calls at a real price, and excluding them reports a 200-call cached turn as
+nearly free.
+
+### The price table
+
+`services/model_prices.py`: per model, input / output / cache-write / cache-read
+per million tokens, plus an `effective_from` date. A ledger row records the
+`price_version` in force when it was written, so a price change never rewrites
+history and an old row keeps the cost it actually had. Version 1, as published
+on 2026-08-25: Opus 5 $5 / $25 per MTok, Sonnet 5 $3 / $15, Haiku 4.5 $1 / $5,
+cache write 1.25x base input, cache read 0.1x base input.
+
+`effective_from` rather than an opaque integer because the question asked of it
+is always "what did this cost on the day it ran", and a date answers that without
+a lookup table of what each version meant.
+
+### What the operator sees
+
+Dollar figures are derived at published API rates and are an estimate of value
+consumed, not an invoice. That is worth **one short info note beside the totals
+in Settings, and nothing else**. No per-figure caveat, no per-row tooltip, no
+banner. Stating it once is honest; stating it everywhere is padding, and it is
+explicitly not wanted.
 
 ---
 
@@ -333,10 +363,10 @@ def occupancy(u: Usage) -> int:
 def spend(u: Usage) -> int:
     """(b) Volume billed: all four components at parity. Sum over CALLS."""
 
-def effective(u: Usage, *, cache_read_weight: float = CACHE_READ_WEIGHT) -> int:
-    """(c) Rate-limit-shaped consumption. Sum over CALLS. The admission unit."""
-
-CACHE_READ_WEIGHT = 0.1   # measured; see counting-tokens-2026-08-25.md §5
+def cost_usd(u: Usage, model: str, *, price_version: str | None = None) -> float:
+    """(c) and (d). What this call cost at published API rates. The budget and
+    admission unit. `price_version` defaults to the table in force now; a stored
+    row passes the version it recorded, so history keeps its own prices."""
 
 class TurnMeter:
     """Accumulates a turn's usage across stream frames, DEDUPLICATED BY API
@@ -344,7 +374,7 @@ class TurnMeter:
     object; adding each frame is what inflated chat spend by ~1.55x.
 
     Also separates the parent conversation from delegates: `occupancy` reads
-    parent-only (a delegate has its own window), `spend`/`effective` count
+    parent-only (a delegate has its own window), `spend`/`cost_usd` count
     everything (a delegate's tokens are really spent). This is the rule
     build_streaming already implements inline and would otherwise re-implement."""
     def observe(self, message_id: str | None, usage: object, *, parent: str | None) -> None: ...
@@ -375,7 +405,7 @@ Rows stay a superset of today's, so every existing reader keeps working:
 {"ts": "...", "project": "development", "tokens": 782141,
  "role": "chat", "run": "...", "chat": "...",
  "v": 2,
- "unit": "effective",
+ "unit": "usd",
  "components": {"input": 108, "cache_read": 5339452,
                 "cache_creation": 247716, "output": 372},
  "calls": 54,
@@ -423,7 +453,7 @@ sites use it that way.
 ### Reading old rows
 
 `_read_entries()` normalizes on load: a row with no `v` is `v: 1`, `unit:
-"raw-frames"` for `role in (chat,)`, `unit: "effective"` for `role == "worker"`,
+"raw-frames"` for `role in (chat,)`, `unit: "weighted-tokens"` for `role == "worker"`,
 `unit: "estimate"` for `role == "compaction"`, and carries no components. Callers
 that need a consistent unit ask for it and get an explicit answer about what
 cannot be converted — see §7. Nothing silently rescales a v1 row by 12.6x: that
@@ -514,7 +544,7 @@ what chat uses in a window?** With the corrected unit that is a one-line query
 that today cannot be asked. Recommended rule, unchanged in mechanism:
 
 - Admission keeps excluding `("chat", "compaction")` — never gate the operator.
-- Admission compares **effective tokens** only, and refuses to admit against a
+- Admission compares **dollars** only, and refuses to admit against a
   window containing unconvertible v1 rows without saying so in the refusal text.
 - The interactive reserve stops being a blind constant: report measured chat
   consumption against the reserved fraction on the Usage page, so 0.65 is a
@@ -526,7 +556,7 @@ that today cannot be asked. Recommended rule, unchanged in mechanism:
 
 - **"And count money, not tokens"** (§4, and §R5's "the only limit that should
   ever be denominated in currency"). Closed as *sequenced and made cheap*: money
-  is the right unit for the monthly limit, effective tokens is the right unit for
+  is the right unit for the monthly limit, and it is also the right unit for
   the 5h limit, and storing components (§6) makes the switch a re-read of history
   rather than a rewrite. `total_cost_usd` is already on the wire and already
   discarded.
@@ -558,7 +588,7 @@ that today cannot be asked. Recommended rule, unchanged in mechanism:
   transcript. Thinking is billed as output; confirm it is already inside
   `output_tokens` rather than additional to it, before adding it anywhere.
 - **`cache_creation` is priced above fresh input** (~1.25x) while this design
-  weights it at 1.0. Below the noise floor for effective tokens; matters for
+  weights it at 1.0. Below the noise floor for a dollar figure; matters for
   money, where the price table handles it.
 - The 0.1 cache-read weight is taken from `ralph.sh`'s stated reasoning about
   subscription rate limits, not from a measurement of the rate limiter itself.
