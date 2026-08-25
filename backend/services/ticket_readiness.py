@@ -66,7 +66,8 @@ def check(task: dict, *, known_ids: Collection[str] | None = None) -> dict:
     if not title:
         fail("title", "the ticket has no title")
 
-    if not (ticket_format.states(body, "objective") or len(body) >= 40):
+    if not (ticket_format.states(body, "objective")
+            or ticket_format.states(body, "problem") or len(body) >= 40):
         fail("objective", "the body does not say what this is trying to achieve")
 
     if not (ticket_format.states(body, "output") or task.get("acceptance")):

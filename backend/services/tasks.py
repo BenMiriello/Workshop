@@ -65,6 +65,9 @@ Canonical Task (version 2)::
       "discovered_from": str | None,   # task id that spawned this follow-up
       "effort": str | None,            # quick|standard|deep hint (aliases s/m/l
                                        # and any case accepted on read)
+      "type": str | None,              # bug|feature|task — the work
+                                       # CATEGORY. None when unset; orthogonal
+                                       # to `execution`. See WORK_TYPES.
       "latitude": str | None,          # "strict"|"standard"|"open" — what the
                                        # worker may do where THIS ticket does not
                                        # say. None means INHERIT (not "standard"):
@@ -722,6 +725,32 @@ def _normalize_execution(value) -> str | None:
     return key if key in EXECUTIONS else None
 
 
+# --- type: what KIND of work this is -----------------------------------------
+# A SPEC field, completely separate from `execution`. `execution` answers "can a
+# machine do this at all"; `type` answers "what category of work is it". A ticket
+# is a bug OR a feature OR a task regardless of whether a machine can
+# execute it, so the two never couple.
+#
+#   bug        something is broken
+#   feature    a new capability
+#   task       any other defined work: a refactor, wiring, a migration, an
+#              investigation, or routine maintenance (deps, cleanup, config).
+#              Deliberately broad — "chore" is not a separate type; a chore is
+#              just a low-ceremony task.
+#   None       not classified. The store does NOT invent a type; an unset or
+#              unrecognized value reads as None rather than defaulting to "task",
+#              so "nobody said" is distinguishable from "someone said task".
+WORK_TYPES = ("bug", "feature", "task")
+
+
+def _normalize_work_type(value) -> str | None:
+    """One of WORK_TYPES, or None when unset OR unrecognized. Fail-soft to None
+    (unclassified) the same way `_normalize_execution` does: a typo must not be
+    coerced into a real category the operator never chose."""
+    key = str(value or "").strip().lower()
+    return key if key in WORK_TYPES else None
+
+
 # --- triage: the mark that stops the queue triager re-judging -----------------
 # An EXEC field (run metadata, never synced). The queue triager reads the store
 # it writes, so it cannot use the note triager's mtime watermark: `update()` sets
@@ -940,6 +969,10 @@ def _normalize(task: dict) -> dict:
         # execution: SPEC (see EXECUTIONS). Unclassified is None and is NOT
         # eligible for unattended selection — fail closed, never guess.
         "execution": _normalize_execution(task.get("execution")),
+        # type: SPEC (see WORK_TYPES). The work CATEGORY, orthogonal to
+        # `execution`. Unset/unrecognized reads as None — the store never
+        # invents a type.
+        "type": _normalize_work_type(task.get("type")),
         # triage: EXEC. The queue triager's own mark; see spec_hash().
         "triage": _normalize_triage(task.get("triage")),
         # Round-trips as None (inherit) when unset OR when the stored value is
@@ -1944,6 +1977,7 @@ def add(
     discovered_from: str | None = None,
     effort: str | None = None,
     execution: str | None = None,
+    type: str | None = None,
     latitude: str | None = None,
     source: dict | None = None,
     provenance: str | None = None,
@@ -1996,6 +2030,7 @@ def add(
             "max_attempts": max_attempts, "touches": touches or [],
             "discovered_from": discovered_from, "effort": effort,
             "execution": execution,
+            "type": type,
             "latitude": latitude,
             "source": source or {"kind": "operator", "ref": None},
             "scoped_by": scoped_by, "sync": sync,
@@ -2029,6 +2064,7 @@ def update(
     max_attempts: int | None = None,
     effort: str | None = None,
     execution: str | None = None,
+    type: str | None = None,
     triage: dict | None = None,
     latitude: str | None = None,
     job_id: str | None = None,
@@ -2224,6 +2260,10 @@ def update(
             # invalidate the work a holding worker is already doing, so it must
             # not fence that worker out.
             found["execution"] = _normalize_execution(execution)
+        if type is not None:
+            # Additive: "" clears back to unclassified (None), never to a real
+            # category. The work CATEGORY, orthogonal to `execution` above.
+            found["type"] = _normalize_work_type(type)
         if triage is not None:
             # The triager's own mark. Also absent from `_material_edit`: the
             # whole point is that recording a decision is not an edit to the

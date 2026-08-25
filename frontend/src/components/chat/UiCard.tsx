@@ -15,7 +15,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Bug, CheckSquare, CircleCheck, History, MessageCircleQuestion, MinusCircle,
-  Sparkles, Wrench,
+  Sparkles,
 } from "lucide-react";
 import {
   Button,
@@ -459,7 +459,6 @@ const TYPE_OPTIONS: SegmentedOption<string>[] = [
   { value: "bug", label: <span className="chat-card__typeopt"><Bug size={14} strokeWidth={1.8} aria-hidden /> Bug</span> },
   { value: "feature", label: <span className="chat-card__typeopt"><Sparkles size={14} strokeWidth={1.8} aria-hidden /> Feature</span> },
   { value: "task", label: <span className="chat-card__typeopt"><CheckSquare size={14} strokeWidth={1.8} aria-hidden /> Task</span> },
-  { value: "chore", label: <span className="chat-card__typeopt"><Wrench size={14} strokeWidth={1.8} aria-hidden /> Chore</span> },
 ];
 
 export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; raw: string; ctx: UiCardCtx }) {

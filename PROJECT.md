@@ -1021,3 +1021,24 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   than die; express limits as one AND-composed rule list with several periods; and
   offer the limiter SHAPE (rolling, Claude-style session, none) as a setting over
   one accounting layer. Not implemented, operator said not necessarily now.
+- 2026-08-25 — Operator: redesign the chat ticket-proposal card. Shipped: (1)
+  spacing normalized (.chat-card 12px->16px padding + top margin; it was
+  deliberately cramped below every other chat block); (2) the "Nothing will pick
+  this up on its own..." explainer deleted — the absent "File and run" button is
+  the message; (3) standard ticket TYPES (bug/feature/task) as top-level card
+  metadata driving a type-aware description template, plus a new Problem label
+  disentangled from Objective (it was a silent synonym, so the template only ever
+  stated the fixed-state outcome and the actual problem was never written).
+  Bug/Feature lead with Problem; Task leads with Objective. Chore was dropped on
+  operator challenge: it is Pivotal-Tracker/Conventional-Commits only, not
+  universal (Jira has no Chore), and Task absorbs it. (4) Card lifecycle
+  animations (file/dismiss/supersede collapse+fade on the motion tokens); (5)
+  supersession DERIVED at render time from the transcript — a re-proposed ticket
+  (same top-level id, or supersedes:) closes the older unresolved card to a muted
+  "Replaced by a newer proposal" line; a filed/dismissed card is never superseded.
+  Type persists in the JSON store (file-backed scopes) immediately; for the
+  Postgres-backed development/workshop scopes the type shapes the body (Problem
+  lands) but is NOT yet a queryable column — the live DB is behind an unapplied
+  destructive migration (def2cbf58df8), so no schema change was made. Follow-up:
+  columnize `type` in Postgres, decoupled from execution/agent_executable, once
+  the alembic head is reconciled.

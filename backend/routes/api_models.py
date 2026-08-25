@@ -432,6 +432,9 @@ class Task(BaseModel):
     discovered_from: str | None = None
     effort: str | None = None
     execution: str | None = None
+    # The work CATEGORY (bug|feature|task|chore), orthogonal to `execution`.
+    # None when unclassified; the store never invents a type.
+    type: str | None = None
     triage: TicketTriage | None = None
     latitude: str | None = None
     scoped_by: str

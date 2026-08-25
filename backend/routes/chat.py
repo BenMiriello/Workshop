@@ -205,6 +205,10 @@ class SpawnTask(BaseModel):
     acceptance: dict | None = None
     priority: int = 0
     effort: str | None = None
+    # The work CATEGORY (bug|feature|task|chore), orthogonal to `execution`.
+    # Optional; a filed ticket carries it through. Unset/unrecognized normalizes
+    # to None in the store — the store never invents a type.
+    type: str | None = None
     run: bool = False             # file AND run now (open a Job, launch a worker)
 
 
@@ -1286,6 +1290,7 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         root, text=text, acceptance=acceptance,
         priority=body.priority or 0,
         effort=(body.effort or "").strip() or None,
+        type=(body.type or "").strip() or None,
         source={"kind": "chat", "ref": thread_id},
         # The operator asked for the work; the ASSISTANT wrote the spec. `source`
         # records the first, `scoped_by` the second, and conflating them is what

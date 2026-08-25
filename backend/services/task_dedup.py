@@ -394,6 +394,7 @@ def dedup_add(
     touches: list[str] | None = None,
     provenance: str | None = None,
     effort: str | None = None,
+    type: str | None = None,
     labels: list[str] | None = None,
     scoped_by: str | None = None,
     status: str = "todo",
@@ -458,7 +459,7 @@ def dedup_add(
             root, text=text, priority=priority, depends_on=depends_on or [],
             acceptance=acceptance, touches=touches or [],
             discovered_from=matched_id, source=src,
-            provenance=prov, effort=effort, labels=labels or [],
+            provenance=prov, effort=effort, type=type, labels=labels or [],
             scoped_by=scoped_by, status=status,
         )
         # Evidence on BOTH sides so the link is navigable either direction.
@@ -482,7 +483,7 @@ def dedup_add(
     task = tasks.add(
         root, text=text, priority=priority, depends_on=depends_on or [],
         acceptance=acceptance, touches=touches or [], source=src,
-        provenance=prov, effort=effort, labels=labels or [],
+        provenance=prov, effort=effort, type=type, labels=labels or [],
         scoped_by=scoped_by, status=status,
     )
     return {

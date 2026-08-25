@@ -25,8 +25,8 @@ weeks later, often having never seen the code. He needs to know what this is,
 where it stands, and what he is being asked to do, before any of the worker's
 instructions make sense.
 
-The four labels serve the first reader. Serving the second is what plain
-language and an honest title are for.
+The labels (of which Problem is type-conditional) serve the first reader.
+Serving the second is what plain language and an honest title are for.
 
 ---
 
@@ -55,10 +55,42 @@ Say what, not how, unless the how is the point. "Add a contract test" is a how;
 
 ---
 
+## Ticket types
+
+Every ticket is one of three types. The type is set on the proposal, not written
+into the body, but it decides which labels the body needs.
+
+- **Bug** — something is broken; behavior differs from intent.
+- **Feature** — a new capability that does not exist yet.
+- **Task** — any other defined work: a refactor, wiring, a migration, an
+  investigation, or routine maintenance (deps, cleanup, config). Deliberately
+  broad; a "chore" is just a low-ceremony task, not a separate type.
+
+The labels a body carries are type-conditional. Lead with **Problem** when the
+type has a motivation to state (a bug or a feature); lead with **Objective**
+otherwise:
+
+| Type | Labels, in order |
+|---|---|
+| Bug | Problem, Output, Start from, Boundaries |
+| Feature | Problem, Objective, Output, Start from, Boundaries |
+| Task | Objective, Output, Start from, Boundaries |
+
+---
+
 ## The body
 
-Four labelled lines, in this order. `services/ticket_format.py` owns the labels
-and accepts common synonyms; write the canonical ones.
+Labelled lines, in the order the type requires (see the table above).
+`services/ticket_format.py` owns the labels and accepts common synonyms; write
+the canonical ones.
+
+**Problem:** what is wrong or missing today and why it matters, stated *before*
+the outcome. For a bug it is the defect: what is observed versus what is
+expected. For a feature it is the need being met; a user story ("As a X I want Y
+so that Z") is one acceptable way to phrase it, not a separate field. This is the
+line that was missing for months: the template only ever stated the fixed-state
+outcome, so the actual problem never got written down. A plain task
+usually has no Problem line and leads with the Objective.
 
 **Objective:** one sentence, stating the outcome in the present tense as though
 it were already true. "The chat's Tickets panel answers a finished ticket by
@@ -140,7 +172,7 @@ the writing:
 
 | Thing | Enforced by | Kind |
 |---|---|---|
-| The four labels are present | `ticket_readiness.check` | advisory report |
+| The labels are present (Problem is type-conditional) | `ticket_readiness.check` | advisory report |
 | Title present, not over-long, not elided | `tasks.title_warnings` | warning |
 | Title and dependencies resolve | `ticket_readiness.BLOCKING` | refuses a run |
 | The labels themselves | `ticket_format.FIELDS` | one table, one regex |

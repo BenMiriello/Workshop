@@ -77,6 +77,8 @@ Return STRICT JSON, no prose, no code fence:
 {"tickets": [
   {
     "title": "short imperative line, under 80 characters",
+    "type": "bug" | "feature" | "task",
+    "problem": "what is wrong or missing today and why it matters (optional)",
     "objective": "the concrete outcome, one sentence",
     "output": "what done looks like: the artifact, or how it would be judged",
     "entry_points": "the files, commands or symbols to read or run first",
@@ -84,6 +86,18 @@ Return STRICT JSON, no prose, no code fence:
     "confidence": "decided" | "likely" | "speculative"
   }
 ]}
+
+`type` classifies the ticket and picks what to lead with:
+  bug      something is broken; behavior differs from intent
+  feature  a new capability that does not exist yet
+  task     any other defined work: a refactor, wiring, a migration, an
+           investigation, or routine maintenance (deps, cleanup, config)
+
+`problem` is what is wrong or missing today and why it matters, stated before the
+outcome. Fill it for a BUG (the defect: observed versus expected) and for a
+FEATURE (the need being met; a user story "As a X I want Y so that Z" is one way
+to phrase it). It is optional for a plain task, which leads with the
+objective.
 
 `output` AND `boundaries` ARE REQUIRED. Never return either one empty. They are
 the two fields tickets most often omit and they are the two a worker cannot
@@ -172,21 +186,30 @@ def _parse(raw: str) -> list[dict]:
         def field(name: str, limit: int = 600) -> str:
             return str(t.get(name) or "").strip().replace("—", ", ")[:limit]
 
-        # The body is COMPOSED from the four fields through the one shared
+        # The body is COMPOSED from the labelled fields through the one shared
         # formatter, so what the model returns and what `ticket_readiness` looks
-        # for cannot drift. A model that ignored the field names and wrote prose
-        # into `body` is not discarded: it rides along under the composed part.
+        # for cannot drift. `problem` leads the body when present (compose omits
+        # empty fields), so a bug reads Problem-first and a task Objective-first.
+        # A model that ignored the field names and wrote prose into `body` is not
+        # discarded: it rides along under the composed part.
         body = ticket_format.compose(
+            problem=field("problem"),
             objective=field("objective"),
             output=field("output"),
             entry_points=field("entry_points"),
             boundaries=field("boundaries"),
             extra=field("body", 1500),
         )
+        ttype = t.get("type") if t.get("type") in (
+            "bug", "feature", "task") else None
         out.append({
             "id": uuid.uuid4().hex[:12],
             "title": title[:140],
             "body": body[:2400],
+            # The ticket's type. Carried onto the filed task so the store can
+            # persist it for file scopes; a draft filed before this change simply
+            # has none.
+            "type": ttype,
             # Kept as its own field for the dialog's editor, and because a draft
             # filed before this change still carries one.
             "acceptance": field("output") or field("acceptance"),
@@ -250,6 +273,7 @@ async def propose(thread_id: str, root, scope: str) -> dict:
             out = task_dedup.dedup_add(
                 root, text=text, labels=labels, status="draft",
                 effort=prop.get("effort") or None,
+                type=prop.get("type") or None,
                 source={"kind": "chat", "ref": thread_id},
                 scoped_by="agent:chat",
             )

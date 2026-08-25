@@ -34,7 +34,9 @@ import re
 # "Done when:", and rejecting a ticket over the wording of a heading it got
 # essentially right is pedantry that costs a run.
 FIELDS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "objective": ("Objective", ("objective", "goal", "why", "problem", "outcome")),
+    "problem": ("Problem", ("problem", "context", "background", "motivation",
+                            "why", "user story")),
+    "objective": ("Objective", ("objective", "goal", "outcome")),
     "output": ("Output", ("output", "done", "done when", "done looks like",
                           "acceptance", "accept", "verify", "proof",
                           "definition of done")),
@@ -44,9 +46,11 @@ FIELDS: dict[str, tuple[str, tuple[str, ...]]] = {
                                   "don't touch", "non-goals", "not in scope")),
 }
 
-# Field order in a composed body. Objective first because it is the one thing a
-# reader needs before anything else makes sense.
-ORDER = ("objective", "output", "entry_points", "boundaries")
+# Field order in a composed body. Problem first (the motivation, when stated),
+# then Objective — a reader needs one of those two before anything else makes
+# sense. `compose` omits empty fields, so a bug that gives only Problem leads
+# with Problem and a task that gives only Objective leads with Objective.
+ORDER = ("problem", "objective", "output", "entry_points", "boundaries")
 
 
 def _label_re(key: str) -> re.Pattern:
@@ -72,12 +76,12 @@ def states(body: str, key: str) -> bool:
     return bool(LABEL_RE[key].search(body or ""))
 
 
-def compose(*, objective: str = "", output: str = "", entry_points: str = "",
-            boundaries: str = "", extra: str = "") -> str:
+def compose(*, problem: str = "", objective: str = "", output: str = "",
+            entry_points: str = "", boundaries: str = "", extra: str = "") -> str:
     """Build a canonical ticket body. Empty fields are omitted rather than left
     as an empty heading, so a partial draft reads as a partial draft and not as a
     template someone forgot to fill in."""
-    values = {"objective": objective, "output": output,
+    values = {"problem": problem, "objective": objective, "output": output,
               "entry_points": entry_points, "boundaries": boundaries}
     lines: list[str] = []
     for key in ORDER:

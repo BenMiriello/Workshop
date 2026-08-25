@@ -15,10 +15,12 @@ Verbs (all take a scope directory as the first positional):
   add <dir> "text" [--priority N] [--depends-on id,id] [--assignee A]
       [--touches glob,glob] [--acceptance-cmd CMD] [--criterion 'desc::cmd::expect']
       [--max-attempts N] [--effort s|m|l] [--latitude strict|standard|open]
-      [--execution code|judgement|external]
+      [--execution code|judgement|external] [--type bug|feature|task]
       # --execution is the UNATTENDED selection predicate. Unset = unclassified
       # = never picked up by a sweep (fail closed). It never narrows what a
       # human may run. Filing without it is why chat-filed tickets sat inert.
+      # --type is the work CATEGORY, orthogonal to --execution. Unset = the
+      # store does not invent one.
       [--discovered-from id] [--provenance KEY] [--source KIND] [--source-ref REF]
       # --source-ref is what the ticket came FROM (a chat thread id for
       # --source chat). Omit it and the ticket is orphaned: nothing links it
@@ -259,6 +261,14 @@ def main(argv: list[str]) -> int:
                          "host user, a vendor console). Unset means "
                          "unclassified, which is INELIGIBLE for unattended "
                          "dispatch. Fail-closed on purpose.")
+    sp.add_argument("--type", default=None,
+                    choices=("bug", "feature", "task"),
+                    help="the work CATEGORY, orthogonal to --execution: bug "
+                         "(something is broken) | feature (a new capability) | "
+                         "task (any other defined work: refactor, wiring, "
+                         "migration, investigation, routine maintenance). "
+                         "Unset means unclassified; the store never invents a "
+                         "type.")
     sp.add_argument("--source", default="agent")
     sp.add_argument("--source-ref", default=None,
                     help="what this ticket came FROM: a chat thread id for "
@@ -329,6 +339,7 @@ def main(argv: list[str]) -> int:
                 assignee=a.assignee, touches=_csv(a.touches), acceptance=acceptance,
                 max_attempts=a.max_attempts, effort=a.effort,
                 execution=a.execution,
+                type=a.type,
                 latitude=a.latitude,
                 discovered_from=a.discovered_from, provenance=a.provenance,
                 # ref is what makes a ticket navigable back to where it came
