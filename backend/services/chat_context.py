@@ -168,8 +168,21 @@ TASK_PROPOSAL_CARD = (
     "then clicks File ticket (queue it) or File and run (start a worker now). A "
     "worker acts on the FILED SPEC ALONE and never sees this chat, so specify it "
     "well.\n"
-    "A ticket is a TITLE and a DESCRIPTION, so the card has exactly three "
-    "fields. Emit these and no others:\n"
+    "CARD METADATA (top-level properties on the card, NOT form fields). Set these "
+    "on the card object itself:\n"
+    "  - type: one of `bug`, `feature`, `task`. Choose it FIRST; it "
+    "selects the shape of the description below.\n"
+    "      bug     something is broken; behavior differs from intent.\n"
+    "      feature a new capability that does not exist yet.\n"
+    "      task    any other defined work: a refactor, wiring, a migration, an "
+    "investigation, routine maintenance.\n"
+    "  - id: a short stable slug identifying THIS proposal (e.g. `fix-login-race`). "
+    "It is how a later proposal can replace this one.\n"
+    "  - supersedes (optional): the `id` of an earlier proposal in this chat that "
+    "this one replaces.\n"
+    "A ticket is a TITLE and a DESCRIPTION, so the FORM has exactly three fields. "
+    "Emit these three and no others (type/id/supersedes are card metadata above, "
+    "not fields):\n"
     "  - scope: type `taskscope` (a select the client fills with the available "
     "scopes; prefill `value` with this chat's own scope when it has one, else "
     "`workshop`).\n"
@@ -177,9 +190,20 @@ TASK_PROPOSAL_CARD = (
     "characters. A title, not a summary. The spec goes in the description; a "
     "title that carries the whole spec is split by the store and reads badly in "
     "every list.\n"
-    "  - description: type `textarea`. The whole spec, written as four labelled "
-    "lines, each on its own line and in this order:\n"
-    "      Objective: ONE crisp sentence stating the concrete outcome.\n"
+    "  - description: type `textarea`. The whole spec, written as labelled lines, "
+    "each label on its own line and in the order the type requires. Use EXACTLY "
+    "these labels per type (the readiness checker reads them literally):\n"
+    "      bug:     Problem, Output, Start from, Boundaries\n"
+    "      feature: Problem, Objective, Output, Start from, Boundaries\n"
+    "      task:    Objective, Output, Start from, Boundaries\n"
+    "The labels mean:\n"
+    "      Problem: what is wrong or missing today and why it matters, stated "
+    "BEFORE the outcome. For a bug it is the defect (what is observed versus what "
+    "is expected). For a feature it is the need being met (a user story, 'As a X "
+    "I want Y so that Z', is one acceptable way to phrase it, not a separate "
+    "field).\n"
+    "      Objective: ONE crisp sentence stating the concrete outcome, written as "
+    "though it were already true.\n"
     "      Output: what done looks like, as an observable artifact, format or "
     "acceptance ('the endpoint returns X and a test covers it'). Never 'it "
     "works', never empty: this is the finish line, and without it the worker "
@@ -192,10 +216,14 @@ TASK_PROPOSAL_CARD = (
     "    Keep those exact labels: the readiness checker reads them, on the card "
     "and on the filed ticket. Anything else the spec needs goes in the same "
     "description, below them.\n"
-    "The CLIENT owns this field list, not you. It renders these three and "
+    "The CLIENT owns this field list, not you. It renders these three fields and "
     "nothing else, so a field you add (priority, effort, execution, labels) "
     "cannot appear on the card and carries nowhere. Those live on the ticket "
     "itself, which is the one place they are edited.\n"
+    "SUPERSEDING. When you propose a ticket you already proposed earlier in this "
+    "chat (the same underlying work), reuse the SAME `id` (or set `supersedes` to "
+    "the earlier `id`) so the older card closes and only the newest one shows. If "
+    "it is genuinely a different ticket, give it a new `id`.\n"
     "The client files the title as the ticket's title and the description as its "
     "body. Actions: `addTasks` (file it), `addTasksAndRun` (file it and run "
     "now), `dismiss`. Emit it only when there is real work to scope, never as "
@@ -220,8 +248,11 @@ TASK_PROPOSAL_BUILD_RULE = (
     "operator is watching. For anything multi-step, multi-file, or that should "
     "survive this conversation, emit a task-proposal card instead of doing it "
     "inline; the operator's click (File ticket vs File and run) is the tiebreaker.\n"
-    "SPECIFY IT WELL. Write all four labelled lines in the description: "
-    "Objective, Output, Start from, Boundaries. A worker reads the ticket's "
+    "SPECIFY IT WELL. Every ticket has a type (bug, feature, task); choose "
+    "it first, since it selects which labelled lines the description needs. A BUG "
+    "or a FEATURE must state the Problem (what is wrong or missing today and why it "
+    "matters) before the outcome; a plain task leads with the Objective. "
+    "Whichever labels the type calls for, a worker reads the ticket's "
     "title and body and NOTHING ELSE: not "
     "this conversation, not the operator, not you. Anything the ticket does not "
     "say is guessed at or asked about, and both cost a turn.\n"
@@ -271,7 +302,9 @@ TASK_PATCH_PROTOCOL = (
     "under 80 characters, never the whole spec (the store splits an over-long first "
     "line, but the split rarely reads as well as a written title). Everything after "
     "it is the spec a worker acts on, so keep the Objective / Output / Start from / "
-    "Boundaries structure even here (a worker never sees this chat). Higher priority "
+    "Boundaries structure even here (a worker never sees this chat); for a bug or a "
+    "new capability, lead instead with a Problem line stating what is wrong or "
+    "missing and why. Higher priority "
     "runs first (default 0). When the "
     "operator says one thing matters more than another, `update` the ticket's "
     "`priority`. Use task-patch for lightweight bookkeeping on the existing queue; "
@@ -1787,106 +1820,6 @@ def contained_project_dir(slug: str) -> _Path:
     return candidate
 
 
-# ------------------------------------------------------- TODO.md summary
-# The generated TODO.md export is the single largest thing a build/project/dev
-# chat used to inline: on the platform's own `development` scope it runs to ~260
-# tickets and ~590 KB (~150k tokens), each ticket carrying its full
-# Objective/Output/Start-from/Boundaries body. Pushing all of that into EVERY
-# turn's cache-stable prefix is what makes a brand-new chat open at a third of
-# the window before the operator has typed anything.
-#
-# It is also redundant three ways over. The open-ticket TITLES are already in the
-# ONGOING WORK digest (`workspace_digest`, capped small). The full bodies are
-# reachable on demand through the `query` MCP tool and `project_tasks.py
-# list-json`/`next-ready`, which is the entire point of those tools: the agent
-# PULLS the one ticket it is about to work, instead of every ticket being PUSHED
-# on every turn. So the live block drops to a status roll-up plus the few tickets
-# that are actually in flight, blocked, or next-ready — the state a continuing
-# session needs at a glance — and names where the rest lives.
-#
-# Parsed from the rendered TODO.md rather than re-loaded from the `.tasks.json`
-# store on purpose: the export is regenerated on every store mutation so it is
-# current, parsing it is side-effect free (loading the store calls reconcile(),
-# which can WRITE the export — not something the read-only chat hot path should
-# do every turn), and it also covers the roots that only ever have a hand-kept
-# TODO.md with no store behind it.
-
-# Reverse of tasks._STATUS_BOX: the checklist box char -> status name.
-_TODO_BOX_STATUS = {
-    " ": "todo", "~": "doing", "?": "in_review", "!": "blocked",
-    "x": "done", "-": "cancelled", "d": "draft", "p": "parked",
-}
-_TODO_ITEM_RE = re.compile(r"^\s*- \[(.)\]\s+(.*\S)\s*$")
-_TODO_TAG_RE = re.compile(r"\s{2,}\((?:draft|doing|blocked|in_review|parked|cancelled)\)\s*$")
-_TODO_TITLE_MAX = 100
-_TODO_LIST_CAP = 8
-
-
-def _todo_title(raw: str) -> str:
-    t = _TODO_TAG_RE.sub("", raw).strip()
-    return t if len(t) <= _TODO_TITLE_MAX else t[: _TODO_TITLE_MAX - 1].rstrip() + "…"
-
-
-def todo_summary_block(todo_md: str) -> str:
-    """A compact status roll-up of a scope's TODO.md export, in place of inlining
-    the whole thing. Counts every checklist item by status and lists only the
-    tickets a continuing session needs at a glance (in flight, blocked, then the
-    next ready ones), capped. Returns "" for a TODO.md with no checklist items."""
-    counts: dict[str, int] = {}
-    in_flight: list[str] = []   # doing / in_review, rendered "[<box>] <title>"
-    blocked: list[str] = []
-    ready: list[str] = []       # todo
-    for line in todo_md.splitlines():
-        m = _TODO_ITEM_RE.match(line)
-        if not m:
-            continue  # continuation/body lines and headings are skipped
-        box = m.group(1)
-        status = _TODO_BOX_STATUS.get(box)
-        if status is None:
-            continue
-        counts[status] = counts.get(status, 0) + 1
-        if status in ("doing", "in_review"):
-            bucket, entry = in_flight, f"[{box}] {_todo_title(m.group(2))}"
-        elif status == "blocked":
-            bucket, entry = blocked, f"[!] {_todo_title(m.group(2))} (blocked)"
-        elif status == "todo":
-            bucket, entry = ready, f"[ ] {_todo_title(m.group(2))}"
-        else:
-            continue
-        if len(bucket) < _TODO_LIST_CAP:
-            bucket.append(entry)
-    total = sum(counts.values())
-    if not total:
-        return ""
-
-    # Counts, most actionable first, only the non-zero ones.
-    order = [("todo", "open"), ("doing", "doing"), ("in_review", "in review"),
-             ("blocked", "blocked"), ("parked", "parked"), ("draft", "draft"),
-             ("done", "done"), ("cancelled", "cancelled")]
-    tally = ", ".join(f"{counts[s]} {label}" for s, label in order if counts.get(s))
-
-    out = [
-        f"This scope's task store holds {total} tickets ({tally}). The full "
-        "TODO.md export (every ticket's Objective/Output/Start-from/Boundaries) "
-        "is NOT inlined here; it runs to hundreds of KB. Pull only what you need:",
-        "  - `mcp__workshop__query` lists open tickets, recent runs and note "
-        "titles for this scope; the top open titles are also in ONGOING WORK above.",
-        "  - `python3 ~/workshop/scripts/project_tasks.py list-json .` prints the "
-        "structured store, `next-ready .` the next actionable ticket; read one in "
-        "full via the query tool. TODO.md is a generated export; never edit it.",
-    ]
-    # The few tickets a continuing session actually needs to see, with status.
-    picks: list[str] = list(in_flight) + list(blocked)
-    remaining = max(0, _TODO_LIST_CAP - len(picks))
-    if remaining:
-        picks += ready[:remaining]
-    if picks:
-        picks = [f"  - {p}" for p in picks]
-        out.append("In flight / blocked / next-ready here:")
-        out.extend(picks)
-    return "\n".join(out)
-
-
 class ProjectContextProvider(ContextProvider):
     """Build-mode provider for a single Project. Routes call_cloud with cwd
     set to the project directory and the full default agentic toolset enabled
@@ -1958,16 +1891,20 @@ class ProjectContextProvider(ContextProvider):
         )
 
     def live_context(self) -> str:
+        # Orientation only: the project brief. We deliberately do NOT inject a
+        # ticket roll-up (or any poll of the scope's task store) here. That block
+        # re-appended a fresh copy of the scope's ticket counts on most turns of a
+        # busy scope, because the store changes under the chat constantly — a
+        # per-turn state dump nobody asked for. Ticket state is fetched on demand
+        # instead (the persona already points at `project_tasks.py` and the
+        # `query`/`search` MCP tools), and a real event (a run finishing, a ticket
+        # closing) is delivered as a one-time appended system message, not by
+        # polling the whole list every turn. See docs/platform-redesign/
+        # chat-context-and-compaction-2026-08-25.md.
         brief = self._read("PROJECT.md")
-        todo = self._read("TODO.md")
-        parts = []
         if brief:
-            parts.append("=== PROJECT.md (brief) ===\n" + brief)
-        if todo:
-            summary = todo_summary_block(todo)
-            if summary:
-                parts.append("=== TODO.md (status roll-up; export not inlined) ===\n" + summary)
-        return "\n\n".join(parts)
+            return "=== PROJECT.md (brief) ===\n" + brief
+        return ""
 
 
 # ---------------------------------------------------------------- development provider
@@ -2078,16 +2015,12 @@ class MakerAgentContextProvider(ContextProvider):
         )
 
     def live_context(self) -> str:
-        parts = []
+        # Orientation only, no per-turn task-store poll. See the note on
+        # ProjectContextProvider.live_context and the design doc.
         brief = self._read("PROJECT.md")
-        todo = self._read("TODO.md")
         if brief:
-            parts.append("=== PROJECT.md (brief) ===\n" + brief)
-        if todo:
-            summary = todo_summary_block(todo)
-            if summary:
-                parts.append("=== TODO.md (status roll-up; export not inlined) ===\n" + summary)
-        return "\n\n".join(parts)
+            return "=== PROJECT.md (brief) ===\n" + brief
+        return ""
 
 
 class AssistantAgentContextProvider(ContextProvider):
