@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { PRIORITY_BANDS, bandOf, floorOf, priorityLabel } from "../lib/priority";
 import { usePoll, shortHttpError, Button, Card, ConfirmDialog, Field, Input, Select, SectionLabel, Skeleton, StateBlock, StatusPill, Stack, Row, Textarea, Toggle } from "@workshop/ui";
 import { RefreshCw, Plus, Pencil, Trash2, Check, X, CornerDownLeft, Compass } from "lucide-react";
 
@@ -408,7 +409,9 @@ export default function TaskPanel({
             </Select>
           </Field>
           <Field label="Priority" htmlFor={`tp-prio-${t.id}`}>
-            <Input id={`tp-prio-${t.id}`} type="number" value={draft.priority} onChange={(e) => setField("priority", e.target.value)} style={{ maxWidth: "6rem" }} />
+            <Select id={`tp-prio-${t.id}`} value={bandOf(draft.priority)} onChange={(e) => setField("priority", String(floorOf(e.target.value)))}>
+              {PRIORITY_BANDS.map((b) => <option key={b} value={b}>{b}</option>)}
+            </Select>
           </Field>
           <Field label="Effort" htmlFor={`tp-effort-${t.id}`}>
             <Select id={`tp-effort-${t.id}`} value={draft.effort} onChange={(e) => setField("effort", e.target.value)}>
@@ -483,8 +486,8 @@ export default function TaskPanel({
                 style={{ flex: "1 1 12rem", minWidth: 0, fontWeight: 600 }}>{taskTitle(t) || "(untitled)"}</span>
         </Row>
         <Row wrap style={{ gap: "var(--space-3)" }}>
-          {typeof t.priority === "number" && t.priority !== 0 && (
-            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>priority {t.priority}</span>
+          {priorityLabel(t.priority) && (
+            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>priority {priorityLabel(t.priority)}</span>
           )}
           {t.effort && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>effort {t.effort}</span>}
           {/* The EFFECTIVE latitude a run would use, always with where it came

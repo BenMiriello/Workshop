@@ -15,6 +15,7 @@
 // a rail row, and comments became a real activity thread rather than a stack of
 // rows above a textarea.
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { PRIORITY_BANDS, bandOf, floorOf, priorityLabel } from "../lib/priority";
 import { usePoll, formatDuration, timeAbsolute, timeAgo, shortHttpError, Button, Card, Row, Stack, PageHeader, DetailLayout, SectionLabel, StateBlock, Notice, StatusDot, StatusPill, Skeleton, ConfirmDialog, Textarea, Menu, MenuItem, Tag, catFor } from "@workshop/ui";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -609,14 +610,14 @@ export default function TicketDetail() {
           <div className="ws-props2">
             <PropRow
               label="Priority"
-              value={task.priority ? task.priority : <span className="ws-muted">none</span>}
+              value={priorityLabel(task.priority) || <span className="ws-muted">none</span>}
               editor={(done) => (
-                <TextEditor
+                <PickEditor
                   label="Priority"
-                  inputMode="numeric"
-                  value={String(task.priority ?? 0)}
+                  value={bandOf(task.priority)}
                   done={done}
-                  onSave={(v) => { void patch({ priority: Number(v) || 0 }); }}
+                  onPick={(v) => { void patch({ priority: floorOf(v) }); }}
+                  options={PRIORITY_BANDS.map((b) => ({ value: b, label: b }))}
                 />
               )}
             />

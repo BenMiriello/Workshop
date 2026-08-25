@@ -93,8 +93,11 @@ has not encoded it at all.
 
 ## 6. Still the operator's
 
-Unchanged and not filed: whether Workshop is ever hosted for others (gates most
-of the hosting work); the monthly limit's value and unit, where the recommendation
+**Whether Workshop is hosted for others is ANSWERED: yes, it is a production
+web SaaS product with other users.** Recorded 2026-08-25. That removes the
+largest conditional in the hosting design and should stop it being re-asked.
+
+Still open and not filed: the monthly limit's value and unit, where the recommendation
 is 60,000,000 weighted tokens rather than dollars, because every writer on this
 installation is a subscription CLI turn and a dollar limit would silently never
 bind; whether `.muted` and `.card` are inlined or promoted; and what `done`

@@ -141,6 +141,46 @@ def _parse_criterion(raw: str) -> dict | None:
     return {"desc": desc or cmd, "cmd": cmd, "expect": expect or "exit0"}
 
 
+# PRIORITY IS A BAND, NOT A NUMBER, and this is where that stops being a trap.
+# The schema stores one of `urgent | high | medium | low | none`
+# (db/models.PRIORITIES). The integer this API still speaks is a projection at
+# the floor of each band, so `--priority 78` was silently stored as `medium` and
+# read back as 40. Five separate agents filed carefully graded priorities in one
+# day and every one of them collapsed, because nothing said so.
+#
+# So: a band NAME is the documented input. An integer is still accepted, because
+# 18 callers pass one, but it is mapped through the same table the store uses and
+# the result is REPORTED rather than applied silently.
+_PRIORITY_BANDS = ("urgent", "high", "medium", "low", "none")
+_BAND_FLOOR = {"urgent": 100, "high": 80, "medium": 40, "low": 1, "none": 0}
+
+
+def _band_of(n: int) -> str:
+    for band in _PRIORITY_BANDS:
+        if n >= _BAND_FLOOR[band]:
+            return band
+    return "none"
+
+
+def _priority_arg(raw: str):
+    """A band name, or an integer mapped to its band with a note on stderr."""
+    text = str(raw).strip().lower()
+    if text in _BAND_FLOOR:
+        return _BAND_FLOOR[text]
+    try:
+        n = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"priority must be one of {', '.join(_PRIORITY_BANDS)} "
+            f"(an integer is accepted and mapped to its band); got {raw!r}")
+    band = _band_of(n)
+    if n != _BAND_FLOOR[band]:
+        print(f"note: priority {n} is stored as {band!r}; priority is a band, "
+              f"not a scale, so {n} and {_BAND_FLOOR[band]} are the same value.",
+              file=sys.stderr)
+    return _BAND_FLOOR[band]
+
+
 def _slim(t: dict | None) -> dict:
     """Compact projection for the loop (keeps next-open's old shape + new fields)."""
     if not t:
@@ -148,7 +188,10 @@ def _slim(t: dict | None) -> dict:
     return {
         "id": t["id"], "text": t.get("text", ""), "owner": t.get("owner", "operator"),
         "assignee": t.get("assignee"), "status": t.get("status"),
-        "priority": t.get("priority", 0), "depends_on": t.get("depends_on", []),
+        "priority": t.get("priority", 0),
+        # The band is the stored truth; the integer above is its floor.
+        "priority_band": _band_of(int(t.get("priority") or 0)),
+        "depends_on": t.get("depends_on", []),
         "acceptance": t.get("acceptance"), "max_attempts": t.get("max_attempts"),
         "attempts": t.get("attempts", 0), "awaiting": t.get("awaiting"),
         "blocked_reason": t.get("blocked_reason"),
@@ -192,7 +235,10 @@ def main(argv: list[str]) -> int:
     sp.add_argument("--assignee", default=None); sp.add_argument("--include-done", action="store_true")
 
     sp = sub.add_parser("add"); scope(sp); sp.add_argument("text")
-    sp.add_argument("--priority", type=int, default=0)
+    sp.add_argument("--priority", type=_priority_arg, default=0,
+                    metavar="{urgent,high,medium,low,none}",
+                    help="a band name. An integer is accepted and mapped to its "
+                         "band, which is what actually gets stored.")
     sp.add_argument("--depends-on", default=None)
     sp.add_argument("--assignee", default=None)
     sp.add_argument("--touches", default=None)

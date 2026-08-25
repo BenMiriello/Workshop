@@ -288,9 +288,14 @@ second provider, and anything Kubernetes.
 
 ## 7. Genuinely the operator's
 
-1. **Is Workshop ever hosted for other people, or always self-hosted?** Nearly
-   everything above is only worth building in the hosted case. Self-hosted, the
-   honest answer is the escape hatch and nothing else.
+1. ~~Is Workshop ever hosted for other people?~~ **ANSWERED by the operator,
+   2026-08-25: yes. "It's a prod web SaaS app, it's gonna have other people use
+   it."** This is settled and must not be asked again. It means the hosted case
+   is the design target, not a hypothetical: the tiers, the provider seam, the
+   per-tenant storage question and the spend cap are all in scope, and
+   "self-hosted only" is no longer a live alternative to weigh them against.
+   Every document that treats hosting as conditional should be read with this
+   applied.
 2. **Cloudflare as the first provider?** The evidence favours it strongly on cost
    at rest and it is purpose-built for this shape, at the price of real lock-in
    and three hard limits.

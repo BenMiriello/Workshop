@@ -12,6 +12,7 @@
 // The design's "Size" is our `effort` (quick | standard | deep), which is the
 // name the store, the API and the ticket page all use.
 import { Link } from "react-router-dom";
+import { priorityLabel } from "../../lib/priority";
 import { Table, TableScroll, StatusDot } from "@workshop/ui";
 import {
   scopeLabel, taskStatusKind, taskStatusLabel, ticketHref, title as taskTitle,
@@ -66,7 +67,7 @@ export function TicketTable({ tasks, showScope }: { tasks: Task[]; showScope: bo
               <td><TagStrip labels={t.labels} /></td>
               {showScope && <td className="ws-tt__muted">{scopeLabel(t.scope ?? undefined)}</td>}
               <td className="ws-tt__num">
-                {typeof t.priority === "number" && t.priority !== 0 ? t.priority : ""}
+                {priorityLabel(t.priority)}
               </td>
               <td className="ws-tt__muted">{t.effort ?? ""}</td>
               <td className="ws-tt__muted ws-tt__ellipsis" title={t.assignee ?? ""}>
