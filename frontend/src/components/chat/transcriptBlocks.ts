@@ -72,7 +72,12 @@ export type TranscriptBlock =
   // no work has come after it. It renders dim, the same "not landed yet" state
   // as a pending send, and turns solid the moment work appears below it (the
   // indicator moves down and the message is now above it). See `liveBlocks`.
-  | { kind: "message"; key: string; id: string; seq: number; msg: ChatMsg; inflight?: boolean }
+  // `optimistic` marks a block this browser is rendering from a still-pending
+  // send, before the log carries it. It renders through the SAME MessageBubble
+  // its committed form will, keyed identically (see `msgKey`), so the handover is
+  // an in-place update rather than an unmount/remount. It carries no server id,
+  // so it is excluded from branching (see MessageList).
+  | { kind: "message"; key: string; id: string; seq: number; msg: ChatMsg; inflight?: boolean; optimistic?: boolean }
   // The turn in flight. `working` marks the block the indicator belongs on —
   // the last one, because that is where the work is still happening.
   | { kind: "live"; key: string; turnId: string; segments: ChatSegment[]; working: boolean }
@@ -210,6 +215,21 @@ function msgFromEvent(ev: LogEvent): ChatMsg {
   };
 }
 
+/** ONE KEY PER MESSAGE, FOR ITS WHOLE LIFECYCLE.
+ *
+ *  A send this browser made carries a `client_id` from the optimistic bubble
+ *  through to the committed event, so keying a user-message block on it (falling
+ *  back to the event id for a message this tab did not send, which has none)
+ *  makes the optimistic and committed forms THE SAME React element. The bubble
+ *  updates in place instead of unmounting and remounting when the log catches up
+ *  -- which, together with rendering both forms through MessageBubble, is what
+ *  stops a just-sent message flashing and jumping as it changes hands from the
+ *  optimistic path to the committed one. The one bug family this whole module
+ *  keeps being reopened for. */
+function msgKey(ev: { client_id?: string; id: string }): string {
+  return ev.client_id || ev.id;
+}
+
 /** The top-level text of a slice — what that block's answer says. */
 function textOf(segments: ChatSegment[]): string {
   return segments.filter((s) => s.t === "text").map((s) => (s as { text: string }).text).join("").trim();
@@ -244,7 +264,7 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
     const piece = pieces[i];
     if (!isWork(piece)) {
       const m = piece.msg;
-      out.push({ kind: "message", key: m.id, id: m.id, seq: m.seq, msg: msgFromEvent(m) });
+      out.push({ kind: "message", key: msgKey(m), id: m.id, seq: m.seq, msg: msgFromEvent(m) });
       continue;
     }
     {
@@ -361,7 +381,7 @@ function liveBlocks(
     const piece = pieces[i];
     if (!isWork(piece)) {
       const m = piece.msg;
-      out.push({ kind: "message", key: m.id, id: m.id, seq: m.seq, msg: msgFromEvent(m),
+      out.push({ kind: "message", key: msgKey(m), id: m.id, seq: m.seq, msg: msgFromEvent(m),
                  // Below the working slice = not reached yet = dim. See header.
                  inflight: i > workingAt });
       continue;
@@ -498,7 +518,7 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
         hold(rid, ev);
         continue;
       }
-      out.push({ kind: "message", key: ev.id, id: ev.id, seq: ev.seq, msg: msgFromEvent(ev) });
+      out.push({ kind: "message", key: msgKey(ev), id: ev.id, seq: ev.seq, msg: msgFromEvent(ev) });
       continue;
     }
     const rid = ev.meta?.turn_id;
@@ -559,32 +579,35 @@ export function composeTranscript(
   const out = committed.blocks.slice();
   const tail = lastSeq(state);
   const pending = pendingSends(state);
+  const liveTurn = state.activeTurn;
+  // Only when the committed half agrees the run is still writing. See the
+  // liveTurnId note in selectCommitted: the snapshot can name a run whose reply
+  // is already committed above, and rendering its draft prints that reply twice.
+  const liveShown = !!(liveTurn && committed.liveTurnId === liveTurn.turnId);
 
-  const toBlock = (p: PendingSend): TranscriptBlock => ({
+  // A FAILED send is the only one that renders as a `pending` block, because
+  // PendingBubble carries its Retry. Every other optimistic send renders as a
+  // `message` block through the SAME MessageBubble its committed form uses, keyed
+  // by client_id (`msgKey`), so the log catching up is an in-place update, not an
+  // unmount and remount. That single fact is what stops the flash and the jump
+  // that five prior passes chased in the placement rules instead of here.
+  const asPending = (p: PendingSend): TranscriptBlock => ({
     kind: "pending", key: `p:${p.clientId}`, clientId: p.clientId, text: p.text,
     status: p.status, ...(p.error ? { error: p.error } : {}),
     ...(p.attachments?.length ? { attachments: p.attachments } : {}),
   });
+  const asMessage = (p: PendingSend, inflight?: boolean): TranscriptBlock => ({
+    kind: "message", key: p.clientId, id: p.clientId, seq: tail + 1,
+    optimistic: true,
+    ...(inflight ? { inflight: true } : {}),
+    msg: {
+      role: "user", content: p.text, ts: p.ts,
+      ...(p.attachments?.length ? { meta: { attachments: p.attachments } } : {}),
+    },
+  });
+  const toBlock = (p: PendingSend): TranscriptBlock =>
+    p.status === "failed" ? asPending(p) : asMessage(p);
 
-  // Anchored back-to-front so an index computed against `out` is still valid
-  // when its turn comes: `pendingSends` is in send order and the log only grows,
-  // so walking it backwards gives non-increasing indices, and two sends landing
-  // on the same index keep their order (the later one is inserted first and the
-  // earlier one pushes it right).
-  //
-  // A send at the tail splits again, by `duringActiveTurn`. One sent while a
-  // turn was already running joined that turn and belongs where that turn
-  // recorded its cut: at the run's CURRENT tail, after the work streamed so far
-  // and above the working indicator that carries on below it (`atTail`, placed
-  // just below where the live blocks land — see the block after the live push).
-  // One sent while nothing was running is what STARTED the turn, so it belongs
-  // ABOVE the indicator, same as the committed floor `workingPieceIndex`
-  // enforces once this send lands in the log. Without the split, a fresh send
-  // rendered after the live block the instant `turnStarted` set `activeTurn`,
-  // then jumped above it the moment the log caught up and reconciled it out of
-  // `pending` — the same message visibly changing sides mid-turn. Reported
-  // 2026-08-18: "it shows up above my continue message... it started working
-  // after I sent it... then the two messages flip order."
   // THE CONVERSATION'S FIRST MESSAGE IS NEVER BELOW THE WORKING INDICATOR.
   // `duringActiveTurn` is captured from `!!state.activeTurn` at send time, and on
   // a NEW chat that flag can be stale (a turn left active on the thread this one
@@ -594,64 +617,80 @@ export function composeTranscript(
   // reported repeatedly. But a turn cannot predate the message that started it,
   // so nothing the operator typed first can sit under a run that was already
   // going. When the committed log carries no message yet, a tail send IS that
-  // first message and belongs above the indicator whatever the flag says.
+  // first message and it starts the turn, so it goes above the indicator.
   const noCommittedMessage = !committed.blocks.some((b) => b.kind === "message");
-  const atTail: TranscriptBlock[] = [];
-  const beforeLive: TranscriptBlock[] = [];
+
+  // Anchored sends: a FAILED bubble the log has since grown past. Walk
+  // back-to-front so an index computed against `out` stays valid as earlier
+  // inserts push later ones right (see anchorIndex).
   for (let i = pending.length - 1; i >= 0; i--) {
     const p = pending[i];
-    if (p.afterSeq >= tail) {
-      (p.duringActiveTurn && !noCommittedMessage ? atTail : beforeLive).unshift(toBlock(p));
-    } else {
-      out.splice(anchorIndex(out, p.afterSeq), 0, toBlock(p));
-    }
+    if (p.afterSeq < tail) out.splice(anchorIndex(out, p.afterSeq), 0, toBlock(p));
+  }
+
+  // Tail sends split by whether they joined a turn already running. A mid-turn
+  // send belongs inside the live run at the run's current tail; a fresh send (or
+  // a failed one, or the conversation's first message) belongs above the whole
+  // live block. Both are collected in send order.
+  const midTurn: PendingSend[] = [];
+  const beforeLive: TranscriptBlock[] = [];
+  for (const p of pending) {
+    if (p.afterSeq < tail) continue;                       // already anchored
+    const joined = p.duringActiveTurn && !noCommittedMessage && liveShown
+      && p.status !== "failed";
+    if (joined) midTurn.push(p);
+    else beforeLive.push(toBlock(p));
   }
   out.push(...beforeLive);
 
-  // Only when the committed half agrees the run is still writing. See the
-  // liveTurnId note in selectCommitted: the snapshot can name a run whose reply
-  // is already committed above, and rendering its draft prints that reply twice.
-  const liveTurn = state.activeTurn;
-  const liveShown = !!(liveTurn && committed.liveTurnId === liveTurn.turnId);
   if (liveTurn && liveShown) {
-    out.push(...liveBlocks(
-      liveTurn.turnId, liveTurn.segments, committed.heldForActiveTurn,
-      liveTurn.cutHead,
-    ));
-  }
-
-  // A TAIL SEND DURING A RUNNING TURN LANDS AT THE RUN'S CURRENT TAIL, NOT BELOW
-  // THE WHOLE LIVE BLOCK. The server records its cut at whatever the run has
-  // emitted so far, so once committed the message renders AFTER that work and
-  // ABOVE the working indicator, which carries on below it (the empty trailing
-  // stretch `cutPieces` emits, see `liveBlocks`). Pushing the still-pending
-  // bubble below the entire live block instead left it at the very bottom for one
-  // round trip and then jumped it up to that recorded position the instant the
-  // log committed it -- "it shows my message at the bottom at first before moving
-  // it up", reported five plus times. Placing it above the indicator from the
-  // first frame, in the same spot the commit will put it, is what stops the jump.
-  //
-  // Only when the run has actually emitted work at its tail. A message that beat
-  // all output stays below the indicator, dim, exactly as its committed `cut_head`
-  // form does: `workingPieceIndex` keeps the indicator first when the run has
-  // streamed nothing, and a tail send then belongs under it (the case pinned by
-  // "still renders below the working indicator when it joined a turn already
-  // running"). `liveBlocks` always ends on the working stretch, so the last block
-  // is the indicator: demote it, drop the messages in, and re-open the indicator
-  // below them -- the same three-part shape the committed cut produces.
-  if (atTail.length) {
-    const wi = out.length - 1;
-    const indicator = out[wi];
-    if (liveTurn && liveShown && indicator?.kind === "live"
-        && indicator.working && indicator.segments.length) {
-      out[wi] = { ...indicator, working: false };
-      out.push(...atTail, {
-        kind: "live", key: `${liveTurn.turnId}:tail`,
-        turnId: liveTurn.turnId, segments: [], working: true,
+    // FOLD EACH NOT-YET-COMMITTED MID-TURN SEND INTO THE LIVE RUN AS AN INTERRUPT
+    // CUT AT THE RUN'S CURRENT TAIL, then let `liveBlocks` lay the whole thing
+    // out. This is the one placement that does not jump: the committed message
+    // will flow through this SAME function with the SAME cut once the server
+    // records it, so the optimistic and committed forms are block-for-block and
+    // key-for-key identical (the message keyed by client_id via `msgKey`, the
+    // work and the trailing indicator keyed by their piece index). Nothing
+    // remounts and nothing relocates when the log catches up. A cut on the LAST
+    // segment puts the send after all work streamed so far; if the run keeps
+    // streaming, the real cut lands on an earlier segment and the message settles
+    // UP by that much, never down and never to the bottom. When the run has
+    // streamed nothing the cut goes in the head, which is what puts a message
+    // that beat all output below the indicator and dim -- the read-state rule
+    // `workingPieceIndex` enforces, the same as the committed `cut_head` form.
+    //
+    // The toggling this replaces (demote the trailing block's `working` flag only
+    // when its own segment count was nonzero) is what produced the reported
+    // top-then-bottom-then-top: that count changes between streamed frames, so
+    // the message flipped sides frame to frame.
+    let segs = liveTurn.segments;
+    let head = liveTurn.cutHead ? [...liveTurn.cutHead] : [];
+    const held = [...committed.heldForActiveTurn];
+    for (const p of midTurn) {
+      const cid = p.clientId;
+      if (segs.length) {
+        const last = segs[segs.length - 1];
+        segs = [...segs.slice(0, -1),
+                { ...last, cut_after: [...(last.cut_after || []), cid] }];
+      } else {
+        head = [...head, cid];
+      }
+      held.push({
+        seq: tail + 1, id: cid, client_id: cid, ts: p.ts, kind: "message",
+        role: "user", content: p.text,
+        meta: { cut_id: cid, ...(p.attachments?.length ? { attachments: p.attachments } : {}) },
       });
-    } else {
-      out.push(...atTail);
     }
+    const optimistic = new Set(midTurn.map((p) => p.clientId));
+    const live = liveBlocks(liveTurn.turnId, segs, held, head);
+    // Tag the folded-in sends so they are excluded from branching (no server id)
+    // and can render their optimistic state; the committed form drops the tag.
+    out.push(...live.map((b) =>
+      b.kind === "message" && optimistic.has(b.key) ? { ...b, optimistic: true } : b));
+  } else {
+    // The run is not shown (its reply already committed above, or none): a
+    // mid-turn send is just the newest message, at the end.
+    out.push(...midTurn.map((p) => asMessage(p)));
   }
 
   return out;

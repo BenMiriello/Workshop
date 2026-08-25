@@ -550,7 +550,9 @@ function MessageList({
   // committed: none of the three is a point in the conversation you could
   // return to, because none of them is IN the conversation.
   const branchTarget = branchTargets(
-    blocks.flatMap((b) => (b.kind === "message"
+    // Optimistic blocks (a still-pending send this tab is rendering before the
+    // log carries it) have no server id to branch from, so they are excluded.
+    blocks.flatMap((b) => (b.kind === "message" && !b.optimistic
       ? [{ key: b.key, id: b.id, role: b.msg.role, error: !!b.msg.meta?.error }]
       : [])),
     branchHead ?? null,

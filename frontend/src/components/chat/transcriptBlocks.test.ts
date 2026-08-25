@@ -488,11 +488,16 @@ describe("a tail window straddling a turn", () => {
 
 describe("pending sends and the context cut", () => {
 
-  it("renders pending sends last, below even the live turn", () => {
+  it("renders a mid-turn send below the indicator when the run has streamed nothing", () => {
+    // A send that joined a turn already running, before that turn emitted a
+    // thing: it sits below the working indicator, dim, because the turn has not
+    // reached it. It renders through MessageBubble (not a pending bubble), keyed
+    // by its client_id, so it is the SAME element as its committed form and does
+    // not remount when the log catches up. See composeTranscript.
     let s = stateOf([user("go")]);
     s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
     s = threadReducer(s, { type: "sendStarted", clientId: "c1", text: "typed ahead", ts: "t" });
-    expect(shape(selectTranscript(s))).toEqual(["user:go", "live:*", "pending:typed ahead"]);
+    expect(shape(selectTranscript(s))).toEqual(["user:go", "live:*", "user:typed ahead"]);
   });
 
   it("draws the divider where the boundary sits in the log", () => {
@@ -661,9 +666,13 @@ describe("a pending send's place in the log", () => {
     );
 
   it("renders last while it is still in flight, which is where it belongs", () => {
+    // A non-failed send renders as a MessageBubble (keyed by client_id), not a
+    // pending bubble: that is what makes it the same React element as its
+    // committed form so the log catching up never remounts or moves it. Only a
+    // FAILED send stays a pending bubble, because that is what carries Retry.
     const s = threadReducer(stateOf([user("a")]),
       { type: "sendStarted", clientId: "c1", text: "b", ts: "2026-08-11T00:00:00Z" });
-    expect(shape(selectTranscript(s))).toEqual(["user:a", "pending:b"]);
+    expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b"]);
   });
 
   it("stays where it was sent once the log has moved past it", () => {
@@ -722,7 +731,7 @@ describe("a pending send's place in the log", () => {
       type: "sendStarted", clientId: "c1", text: "go", ts: "2026-08-18T00:00:00Z",
     });
     const live = threadReducer(sent, { type: "turnStarted", turnId: "r1" });
-    expect(shape(selectTranscript(live))).toEqual(["user:a", "pending:go", "live:*"]);
+    expect(shape(selectTranscript(live))).toEqual(["user:a", "user:go", "live:*"]);
 
     // The send is acknowledged and the run starts emitting: the message must
     // still read above the working line, not jump sides.
@@ -730,49 +739,91 @@ describe("a pending send's place in the log", () => {
     const writing = threadReducer(acked, {
       type: "turnDelta", turnId: "r1", event: { kind: "text", content: "working" },
     });
-    expect(shape(selectTranscript(writing))).toEqual(["user:a", "pending:go", "live:working*"]);
+    expect(shape(selectTranscript(writing))).toEqual(["user:a", "user:go", "live:working*"]);
   });
 
   it("still renders below the working indicator when it joined a turn already running", () => {
     // The opposite case: a turn was already in flight when this send began, so
     // it is a mid-turn message and belongs below the indicator, same as a
-    // committed one would.
+    // committed one would. It is a MessageBubble (dim), not a pending bubble.
     const s0 = threadReducer(stateOf([user("a")]), { type: "turnStarted", turnId: "r1" });
     const sent = threadReducer(s0, {
       type: "sendStarted", clientId: "c1", text: "also", ts: "2026-08-18T00:00:00Z",
     });
-    expect(shape(selectTranscript(sent))).toEqual(["user:a", "live:*", "pending:also"]);
+    expect(shape(selectTranscript(sent))).toEqual(["user:a", "live:*", "user:also"]);
   });
 
-  it("puts a mid-turn tail send ABOVE the indicator once the run has streamed work", () => {
+  it("puts a mid-turn send after the streamed work, above the indicator that carries on", () => {
     // The reported jump: a message sent while a turn is actively writing showed at
     // the very BOTTOM (below the working indicator) for one round trip, then moved
     // UP to its recorded cut position the instant the log committed it. Reported
     // five plus times: "it shows my message at the bottom at first before moving
-    // it up." The run has emitted work, so the send lands at that work's tail --
-    // after it, above the indicator that carries on below -- which is exactly
-    // where the commit will place it, so nothing jumps.
+    // it up." The run has emitted work, so the send is folded in at that work's
+    // tail -- after it, above the trailing indicator -- which is exactly where the
+    // commit will place it (see the key-stability test below), so nothing moves.
     let s = stateOf([user("go")]);
     s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
     s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "working on it" } });
     s = threadReducer(s, { type: "sendStarted", clientId: "c1", text: "also do this", ts: "2026-08-24T00:00:00Z" });
     expect(shape(selectTranscript(s))).toEqual([
-      "user:go", "live:working on it", "pending:also do this", "live:*",
+      "user:go", "live:working on it", "user:also do this", "live:*",
     ]);
   });
 
-  it("renders the pending mid-turn send where the commit will, so it does not move", () => {
-    // The same send, once the server has recorded its cut and committed the
-    // message: it sits after the streamed work and above the trailing indicator.
-    // The pending frame above must match this frame, block for block, or the
-    // message visibly relocates when the log catches up.
-    let s = stateOf([user("go"), user("also do this", { during_turn: "r1", cut_id: "c1" })]);
+  // THE INVARIANT NOBODY PINNED BEFORE, AND THE WHOLE POINT OF THE FIX.
+  //
+  // A mid-turn message passes from the optimistic (still-pending) frame to the
+  // committed frame as the log catches up. Five prior passes tuned the placement
+  // rules and still shipped a jump, because they compared ONE frame at a time. A
+  // message that renders in the right place in both frames still visibly moves
+  // and flashes if the two frames key it differently or render it through a
+  // different component: React unmounts the old element and mounts a new one.
+  //
+  // This drives the real reducer from the pending frame to the committed one and
+  // asserts the two transcripts are identical block-for-block AND key-for-key, so
+  // the handoff is an in-place update. If it ever fails, the message moves.
+  it("keeps the same keys and shape from the pending frame to the committed one", () => {
+    const withKeys = (blocks: TranscriptBlock[]) =>
+      blocks.map((b) => `${b.kind}:${b.key}`);
+
+    let s = stateOf([user("go")]);
     s = threadReducer(s, { type: "turnStarted", turnId: "r1" });
     s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "text", content: "working on it" } });
-    s = threadReducer(s, { type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" } });
-    expect(shape(selectTranscript(s))).toEqual([
+    const pendingFrame = threadReducer(s, {
+      type: "sendStarted", clientId: "c1", text: "also do this", ts: "2026-08-24T00:00:00Z",
+    });
+
+    // Now the server records the cut on the current tail and commits the message
+    // under the SAME client_id. Order is irrelevant (SSE cut vs sync commit); do
+    // both from the pending frame to reach the committed one.
+    let committedFrame = threadReducer(pendingFrame, {
+      type: "turnDelta", turnId: "r1", event: { kind: "cut", ref: "c1" },
+    });
+    // The run is STILL active when the message commits, so the sync carries it.
+    committedFrame = threadReducer(committedFrame, {
+      type: "eventsReceived", lastSeq: 99,
+      activeTurn: { turn_id: "r1", live: { meta: { segments: [text("working on it")] } } },
+      events: [{
+        seq: 50, id: "server-id", client_id: "c1", ts: "2026-08-24T00:00:00Z",
+        kind: "message", role: "user", content: "also do this",
+        meta: { during_turn: "r1", cut_id: "c1" },
+      }],
+    });
+
+    // The pending copy is gone (reconciled by client_id) and the committed one is
+    // in its place, at the same slot, under the same key, through the same
+    // MessageBubble -- so the two frames are indistinguishable to React.
+    expect(shape(selectTranscript(committedFrame))).toEqual([
       "user:go", "live:working on it", "user:also do this", "live:*",
     ]);
+    expect(withKeys(selectTranscript(pendingFrame)))
+      .toEqual(withKeys(selectTranscript(committedFrame)));
+    // And the message's key is its client_id in BOTH, which is what makes it one
+    // element across the handoff rather than two.
+    const msgKeyOf = (st: ThreadState) =>
+      selectTranscript(st).find((b) => b.kind === "message" && b.msg.content === "also do this")?.key;
+    expect(msgKeyOf(pendingFrame)).toBe("c1");
+    expect(msgKeyOf(committedFrame)).toBe("c1");
   });
 
   it("the FIRST send in a chat sits above the indicator, even with a stale active turn", () => {
@@ -789,7 +840,7 @@ describe("a pending send's place in the log", () => {
     const sent = threadReducer(empty, {
       type: "sendStarted", clientId: "c1", text: "first", ts: "2026-08-23T00:00:00Z",
     });
-    expect(shape(selectTranscript(sent))).toEqual(["pending:first", "live:*"]);
+    expect(shape(selectTranscript(sent))).toEqual(["user:first", "live:*"]);
   });
 });
 
