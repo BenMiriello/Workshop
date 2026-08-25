@@ -17,14 +17,16 @@
 
 ## 0. The decision, up front
 
-**One declared field, and it is not an estimate.** The ticket does not say how
-big the work is. It says how much the operator is willing to spend on it. That
-is an **appetite**, in Shape Up's sense: a budget you set, not a prediction you
-make. Everything else follows.
+**One declared field, and it is the one that already exists.** The ticket keeps
+`effort`. What changes is not its name but what reads it: today a bash env var,
+under this design a policy table. The field means how much the operator is
+willing to spend on the work, not a prediction of how big it is. That
+distinction lives in one line of help text, not in a new word.
 
-- The field is `appetite`, values `small | standard | large`, absent meaning
-  `standard`. It replaces `effort` on the ticket, which also clears the
-  vocabulary collision with reasoning-effort (§5).
+- The field is `effort`, values `quick | standard | deep`, absent meaning
+  `standard`. Unchanged from today. No rename, no migration, no new vocabulary.
+  The reasoning-effort collision is handled by calling the other one "reasoning
+  effort" wherever it is shown, which is what it already is (§5).
 - A settings-owned **policy table** maps each band to a **starting tier** and a
   **ceiling tier**. Global default, per-scope override, per-ticket pin.
 - A run that fails for a reason a stronger model could fix **escalates one tier
@@ -211,7 +213,7 @@ automatically, or splits by workflow role.
 The inference to draw is narrow and it is about *what they expose*: a model
 identity, a cost/quality posture, or an effort level. All three are things a
 person can judge **without estimating the task**. That is the same property an
-appetite has and a size estimate does not.
+effort has and a size estimate does not.
 
 ### 2.5 Effort is confirmed as a separate axis
 
@@ -235,12 +237,14 @@ correctly, including Haiku supporting none.
 ### 2.6 Sizing conventions, and how well estimates hold up
 
 - **Shape Up ch. 3, "Set Boundaries"** (Singer, Basecamp, 2019).
-  https://basecamp.com/shapeup/1.2-chapter-03. Verbatim: "An appetite is
-  completely different from an estimate. Estimates start with a design and end
-  with a number. Appetites start with a number and end with a design." This
-  supplies the reframe in §0, and it is the answer to "is there a more elegant
-  design", the elegance is not in combining dimensions better, it is in not
-  making a prediction at all.
+  Argues that a spending limit set in advance behaves differently from an
+  estimate made in advance: one starts with a number and derives a design, the
+  other starts with a design and derives a number. Cited only for that
+  distinction, which is worth one line of help text on the `effort` field. Its
+  vocabulary is deliberately NOT adopted: the operator rejected the niche term
+  on 2026-08-25, and the mechanism in §3 is unchanged without it. The answer to
+  "is there a more elegant design" is not a better word and not a better way to
+  combine dimensions, it is §3.4, not making a prediction at all.
 - **Story points vs actual effort** (Tawosi, Moussa & Sarro, ESEM 2022).
   https://dl.acm.org/doi/10.1145/3544902.3546238. 37,440 user stories across 37
   open-source projects: the correlation between expert story points and actual
@@ -291,16 +295,17 @@ correctly, including Haiku supporting none.
 
 ## 3. The design
 
-### 3.1 The field: `appetite`, not a size
+### 3.1 The field: `effort`, which already exists
 
-One field on the ticket. `small | standard | large`. Absent means `standard`,
-and absent is expected to stay the common case.
+One field on the ticket, the one already there. `quick | standard | deep`.
+Absent means `standard`, and absent is expected to stay the common case.
 
-It reads as a sentence the operator can answer without knowing the code: **"how
-much am I willing to spend on this?"** Not "how big is it?", which §2.6 says he
-cannot know, and which the 42.6x measured spread says nobody can. The distinction
-is not cosmetic. An estimate can be wrong; an appetite cannot, because it is a
-decision. That is what makes it safe to attach to money.
+Its help text should read as a sentence answerable without knowing the code:
+**"how much am I willing to spend on this?"** Not "how big is it?", which §2.6
+says he cannot know and the 42.6x measured spread says nobody can. That
+distinction is worth one line of help text and is not worth a new word: the
+mechanism in §3.2 to §3.4 is identical either way, and the escalation in §3.4 is
+what actually corrects a wrong call.
 
 Who sets it:
 
@@ -407,7 +412,7 @@ attempt runs at, and the next claim reads it at rung 2 of §3.3.
 **What caps it.** Four things, and they are all already in the tree:
 
 1. The band's `ceiling`. `small` tops out at Sonnet by default. A ticket cannot
-   climb out of the appetite it was given.
+   climb out of the effort it was given.
 2. `max_attempts`. Escalation changes which model spends an attempt; it never
    grants one.
 3. One step per attempt. No double jumps, so each step's outcome is readable.
@@ -464,7 +469,7 @@ another could outrank.
 
 **It fails the repo's own test.** `agents_registry.py:132-140` deleted `depth` and
 `fanout` for having no reader, and named the failure: a control that lies. Two
-new fields would bring the ticket to five spec dimensions (`appetite`,
+new fields would bring the ticket to five spec dimensions (`effort`,
 `complexity`, `execution`, `latitude`, `priority`), of which the newest two would
 share a single reader with the oldest. `effort` has had a reader for months and is
 still unset on 73% of tickets; the observed problem is not that one dimension is
@@ -474,7 +479,7 @@ too few, it is that even one is more prediction than anyone wants to supply.
 populations that a single band cannot separate: long-but-simple work that a
 cheap model finishes given more iterations, and short-but-hard work that needs a
 strong model for three turns. That is a real hypothesis and it is measurable:
-`appetite` sets both the tier and the iteration cap today, so if postmortems show
+`effort` sets both the tier and the iteration cap today, so if postmortems show
 tickets that needed one raised and the other lowered, split them. Measure first.
 The instrumentation in §7 is what would tell us.
 
@@ -484,36 +489,31 @@ The instrumentation in §7 is what would tell us.
 
 Two different meanings sit on one word.
 
-- **Ticket `effort`**: `quick | standard | deep`. A size hint. One reader.
+- **Ticket `effort`**: `quick | standard | deep`. How much to spend on the work.
+  One reader today, about thirty setters.
 - **Chat `effort`**: `low | medium | high | xhigh | max`. Reasoning effort, with
   per-model ladders at `model_caps.EFFORT_BY_MODEL:37-44` (Haiku supports none).
 
-**Rename the ticket one.** The chat one is the vendor's own parameter name, with
-the vendor's own level names, matching `output_config.effort` at Anthropic and
-`reasoning.effort` at OpenAI, and matching the CLI's `--effort` flag. Renaming it
-would put this repo out of step with the API it calls, and it is referenced from
-`model_caps`, `chat_store.get_default_effort`, agent frontmatter
-(`_coerce_effort`), the composer, and `routes/chat.py`. The ticket field has one
-reader and about thirty setters.
+**Rename neither.** The chat one is the vendor's own parameter name with the
+vendor's own level names, matching `output_config.effort` at Anthropic and
+`reasoning.effort` at OpenAI and the CLI's `--effort` flag; renaming it would put
+this repo out of step with the API it calls. The ticket one is the standard
+tracker field name, is already on thirty tickets, already has a picker at
+`TicketDetail.tsx:624-637`, and already has an alias table at `tasks.py:668-698`.
+Renaming it buys a clearer noun and costs a migration across
+`scripts/project_tasks.py`, five routes, four frontend modules and
+`docs/ticket-writing.md`.
 
-**What the rename costs**, named honestly:
+The collision is real, but it is a LABEL problem rather than a schema problem,
+and it is fixed by labelling: wherever the model-side one is shown to a person or
+named in a comment, call it **reasoning effort**, which is what it already is.
+Where both could appear in one view, the ticket one is "effort" and the model one
+is "reasoning effort". No field changes and nothing migrates.
 
-- `tasks.py:668-698`: the `_EFFORT_ALIASES` table already folds `s/small/xs`
-  and `l/large/xl`. Re-point its canonical outputs to `small|standard|large` and
-  every stored value in the tree (`quick`, `S`, `M`, `deep`, `L`) migrates on
-  read with no data migration. This is the cheapest part and it is why these
-  band names were chosen over inventing new ones.
-- Read both keys for one release: `task.get("appetite", task.get("effort"))`.
-  Write only the new one.
-- `scripts/project_tasks.py:250`: add `--appetite`, keep `--effort` as a
-  deprecated alias so no filed script breaks.
-- `routes/tasks_all.py:269,354,392,564,668`: the field, the filter and two
-  bodies. `routes/chat.py` `FileTaskBody.effort`.
-- `frontend/src/lib/tasks.ts:215` `TASK_EFFORTS`, `TicketDetail.tsx:624-637`,
-  `TicketFilters.tsx:57,323`, `lib/ticketEdit.ts:34`.
-- `scripts/project_ralph.sh:1256-1265`: replaced by the resolver call anyway.
-- `docs/ticket-writing.md` gains a line, since it is the page that tells both
-  readers what a ticket carries.
+This reverses an earlier draft of this document, which proposed renaming the
+ticket field to a new word. The operator rejected that vocabulary on 2026-08-25.
+The reversal costs the design nothing, which is itself the evidence that the word
+was never load-bearing: §3.2 through §3.4 are unchanged.
 
 **How the two knobs compose.** Model first, effort second, exactly as
 `routes/chat.py:235-270` already does it: "which rungs exist is a fact about the
@@ -545,7 +545,7 @@ not in a global list, the same choice `scope_execution` makes, where the store
 holds only deliberate overrides and the global page shows the armed set rather
 than every scope that could be armed.
 
-**On the ticket**, the Effort row becomes an Appetite row plus a read-only line
+**On the ticket**, the Effort row becomes an Effort row plus a read-only line
 naming what it resolved to: "standard: starting on Sonnet, may escalate to Opus".
 A picker whose consequence is invisible is how a field ends up unset on 73% of
 tickets.
@@ -573,9 +573,9 @@ Usage page will show a Haiku attempt and an Opus attempt as the same size (§3.4
 tier, and the retry, which was going to happen regardless, runs stronger. Cost
 is one cheap attempt's tokens. The bad case is a genuinely large ticket declared
 `small`: its ceiling is Sonnet, so it can never reach Opus and will burn its
-attempts and block. That is intended (an appetite is a limit, and a limit that
+attempts and block. That is intended (an effort is a limit, and a limit that
 yields is not one), but it must be **legible**: the block reason has to say "hit
-the appetite ceiling for band small" rather than "failed after 3 attempts", so
+the effort ceiling for band small" rather than "failed after 3 attempts", so
 the one action that fixes it, raising the band, is the one the sentence suggests.
 
 **The band is too high.** Opus does a one-line fix. **Nothing catches this, on
@@ -594,10 +594,10 @@ design becomes worse than doing nothing.
 **Interaction with `limiting-usage-2026-08-24.md`.**
 
 - Its §4A wants admission to reserve a history-derived p80 "bucketed by the
-  ticket's `effort` when it has one". That bucket becomes `appetite`, and it gets
+  ticket's `effort` when it has one". That bucket becomes `effort`, and it gets
   better because the band now correlates with the model tier that actually ran.
 - Its R1 rules that no design may rest correctness on a cost estimate. Honoured:
-  appetite is a **budget the operator sets**, and it is a scheduling hint to
+  effort is a **budget the operator sets**, and it is a scheduling hint to
   admission, never a safety mechanism. Correctness rests on the ceiling and the
   attempt cap, which are decisions, not predictions.
 - Its R2 pause-and-resume: a paused run keeps its tier. Only a *failed* run
@@ -616,7 +616,7 @@ argued:
    that escalated against retries at the same tier. **If escalated retries do no
    better, escalation is a control that lies and should be deleted**, leaving the
    policy table.
-2. Count how many tickets carry an `appetite` three months after the rename ships
+2. Count how many tickets carry an `effort` three months after the rename ships
    with the resolved-model line on the ticket page. **If it is still under 30%,
    the declared field is not wanted**, and the honest response is to delete it and
    let every ticket start at the default and escalate. The design already works in
@@ -641,13 +641,7 @@ something measured.
    also the field most likely to be set once and then quietly outlive its reason.
    The alternative is that the only per-ticket control is the band.
 
-3. **`appetite` as the word.** It is Shape Up's term and it carries the reframe
-   in the name, which is most of why it was chosen. `budget` is plainer and
-   collides with `budget_engine.py`, which is the personal-finance planner and
-   has nothing to do with models. `size` is available and would re-import the
-   prediction framing this design is trying to leave.
-
-4. **Whether the drafting model proposes a band at filing time.** Yes means most
+3. **Whether the drafting model proposes a band at filing time.** Yes means most
    tickets arrive with a band nobody chose, and a machine's guess in a field whose
    entire value is that it is a human decision. No means the field stays mostly
    unset and the default carries the work, which §7's second falsifier says is
@@ -655,10 +649,12 @@ something measured.
 
 Decided here, and not offered as questions: one dimension rather than two (§4);
 escalation on measured failure rather than a second declared dimension (§3.4);
-renaming the ticket field rather than the chat one (§5); the `scope_execution`
-storage idiom and the `routes/chat.py` resolution ladder (§3.2, §3.3); and one
-resolver, because `providers-credentials-and-limits-2026-08-23.md` §6 already
-settled that.
+keeping the existing `effort` field and its existing enum, with no rename and no
+migration, per the operator on 2026-08-25 ("don't do dumb niche terms or
+concepts, let's just get the basic essential stuff working"); the
+`scope_execution` storage idiom and the `routes/chat.py` resolution ladder
+(§3.2, §3.3); and one resolver, because
+`providers-credentials-and-limits-2026-08-23.md` §6 already settled that.
 
 ---
 
@@ -668,7 +664,7 @@ Sequenced. 2 blocks 3 blocks 4; 6 blocks on 2; 1 and 5 are independent.
 
 | id | title | priority |
 |---|---|---|
-| `ce1a5770` | Rename the ticket effort field to appetite, with bands small/standard/large | medium |
+| `ce1a5770` | Rename the ticket effort field to effort, with bands small/standard/large | medium |
 | `372c72f7` | One resolver decides which model runs a ticket, from a stored policy table | high |
 | `0e68c881` | The sweep asks the resolver which model to run, instead of its own case statement | high |
 | `2c7c245e` | A run that fails the reviewer retries one tier up, capped by the band ceiling | medium |

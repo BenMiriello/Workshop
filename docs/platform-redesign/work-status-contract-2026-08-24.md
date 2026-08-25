@@ -124,3 +124,43 @@ Every link in that chain is closed by section 3: the ticket could not have read
 done with its change unmerged, so the later agent would have seen unlanded work
 rather than a contradiction. No separate mechanism is needed, and the
 worktree-per-run and reaper work removes the branches that are the raw material.
+
+## 6. Operator ruling, 2026-08-25: done means merged
+
+Asked to choose between "done means accepted and landed on the default branch,
+refused at the write if the change is not merged" and "done means the worker
+finished, with landed-ness derived separately", the operator answered plainly:
+**"I mean done should be merged, right?"**
+
+So this document's §3 is now settled rather than proposed on that point:
+
+- **`done` is refused when the ticket's change is not merged into the default
+  branch.** It is a write-time refusal, not a warning and not a later reconcile.
+  The refusal names the change and its state, because the whole failure being
+  fixed is a status that asserted something nobody had checked.
+- This does NOT add a ninth status, and §2's reading of GitHub still holds: the
+  merged fact stays its own field on the change, and `done` is refused by
+  consulting it. One fact, one home, one reader.
+- A ticket whose work legitimately has no change (a decision, an operator-only
+  action, an external dependency) is not caught by this, because there is no
+  change to be unmerged. That is the correct behaviour and not a loophole:
+  `execution` already distinguishes those.
+
+This closes the first of the eight decisions listed in
+`work-system-coverage-2026-08-25.md` §4, and unblocks the three tickets that
+section names as waiting on it: `46b07a2b` (the state vocabulary), `e48268d0`
+(no done while unmerged) and `91a477a5` (the landed-ness guard). `e48268d0`'s
+Boundaries line, which forbids the move that `791f334e` mandates, is stale
+against this ruling and should be corrected when it is picked up.
+
+Two related decisions were also settled the same day and are recorded here so a
+reader of this file does not have to hunt them:
+
+- **`latitude` is deleted.** Set on zero of 111 tickets, and its stated job
+  (decision rights) is already carried in words by the Boundaries line every
+  ticket must have. The operator: "I don't know what latitude is either, so
+  yeah, if you're saying it's not essential and it's not serving a purpose...
+  remove it."
+- **The autonomous loop stays off, deliberately.** The operator turned it off
+  because it does not yet work correctly, not because arming it is an open
+  question. Nothing in this document should be read as proposing to arm it.

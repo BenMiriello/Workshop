@@ -339,3 +339,72 @@ window for the short limit, and the monthly is what keeps it honest.
    task that plausibly fits the remaining session over one that plainly does not.
 5. Configurable periods beyond those two: available, not encouraged, advanced
    disclosure. The operator has twice declined to request this, so it is last.
+
+---
+
+## Operator ruling, 2026-08-25: the monthly cap's default value
+
+Asked what unit and what amount, the operator answered that **the amount is a
+default and is configurable**, that it "depends on the plan people use and how
+much they want to use this", and that it should be set to roughly **20% to 25%
+of a Claude Max plan over a month**, rounded to a nice number.
+
+### The number: 100,000,000 effective tokens per month
+
+"Effective tokens" is the unit defined in `counting-tokens-2026-08-25.md`:
+`input + cache_creation + output + 0.1 x cache_read`, summed over distinct API
+calls. It is named here rather than "tokens" because the same raw ledger number
+means about a twelvefold different thing depending on how cache reads are
+counted, and today's ledger counts them at full weight over stream frames rather
+than API calls.
+
+Two independent derivations, which is why this number rather than another:
+
+**From this installation's measured burn.** `.runtime/usage.jsonl` holds
+6,544,418,988 raw tokens over 2026-07-15 to 2026-08-25. Removing the 4,208
+test-written rows and converting at the measured 12.6x raw-to-effective factor
+gives roughly 516M effective over 41 days, so about **378M effective per month**
+at the observed rate, on an installation that has been running near-continuously
+and does hit plan limits. A quarter of that is **95M**, which rounds to 100M.
+
+**From the unit of work, which is the more robust check because it does not
+depend on guessing what a plan is worth.** A worker run costs a median of
+107,284 and a p80 of 231,965 effective tokens (168 runs, `.runtime/ralph.log`;
+`ralph.sh:905-911` already weights cache reads at 0.1, so those figures are
+already in this unit). 100M therefore buys **roughly 430 to 930 ticket-runs a
+month**, or 14 to 31 a day. That is a generous but bounded default for
+autonomous work, and it is a sentence the operator can check against his own
+sense of how much work he wants done per day, which a raw token count is not.
+
+The two routes landing in the same range is the reason to trust the number. It
+is a **default**, and the setting is the point: a low-volume user or a Pro plan
+wants a fraction of this and a heavy user wants several times it.
+
+### What it counts, and the one sub-decision inside it
+
+The cap counts **all** recorded spend, because a plan allowance is consumed by
+chat and by workers alike and a cap that ignores most of the spend is not a cap.
+
+But reaching the cap must not do the same thing to both:
+
+- **Autonomous admission is refused** at the cap. This is the existing
+  `usage_ledger.can_admit` path and it already behaves this way.
+- **Chat is never blocked**, only warned. Blocking chat at a spend cap means the
+  operator cannot ask why he is blocked, cannot raise the limit through the UI,
+  and cannot see what consumed it. It also cannot be enforced usefully: the
+  2026-08-22 compaction starvation showed that gating the conversation starves
+  the very mechanism that would reduce its cost.
+
+So one ledger, one cap, two responses. This is a narrowing of the existing
+chat-exemption comment at `build_streaming.py:3383`, which assumed chat was
+invisible to the ledger. It is not invisible; it is exempt from refusal only.
+
+### Sequencing, stated plainly
+
+**No cap can be enforced until `counting-tokens-2026-08-25.md` lands.** The
+number a cap compares against is not currently a consistent quantity: the same
+ledger mixes results and per-frame sums, counts cache reads at full weight,
+under-reports output because the stream carries a placeholder, and contains
+4,208 test rows. Setting 100M today would mean an unpredictable multiple of
+100M. The unit work sequences first, and this ruling is recorded now so the
+number is not re-derived later.
