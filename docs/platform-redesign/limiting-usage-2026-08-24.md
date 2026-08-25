@@ -342,69 +342,74 @@ window for the short limit, and the monthly is what keeps it honest.
 
 ---
 
-## Operator ruling, 2026-08-25: the monthly cap's default value
+## Operator ruling, 2026-08-25: what the monthly cap governs, and its default
 
-Asked what unit and what amount, the operator answered that **the amount is a
-default and is configurable**, that it "depends on the plan people use and how
-much they want to use this", and that it should be set to roughly **20% to 25%
-of a Claude Max plan over a month**, rounded to a nice number.
+### The cap is autonomous work only
 
-### The number: 100,000,000 effective tokens per month
+> "I don't want the chat warned if we're over like the 25% usage, and I don't
+> want the chat and the autonomous agents being on the same cap. That was never
+> part of the design."
 
-"Effective tokens" is the unit defined in `counting-tokens-2026-08-25.md`:
-`input + cache_creation + output + 0.1 x cache_read`, summed over distinct API
-calls. It is named here rather than "tokens" because the same raw ledger number
-means about a twelvefold different thing depending on how cache reads are
-counted, and today's ledger counts them at full weight over stream frames rather
-than API calls.
+Chat is not capped, not warned, and does not draw down the autonomous budget.
+Reaching the cap refuses autonomous admission and changes nothing about a
+conversation. The tree already supports this: chat spend is recorded with
+`role="chat"` (`build_streaming.py:3383`) and `can_admit`
+(`usage_ledger.py:674`) is only called on the autonomous path, so the monthly
+rule reads the ledger filtered to non-chat roles.
 
-Two independent derivations, which is why this number rather than another:
+### The unit is dollars at published API prices
 
-**From this installation's measured burn.** `.runtime/usage.jsonl` holds
-6,544,418,988 raw tokens over 2026-07-15 to 2026-08-25. Removing the 4,208
-test-written rows and converting at the measured 12.6x raw-to-effective factor
-gives roughly 516M effective over 41 days, so about **378M effective per month**
-at the observed rate, on an installation that has been running near-continuously
-and does hit plan limits. A quarter of that is **95M**, which rounds to 100M.
+Settled in §4 and R5 above, and it is what everyone else does. OpenTelemetry's
+GenAI conventions record input, output, cache-read and cache-write tokens as
+four raw counters and define no weighted unit and no cost metric; Langfuse,
+LangSmith, Helicone and Portkey store the same components and derive dollars
+from a versioned price table; Anthropic returns the components and prices each
+separately (cache write 1.25x base input, cache read 0.1x). So the monthly rule
+stores components and caps dollars. The `effective tokens` scalar in
+`counting-tokens-2026-08-25.md` §5 stays the unit of the 5 hour admission
+check, and is not the unit of the budget.
 
-**From the unit of work, which is the more robust check because it does not
-depend on guessing what a plan is worth.** A worker run costs a median of
-107,284 and a p80 of 231,965 effective tokens (168 runs, `.runtime/ralph.log`;
-`ralph.sh:905-911` already weights cache reads at 0.1, so those figures are
-already in this unit). 100M therefore buys **roughly 430 to 930 ticket-runs a
-month**, or 14 to 31 a day. That is a generous but bounded default for
-autonomous work, and it is a sentence the operator can check against his own
-sense of how much work he wants done per day, which a raw token count is not.
+### The default: a quarter of the plan's monthly price
 
-The two routes landing in the same range is the reason to trust the number. It
-is a **default**, and the setting is the point: a low-volume user or a Pro plan
-wants a fraction of this and a heavy user wants several times it.
+Anthropic publishes a plan's price and its size relative to Pro, and no token
+figure. It does publish the conversion: usage past the allowance bills as usage
+credits at standard API rates, so API-rate dollars is a denominator the plan
+and the ledger already share.
 
-### What it counts, and the one sub-decision inside it
+| plan | price | default autonomous cap |
+| --- | --- | --- |
+| Pro | $20 / month | $5 / month |
+| Max 5x | $100 / month | $25 / month |
+| Max 20x | $200 / month | $50 / month |
 
-The cap counts **all** recorded spend, because a plan allowance is consumed by
-chat and by workers alike and a cap that ignores most of the spend is not a cap.
+25% of the price. The other 75% is the point of the fraction: it stays free for
+the operator's own interactive use, which is why the cap may not see chat. This
+installation is on Max 5x, so the default here is **$25 per month**. For scale,
+an agentic turn is roughly 90% cache read, which at published prices runs about
+$1.05 per million tokens on Sonnet 5 and $1.75 on Opus 5, so $25 buys 15 to 25
+million tokens a month.
 
-But reaching the cap must not do the same thing to both:
+`auth_health.parse_claude_auth_status` (`:172`) already reads
+`subscriptionType` and returns it as `plan`. It separates `pro` from `max` but
+not 5x from 20x, so the tier is free and the multiplier is a setting defaulting
+to 5x.
 
-- **Autonomous admission is refused** at the cap. This is the existing
-  `usage_ledger.can_admit` path and it already behaves this way.
-- **Chat is never blocked**, only warned. Blocking chat at a spend cap means the
-  operator cannot ask why he is blocked, cannot raise the limit through the UI,
-  and cannot see what consumed it. It also cannot be enforced usefully: the
-  2026-08-22 compaction starvation showed that gating the conversation starves
-  the very mechanism that would reduce its cost.
+### A separate mechanism: the plan-availability gate
 
-So one ledger, one cap, two responses. This is a narrowing of the existing
-chat-exemption comment at `build_streaming.py:3383`, which assumed chat was
-invisible to the ledger. It is not invisible; it is exempt from refusal only.
+The operator raised this and distinguished it from the cap:
 
-### Sequencing, stated plainly
+> "it might be an idea that we could look towards the overall usage, and if
+> there's no more available usage, then we don't run the autonomous system, but
+> that's a different idea than what you're saying."
 
-**No cap can be enforced until `counting-tokens-2026-08-25.md` lands.** The
-number a cap compares against is not currently a consistent quantity: the same
-ledger mixes results and per-frame sums, counts cache reads at full weight,
-under-reports output because the stream carries a placeholder, and contains
-4,208 test rows. Setting 100M today would mean an unpredictable multiple of
-100M. The unit work sequences first, and this ruling is recorded now so the
-number is not re-derived later.
+A precondition on starting, not a budget. Before an autonomous run begins, ask
+whether the plan has allowance left right now; if the account is sitting at its
+5 hour or weekly limit, do not start, and retry after the reset. No amount, no
+period, no fraction, and it holds even when the monthly cap is untouched. It
+buys what the cap cannot: a worker is never what consumes the last of the plan.
+The cap decides how much of a month autonomous work may have; the gate decides
+whether it may start at all right now.
+
+**Sequencing.** Not enforceable until `counting-tokens-2026-08-25.md` lands:
+today's ledger mixes three units in one column, and pricing a mixed unit yields
+a mixed dollar figure.
