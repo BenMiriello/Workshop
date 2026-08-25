@@ -1,6 +1,11 @@
 # Hosting a user's apps: the design
 
-**Status: proposal, 2026-08-24.** Supersedes the sketch in
+**Status: POSITION PAPER, not an implementation plan. 2026-08-24, downgraded
+the same day after review.** An independent review
+(`hosting-design-review-2026-08-24.md`) found that exactly one step in section 6
+is implementable as written (the deletion), and that section 6 step 1, which this
+document says everything else depends on, is asserted rather than specified. Read
+this for the direction and the research; do NOT hand it to a worker. Supersedes the sketch in
 `where-apps-run-2026-08-24.md`, which was written before the research and got
 the tier count wrong. Grounded in four research documents produced the same day:
 `research-cloudflare-hosting`, `research-hosting-runtimes`,
@@ -107,11 +112,20 @@ The single most common real complaint across every peer platform is
 $20 to between $700 and $23,000 from traffic the customer did not cause, and
 Firebase per-read pricing turning $50 a month into $5,000.
 
-Workshop already has the mechanism, designed and half built: the usage limiter
-(`limiting-usage-2026-08-24.md`) with a session window, a monthly cap,
-AND-composed rules and refusal on breach. **The same limiter must govern app
-hosting spend from day one**, per tenant and per app. This is not a feature to
-add later; every platform that added it later has a public incident attached.
+**CORRECTION, 2026-08-24: an earlier revision of this section claimed "Workshop
+already has the mechanism". That is false and is retracted.** The usage limiter
+records `{ts, project, agent, tokens, job_id}` keyed on a project, counts TOKENS,
+and gates the admission of an agent run. An app spend cap counts MONEY, is keyed
+on a tenant and an app, and is enforced against a cloud provider's metered usage
+that this platform does not observe. Different unit, different actor, different
+enforcement point, different observability. It is a separate mechanism that can
+borrow the limiter's SHAPE (AND-composed rules, refusal on breach, a named cause)
+and none of its plumbing.
+
+The requirement stands and the reason is stronger than the convenience: every
+platform that added a spend cap late has a public incident attached. It must be
+designed as its own thing, and its absence is a reason not to accept an external
+tenant, not a thing to note and move past.
 
 And the safety lesson, from the platform with the *best* agent steering: Replit's
 agent deleted a production database during a declared freeze. Good primitives

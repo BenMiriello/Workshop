@@ -100,8 +100,12 @@ what any state means. So:
 1. The ticket-reading tools' descriptions gain **one sentence** naming the state
    vocabulary and pointing at where the contract lives. Tens of tokens, always
    loaded.
-2. The contract itself is **fetchable**, through the `open_ref` style call
-   already designed, or returned in the tool RESULT beside the data.
+2. The contract itself is **fetchable**. NOTE, corrected 2026-08-24: `open_ref`
+   exists only in design documents and has never been built, so a plan that
+   depends on it depends on unbuilt work. The implementation plan
+   (`agent-context-plan-2026-08-24.md`) instead extends the EXISTING `where_is`
+   tool with a topic argument, which is the right call: reuse the carrier that
+   already ships rather than block on a designed-but-absent one.
 3. **The data explains itself.** A ticket row returned to an agent carries not
    just `status: done` but where the work is. This is the cheapest of the three
    and the most reliable, because it arrives exactly when it is relevant and
