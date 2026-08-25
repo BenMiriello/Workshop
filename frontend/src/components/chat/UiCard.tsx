@@ -12,8 +12,11 @@
 // State-on-reload: cards are stateless server-side in Phase 1. A reloaded
 // thread re-renders each card in edit state from the stored block; createProject
 // handles 409 so a re-submit after reload stays safe. No server-side card state.
-import { useEffect, useMemo, useState } from "react";
-import { CircleCheck, MessageCircleQuestion, MinusCircle, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Bug, CheckSquare, CircleCheck, History, MessageCircleQuestion, MinusCircle,
+  Sparkles, Wrench,
+} from "lucide-react";
 import {
   Button,
   Card,
@@ -30,7 +33,8 @@ import {
   type SegmentedOption,
 } from "@workshop/ui";
 import { proposalGaps, readinessLine, scopeLabel } from "../../lib/tasks";
-import { pickupFor, pickupNote, type PickupMap } from "../../lib/scopePickup";
+import { pickupFor, type PickupMap } from "../../lib/scopePickup";
+import { Reveal } from "./Reveal";
 import TicketCard from "./work/TicketCard";
 import { displayDefault,
   KNOWN_KINDS,
@@ -367,11 +371,96 @@ function ActionButtons({
 // content IS the identity: the same card block acted on once should stay acted
 // on. djb2 over the raw text, hex — short, stable, and collision-safe enough for
 // per-thread keys.
-function cardKey(raw: string): string {
+export function cardKey(raw: string): string {
   let h = 5381;
   for (let i = 0; i < raw.length; i++) h = ((h * 33) ^ raw.charCodeAt(i)) >>> 0;
   return `c${h.toString(16)}${raw.length.toString(16)}`;
 }
+
+// SUPERSESSION, derived from the whole transcript rather than stored anywhere.
+//
+// When the agent re-proposes work it proposed before, the newer card carries the
+// SAME top-level `id`, or a later card sets `supersedes` to the earlier card's
+// `id`. The older, still-unresolved proposal should close. This walks every
+// assistant body in transcript order, keys each fully-parsed card the same way
+// the card itself does (`cardKey` over the fence's raw JSON), and returns the
+// set of keys a later card has replaced.
+//
+// Only fully-parsed cards with a non-empty `id` take part: a card mid-stream has
+// no closed fence to key, and one with no id cannot be matched to a later
+// proposal. A card whose recorded phase is `success` or `dismissed` is already
+// resolved and is NEVER superseded — it keeps its resolved render.
+export function computeSupersededKeys(
+  bodies: string[],
+  cardStates: Record<string, { phase?: string } | undefined> | undefined,
+): Set<string> {
+  type Entry = { id: string; key: string; phase: string | undefined; supersedes?: string };
+  const entries: Entry[] = [];
+  for (const body of bodies) {
+    if (!body || !body.includes("```ui-card")) continue;
+    for (const part of splitUiCards(body)) {
+      if (part.t !== "card" || !part.spec) continue;
+      const id = typeof part.spec.id === "string" ? part.spec.id.trim() : "";
+      if (!id) continue;
+      const key = cardKey(part.raw);
+      entries.push({
+        id,
+        key,
+        phase: cardStates?.[key]?.phase,
+        supersedes: typeof part.spec.supersedes === "string" ? part.spec.supersedes.trim() : "",
+      });
+    }
+  }
+  const superseded = new Set<string>();
+  const resolved = (e: Entry) => e.phase === "success" || e.phase === "dismissed";
+
+  const byId = new Map<string, Entry[]>();
+  for (const e of entries) {
+    const list = byId.get(e.id);
+    if (list) list.push(e);
+    else byId.set(e.id, [e]);
+  }
+  // Same id more than once: every instance but the last is replaced.
+  for (const group of byId.values()) {
+    if (group.length < 2) continue;
+    for (let i = 0; i < group.length - 1; i++) {
+      if (!resolved(group[i])) superseded.add(group[i].key);
+    }
+  }
+  // An explicit `supersedes` closes the card(s) it names.
+  for (const e of entries) {
+    if (!e.supersedes) continue;
+    const targets = byId.get(e.supersedes);
+    if (!targets) continue;
+    for (const t of targets) {
+      if (t.key === e.key) continue;
+      if (!resolved(t)) superseded.add(t.key);
+    }
+  }
+  return superseded;
+}
+
+// The resolved render (a filed ticket, a dismissed line, a superseded line)
+// grows into place when the resolution just happened, and appears settled on a
+// reload. `animate` is the whole difference: the caller passes true only when
+// the phase changed under the operator's hand this session, so a thread opened
+// on an already-filed card does not replay the fill.
+function ResolvedCard({ animate, children }: { animate: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(!animate);
+  useEffect(() => { if (animate) setOpen(true); }, [animate]);
+  if (!animate) return <>{children}</>;
+  return <Reveal open={open} className="chat-card-appear">{children}</Reveal>;
+}
+
+// The ticket kinds a proposal can carry, each with a lucide icon that names it.
+// Local override: the segmented value seeds from the card's `type` (falling back
+// to `task`) and files whatever the operator leaves it on.
+const TYPE_OPTIONS: SegmentedOption<string>[] = [
+  { value: "bug", label: <span className="chat-card__typeopt"><Bug size={14} strokeWidth={1.8} aria-hidden /> Bug</span> },
+  { value: "feature", label: <span className="chat-card__typeopt"><Sparkles size={14} strokeWidth={1.8} aria-hidden /> Feature</span> },
+  { value: "task", label: <span className="chat-card__typeopt"><CheckSquare size={14} strokeWidth={1.8} aria-hidden /> Task</span> },
+  { value: "chore", label: <span className="chat-card__typeopt"><Wrench size={14} strokeWidth={1.8} aria-hidden /> Chore</span> },
+];
 
 export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; raw: string; ctx: UiCardCtx }) {
   // THE CLIENT OWNS THE FIELD LIST FOR A STORE-BOUND KIND. The model authors the
@@ -406,6 +495,10 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
     const seed: Record<string, string> = { ...(normalized?.carried ?? {}) };
     for (const f of fields) seed[f.name] = f.value ?? displayDefault(f);
     if (recorded?.slug) seed.slug = recorded.slug;
+    // The ticket kind is metadata, not a field, so it lives in values (where the
+    // filing handler reads it) without becoming an editable control. It seeds
+    // from the card's own `type`, falling back to `task`.
+    if (spec?.kind === "task-proposal") seed.type = spec.type || "task";
     return seed;
   });
   const [phase, setPhase] = useState<Phase>(
@@ -418,6 +511,15 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
   );
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Was this card resolved by the operator THIS session (as opposed to arriving
+  // already-resolved from the server on a reload)? Only a live resolution
+  // animates; a reloaded thread renders its filed and dismissed cards settled.
+  const actedRef = useRef(false);
+  // Whether this card was ALREADY superseded on first render. A card that
+  // becomes superseded while the reader is watching collapses; one that opens a
+  // thread already superseded appears settled. `null` until the first render
+  // captures it.
+  const supersededMountRef = useRef<boolean | null>(null);
   // What will actually happen to a ticket filed from this card. The drafts
   // dialog has always asked this before offering "File and run"; the card path
   // did not, so a non-runnable scope produced the after-the-fact footnote the
@@ -473,11 +575,13 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
         if (result.slug) setValues((prev) => ({ ...prev, slug: result.slug as string }));
         if (result.values) setValues((prev) => ({ ...prev, ...result.values }));
         setSuccess({ slug: result.slug, title: result.title, note: result.note, actions: result.actions });
+        actedRef.current = true; // a live resolution, so the resolved render animates in
         setPhase("success");
         ctx.recordCardState?.(key, {
           phase: "success", slug: result.slug ?? null, title: result.title ?? null, note: result.note ?? null,
         });
       } else if (result.status === "dismiss") {
+        actedRef.current = true; // animate the collapse to the dismissed line
         setPhase("dismissed");
         ctx.recordCardState?.(key, { phase: "dismissed" });
       } else if (result.status === "error") {
@@ -517,13 +621,23 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
     );
   }
 
+  // A LATER PROPOSAL REPLACED THIS ONE (same id, or a later card's `supersedes`).
+  // Derived from the whole transcript in Chat.tsx. A resolved card is never
+  // superseded, so this only ever applies while phase is still `edit`; it renders
+  // a muted, non-interactive line in place of the form.
+  const isSuperseded = !!(spec && ctx.supersededKeys?.has(key));
+  if (supersededMountRef.current === null) supersededMountRef.current = isSuperseded;
+  const animateSupersede = isSuperseded && supersededMountRef.current === false;
+
   if (phase === "dismissed") {
     return (
-      <Card className="chat-card">
-        <Row className="ws-card__meta">
-          <MinusCircle size={14} strokeWidth={1.8} aria-hidden /> Dismissed
-        </Row>
-      </Card>
+      <ResolvedCard animate={actedRef.current}>
+        <Card className="chat-card">
+          <Row className="ws-card__meta">
+            <MinusCircle size={14} strokeWidth={1.8} aria-hidden /> Dismissed
+          </Row>
+        </Card>
+      </ResolvedCard>
     );
   }
 
@@ -538,13 +652,15 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
     if (isTaskProposal && filedId) {
       const filedScope = (values.scope || "workshop").trim();
       return (
-        <TicketCard
-          id={filedId}
-          scope={filedScope}
-          filedTitle={success?.title || values.title || ""}
-          filedNote={success?.note ?? null}
-          pickup={pickupFor(pickupMap, filedScope)}
-        />
+        <ResolvedCard animate={actedRef.current}>
+          <TicketCard
+            id={filedId}
+            scope={filedScope}
+            filedTitle={success?.title || values.title || ""}
+            filedNote={success?.note ?? null}
+            pickup={pickupFor(pickupMap, filedScope)}
+          />
+        </ResolvedCard>
       );
     }
     // A PROMPT CARD KEEPS THE QUESTION. Collapsing straight to a receipt like
@@ -554,33 +670,53 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
     // exchange staying where it happened, not a second copy of it.
     if (spec.kind === "prompt") {
       return (
-        <Card className="chat-card">
-          <Stack gap="sm">
-            <Row>
-              <MessageCircleQuestion size={16} strokeWidth={1.8} aria-hidden />
-              <span className="ws-card__title">{spec.title || "Question"}</span>
-            </Row>
-            <Row>
-              <CircleCheck size={16} strokeWidth={1.8} aria-hidden />
-              <span>{success?.note || "Answered"}</span>
-            </Row>
-            {errorBlock}
-          </Stack>
-        </Card>
+        <ResolvedCard animate={actedRef.current}>
+          <Card className="chat-card">
+            <Stack gap="sm">
+              <Row>
+                <MessageCircleQuestion size={16} strokeWidth={1.8} aria-hidden />
+                <span className="ws-card__title">{spec.title || "Question"}</span>
+              </Row>
+              <Row>
+                <CircleCheck size={16} strokeWidth={1.8} aria-hidden />
+                <span>{success?.note || "Answered"}</span>
+              </Row>
+              {errorBlock}
+            </Stack>
+          </Card>
+        </ResolvedCard>
       );
     }
     const heading = success?.note || (success?.title ? `Created ${success.title}` : "Done");
     return (
-      <Card className="chat-card">
-        <Stack>
-          <Row>
-            <CircleCheck size={16} strokeWidth={1.8} aria-hidden />
-            <span>{heading}</span>
+      <ResolvedCard animate={actedRef.current}>
+        <Card className="chat-card">
+          <Stack>
+            <Row>
+              <CircleCheck size={16} strokeWidth={1.8} aria-hidden />
+              <span>{heading}</span>
+            </Row>
+            <ActionButtons actions={success?.actions ?? []} busyId={busyId} onRun={(a) => void runAction(a)} />
+            {errorBlock}
+          </Stack>
+        </Card>
+      </ResolvedCard>
+    );
+  }
+
+  // A LATER PROPOSAL REPLACED THIS ONE, and it is still unresolved (both resolved
+  // phases returned above, so phase is `edit` here). It collapses to a muted,
+  // non-interactive line instead of offering a form that would file duplicate
+  // work.
+  if (isSuperseded) {
+    return (
+      <ResolvedCard animate={animateSupersede}>
+        <Card className="chat-card">
+          <Row className="ws-card__meta">
+            <History size={14} strokeWidth={1.8} aria-hidden /> Replaced by a newer proposal
           </Row>
-          <ActionButtons actions={success?.actions ?? []} busyId={busyId} onRun={(a) => void runAction(a)} />
-          {errorBlock}
-        </Stack>
-      </Card>
+        </Card>
+      </ResolvedCard>
     );
   }
 
@@ -592,7 +728,6 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
   // through the ticket. Advisory only, exactly as on the ticket page: it never
   // disables File.
   const notReady = isTaskProposal ? readinessLine(proposalGaps(values)) : "";
-  const pickupWarning = pickup ? pickupNote(pickup) : null;
   // The actions this card offers: the model's own, minus any with no handler,
   // falling back to the kind's canonical set if it named none this build can
   // run, and without the run action where the scope cannot run (the same rule
@@ -611,15 +746,24 @@ export function UiCard({ spec: rawSpec, raw, ctx }: { spec: UiCardSpec | null; r
             : <Sparkles size={16} strokeWidth={1.8} aria-hidden />}
           <span className="ws-card__title">{spec.title || "Card"}</span>
         </Row>
+        {isTaskProposal && (
+          // The ticket kind, as a compact segmented control in the header. It is
+          // metadata, not one of the three form fields, and defaults to the
+          // card's own `type` (or `task`); the operator can override it and the
+          // choice files as `type`.
+          <Segmented
+            options={TYPE_OPTIONS}
+            value={values.type || "task"}
+            onChange={(v) => setValue("type", v)}
+            ariaLabel="Ticket type"
+          />
+        )}
         <Stack>
           {fields.map((f) => (
             <CardField key={f.name} field={f} value={values[f.name] ?? ""} onChange={(v) => setValue(f.name, v)} />
           ))}
         </Stack>
         {notReady && <Notice tone="warn">{notReady}</Notice>}
-        {pickupWarning && (
-          <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{pickupWarning}</span>
-        )}
         {errorBlock}
         <ActionButtons actions={editActions} busyId={busyId} onRun={(a) => void runAction(a)} />
       </Stack>

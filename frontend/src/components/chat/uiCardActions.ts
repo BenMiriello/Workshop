@@ -61,6 +61,13 @@ export type UiCardSpec = {
   title?: string;
   fields?: UiCardField[];
   actions?: UiCardAction[];
+  // Card METADATA, not form fields. `type` is the ticket kind
+  // (bug|feature|task|chore) shown as a header control; `id` is a stable slug
+  // for the proposal; `supersedes` names an earlier proposal's `id` this one
+  // replaces. They ride the top-level spec (normalizeCardSpec preserves them)
+  // and never become editable controls — the form stays scope/title/description.
+  type?: string;
+  supersedes?: string;
 };
 
 // Kinds the client knows how to render as a live, interactive card. Anything
@@ -107,6 +114,11 @@ export type UiCardCtx = {
   // one that was filed and run renders its outcome instead of offering the same
   // buttons again (which is how the same work got queued twice).
   cardStates?: Record<string, { phase: string; note?: string | null; slug?: string | null; title?: string | null }>;
+  // Card keys that a LATER proposal has replaced. Derived at render time from the
+  // whole transcript (Chat.tsx, computeSupersededKeys): a card whose key is in
+  // here and is still unresolved renders a muted "replaced" line instead of its
+  // form. A filed or dismissed card is never in this set. See UiCard.
+  supersededKeys?: Set<string>;
   recordCardState?: (
     key: string,
     state: { phase: string; note?: string | null; slug?: string | null; title?: string | null },
@@ -333,6 +345,9 @@ async function fileTicket(
       text: composeTaskText(v),
       priority: Number(v.priority || "0") || 0,
       effort: (v.effort || "").trim() || null,
+      // The ticket kind the operator selected in the card header (the store
+      // never invents one, so an unset value stays null). SpawnTask.type.
+      type: (v.type || "").trim() || null,
       run,
     }),
   });

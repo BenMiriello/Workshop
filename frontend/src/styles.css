@@ -2805,8 +2805,25 @@ p.chat-workpanel__note { margin: 0; }
   border: 1px solid var(--card-ring);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
-  padding: var(--space-3);
+  /* NORMAL CHAT BREATHING ROOM. This used to drop to --space-3 with no margin,
+     so the card butted against the markdown above it and read tighter than
+     everything else in the log. It gets the same room as any other block now:
+     --space-4 inside, and --space-3 of separation on top so it sits apart from
+     the prose above. The trailing-card rule below still owns the bottom, so a
+     card that ends a bubble is not doubly-spaced. */
+  padding: var(--space-4);
+  margin-top: var(--space-3);
 }
+/* The resolved card (a filed ticket, a dismissed line, a superseded line) grows
+   into place instead of hard-swapping. It rides the chat's one collapse
+   mechanism (.chat-reveal, a 0fr->1fr grid) and adds a fade on top; both are
+   built on --dur-base, which tokens.css zeroes under prefers-reduced-motion, so
+   an appear becomes an instant swap there for free. */
+.chat-reveal__inner.chat-card-appear { opacity: 0; transition: opacity var(--dur-base) var(--ease-out); }
+.chat-reveal.is-shown > .chat-reveal__inner.chat-card-appear { opacity: 1; }
+/* One type option in the proposal header: a lucide icon beside its word, in the
+   compact segmented control. */
+.chat-card__typeopt { display: inline-flex; align-items: center; gap: var(--space-1); }
 .chat-ticket-card { display: flex; flex-direction: column; gap: var(--space-2); }
 /* Collapsed, this IS the card: one line, in the measure of the prose above it. */
 .chat-ticket-card__head {

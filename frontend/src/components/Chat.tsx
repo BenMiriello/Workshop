@@ -49,6 +49,7 @@ import { writeSelection, NEW_CHAT } from "../lib/chatSelection";
 import { useDraft } from "../lib/draftSync";
 import VoiceSettings from "./VoiceSettings";
 import { type UiCardCtx } from "./chat/uiCardActions";
+import { computeSupersededKeys } from "./chat/UiCard";
 
 // The unified chat. COMPOSITION over one store and a handful of hooks, each of
 // which owns one seam:
@@ -1024,12 +1025,25 @@ export default function Chat({
   const submitTextRef = useRef(pipeline.submitText);
   submitTextRef.current = pipeline.submitText;
   const answerPrompt = useCallback((text: string) => { submitTextRef.current(text); }, []);
+  // Which proposal cards a LATER proposal has replaced, derived from the whole
+  // transcript rather than stored server-side. Same-`id` re-proposals and
+  // explicit `supersedes` both close the older, still-unresolved card. Read over
+  // the committed assistant bodies (a streaming card has no closed fence to key,
+  // so it is naturally excluded) against the thread's recorded card phases.
+  const supersededKeys = useMemo(
+    () => computeSupersededKeys(
+      messages.filter((m) => m.role === "assistant").map((m) => m.content),
+      thread.cardStates,
+    ),
+    [messages, thread.cardStates],
+  );
   const cardCtx = useMemo<UiCardCtx>(
     () => ({
       navigate, contextKey, threadId: activeId, rescopeThread: chatApi.rescopeThread,
       cardStates: thread.cardStates, recordCardState, answer: answerPrompt,
+      supersededKeys,
     }),
-    [navigate, contextKey, activeId, thread.cardStates, recordCardState, answerPrompt],
+    [navigate, contextKey, activeId, thread.cardStates, recordCardState, answerPrompt, supersededKeys],
   );
 
   // WHAT A TICKET CARD READS, and it is NOT `UiCardCtx`. The work store returns

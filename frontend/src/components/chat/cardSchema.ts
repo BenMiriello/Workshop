@@ -147,5 +147,8 @@ export function normalizeCardSpec(spec: UiCardSpec | null): NormalizedCard | nul
     carried[name] = value;
   }
 
+  // `...spec` keeps the top-level card metadata (`id`, `type`, `supersedes`)
+  // intact: only `fields` is replaced by the canonical list. Those three are not
+  // fields, so they never enter `byName` and never land in `carried`.
   return { spec: { ...spec, fields }, carried };
 }
