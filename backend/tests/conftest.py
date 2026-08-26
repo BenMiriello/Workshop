@@ -177,14 +177,19 @@ def _isolate_usage_ledger(tmp_path, monkeypatch):
     This also fences `prune()`, which rewrites the ledger in place and would
     silently truncate the operator's history if an unisolated test ever called
     it.
+
+    Fails LOUDLY rather than degrading. `raising=True` and the assert below
+    exist because the failure mode of a silent guard is that a rename turns the
+    attribute patch into a dead write, the fixture quietly falls back to
+    env-only against a module that is already imported, and the suite starts
+    appending to the operator's ledger again with nothing going red.
     """
     ledger = tmp_path / "usage.jsonl"
     budget = tmp_path / "usage-budget.json"
     monkeypatch.setenv("WORKSHOP_USAGE_LEDGER", str(ledger))
     monkeypatch.setenv("WORKSHOP_USAGE_BUDGET", str(budget))
-    try:
-        from services import usage_ledger
-    except Exception:  # pragma: no cover - suite runs without the package
-        return
-    monkeypatch.setattr(usage_ledger, "LEDGER_PATH", ledger, raising=False)
-    monkeypatch.setattr(usage_ledger, "BUDGET_CONFIG_PATH", budget, raising=False)
+    from services import usage_ledger
+
+    monkeypatch.setattr(usage_ledger, "LEDGER_PATH", ledger)
+    monkeypatch.setattr(usage_ledger, "BUDGET_CONFIG_PATH", budget)
+    assert usage_ledger.LEDGER_PATH == ledger, "usage ledger is not isolated"
