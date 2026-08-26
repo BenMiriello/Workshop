@@ -737,6 +737,18 @@ reported reason is the useful one:
 Autonomous work already re-checks admission on the next sweep, which is a queue
 with an honest name.
 
+> **CORRECTED 2026-08-26.** The paragraph above is right about a *queue* and was
+> being read as forbidding a *pause*, which is a different thing.
+> `backlog-reconciliation-2026-08-24.md` §1.2 ruled that "a pause is resumable
+> work and is not a queue entry", and the operator settled the same point again
+> on 2026-08-25 by choosing pause-at-cap over fail-on-cap, on the grounds that a
+> paused run has committed its work and resumes with `SESSION_ID`, so nothing is
+> lost. A refusal still does not queue. A run that hits the cap mid-flight stops,
+> commits, and is resumable; it is not holding a promise about when it will run.
+> Ticket `70860d58` builds that and is not in conflict with this section. The
+> 2026-08-24 correction was ordered and never applied, which is why an urgent
+> ticket appeared to contradict its own design doc for two days.
+
 ### 7.4 How this composes with the existing reserve-fraction admission
 
 The `autonomy` rule above **is** today's admission, unchanged: the deployment
