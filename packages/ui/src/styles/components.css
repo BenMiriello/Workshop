@@ -2184,6 +2184,14 @@ span.ws-filterchip__open { cursor: default; }
   color: var(--muted);
 }
 .ws-rail__tile--app:hover { border-color: var(--border-strong); }
+/* The "new project" affordance: same footprint as an app tile, but a dashed
+   ring and no resting surface, so it reads as "add one" rather than as an
+   installed place. */
+.ws-rail__tile--add {
+  border: 1px dashed var(--border-strong);
+  color: var(--faint);
+}
+.ws-rail__tile--add:hover { border-color: var(--accent); color: var(--fg); }
 .ws-rail__tile.is-active {
   background: var(--accent-soft);
   border-color: var(--border-strong);

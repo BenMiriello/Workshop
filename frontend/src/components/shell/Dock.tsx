@@ -14,6 +14,7 @@
 // click is intercepted.
 
 import { Link } from "react-router-dom";
+import { Plus } from "lucide-react";
 import { AppGlyph, monogram } from "../../lib/appIcon";
 import { useAuth } from "../../auth/AuthProvider";
 import type { Shell } from "./useShell";
@@ -76,6 +77,19 @@ export function Dock({ shell }: { shell: Shell }) {
       {apps.map((p) => (
         <Tile key={p.id} shell={shell} place={p} />
       ))}
+      {/* Start a new project. An action, not a place, so it is a plain Link and
+          never highlights. It opens the create flow; the rail lists a fixed set
+          of apps today, so a new project shows up on the Projects page and in
+          its own chat rather than as a rail tile, until the rail is backed by
+          the app registry. See project-context-files-and-flows-2026-08-25.md. */}
+      <Link
+        to="/projects/new"
+        className="ws-rail__tile ws-rail__tile--add"
+        aria-label="New project"
+        title="New project"
+      >
+        <Plus size={18} aria-hidden />
+      </Link>
       <span className="ws-rail__spacer" aria-hidden />
       <Link
         to="/settings"
