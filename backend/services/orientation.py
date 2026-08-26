@@ -24,7 +24,11 @@ def _scope_line(scope_key: str | None) -> str:
             "project in this account, but not another account's data."
         )
     if key == "development":
-        return "This chat is the development scope: it works on the Workshop platform itself."
+        return (
+            "This chat is the development scope: it works on the Workshop platform "
+            "itself. `development` NAMES this work scope; it is not an environment "
+            "tier (Workshop has no prod/staging/dev split, see below)."
+        )
     if key.startswith("project:") or key.startswith("app:"):
         return (
             f"This chat is scoped to {key}: its notes, tickets and runs are that "
@@ -42,10 +46,24 @@ def manifest_text(scope_key: str | None = None) -> str:
     """The orientation block. `scope_key` is the chat's knowledge scope
     ("workshop", "development", "project:<slug>", "app:<name>", "agent:<id>")."""
     return (
-        "=== WHERE THINGS ARE (orientation; reach by tool, don't grep) ===\n"
+        "=== WHAT AND WHERE YOU ARE (orientation; reach by tool, don't grep) ===\n"
+        "Workshop runs as ONE live instance with no environment tiers: there is no "
+        "separate production, staging, or preview, and no deploy-to-promote step. "
+        "\"Live\" means this one running instance, the one in use right now. Its "
+        "stores hold the operator's real working data, so act deliberately, but "
+        "nothing here is a walled-off \"production\" system and no scope name is an "
+        "environment. Do not infer a deployment tier from a scope name or from the "
+        "presence of hardening (roles, RLS, isolation): those are tenancy and "
+        "security design, not a prod/dev boundary.\n"
         + _scope_line(scope_key) + "\n"
         "You do not need to search the filesystem to find the Workshop's own "
-        "things. Reach each kind by its tool:\n"
+        "things, or to work out the STATE of one of its subsystems. Reach each kind "
+        "by its tool:\n"
+        "- The current state of a subsystem (database migrations, running services, "
+        "queues, git) is whatever that subsystem's own command or tool reports, and "
+        "that is authoritative. Read it from there; do not reconstruct it by "
+        "hand-parsing files or logs. If a hand check disagrees with the tool, the "
+        "tool wins.\n"
         "- Files uploaded to THIS chat: `list_attachments` lists them; `get_file` "
         "returns one file's text, or its on-disk path for a binary (a zip, an "
         "image) so you can open it directly. Don't hunt the filesystem for an "
