@@ -40,7 +40,7 @@ def test_resolve_live_attachment(monkeypatch, tmp_path):
     assert out is not None
     assert out["kind"] == "file"
     assert out["title"] == "notes.txt"
-    assert out["href"] == f"/api/attachments/{att_id}"          # in-app, not a path
+    assert out["href"] == f"/api/chat/attachments/{att_id}"     # the real serve route
     assert out["status"] == "current"
     assert out["preview"]["icon"] == "text"
     assert out["preview"]["size_bytes"] == len(b"hello world")
@@ -99,5 +99,7 @@ def test_resolve_image_attachment_points_at_thumb_endpoint(monkeypatch, tmp_path
     assert out["preview"]["icon"] == "image"
     # An image now gets a lazily-rendered, cached thumbnail from /thumb, not the
     # full-bytes href, so a small preview box does not download the whole image.
-    assert out["preview"]["thumb_url"] == f"/api/attachments/{rec['id']}/thumb"
+    # The path is under the chat router's /api/chat prefix, matching the frontend.
+    assert out["preview"]["thumb_url"] == f"/api/chat/attachments/{rec['id']}/thumb"
+    assert out["href"] == f"/api/chat/attachments/{rec['id']}"
     assert out["preview"]["mime"] == "image/png"

@@ -431,7 +431,11 @@ def _resolve_file(ref: Ref) -> dict | None:
         "image/png" if kind == "image"
         else "application/pdf" if kind == "pdf"
         else "text/plain")
-    href = f"/api/attachments/{att_id}"
+    # The chat router is mounted under /api/chat, so the serve endpoint is
+    # /api/chat/attachments/<id> (chatApi.attachmentUrl in the frontend). It is
+    # NOT /api/attachments/<id> -- that path 404s, which is why the link opened a
+    # "not found" page and the thumbnail never loaded.
+    href = f"/api/chat/attachments/{att_id}"
     # An image and a pdf both get a lazily-rendered, cached raster thumbnail from
     # the /thumb endpoint (small bytes, not the whole file). Text and converted
     # binaries have no raster; the card shows the kind icon and, later, an excerpt.
@@ -446,6 +450,11 @@ def _resolve_file(ref: Ref) -> dict | None:
             "size_bytes": rec.get("size"),
             "icon": icon,
             "thumb_url": thumb_url,
+            # For the in-app AttachmentViewer: its real kind (image/pdf/text) and,
+            # for a converted binary, that the served bytes are the derived text.
+            "file_kind": kind,
+            "converted": bool(rec.get("converter")),
+            "source": rec.get("converter") or None,
         },
     }
 

@@ -18,6 +18,10 @@ export type RefPreview = {
   // A short plain-text lead-in from an entity's body (note, doc, ticket, chat).
   // Shown when there is no thumbnail. A file has no excerpt; an entity has no thumb.
   excerpt?: string | null;
+  // A file ref only: what the in-app AttachmentViewer needs to render the file.
+  file_kind?: string | null;
+  converted?: boolean | null;
+  source?: string | null;
 };
 
 export type ResolvedRef = {

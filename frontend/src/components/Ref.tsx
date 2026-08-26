@@ -13,12 +13,14 @@
 // The trigger reads as a link WITHOUT hover (the operator is often on a
 // phone): a faint underline at rest, same rule as `.ws-md a` in the kit and
 // `.chat-receipt--link` in styles.css, not a hover-only affordance.
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   FileText, BookOpen, Ticket as TicketIcon, MessageSquare, Play,
   FolderGit2, Bot, Blocks, Paperclip, ChevronRight,
 } from "lucide-react";
 import { Popover, CopyButton } from "@workshop/ui";
+import AttachmentViewer from "./chat/AttachmentViewer";
 import type { ResolvedRef, RefKind, RefPreview } from "../lib/refs";
 
 const REF_ICON: Record<RefKind, typeof FileText> = {
@@ -78,10 +80,13 @@ function RefCard({
     typeof window !== "undefined"
       ? `${window.location.origin}${resolved.href}`
       : resolved.href;
-  // A `file` ref's href is a raw serve endpoint (/api/attachments/<id>), so
-  // Open leaves the SPA; every other kind's href is an in-app route, so Open
-  // navigates through the router instead of a full page load.
   const isFile = resolved.kind === "file";
+  // A file opens the in-app AttachmentViewer overlay (never a new tab to raw
+  // bytes -- that is the rule AttachmentViewer exists to enforce). The id is the
+  // tail of the `workshop:file/<id>` ref. Every other kind is an in-app route
+  // the router navigates to.
+  const attId = isFile ? (refStr?.split("/").pop() ?? "") : "";
+  const [viewing, setViewing] = useState(false);
 
   const trigger = (
     <button type="button" className="ws-ref ws-ref--trigger" title={resolved.title}>
@@ -92,9 +97,8 @@ function RefCard({
 
   // The whole header row IS the link: a small kind icon (no taller than the
   // title), the title, and a caret at the end that says it opens. No separate
-  // "Open" action, no external-link glyph. A `file` opens in a new tab (its
-  // href is a raw serve endpoint that leaves the SPA); every other kind
-  // navigates through the router.
+  // "Open" action, no external-link glyph. A `file` opens the in-app viewer
+  // overlay; every other kind navigates through the router.
   const head = (
     <>
       <Icon size={15} strokeWidth={1.8} aria-hidden />
@@ -106,41 +110,61 @@ function RefCard({
   );
 
   return (
-    <Popover trigger={trigger} label={resolved.title} side="bottom">
-      <div className="ws-ref-card">
-        {isFile ? (
-          <a
-            className="ws-ref-card__open"
-            href={resolved.href}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {head}
-          </a>
-        ) : (
-          <Link className="ws-ref-card__open" to={resolved.href}>
-            {head}
-          </Link>
-        )}
-        {p.thumb_url ? (
-          <img className="ws-ref-card__thumb" src={p.thumb_url} alt="" />
-        ) : p.excerpt ? (
-          <div className="ws-ref-card__excerpt">{p.excerpt}</div>
-        ) : null}
-        {meta ? <div className="ws-ref-card__meta">{meta}</div> : null}
-        <div className="ws-ref-card__actions">
-          <div className="ws-ref-row">
-            <span className="ws-ref-row__label">URL</span>
-            <CopyButton value={url} />
-          </div>
-          {refStr ? (
-            <div className="ws-ref-row">
-              <span className="ws-ref-row__label">Path</span>
-              <CopyButton value={refStr} />
-            </div>
+    <>
+      <Popover trigger={trigger} label={resolved.title} side="bottom">
+        <div className="ws-ref-card">
+          {isFile ? (
+            <button type="button" className="ws-ref-card__open" onClick={() => setViewing(true)}>
+              {head}
+            </button>
+          ) : (
+            <Link className="ws-ref-card__open" to={resolved.href}>
+              {head}
+            </Link>
+          )}
+          {p.thumb_url ? (
+            isFile ? (
+              <button
+                type="button"
+                className="ws-ref-card__thumbbtn"
+                onClick={() => setViewing(true)}
+                aria-label={`Open ${resolved.title}`}
+              >
+                <img className="ws-ref-card__thumb" src={p.thumb_url} alt="" />
+              </button>
+            ) : (
+              <img className="ws-ref-card__thumb" src={p.thumb_url} alt="" />
+            )
+          ) : p.excerpt ? (
+            <div className="ws-ref-card__excerpt">{p.excerpt}</div>
           ) : null}
+          {meta ? <div className="ws-ref-card__meta">{meta}</div> : null}
+          <div className="ws-ref-card__actions">
+            <div className="ws-ref-row">
+              <span className="ws-ref-row__label">URL</span>
+              <CopyButton value={url} />
+            </div>
+            {refStr ? (
+              <div className="ws-ref-row">
+                <span className="ws-ref-row__label">Path</span>
+                <CopyButton value={refStr} />
+              </div>
+            ) : null}
+          </div>
         </div>
-      </div>
-    </Popover>
+      </Popover>
+      {isFile && viewing && attId ? (
+        <AttachmentViewer
+          file={{
+            id: attId,
+            name: resolved.title,
+            kind: p.file_kind ?? p.icon ?? "",
+            converted: p.converted ?? undefined,
+            source: p.source ?? undefined,
+          }}
+          onClose={() => setViewing(false)}
+        />
+      ) : null}
+    </>
   );
 }
