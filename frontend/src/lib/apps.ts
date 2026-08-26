@@ -27,12 +27,6 @@ function fetchAppList(): Promise<AppRecord[]> {
   return listPromise;
 }
 
-/** Force the next read to hit the network again (an app was just created,
- *  renamed or relinked elsewhere in this session). */
-export function invalidateAppList(): void {
-  listPromise = null;
-}
-
 /** Resolve one app by slug to its full record. `app` is `null` while loading
  *  or when the slug does not resolve to a known app id (installed-only apps
  *  with no /api/apps row yet -- see the module note in services/apps.py about

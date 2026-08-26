@@ -13,7 +13,8 @@
 // is what makes the dock behave like a dock. That is the one case where the
 // click is intercepted.
 
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { AppGlyph, monogram } from "../../lib/appIcon";
 import { useAuth } from "../../auth/AuthProvider";
@@ -61,6 +62,34 @@ function Tile({ shell, place }: { shell: Shell; place: ShellPlace }) {
 
 export function Dock({ shell }: { shell: Shell }) {
   const { user } = useAuth();
+  const nav = useNavigate();
+  const [creating, setCreating] = useState(false);
+
+  // The "+" creates a project and drops the operator straight into a chat in it,
+  // per the operator's direction (2026-08-25): no create form, build it up from
+  // the chat. The scaffold is a blank template, so there is no GitHub side
+  // effect. A unique slug avoids a collision; the project is renamed from the
+  // chat, which is why the default title is generic.
+  const startNewProject = async () => {
+    if (creating) return;
+    setCreating(true);
+    try {
+      const rnd = (crypto.randomUUID?.() || String(Math.random()))
+        .replace(/[^a-z0-9]/gi, "").slice(0, 6).toLowerCase();
+      const r = await fetch("/api/projects/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug: `new-project-${rnd}`, title: "New project" }),
+      });
+      if (!r.ok) throw new Error(await r.text().catch(() => r.statusText));
+      const p = await r.json();
+      nav(`/chat/${encodeURIComponent(`project:${p.slug}`)}`);
+    } catch (e) {
+      // A failed create must not blank the shell; report and re-enable.
+      console.error("new project failed", e);
+      setCreating(false);
+    }
+  };
   // Settings is a place but NOT a tile: the avatar below is already the way in,
   // and two controls to one destination is the duplication the dock exists to
   // remove. It still highlights, because it is still a place.
@@ -77,19 +106,20 @@ export function Dock({ shell }: { shell: Shell }) {
       {apps.map((p) => (
         <Tile key={p.id} shell={shell} place={p} />
       ))}
-      {/* Start a new project. An action, not a place, so it is a plain Link and
-          never highlights. It opens the create flow; the rail lists a fixed set
-          of apps today, so a new project shows up on the Projects page and in
-          its own chat rather than as a rail tile, until the rail is backed by
-          the app registry. See project-context-files-and-flows-2026-08-25.md. */}
-      <Link
-        to="/projects/new"
+      {/* Start a new project: create it and open a chat in it. An action, not a
+          place, so it is a button and never highlights. The rail lists a fixed
+          set of apps today, so the new project is reached through that chat
+          rather than appearing as a rail tile, until the rail is backed by the
+          app registry. See project-context-files-and-flows-2026-08-25.md. */}
+      <button
+        type="button"
         className="ws-rail__tile ws-rail__tile--add"
         aria-label="New project"
         title="New project"
+        onClick={startNewProject}
       >
         <Plus size={18} aria-hidden />
-      </Link>
+      </button>
       <span className="ws-rail__spacer" aria-hidden />
       <Link
         to="/settings"
