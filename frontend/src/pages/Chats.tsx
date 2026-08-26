@@ -89,6 +89,28 @@ function archivedLabel(iso?: string | null): string {
     : `Archived ${d.toLocaleDateString([], { month: "short", day: "numeric" })}`;
 }
 
+// How long ago a chat was last active, at the resolution a chat list is scanned
+// at: recent conversations want minutes and hours, older ones settle to days and
+// weeks. It reads the same field the list is sorted by (updated_at), so the time
+// on a row and its position agree. This is the mockup's "when" column, carried in
+// the meta line rather than a column of its own.
+function relTime(iso?: string | null): string {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const secs = Math.max(0, (Date.now() - t) / 1000);
+  if (secs < 60) return "now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d`;
+  if (days < 30) return `${Math.floor(days / 7)}w`;
+  if (days < 365) return `${Math.floor(days / 30)}mo`;
+  return `${Math.floor(days / 365)}y`;
+}
+
 /** What the archive is being asked to do to a chat, while the dialog is open. */
 type Pending = { id: string; title: string; action: "restore" | "delete" };
 
@@ -278,7 +300,11 @@ export default function Chats() {
                     is already carrying the scope tag. */}
                 <div className="ws-chat-card__last">
                   <p className="ws-muted ws-chat-card__snippet">{t.last_message || " "}</p>
-                  <span className="ws-card__meta ws-chat-card__count">{t.message_count}</span>
+                  {/* Last activity, then the message count. Both describe the
+                      conversation, so they ride next to its last line. */}
+                  <span className="ws-card__meta ws-chat-card__count">
+                    {[relTime(t.updated_at), t.message_count].filter(Boolean).join(" · ")}
+                  </span>
                 </div>
               </Card>
             ))}
