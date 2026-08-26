@@ -291,12 +291,12 @@ export default function Chats() {
                     // viewport on mobile (the raw grid parent sets no min-width).
                     style={{ cursor: "pointer", minWidth: 0 }}
                   >
-                    {/* State dot, then name + scope + agent, the last message on
-                        one line, and the quiet meta rail: model, length, age, and
-                        the two row actions. This is the mockup's 5a row. */}
-                    <span className="ws-chat-row__state" data-live={t.running ? "" : undefined} aria-hidden />
+                    {/* Name with its state dot and scope + agent, the last
+                        message on one line, and the quiet meta rail: model,
+                        length, age, and the two row actions. The mockup's 5a row. */}
                     <div className="ws-chat-row__main">
                       <div className="ws-chat-row__head">
+                        <span className="ws-chat-row__state" data-live={t.running ? "" : undefined} aria-hidden />
                         <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
                         <Tag hue={catFor(t.context_key)}>{scopeName(t.context_key)}</Tag>
                         {/* Who answered, only when the scope tag does not already

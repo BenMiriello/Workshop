@@ -703,7 +703,7 @@ a.ws-btn { text-decoration: none; }
     width: 100%;
     justify-content: flex-start;
     gap: var(--space-3);
-    padding-left: calc(8px + var(--space-3));
+    padding-left: calc(8px + var(--space-2));
   }
   .ws-chat-row__when { min-width: 0; text-align: left; }
 }
