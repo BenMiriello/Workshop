@@ -129,6 +129,7 @@ class TestNoteResolutionAndBacklinks:
         assert got == {
             "kind": "note", "title": "First note",
             "href": "/memory?scope=workshop&note=n1", "status": "current",
+            "preview": {"excerpt": "hello there"},
         }
 
     def test_resolve_deleted_note_refuses(self, tree):

@@ -112,6 +112,19 @@ class McpSelection(BaseModel):
 
 # ---------------------------------------------------------------- attachments
 
+class CustomInstructions(BaseModel):
+    """One scope's L3 custom instructions (empty text when none is set)."""
+
+    scope: str
+    text: str
+
+
+class CustomInstructionsScopes(BaseModel):
+    """Every scope that has custom instructions set: scope key -> text."""
+
+    scopes: dict[str, str]
+
+
 class AttachmentUploaded(BaseModel):
     id: str
     name: str

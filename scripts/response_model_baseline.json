@@ -2,7 +2,7 @@
   "per_file_without_response_model": {
     "backend/routes/birds.py": 78,
     "backend/routes/budget.py": 6,
-    "backend/routes/chat.py": 4,
+    "backend/routes/chat.py": 5,
     "backend/routes/commute.py": 27,
     "backend/routes/environment.py": 2,
     "backend/routes/finance.py": 8,

@@ -3264,6 +3264,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat/attachments/{att_id}/thumb": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Attachment Thumb
+         * @description A small raster preview of an image or pdf attachment, fitted inside (w, h).
+         *
+         *     Generated lazily and cached, so the ref preview card gets small bytes instead
+         *     of the full file. 404 when the attachment is gone or has no raster preview
+         *     (text/converted); the client then shows the kind icon.
+         */
+        get: operations["get_attachment_thumb_chat_attachments__att_id__thumb_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat/custom-instructions": {
         parameters: {
             query?: never;
@@ -11035,6 +11059,26 @@ export interface components {
             /** Parent Branch Id */
             parent_branch_id?: string | null;
         };
+        /**
+         * CustomInstructions
+         * @description One scope's L3 custom instructions (empty text when none is set).
+         */
+        CustomInstructions: {
+            /** Scope */
+            scope: string;
+            /** Text */
+            text: string;
+        };
+        /**
+         * CustomInstructionsScopes
+         * @description Every scope that has custom instructions set: scope key -> text.
+         */
+        CustomInstructionsScopes: {
+            /** Scopes */
+            scopes: {
+                [key: string]: string;
+            };
+        };
         /** DecideBody */
         DecideBody: {
             /**
@@ -11586,6 +11630,8 @@ export interface components {
              */
             touches: string[];
             triage?: components["schemas"]["TicketTriage"] | null;
+            /** Type */
+            type?: string | null;
             /** Updated */
             updated: string;
         };
@@ -15246,6 +15292,8 @@ export interface components {
             scope?: string | null;
             /** Text */
             text?: string | null;
+            /** Type */
+            type?: string | null;
         };
         /**
          * SpawnedTask
@@ -15694,6 +15742,8 @@ export interface components {
              */
             touches: string[];
             triage?: components["schemas"]["TicketTriage"] | null;
+            /** Type */
+            type?: string | null;
             /** Updated */
             updated: string;
         };
@@ -17187,6 +17237,8 @@ export interface components {
              */
             touches: string[];
             triage?: components["schemas"]["TicketTriage"] | null;
+            /** Type */
+            type?: string | null;
             /** Updated */
             updated: string;
         };
@@ -24046,6 +24098,40 @@ export interface operations {
             };
         };
     };
+    get_attachment_thumb_chat_attachments__att_id__thumb_get: {
+        parameters: {
+            query?: {
+                w?: number;
+                h?: number;
+            };
+            header?: never;
+            path: {
+                att_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_custom_instructions_chat_custom_instructions_get: {
         parameters: {
             query?: {
@@ -24063,7 +24149,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CustomInstructions"];
                 };
             };
             /** @description Validation Error */
@@ -24096,7 +24182,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CustomInstructions"];
                 };
             };
             /** @description Validation Error */
@@ -24125,7 +24211,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CustomInstructionsScopes"];
                 };
             };
         };

@@ -15,6 +15,9 @@ export type RefPreview = {
   size_bytes?: number | null;
   icon?: string | null;
   thumb_url?: string | null;
+  // A short plain-text lead-in from an entity's body (note, doc, ticket, chat).
+  // Shown when there is no thumbnail. A file has no excerpt; an entity has no thumb.
+  excerpt?: string | null;
 };
 
 export type ResolvedRef = {

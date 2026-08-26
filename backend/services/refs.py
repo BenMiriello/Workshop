@@ -228,11 +228,41 @@ def resolve_ref(ref_str: str) -> dict | None:
         return None
 
 
+_EXCERPT_MAX = 220
+
+
+def _excerpt(text: str | None) -> str | None:
+    """A short, plain-text lead-in for an entity's body: the first lines with
+    markdown lightly stripped, collapsed to one run and truncated. Returned in
+    `preview.excerpt` and shown by the ref card when there is no thumbnail.
+    None for an empty body, so the card shows nothing rather than a blank line."""
+    if not text:
+        return None
+    s = re.sub(r"<!--.*?-->", " ", text, flags=re.S)   # author markers, comments
+    s = re.sub(r"```.*?```", " ", s, flags=re.S)         # fenced code
+    lines: list[str] = []
+    for raw in s.splitlines():
+        t = raw.strip()
+        if not t:
+            continue
+        t = re.sub(r"^\s*(#{1,6}\s+|[-*+]\s+|>\s+|\d+\.\s+)", "", t)  # block marks
+        t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)                # links -> text
+        t = re.sub(r"[`*_]{1,3}", "", t)                             # emphasis/code
+        lines.append(t)
+        if sum(len(x) for x in lines) >= _EXCERPT_MAX:
+            break
+    out = " ".join(lines).strip()
+    if not out:
+        return None
+    return out[:_EXCERPT_MAX].rstrip() + "…" if len(out) > _EXCERPT_MAX else out
+
+
 def _resolve_note(ref: Ref) -> dict | None:
     from services import knowledge, scope_tree
     scope, _, note_id = ref.key.partition("/")
     scope_tree.parse(scope)  # raises ValueError -> caught by resolve_ref
-    if knowledge.get_note(scope, note_id) is None:
+    body = knowledge.get_note(scope, note_id)
+    if body is None:
         return None
     title = note_id
     for n in knowledge.list_notes(scope):
@@ -244,6 +274,7 @@ def _resolve_note(ref: Ref) -> dict | None:
         "title": title,
         "href": f"/memory?scope={scope}&note={note_id}",
         "status": "current",
+        "preview": {"excerpt": _excerpt(body)},
     }
 
 
@@ -253,16 +284,16 @@ def _resolve_doc(ref: Ref) -> dict | None:
     if candidate is None or candidate.suffix != ".md" or not candidate.is_file():
         return None
     title = candidate.stem
+    body = ""
     try:
-        with candidate.open() as fh:
-            for _ in range(50):
-                line = fh.readline()
-                if not line:
-                    break
-                m = re.match(r"^\s*#\s+(.+?)\s*$", line)
-                if m:
-                    title = m.group(1).strip()
-                    break
+        raw = candidate.read_text()
+        # Drop a leading H1 so the excerpt does not just repeat the title.
+        body = re.sub(r"^\s*#\s+.+?\n", "", raw, count=1)
+        for line in raw.splitlines():
+            m = re.match(r"^\s*#\s+(.+?)\s*$", line)
+            if m:
+                title = m.group(1).strip()
+                break
     except OSError:
         pass
     rel = candidate.relative_to(paths.workshop_root().resolve())
@@ -271,6 +302,7 @@ def _resolve_doc(ref: Ref) -> dict | None:
         "title": title,
         "href": f"/memory?tab=docs&path={rel}",
         "status": "current",
+        "preview": {"excerpt": _excerpt(body)},
     }
 
 
@@ -285,6 +317,7 @@ def _resolve_ticket(ref: Ref) -> dict | None:
                 "title": task.get("title") or ref.key,
                 "href": f"/tickets/{scope}/{ref.key}",
                 "status": task.get("status") or "todo",
+                "preview": {"excerpt": _excerpt(task.get("body"))},
             }
     return None
 
@@ -300,11 +333,17 @@ def _resolve_chat(ref: Ref) -> dict | None:
         return None
     context_key = thread.get("context_key") or "general"
     status = "archived" if thread.get("archived_at") else "active"
+    opening = next(
+        (str(m.get("text") or m.get("content") or "")
+         for m in (thread.get("messages") or []) if m.get("role") == "user"),
+        "",
+    )
     return {
         "kind": "chat",
         "title": thread.get("title") or "Chat",
         "href": f"/chat/{context_key}?thread={thread_id}#msg-{message_id}",
         "status": status,
+        "preview": {"excerpt": _excerpt(opening)},
     }
 
 
@@ -393,6 +432,10 @@ def _resolve_file(ref: Ref) -> dict | None:
         else "application/pdf" if kind == "pdf"
         else "text/plain")
     href = f"/api/attachments/{att_id}"
+    # An image and a pdf both get a lazily-rendered, cached raster thumbnail from
+    # the /thumb endpoint (small bytes, not the whole file). Text and converted
+    # binaries have no raster; the card shows the kind icon and, later, an excerpt.
+    thumb_url = f"{href}/thumb" if kind in ("image", "pdf") else None
     return {
         "kind": "file",
         "title": rec.get("name") or att_id,
@@ -402,7 +445,7 @@ def _resolve_file(ref: Ref) -> dict | None:
             "mime": mime,
             "size_bytes": rec.get("size"),
             "icon": icon,
-            "thumb_url": href if kind == "image" else None,
+            "thumb_url": thumb_url,
         },
     }
 

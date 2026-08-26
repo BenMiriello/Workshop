@@ -312,6 +312,110 @@ def derived_path(rec: dict, owner_id: int | None = None) -> Path | None:
     return p if p.exists() else None
 
 
+# --- Thumbnails -------------------------------------------------------------
+#
+# A raster preview of a file, generated LAZILY on first request and cached
+# content-addressed beside the blob (thumb/<sha>/<w>x<h>.webp). A thumb is a
+# pure function of (source bytes, box), so the key needs nothing else and a
+# regenerate is free. Only `image` and `pdf` produce one; a text/converted file
+# has no meaningful raster, so the ref card shows an excerpt instead. Any
+# failure returns None and the caller falls back to the kind icon: a thumbnail
+# is a nicety, never load-bearing.
+
+# Below this the box is pointless and above it we are rendering a poster, not a
+# thumbnail. Clamped, not trusted from the query string.
+_THUMB_MIN = 48
+_THUMB_MAX = 512
+# A pdf page one render past this many seconds is not worth the wait for a
+# preview; fall back to the icon.
+_PDF_RENDER_TIMEOUT = 8
+
+
+def _thumb_path(owner_id: int | None, sha: str, w: int, h: int) -> Path:
+    return _files_dir(owner_id) / "thumb" / sha[:2] / sha / f"{w}x{h}.webp"
+
+
+def _clamp_box(w: int, h: int) -> tuple[int, int]:
+    def c(v: int) -> int:
+        return max(_THUMB_MIN, min(_THUMB_MAX, int(v)))
+    return c(w), c(h)
+
+
+def _render_pdf_page1(src: Path, box_px: int) -> "object | None":
+    """Page one of a pdf as a PIL image, via poppler's pdftoppm (already on the
+    box, no Python dep). None if poppler is absent or the render fails."""
+    import shutil
+    import subprocess
+    import tempfile
+    from PIL import Image
+
+    exe = shutil.which("pdftoppm")
+    if exe is None:
+        return None
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "page"
+        try:
+            subprocess.run(
+                [exe, "-png", "-f", "1", "-l", "1", "-scale-to", str(box_px),
+                 str(src), str(out)],
+                check=True, timeout=_PDF_RENDER_TIMEOUT,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return None
+        pngs = sorted(Path(td).glob("page*.png"))
+        if not pngs:
+            return None
+        img = Image.open(pngs[0])
+        img.load()
+        return img
+
+
+def thumbnail(att_id: str, w: int = 320, h: int = 320,
+              owner_id: int | None = None) -> Path | None:
+    """Path to a cached thumbnail of the attachment fitted inside (w, h), or None
+    when the file has no raster preview (text/converted) or rendering failed.
+    Generates on a cache miss, serves on a hit."""
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    rec = get(att_id, owner_id)
+    if rec is None:
+        return None
+    kind = rec.get("kind") or ""
+    if kind not in ("image", "pdf"):
+        return None
+    sha = rec.get("sha256") or ""
+    src = _blob_path(owner_id, sha)
+    if not sha or not src.exists():
+        return None
+
+    w, h = _clamp_box(w, h)
+    dest = _thumb_path(owner_id, sha, w, h)
+    if dest.exists():
+        return dest
+
+    try:
+        if kind == "image":
+            img = Image.open(src)
+            img.load()
+        else:  # pdf
+            img = _render_pdf_page1(src, max(w, h) * 2)
+            if img is None:
+                return None
+        img = ImageOps.exif_transpose(img)
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGBA" if "A" in img.getbands() else "RGB")
+        img.thumbnail((w, h))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_name(f".{uuid.uuid4().hex}.part")
+        img.save(tmp, "WEBP", quality=82, method=4)
+        os.replace(tmp, dest)
+        return dest
+    except (UnidentifiedImageError, OSError, ValueError) as e:
+        log.debug("thumbnail failed for %s: %s", att_id, e)
+        return None
+
+
 def _text_block(rec: dict, data: bytes) -> dict:
     """A text file, inlined and labelled. Fenced with its name so the model can
     tell one attached file from the next and from the operator's own message."""

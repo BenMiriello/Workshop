@@ -992,7 +992,7 @@ def _canon_scope(scope: str) -> str:
         return scope or "workshop"
 
 
-@router.get("/custom-instructions")
+@router.get("/custom-instructions", response_model=crm.CustomInstructions)
 def get_custom_instructions(scope: str = "workshop"):
     """The operator's L3 custom instructions for one scope (empty if none)."""
     from services import custom_instructions
@@ -1000,7 +1000,7 @@ def get_custom_instructions(scope: str = "workshop"):
     return {"scope": key, "text": custom_instructions.get(key)}
 
 
-@router.get("/custom-instructions/all")
+@router.get("/custom-instructions/all", response_model=crm.CustomInstructionsScopes)
 def all_custom_instructions():
     """Every scope that has custom instructions set, for the settings UI. Keys
     are knowledge scopes (workshop, development, project:*, app:*, agent:*)."""
@@ -1008,7 +1008,7 @@ def all_custom_instructions():
     return {"scopes": custom_instructions.all_scopes()}
 
 
-@router.post("/custom-instructions")
+@router.post("/custom-instructions", response_model=crm.CustomInstructions)
 def set_custom_instructions(body: SetCustomInstructions):
     """Set (or clear, when text is blank) the L3 custom instructions for a scope.
     Applies to that scope's chats from their next turn; the platform layers above
@@ -3493,6 +3493,20 @@ async def get_attachment(att_id: str):
     return FileResponse(path, media_type=media,
                         headers={"Content-Disposition":
                                  _content_disposition("inline", rec["name"])})
+
+
+@router.get("/attachments/{att_id}/thumb")
+async def get_attachment_thumb(att_id: str, w: int = 320, h: int = 320):
+    """A small raster preview of an image or pdf attachment, fitted inside (w, h).
+
+    Generated lazily and cached, so the ref preview card gets small bytes instead
+    of the full file. 404 when the attachment is gone or has no raster preview
+    (text/converted); the client then shows the kind icon."""
+    path = chat_attachments.thumbnail(att_id, w, h)
+    if path is None:
+        raise HTTPException(404, "no thumbnail")
+    return FileResponse(path, media_type="image/webp",
+                        headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.get("/attachments/{att_id}/original")

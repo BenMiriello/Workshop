@@ -51,7 +51,45 @@ def test_resolve_live_attachment(monkeypatch, tmp_path):
     assert refs.resolve_ref(refs.file_ref(att_id)) is None
 
 
-def test_resolve_image_attachment_is_its_own_thumbnail(monkeypatch, tmp_path):
+def _real_png(w: int, h: int) -> bytes:
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (20, 120, 90)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_thumbnail_generates_and_caches_for_image(monkeypatch, tmp_path):
+    monkeypatch.setattr(chat_attachments.ownership, "user_runtime_dir",
+                        lambda owner_id=None: tmp_path)
+    rec = chat_attachments.save(_real_png(900, 600), "wide.png", "image")
+    p = chat_attachments.thumbnail(rec["id"], 320, 320)
+    assert p is not None and p.exists()
+    from PIL import Image
+    tw, th = Image.open(p).size
+    assert tw <= 320 and th <= 320 and (tw == 320 or th == 320)  # fit the box
+    # A second call is a cache HIT: same path, no regeneration.
+    assert chat_attachments.thumbnail(rec["id"], 320, 320) == p
+
+
+def test_thumbnail_is_none_for_text(monkeypatch, tmp_path):
+    monkeypatch.setattr(chat_attachments.ownership, "user_runtime_dir",
+                        lambda owner_id=None: tmp_path)
+    rec = chat_attachments.save(b"plain text file", "notes.txt", "text")
+    assert chat_attachments.thumbnail(rec["id"]) is None
+
+
+def test_thumbnail_box_is_clamped(monkeypatch, tmp_path):
+    monkeypatch.setattr(chat_attachments.ownership, "user_runtime_dir",
+                        lambda owner_id=None: tmp_path)
+    rec = chat_attachments.save(_real_png(400, 400), "sq.png", "image")
+    # An absurd box is clamped to the max, not honoured.
+    p = chat_attachments.thumbnail(rec["id"], 9000, 9000)
+    from PIL import Image
+    assert max(Image.open(p).size) <= 512
+
+
+def test_resolve_image_attachment_points_at_thumb_endpoint(monkeypatch, tmp_path):
     monkeypatch.setattr(chat_attachments.ownership, "user_runtime_dir",
                         lambda owner_id=None: tmp_path)
     png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
@@ -59,5 +97,7 @@ def test_resolve_image_attachment_is_its_own_thumbnail(monkeypatch, tmp_path):
     out = refs.resolve_ref(refs.file_ref(rec["id"]))
     assert out is not None
     assert out["preview"]["icon"] == "image"
-    assert out["preview"]["thumb_url"] == f"/api/attachments/{rec['id']}"
+    # An image now gets a lazily-rendered, cached thumbnail from /thumb, not the
+    # full-bytes href, so a small preview box does not download the whole image.
+    assert out["preview"]["thumb_url"] == f"/api/attachments/{rec['id']}/thumb"
     assert out["preview"]["mime"] == "image/png"

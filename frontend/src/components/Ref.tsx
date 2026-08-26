@@ -98,8 +98,10 @@ function RefCard({
   const head = (
     <>
       <Icon size={15} strokeWidth={1.8} aria-hidden />
-      <span className="ws-ref-card__title">{resolved.title}</span>
-      <ChevronRight className="ws-ref-card__caret" size={15} strokeWidth={1.8} aria-hidden />
+      <span className="ws-ref-card__title">
+        {resolved.title}
+        <ChevronRight className="ws-ref-card__caret" size={14} strokeWidth={1.8} aria-hidden />
+      </span>
     </>
   );
 
@@ -120,7 +122,11 @@ function RefCard({
             {head}
           </Link>
         )}
-        {p.thumb_url ? <img className="ws-ref-card__thumb" src={p.thumb_url} alt="" /> : null}
+        {p.thumb_url ? (
+          <img className="ws-ref-card__thumb" src={p.thumb_url} alt="" />
+        ) : p.excerpt ? (
+          <div className="ws-ref-card__excerpt">{p.excerpt}</div>
+        ) : null}
         {meta ? <div className="ws-ref-card__meta">{meta}</div> : null}
         <div className="ws-ref-card__actions">
           <div className="ws-ref-row">
