@@ -296,7 +296,13 @@ def _needs_you_row(task: dict, scope: str, names: dict[str, str]) -> dict:
     aw = task.get("awaiting") or {}
     return {
         "id": needs_you_id(scope, task["id"]),
-        "kind": "question",
+        # WHAT KIND OF INPUT IT WANTS, which is what the status already says:
+        # `in_review` is finished work waiting to be accepted or sent back, and
+        # `blocked` is stopped until you answer something. Every row here used to
+        # claim to be a question, so a card led with "who is asking" over five
+        # tickets that were not asking anything, and the sort could not put a
+        # real question above an approval because it could not tell them apart.
+        "kind": "review" if task.get("status") == "in_review" else "question",
         "state": "open",
         "agent": _who_did_the_work(task, run, scope, names),
         "scope": scope,
@@ -351,8 +357,11 @@ def needs_you(limit: int = 50) -> dict:
             if is_waiting(r):
                 rows.append(_needs_you_row(r, skey, names))
 
+    # ONLY WHAT WANTS YOU. A notification is an agent reporting what it did;
+    # there is nothing to answer, approve or unblock, so it is not "needs you"
+    # however useful it is elsewhere. See inbox.WANTS_YOU_KINDS.
     stored = [row for row in inbox.list_items(limit=1000)
-              if not row.get("ticket_id")]
+              if not row.get("ticket_id") and inbox.wants_you(row)]
     ordered = inbox.sort_items(rows + stored)
 
     # COUNTED BEFORE THE CAP. `total` and `counts` describe the whole waiting
@@ -472,7 +481,12 @@ def thread_work(thread_id: str) -> dict | None:
             # The BADGE. An open-ticket count is ambient information wearing an
             # alarm's clothing, so only what actually wants the operator counts
             # here; the other three are chip counts.
-            "needs_you": len(items),
+            #
+            # THAT SENTENCE WAS NOT ENFORCED: this was `len(items)`, and `items`
+            # includes notifications, which want nothing. The panel still LISTS
+            # them (they are worth seeing where they were raised); they just stop
+            # counting as waiting, which is what the badge claims to measure.
+            "needs_you": sum(1 for i in items if inbox.wants_you(i)),
             "running": running,
             "this_chat": len(filed),
             # Every active ticket in the scope, uncapped and including the ones

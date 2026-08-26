@@ -69,6 +69,22 @@ KINDS = ("notify", "question", "review")
 # exact failure this surface exists to prevent.
 _KIND_RANK = {"question": 0, "review": 1, "notify": 2}
 
+# THE KINDS THAT WANT THE OPERATOR. A `notify` does not: it is an agent saying
+# what it did ("Run finished", "Consolidated 4 notes this pass"), and there is
+# nothing to answer, approve or unblock. It belongs in a feed, not in a count of
+# what is waiting on someone.
+#
+# This is the line between "here is what happened" and "you are the reason this
+# has stopped", and both the dashboard's Needs-you card and the chat's badge
+# read it, so the two cannot mean different things by the same word. The chat's
+# work PANEL still lists notifications -- they are worth seeing in the place they
+# were raised; they just do not count as waiting.
+WANTS_YOU_KINDS = ("question", "review")
+
+
+def wants_you(item: dict) -> bool:
+    return item.get("kind") in WANTS_YOU_KINDS
+
 # Terminal states. An item is `open` until the operator deals with it; how it
 # closed is kept because "I answered that" and "I dismissed that" are different
 # facts, and the second is a signal that the agent is producing noise.

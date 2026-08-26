@@ -119,7 +119,9 @@ class TestWhatWantsTheOperator:
         tasks.update(env["root"], t["id"], status="in_review")
         out = chat_work.needs_you()
         assert [i["ticket_id"] for i in out["items"]] == [t["id"]]
-        assert out["counts"]["question"] == 1
+        # `in_review` is finished work waiting to be accepted, so it counts as a
+        # review rather than a question. See `_needs_you_row`.
+        assert out["counts"]["review"] == 1
         assert out["total"] == 1
 
     def test_a_dismissed_block_stops_asking(self, env):
@@ -148,31 +150,55 @@ class TestWhatWantsTheOperator:
         assert len(out["items"]) == 1
         assert out["items"][0]["ticket_id"] == t["id"]
 
-    def test_an_ambient_notice_with_no_ticket_still_surfaces(self, env):
+    def test_a_notification_is_not_something_that_needs_you(self, env):
+        """It is an agent saying what it DID. There is nothing to answer,
+        approve or unblock, so it does not belong in a count of what is waiting
+        on someone -- "Run finished" and "Consolidated 4 notes this pass" were
+        both sitting in the operator's Needs-you card."""
         inbox.raise_item(kind="notify", agent="nightly-sync",
-                         scope="project:demo", title="3 tasks failed",
-                         body="same malformed date")
+                         scope="project:demo", title="Run finished", body="")
         out = chat_work.needs_you()
-        assert [i["kind"] for i in out["items"]] == ["notify"]
-        assert out["counts"]["notify"] == 1
+        assert out["items"] == []
+        assert out["total"] == 0
+
+    def test_an_ambient_question_with_no_ticket_still_surfaces(self, env):
+        inbox.raise_item(kind="question", agent="memory-keeper",
+                         scope="project:demo", title="Which port is current?",
+                         body="One note says 8012, another 8013.")
+        out = chat_work.needs_you()
+        assert [i["kind"] for i in out["items"]] == ["question"]
+        assert out["counts"]["question"] == 1
+
+    def test_a_rows_kind_follows_the_ticket_status(self, env):
+        """`in_review` is finished work waiting to be accepted; `blocked` is
+        stopped until you answer. Every ticket-derived row used to claim to be a
+        question, so the card led with "who is asking" over work that was not
+        asking, and the sort could not rank a real question above an approval."""
+        a = tasks.add(env["root"], title="finished work", body="")
+        tasks.update(env["root"], a["id"], status="in_review")
+        b = tasks.add(env["root"], title="stopped work", body="")
+        tasks.update(env["root"], b["id"], status="blocked")
+        by_title = {i["title"]: i["kind"] for i in chat_work.needs_you()["items"]}
+        assert by_title == {"finished work": "review", "stopped work": "question"}
 
     def test_the_total_counts_the_whole_set_not_the_page(self, env):
         """The alarm must not silently count only what fitted. A badge that caps
         itself at the page size is one the operator learns to distrust."""
         for i in range(5):
-            t = tasks.add(env["root"], title=f"question {i}", body="")
-            tasks.update(env["root"], t["id"], status="in_review")
+            t = tasks.add(env["root"], title=f"blocked {i}", body="")
+            tasks.update(env["root"], t["id"], status="blocked")
         out = chat_work.needs_you(limit=2)
         assert len(out["items"]) == 2
         assert out["total"] == 5
         assert out["counts"]["question"] == 5
 
-    def test_questions_outrank_notifications(self, env):
-        """One sort, shared with the chat's read, so a blocked agent is never
-        buried under notices in one surface and first in the other."""
-        inbox.raise_item(kind="notify", agent="sweep",
-                         scope="project:demo", title="a notice", body="")
-        t = tasks.add(env["root"], title="a question", body="")
-        tasks.update(env["root"], t["id"], status="in_review")
+    def test_a_question_outranks_an_approval(self, env):
+        """One sort, shared with the chat's read. A blocked agent must not sit
+        under finished work in one surface and above it in the other -- and on a
+        card that shows three of nine rows, the order IS the surface."""
+        a = tasks.add(env["root"], title="finished work", body="")
+        tasks.update(env["root"], a["id"], status="in_review")
+        b = tasks.add(env["root"], title="stopped work", body="")
+        tasks.update(env["root"], b["id"], status="blocked")
         assert [i["kind"] for i in chat_work.needs_you()["items"]] == \
-            ["question", "notify"]
+            ["question", "review"]

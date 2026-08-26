@@ -35,6 +35,17 @@ cd "$REPO_ROOT"
 #                        with its own lifecycle (apply.sh tracks it separately);
 #                        including it here would bounce the main backend for an
 #                        edge-only edit, which is disruption for no reason
+#   tests/               NOT WHAT UVICORN IMPORTS, which is the rule this
+#                        comment opens with. A test file cannot change what the
+#                        server serves, so an edit to one has no business
+#                        reporting the backend stale -- and it did: on
+#                        2026-08-26 an uncommitted `tests/conftest.py` made the
+#                        id differ, which made apply.sh want a restart, which
+#                        its own uncommitted-work guard then refused, so a
+#                        finished route sat unserved behind a test fixture
+#                        nobody was running. Same shape as the orphaned
+#                        docstring edit that blocked several agents on
+#                        2026-08-23.
 if [ ! -d backend ]; then
   echo "no-backend"
   exit 0
@@ -43,6 +54,7 @@ fi
 {
   find backend \
     -type d \( -name .venv -o -name __pycache__ -o -name .runtime -o -name node_modules \) -prune -o \
+    -type d -path backend/tests -prune -o \
     -type f \( -name '*.py' -o -name 'requirements*.txt' \) \
     ! -name 'workshop_public_app.py' \
     -print0 2>/dev/null

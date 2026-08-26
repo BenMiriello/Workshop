@@ -68,6 +68,11 @@ export type NeedsRow = {
   id: string;
   /** Who is asking. An agent name when one is recorded, else the scope. */
   who: string;
+  /** WHAT IT WANTS FROM YOU, in a word. Not decoration: this card mixes two
+   *  different requests -- a question that has stopped an agent, and finished
+   *  work waiting to be accepted -- and the row is otherwise identical for
+   *  both, so it read as "someone is asking" over things nobody was asking. */
+  wants: string;
   scope: string;
   ask: string;
   when: string | null;
@@ -103,6 +108,10 @@ export function needsRows(list: InboxList | null, cap = Infinity): NeedsRow[] {
   return (list?.items ?? []).slice(0, cap).map((i) => ({
     id: i.id,
     who: i.agent || i.scope || "workshop",
+    // The server's own vocabulary (inbox.KINDS), said in the operator's words.
+    // A `notify` never reaches here -- it wants nothing, so it is not in this
+    // column at all (inbox.WANTS_YOU_KINDS).
+    wants: i.kind === "review" ? "for review" : "asks",
     // BLANK WHEN IT WOULD REPEAT `who`. A row with no agent recorded falls back
     // to naming its scope, and a chip beside it saying the same word twice is
     // noise wearing a label's clothing.

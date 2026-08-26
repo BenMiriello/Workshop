@@ -43,6 +43,16 @@ describe("what needs you", () => {
     expect(rows[1].to).toBe("/tickets");
   });
 
+  it("says what it wants, because the card mixes two different requests", () => {
+    // Five of nine rows on the live instance were finished work waiting to be
+    // accepted, not questions, and the row was identical for both.
+    const rows = needsRows({
+      items: [item({ kind: "question" }), item({ id: "b", kind: "review" })],
+      counts: {}, total: 2,
+    }, 5);
+    expect(rows.map((r) => r.wants)).toEqual(["asks", "for review"]);
+  });
+
   it("says one line, never a paragraph, on a fixed-height row", () => {
     const rows = needsRows({ items: [item({ title: "line one\nline two" })],
                              counts: {}, total: 1 }, 5);

@@ -67,6 +67,7 @@ export function NeedsYouCard() {
               <Link className="ws-dashneed" to={r.to}>
                 <span className="ws-dashneed__top">
                   <span className="ws-dashneed__who">{r.who}</span>
+                  <span className="ws-dashneed__wants">{r.wants}</span>
                   {r.scope && <span className="ws-dashneed__scope">{r.scope}</span>}
                   {r.when && <span className="ws-dashneed__when">{timeAgo(r.when)}</span>}
                 </span>

@@ -179,8 +179,17 @@ else
   #
   # Skipping strands nothing. Committing is the act that already means
   # "finished", and the owner of the work restarts by doing it.
+  # `backend/tests/` is NOT in this set, for the same reason it is not in
+  # backend_source_id.sh: uvicorn does not import it, so a test file cannot
+  # change what the server serves and must not be able to hold a restart. On
+  # 2026-08-26 an uncommitted `tests/conftest.py` did exactly that -- it moved
+  # the source id, which asked for a restart, which this guard then refused,
+  # leaving a finished route unserved behind a fixture nobody was running.
+  # Excluding it ENFORCES this guard's stated rule (do not start someone else's
+  # half-written code) rather than relaxing it.
   be_wip="$(git status --porcelain -uall -- backend 2>/dev/null | awk '{print $NF}' \
-    | grep -E '(\.py|requirements[^/]*\.txt)$' | grep -v 'workshop_public_app\.py$' || true)"
+    | grep -E '(\.py|requirements[^/]*\.txt)$' | grep -v 'workshop_public_app\.py$' \
+    | grep -v '^backend/tests/' || true)"
   if [ -n "$be_wip" ] && [ "$PUBLISH_WIP" = 0 ]; then
     warn "not restarting: the backend is stale because of UNCOMMITTED work:"
     printf '            %s\n' $be_wip
