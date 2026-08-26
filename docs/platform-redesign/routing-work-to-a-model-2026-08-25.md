@@ -627,18 +627,17 @@ argued:
 
 ---
 
-## 8. For the operator to decide
+## 8. Settled 2026-08-25. Nothing here is open.
 
-One thing. The other two listed here earlier were answered on 2026-08-25 and are
-recorded below as settled.
+**The three default rows are confirmed:** `quick -> haiku, ceiling sonnet`,
+`standard -> sonnet, ceiling opus`, `deep -> opus, ceiling opus`. The operator:
+"that sounds like what I already said so you don't need to double check if I
+already told you the answer." Noting once, because it is a spend posture rather
+than a fact: `standard` starting on Sonnet is a raise from today, where 73% of
+tickets route to nothing, so it costs more per ticket and is expected to cost
+less per completed ticket.
 
-1. **The three default rows.** `quick -> haiku, ceiling sonnet`,
-   `standard -> sonnet, ceiling opus`, `deep -> opus, ceiling opus` is a spend
-   posture, not a fact. `standard` starting on Sonnet is a raise from today,
-   where 73% of tickets route to nothing; it costs more per ticket and is
-   expected to cost less per completed ticket.
-
-### Answered 2026-08-25
+### Also answered 2026-08-25
 
 **The drafting agent sets `effort` when it files the ticket.** This was listed as
 a question and should not have been. The operator: "I didn't think this was up
