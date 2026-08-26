@@ -1,16 +1,21 @@
 // Reading the ownership surfaces: who is here, and what branches exist.
 //
-// TWO READS, BOTH POLLED, NEITHER CACHED. `GET /presence/directory` is a
+// TWO READS, BOTH POLLED, NEITHER WRITTEN TO. `GET /presence/directory` is a
 // read-time join that stores nothing (leases design section 6), so there is no
-// "invalidate" to do and no local copy that can be wrong for longer than one
+// "invalidate" to do and nothing here can be wrong for longer than one
 // interval. `GET /branches` is the worktree RECORD.
+//
+// Both run on the query layer (`lib/queryClient.ts`) at the intervals below,
+// which is where the pausing, the catch-up read on the way back from hidden and
+// the shared in-flight request come from.
 //
 // Both hooks report `entries === null` while cold and a message on `err`, so
 // every caller can draw the four list states from one shape. A poll that fails
 // keeps the last good payload: the rows are still on screen, so the failure is
 // a line beside them and not a region over them (frontend/CLAUDE.md).
-import { useCallback, useEffect, useState } from "react";
-import { shortHttpError, usePoll } from "@workshop/ui";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { shortHttpError } from "@workshop/ui";
 import { treeWriters, trunkLabel, type BranchRecord, type DirectoryEntry } from "../../lib/holders";
 
 // Presence beats every 30s and a lease's TTL is 90s (design section 5), so a
@@ -42,22 +47,33 @@ export type DirectoryRead = {
 export function useDirectory(
   { enabled = true, subjectKind }: { enabled?: boolean; subjectKind?: string } = {},
 ): DirectoryRead {
-  const [entries, setEntries] = useState<DirectoryEntry[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  // The filter is in the key, so two surfaces asking about different subject
+  // kinds cannot be served each other's answer.
+  const q = useQuery({
+    queryKey: ["presence", "directory", subjectKind ?? null],
+    queryFn: async (): Promise<DirectoryEntry[]> => {
+      const qs = subjectKind ? `?subject_kind=${encodeURIComponent(subjectKind)}` : "";
+      const d = await readJson<{ entries: DirectoryEntry[] }>(`/api/presence/directory${qs}`);
+      return d.entries ?? [];
+    },
+    // `enabled: false` is what the closed sheet passed to `usePoll`: no timer,
+    // no read, and the hook still reports cold.
+    enabled,
+    refetchInterval: DIRECTORY_MS,
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read `usePoll` did on the way back from hidden.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
 
-  const q = subjectKind ? `?subject_kind=${encodeURIComponent(subjectKind)}` : "";
-  const load = useCallback(async () => {
-    try {
-      const d = await readJson<{ entries: DirectoryEntry[] }>(`/api/presence/directory${q}`);
-      setEntries(d.entries ?? []);
-      setErr(null);
-    } catch (e) {
-      setErr(String(e));
-    }
-  }, [q]);
-
-  usePoll(load, DIRECTORY_MS, { enabled });
-  return { entries, err, reload: () => { void load(); } };
+  return {
+    entries: q.data ?? null,
+    // Set on a failed read and cleared by the next SUCCESSFUL one, which is
+    // what `isError` already means.
+    err: q.isError ? String(q.error) : null,
+    reload: () => { void q.refetch(); },
+  };
 }
 
 export type BranchesRead = {
@@ -75,26 +91,37 @@ export function useBranches(
   { appId, projectSlug, enabled = true }:
   { appId?: string | null; projectSlug?: string | null; enabled?: boolean },
 ): BranchesRead {
-  const [records, setRecords] = useState<BranchRecord[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  const key = projectSlug
+  const addr = projectSlug
     ? `project=${encodeURIComponent(projectSlug)}`
     : appId ? `app_id=${encodeURIComponent(appId)}` : "";
 
-  const load = useCallback(async () => {
-    if (!key) { setRecords([]); setErr(null); return; }
-    try {
-      const d = await readJson<{ worktrees: BranchRecord[] }>(`/api/branches?${key}&live=true`);
-      setRecords(d.worktrees ?? []);
-      setErr(null);
-    } catch (e) {
-      setErr(String(e));
-    }
-  }, [key]);
+  const q = useQuery({
+    queryKey: ["branches", addr],
+    // AN APP WITH NO TREE ANSWERS `[]` WITHOUT ASKING, which is what the `if
+    // (!key)` at the top of the load this replaces did. It is not `enabled:
+    // false`: that would report the hook as cold forever, and "this app has no
+    // branches" is an answer, not an absence of one.
+    queryFn: async (): Promise<BranchRecord[]> => {
+      if (!addr) return [];
+      const d = await readJson<{ worktrees: BranchRecord[] }>(`/api/branches?${addr}&live=true`);
+      return d.worktrees ?? [];
+    },
+    // `enabled: false` is what a closed surface passed to `usePoll`: no timer,
+    // no read, and the hook still reports cold.
+    enabled,
+    refetchInterval: BRANCHES_MS,
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read `usePoll` did on the way back from hidden.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
 
-  usePoll(load, BRANCHES_MS, { enabled });
-  return { records, err, reload: () => { void load(); } };
+  return {
+    records: q.data ?? null,
+    err: q.isError ? String(q.error) : null,
+    reload: () => { void q.refetch(); },
+  };
 }
 
 // --- the app's ref -----------------------------------------------------------

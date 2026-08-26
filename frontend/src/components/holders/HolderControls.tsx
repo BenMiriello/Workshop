@@ -1,8 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Send, Trash2 } from "lucide-react";
 import {
   Button, ConfirmDialog, Notice, Row, Skeleton, Stack, StatusPill, Textarea,
-  shortHttpError, timeAgo, usePoll,
+  shortHttpError, timeAgo,
 } from "@workshop/ui";
 import {
   PREEMPT_HUMAN_ACTION, activityLine, holderName, holderStatus, leaseLine,
@@ -60,7 +61,6 @@ export default function HolderControls({
   const [accepted, setAccepted] = useState<ControlAccepted | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
-  const [pending, setPending] = useState<ControlRequest[] | null>(null);
   const [pendingErr, setPendingErr] = useState<string | null>(null);
   // What the preempt route reported back, in its own words.
   const [takeover, setTakeover] = useState<string | null>(null);
@@ -68,18 +68,38 @@ export default function HolderControls({
   const sid = entry.session_id;
   const nowMs = Date.now();
 
-  const loadPending = useCallback(async () => {
-    try {
+  const qc = useQueryClient();
+  // Memoised because `submit` below writes this exact entry from the route's
+  // own answer, and a fresh array every render would rebuild that path.
+  const controlKey = useMemo(() => ["control", sid], [sid]);
+
+  const q = useQuery({
+    queryKey: controlKey,
+    queryFn: async (): Promise<ControlRequest[]> => {
       const r = await fetch(`/api/control/${encodeURIComponent(sid)}`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const d = (await r.json()) as { requests?: ControlRequest[] };
-      setPending(d.requests ?? []);
-      setPendingErr(null);
-    } catch (e) {
-      setPendingErr(String(e));
-    }
-  }, [sid]);
-  usePoll(loadPending, 15_000);
+      return ((await r.json()) as { requests?: ControlRequest[] }).requests ?? [];
+    },
+    refetchInterval: 15_000,
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read `usePoll` did on the way back from hidden.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
+
+  const pending = q.data ?? null;
+  const { isError, error, dataUpdatedAt, errorUpdatedAt, refetch } = q;
+  // ONE LINE FOR TWO KINDS OF FAILURE, unchanged: a dropped read and a refused
+  // cancel share `pendingErr`, and whichever happened last is the one shown.
+  // The read half is mirrored out of the query rather than derived, because a
+  // refused cancel is not in the query at all.
+  useEffect(() => {
+    if (isError) setPendingErr(String(error));
+    else if (dataUpdatedAt) setPendingErr(null);
+  }, [isError, error, dataUpdatedAt, errorUpdatedAt]);
+
+  const loadPending = useCallback(() => { void refetch(); }, [refetch]);
 
   const submit = useCallback(async (verb: "queue" | "steer") => {
     const body = text.trim();
@@ -96,14 +116,22 @@ export default function HolderControls({
       const out = (await r.json()) as ControlAccepted;
       setAccepted(out);
       setText("");
-      setPending(out.pending ?? []);
+      // The route answers with the queue it just changed, so the list takes it
+      // directly instead of re-reading. It keeps the cached read's timestamp: a
+      // WRITE is not a fresh read, and moving `dataUpdatedAt` would run the
+      // mirror above and clear a `pendingErr` no read has cleared.
+      qc.setQueryData<ControlRequest[]>(
+        controlKey,
+        out.pending ?? [],
+        { updatedAt: qc.getQueryState(controlKey)?.dataUpdatedAt },
+      );
       onChanged?.();
     } catch (e) {
       setErr(String(e));
     } finally {
       setBusy(null);
     }
-  }, [busy, onChanged, selfSessionId, sid, text, worktreeId]);
+  }, [busy, controlKey, onChanged, qc, selfSessionId, sid, text, worktreeId]);
 
   const cancel = useCallback(async (requestId: string) => {
     try {

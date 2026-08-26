@@ -1,7 +1,7 @@
-import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
-import { timeAgo, usePoll } from "@workshop/ui";
-import { fetchNeedsYou, fitRows, moreLabel, needsRows, type InboxList } from "../../lib/dashboard";
+import { useQuery } from "@tanstack/react-query";
+import { timeAgo } from "@workshop/ui";
+import { fetchNeedsYou, fitRows, moreLabel, needsRows } from "../../lib/dashboard";
 import { DashboardCard, DashboardState } from "./DashboardCard";
 import { useRowCaps } from "./useRowCaps";
 
@@ -18,20 +18,27 @@ import { useRowCaps } from "./useRowCaps";
 // card and that panel cannot disagree about what is waiting.
 
 const POLL_MS = 20_000;
+// The page cap this card asks for. It shows three rows; the twelve are what
+// makes `moreLabel` honest without a second call. Named because it is part of
+// the query key: a different limit is a different read.
+const LIMIT = 12;
 
 export function NeedsYouCard() {
-  const [data, setData] = useState<InboxList | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setData(await fetchNeedsYou());
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-  usePoll(load, POLL_MS);
+  const q = useQuery({
+    queryKey: ["inbox", LIMIT],
+    queryFn: () => fetchNeedsYou(LIMIT),
+    refetchInterval: POLL_MS,
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read `usePoll` did on the way back from hidden.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
+  // A failed read keeps the last good payload on screen, as before, and the
+  // error clears on the next SUCCESSFUL read rather than at the start of the
+  // next attempt -- which is what `isError` already means.
+  const data = q.data ?? null;
+  const err = q.isError ? (q.error instanceof Error ? q.error.message : String(q.error)) : null;
 
   const ROWS = useRowCaps().needs;
   const all = needsRows(data);

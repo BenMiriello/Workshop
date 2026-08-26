@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
-import { usePoll, formatDuration, timeAgo, shortHttpError, Button, Card, Row, Stack, Skeleton, StateBlock, StatusDot, Segmented, agencyFor, type SegmentedOption } from "@workshop/ui";
+import { useQuery } from "@tanstack/react-query";
+import { formatDuration, timeAgo, shortHttpError, Button, Card, Row, Stack, Skeleton, StateBlock, StatusDot, Segmented, agencyFor, type SegmentedOption } from "@workshop/ui";
 import { Link } from "react-router-dom";
 import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronRight, ChevronDown } from "lucide-react";
 
@@ -91,9 +92,6 @@ function crossLinks(job: Job): JSX.Element[] {
 // and always passed it, and /jobs is a redirect to that tab. The prop and the
 // header went with it, along with the only read of `data.count`.
 export default function JobsFeed() {
-  const [data, setData] = useState<JobsResp | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<StatusFilter>("all");
   // Which coordinator sweeps have their child-Job group expanded.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -106,22 +104,45 @@ export default function JobsFeed() {
     });
   }, []);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      const q = filter === "all" ? "" : `&status=${filter}`;
-      const r = await fetch(`/api/jobs?limit=100${q}`);
+  // THE FILTER IS IN THE KEY, so the feed and the segmented control cannot
+  // disagree about which list is on screen.
+  //
+  // TWO DELIBERATE CHANGES COME WITH THAT, both recorded because the rule for
+  // this migration was no behaviour changes. `usePoll` reads its callback
+  // through a ref, so changing the filter did NOT re-read: the previous
+  // filter's rows stayed for up to thirty seconds, under a control that had
+  // already moved. A key changes that to a read on the click. And because an
+  // unseen filter has no cache entry, it draws the skeleton for that one
+  // request instead of the old filter's rows; going back to a filter looked at
+  // within `gcTime` paints instantly, which is new and strictly additive.
+  const q = useQuery({
+    queryKey: ["jobs", "feed", filter],
+    queryFn: async (): Promise<JobsResp> => {
+      const status = filter === "all" ? "" : `&status=${filter}`;
+      const r = await fetch(`/api/jobs?limit=100${status}`);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setData(await r.json());
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [filter]);
+      return (await r.json()) as JobsResp;
+    },
+    refetchInterval: 30_000,
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read `usePoll` did on the way back from hidden.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
 
-  usePoll(refresh, 30_000);
+  const data = q.data ?? null;
+  // The Refresh button spun on every tick, poll included, because the poll and
+  // the button called the same function. `isFetching` is that flag.
+  const loading = q.isFetching;
+  // Cleared at the START of the next attempt, which is what the `setErr(null)`
+  // at the top of the old `refresh` did, so a retry drops the error region
+  // rather than holding it under a spinner.
+  const err = !q.isFetching && q.isError
+    ? (q.error instanceof Error ? q.error.message : String(q.error))
+    : null;
+  const { refetch } = q;
+  const refresh = useCallback(() => { void refetch(); }, [refetch]);
 
   const jobs = data?.jobs ?? [];
 

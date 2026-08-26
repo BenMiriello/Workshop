@@ -1,10 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { MessagesSquare } from "lucide-react";
 import { Menu, MenuItem, MenuSeparator } from "@workshop/ui";
 import { chatApi, type ThreadSummary } from "../../lib/chat";
 import { scopeKind } from "./chatScope";
 import ScopeIcon from "./ScopeIcon";
-import { recentChatsCache } from "./recentChatsCache";
 
 // Trim a full cross-scope list to the recent few this menu shows, newest first.
 const recentSlice = (list: ThreadSummary[]): ThreadSummary[] =>
@@ -30,6 +30,20 @@ const recentSlice = (list: ThreadSummary[]): ThreadSummary[] =>
 // FETCHED WHEN OPENED, not on mount. Every chat in the app would otherwise pay
 // for a full cross-scope thread list it may never show. The trigger's own
 // onClick loads it; Menu calls that before its own toggle, so one tap does both.
+//
+// THE CACHE IS THE QUERY CACHE NOW. This used to seed from a module singleton
+// (`recentChatsCache`) whose only job was painting the last-known list on a
+// remount instead of the "Loading" row, and the shared key `["chat", "threads",
+// <scope>]` does that for nothing: the dashboard's own threads read writes the
+// same entry, so opening the menu on a chat reached from the dashboard is
+// already warm. `enabled: false` is what keeps "on open, not on mount" true --
+// a disabled query still reads the cache and never fetches on its own.
+//
+// ONE THING THE SINGLETON DID THAT THIS DOES NOT: it lived for the life of the
+// tab. The entry lives for `gcTime` (5 minutes) past the last component holding
+// it, so leaving the chat for longer than that and coming back shows "Loading"
+// for one request. Every remount the old comment named -- reopening the menu, a
+// scope switch rebuilding the toolbar -- is inside that window and unaffected.
 
 const RECENT_LIMIT = 8;
 
@@ -45,35 +59,35 @@ export default function RecentChatsMenu({
   /** The overflow path: more chats exist than this menu shows. */
   onSeeAll: () => void;
 }) {
-  // Seed from the tab-lifetime cache so a re-open (or a remount from a scope
-  // switch) paints the last-known list in the FIRST render instead of the
-  // "Loading" row. Cold on the very first open of the tab, which is the only time
-  // "Loading" now shows.
-  const seed = recentChatsCache.get();
-  const [threads, setThreads] = useState<ThreadSummary[] | null>(
-    seed ? recentSlice(seed) : null);
-  const [total, setTotal] = useState(seed ? seed.length : 0);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const q = useQuery({
+    // The shared key. The scope slot is null because this list is deliberately
+    // cross-scope, which is the same list the dashboard reads.
+    queryKey: ["chat", "threads", null],
+    queryFn: () => chatApi.listThreads(),
+    // On open, not on mount. The cached list is still read and painted.
+    enabled: false,
+    // The read this replaces did not retry, and a menu that has already drawn
+    // its last-known rows must not sit on a spinner through a backoff.
+    retry: false,
+  });
 
+  const { data, isFetching, isError, error, refetch } = q;
   // Revalidates on every open: the list is a handful of rows, and a "recent"
   // list an hour of conversation out of date is worse than one that costs a
   // request. The cached rows stay on screen while it runs (never cleared to
   // null), so revalidation refreshes in place rather than flashing "Loading". A
-  // second open while one is in flight is ignored.
-  const load = useCallback(() => {
-    if (loading) return;
-    setLoading(true);
-    setErr(null);
-    chatApi.listThreads()
-      .then((list) => {
-        recentChatsCache.set(list);
-        setTotal(list.length);
-        setThreads(recentSlice(list));
-      })
-      .catch((e) => setErr(String(e)))
-      .finally(() => setLoading(false));
-  }, [loading]);
+  // second open while one is in flight is ignored -- `cancelRefetch: false` is
+  // that guard; the default would abandon the request in flight and start
+  // another.
+  const load = useCallback(() => { void refetch({ cancelRefetch: false }); }, [refetch]);
+
+  const threads = useMemo(() => (data ? recentSlice(data) : null), [data]);
+  const total = data?.length ?? 0;
+  const loading = isFetching;
+  // Set on a failed read and cleared at the START of the next attempt, which is
+  // what the `setErr(null)` at the top of the old `load` did: reopening the menu
+  // after a failure shows the loading row, not the stale failure.
+  const err = !isFetching && isError ? String(error) : null;
 
   return (
     <Menu

@@ -11,13 +11,12 @@
 // loading flags) stays in the components; what is a decision (which rows fit,
 // what a row says, how a spend reads) is below and is tested.
 //
-// NO NEW DATA LAYER. There is no query library in this workspace's non-chat
-// surfaces: what exists is `usePoll`, `shortHttpError` and per-domain modules
-// like `lib/usage` and `lib/jobs` that own a shape and a fetch. This is one
-// more of those. Chat has since moved onto TanStack Query; these four reads are
-// plain GETs with no streaming, no pagination and no optimistic write, so they
-// are the easiest possible thing to move later and there is no reason to make
-// them the pilot.
+// THE FETCHES ARE HERE; THE CADENCE IS NOT. Each function below is one plain
+// GET that owns a shape, and the cards call them as query functions. When these
+// four reads were written they were `usePoll` call sites, which was already the
+// old mechanism by then; they have since moved onto the query layer
+// (`lib/queryClient.ts`) with the same URLs and the same intervals. Nothing in
+// this module knows how often it is called.
 import { shortHttpError } from "@workshop/ui";
 import type { components } from "../api/schema.gen";
 import type { Job } from "./jobs";

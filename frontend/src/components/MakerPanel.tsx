@@ -1,10 +1,11 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, Clock, ListChecks, Play, Power, Square, Ticket, Users } from "lucide-react";
 import {
   ActionBar, Button, Card, Clamp, ConfirmDialog, Notice, Prop, Props, Row, SectionLabel,
   Segmented, Skeleton, Stack, StateBlock, StatusDot, StatusPill, Tag, catFor,
-  shortHttpError, timeAbsolute, usePoll, useEditMode,
+  shortHttpError, timeAbsolute, useEditMode,
 } from "@workshop/ui";
 
 import { jobStatusKind, runHref } from "../lib/jobs";
@@ -51,26 +52,46 @@ export default function MakerPanel({
    *  ActionBars can never stack on top of each other. */
   canEdit?: boolean;
 }) {
-  const [state, setState] = useState<MakerState | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [actErr, setActErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [confirmStop, setConfirmStop] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch(`/api/agents/${encodeURIComponent(agentId)}/maker`);
-      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setState((await r.json()) as MakerState);
-      setLoadErr(null);
-    } catch (e) {
-      setLoadErr(String(e));
-    }
-  }, [agentId]);
+  const qc = useQueryClient();
+  // Memoised because `post` below writes this exact entry, and a fresh array
+  // every render would rebuild that path every render.
+  const makerKey = useMemo(() => ["agents", agentId, "maker"], [agentId]);
 
   // Activity is the reason this page exists, so it is polled. The interval
   // matches the roster's.
-  usePoll(load, 15_000);
+  const q = useQuery({
+    queryKey: makerKey,
+    queryFn: async (): Promise<MakerState> => {
+      const r = await fetch(`/api/agents/${encodeURIComponent(agentId)}/maker`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      return (await r.json()) as MakerState;
+    },
+    refetchInterval: 15_000,
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read `usePoll` did on the way back from hidden.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
+
+  // A DROPPED POLL LEAVES THE PANEL ON SCREEN and says so in a line beside the
+  // controls; only a panel that has never read anything falls to the error
+  // region. Both halves are unchanged, and `loadErr` stays a mirror rather than
+  // a derivation because a REFUSED WRITE below is not in the query at all and
+  // the two have to take turns on `actErr`/`loadErr` the way they always did.
+  const state = q.data ?? null;
+  const { isError, error, dataUpdatedAt, errorUpdatedAt, refetch } = q;
+  useEffect(() => {
+    if (isError) setLoadErr(String(error));
+    else if (dataUpdatedAt) setLoadErr(null);
+  }, [isError, error, dataUpdatedAt, errorUpdatedAt]);
+
+  const load = useCallback(() => { void refetch(); }, [refetch]);
 
   const post = useCallback(async (path: string, body?: unknown, kind: Busy = "arm") => {
     setBusy(kind);
@@ -82,14 +103,22 @@ export default function MakerPanel({
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setState((await r.json()) as MakerState);
+      // The route answers with the new state, so the panel takes it directly
+      // instead of re-reading. It keeps the cached read's timestamp: a WRITE is
+      // not a fresh read, and moving `dataUpdatedAt` would run the mirror above
+      // and clear a `loadErr` no read has cleared.
+      qc.setQueryData<MakerState>(
+        makerKey,
+        (await r.json()) as MakerState,
+        { updatedAt: qc.getQueryState(makerKey)?.dataUpdatedAt },
+      );
     } catch (e) {
       setActErr(String(e));
       throw e;
     } finally {
       setBusy(null);
     }
-  }, [agentId]);
+  }, [agentId, makerKey, qc]);
 
   // The arm level writes config, so it commits on an explicit Save with a
   // sticky ActionBar (frontend/CLAUDE.md rule 7). Start and Stop are actions,

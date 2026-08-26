@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { usePoll, shortHttpError, Badge, Button, Card, CardGrid, Field, Modal, PageHeader, Row, SectionLabel, Segmented, Select, Skeleton, Stack, StateBlock, StatusDot, StatusPill, Tag, catFor, type StatusKind, Notice } from "@workshop/ui";
+import { useQuery } from "@tanstack/react-query";
+import { shortHttpError, Badge, Button, Card, CardGrid, Field, Modal, PageHeader, Row, SectionLabel, Segmented, Select, Skeleton, Stack, StateBlock, StatusDot, StatusPill, Tag, catFor, type StatusKind, Notice } from "@workshop/ui";
 import { Link, useNavigate } from "react-router-dom";
 import { Plus, Bot, Brain, Clock, ListChecks, Play, RotateCw, Power, Compass, FileStack, MessageSquare, Ticket } from "lucide-react";
 import type { ReactNode } from "react";
@@ -241,25 +242,81 @@ function FromTemplateModal({
 
 export default function Agents() {
   const nav = useNavigate();
-  const [agents, setAgents] = useState<RosterAgent[] | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [sup, setSup] = useState<SupervisorStatus | null>(null);
   const [templating, setTemplating] = useState(false);
   // Scope-kind filter (C3). Persists in URL-less local state; view preference,
   // commits on change per the design system.
   const [scopeFilter, setScopeFilter] = useState<"all" | "workshop" | "project">("all");
 
-  const loadAll = useCallback(async () => {
+  // The roster's maker blocks are LIVE state (activity, the ticket held, whether
+  // a worker is resident), so the list refreshes every fifteen seconds, on the
+  // same cadence as the autonomy pill. Only the agents call: projects and the
+  // 200-row jobs feed are not live, and re-reading them every 15 seconds would
+  // be waste on a phone, so they stay a mount read below.
+  //
+  // ONE READ WHERE THERE WERE TWO. The roster poll carried `immediate: false`
+  // because the mount read below already fetched `/api/agents/`; a query IS
+  // that mount read, so the agents leg came out of it in the same edit rather
+  // than becoming a duplicate first request.
+  const agentsQuery = useQuery({
+    queryKey: ["agents", "list"],
+    queryFn: async (): Promise<RosterAgent[]> => {
+      const r = await fetch("/api/agents/");
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      return (await r.json()) as RosterAgent[];
+    },
+    refetchInterval: 15_000,
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read `usePoll` did on the way back from hidden.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
+  const agents = agentsQuery.data ?? null;
+
+  // The two reads had DIFFERENT failure handling and both are kept. A failure
+  // with nothing on screen is the page's error region, as the mount read's was;
+  // a failure with a roster already drawn is swallowed and the next tick
+  // retries, as the poll's was. `err` is not cleared once set, which is also
+  // unchanged: it was written once, by a read that ran once.
+  const rosterCold = agentsQuery.data === undefined;
+  const rosterErr = agentsQuery.isError ? agentsQuery.error : null;
+  useEffect(() => {
+    if (rosterErr && rosterCold) setErr(String(rosterErr));
+  }, [rosterErr, rosterCold]);
+
+  const readSup = useCallback(async (): Promise<SupervisorStatus | null> => {
+    // A failure is `null` rather than an error: the pill and the panel below
+    // are gated on `sup` being present and say nothing when it is not. Written
+    // as a queryFn that cannot reject so that stays exactly true.
     try {
-      const [aR, pR, jR] = await Promise.all([
-        fetch("/api/agents/"),
+      const r = await fetch("/api/agents/autonomy/status");
+      return r.ok ? ((await r.json()) as SupervisorStatus) : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const supQuery = useQuery({
+    queryKey: ["agents", "autonomy", "status"],
+    queryFn: readSup,
+    refetchInterval: 15_000,
+    staleTime: 0,
+    retry: false,
+  });
+  const sup = supQuery.data ?? null;
+
+  // Projects and the jobs feed. Not live, so read on mount and after a create,
+  // never polled, and left off the query layer because this is the only page
+  // that reads them. A failure of either is the page's error region, as before.
+  const loadRest = useCallback(async () => {
+    try {
+      const [pR, jR] = await Promise.all([
         fetch("/api/projects/"),
         fetch("/api/jobs?limit=200"),
       ]);
-      if (!aR.ok) throw new Error(shortHttpError(aR.status, aR.statusText, await aR.text().catch(() => "")));
-      setAgents((await aR.json()) as RosterAgent[]);
       setProjects(pR.ok ? await pR.json() : []);
       setJobs(jR.ok ? (await jR.json()).jobs || [] : []);
     } catch (e) {
@@ -267,27 +324,7 @@ export default function Agents() {
     }
   }, []);
 
-  const loadSup = useCallback(() => {
-    fetch("/api/agents/autonomy/status")
-      .then((r) => (r.ok ? r.json() : null))
-      .then(setSup)
-      .catch(() => setSup(null));
-  }, []);
-
-  // The roster's maker blocks are LIVE state (activity, the ticket held, whether
-  // a worker is resident), so the list refreshes on the same cadence as the
-  // autonomy pill. Only the agents call: projects and the 200-row jobs feed are
-  // not live, and re-reading them every 15 seconds would be waste on a phone.
-  const loadRoster = useCallback(() => {
-    fetch("/api/agents/")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((rows) => { if (rows) setAgents(rows as RosterAgent[]); })
-      .catch(() => { /* the visible list stays; the next tick retries */ });
-  }, []);
-
-  useEffect(() => { loadAll(); }, [loadAll]);
-  usePoll(loadSup, 15_000);
-  usePoll(loadRoster, 15_000, { immediate: false });
+  useEffect(() => { void loadRest(); }, [loadRest]);
 
   // Last Job per agent id, from a single jobs feed (most recent first already).
   const lastJobByAgent = useMemo(() => {
@@ -645,7 +682,10 @@ export default function Agents() {
         onCancel={() => setTemplating(false)}
         onDone={(slug) => {
           setTemplating(false);
-          loadAll();
+          // Both halves of what `loadAll` did: the new agent is in the roster
+          // read, and a group adoption can have created a project.
+          void loadRest();
+          void agentsQuery.refetch();
           if (slug) nav(`/agents/${encodeURIComponent(slug)}`);
         }}
       />
