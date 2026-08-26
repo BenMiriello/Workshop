@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { chatApi, type CardState, type Thread, type ThreadSummary } from "../../lib/chat";
 import { withTransientRetry } from "@workshop/ui";
 import {
@@ -196,13 +197,33 @@ export function useChatThread({
   // What a NEW chat starts in (Settings -> Chat). Applied whenever there is no
   // thread yet, so the blank chat's control shows the mode the next message will
   // actually run in rather than a hardcoded guess.
+  //
+  // THERE IS NO TRIGGER BUT THE MOUNT, which is exactly the empty dependency
+  // array this replaces. The operator's default is a seed, so re-reading it on
+  // a focus or a reconnect would be a request this chat has never made, and
+  // would hand a running chat a value it is done with. A failed read is not
+  // retried for the same reason the effect swallowed the failure: the platform
+  // default already stands, so there is nothing a second request could rescue.
+  const prefsQuery = useQuery({
+    queryKey: ["chat", "prefs"],
+    queryFn: () => chatApi.getChatPrefs(),
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  // THE MODE ITSELF STAYS LOCAL STATE, and this only seeds it. `chooseChatMode`
+  // below writes it optimistically and rolls it back when the server refuses,
+  // and `adoptSettings` overwrites it with the thread's own stored mode; a
+  // read-only value derived from this query could do neither. The ref guard is
+  // what keeps the two apart: a chat that has a thread has its OWN mode, and
+  // the default for new chats must never land on top of it.
   useEffect(() => {
-    let live = true;
-    void chatApi.getChatPrefs()
-      .then((p) => { if (live && !activeIdRef.current) setChatMode(chatModeDef(p.default_mode ?? undefined).id); })
-      .catch(() => { /* the platform default stands */ });
-    return () => { live = false; };
-  }, []);
+    const p = prefsQuery.data;
+    if (!p) return;
+    if (activeIdRef.current) return;
+    setChatMode(chatModeDef(p.default_mode ?? undefined).id);
+  }, [prefsQuery.data]);
 
   // The thread's own settings. NOT its messages.
   // Takes the thread DOCUMENT, not a list row. `card_states`, `effort` and

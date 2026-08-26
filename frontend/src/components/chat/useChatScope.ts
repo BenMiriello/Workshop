@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { chatApi, type Provider } from "../../lib/chat";
 import { DEFAULT_SCOPE, readProvider, resolveScope, writeProvider } from "../../lib/chatSelection";
 import type { ChatMode } from "./chatScope";
@@ -93,28 +94,70 @@ export function useChatScope({
   // re-running it is exactly what "try that request again" means here.
   const [providerNonce, setProviderNonce] = useState(0);
 
+  // THE PROVIDER LIST IS THE READ; the scope resolution below is what is done
+  // with it, and only the read moved onto Query.
+  //
+  // THE KEY IS THE OLD DEPENDENCY ARRAY, all six of it. Keying on the request
+  // alone (`scoped ? contextKey : undefined` is the only thing in the URL)
+  // would look tidier and would be wrong: the effect re-read the list on every
+  // one of these, so dropping any of them serves a cached list where the code
+  // this replaces made a request. `providerNonce` is the error block's Retry
+  // and would stop retrying anything at all.
+  const providerScope = scoped ? contextKey : null;
+  const providersQuery = useQuery({
+    queryKey: [
+      "chat", "providers", providerScope,
+      effectiveMode, initialThreadId ?? null, !!startNew, providerNonce,
+    ],
+    queryFn: () => chatApi.listProviders(providerScope ?? undefined),
+    // The effect had no retry. This failure has a visible error block with its
+    // own Retry, so retrying under it would only delay the notice and then
+    // double the request the operator is about to make himself.
+    retry: false,
+    // Neither trigger existed here. This list is the gate the thread loader
+    // waits on, so a focus refetch would re-run scope resolution — including
+    // its `getThread` peek and its `writeProvider` — against URL intents the
+    // operator moved on from minutes ago.
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    // The key RECURS: leaving a scope and coming back makes `contextKey` the
+    // same string again. A cache hit there would resolve the scope from a list
+    // that may be minutes old and skip the read the effect always made.
+    staleTime: 0,
+    gcTime: 0,
+  });
+  const { data: providerList, isSuccess, isError, error, fetchStatus } = providersQuery;
+  // Settled for THIS key, success or failure. The key carries every trigger, so
+  // this flipping to true is exactly the moment the effect used to reach after
+  // its `await` — and a key change puts it back to false before the resolution
+  // below can run against the previous key's answer.
+  const providersSettled = fetchStatus === "idle" && (isSuccess || isError);
+
   useEffect(() => {
+    if (!providersSettled) return;
     let cancelled = false;
     (async () => {
-      let list: Provider[] = [];
-      try {
-        list = await chatApi.listProviders(scoped ? contextKey : undefined);
-        if (cancelled) return;
-        setProviders(list);
-      } catch (e) {
+      // A failed read resolves from an EMPTY list and leaves the last good one
+      // in `providers`, which is what the effect's caught `list = []` did. The
+      // picker keeping stale options is the documented failure mode below; the
+      // picker emptying itself is not.
+      const list = providerList ?? [];
+      // On success, even an EMPTY success: the effect set the list whenever the
+      // request returned, and a scope that genuinely serves no provider has to
+      // be able to say so. Only the failure path (`providerList` undefined)
+      // leaves the previous list alone.
+      if (providerList) setProviders(providerList);
+      if (isError) {
         // NOT non-essential, which is what this used to claim. This list is the
         // live source for the model picker; when it fails the picker silently
         // falls back to the frontend's hardcoded MODEL_LABELS, which can offer
         // models the backend does not serve.
-        if (!cancelled) {
-          onError({
-            text: `Couldn't load the model/assistant list: ${e}. The picker may be showing stale options.`,
-            endpoint: scoped ? `/api/chat/providers?scope=${contextKey}` : "/api/chat/providers",
-            retry: () => setProviderNonce((n) => n + 1),
-          });
-        }
+        onError({
+          text: `Couldn't load the model/assistant list: ${error}. The picker may be showing stale options.`,
+          endpoint: scoped ? `/api/chat/providers?scope=${contextKey}` : "/api/chat/providers",
+          retry: () => setProviderNonce((n) => n + 1),
+        });
       }
-      if (cancelled) return;
       if (effectiveMode === "data" && list.length) {
         // The picked thread, from the STABLE prop, not the raced ref. This is
         // the whole of the switching fix: the loader has already nulled
@@ -146,7 +189,8 @@ export function useChatScope({
     // props (and listed here as real deps) so scope resolution re-runs on every
     // pick and never races the loader consuming their refs. onError is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contextKey, effectiveMode, scoped, initialThreadId, startNew, providerNonce]);
+  }, [providersSettled, providerList, isError, error,
+      contextKey, effectiveMode, scoped, initialThreadId, startNew]);
 
   const chooseProvider = useCallback((key: string) => {
     setActiveProvider(key);

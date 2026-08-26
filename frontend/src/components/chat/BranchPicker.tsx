@@ -1,4 +1,5 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { GitBranch } from "lucide-react";
 import { Menu, MenuItem, MenuLabel } from "@workshop/ui";
 import { chatApi, type Branch } from "../../lib/chat";
@@ -48,15 +49,36 @@ export default function BranchPicker({
   count: number;
   onChanged: () => void;
 }) {
-  const [branches, setBranches] = useState<Branch[] | null>(null);
-
   // Fetched when the menu opens, not on every sync. Same shape as
   // RecentChatsMenu.
-  const load = useCallback(() => {
-    chatApi.listBranches(threadId)
-      .then((r) => setBranches(r.branches))
-      .catch(() => setBranches([]));
-  }, [threadId]);
+  //
+  // THE TRIGGER STAYS THE CLICK, so the query is never enabled and `refetch()`
+  // is the only thing that runs it. That is deliberate over the two shapes this
+  // could have taken:
+  //
+  //   * a short `staleTime` with the menu's open state driving `enabled` would
+  //     put a window between forking and looking, and a fork is followed by
+  //     opening the picker within about a second. A read the window swallows
+  //     shows the operator a list that does not contain the line they just
+  //     made.
+  //   * `invalidateQueries` on the writes would have to be wired at BOTH
+  //     writers, and one of them (BranchAction's fork) is not this component --
+  //     it reaches this list only through the shared `onChanged` in Chat.tsx.
+  //
+  // `refetch()` ignores staleness by definition, so every open is a fresh read
+  // exactly as the effect was, and a reopen after a fork or a switch cannot be
+  // served from cache. The click toggles, so a click that CLOSES the menu reads
+  // too; that was already true and is left alone.
+  const { data: branches, isError, refetch } = useQuery({
+    queryKey: ["chat", "branches", threadId],
+    queryFn: () => chatApi.listBranches(threadId).then((r) => r.branches),
+    enabled: false,
+    // Not retried, because the read this replaces was not: a picker that comes
+    // up empty is the documented answer for "the relational store is not
+    // reachable", and the retry is the next click.
+    retry: false,
+  });
+  const load = useCallback(() => { void refetch(); }, [refetch]);
 
   const switchTo = useCallback((b: Branch) => {
     if (b.is_current) return;
@@ -66,6 +88,10 @@ export default function BranchPicker({
   if (count < 2) return null;
 
   const rows = branches ?? [];
+  // Nothing has been read yet. A FAILED read counts as read: the effect this
+  // replaces answered a failure with an empty list, so the picker opens empty
+  // rather than sitting on "Loading" forever.
+  const cold = branches === undefined && !isError;
   const overflow = Math.max(0, rows.length - VISIBLE_BRANCHES);
 
   return (
@@ -97,7 +123,7 @@ export default function BranchPicker({
             </span>
           </MenuItem>
         ))}
-        {branches === null && <MenuItem disabled onSelect={() => {}}>Loading</MenuItem>}
+        {cold && <MenuItem disabled onSelect={() => {}}>Loading</MenuItem>}
       </div>
       {overflow > 0 && <MenuLabel>{overflow} more, scroll to see</MenuLabel>}
     </Menu>

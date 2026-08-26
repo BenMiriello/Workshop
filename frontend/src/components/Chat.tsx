@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { usePoll, Notice } from "@workshop/ui";
 import { useNavigate } from "react-router-dom";
 import { WifiOff, ArrowDown, Paperclip, Unplug } from "lucide-react";
@@ -88,6 +89,14 @@ const LIVENESS_MS = 5_000;
 // Keep at least this many screens of history loaded so a short thread is always
 // scrollable; past it, older pages load on approach (useLogScroll's onNearTop).
 const MIN_FILL_SCREENS = 1.5;
+
+/** One agent this chat may @-mention, as `/mentionable` projects it. */
+type MentionableAgent = {
+  slug: string; name: string; role: string | null; purpose: string; local: boolean;
+};
+// One frozen empty list rather than a fresh `[]` per render, so "no thread yet"
+// and "the read has not landed" are the same identity every time.
+const EMPTY_MENTIONABLE: MentionableAgent[] = [];
 
 export type ChatProps = {
   contextKey: string;
@@ -770,18 +779,38 @@ export default function Chat({
 
   // P3: agents this chat may @-mention. Server-resolved (the rule is opt-in +
   // scope reach, which is policy, not display), refreshed when the thread moves.
-  const [mentionable, setMentionable] = useState<
-    { slug: string; name: string; role: string | null; purpose: string; local: boolean }[]
-  >([]);
-  useEffect(() => {
-    if (!activeId) { setMentionable([]); return; }
-    let cancelled = false;
-    fetch(`/api/chat/threads/${encodeURIComponent(activeId)}/mentionable`)
-      .then((r) => (r.ok ? r.json() : { agents: [] }))
-      .then((j) => { if (!cancelled) setMentionable(j.agents || []); })
-      .catch(() => { if (!cancelled) setMentionable([]); });
-    return () => { cancelled = true; };
-  }, [activeId]);
+  //
+  // THE THREAD IS THE ONLY TRIGGER, which is the whole of the effect's old
+  // dependency array. Nothing else may fire this read: focus and reconnect are
+  // off because the effect had neither, and a failed read is not retried
+  // because the effect did not throw at all — a non-ok response and a dropped
+  // request both resolved to "no addressable agents", which is what the
+  // `catch` below keeps doing. An @-list that is empty for a moment is a
+  // menu that does not open; one that retries is a request the code this
+  // replaces never made.
+  const mentionableQuery = useQuery<MentionableAgent[]>({
+    queryKey: ["chat", "mentionable", activeId],
+    queryFn: ({ signal }) =>
+      fetch(`/api/chat/threads/${encodeURIComponent(activeId!)}/mentionable`, { signal })
+        .then((r) => (r.ok ? r.json() : { agents: [] }))
+        .then((j) => (j.agents || []) as MentionableAgent[])
+        .catch(() => [] as MentionableAgent[]),
+    enabled: !!activeId,
+    // The key RECURS: switching back to a thread is the same key again, and the
+    // effect this replaces re-read every time. A cache hit there would answer
+    // from a list that predates any agent the operator has since opted in.
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    // THE PREVIOUS THREAD'S LIST STAYS UP while the new one is in flight, which
+    // is what the effect did by never clearing on the way in. Held here rather
+    // than in local state because the only thing being held is the last value,
+    // and `gcTime: 0` means the cache is not doing it. A chat with NO thread
+    // clears, because that is the one case the effect cleared for.
+    placeholderData: (prev) => (activeId ? prev : undefined),
+  });
+  const mentionable = mentionableQuery.data ?? EMPTY_MENTIONABLE;
 
   // NOTHING TO RESET. A scope change is a `scope` event in the thread's own log
   // now, so it arrives with that thread and belongs to it — the reason this
