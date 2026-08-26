@@ -154,3 +154,37 @@ def _delete_test_users(user_ids) -> None:
                 f"{unsafe}. A test fixture is holding a real user id.")
         s.execute(text("DELETE FROM user_account WHERE id = ANY(CAST(:ids AS uuid[]))"),
                   {"ids": ids})
+
+
+@pytest.fixture(autouse=True)
+def _isolate_usage_ledger(tmp_path, monkeypatch):
+    """Keep the test suite out of the operator's real usage ledger.
+
+    `usage_ledger.record()` appends to `.runtime/usage.jsonl`, which is live
+    operator state: the admission window, the spend charts and every cost figure
+    read it. Isolation was opt-in per test file and only five files opted in, so
+    every other test that drove a chat turn or a compaction wrote real-looking
+    rows into it. Measured 2026-08-26: 4,196 of 5,127 rows were test writes,
+    1,724 of them from one module, all carrying `tokens: 11`. Any measurement
+    taken off that file was reading mostly itself.
+
+    Patches BOTH the module attribute and the env var on purpose. `LEDGER_PATH`
+    is bound at import, so an env-only fix depends on import ordering; but the
+    two shell writers reach the ledger through the `python -m
+    services.usage_ledger record` shim, which is a SUBPROCESS and reads the env
+    var, so an attribute-only fix misses those. Neither alone is sufficient.
+
+    This also fences `prune()`, which rewrites the ledger in place and would
+    silently truncate the operator's history if an unisolated test ever called
+    it.
+    """
+    ledger = tmp_path / "usage.jsonl"
+    budget = tmp_path / "usage-budget.json"
+    monkeypatch.setenv("WORKSHOP_USAGE_LEDGER", str(ledger))
+    monkeypatch.setenv("WORKSHOP_USAGE_BUDGET", str(budget))
+    try:
+        from services import usage_ledger
+    except Exception:  # pragma: no cover - suite runs without the package
+        return
+    monkeypatch.setattr(usage_ledger, "LEDGER_PATH", ledger, raising=False)
+    monkeypatch.setattr(usage_ledger, "BUDGET_CONFIG_PATH", budget, raising=False)
