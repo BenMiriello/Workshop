@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  continueRows, fitRows, formatTokens, moreLabel, needsRows, runningRows, spendLine,
-  type InboxList, type ThreadSummary,
+  continueRows, fitRows, formatTokens, moreLabel, needsRows, rowCaps, runningRows,
+  spendLine, type InboxList, type ThreadSummary,
 } from "./dashboard";
 import type { Job } from "./jobs";
 
@@ -23,6 +23,13 @@ describe("what needs you", () => {
     const rows = needsRows({ items: [item({ agent: "reviewer" }), item({ id: "b" })],
                              counts: {}, total: 2 }, 5);
     expect(rows.map((r) => r.who)).toEqual(["reviewer", "development"]);
+  });
+
+  it("does not print the scope twice when it is standing in for the agent", () => {
+    const rows = needsRows({ items: [item(), item({ id: "b", agent: "reviewer" })],
+                            counts: {}, total: 2 }, 5);
+    expect(rows[0].scope).toBe("");          // `who` is already "development"
+    expect(rows[1].scope).toBe("development");
   });
 
   it("opens the ticket when there is one, and the list when there is not", () => {
@@ -78,12 +85,25 @@ describe("running now", () => {
   } as Job);
 
   it("leads with who is running, not with a task id", () => {
-    expect(runningRows([job()], 3)[0].name).toBe("ingest-sweep");
+    expect(runningRows([job()], null, 3)[0].name).toBe("ingest-sweep");
   });
 
   it("falls back to the trigger when no agent is named", () => {
-    expect(runningRows([job({ agent_name: undefined, trigger_label: "Cron" })], 3)[0].name)
+    expect(runningRows([job({ agent_name: undefined, trigger_label: "Cron" })], null, 3)[0].name)
       .toBe("Cron");
+  });
+
+  it("counts a chat with a turn in flight as running", () => {
+    // "Nothing running" on an instance with two live turns is the kind of
+    // confident wrong answer that teaches an operator to stop reading a card.
+    const rows = runningRows([], [thread({ running: true }), thread({ id: "t2" })]);
+    expect(rows.map((r) => r.name)).toEqual(["ingest retry backoff"]);
+    expect(rows[0].to).toContain("thread=t1");
+  });
+
+  it("puts runs above chats", () => {
+    const rows = runningRows([job()], [thread({ running: true })]);
+    expect(rows.map((r) => r.name)).toEqual(["ingest-sweep", "ingest retry backoff"]);
   });
 });
 
@@ -119,6 +139,14 @@ describe("a card is a fixed height and clips", () => {
 
   it("never reports negative overflow when everything fits", () => {
     expect(fitRows([1], 3).hidden).toBe(0);
+  });
+
+  it("fits fewer rows on the shorter phone card", () => {
+    // A constant was wrong at one of the two widths: three blocks fit the 236px
+    // desktop card and two fit the 210px phone card, so a fixed three half-drew
+    // the last one on a phone.
+    expect(rowCaps(true)).toEqual({ needs: 3, lines: 4 });
+    expect(rowCaps(false)).toEqual({ needs: 2, lines: 3 });
   });
 
   it("says how much is missing on the link, and stays quiet when nothing is", () => {

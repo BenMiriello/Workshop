@@ -48,8 +48,13 @@ export const fetchNeedsYou = (limit = 12) =>
  *  context pair, so the card needs no per-chat follow-up call. */
 export const fetchThreads = () => get<ThreadSummary[]>("/api/chat/threads");
 
-/** Runs in flight. `page.total` is null on this endpoint by design (ADR 0023
- *  clause 1) and a null total is not zero, so the count comes from the rows. */
+/** Runs in flight.
+ *
+ *  `page.total` is null on this endpoint BY DESIGN (ADR 0023 clause 1: the job
+ *  log is collapsed by id and stops at `limit`, so a total would mean a second
+ *  full pass), and a null total must not be read as zero. So the count comes
+ *  from the rows, and the limit is set high enough that the count is the real
+ *  one rather than the page's. */
 export const fetchRunning = (limit = 12) =>
   get<{ items: Job[] }>(`/api/jobs?status=running&limit=${limit}`).then((p) => p.items ?? []);
 
@@ -94,11 +99,14 @@ export type RunningRow = {
 const firstLine = (s: string | null | undefined) =>
   String(s ?? "").split("\n").find((l) => l.trim()) ?? "";
 
-export function needsRows(list: InboxList | null, cap: number): NeedsRow[] {
+export function needsRows(list: InboxList | null, cap = Infinity): NeedsRow[] {
   return (list?.items ?? []).slice(0, cap).map((i) => ({
     id: i.id,
     who: i.agent || i.scope || "workshop",
-    scope: i.scope || "",
+    // BLANK WHEN IT WOULD REPEAT `who`. A row with no agent recorded falls back
+    // to naming its scope, and a chip beside it saying the same word twice is
+    // noise wearing a label's clothing.
+    scope: i.agent && i.scope ? i.scope : "",
     ask: firstLine(i.title) || firstLine(i.body),
     when: i.created_at ?? null,
     // A waiting TICKET has a record to open. An ambient notice does not: it is
@@ -108,7 +116,7 @@ export function needsRows(list: InboxList | null, cap: number): NeedsRow[] {
   }));
 }
 
-export function continueRows(threads: ThreadSummary[] | null, cap: number): ContinueRow[] {
+export function continueRows(threads: ThreadSummary[] | null, cap = Infinity): ContinueRow[] {
   return (threads ?? []).slice(0, cap).map((t) => ({
     id: t.id,
     title: t.title || "Untitled chat",
@@ -121,8 +129,20 @@ export function continueRows(threads: ThreadSummary[] | null, cap: number): Cont
   }));
 }
 
-export function runningRows(jobs: Job[] | null, cap: number): RunningRow[] {
-  return (jobs ?? []).slice(0, cap).map((j) => ({
+/** What is moving right now: runs in flight AND chats with a turn in flight.
+ *
+ *  BOTH, because the question the card answers is "what is happening without
+ *  me" and a streaming chat is one of those. Showing only jobs said "Nothing
+ *  running" on an instance with two live turns on it, which is the kind of
+ *  confident wrong answer that teaches an operator to stop reading a card.
+ *
+ *  Runs first: a chat is running because you left it open, a job is running on
+ *  its own, and the second is the one you are less likely to know about.
+ */
+export function runningRows(
+  jobs: Job[] | null, threads: ThreadSummary[] | null, cap = Infinity,
+): RunningRow[] {
+  const runs: RunningRow[] = (jobs ?? []).map((j) => ({
     id: j.id,
     // `agent_name` is the display name the API resolved; `title` is the run's
     // own sentence. The name is what the row leads with, because "what is
@@ -132,6 +152,14 @@ export function runningRows(jobs: Job[] | null, cap: number): RunningRow[] {
     when: j.started_at ?? null,
     to: `/runs/${j.id}`,
   }));
+  const chats: RunningRow[] = (threads ?? []).filter((t) => t.running).map((t) => ({
+    id: `chat:${t.id}`,
+    name: t.title || "Untitled chat",
+    doing: "answering",
+    when: t.last_user_at || t.updated_at || null,
+    to: `/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`,
+  }));
+  return [...runs, ...chats].slice(0, cap);
 }
 
 // ---- the spend line --------------------------------------------------------
@@ -173,6 +201,26 @@ export function formatTokens(n: number): string {
 export function fitRows<T>(rows: T[], cap: number): { shown: T[]; hidden: number } {
   const shown = rows.slice(0, Math.max(0, cap));
   return { shown, hidden: Math.max(0, rows.length - shown.length) };
+}
+
+/** How many rows of each kind fit the card at this width.
+ *
+ *  A CONSTANT WOULD BE WRONG AT ONE OF THE TWO WIDTHS, and it was: three
+ *  needs-you blocks fit the 236px desktop card and only two fit the 210px phone
+ *  card, so a fixed three half-drew the last one on a phone -- the exact fault
+ *  a clipping card must never show, because it reads as a rendering error
+ *  rather than as "there is more".
+ *
+ *  The arithmetic, so the next person can redo it rather than guess. Desktop:
+ *  236 card - 30 padding - 17 head - 12 gap = 177 for the list; a block is 55
+ *  and the gap 6, so 3*55 + 2*6 = 177. Phone: 210 - 28 - 17 - 12 = 153, which
+ *  takes 2. One-line rows are 22 with a 10 gap, so the same sums give 4 and 3.
+ *
+ *  It is here rather than in the components because it is a decision, and a
+ *  decision in a component is a decision nothing can test.
+ */
+export function rowCaps(wide: boolean): { needs: number; lines: number } {
+  return wide ? { needs: 3, lines: 4 } : { needs: 2, lines: 3 };
 }
 
 /** The label a "→" link carries once rows are being left out. Plain "→" while

@@ -156,6 +156,17 @@ class TestWhatWantsTheOperator:
         assert [i["kind"] for i in out["items"]] == ["notify"]
         assert out["counts"]["notify"] == 1
 
+    def test_the_total_counts_the_whole_set_not_the_page(self, env):
+        """The alarm must not silently count only what fitted. A badge that caps
+        itself at the page size is one the operator learns to distrust."""
+        for i in range(5):
+            t = tasks.add(env["root"], title=f"question {i}", body="")
+            tasks.update(env["root"], t["id"], status="in_review")
+        out = chat_work.needs_you(limit=2)
+        assert len(out["items"]) == 2
+        assert out["total"] == 5
+        assert out["counts"]["question"] == 5
+
     def test_questions_outrank_notifications(self, env):
         """One sort, shared with the chat's read, so a blocked agent is never
         buried under notices in one surface and first in the other."""

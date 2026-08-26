@@ -351,15 +351,19 @@ def needs_you(limit: int = 50) -> dict:
             if is_waiting(r):
                 rows.append(_needs_you_row(r, skey, names))
 
-    stored = [row for row in inbox.list_items(limit=limit)
+    stored = [row for row in inbox.list_items(limit=1000)
               if not row.get("ticket_id")]
-    items = inbox.sort_items(rows + stored)[:limit]
+    ordered = inbox.sort_items(rows + stored)
 
+    # COUNTED BEFORE THE CAP. `total` and `counts` describe the whole waiting
+    # set; `items` is the page. A badge that silently counts only what fitted on
+    # one screen is a badge the operator learns to distrust, and this is the one
+    # number on the dashboard that is an alarm.
     counts = {k: 0 for k in inbox.KINDS}
-    for it in items:
+    for it in ordered:
         kind = it.get("kind", "notify")
         counts[kind] = counts.get(kind, 0) + 1
-    return {"items": items, "counts": counts, "total": len(items)}
+    return {"items": ordered[:limit], "counts": counts, "total": len(ordered)}
 
 
 def thread_work(thread_id: str) -> dict | None:

@@ -1,11 +1,10 @@
-import { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
-import { timeAgo, usePoll } from "@workshop/ui";
+import { timeAgo } from "@workshop/ui";
 import { ContextRing } from "../chat/ContextRing";
-import {
-  continueRows, fetchThreads, fitRows, moreLabel, type ThreadSummary,
-} from "../../lib/dashboard";
+import { continueRows, fitRows, moreLabel } from "../../lib/dashboard";
 import { DashboardCard, DashboardState } from "./DashboardCard";
+import { useRowCaps } from "./useRowCaps";
+import type { ThreadsRead } from "./useThreads";
 
 // WHERE YOU WERE. The chat list's own order (when the operator last spoke), so
 // this card and /chats cannot disagree about what is most recent.
@@ -19,24 +18,11 @@ import { DashboardCard, DashboardState } from "./DashboardCard";
 // turn has no server count, and a list row does not estimate: the estimate
 // needs the unsent draft and only the composer has that. Absent, not zero.
 
-const ROWS = 4;
-const POLL_MS = 15_000;
 
-export function ContinueCard() {
-  const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setThreads(await fetchThreads());
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-  usePoll(load, POLL_MS);
-
-  const all = continueRows(threads, 50);
+export function ContinueCard({ read }: { read: ThreadsRead }) {
+  const { threads, error: err } = read;
+  const ROWS = useRowCaps().lines;
+  const all = continueRows(threads);
   const { shown, hidden } = fitRows(all, ROWS);
 
   return (

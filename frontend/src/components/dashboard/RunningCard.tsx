@@ -7,6 +7,8 @@ import {
 } from "../../lib/dashboard";
 import type { Job } from "../../lib/jobs";
 import { DashboardCard, DashboardCardFoot, DashboardState } from "./DashboardCard";
+import { useRowCaps } from "./useRowCaps";
+import type { ThreadsRead } from "./useThreads";
 
 // WHAT IS MOVING WITHOUT YOU. Runs in flight, and what the window has cost.
 //
@@ -19,18 +21,17 @@ import { DashboardCard, DashboardCardFoot, DashboardState } from "./DashboardCar
 // table anywhere in the tree, and the only window with a defined ceiling is the
 // rolling 5h one. See `spendLine`.
 
-const ROWS = 3;
 const RUNS_POLL_MS = 10_000;
 const USAGE_POLL_MS = 60_000;
 
-export function RunningCard() {
+export function RunningCard({ read }: { read: ThreadsRead }) {
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageStatus | null>(null);
 
   const loadRuns = useCallback(async () => {
     try {
-      setJobs(await fetchRunning());
+      setJobs(await fetchRunning(50));
       setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -43,7 +44,8 @@ export function RunningCard() {
   usePoll(loadRuns, RUNS_POLL_MS);
   usePoll(loadUsage, USAGE_POLL_MS);
 
-  const all = runningRows(jobs, 50);
+  const ROWS = useRowCaps().lines;
+  const all = runningRows(jobs, read.threads);
   const { shown, hidden } = fitRows(all, ROWS);
   const spend = spendLine(usage);
 

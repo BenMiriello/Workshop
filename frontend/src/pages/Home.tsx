@@ -2,6 +2,7 @@ import { AppsCard } from "../components/dashboard/AppsCard";
 import { ContinueCard } from "../components/dashboard/ContinueCard";
 import { NeedsYouCard } from "../components/dashboard/NeedsYouCard";
 import { RunningCard } from "../components/dashboard/RunningCard";
+import { useThreads } from "../components/dashboard/useThreads";
 
 // THE DASHBOARD. Home's first page and what the root opens to.
 //
@@ -23,13 +24,17 @@ import { RunningCard } from "../components/dashboard/RunningCard";
 // lib/dashboard for the reads and every derivation behind them.
 
 export default function Home() {
+  // ONE threads read, two consumers: the chats card lists them and the running
+  // card wants the ones with a turn in flight. See useThreads -- everything
+  // else stays per-card.
+  const threads = useThreads();
   return (
     <div className="ws-dashboard">
       <div className="ws-dashboard__grid">
         <AppsCard />
         <NeedsYouCard />
-        <ContinueCard />
-        <RunningCard />
+        <ContinueCard read={threads} />
+        <RunningCard read={threads} />
       </div>
     </div>
   );

@@ -3346,7 +3346,14 @@ p.chat-workpanel__note { margin: 0; }
   list-style: none; margin: 0; padding: 0; min-width: 0;
   display: flex; flex-direction: column; gap: 10px;
 }
-.ws-dashrows--blocks { gap: var(--space-2); }
+/* THREE BLOCKS MUST FIT THE FIXED ROW, WHOLE. Measured at the 236px card: the
+   head and its gap take 29, leaving 177 for three blocks and two gaps, so with
+   a 6px gap a block gets 55. At 60 (the first attempt) the third one half-drew
+   at the clip edge, which is precisely what a card that clips must never do --
+   it reads as a rendering fault rather than as "there is more". At 53 it fitted
+   and clipped the DESCENDERS off the second line instead, which is the same
+   fault one notch smaller. */
+.ws-dashrows--blocks { gap: 6px; }
 
 /* A one-line row: title, then the tail of what was said, then the reading and
    the time pinned right. The tail is what absorbs the leftover width and it is
@@ -3361,8 +3368,13 @@ p.chat-workpanel__note { margin: 0; }
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--fs-base); color: var(--fg);
 }
+/* `flex-basis: 0`, NOT auto. With an auto basis the tail's basis is its own
+   (long) text, so it competed with the title for width and the title lost:
+   measured at 1440 the titles ellipsized at about a quarter of the row while
+   `max-width: 52%` went unused. A zero basis makes the tail take only what is
+   LEFT once the title has taken up to its 52%, which is the intent. */
 .ws-dashline__tail {
-  flex: 1 1 auto; min-width: 0;
+  flex: 1 1 0; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--fs-sm); color: var(--faint);
 }
@@ -3376,9 +3388,15 @@ p.chat-workpanel__note { margin: 0; }
 
 /* A needs-you row is a block, not a line: two lines, on an inset surface, so
    the thing that is waiting is visibly a record rather than a log entry. */
+/* A FIXED 53px, not "whatever the text makes it". The card clips, so a block
+   whose height depends on its font metrics is a block that sometimes gets cut
+   in half at the bottom edge; see `rowCaps` for the arithmetic this is half of.
+   Both lines inside clamp to one line, so the height is honest. */
 .ws-dashneed {
-  display: flex; flex-direction: column; gap: var(--space-1);
-  padding: 9px 10px; border-radius: var(--radius-sm);
+  box-sizing: border-box; height: 55px;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  line-height: 1.3;
   background: var(--bg-inset); border: 1px solid var(--border);
   text-decoration: none; color: inherit; min-width: 0;
 }
@@ -3447,9 +3465,20 @@ p.chat-workpanel__note { margin: 0; }
     gap: 11px;
   }
   .ws-dashcard { padding: 14px; }
-  .ws-dashapps { gap: 12px 14px; }
+  /* TIGHTER, because two rows of tiles have to fit the shorter card: at the
+     desktop spacing the second row's NAMES were cut in half by the clip edge.
+     46 + 4 + 15 = 65 a row, twice, plus a 10px gap = 140 inside the 153 the
+     phone card leaves under its head. */
+  .ws-dashapps { gap: 10px 14px; }
+  .ws-dashapps__tile { gap: var(--space-1); }
+  .ws-dashapps__name { font-size: 11px; }
   /* The scope chip is the first thing to go when the row is narrow: the ask
      underneath it is what the row is for. */
   .ws-dashneed__scope { max-width: 34%; }
-  .ws-dashline__title { max-width: 54%; }
+  /* THE TAIL GOES, and the title takes the room. At 390 the title, the ring,
+     the percentage and the time leave the tail about ten pixels, which renders
+     as a single letter and an ellipsis -- it says nothing and costs the title
+     the width that would have made it readable. */
+  .ws-dashline__tail { display: none; }
+  .ws-dashline__title { max-width: none; flex: 1 1 auto; }
 }

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { timeAgo, usePoll } from "@workshop/ui";
 import { fetchNeedsYou, fitRows, moreLabel, needsRows, type InboxList } from "../../lib/dashboard";
 import { DashboardCard, DashboardState } from "./DashboardCard";
+import { useRowCaps } from "./useRowCaps";
 
 // WHAT WANTS THE OPERATOR, across every scope. The one alarm on this page.
 //
@@ -16,7 +17,6 @@ import { DashboardCard, DashboardState } from "./DashboardCard";
 // builds -- same waiting predicate, same row builder, same order -- so this
 // card and that panel cannot disagree about what is waiting.
 
-const ROWS = 3;
 const POLL_MS = 20_000;
 
 export function NeedsYouCard() {
@@ -33,9 +33,14 @@ export function NeedsYouCard() {
   }, []);
   usePoll(load, POLL_MS);
 
-  const all = needsRows(data, 50);
-  const { shown, hidden } = fitRows(all, ROWS);
+  const ROWS = useRowCaps().needs;
+  const all = needsRows(data);
+  const { shown } = fitRows(all, ROWS);
+  // `total` is the WHOLE waiting set, counted by the server before its own
+  // page cap, so both the alarm and the overflow are honest even though this
+  // card asks for twelve rows and shows three.
   const waiting = data?.total ?? 0;
+  const hidden = Math.max(0, waiting - shown.length);
 
   return (
     <DashboardCard
