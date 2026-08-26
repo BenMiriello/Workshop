@@ -13,6 +13,11 @@
 // every caller can draw the four list states from one shape. A poll that fails
 // keeps the last good payload: the rows are still on screen, so the failure is
 // a line beside them and not a region over them (frontend/CLAUDE.md).
+//
+// Both are now keyed by what they asked for, which the `useState` pair they
+// replace was not: changing the subject kind, or the app, used to leave the
+// previous answer on screen until the next read landed. That window is the cold
+// state now, and coming back to a filter already read is an instant cache hit.
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { shortHttpError } from "@workshop/ui";

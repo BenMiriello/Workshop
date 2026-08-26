@@ -88,6 +88,9 @@ export default function HolderControls({
     retry: false,
   });
 
+  // Keyed by session, which the `useState` this replaces was not: a control
+  // re-pointed at a different holder used to show the previous session's queue
+  // until the next read landed. It shows the cold state for that window now.
   const pending = q.data ?? null;
   const { isError, error, dataUpdatedAt, errorUpdatedAt, refetch } = q;
   // ONE LINE FOR TWO KINDS OF FAILURE, unchanged: a dropped read and a refused

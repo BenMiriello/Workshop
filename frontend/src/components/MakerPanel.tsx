@@ -84,6 +84,13 @@ export default function MakerPanel({
   // region. Both halves are unchanged, and `loadErr` stays a mirror rather than
   // a derivation because a REFUSED WRITE below is not in the query at all and
   // the two have to take turns on `actErr`/`loadErr` the way they always did.
+  //
+  // ONE DELIBERATE BEHAVIOUR CHANGE, recorded because the rule for this
+  // migration was no behaviour changes. The `useState` this replaces was never
+  // cleared on an `agentId` change, and the route does not remount this
+  // component when the slug moves, so for one read the panel showed the
+  // PREVIOUS agent's worker, sessions and runs under the new agent's name.
+  // Keyed by agent, that window is the skeleton instead.
   const state = q.data ?? null;
   const { isError, error, dataUpdatedAt, errorUpdatedAt, refetch } = q;
   useEffect(() => {
