@@ -1,6 +1,7 @@
 # Ref preview: thumbnails and excerpts (plan)
 
-Status: PROPOSED, not built. Operator asked to see the plan before the work.
+Status: phases 1-3 SHIPPED 2026-08-25 (entity excerpts, image thumbnails, pdf
+thumbnails). Phase 4 (Office via LibreOffice) remains optional and unbuilt.
 Supersedes nothing. Related: `managed-file-references-and-path-scoping-2026-08-18.md`
 (Layer 3, which parked pdf/text rendering), `memory-and-documentation-model-2026-08-14.md` sec 10.
 
