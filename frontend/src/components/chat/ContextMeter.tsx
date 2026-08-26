@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { chatApi, type ChatMsg } from "../../lib/chat";
 import { estimateContextTokens } from "./chatScope";
 import { contextWindowFor } from "./models";
-import { contextLabel, contextReading, contextTooltip } from "./contextReading";
+import { contextTooltip } from "./contextReading";
+import { ContextRing } from "./ContextRing";
 
 // How full this conversation's context is, under the composer.
 //
@@ -16,9 +17,6 @@ import { contextLabel, contextReading, contextTooltip } from "./contextReading";
 //
 // `nonce` exists because a forced /compact changes the answer without changing
 // `messages.length`, which is otherwise what drives the refetch.
-
-const RING_R = 7;
-const RING_C = 2 * Math.PI * RING_R;
 
 export default function ContextMeter({
   activeId, streaming, messages, draft, model, nonce, liveTokens, onOpen,
@@ -150,23 +148,8 @@ export default function ContextMeter({
 
   // ALWAYS A READING, and the meter always renders. See contextReading: it used
   // to return null at zero and take the whole control off the composer with it.
-  const reading = contextReading(ctx.used, ctx.win);
-
-  // A single accent tone, no threshold colors: this is a reading, not a status.
-  // The arc is a dash on a rotated circle so it fills clockwise from 12 o'clock.
-  const inner = (
-    <>
-      <svg className="chat-context-meter__ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden>
-        <circle className="chat-context-meter__track" cx="9" cy="9" r={RING_R} />
-        <circle
-          className="chat-context-meter__arc"
-          cx="9" cy="9" r={RING_R}
-          style={{ strokeDasharray: `${reading.fraction * RING_C} ${RING_C}` }}
-        />
-      </svg>
-      <span className="chat-context-meter__pct">{contextLabel(reading)}</span>
-    </>
-  );
+  // The drawing itself is ContextRing, shared with the dashboard.
+  const inner = <ContextRing used={ctx.used} win={ctx.win} />;
   const title = contextTooltip(ctx.used, ctx.win);
   // A reading with nothing behind it stays a plain label rather than pretending
   // to be a control: a blank chat has no session to break down.

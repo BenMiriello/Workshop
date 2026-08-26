@@ -389,9 +389,12 @@ export function useChatThread({
     // because the list is what computes those, so a created thread used to go
     // into the picker with both `undefined` while the type said otherwise.
     // A thread this client just created has no messages yet, so the two values
-    // are known here rather than needing a refetch.
+    // are known here rather than needing a refetch. `running` is known for the
+    // same reason: creating a thread does not start a turn on it.
     const row: ThreadSummary =
-      "message_count" in t ? t : { ...t, message_count: 0, last_message: "" };
+      "message_count" in t
+        ? t
+        : { ...t, message_count: 0, last_message: "", running: false };
     // Put the new thread in the picker immediately. Without this a chat you had
     // just started was unreachable the moment you navigated away: it wasn't in
     // the local list, and nothing remembered you were in it.

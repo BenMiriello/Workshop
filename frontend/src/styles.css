@@ -3265,3 +3265,191 @@ p.chat-workpanel__note { margin: 0; }
 .ws-memory__title { margin: 0; font-size: var(--fs-xl); font-weight: var(--fw-semi); letter-spacing: -0.01em; }
 .ws-memory__path { color: var(--muted); font-size: var(--fs-xs); word-break: break-all; }
 .ws-memory__hook { margin: 0; color: var(--muted); }
+
+/* ============================================================
+   DASHBOARD — Home's first page
+   docs/platform-redesign/dashboard-2026-08-25.md
+   ============================================================ */
+
+/* THE GRID SETS THE ROW HEIGHT, and that is the whole layout rule. Cards do not
+   size themselves: `grid-auto-rows` gives every card the same height and each
+   one clips, so a row of cards lines up whatever is inside them. Four cards of
+   four different lengths is not a grid, and it is what this page looked like
+   before (three stacked bands that each grew with their content).
+
+   `auto-fit` + `minmax` is what makes it one column on a phone, two on a
+   laptop and three on a wide monitor with no breakpoint list to maintain. */
+.ws-dashboard { display: flex; justify-content: center; padding-bottom: var(--space-6); }
+.ws-dashboard__grid {
+  width: 100%; max-width: 900px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  grid-auto-rows: 236px;
+  gap: 14px;
+  align-content: start;
+}
+
+.ws-dashcard {
+  display: flex; flex-direction: column; gap: var(--space-3);
+  min-width: 0; overflow: hidden;
+  padding: 15px 17px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+/* THE ONE ALARM ON THIS PAGE. Only "Needs you" wears it, and only while
+   something is actually waiting: the border and the label carry it together so
+   it reads at a glance from across the grid without a second colour anywhere
+   else on the card. */
+.ws-dashcard--alert { border-color: var(--warn); }
+.ws-dashcard--alert .ws-dashcard__label { color: var(--warn); }
+
+.ws-dashcard__head { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
+.ws-dashcard__label {
+  font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: var(--fw-medium);
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ws-dashcard__count {
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums; color: var(--muted); flex: 0 0 auto;
+}
+.ws-dashcard--alert .ws-dashcard__count { color: var(--warn); }
+/* The way out, and the overflow affordance: a capped card says what it left out
+   here rather than growing or scrolling. */
+.ws-dashcard__link {
+  margin-left: auto; flex: 0 0 auto;
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  color: var(--faint); text-decoration: none; white-space: nowrap;
+}
+.ws-dashcard__link:hover { color: var(--accent); }
+/* min-height:0 so the body is what clips, not the card: without it a flex child
+   refuses to shrink below its content and the card grows past its grid row. */
+.ws-dashcard__body {
+  flex: 1 1 auto; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.ws-dashcard__foot {
+  flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-2);
+  padding-top: var(--space-3); border-top: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--faint);
+}
+.ws-dashfoot__spend { font-variant-numeric: tabular-nums; }
+.ws-dashcard__empty { margin: 0; font-size: var(--fs-sm); color: var(--faint); }
+.ws-dashcard__skeletons { display: flex; flex-direction: column; gap: var(--space-3); }
+/* The card's states are small: the page-sized StateBlock would fill the card
+   with an icon and leave no room for the sentence that explains it. */
+.ws-dashcard__state { padding: 0; text-align: left; align-items: flex-start; }
+
+/* ---- rows ---------------------------------------------------------------- */
+.ws-dashrows {
+  list-style: none; margin: 0; padding: 0; min-width: 0;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.ws-dashrows--blocks { gap: var(--space-2); }
+
+/* A one-line row: title, then the tail of what was said, then the reading and
+   the time pinned right. The tail is what absorbs the leftover width and it is
+   what ellipsizes, because it is the only part that is prose. */
+.ws-dashline {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-width: 0; text-decoration: none; color: inherit;
+}
+.ws-dashline:hover .ws-dashline__title { color: var(--accent); }
+.ws-dashline__title {
+  flex: 0 1 auto; max-width: 52%;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-base); color: var(--fg);
+}
+.ws-dashline__tail {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-sm); color: var(--faint);
+}
+.ws-dashline__end { flex: 0 0 auto; display: flex; align-items: center; gap: var(--space-2); }
+.ws-dashline__ring { gap: var(--space-1); }
+.ws-dashline__when {
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums; color: var(--faint);
+  min-width: 2.2rem; text-align: right;
+}
+
+/* A needs-you row is a block, not a line: two lines, on an inset surface, so
+   the thing that is waiting is visibly a record rather than a log entry. */
+.ws-dashneed {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: 9px 10px; border-radius: var(--radius-sm);
+  background: var(--bg-inset); border: 1px solid var(--border);
+  text-decoration: none; color: inherit; min-width: 0;
+}
+.ws-dashneed:hover { border-color: var(--border-strong); }
+.ws-dashneed__top { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.ws-dashneed__who {
+  font-size: var(--fs-base); font-weight: var(--fw-semi); color: var(--fg);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ws-dashneed__scope {
+  margin-left: auto; flex: 0 0 auto;
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  padding: 3px 5px; border-radius: 4px;
+  background: var(--accent-soft); color: var(--accent);
+  max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ws-dashneed__when {
+  flex: 0 0 auto; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--faint);
+}
+.ws-dashneed__ask {
+  font-size: var(--fs-sm); color: var(--muted);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---- the apps tile grid --------------------------------------------------- */
+.ws-dashapps {
+  list-style: none; margin: 0; padding: 0;
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-wrap: wrap; align-content: flex-start;
+  gap: 14px 16px;
+}
+.ws-dashapps__tile {
+  width: 62px; display: flex; flex-direction: column; align-items: center; gap: var(--space-2);
+  text-decoration: none; color: inherit;
+}
+.ws-dashapps__tile:hover { opacity: 0.78; }
+.ws-dashapps__glyph {
+  width: 46px; height: 46px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-inset); border: 1px solid var(--border); color: var(--accent);
+}
+.ws-dashapps__name {
+  max-width: 100%; font-size: var(--fs-xs); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Paged rather than scrolled, because the card clips: a half-visible row of
+   tiles at the fold reads as a rendering fault. */
+.ws-dashapps__pager {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 7px;
+}
+.ws-dashapps__dot {
+  width: 6px; height: 6px; padding: 0; border: none; border-radius: var(--radius-pill);
+  background: var(--border-strong); cursor: pointer;
+  transition: background var(--dur-fast) linear;
+}
+.ws-dashapps__dot.is-on { background: var(--accent); }
+
+/* ---- phone ---------------------------------------------------------------- */
+/* The cards stack in source order and each one is a little shorter. No page
+   header at either width: the shell's bar one already says where you are, and
+   an <h1> under it is the second telling. */
+@media (max-width: 900px) {
+  .ws-dashboard__grid {
+    grid-template-columns: 1fr;
+    grid-auto-rows: 210px;
+    gap: 11px;
+  }
+  .ws-dashcard { padding: 14px; }
+  .ws-dashapps { gap: 12px 14px; }
+  /* The scope chip is the first thing to go when the row is narrow: the ask
+     underneath it is what the row is for. */
+  .ws-dashneed__scope { max-width: 34%; }
+  .ws-dashline__title { max-width: 54%; }
+}
