@@ -2,14 +2,16 @@ import { describe, expect, it } from "vitest";
 import { STOPPED_BY_OPERATOR, STOPPED_INTERRUPTED, stoppedTag } from "./stopReason";
 
 describe("stoppedTag", () => {
-  it("says only that the user interrupted it", () => {
-    expect(stoppedTag(STOPPED_BY_OPERATOR)).toBe("user interrupted");
+  it("says plainly that the operator stopped it", () => {
+    expect(stoppedTag(STOPPED_BY_OPERATOR)).toBe("Stopped");
   });
 
-  it("does not blame the operator for a restart", () => {
+  it("names no internal mechanism for an interruption", () => {
     const tag = stoppedTag(STOPPED_INTERRUPTED);
-    expect(tag).toBe("interrupted by a restart");
-    expect(tag).not.toContain("user interrupted");
+    expect(tag).toBe("Interrupted");
+    // Never leak how the platform works ("restart", "backend") into copy.
+    expect(tag.toLowerCase()).not.toContain("restart");
+    expect(tag.toLowerCase()).not.toContain("backend");
   });
 
   it("treats an unknown reason as an interruption, not as a Stop", () => {

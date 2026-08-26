@@ -26,7 +26,7 @@ export function noReplyText(m: ChatMsg): string {
  *
  *  Stopping a turn before it wrote anything leaves a reply with no text, no
  *  segments, and (by the rule above) no explanatory sentence either. Rendering
- *  the bubble anyway put an EMPTY BOX above the "user interrupted" line, which
+ *  the bubble anyway put an EMPTY BOX above the stopped-reply line, which
  *  reads as a rendering fault rather than as a turn the operator ended. The line
  *  alone is the whole treatment.
  *

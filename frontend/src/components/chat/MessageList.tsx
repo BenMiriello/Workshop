@@ -269,7 +269,7 @@ const MessageBubble = memo(function MessageBubble({
 }) {
   const threadCfg = modelDisplay(selectedModel);
   // Stopping a turn before it wrote anything leaves nothing to put in a bubble,
-  // and an empty box above the "user interrupted" line reads as a rendering
+  // and an empty box above the stopped-reply line reads as a rendering
   // fault rather than as a turn the operator ended. See replyBody.hasBubble.
   const body = hasBubble(msg);
   // WHO PUT THIS HERE. A run report or a sweep's question was posted with
