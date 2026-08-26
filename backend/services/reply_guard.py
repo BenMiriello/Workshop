@@ -28,7 +28,7 @@ log = logging.getLogger("workshop.reply_guard")
 _BANNER_MARKERS = (
     "=== PLATFORM INSTRUCTIONS (confidential",
     "=== YOUR CAPABILITIES (read this first) ===",
-    "=== WHAT AND WHERE YOU ARE (orientation",
+    "=== WHERE THINGS ARE (orientation",
     "=== RUNTIME BRIEFING (your environment",
 )
 # Distinctive kernel sentences, in case the banner itself is paraphrased away.

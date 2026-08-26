@@ -1064,23 +1064,16 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   `cd backend && set -a; . ~/.config/workshop/db-admin.env; set +a; ./.venv/bin/python -m alembic upgrade head`
   then `git apply scratch/work_type_wiring.patch` and `bash scripts/apply.sh` (or
   ask me to land the wiring once the column exists). Follow-up 6a9dda58.
-- 2026-08-25 (3) — Operator: my two hallucinations (a migration "tangle" and
-  calling the DB "production") are SYSTEM-clarity defects, not one-off mistakes to
-  apologize for. The system left "what/where am I" to inference, so agents infer
-  wrong. Fixed at the root, generalized, in the one place every tool-capable chat
-  and agent is oriented: services/orientation.py (L1 manifest, mirrored by the
-  where_is tool). Renamed its header to "WHAT AND WHERE YOU ARE" and added a
-  generated, layer-clean environment-identity statement: Workshop is ONE live
-  instance with no environment tiers (no prod/staging/preview, no deploy-to-
-  promote); "live" means this running instance; its stores hold the operator's
-  real data so act deliberately, but nothing is a walled-off "production" system;
-  do NOT infer a tier from a scope name or from hardening (roles/RLS/isolation),
-  which are tenancy/security design. Disambiguated the `development` scope line
-  (it names a WORK scope, not an environment tier). Extended the "reach by tool,
-  don't grep" doctrine to STATE: a subsystem's current state (migrations, running
-  services, queues, git) is whatever its own tool reports, authoritative; do not
-  reconstruct it by hand-parsing files, and if a hand check disagrees with the
-  tool, the tool wins. Updated the reply_guard banner marker to the new header so
-  leak-detection still fires. Not touched: bootstrap.py and other hardened files
-  were left un-annotated on purpose; the fix is the single generalized orientation
-  statement, not a clarification scattered per file.
+- 2026-08-25 (3) — Operator: I overstepped. I shipped an "environment identity"
+  statement into orientation.py without discussing, and it was substantively wrong
+  (it asserted "no environment tiers / no deployment" for ALL agents, contradicting
+  the planned model where apps CAN have branches/worktrees/their own deployments,
+  and where dev-scope agents SHOULD know about dev/prod builds while regular users
+  NEVER do). REVERTED. Direction from the operator: research the existing plans/docs
+  on prompt layering, roles, and environment/branches/worktrees, plus external
+  practice on giving agents context/role that GUIDES (not personality, not
+  scripting), then PROPOSE before implementing. Open design questions to answer in
+  the proposal: how "Workshop" is defined for non-dev/user chats (which should have
+  no environment awareness); how dev-scope chats learn about workshop code, dev/prod
+  builds, and branches; where system prompts are defined vs other prompts and how
+  tool/other definitions roll up. Not implemented — proposal only.
