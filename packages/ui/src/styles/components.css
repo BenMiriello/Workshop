@@ -1744,7 +1744,10 @@ span.ws-filterchip__open { cursor: default; }
 .ws-menu__list {
   position: absolute; z-index: var(--z-dropdown);
   min-width: 11rem; max-width: min(20rem, 80vw);
-  max-height: 16rem; overflow-y: auto; overscroll-behavior: contain;
+  /* Grow to fit contents, bounded by the viewport (mirrors .ws-popover__surface).
+     placeMenu measures the post-clamp height and flips/scrolls accordingly, so a
+     taller cap needs no JS change. Was a flat 16rem that truncated short menus. */
+  max-height: min(28rem, calc(100vh - 6rem)); overflow-y: auto; overscroll-behavior: contain;
   padding: var(--space-2);
   background: var(--card); border: 1px solid var(--border);
   border-radius: var(--radius-md); box-shadow: var(--shadow-md);

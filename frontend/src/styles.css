@@ -575,6 +575,10 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-log {
   flex: 1 1 auto; min-height: 0; min-width: 0;
   overflow-y: auto; -webkit-overflow-scrolling: touch;
+  /* Reserve the scrollbar track permanently. The composer shares this column
+     and grows a row as you type; that shrinks the log into overflow, so the
+     bar would otherwise pop in (and rewrap the transcript) on a keystroke. */
+  scrollbar-gutter: stable;
   /* Clip horizontal overflow HERE: a wide reply (long code line, unbroken URL,
      table) must scroll INSIDE its own block (pre/table have overflow:auto), never
      push the whole chat sideways into blank space. */
