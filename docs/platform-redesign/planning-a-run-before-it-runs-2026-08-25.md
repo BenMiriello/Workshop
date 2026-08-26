@@ -30,7 +30,7 @@ writes it.
   mints the same `job_<epoch>_<hex>` id, sets `status="queued"`, records
   `task_id`, `agent_id`, and the resolved routing, and starts nothing.
 - It stores the routing decision and **who made it**, as a source name and not a
-  boolean: `policy | escalation | agent | operator`.
+  boolean: `policy | agent | operator`.
 - At execution the resolver runs again. An answer sourced from `policy` is
   replaced by the fresh one. An answer sourced from `operator` is kept.
   **Escalation is not exempted from re-resolution and does not need to be**,
@@ -187,7 +187,7 @@ New fields, each with a named reader:
 | `model_tier` | the short name it resolved to | ticket page, run row |
 | `model_ceiling` | the band's ceiling handle | escalation, to know when to stop |
 | `reasoning_effort` | third element of `resolve()`, may be null | the turn site |
-| `model_source` | `policy \| escalation \| agent \| operator` | the re-resolve rule (§4) |
+| `model_source` | `policy \| agent \| operator` | the re-resolve rule (§4) |
 | `resolved_at` | when the routing was last computed | shown on the ticket page and the run row, never consulted |
 
 `resolved_at` is display only and is stated as display only, because
@@ -268,21 +268,28 @@ A planned run stores no copy of the ticket. It stores a routing decision. So:
 
 ## 4. Re-resolution, pins, and escalation
 
-### 4.1 A boolean is not enough
+### 4.1 Three sources, not four
 
-A boolean `pinned` distinguishes two cases and there are four writers: the policy
-table, escalation, the agent's own `model` pin (`agents_registry._coerce_model`,
-`:228-236`), and a person. Escalation is automatic and must **outrank** a stale
-policy answer, so a boolean would have to call it pinned, which would then also
-protect it from a policy change the operator deliberately made. Store the source
-name instead:
+An earlier draft listed four: `policy | escalation | agent | operator`. The
+operator asked whether `escalation` is not just one of the other three. It is,
+and it is removed.
+
+Escalation is the policy table resolved again with the ticket's `attempt_tier`,
+which §4.3 shows `resolve()` already consults. So an escalated model IS a policy
+answer, and storing `escalation` as a distinct source would be a stored value
+that no decision reads, which is the thing `agents_registry.py:132-140` deleted
+`depth` and `fanout` for. The display need it was invented to serve ("escalated
+to Opus after a failed review") is answered by reading `attempt_tier` on the
+ticket, where the fact actually lives.
 
 ```
-model_source: "policy" | "escalation" | "agent" | "operator"
+model_source: "policy" | "agent" | "operator"
 ```
 
-`operator` means a person chose this model for this run. Everything else is
-machine-chosen and replaceable.
+Stated honestly: the RULE in §4.2 only needs to distinguish `operator` from
+everything else, so a boolean would satisfy it. The three-way value costs the
+same storage and additionally answers "who chose this" on the ticket page, which
+is a real reader. If that surface is not built, this collapses to a boolean.
 
 ### 4.2 The rule
 
@@ -313,11 +320,11 @@ ticket**, in `attempt_tier`, written by `release_or_block` on the way past, and
 `resolve()` again returns the escalated tier, because `resolve()` consults the
 ticket. Re-resolution reproduces the escalation instead of overwriting it.
 
-`model_source: "escalation"` on the planned run is therefore a **label on a
-derived value**, not a second home for the fact. It exists so the ticket page can
-say "escalated to Opus after a failed review" rather than "Opus", and so §7's
-falsification test can count escalated retries. One fact, one home, per
-`one-fact-one-place-2026-08-22.md`.
+That is also why `escalation` is not a source (§4.1): it would be a label on a
+derived value, and the value is derived from `attempt_tier`. One fact, one home,
+per `one-fact-one-place-2026-08-22.md`. The ticket page reads `attempt_tier` to
+say "escalated to Opus after a failed review", and §7's falsification test counts
+escalated retries the same way.
 
 The three-way outcome, stated once:
 
@@ -471,58 +478,50 @@ as one writer.
 
 ---
 
-## 8. For the operator to decide
+## 8. Answered by the operator, 2026-08-25
 
-Three. Everything else here follows from something measured.
+All three are settled. Nothing in this document is open.
 
-**1. When a run you pinned to a model fails and the ticket is retried, does the
-next attempt use your model again, or go back to automatic?**
+**1. A model you pinned holds on retry.** Operator: "yes why wouldn't it hold on
+retry?" So the pin is copied onto the next planned run and keeps applying until
+changed. The consequence is intended and must be visible rather than silent: a
+pinned ticket does not escalate, so if the pin is too low the ticket burns its
+attempts and blocks, and the block reason must name the pin as the cause.
 
-- *Sticky:* the pin is copied onto the next planned run. Your choice keeps
-  applying until you change it. The cost is that a pinned ticket never escalates,
-  so if you pinned it too low it will burn all its attempts at that model and
-  block, and the block reason has to say the model was pinned.
-- *Per attempt:* the pin applies to the run you pinned and nothing after it. The
-  retry re-resolves and can escalate. The cost is that a deliberate choice
-  silently expires after one failure.
+**2. A remote close wins.** When an imported issue is closed in its own tracker
+and our rule says the ticket cannot be `done` because its change is not merged,
+the close wins and a note on the ticket records that the change was never merged.
+The refusal exists to stop US asserting something nobody checked; a person
+closing an issue elsewhere already happened, and declining to record it is not
+available to us.
 
-Recommendation: **sticky.** You pinned a model for the work, not for one attempt,
-and a choice that evaporates on failure is a choice you have to remember to make
-again at the worst moment. Take the blocking case and make the block reason name
-the pin.
+The operator added that **the definition of `done` should itself be
+configurable**, with structure, where merged-into-a-named-branch is one condition
+among a small set. That is designed in `work-status-contract-2026-08-24.md` §7
+and carried on the existing `acceptance` field rather than a new one.
 
-**2. When someone closes an imported GitHub issue and our own rule says the
-ticket cannot be `done` because its change is not merged, which one wins?**
+**3. No forward queue. Plan only the ticket the sweep would pick next.**
 
-- *The remote close wins:* the ticket goes `done`, and a note on the ticket
-  records that its change was never merged. Simple, and it matches the tracker
-  field-ownership table, where the tracker owns the words and the close.
-- *The refusal wins:* the pull is rejected, the `sync` record goes to `conflict`,
-  and the ticket stays where it is until you resolve it. Consistent with the
-  2026-08-25 ruling, at the cost of our copy disagreeing with GitHub until you
-  act.
+### 8.1 Why a planned run exists at all
 
-Recommendation: **the remote close wins, with the note.** The refusal exists to
-stop *us* asserting something nobody checked. A person closing an issue on GitHub
-already happened, and refusing to record a fact that occurred elsewhere is not
-available to us. The note preserves what the refusal was protecting.
+The operator asked directly whether there was a reason for planned runs or
+whether he had imagined one. There is a reason, and it is structural rather than
+a feature: **the code already requires the job to exist before the claim.**
+`tasks.py:2425-2431` uses the job id as the `holder_id` of the ticket's lease, so
+a run record must exist before anything can hold the ticket. Today that ordering
+is satisfied incidentally and has no name. `queued` names it, using a state that
+`jobs.py:52` already declares and that 0 of 11,883 records have ever used.
 
-**3. Should the system plan a run for every ticket that is ready to run, so you
-can see the queue before anything starts?**
+So this is not a new object bought to hold the model. It is a state the lease
+already forces, given a name, with the model stored on it because that is now the
+one place a model can be recorded before work starts, which is what stops it
+being set both on the ticket and on the agent.
 
-- *Yes:* every ready ticket gets a queued run showing which agent and model it
-  will use. `/runs` becomes a forward-looking queue. Cost: about 95 queued rows
-  today, most of which will be cancelled and re-planned as the policy or the
-  backlog changes, and the Runs page fills with things that have not happened.
-- *No:* a planned run exists only when you or a chat asks for one, or for the
-  microseconds before the sweep starts it. `/runs` stays a record of what
-  happened. Cost: you cannot see next week's routing without asking for it
-  ticket by ticket.
-
-Recommendation: **no, with one exception.** Plan the ticket the sweep would pick
-next, so there is always exactly one visible "up next" row. That gives the
-forward view at a cost of one row instead of ninety-five, and it is deletable
-without touching anything else if it turns out nobody looks at it.
+The user-facing benefit follows for free rather than justifying the work: exactly
+one "up next" row, showing which agent and model the next ticket will use, which
+you can change before it runs. Planning every ready ticket instead would create
+about 95 queued rows, most of them cancelled and re-planned as the backlog moves,
+and would turn a record of what happened into a list of things that have not.
 
 ---
 
