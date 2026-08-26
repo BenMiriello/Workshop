@@ -124,9 +124,15 @@ describe("buildPlaces", () => {
     expect(everyPath).not.toContain("/activity");
   });
 
-  it("does not offer two rows to one destination", () => {
+  it("offers /chats from the home nav and its own place, and nothing else twice", () => {
+    // The one intended duplicate: /chats is both the workshop nav's Chats row
+    // and the chats place's All chats page (operator, 2026-08-26 -- the dock
+    // tile alone left the home path with no way to the chat list). Every OTHER
+    // destination is still unique, so an accidental second row to one place is
+    // still caught.
     const everyPath = places.flatMap((p) => p.pages.map((pg) => pg.to));
-    expect(new Set(everyPath).size).toBe(everyPath.length);
+    const dupes = everyPath.filter((to, i) => everyPath.indexOf(to) !== i);
+    expect(dupes).toEqual(["/chats"]);
   });
 
   it("lands a place on its first page", () => {

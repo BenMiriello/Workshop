@@ -158,11 +158,18 @@ export function buildPlaces(
     Icon: icons.home,
     defaultColumnOpen: true,
     // ADR-008 order: use first, build second, workers third, config last. This
-    // is the live SectionNav list with Home swapped for Dashboard, and Chats
-    // removed because the dock owns it now (two rows to one destination is the
-    // duplication the operator already called out about search).
+    // is the live SectionNav list with Home swapped for Dashboard.
+    //
+    // Chats sits second, in the workshop nav, restored 2026-08-26 by operator
+    // direction: he was in the home/workshop path and there was no way to the
+    // chats list from it. It had been dropped as "two rows to one destination"
+    // (the dock rail tile also points at /chats), but the rail tile is a 60px
+    // glyph that is easy to miss and absent from the mobile bars, so the home
+    // nav had no chats entry at all. The dock tile stays; this is the named,
+    // labelled way in from the scope the operator actually browses.
     pages: [
       { id: "dashboard", label: "Dashboard", to: "/", Icon: icons.dashboard, end: true },
+      { id: "chats", label: "Chats", to: "/chats", Icon: icons.chats },
       { id: "projects", label: "Projects", to: "/projects", Icon: icons.projects },
       { id: "apps", label: "Apps", to: "/apps", Icon: icons.apps },
       { id: "agents", label: "Agents", to: "/agents", Icon: icons.agents },
