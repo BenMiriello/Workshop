@@ -173,6 +173,21 @@ export function useThreadLog({
   // today's cold-load behaviour untouched.
   const pendingCatchUpRef = useRef<string | null>(null);
 
+  // THE FRESH READ IS SINGLE-FLIGHT. `sync` asks from zero whenever the store's
+  // threadId has not caught up to the thread being synced (see `after`, below),
+  // which is true for every sync racing a thread switch's reset commit. On a
+  // new-chat send four of them land inside ~150ms -- the thread-change cold
+  // load, the thread stream connecting, the turn stream connecting, the draft
+  // write -- and each one re-read the ENTIRE tail of the same thread and
+  // dispatched the same page again. They agree, so the answers were identical
+  // and the extra three were pure waste: four full-tail reads and four store
+  // commits where one would do. A second fresh read for a thread already being
+  // read joins the first instead of issuing its own. Only fresh (`after === 0`)
+  // reads are shared: an incremental cursor sync is how a caller pulls its own
+  // write back, and joining one of those could hand it a page fetched before
+  // the write it is waiting on.
+  const freshReadRef = useRef<{ id: string; p: Promise<void> } | null>(null);
+
   // LOADING OLDER: a page further into this thread's past, on demand. Kept
   // out of `stateRef`/the reducer's own bookkeeping on purpose — whether a
   // fetch is IN FLIGHT is this hook's business, not the transcript's, and a
@@ -210,7 +225,7 @@ export function useThreadLog({
     }
   }, []);
 
-  const sync = useCallback(async () => {
+  const runSync = useCallback(async () => {
     const id = threadIdRef.current;
     if (!id) return;
     // A BRANCH CHANGE IS A RE-READ FROM ZERO, not a merge. This is a cursor
@@ -322,6 +337,28 @@ export function useThreadLog({
       }
     }
   }, []);
+
+  // The single-flight wrapper. See `freshReadRef`.
+  const sync = useCallback(async () => {
+    const id = threadIdRef.current;
+    if (!id) return;
+    // A pending branch change must never join someone else's read: the flag is
+    // consumed inside `runSync` and is what turns the re-read into a RESET, so
+    // a joined call would drop the reset and merge a superseded branch's
+    // messages onto the current line.
+    const mustRunAlone = branchRef.current.pending;
+    const isFresh = !mustRunAlone && stateRef.current.threadId !== id;
+    if (isFresh) {
+      const inFlight = freshReadRef.current;
+      if (inFlight && inFlight.id === id) return inFlight.p;
+      const p = runSync().finally(() => {
+        if (freshReadRef.current?.p === p) freshReadRef.current = null;
+      });
+      freshReadRef.current = { id, p };
+      return p;
+    }
+    return runSync();
+  }, [runSync]);
 
   // Opening a thread: drop everything and read the log from the start — UNLESS
   // this tab already holds a finished snapshot of this exact thread, in which
