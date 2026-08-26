@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { usePoll, shortHttpError, Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill, Badge, Modal, Skeleton, type StatusKind } from "@workshop/ui";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { shortHttpError, Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill, Badge, Modal, Skeleton, type StatusKind } from "@workshop/ui";
 import { Link } from "react-router-dom";
 import { Boxes, ExternalLink, RefreshCw, Play, Square, ScrollText, RotateCw, Eye, TriangleAlert } from "lucide-react";
+
+import { appWorkInFlight, type AppStatus, type Service } from "../lib/appServices";
 
 // Run: the single place a project becomes a running thing on this host. Drives
 // the backend app_runner — one app made of N services (each its own process +
@@ -15,31 +18,6 @@ import { Boxes, ExternalLink, RefreshCw, Play, Square, ScrollText, RotateCw, Eye
 // concept and lives in DeploysPanel — running the app locally IS NOT the same
 // thing as shipping it to a hosted origin.
 
-type Service = {
-  name: string;
-  status: "pending" | "building" | "starting" | "running" | "failed" | "stopped" | "disabled" | "crashlooping";
-  pid: number | null;
-  port: number | null;
-  url: string | null;
-  expose: boolean;
-  healthy: boolean | null;
-  error: string | null;
-  // Crash restarts only, counted by docker. An operator pressing Restart never
-  // moves this, which is the whole point of it.
-  restarts: number;
-  oom_killed?: boolean;
-  exit_code?: number | null;
-  started_at?: string | null;
-};
-type Dep = { name: string; ok: boolean; error?: string | null };
-type AppStatus = {
-  slug: string;
-  phase: string;
-  desired: string;
-  manifest_detected?: boolean;
-  services: Service[];
-  deps: Dep[];
-};
 type ManifestService = {
   name: string; cwd: string; build: string | null; start: string;
   enabled: boolean; disabled_reason?: string | null; expose: boolean; depends_on: string[];
@@ -52,6 +30,11 @@ type Manifest = {
   services: ManifestService[];
   deps: { name: string }[];
 };
+
+// Poll fast while anything is in flight (starting/building) so the live state
+// machine is reflected without a manual refresh, slowly once it has settled.
+const INFLIGHT_MS = 2000;
+const IDLE_MS = 6000;
 
 const SVC_KIND: Record<Service["status"], StatusKind> = {
   running: "ok",
@@ -88,19 +71,46 @@ function isDockerAccessError(msg?: string | null): boolean {
 
 export default function AppServicesPanel({ slug }: { slug: string }) {
   const [manifest, setManifest] = useState<Manifest | null>(null);
-  const [status, setStatus] = useState<AppStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [logsFor, setLogsFor] = useState<string | null>(null);
   const [logText, setLogText] = useState("");
 
-  const loadStatus = useCallback(async () => {
-    try {
+  const qc = useQueryClient();
+  // Memoised because `act` below writes this exact entry, and a fresh array
+  // every render would rebuild that path every render.
+  const statusKey = useMemo(() => ["apps", slug, "run", "status"], [slug]);
+
+  // A DROPPED STATUS READ SAYS NOTHING AND KEEPS THE LAST GOOD PANEL, which is
+  // what the `if (r.ok)` and the swallowed `catch` this replaces did: this read
+  // has no error surface at all, only the next tick.
+  //
+  // ONE READ WHERE THERE WERE TWO ON MOUNT. The mount effect below called
+  // `loadStatus` AND the poll ran immediately, so the panel opened with two
+  // identical requests in flight; a query is one. The old poll also re-ran its
+  // effect whenever the interval changed, firing an extra immediate read on
+  // every crossing of the in-flight boundary. Neither duplicate survives, and
+  // neither was ever wanted.
+  const statusQuery = useQuery({
+    queryKey: statusKey,
+    queryFn: async (): Promise<AppStatus> => {
       const r = await fetch(`/api/base-apps/run/${slug}/status`);
-      if (r.ok) setStatus(await r.json());
-    } catch { /* transient */ }
-  }, [slug]);
+      if (!r.ok) throw new Error(String(r.status));
+      return (await r.json()) as AppStatus;
+    },
+    // The cadence follows the data, read off the payload rather than off a
+    // render, through the same predicate the panel renders from.
+    refetchInterval: (query) => (appWorkInFlight(query.state.data) ? INFLIGHT_MS : IDLE_MS),
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read `usePoll` did on the way back from hidden.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
+  const status = statusQuery.data ?? null;
+  const { refetch: refetchStatus } = statusQuery;
+  const loadStatus = useCallback(async () => { await refetchStatus(); }, [refetchStatus]);
 
   const loadManifest = useCallback(async () => {
     setLoading(true);
@@ -116,16 +126,12 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
     }
   }, [slug]);
 
-  useEffect(() => { loadManifest(); loadStatus(); }, [loadManifest, loadStatus]);
+  // The manifest is read once per slug and never polled. The status leg came
+  // out of this effect in the same edit that made it a query, because a query
+  // IS that mount read and leaving the call here would be a duplicate.
+  useEffect(() => { loadManifest(); }, [loadManifest]);
 
-  // Poll while anything is in flight (starting/building) so the live state
-  // machine is reflected without manual refresh.
-  const inFlight = useMemo(
-    () => status?.phase === "starting" ||
-      (status?.services || []).some((s) => s.status === "building" || s.status === "starting"),
-    [status],
-  );
-  usePoll(loadStatus, inFlight ? 2000 : 6000);
+  const inFlight = appWorkInFlight(status);
 
   const act = useCallback(async (path: string) => {
     setBusy(true);
@@ -133,7 +139,9 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
     try {
       const r = await fetch(`/api/base-apps/run/${slug}/${path}`, { method: "POST" });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setStatus(await r.json());
+      // The route answers with the new state, so the panel takes it directly
+      // instead of re-reading, exactly as `setStatus` did.
+      qc.setQueryData<AppStatus>(statusKey, (await r.json()) as AppStatus);
       // A start kicks off background work; nudge a couple of refreshes.
       setTimeout(loadStatus, 1500);
     } catch (e) {
@@ -141,7 +149,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
     } finally {
       setBusy(false);
     }
-  }, [slug, loadStatus]);
+  }, [slug, loadStatus, qc, statusKey]);
 
   const openLogs = useCallback(async (service: string) => {
     setLogsFor(service);

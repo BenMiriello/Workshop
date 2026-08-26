@@ -1,5 +1,5 @@
 {
   "_comment": "Ratchet baseline for check_frontend_state.py. These counts may only go DOWN. A new server read in frontend/src goes through the query layer at frontend/src/lib/queryClient.ts; `usePoll` and hand-rolled polling setInterval timers are the LEGACY mechanisms and both are on their way to zero. usepoll_sites counts call sites under frontend/src only (the hook's definition in packages/ui/src/usePoll.ts is a separate, breaking, MINOR-bump ticket). raw_poll_intervals counts setInterval timers that reach the network -- the non-poll timers (clock ticks, audio meters, debounces, watchdogs) are exempted one by one, with a reason each, in _TIMER_ALLOW inside the checker.",
-  "usepoll_sites": 32,
+  "usepoll_sites": 24,
   "raw_poll_intervals": 4
 }

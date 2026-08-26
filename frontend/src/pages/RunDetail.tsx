@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { usePoll, StatusKind, shortHttpError, timeAbsolute, Button, Card, PageHeader, Row, Stack, SectionLabel, Skeleton, StateBlock, StatusPill, StatusDot, Notice } from "@workshop/ui";
+import { useCallback, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { StatusKind, shortHttpError, timeAbsolute, Button, Card, PageHeader, Row, Stack, SectionLabel, Skeleton, StateBlock, StatusPill, StatusDot, Notice } from "@workshop/ui";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft, HelpCircle, ListChecks } from "lucide-react";
 
@@ -22,6 +23,10 @@ import { ticketHref, runTicketScope } from "../lib/tasks";
 // actionable section at the top (approve / send back / unblock / cancel) so the
 // operator can see WHAT is waited on, WHERE it ran, and resolve it in place -
 // not just read a raw JSON blob.
+
+// Five seconds is what every live surface in the app uses while something is
+// actually running.
+const POLL_MS = 5000;
 
 type WaitingTask = {
   id: string;
@@ -197,55 +202,100 @@ function ReceiptView({ receipt }: { receipt: Receipt }) {
 export default function JobDetail() {
   const { id = "" } = useParams();
   const nav = useNavigate();
-  const [job, setJob] = useState<Job | null>(null);
-  const [children, setChildren] = useState<Job[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [notFound, setNotFound] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState<string | null>(null); // "<taskId>:<action>" in flight
   const [actErr, setActErr] = useState<string | null>(null);
-
-  // `quiet` is the polled read: it must not flash the Refresh button's spinner
-  // or blank the page every five seconds.
-  const refresh = useCallback(async (quiet = false) => {
-    if (!quiet) setLoading(true);
-    setErr(null);
-    setNotFound(false);
-    try {
-      const r = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
-      if (r.status === 404) {
-        setNotFound(true);
-        setJob(null);
-        return;
-      }
-      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setJob(await r.json());
-      // A coordinator sweep has child Jobs (one per task it ran); fetch them so
-      // the sweep detail can nest them. A leaf run simply returns none.
-      try {
-        const cr = await fetch(`/api/jobs?parent_id=${encodeURIComponent(id)}&limit=100`);
-        setChildren(cr.ok ? ((await cr.json()).jobs ?? []) : []);
-      } catch {
-        setChildren([]);
-      }
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (!quiet) setLoading(false);
-    }
-  }, [id]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  // THE MANUAL READ CARRIES ITS OWN FLAG, and that is the whole of what the old
+  // `quiet` parameter did. One function served both the button and the poll and
+  // took a boolean saying which it was, because the polled read must not flash
+  // the Refresh spinner every five seconds. `isFetching` cannot tell them
+  // apart, so the button says so itself; the mount read is `isLoading`, which
+  // is the one automatic read that DID show the spinner.
+  const [manual, setManual] = useState(false);
 
   // A run is a background process: it changes without us acting. This page used
   // to read only on mount and on the manual button, so a run opened while in
   // flight said "running" and "Ended: running" forever, however long ago it had
   // actually finished. Poll while it can still move, and stop the moment it
-  // cannot (jobIsLive), so a finished run costs nothing.
+  // cannot (jobIsLive), so a finished run costs nothing. Read off the cached
+  // payload rather than off a render, so the cadence and the page cannot
+  // describe different runs.
+  const jobQuery = useQuery({
+    queryKey: ["jobs", "detail", id],
+    queryFn: async (): Promise<Job | null> => {
+      const r = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
+      // A PRUNED RUN IS AN ANSWER, not a failure: it gets its own region, so it
+      // must not land on the error path.
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      return (await r.json()) as Job;
+    },
+    refetchInterval: (query) => (jobIsLive(query.state.data?.status) ? POLL_MS : false),
+    // `usePoll` runs a catch-up read on the way back from hidden, but only
+    // WHILE ENABLED, and this poll was enabled only for a live run. A settled
+    // run did not re-read on focus and must not start now. Read off the cached
+    // status, so a run that finished while the tab was away is still caught.
+    refetchOnWindowFocus: (query) => jobIsLive(query.state.data?.status),
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read above.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
+
+  const job = jobQuery.data ?? null;
   const live = jobIsLive(job?.status);
-  usePoll(() => { void refresh(true); }, 5000, { enabled: live, immediate: false });
+
+  // A coordinator sweep has child Jobs (one per task it ran); a leaf run simply
+  // returns none. SEQUENTIAL AND DEPENDENT in the code this replaces: the child
+  // list was only ever read after the run itself came back OK, so a 404 or a
+  // failed read left the previous children alone rather than clearing them.
+  // `enabled` is that dependency; a disabled query keeps its cached list, which
+  // is the same thing the early `return` did.
+  //
+  // WHAT CHANGES: two queries on one cadence are scheduled independently, so
+  // the pair is no longer strictly ordered within a tick. Nothing reads one
+  // against the other -- the children render as their own section -- so the
+  // page is the same; the request pattern is two timers instead of one.
+  const childrenQuery = useQuery({
+    queryKey: ["jobs", "children", id],
+    queryFn: async (): Promise<Job[]> => {
+      // A failed child read was swallowed into an empty list, never onto the
+      // page's error region. Unchanged.
+      try {
+        const cr = await fetch(`/api/jobs?parent_id=${encodeURIComponent(id)}&limit=100`);
+        return cr.ok ? (((await cr.json()).jobs ?? []) as Job[]) : [];
+      } catch {
+        return [];
+      }
+    },
+    enabled: jobQuery.isSuccess && jobQuery.data !== null,
+    refetchInterval: live ? POLL_MS : false,
+    refetchOnWindowFocus: live,
+    staleTime: 0,
+    retry: false,
+  });
+  const children = childrenQuery.data ?? null;
+
+  // Cleared at the START of the next attempt, which is what `setErr(null)` and
+  // `setNotFound(false)` at the top of the old `refresh` did, for the poll as
+  // well as for the button.
+  const err = !jobQuery.isFetching && jobQuery.isError
+    ? (jobQuery.error instanceof Error ? jobQuery.error.message : String(jobQuery.error))
+    : null;
+  const notFound = !jobQuery.isFetching && jobQuery.isSuccess && jobQuery.data === null;
+  const loading = manual || jobQuery.isLoading;
+
+  const { refetch: refetchJob } = jobQuery;
+  const { refetch: refetchChildren } = childrenQuery;
+  const refresh = useCallback(async () => {
+    setManual(true);
+    try {
+      await refetchJob();
+      await refetchChildren();
+    } finally {
+      setManual(false);
+    }
+  }, [refetchJob, refetchChildren]);
 
   const act = useCallback(
     async (taskId: string, action: string) => {

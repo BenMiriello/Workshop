@@ -15,8 +15,9 @@
 // a rail row, and comments became a real activity thread rather than a stack of
 // rows above a textarea.
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PRIORITY_BANDS, bandOf, floorOf, priorityLabel } from "../lib/priority";
-import { usePoll, formatDuration, timeAbsolute, timeAgo, shortHttpError, Button, Card, Row, Stack, PageHeader, DetailLayout, SectionLabel, StateBlock, Notice, StatusDot, StatusPill, Skeleton, ConfirmDialog, Textarea, Menu, MenuItem, Tag, catFor } from "@workshop/ui";
+import { formatDuration, timeAbsolute, timeAgo, shortHttpError, Button, Card, Row, Stack, PageHeader, DetailLayout, SectionLabel, StateBlock, Notice, StatusDot, StatusPill, Skeleton, ConfirmDialog, Textarea, Menu, MenuItem, Tag, catFor } from "@workshop/ui";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ChevronLeft, ChevronDown, RefreshCw, Trash2, ExternalLink, MoreHorizontal,
@@ -45,6 +46,10 @@ import {
 // A ticket can only be launched from `todo`.
 const RUNNABLE_STATUSES = new Set(["todo"]);
 
+// Five seconds is what every live surface in the app uses while a run is in
+// flight. A settled ticket is not polled at all.
+const POLL_MS = 5000;
+
 type JobRec = {
   id: string;
   status: string;
@@ -64,6 +69,15 @@ type JobRec = {
   // narrowed away by a hand-written shape. See routes/api_models.JobEvidence.
   evidence?: JobEvidence | null;
 };
+
+// The two reads the page draws from, as one value. See the query for why they
+// are fetched together rather than as two queries.
+type TicketRead = { task: Task; runs: JobRec[] };
+
+/** The run this ticket has in flight, if it has one. */
+function liveRun(runs: JobRec[] | null | undefined): JobRec | undefined {
+  return (runs ?? []).find((r) => jobIsLive(r.status));
+}
 
 // The run row's own link. `.ws-runrow` still lays the row out; the link inside
 // it takes the row's ink, no underline, and the growth that used to belong to
@@ -110,14 +124,10 @@ export default function TicketDetail() {
   const scope = decodeURIComponent(scopeRaw);
   const nav = useNavigate();
 
-  const [task, setTask] = useState<Task | null>(null);
-  const [runs, setRuns] = useState<JobRec[] | null>(null);
   // The change this ticket's work is on, if it is on one. Fetched separately
   // and BEST EFFORT: /changes needs the relational store and answers 503
   // without it, and a ticket page must still render on a file-backed scope.
   const [change, setChange] = useState<Change | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [fieldErr, setFieldErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -133,24 +143,71 @@ export default function TicketDetail() {
   const say = useCallback((text: string) => { setBanner(text); setBannerErr(false); }, []);
   const fail = useCallback((text: string) => { setBanner(text); setBannerErr(true); }, []);
 
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
+  const qc = useQueryClient();
+  // Memoised because every write below patches this exact entry, and a fresh
+  // array every render would rebuild that path every render.
+  const detailKey = useMemo(() => ["tasks", scope, id, "detail"], [scope, id]);
+
+  // ONE QUERY OVER TWO CALLS, not two queries, because the read this replaces
+  // was already all-or-nothing: `Promise.all` plus a throw on either response
+  // meant neither the ticket nor its runs was written when either failed, and
+  // the page showed one error over the last good copy of both. The failure
+  // granularity is the behaviour, so it is preserved.
+  //
+  // THE CADENCE IS SELF-REFERENTIAL and stays that way. `liveRunId` is derived
+  // from `runs`, which is this read's OWN output, so as the poll's `enabled` it
+  // could only ever turn itself off: nothing else re-reads, so once the last
+  // run settled the page stopped polling until a write path or the operator
+  // asked again. That is exactly what a data-driven `refetchInterval` does,
+  // with the query mounted throughout, read off the cached payload rather than
+  // off a render.
+  const q = useQuery({
+    queryKey: detailKey,
+    queryFn: async (): Promise<TicketRead> => {
       const [tr, jr] = await Promise.all([
         fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}`),
         fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/jobs`),
       ]);
       if (!tr.ok) throw new Error(`ticket: ${shortHttpError(tr.status, tr.statusText, await tr.text().catch(() => ""))}`);
       if (!jr.ok) throw new Error(`runs: ${shortHttpError(jr.status, jr.statusText, await jr.text().catch(() => ""))}`);
-      setTask(await tr.json());
-      const j = await jr.json();
-      setRuns(j.jobs || []);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [scope, id]);
+      const task = (await tr.json()) as Task;
+      const runs = (((await jr.json()).jobs || []) as JobRec[]);
+      return { task, runs };
+    },
+    refetchInterval: (query) => (liveRun(query.state.data?.runs) ? POLL_MS : false),
+    // `usePoll` runs a catch-up read on the way back from hidden, but only
+    // WHILE ENABLED, and this poll was enabled only while a run was in flight.
+    // A settled ticket did not re-read on focus and must not start now. Same
+    // predicate as the cadence, off the same payload.
+    refetchOnWindowFocus: (query) => !!liveRun(query.state.data?.runs),
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read above.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
+
+  const task = q.data?.task ?? null;
+  const runs = q.data?.runs ?? null;
+  // Nothing has read yet, which is what `useState(true)` plus the `finally`
+  // meant: a FAILED read counts as read.
+  const loading = q.isPending;
+  // Cleared at the START of the next attempt, which is what the `setErr(null)`
+  // at the top of the old `load` did, so pressing Retry drops the error region
+  // rather than holding it over the read that is answering it.
+  const err = !q.isFetching && q.isError
+    ? (q.error instanceof Error ? q.error.message : String(q.error))
+    : null;
+  const { refetch } = q;
+  // Returns the promise: every write path awaited the re-read before dropping
+  // out of its busy state.
+  const load = useCallback(async () => { await refetch(); }, [refetch]);
+  // One writer for the cached ticket, used by every route that answers with the
+  // updated record instead of making the page re-read. Keeps the runs leg as it
+  // was, exactly as `setTask` did.
+  const putTask = useCallback((next: Task) => {
+    qc.setQueryData<TicketRead>(detailKey, (v) => (v ? { ...v, task: next } : v));
+  }, [qc, detailKey]);
 
   const loadChange = useCallback(async () => {
     try {
@@ -165,7 +222,9 @@ export default function TicketDetail() {
     }
   }, [id]);
 
-  useEffect(() => { load(); }, [load]);
+  // The mount read for the ticket IS the query above; the effect that used to
+  // do it went with the poll's `immediate: false`. The change lookup is a
+  // separate, unpolled, best-effort read and keeps its own.
   useEffect(() => { void loadChange(); }, [loadChange]);
 
   // ONE writer for every field on this page. It sends exactly the keys it is
@@ -183,7 +242,7 @@ export default function TicketDetail() {
         body: JSON.stringify(fields),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setTask(await r.json());
+      putTask((await r.json()) as Task);
       return true;
     } catch (e) {
       // At the field, not as a page banner: the ticket is right there, so a
@@ -193,7 +252,7 @@ export default function TicketDetail() {
     } finally {
       setSaving(false);
     }
-  }, [scope, id]);
+  }, [scope, id, putTask]);
 
   const approve = useCallback(async () => {
     setApproving(true);
@@ -318,14 +377,14 @@ export default function TicketDetail() {
         body: JSON.stringify({ text }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      setTask(await r.json());
+      putTask((await r.json()) as Task);
       setCommentDraft("");
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e));
     } finally {
       setCommentBusy(false);
     }
-  }, [scope, id, commentDraft, fail]);
+  }, [scope, id, commentDraft, fail, putTask]);
 
   const links = task?.links;
   const dependsOn = links?.depends_on ?? [];
@@ -345,8 +404,7 @@ export default function TicketDetail() {
   // A run this ticket started is a background process. The ticket record does
   // not move when the run opens, so without this the status still reads "todo"
   // after a successful launch. Say a run is in flight, and poll until it is not.
-  const liveRunId = (runs || []).find((r) => jobIsLive(r.status))?.id ?? null;
-  usePoll(load, 5000, { enabled: !!liveRunId, immediate: false });
+  const liveRunId = liveRun(runs)?.id ?? null;
 
   const statusRunnable = RUNNABLE_STATUSES.has(task?.status ?? "");
   const stillOpen = !["done", "cancelled", "parked"].includes(task?.status ?? "");

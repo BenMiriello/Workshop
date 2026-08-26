@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
-import { usePoll, timeAbsolute, shortHttpError, Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill, Skeleton, Input, Field, ActionBar, Tag, Segmented, catFor, useEditMode, type StatusKind, type SegmentedOption } from "@workshop/ui";
+import { useQuery } from "@tanstack/react-query";
+import { timeAbsolute, shortHttpError, Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill, Skeleton, Input, Field, ActionBar, Tag, Segmented, catFor, useEditMode, type StatusKind, type SegmentedOption } from "@workshop/ui";
 import {
   Repeat, Play, RefreshCw, X, Clock, Zap, RotateCw,
   ChevronDown, ChevronRight, HelpCircle, SlidersHorizontal, Compass,
@@ -165,24 +166,32 @@ function triggerSummary(t: Trigger): string {
 
 // ---- Component -------------------------------------------------------------
 
+// A sweep in flight is the only time any of this moves fast enough to be worth
+// two and a half seconds; an idle project is read on the same fifteen-second
+// cadence as every other settled surface.
+const RUNNING_MS = 2500;
+const IDLE_MS = 15000;
+
 export default function AutonomyPanel({ slug }: { slug: string }) {
   const getUrl = `/api/projects/${encodeURIComponent(slug)}/autonomy`;
   const putUrl = getUrl;
   const runUrl = `/api/projects/${encodeURIComponent(slug)}/autonomy/run`;
 
-  const [cfg, setCfg] = useState<Autonomy | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
+  const cfgQuery = useQuery({
+    queryKey: ["projects", slug, "autonomy"],
+    queryFn: async (): Promise<Autonomy> => {
       const r = await fetch(getUrl);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const raw = await r.json();
-      const cfgNext: Autonomy = {
+      // Normalising INSIDE the read is what lets the cadence below read
+      // `running` off the cached payload: the interval callback is handed the
+      // query's own state, not a render, so there is no way for the two to
+      // describe different sweeps.
+      return {
         autonomy: isPreset(raw.autonomy) ? raw.autonomy : "off",
         latitude: isLatitude(raw.latitude) ? raw.latitude : null,
         limits: (raw.limits && typeof raw.limits === "object") ? raw.limits : {},
@@ -193,17 +202,31 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
         running: !!raw.running,
         last_run: raw.last_run ?? null,
       };
-      setCfg(cfgNext);
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [getUrl]);
+    },
+    // The cadence follows the data, which is the same rule the poll it replaces
+    // applied, read off the payload instead of off a render.
+    refetchInterval: (query) => (query.state.data?.running ? RUNNING_MS : IDLE_MS),
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read `usePoll` did on the way back from hidden.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
+
+  // A DROPPED READ LEAVES THE PANEL ON SCREEN: only a panel that has never read
+  // anything falls to the error region, and the next success clears the line.
+  // Both halves unchanged.
+  const cfg = cfgQuery.data ?? null;
+  const loading = cfgQuery.isPending;
+  const err = cfgQuery.isError
+    ? (cfgQuery.error instanceof Error ? cfgQuery.error.message : String(cfgQuery.error))
+    : null;
+  const { refetch } = cfgQuery;
+  // Returns the promise because both Save paths awaited the re-read before
+  // dropping out of their saving state.
+  const load = useCallback(async () => { await refetch(); }, [refetch]);
 
   const running = cfg?.running ?? false;
-  usePoll(load, running ? 2500 : 15000);
 
   // Primary preset config: the main control. Edit-mode + explicit Save.
   const primaryModel = useMemo<PrimaryDraft>(() => ({

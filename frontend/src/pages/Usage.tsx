@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
-import { usePoll, Button, Card, CardGrid, ChartFrame, ChartTooltip, CHART_SERIES, Field, Input, Modal, PageHeader, SectionLabel, Segmented, Skeleton, Stack, StackedBar, Stat, StateBlock, Table, TableScroll, NumCell, useEditMode, type SegmentedOption } from "@workshop/ui";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Card, CardGrid, ChartFrame, ChartTooltip, CHART_SERIES, Field, Input, Modal, PageHeader, SectionLabel, Segmented, Skeleton, Stack, StackedBar, Stat, StateBlock, Table, TableScroll, NumCell, useEditMode, type SegmentedOption } from "@workshop/ui";
 import { Link, useNavigate } from "react-router-dom";
 import { RefreshCw, Gauge, MessageSquare, SlidersHorizontal, FolderCog } from "lucide-react";
 import {
@@ -104,13 +105,14 @@ type Row = {
   share: number; // 0..1
 };
 
+// The three reads the page draws from, as one value. See the query below for
+// why they are fetched together rather than as three queries.
+type UsageRead = { status: UsageStatus; series: UsageSeries; chat: ChatSeries };
+
+const POLL_MS = 30_000;
+
 export default function Usage() {
   const nav = useNavigate();
-  const [data, setData] = useState<UsageStatus | null>(null);
-  const [series, setSeries] = useState<UsageSeries | null>(null);
-  const [chatSeries, setChatSeries] = useState<ChatSeries | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
   // View preference: By App (default) or By Chat. Commits on change.
   const [viewMode, setViewMode] = useState<ViewMode>("app");
@@ -119,26 +121,61 @@ export default function Usage() {
   // (design system: only config/money writes wait for an explicit Save).
   const [win, setWin] = useState<UsageWindow>("5h");
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      const [status, ts, chatTs] = await Promise.all([
+  const qc = useQueryClient();
+  // Memoised because the budget Save below writes this exact entry, and a fresh
+  // array every render would rebuild that path every render.
+  const usageKey = useMemo(() => ["usage", "page", win], [win]);
+
+  // ONE QUERY OVER THREE CALLS, not three queries, because the read this
+  // replaces was already all-or-nothing: `Promise.all` rejects on the first
+  // failure, so none of the three `useState`s was written and the page showed
+  // one error over the last good copy of all three. Three keys would fail
+  // independently, which is a nicer property and a DIFFERENT one: the headline
+  // could then be drawn from a window whose chart failed to load. The failure
+  // granularity is the behaviour, so it is preserved.
+  //
+  // THE WINDOW IS IN THE KEY, so the segmented control and the numbers cannot
+  // disagree about which lookback is on screen. TWO DELIBERATE CHANGES come
+  // with that, recorded because the rule for this migration was no behaviour
+  // changes. `usePoll` reads its callback through a ref, so moving the window
+  // did NOT re-read: the previous window's totals, chart and bar stayed under a
+  // control that had already moved, for up to thirty seconds. A key changes
+  // that to a read on the click. And because an unseen window has no cache
+  // entry, it draws the skeleton for that one request instead of the previous
+  // window's numbers; going back to a window looked at within `gcTime` paints
+  // instantly, which is new and strictly additive.
+  const q = useQuery({
+    queryKey: usageKey,
+    queryFn: async (): Promise<UsageRead> => {
+      const [status, series, chat] = await Promise.all([
         usageApi.status(win),
         usageApi.timeseries(win),
         usageApi.chatTimeseries(),
       ]);
-      setData(status);
-      setSeries(ts);
-      setChatSeries(chatTs);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [win]);
+      return { status, series, chat };
+    },
+    refetchInterval: POLL_MS,
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read `usePoll` did on the way back from hidden.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
 
-  usePoll(refresh, 30_000);
+  const data = q.data?.status ?? null;
+  const series = q.data?.series ?? null;
+  const chatSeries = q.data?.chat ?? null;
+  // The Refresh button spun on every tick, poll included, because the poll and
+  // the button called the same function. `isFetching` is that flag.
+  const loading = q.isFetching;
+  // Cleared at the START of the next attempt, which is what the `setErr(null)`
+  // at the top of the old `refresh` did, so a retry drops the error region
+  // rather than holding it under a spinner.
+  const err = !q.isFetching && q.isError
+    ? (q.error instanceof Error ? q.error.message : String(q.error))
+    : null;
+  const { refetch } = q;
+  const refresh = useCallback(() => { void refetch(); }, [refetch]);
 
   const rows = useMemo<Row[]>(() => {
     if (!data) return [];
@@ -159,7 +196,10 @@ export default function Usage() {
     { app_total: data?.app_total ?? 0 },
     async (draft) => {
       const next = await usageApi.setBudget({ app_total: Math.round(draft.app_total) });
-      setData(next);
+      // The route answers with the new status, so the page takes it directly
+      // instead of re-reading, exactly as `setData(next)` did. Only the status
+      // leg moves: the two series are unaffected by a budget write.
+      qc.setQueryData<UsageRead>(usageKey, (v) => (v ? { ...v, status: next } : v));
     },
   );
 

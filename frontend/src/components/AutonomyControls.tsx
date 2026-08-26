@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { usePoll, Button, ConfirmDialog, Notice, Select, StatusDot, Toggle, SettingsSection, SettingsRow as Row } from "@workshop/ui";
+import { useCallback, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Button, ConfirmDialog, Notice, Select, StatusDot, Toggle, SettingsSection, SettingsRow as Row } from "@workshop/ui";
 import { Power, Play, Square } from "lucide-react";
 import { describeAutonomy } from "../lib/autonomy";
 
@@ -48,70 +49,120 @@ type AutonomyStatus = {
 // it otherwise and an option that always fails is not an option.
 type RunTarget = { key: string; label: string; dir: string };
 
+const POLL_MS = 15_000;
+
+// Every read here owns its own cadence and none of them retries: that is what
+// the polls they replace did. Staleness would swallow the catch-up read
+// `usePoll` ran on the way back from hidden, and a retry would put extra
+// requests in front of a cadence that already re-reads on its own.
+const POLLED = { staleTime: 0, retry: false } as const;
+
 export default function AutonomyControls() {
-  const [auto, setAuto] = useState<AutonomyStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmStopAll, setConfirmStopAll] = useState(false);
   const [confirmStopRunner, setConfirmStopRunner] = useState(false);
-  const [targets, setTargets] = useState<RunTarget[] | null>(null);
-  const [targetsFailed, setTargetsFailed] = useState(false);
   const [scope, setScope] = useState("");
   const [runnerError, setRunnerError] = useState<string | null>(null);
-  // The runner's flock is per TREE, so "is one resident" is only answerable once
-  // a tree is named. Null until then, and the row says so rather than reporting
-  // the platform repo's lock as if it were the answer for every scope.
-  const [scopeRunning, setScopeRunning] = useState<boolean | null>(null);
+
+  // ONE POLL BECOMES TWO QUERIES. The tick this replaces issued both of the
+  // requests below, in order, but the two endpoints have DIFFERENT failure
+  // contracts -- a dropped status keeps the panel on screen and says nothing,
+  // a dropped target list says so in a line and offers Retry -- and one key
+  // cannot own two of those. So the request pattern changes from "one timer,
+  // two requests" to two independently scheduled queries on the same interval.
+  // Same endpoints, same cadence, same rendered output; what moved is that the
+  // two are no longer forced to arrive together.
+
+  // `/api/agents/autonomy/status`. A NON-OK RESPONSE IS AN ANSWER (`null`, and
+  // the rows fall back to their loading text); a fetch that never got a
+  // response at all keeps the last good copy, which is what the `catch { keep
+  // prior state }` this replaces did. Returning null for one and throwing for
+  // the other is what preserves that split.
+  //
+  // NOT the Agents page's `["agents", "autonomy", "status"]`, deliberately.
+  // That one is written as a queryFn that cannot reject, so for it every
+  // failure is `null`. Same URL, different answer to "what does a dropped read
+  // mean", and a key is the read INCLUDING that. The two never mount together
+  // (Settings and the roster are different routes), so nothing is read twice.
+  const statusQuery = useQuery({
+    queryKey: ["agents", "autonomy", "status", "controls"],
+    queryFn: async (): Promise<AutonomyStatus | null> => {
+      const r = await fetch("/api/agents/autonomy/status");
+      return r.ok ? ((await r.json()) as AutonomyStatus) : null;
+    },
+    refetchInterval: POLL_MS,
+    ...POLLED,
+  });
+  const auto = statusQuery.data ?? null;
+
+  const targetsQuery = useQuery({
+    queryKey: ["queue", "runner", "targets"],
+    queryFn: async (): Promise<RunTarget[]> => {
+      const r = await fetch("/api/queue/runner/targets");
+      if (!r.ok) throw new Error(String(r.status));
+      return ((await r.json()).targets || []) as RunTarget[];
+    },
+    refetchInterval: POLL_MS,
+    ...POLLED,
+  });
+  // A failed list keeps the last good options and says so beside the picker,
+  // and the next success clears the line. Unchanged in both halves.
+  const targets = targetsQuery.data ?? null;
+  const targetsFailed = targetsQuery.isError;
+
+  // Whether a worker is resident IN THE SELECTED TREE. Its own query because it
+  // depends on the picker, and because probing every registered tree on a 15s
+  // poll to answer a question about one of them is waste.
+  //
+  // THE TREE IS IN THE KEY, which is also what makes picking one answer now
+  // rather than in fifteen seconds: `usePoll` read its callback through a ref,
+  // so the picker needed a second effect to force that read and this replaces
+  // it. ONE DELIBERATE CHANGE comes with that: the moment between picking a
+  // tree and its answer arriving used to show the PREVIOUS tree's verdict, and
+  // keyed by tree it shows that tree's own last one instead -- "not running"
+  // for a tree never probed, "unknown" for one whose last probe failed -- until
+  // the new probe lands. One round trip either way.
+  const runnerQuery = useQuery({
+    queryKey: ["queue", "runner", scope],
+    queryFn: async (): Promise<{ running: boolean }> => {
+      const r = await fetch(`/api/queue/runner?dir=${encodeURIComponent(scope)}`);
+      if (!r.ok) throw new Error(String(r.status));
+      return { running: !!(await r.json()).running };
+    },
+    // The runner's flock is per TREE, so "is one resident" is only answerable
+    // once a tree is named. Nothing is probed until then, and the row says so
+    // rather than reporting the platform repo's lock as if it were the answer
+    // for every scope.
+    enabled: scope !== "",
+    refetchInterval: POLL_MS,
+    ...POLLED,
+  });
   // A FAILED PROBE IS NOT "NOT RUNNING". Both used to collapse into
   // `scopeRunning = null`, which renders the Start button, so a resident worker
   // whose probe merely failed offered no way to stop it, the dot painted
   // `stopped`, and the word beside it said `unknown`. Two answers to one
   // question, in one element, and no error on screen.
-  const [scopeProbeFailed, setScopeProbeFailed] = useState(false);
+  //
+  // A failed probe DROPS the last good verdict rather than keeping it, which is
+  // what `setScopeRunning(null)` in the old catch did: "a worker was resident
+  // fifteen seconds ago" is not an answer to "is one resident".
+  const scopeProbeFailed = runnerQuery.isError;
+  const scopeRunning = runnerQuery.isError ? null : (runnerQuery.data?.running ?? null);
 
+  const { refetch: refetchStatus } = statusQuery;
+  const { refetch: refetchTargets } = targetsQuery;
+  const { refetch: refetchRunner } = runnerQuery;
+  // The write paths and the Retry line both re-read BOTH of the split reads,
+  // exactly as the one `load` they call did.
   const load = useCallback(async () => {
-    try {
-      const a = await fetch("/api/agents/autonomy/status").then((r) => r.ok ? r.json() : null);
-      setAuto(a);
-    } catch {
-      // keep prior state
-    }
-    try {
-      const r = await fetch("/api/queue/runner/targets");
-      if (!r.ok) throw new Error(String(r.status));
-      const j = await r.json();
-      setTargets((j.targets || []) as RunTarget[]);
-      setTargetsFailed(false);
-    } catch {
-      setTargetsFailed(true);
-    }
-  }, []);
-
-  // Whether a worker is resident IN THE SELECTED TREE. Separate from `load`
-  // because it depends on the picker, and because probing every registered
-  // tree on a 15s poll to answer a question about one of them is waste.
+    await Promise.all([refetchStatus(), refetchTargets()]);
+  }, [refetchStatus, refetchTargets]);
   const loadScope = useCallback(async () => {
-    if (!scope) {
-      setScopeRunning(null);
-      setScopeProbeFailed(false);
-      return;
-    }
-    try {
-      const r = await fetch(`/api/queue/runner?dir=${encodeURIComponent(scope)}`);
-      if (!r.ok) throw new Error(String(r.status));
-      setScopeRunning(!!(await r.json()).running);
-      setScopeProbeFailed(false);
-    } catch {
-      setScopeRunning(null);
-      setScopeProbeFailed(true);
-    }
-  }, [scope]);
-
-  usePoll(load, 15_000);
-  usePoll(loadScope, 15_000);
-  // usePoll reads its callback through a ref, so it does not re-run when the
-  // picker moves. Picking a tree has to answer "is one running there" now, not
-  // in fifteen seconds.
-  useEffect(() => { void loadScope(); }, [loadScope]);
+    // `refetch` fires even on a disabled query, and the read this replaces did
+    // not probe at all without a tree.
+    if (!scope) return;
+    await refetchRunner();
+  }, [scope, refetchRunner]);
 
   const cronDisabled = !!auto?.cron_autonomy.disabled;
   const runnerRunning = !!auto?.queue_runner?.running;

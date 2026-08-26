@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { PRIORITY_BANDS, bandOf, floorOf, priorityLabel } from "../lib/priority";
-import { usePoll, shortHttpError, Button, Card, ConfirmDialog, Field, Input, Select, SectionLabel, Skeleton, StateBlock, StatusPill, Stack, Row, Textarea, Toggle } from "@workshop/ui";
+import { shortHttpError, Button, Card, ConfirmDialog, Field, Input, Select, SectionLabel, Skeleton, StateBlock, StatusPill, Stack, Row, Textarea, Toggle } from "@workshop/ui";
 import { RefreshCw, Plus, Pencil, Trash2, Check, X, CornerDownLeft, Compass } from "lucide-react";
 
 import {
@@ -105,6 +106,11 @@ function isOpenStatus(status?: string): boolean {
   return status !== "done" && status !== "cancelled";
 }
 
+/** Is a sweep actively working this scope right now. */
+function anyDoing(tasks: Task[] | undefined): boolean {
+  return (tasks ?? []).some((t) => t.status === "doing");
+}
+
 export default function TaskPanel({
   scope,
   assignee,
@@ -114,9 +120,6 @@ export default function TaskPanel({
   variant = "drawer",
   heading,
 }: TaskPanelProps) {
-  const [tasks, setTasks] = useState<Task[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [showDone, setShowDone] = useState(false);
 
   // Create
@@ -138,33 +141,70 @@ export default function TaskPanel({
 
   const endpoint = `/api/tasks?scope=${encodeURIComponent(scope)}`;
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setErr(null);
-    try {
+  // ONE READER FOR ONE READ. There were two: an effect that re-ran on scope and
+  // on `refetchKey`, and a poll gated on the effect's own output. The poll's
+  // `enabled` was `open && anyDoing`, and `anyDoing` came out of the list the
+  // poll itself wrote, so as `enabled` it would be self-referential: the query
+  // would unmount as the last ticket left `doing` and could never see the
+  // transition back. So THE QUERY STAYS MOUNTED AND ENABLED and only its
+  // CADENCE varies -- fast while a sweep is working this scope, not at all when
+  // it is not -- read off the cached payload rather than off a render.
+  //
+  // The read is NOT gated on `open`. A closed panel still reports its count up
+  // for the toolbar badge (`onCount`), which is why the effect this replaces
+  // ran regardless of the drawer; only the polling was ever gated, and that is
+  // what `open` still gates here.
+  //
+  // ONE DELIBERATE CHANGE, recorded because the rule for this migration was no
+  // behaviour changes: keyed by scope, the moment between naming a new scope
+  // and its tickets arriving is a skeleton rather than the previous scope's
+  // tickets. Returning to a scope inside `gcTime` now paints instantly, which
+  // is new and strictly additive.
+  const q = useQuery({
+    queryKey: ["tasks", scope],
+    queryFn: async (): Promise<Task[]> => {
       const r = await fetch(endpoint);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = (await r.json()) as { tasks?: Task[] };
-      setTasks(j.tasks ?? []);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [endpoint]);
+      return ((await r.json()) as { tasks?: Task[] }).tasks ?? [];
+    },
+    refetchInterval: (query) => (open && anyDoing(query.state.data) ? POLL_MS : false),
+    // `usePoll` runs a catch-up read on the way back from hidden, but only
+    // WHILE ENABLED, so an idle scope did not re-read on focus and must not
+    // start now. Same predicate as the cadence, off the same payload.
+    refetchOnWindowFocus: (query) => open && anyDoing(query.state.data),
+    // Owns its own cadence, so no staleness window over it: that would swallow
+    // the catch-up read above.
+    staleTime: 0,
+    // `usePoll` does not retry. A failed tick is followed by the next tick.
+    retry: false,
+  });
 
+  const tasks = q.data ?? null;
+  // The Refresh button spun on every read, poll included, because the poll and
+  // the button called the same function. `isFetching` is that flag.
+  const loading = q.isFetching;
+  // Cleared at the START of the next attempt, which is what the `setErr(null)`
+  // at the top of the old `load` did.
+  const err = !q.isFetching && q.isError
+    ? (q.error instanceof Error ? q.error.message : String(q.error))
+    : null;
+  const { refetch } = q;
+  // Returns the promise: every write path awaited the re-read before dropping
+  // out of its busy state.
+  const load = useCallback(async () => { await refetch(); }, [refetch]);
+
+  // `refetchKey` is the chat asking for THIS read again when a turn ends, so it
+  // is a trigger on the one query rather than a second reader. Not a key
+  // member: a new key is a new cache entry, which would empty the list to a
+  // skeleton on every bump instead of leaving it up while it re-reads. The ref
+  // is what keeps the first render from firing a duplicate of the query's own
+  // mount read.
+  const lastBump = useRef(refetchKey);
   useEffect(() => {
-    void load();
-  }, [load, refetchKey]);
-
-  // Poll while a sweep is actively working this scope (a task in `doing`), so the
-  // panel reflects a running run without the operator refreshing. Idle scopes do
-  // no polling. Refetch-on-demand (load) stays the primary path.
-  const anyDoing = (tasks ?? []).some((t) => t.status === "doing");
-  // `immediate: false` because `load` has already run for this scope via the
-  // effect above; re-running it the moment a task enters `doing` would be a
-  // duplicate fetch, not a catch-up.
-  usePoll(load, POLL_MS, { enabled: open && anyDoing, immediate: false });
+    if (lastBump.current === refetchKey) return;
+    lastBump.current = refetchKey;
+    void refetch();
+  }, [refetchKey, refetch]);
 
   const scoped = assignee != null ? (tasks ?? []).filter((t) => (t.assignee ?? "") === assignee) : (tasks ?? []);
   const openCount = scoped.filter((t) => isOpenStatus(t.status)).length;
