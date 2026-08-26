@@ -18,13 +18,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
 from routes.tasks_all import TaskReviewIn, _require_root, review_task
 from services import chat_work, inbox, task_decision, tasks
+from wsplatform.http import DEFAULT_PAGE, MAX_PAGE
 
 # Bare prefix, NOT "/api/inbox". The edge proxy strips the leading `/api`
 # before it reaches this app, so every router here mounts at its bare path
@@ -92,6 +93,41 @@ class InboxItem(BaseModel):
     answer: str | None = None
     snoozed_until: str | None = None
     review: dict[str, Any] | None = None
+
+
+class InboxList(BaseModel):
+    """Everything waiting on the operator, instance-wide.
+
+    `items` rather than an entity-named key, per ADR 0023 clause 1. `counts` is
+    per kind and rides along because a badge that says WHAT is waiting and one
+    that says how much are different messages, and splitting them over two
+    endpoints is what let three surfaces hold three copies of one ticket.
+    """
+
+    items: list[InboxItem]
+    counts: dict[str, int]
+    total: int
+
+
+@router.get("", response_model=InboxList, response_model_exclude_unset=True)
+async def list_inbox(limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE)):
+    """What wants the operator, across every scope.
+
+    THIS ROUTE EXISTED AND WAS DELETED, in the 2026-08-16 coherence sweep, for
+    having zero callers -- every producer raises an item by direct Python call
+    and the only reader was per-chat. It is back because it has a reader now:
+    the dashboard's "Needs you" card, which is instance-wide and cannot use the
+    per-chat read.
+
+    It is NOT a new assembler. `services.chat_work.needs_you` builds the same
+    column `thread_work` builds for one chat, off the same waiting predicate,
+    the same row builder and the same sort, so the card and the chat panel
+    cannot disagree about what is waiting or which question is first.
+
+    Pure read. Answering is unchanged and still goes to `resolve` below, which
+    is what keeps a dashboard card from becoming a third place to answer.
+    """
+    return chat_work.needs_you(limit=limit)
 
 
 @router.post("/{item_id}/snooze", response_model=InboxItem, response_model_exclude_unset=True)

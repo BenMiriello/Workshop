@@ -274,6 +274,22 @@ def _who_did_the_work(task: dict, run: dict | None, scope: str,
     return ""
 
 
+def is_waiting(task: dict) -> bool:
+    """Does this ticket want the operator.
+
+    THE definition, and the only one. A block the operator DISMISSED in review
+    stays a block; it just stops asking. That is the one thing that takes a
+    waiting ticket out of this column without changing its status.
+
+    Read by both scans: `thread_work` (one chat's column) and `needs_you` (the
+    whole instance). A predicate rather than a line inside each loop, because
+    two copies of this is how a badge and a list start disagreeing about what
+    is waiting.
+    """
+    return (task.get("status") in NEEDS_YOU_STATUSES
+            and not (task.get("awaiting") or {}).get("dismissed"))
+
+
 def _needs_you_row(task: dict, scope: str, names: dict[str, str]) -> dict:
     """One waiting ticket as a row of the "needs you" column."""
     run = _latest_run(task["id"], names)
@@ -299,6 +315,51 @@ def _needs_you_row(task: dict, scope: str, names: dict[str, str]) -> dict:
         "answer": None,
         "snoozed_until": None,
     }
+
+
+def needs_you(limit: int = 50) -> dict:
+    """What wants the operator, across the whole instance.
+
+    The same column `thread_work` builds for one chat, without the chat: every
+    scope's waiting tickets plus whatever an ambient agent raised, merged and
+    ordered by the same rule. The dashboard's "Needs you" card and the per-chat
+    panel therefore cannot disagree about what is waiting or about which
+    question is first.
+
+    NOT A SECOND SCAN OF A DIFFERENT THING. `is_waiting` is the definition,
+    `_needs_you_row` builds the row, `inbox.sort_items` orders it and the
+    ticket-shadow rule below is the same one the chat applies: a stored row that
+    NAMES a ticket does not surface, because the ticket is the fact and already
+    has a derived row. `run_inbox` was deleted for being the second answer to
+    one question; this must not become the third.
+
+    `counts` is per kind, the same shape `inbox.counts()` returns, so a badge
+    can say WHAT is waiting and not only how much.
+    """
+    from routes.jobs import _name_map
+    from routes.tasks_all import scope_roots
+
+    names = _name_map()
+    rows: list[dict] = []
+    for skey, root in scope_roots():
+        try:
+            recs = tasks.list_tasks(root)
+        except Exception as e:  # one unreadable store must not empty the column
+            log.warning("needs_you: cannot read tasks for %s: %s", skey, e)
+            continue
+        for r in recs:
+            if is_waiting(r):
+                rows.append(_needs_you_row(r, skey, names))
+
+    stored = [row for row in inbox.list_items(limit=limit)
+              if not row.get("ticket_id")]
+    items = inbox.sort_items(rows + stored)[:limit]
+
+    counts = {k: 0 for k in inbox.KINDS}
+    for it in items:
+        kind = it.get("kind", "notify")
+        counts[kind] = counts.get(kind, 0) + 1
+    return {"items": items, "counts": counts, "total": len(items)}
 
 
 def thread_work(thread_id: str) -> dict | None:
@@ -349,11 +410,7 @@ def thread_work(thread_id: str) -> dict | None:
                 active_in_scope += 1
                 if not filed_here:
                     scope_raw.append((r, skey))
-            # A block the operator DISMISSED in review stays a block; it just
-            # stops asking. That is the one thing that takes a waiting ticket
-            # out of this column without changing its status.
-            if r.get("status") in NEEDS_YOU_STATUSES \
-                    and not (r.get("awaiting") or {}).get("dismissed"):
+            if is_waiting(r):
                 waiting_raw.append((r, skey))
 
     lat_cache: dict[str, str | None] = {}

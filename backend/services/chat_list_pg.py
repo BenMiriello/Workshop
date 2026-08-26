@@ -50,7 +50,7 @@ def _shape_row(row: dict) -> dict:
     is what keeps the two paths from drifting apart the moment one of those
     rules changes.
     """
-    from services import scope_tree
+    from services import context_window, scope_tree
     from services.chat_store import DEFAULT_CHAT_MODE
 
     ck = row.get("context_key") or "general"
@@ -60,6 +60,10 @@ def _shape_row(row: dict) -> dict:
         title = row["seed_title"]
 
     state = row.get("state") or {}
+
+    stored_ctx = row.get("context_tokens")
+    ctx_tokens = (int(stored_ctx)
+                  if isinstance(stored_ctx, (int, float)) and stored_ctx > 0 else 0)
 
     return {
         "id": row["external_id"],
@@ -90,6 +94,17 @@ def _shape_row(row: dict) -> dict:
         "last_user_at": _iso(row.get("last_user_at")),
         "message_count": int(row.get("message_count") or 0),
         "last_message": (row.get("last_message") or "")[:120],
+        # HOW FULL THE WINDOW IS. `context_tokens` is a real mirrored column
+        # (db.models.App -> chat_thread), so this path has the same fact the
+        # file fold reads out of meta, and both resolve the denominator through
+        # the one table in `services/context_window`.
+        #
+        # `running` is NOT here: it is stamped over the finished rows by
+        # `chat_store.stamp_running`, so the two list sources cannot derive it
+        # differently. See that function.
+        "context_tokens": ctx_tokens or None,
+        "context_window": (context_window.window_for(row.get("model"), ctx_tokens)
+                           if ctx_tokens else None),
     }
 
 

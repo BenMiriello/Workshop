@@ -136,6 +136,17 @@ class ThreadSummary(BaseModel):
     last_user_at: str | None = None
     message_count: int
     last_message: str
+    # IS A TURN IN FLIGHT ON THIS THREAD. Derived per read, never stored:
+    # `chat_store.stamp_running` reads `meta.active_turn_id`, the same fact the
+    # open chat already renders through `chat_log.active_turn`. It is on the row
+    # so a surface showing many chats does not make one call per chat.
+    running: bool = False
+    # HOW FULL THE WINDOW IS: the size the model itself reported on the last
+    # turn, over the one table (`services/context_window`). Both null until a
+    # turn has completed -- a list row does not estimate, because the estimate
+    # needs the draft and only the composer has that.
+    context_tokens: int | None = None
+    context_window: int | None = None
 
 
 class StoredCardState(BaseModel):

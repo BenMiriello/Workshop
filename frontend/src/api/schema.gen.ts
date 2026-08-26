@@ -5939,6 +5939,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/inbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Inbox
+         * @description What wants the operator, across every scope.
+         *
+         *     THIS ROUTE EXISTED AND WAS DELETED, in the 2026-08-16 coherence sweep, for
+         *     having zero callers -- every producer raises an item by direct Python call
+         *     and the only reader was per-chat. It is back because it has a reader now:
+         *     the dashboard's "Needs you" card, which is instance-wide and cannot use the
+         *     per-chat read.
+         *
+         *     It is NOT a new assembler. `services.chat_work.needs_you` builds the same
+         *     column `thread_work` builds for one chat, off the same waiting predicate,
+         *     the same row builder and the same sort, so the card and the chat panel
+         *     cannot disagree about what is waiting or which question is first.
+         *
+         *     Pure read. Answering is unchanged and still goes to `resolve` below, which
+         *     is what keeps a dashboard card from becoming a third place to answer.
+         */
+        get: operations["list_inbox_inbox_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/inbox/{item_id}/resolve": {
         parameters: {
             query?: never;
@@ -12051,6 +12085,25 @@ export interface components {
             /** Url */
             url: string;
         };
+        /**
+         * InboxList
+         * @description Everything waiting on the operator, instance-wide.
+         *
+         *     `items` rather than an entity-named key, per ADR 0023 clause 1. `counts` is
+         *     per kind and rides along because a badge that says WHAT is waiting and one
+         *     that says how much are different messages, and splitting them over two
+         *     endpoints is what let three surfaces hold three copies of one ticket.
+         */
+        InboxList: {
+            /** Counts */
+            counts: {
+                [key: string]: number;
+            };
+            /** Items */
+            items: components["schemas"]["routes__inbox__InboxItem"][];
+            /** Total */
+            total: number;
+        };
         /** IndexStatus */
         IndexStatus: {
             /** By Kind */
@@ -16434,6 +16487,10 @@ export interface components {
             archived_at?: string | null;
             /** Context Key */
             context_key: string;
+            /** Context Tokens */
+            context_tokens?: number | null;
+            /** Context Window */
+            context_window?: number | null;
             /** Created At */
             created_at?: string | null;
             /** Id */
@@ -16448,6 +16505,11 @@ export interface components {
             mode: string;
             /** Model */
             model?: string | null;
+            /**
+             * Running
+             * @default false
+             */
+            running: boolean;
             /** Scope */
             scope: string;
             /** Title */
@@ -28184,6 +28246,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_inbox_inbox_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboxList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

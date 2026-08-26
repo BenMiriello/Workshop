@@ -30,6 +30,7 @@ from routes import chat_models as cm
 from routes import chat_resource_models as crm
 from routes.api_models import DeletedOut
 from services import chat_attachments
+from services import context_window
 from services import chat_branches
 from services import chat_drain
 from services import chat_events
@@ -338,11 +339,14 @@ async def threads(context: str | None = None, archived: bool = False):
     rule is settled. `db/chat_list_parity.py` is the check to re-run.
     """
     from services import chat_list_pg
+    rows: list[dict] | None = None
     if os.environ.get("WORKSHOP_CHAT_LIST_PG", "").strip().lower() in {"1", "true", "yes"}:
         rows = await chat_list_pg.list_threads(context_key=context, archived=archived)
-        if rows is not None:
-            return rows
-    return chat_store.list_threads(context_key=context, archived=archived)
+    if rows is None:
+        rows = chat_store.list_threads(context_key=context, archived=archived)
+    # WHICH OF THESE IS LIVE, stamped over whichever source answered so the two
+    # cannot disagree about it. See chat_store.stamp_running.
+    return chat_store.stamp_running(rows)
 
 
 # ---- Composer drafts -------------------------------------------------------
@@ -2381,55 +2385,13 @@ async def _land_clear_when_quiet(thread_id: str) -> None:
         thread_ops.end(thread_id)
 
 
-# Context window per model. This is the DENOMINATOR of the composer meter, and
-# it was wrong for every Claude model except Haiku: the table said 200k across
-# the board, but the whole 4.6-and-later generation is 1M. A real chat holding
-# 310,931 tokens therefore computed 155% and clamped to a permanent, confident
-# 100% — the meter read "full" on a chat using under a third of its window.
-#
-# Haiku 4.5 is the genuine 200k exception; do not "simplify" this table back to
-# one number.
-_CONTEXT_WINDOW = {
-    "claude-opus-5": 1_000_000,
-    "claude-opus-4-8": 1_000_000,
-    "claude-opus-4-7": 1_000_000,
-    "claude-opus-4-6": 1_000_000,
-    "claude-fable-5": 1_000_000,
-    "claude-sonnet-5": 1_000_000,
-    "claude-sonnet-4-6": 1_000_000,
-    "claude-haiku-4-5": 200_000,
-    "claude-haiku-4-5-20251001": 200_000,
-}
-# Smallest-to-largest, for the self-correction in `_window_for`.
-_WINDOW_TIERS = (200_000, 1_000_000)
-
-
+# The context-window table used to live here. It moved to
+# `services/context_window` when the chat LIST grew a per-thread reading (the
+# dashboard draws a ring per row and must not make one HTTP call per row): two
+# surfaces answering "how full is this chat" from two tables is a silent
+# disagreement, so there is one table and both read it.
 def _window_for(model: str | None, measured: int = 0) -> int:
-    """The model's context window, widened to fit what we've actually measured.
-
-    A hardcoded table goes stale every time a model ships, and the failure is
-    silent and one-directional: too small a window pins the meter at 100% and
-    the operator has no way to tell a wrong denominator from a genuinely full
-    chat. So the measurement gets a vote. If the model reports more context in
-    use than the table allows, the table is the thing that's wrong — step up to
-    the smallest tier that actually fits rather than rendering a confident lie.
-    """
-    if model and model in _CONTEXT_WINDOW:
-        window = _CONTEXT_WINDOW[model]
-    elif model and model.startswith("claude"):
-        # An unrecognized Claude model is far more likely to be newer than
-        # older, and every current family except Haiku is 1M.
-        window = 1_000_000
-    elif model:
-        window = 32_768  # local / Ollama
-    else:
-        window = 1_000_000
-    if measured > window:
-        for tier in _WINDOW_TIERS:
-            if tier > measured:
-                return tier
-        return measured  # past every known tier — report honestly, never clamp
-    return window
+    return context_window.window_for(model, measured)
 
 
 @router.get("/threads/{thread_id}/context", response_model=crm.ThreadContext, response_model_exclude_unset=True)
