@@ -89,6 +89,35 @@ describe("the whole sequence of a real turn", () => {
 
 
 // ---------------------------------------------------------------------------
+// GROUP OPEN/CLOSE RULE. A group is open only if it is currently running or the
+// operator opened it. This is what makes collapsed-by-default cost nothing: the
+// one group the turn is inside is always visible, and everything else is quiet
+// until you ask for it.
+// ---------------------------------------------------------------------------
+describe("group open/close: open only when running or operator-opened", () => {
+  it("a settled group is closed by default", () => {
+    expect(openInitial(false).open).toBe(false);
+  });
+
+  it("a currently-running group opens automatically", () => {
+    expect(openInitial(true).open).toBe(true);
+  });
+
+  it("closes when work leaves it, not before", () => {
+    const running = run(openInitial(false), [true]);
+    expect(running.open).toBe(true);
+    const done = run(running, [false]);
+    expect(done.open).toBe(false);
+  });
+
+  it("only the operator can open a settled group", () => {
+    const settled = run(openInitial(false), [true, false]);
+    expect(settled.open).toBe(false);
+    expect(onToggle(settled).open).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // WHAT ANIMATES. The rule is not who caused the change, it is whether the state
 // being left was ever on screen. See the note in disclosure.ts.
 // ---------------------------------------------------------------------------

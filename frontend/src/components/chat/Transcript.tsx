@@ -168,12 +168,12 @@ function useArrivedSteps(): (seg: ChatSegment) => boolean {
 // one thing this rule is for. (Zero occurrences in the operator's history —
 // every tool call in 449 stored replies has its result — so removing it changes
 // nothing that ever happened, and removes a way for it to.)
-function GroupChip({ item, nowMs, defaultOpen, arrived, current }: {
-  item: Extract<TurnItem, { t: "group" }>; nowMs: number; defaultOpen?: boolean;
+function GroupChip({ item, nowMs, arrived, current }: {
+  item: Extract<TurnItem, { t: "group" }>; nowMs: number;
   arrived?: (seg: ChatSegment) => boolean; current?: boolean;
 }) {
   const live = !!current;
-  const [disc, setDisc] = useState(() => openInitial(live, !!defaultOpen, Date.now()));
+  const [disc, setDisc] = useState(() => openInitial(live, false, Date.now()));
   const id = useId();
   useEffect(() => { setDisc((prev) => onLive(prev, live, Date.now())); }, [live]);
   // A GROUP OF ONE IS NOT A GROUP, ON SCREEN. It wears no header and no rail: it
@@ -428,10 +428,10 @@ export function AnswerBody({
 // This component is that clamp applied where it was missing. Interim text
 // rendered in full however long it was, the one place in the transcript where
 // "a message shortens itself" was not true.
-function WorkText({ text, cfg, expanded }: { text: string; cfg: ModelDisplay; expanded?: boolean }) {
+function WorkText({ text, cfg }: { text: string; cfg: ModelDisplay }) {
   return (
     <div className="chat-work__text">
-      <ElidedContent source={text} cfg={cfg} expanded={expanded} render={(s) => <Markdown>{s}</Markdown>} />
+      <ElidedContent source={text} cfg={cfg} render={(s) => <Markdown>{s}</Markdown>} />
     </div>
   );
 }
@@ -528,8 +528,8 @@ export type AnswerPermission = (a: {
 // approvals in it, and those are the things the reader wants to see. A second
 // truncation on top of the grouping would hide work for no gain and bring back
 // the pinning rules to stop it hiding the wrong work.
-function StepRun({ items, cfg, nowMs, openGroups, arrived, current, onAnswerPermission }: {
-  items: TurnItem[]; cfg: ModelDisplay; nowMs: number; openGroups?: boolean;
+function StepRun({ items, cfg, nowMs, arrived, current, onAnswerPermission }: {
+  items: TurnItem[]; cfg: ModelDisplay; nowMs: number;
   arrived?: (seg: ChatSegment) => boolean;
   // This run is the trailing one of a turn still streaming, so its LAST item is
   // the work in progress.
@@ -548,7 +548,7 @@ function StepRun({ items, cfg, nowMs, openGroups, arrived, current, onAnswerPerm
   const renderItem = (item: TurnItem, i: number) =>
     item.t === "group"
       ? <GroupChip key={item.steps[0]?.id || `g${i}`} item={item} nowMs={nowMs}
-                   defaultOpen={openGroups} arrived={arrived}
+                   arrived={arrived}
                    current={current && i === items.length - 1} />
       : item.seg.t === "agent"
         ? <AgentChip key={item.seg.id || `a${i}`} seg={item.seg} cfg={cfg} nowMs={nowMs} />
@@ -570,11 +570,10 @@ function StepRun({ items, cfg, nowMs, openGroups, arrived, current, onAnswerPerm
 // regression on a long thread: today an old turn shows exactly one line for all
 // of its work, and that is the right amount.
 function SettledWork({
-  work, cfg, nowMs, tookMs, streaming, expanded, onAnswerPermission,
+  work, cfg, nowMs, tookMs, streaming, onAnswerPermission,
 }: {
   work: ChatSegment[]; cfg: ModelDisplay; nowMs: number; tookMs?: number;
   streaming?: boolean;
-  expanded?: boolean;
   onAnswerPermission?: AnswerPermission;
 }) {
   // THE SAME PROVENANCE RULE THE GROUPS USE, because this is the same kind of
@@ -612,7 +611,7 @@ function SettledWork({
   // longer the latest: the buttons are the only thing that can restart it.
   const pending = work.some((s) => s.t === "approval" && s.state === "pending");
   if (pending) {
-    return <TurnWork work={work} cfg={cfg} nowMs={nowMs} expanded={expanded}
+    return <TurnWork work={work} cfg={cfg} nowMs={nowMs}
                      streaming={streaming} onAnswerPermission={onAnswerPermission} />;
   }
   return (
@@ -637,30 +636,17 @@ function SettledWork({
           summary
         )}
       </button>
-      {/* ONE CLICK, NOT TWO, BUT ONLY ON A SETTLED TURN. Opening a turn the
-          reader has already read opens its groups with it: the turn line
-          already says "12 steps", so a group inside it saying "6 steps" is the
-          same disclosure twice, and the reader who opened the turn has asked
-          for exactly what the group would hide. Operator-agreed, 2026-08-12.
-
-          `!streaming` is the 2026-08-17 correction. This used to be a bare
-          `openGroups`, so it was true WHILE THE TURN RAN too, and that forced
-          every group of a live turn open at mount. A group opened that way was
-          never opened by `live`, so `disclosure.onLive` had nothing to close --
-          it only moves a disclosure on a live TRANSITION -- and the whole run
-          of them stayed open behind the turn as it went. Only the trailing
-          group ever closed itself, which is the "they don't collapse when the
-          group is done" report.
-
-          A live turn's groups now manage themselves: `current` opens the one
-          holding the turn's position and closes it the moment anything follows
-          it, which is the earliest point the wire can say that group is
-          finished. Nothing is lost for the settled case, because `Reveal`
-          unmounts its children when it closes, so the groups of a turn watched
-          live are remounted from this flag the next time it is opened. */}
+      {/* OPENING THE TURN DOES NOT FORCE-EXPAND EVERY GROUP. Each group manages
+          its own state. A group starts closed; only the currently-running group
+          opens automatically via `current`, and only an operator click can open
+          a settled one. This is the 2026-08-25 rule: a group is open only if
+          it is currently running or the operator opened it. The previous
+          "one click opens all groups" rule (Operator-agreed, 2026-08-12) is
+          gone, because it turned opening a long settled turn into a wall of
+          nested rows that was harder to navigate than the collapsed summary. */}
       <Reveal open={open} id={id} animate={disc.animate}>
-        <TurnWork work={work} cfg={cfg} nowMs={nowMs} openGroups={!streaming}
-                  expanded={expanded} streaming={streaming}
+        <TurnWork work={work} cfg={cfg} nowMs={nowMs}
+                  streaming={streaming}
                   onAnswerPermission={onAnswerPermission} />
       </Reveal>
     </div>
@@ -707,15 +693,8 @@ function Thought({ text, cfg }: { text: string; cfg: ModelDisplay }) {
 // them. There is no wrapper around the whole thing, because there never was one
 // worth naming: the old `.chat-work` div was whatever remained after the answer
 // was taken off the end. See ADR 0015 §1.
-function TurnWork({ work, cfg, nowMs, expanded, openGroups, streaming, onAnswerPermission }: {
+function TurnWork({ work, cfg, nowMs, streaming, onAnswerPermission }: {
   work: ChatSegment[]; cfg: ModelDisplay; nowMs: number;
-  // The most recent turn reads in full, the same rule the answer already uses.
-  // Narration on a live turn is there precisely so progress is legible as it
-  // happens, so it must not arrive pre-clamped.
-  expanded?: boolean;
-  // Draw the step groups already open. Set when the reader has opened a settled
-  // turn, so that one click reaches the steps rather than two.
-  openGroups?: boolean;
   // This turn is still being written, so its trailing run holds work in flight.
   streaming?: boolean;
   onAnswerPermission?: AnswerPermission;
@@ -736,10 +715,14 @@ function TurnWork({ work, cfg, nowMs, expanded, openGroups, streaming, onAnswerP
           // through WorkText, not AnswerBody, deliberately: a ```ui-card``` the
           // model wrote halfway through a turn and then talked itself out of
           // must not be a live control, and card outcomes persist server-side.
-          ? <WorkText key={`p${i}`} text={b.text} cfg={cfg} expanded={expanded} />
+          //
+          // NEVER expanded. Narration between tool calls is compact (clamped at
+          // previewLines), even on the latest turn. A wall of paragraphs while
+          // work is still streaming is the bug this replaces.
+          ? <WorkText key={`p${i}`} text={b.text} cfg={cfg} />
           : b.t === "thinking"
           ? <Thought key={`t${i}`} text={b.text} cfg={cfg} />
-          : <StepRun key={`r${i}`} items={b.items} cfg={cfg} nowMs={nowMs} openGroups={openGroups}
+          : <StepRun key={`r${i}`} items={b.items} cfg={cfg} nowMs={nowMs}
                      arrived={arrived}
                      current={!!streaming && endsOnRun && i === lastRun}
                      onAnswerPermission={onAnswerPermission} />)}
@@ -801,7 +784,7 @@ export function AssistantTurn({
             ? <Thought key={`t${i}`} text={s.text} cfg={cfg} />
             : null))
         : <SettledWork work={work} cfg={cfg} nowMs={clock} tookMs={tookMs}
-                       streaming={streaming} expanded={isLatest}
+                       streaming={streaming}
                        onAnswerPermission={onAnswerPermission} />
       )}
       {answer.map((s, i) =>
