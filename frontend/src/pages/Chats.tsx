@@ -12,6 +12,7 @@ import {
   Segmented,
   Skeleton,
   StateBlock,
+  StatusDot,
   Tag,
   catFor,
   type SegmentedOption,
@@ -263,48 +264,36 @@ export default function Chats() {
                 key={t.id}
                 interactive
                 compact
-                className="ws-chat-card"
+                className="ws-chat-row"
                 onClick={() => open(t)}
-                // min-width:0 is what every other card grid sets on its items
-                // (see .ws-*-grid > li in components.css). This grid is a raw
-                // inline div, so the card must carry it itself, else a long
-                // context tag or snippet sets the card's min-content width and
-                // pushes it past the viewport on mobile (horizontal scroll).
+                // min-width:0 lets the two ellipsizing lines shrink instead of
+                // setting the card's min-content width and overflowing the
+                // viewport on mobile (the raw grid parent sets no min-width).
                 style={{ cursor: "pointer", minWidth: 0 }}
               >
-                {/* One line: icon + title ellipsize, tag + count never shrink.
-                    overflow:hidden + min-width:0 keep a long title/context from
-                    wrapping the row tall or overflowing the viewport on mobile. */}
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0, overflow: "hidden" }}>
-                  <MessagesSquare size={14} aria-hidden style={{ flex: "none" }} />
-                  <strong style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {t.title || "New chat"}
-                  </strong>
-                  <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flex: "none", marginLeft: "auto" }}>
+                {/* Left column fills the row; title and snippet each ellipsize on
+                    one line. This is the mockup's row shape: the name and its
+                    scope on top, the last line beneath, the counts held off to
+                    the right rather than trailing the snippet. */}
+                <div className="ws-chat-row__main">
+                  <div className="ws-chat-row__head">
+                    <MessagesSquare size={14} aria-hidden style={{ flex: "none" }} />
+                    <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
                     <Tag hue={catFor(t.context_key)}>{scopeLabel(t.context_key)}</Tag>
-                    {/* Who answered, only when the scope tag beside it does not
-                        already say so. An `agent:<slug>` chat reads
-                        "Agent · <slug>" one tag to the left, and repeating it
-                        would be the same fact twice. */}
+                    {/* Who answered, only when the scope tag does not already say
+                        so: an agent:<slug> chat already reads "Agent · <slug>". */}
                     {!t.context_key.startsWith("agent:") && threadAgent(t) && (
                       <Tag hue={catFor(`agent:${threadAgent(t)}`)}>{threadAgent(t)}</Tag>
                     )}
-                  </span>
+                  </div>
+                  <p className="ws-muted ws-chat-row__snippet">{t.last_message || " "}</p>
                 </div>
-                {/* The snippet is always rendered (even when empty) so every card
-                    reserves the same 2-line height; the clamp trims longer
-                    snippets with an ellipsis instead of growing the card.
-                    The message count rides at the END of the snippet line, not up
-                    in the title row: it describes the conversation's length, so it
-                    belongs next to the conversation's last line, and the title row
-                    is already carrying the scope tag. */}
-                <div className="ws-chat-card__last">
-                  <p className="ws-muted ws-chat-card__snippet">{t.last_message || " "}</p>
-                  {/* Last activity, then the message count. Both describe the
-                      conversation, so they ride next to its last line. */}
-                  <span className="ws-card__meta ws-chat-card__count">
-                    {[relTime(t.updated_at), t.message_count].filter(Boolean).join(" · ")}
-                  </span>
+                {/* Right rail: a live dot while a turn is running, then the two
+                    quiet meta columns, length and last activity. */}
+                <div className="ws-chat-row__meta">
+                  {t.running && <StatusDot status="running">running</StatusDot>}
+                  <span className="ws-card__meta">{t.message_count} msgs</span>
+                  <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
                 </div>
               </Card>
             ))}

@@ -609,6 +609,62 @@ a.ws-btn { text-decoration: none; }
   min-height: calc(var(--lh-tight, 1.4) * 2em);
 }
 
+/* ---- CHAT ROW (the /chats list) ------------------------------------------ */
+/* A horizontal row: the left column fills the width with the title line and the
+   last-message line, each on ONE line and ellipsized; the right rail holds the
+   quiet meta (a live dot, the length, the last-activity time) off to the side so
+   the counts line up down the list rather than trailing the snippet at a ragged
+   edge. This is the /chats mockup's row, and it replaces the older stacked
+   ws-chat-card, which buried both counts at the end of a two-line snippet. */
+.ws-chat-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.ws-chat-row__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.ws-chat-row__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+/* Only the title gives way when the row is tight; the icon and the scope tags
+   keep their size so a long name ellipsizes rather than crushing its tag. */
+.ws-chat-row__head > :not(.ws-chat-row__title) { flex: none; }
+.ws-chat-row__title {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-chat-row__snippet {
+  margin: 0;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-tight, 1.4);
+}
+.ws-chat-row__meta {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.ws-chat-row__when {
+  min-width: 44px;
+  text-align: right;
+}
+
 /* ---- LIST ROW ------------------------------------------------------------ */
 /* The one row shape for every list in the app: tickets and runs today. It is a
    ROW, not a card and not a table cell (operator, 2026-08-12).
