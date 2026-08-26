@@ -248,9 +248,24 @@ export function useThreadLog({
                     head: page.branch?.head ?? null });
         if (!first) {
           // Learned about the change on this very response, which was fetched
-          // from the OLD cursor. Drop what we have and ask again from zero.
+          // from the OLD cursor. Ask again from zero; the re-read replaces what
+          // we hold.
+          //
+          // THE RESET IS NOT DISPATCHED HERE, and it used to be. Emptying the
+          // store now and refilling it when the re-read lands leaves the
+          // transcript with NOTHING in it for a whole round trip, and the
+          // reducer's `reset` drops the pending send with everything else
+          // (threadStore: it is only preserved for a blank chat becoming a
+          // thread). On screen that is the operator's just-sent message, and
+          // the working indicator, vanishing and being replaced by the empty
+          // state — measured at 60-200ms on the new-chat path, twice in some
+          // runs. The re-read already resets ATOMICALLY: it sets
+          // `branchChanged`, and the `if (branchChanged) dispatch reset` below
+          // batches with its own `eventsReceived` in one commit (React 18), so
+          // the old line is replaced by the new one with no empty frame
+          // between them. Dropping stale content is the re-read's job, not a
+          // separate step that renders.
           branchRef.current.pending = true;
-          dispatch({ type: "reset", threadId: id });
           void sync();
           return;
         }
@@ -362,6 +377,19 @@ export function useThreadLog({
     }
 
     // CACHE MISS: today's behaviour, unchanged.
+    //
+    // FORGET THE PREVIOUS THREAD'S BRANCH. The cache-HIT path above re-seeds
+    // `branchRef` (and says why); this path did not, so the ref kept the
+    // OUTGOING thread's branch id while the incoming thread loaded. Every
+    // thread has its own branch id, so the first response for the new thread
+    // then satisfied `branchRef.current.id !== nextBranch` with `first ===
+    // false` — a phantom branch CHANGE on a thread that had merely been
+    // switched to — and took the drop-and-re-read path above. On a new chat
+    // that fires on every single send, because sending is what creates the
+    // thread. `undefined` is the honest value here: it means "no response yet
+    // for this thread", which is exactly true one line after the reset, and it
+    // is what makes the next response `first`.
+    branchRef.current = { id: undefined, count: 0, head: null, pending: false };
     dispatch({ type: "reset", threadId });
     let cancelled = false;
     const requestedAt = Date.now();
@@ -375,6 +403,19 @@ export function useThreadLog({
         const page = await withTransientRetry(
           () => chatApi.threadEvents(threadId, 0, { tail: INITIAL_TAIL }));
         if (cancelled || threadIdRef.current !== threadId) return;
+        // RECORD THE BRANCH THIS PAGE IS FOR. This fetch answers the same
+        // question `sync` does, so it must leave the branch tracker in the
+        // same state a sync would; otherwise the ref sits at `undefined` until
+        // some later sync happens to run, and the branch controls read as
+        // "this chat has no branches" in the meantime.
+        branchRef.current = {
+          id: page.branch?.id ?? null,
+          count: page.branch_count ?? 0,
+          head: page.branch?.head ?? null,
+          pending: false,
+        };
+        setBranch({ id: page.branch?.id ?? null, name: page.branch?.name ?? "",
+                    count: page.branch_count ?? 0, head: page.branch?.head ?? null });
         dispatch({
           type: "eventsReceived",
           events: page.events || [],

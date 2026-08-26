@@ -47,6 +47,18 @@ export type TurnStream = {
    *  indicator's wording; it is NOT the question "is a turn running", which is
    *  the store's `activeTurn`. */
   attached: boolean;
+  /** This tab has GIVEN UP watching the current run: the reconnect budget was
+   *  spent, or Stop closed the socket. It is NOT `!attached`.
+   *
+   *  It used to be read as `!attached`, and that conflated "we stopped
+   *  watching" with "we have not started watching YET" — which is the state
+   *  every turn passes through between the server reporting it active and this
+   *  tab's attach effect running one tick later. The indicator therefore
+   *  flashed "Still running" (the wording for a socket that ENDED) at the top
+   *  of a turn the operator had just started themselves, before flipping to
+   *  "Working". Measured window between `POST /turns` answering and
+   *  `GET /turns/{id}/stream` opening: 60-140ms. */
+  detached: boolean;
   reconnecting: boolean;
   attach: (turnId: string) => void;
   /** Claim the end of this run WITHOUT closing the socket, before asking the
@@ -84,6 +96,8 @@ export function useTurnStream({
   onError: (problem: ChatProblem | null) => void;
 }): TurnStream {
   const [attached, setAttached] = useState(false);
+  // Only the give-up paths set this. Attaching clears it.
+  const [detached, setDetached] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
 
   const sseRef = useRef<EventSource | null>(null);
@@ -110,6 +124,7 @@ export function useTurnStream({
     sseRef.current?.close();
     sseRef.current = null;
     setAttached(false);
+    setDetached(false);
     setReconnecting(false);
   }, []);
 
@@ -125,6 +140,7 @@ export function useTurnStream({
     finishingRef.current = false;
     detachedRef.current.delete(turnId);
     setAttached(true);
+    setDetached(false);
 
     // REWIND BEFORE OPENING THE SOCKET. A fresh EventSource carries no
     // Last-Event-ID (only the browser's own automatic retry does, and this is
@@ -343,6 +359,7 @@ export function useTurnStream({
       // claiming a run is in flight and let the poll correct the transcript.
       cb.current.dispatch({ type: "turnCommitted", turnId });
       setAttached(false);
+      setDetached(false);
       setReconnecting(false);
       cb.current.onTurnEnd();
       // NOTHING IS DRAINED FROM HERE ANY MORE. A turn ending used to be this
@@ -380,6 +397,7 @@ export function useTurnStream({
         // the poll's pace instead of back in a tight retry loop.
         finishingRef.current = true;
         setAttached(false);
+        setDetached(true);
         setReconnecting(false);
         // Hand the segments back to the poll: with no socket held, the stream is
         // no longer replaying, so the poll snapshot must resume advancing them
@@ -434,6 +452,6 @@ export function useTurnStream({
     sseRef.current = null;
   }, []);
 
-  return { attached, reconnecting, attach, beginStop, stopWatching, closeStream,
-           hasOpenStream, isDetached };
+  return { attached, detached, reconnecting, attach, beginStop, stopWatching,
+           closeStream, hasOpenStream, isDetached };
 }

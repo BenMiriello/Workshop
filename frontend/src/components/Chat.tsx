@@ -926,7 +926,7 @@ export default function Chat({
   }, [turnActive]);
   const elapsed = indicatorElapsed(state.activeTurn?.segments, state.activeTurn?.startedMs ?? null, nowMs);
   const workingLabel = turnLabel({
-    attached: stream.attached,
+    detached: stream.detached,
     reconnecting: stream.reconnecting,
     stopping,
     segments: state.activeTurn?.segments,

@@ -110,8 +110,18 @@ export function currentActivity(segments: ChatSegment[]): string {
 }
 
 export function turnPhase(o: {
-  // An SSE socket for this run is open here.
-  attached: boolean;
+  // This tab has GIVEN UP watching this run: the reconnect budget is spent, or
+  // the socket was closed and will not be silently re-opened.
+  //
+  // NOT `!attached`, which is what this used to be. A turn is briefly
+  // un-attached at its very start — the server reports the run active on the
+  // events page, and this tab's attach effect runs a tick later — and reading
+  // that window as "detached" made the indicator say "Still running" for a
+  // frame or two at the top of a turn the operator had just started, before
+  // switching to "Working". "Still running" is the wording for a socket that
+  // ENDED; saying it before one has ever opened is simply false, and it is the
+  // first of the states the operator caught on a screen recording.
+  detached: boolean;
   // The socket dropped and is being retried.
   reconnecting: boolean;
   // Stop was pressed and the server has not answered yet.
@@ -122,7 +132,7 @@ export function turnPhase(o: {
   // they asked for it to end and are waiting to hear that it did.
   if (o.stopping) return "stopping";
   if (o.reconnecting) return "reconnecting";
-  if (!o.attached) return "detached";
+  if (o.detached) return "detached";
   return "working";
 }
 
