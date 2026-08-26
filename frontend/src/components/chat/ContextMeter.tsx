@@ -84,6 +84,13 @@ export default function ContextMeter({
     // they would be a new read the meter never made.
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    // AND IT DID NOT RETRY. The effect made exactly one request and swallowed
+    // the failure. Leaving the app's transient-retry default on would not only
+    // add requests this read never made, it would hold `settled` below across
+    // the backoff — so the live reading would clear seconds after a failure
+    // instead of on it. The meter falls back to the browser estimate, which is
+    // what it already did.
+    retry: false,
   });
 
   // THE HOLD STAYS LOCAL, and that is the point of this pair of effects. The

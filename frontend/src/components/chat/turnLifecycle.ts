@@ -78,13 +78,21 @@ export function deriveTurnLifecycle(input: {
     return {
       kind: "running",
       turnId: run.turnId,
-      // RECONNECTING BEFORE DETACHED, because that is the order `turnPhase`
-      // used and this stage is a representation change, not a wording change.
-      // The two flags are not mutually exclusive in useTurnStream (`attach`
-      // clears `detached` but not `reconnecting`, and the drop handler sets
-      // `reconnecting` without clearing `detached`), and collapsing them into
-      // one `watching` field is what forces the precedence to be applied here
-      // rather than in the label selector.
+      // RECONNECTING BEFORE DETACHED, because that is the order the deleted
+      // `turnPhase` used and this stage is a representation change, not a
+      // wording change. The old test pinned it explicitly
+      // (`turnPhase({detached, reconnecting}) === "reconnecting"`), and that
+      // test moved into this file rather than being dropped.
+      //
+      // The precedence has to be applied HERE rather than in the label
+      // selector, which is where the plan originally put it: once the two
+      // flags collapse into one `watching` field, `"detached"` is lossy and no
+      // selector downstream could recover "Reconnecting" from it. (An earlier
+      // draft of this comment justified the order by claiming the two flags can
+      // be true at once. They cannot: the give-up path sets `finishingRef`
+      // in the same block that sets `detached`, and `handleDrop` returns early
+      // on `finishingRef`, so `setReconnecting(true)` is unreachable while
+      // detached. The order is right; that reason for it was not.)
       watching: input.reconnecting ? "reconnecting" : input.detached ? "detached" : "attached",
       segments: run.segments,
       startedMs: run.startedMs,

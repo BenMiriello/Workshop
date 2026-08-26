@@ -218,10 +218,21 @@ export function useChatThread({
   // read-only value derived from this query could do neither. The ref guard is
   // what keeps the two apart: a chat that has a thread has its OWN mode, and
   // the default for new chats must never land on top of it.
+  // SEEDS EXACTLY ONCE, which is what the empty dependency array it replaces
+  // guaranteed for free and a query does not. This effect re-runs whenever the
+  // query's data identity changes, and a second observer mounting can push a
+  // fresh read into this one; if no thread has been selected yet, seeding a
+  // second time would overwrite a mode the operator had already picked on a
+  // blank chat. That pick is local-only until a thread exists (`chooseChatMode`
+  // only writes to the server when there is one), so nothing would have
+  // restored it.
+  const prefsSeeded = useRef(false);
   useEffect(() => {
     const p = prefsQuery.data;
     if (!p) return;
+    if (prefsSeeded.current) return;
     if (activeIdRef.current) return;
+    prefsSeeded.current = true;
     setChatMode(chatModeDef(p.default_mode ?? undefined).id);
   }, [prefsQuery.data]);
 

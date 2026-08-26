@@ -94,6 +94,12 @@ export function useChatWork(threadId: string | null, opts: { enabled?: boolean }
     // the way back from hidden, which is half of what made pausing a poll safe
     // to default to (see packages/ui/src/usePoll.ts).
     staleTime: 0,
+    // `usePoll` DOES NOT RETRY: a failed tick is simply followed by the next
+    // tick, at most twenty seconds later. Leaving the app's transient-retry
+    // default on would put up to three extra requests in front of a cadence
+    // that already re-reads on its own, which is more traffic than the code it
+    // replaces, not less.
+    retry: false,
   });
 
   const data = q.data;
@@ -190,6 +196,16 @@ export function useChatWork(threadId: string | null, opts: { enabled?: boolean }
     err,
     // Nothing has been read yet. A FAILED read counts as read: the panel drops
     // to the empty payload and draws its rows, which is what `cold` gates.
+    //
+    // ONE DELIBERATE BEHAVIOUR CHANGE, recorded because the rule for this
+    // migration was "no behaviour changes". The `useState` this replaces was
+    // never cleared on a thread switch, so for one read the panel showed the
+    // PREVIOUS thread's tickets under the new thread's transcript. Keyed by
+    // thread, that window is a loading region instead. Restoring the old
+    // behaviour would mean `placeholderData` carrying one chat's work into
+    // another, which is the thing ContextMeter resets for a few lines away.
+    // Returning to a thread inside `gcTime` is now an instant cache hit, which
+    // is new and strictly additive.
     cold: data === undefined && !isError,
     reload,
     ticket: useCallback((id: string) => byId.get(id), [byId]),

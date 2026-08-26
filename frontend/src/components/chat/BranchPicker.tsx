@@ -91,6 +91,15 @@ export default function BranchPicker({
   // Nothing has been read yet. A FAILED read counts as read: the effect this
   // replaces answered a failure with an empty list, so the picker opens empty
   // rather than sitting on "Loading" forever.
+  // A FAILED read counts as read, so the picker opens empty rather than sitting
+  // on "Loading" forever — which is exactly what the `.catch(() => setBranches([]))`
+  // it replaces did.
+  //
+  // One deliberate behaviour change, recorded because the rule for this
+  // migration was "no behaviour changes": the `useState` this replaces was
+  // per-component and was never reset when the thread changed, so reopening the
+  // picker after a thread switch briefly listed the PREVIOUS thread's branches.
+  // Keyed by thread, that moment is "Loading" instead.
   const cold = branches === undefined && !isError;
   const overflow = Math.max(0, rows.length - VISIBLE_BRANCHES);
 
