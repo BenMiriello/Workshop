@@ -1525,19 +1525,24 @@ button.ws-ref--trigger:hover > svg { color: var(--you); }
    inline trigger wrapper, not the panel, so an app-level max-width here would
    be inert at best. The kit's vw-capped default plus useAnchoredPlacement's
    clamped position (menuPlacement.ts) is what keeps this on screen on a phone. */
-.ws-ref-card { display: flex; gap: var(--space-3); align-items: flex-start; }
-/* Preview sizes to its content: for the common icon-only ref that is just the
-   28px glyph, so the info column takes the rest and the card reads square
-   rather than leaving a wide empty column. A thumbnail grows up to 8rem. */
-.ws-ref-card__preview {
-  flex: 0 0 auto; max-width: 8rem; min-height: 2.5rem;
-  display: flex; align-items: center; justify-content: center; color: var(--muted);
+.ws-ref-card { display: flex; flex-direction: column; }
+/* The header row is the link: small kind icon (no taller than the title), the
+   title, and a caret pinned to the end. Icon and caret anchor to the FIRST
+   line so a wrapped title stays left-aligned under the icon. */
+.ws-ref-card__open {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  color: inherit; text-decoration: none; font-weight: 600;
+  overflow-wrap: anywhere;
 }
+.ws-ref-card__open:hover { color: var(--you); }
+.ws-ref-card__open > svg:first-child { flex: 0 0 auto; margin-top: 0.12em; }
+.ws-ref-card__title { flex: 1 1 auto; min-width: 0; }
+.ws-ref-card__caret { flex: 0 0 auto; margin-top: 0.12em; color: var(--muted); }
+.ws-ref-card__open:hover .ws-ref-card__caret { color: var(--you); }
 .ws-ref-card__thumb {
-  max-width: 100%; max-height: 8rem; border-radius: var(--radius-md); display: block;
+  margin-top: var(--space-2); max-width: 100%; max-height: 10rem;
+  border-radius: var(--radius-md); display: block;
 }
-.ws-ref-card__info { flex: 1 1 auto; min-width: 0; }
-.ws-ref-card__title { font-weight: 600; overflow-wrap: anywhere; }
 .ws-ref-card__meta {
   color: var(--muted); font-size: var(--fs-sm); margin-top: var(--space-1);
   overflow-wrap: anywhere;
@@ -1546,11 +1551,6 @@ button.ws-ref--trigger:hover > svg { color: var(--you); }
   display: flex; flex-direction: column; gap: var(--space-2);
   margin-top: var(--space-3);
 }
-.ws-ref-action {
-  display: inline-flex; align-items: center; gap: var(--space-1);
-  color: inherit; text-decoration: none; font-size: var(--fs-sm);
-}
-.ws-ref-action:hover { color: var(--you); }
 .ws-ref-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .ws-ref-row__label {
   color: var(--muted); font-size: var(--fs-sm); min-width: 2.6rem; flex: 0 0 auto;

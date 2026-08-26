@@ -1836,10 +1836,11 @@ span.ws-filterchip__open { cursor: default; }
 .ws-popover { position: relative; display: inline-flex; flex: 0 0 auto; min-width: 0; }
 .ws-popover__surface {
   position: absolute; z-index: var(--z-dropdown);
-  /* Roughly square by default: the only consumer is the ref preview card, which
-     is an icon, a title and a couple of copy rows. It read oddly wide at 18-24rem.
-     The vw cap is what keeps it on a phone, where it is nearly the whole width. */
-  min-width: 13rem; max-width: min(18rem, calc(100vw - 2 * var(--space-4)));
+  /* Width follows content between a min and a max: a short ref sits near 14rem,
+     a long title or URL grows it toward the max. The only consumer is the ref
+     preview card. The vw term keeps it on a phone, where it is nearly the whole
+     width; the rem max keeps it from sprawling on a wide screen. */
+  min-width: 14rem; max-width: min(30rem, calc(100vw - 2 * var(--space-4)));
   /* The scroll behaviour .ws-menu__list has, for the same reason: the placement
      rule measures the surface AFTER its CSS has clamped it, so a long panel is
      measured at the size it will really be and scrolls inside instead of

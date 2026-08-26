@@ -16,7 +16,7 @@
 import { Link } from "react-router-dom";
 import {
   FileText, BookOpen, Ticket as TicketIcon, MessageSquare, Play,
-  FolderGit2, Bot, Blocks, Paperclip, ExternalLink,
+  FolderGit2, Bot, Blocks, Paperclip, ChevronRight,
 } from "lucide-react";
 import { Popover, CopyButton } from "@workshop/ui";
 import type { ResolvedRef, RefKind, RefPreview } from "../lib/refs";
@@ -90,48 +90,50 @@ function RefCard({
     </button>
   );
 
+  // The whole header row IS the link: a small kind icon (no taller than the
+  // title), the title, and a caret at the end that says it opens. No separate
+  // "Open" action, no external-link glyph. A `file` opens in a new tab (its
+  // href is a raw serve endpoint that leaves the SPA); every other kind
+  // navigates through the router.
+  const head = (
+    <>
+      <Icon size={15} strokeWidth={1.8} aria-hidden />
+      <span className="ws-ref-card__title">{resolved.title}</span>
+      <ChevronRight className="ws-ref-card__caret" size={15} strokeWidth={1.8} aria-hidden />
+    </>
+  );
+
   return (
     <Popover trigger={trigger} label={resolved.title} side="bottom">
       <div className="ws-ref-card">
-        <div className="ws-ref-card__preview">
-          {p.thumb_url ? (
-            <img className="ws-ref-card__thumb" src={p.thumb_url} alt="" />
-          ) : (
-            <Icon size={28} strokeWidth={1.4} aria-hidden />
-          )}
-        </div>
-        <div className="ws-ref-card__info">
-          <div className="ws-ref-card__title">{resolved.title}</div>
-          {meta ? <div className="ws-ref-card__meta">{meta}</div> : null}
-        </div>
-      </div>
-      <div className="ws-ref-card__actions">
         {isFile ? (
           <a
-            className="ws-ref-action"
+            className="ws-ref-card__open"
             href={resolved.href}
             target="_blank"
             rel="noopener noreferrer"
           >
-            <ExternalLink size={14} strokeWidth={1.8} aria-hidden />
-            <span>Open</span>
+            {head}
           </a>
         ) : (
-          <Link className="ws-ref-action" to={resolved.href}>
-            <ExternalLink size={14} strokeWidth={1.8} aria-hidden />
-            <span>Open</span>
+          <Link className="ws-ref-card__open" to={resolved.href}>
+            {head}
           </Link>
         )}
-        <div className="ws-ref-row">
-          <span className="ws-ref-row__label">URL</span>
-          <CopyButton value={url} />
-        </div>
-        {refStr ? (
+        {p.thumb_url ? <img className="ws-ref-card__thumb" src={p.thumb_url} alt="" /> : null}
+        {meta ? <div className="ws-ref-card__meta">{meta}</div> : null}
+        <div className="ws-ref-card__actions">
           <div className="ws-ref-row">
-            <span className="ws-ref-row__label">Path</span>
-            <CopyButton value={refStr} />
+            <span className="ws-ref-row__label">URL</span>
+            <CopyButton value={url} />
           </div>
-        ) : null}
+          {refStr ? (
+            <div className="ws-ref-row">
+              <span className="ws-ref-row__label">Path</span>
+              <CopyButton value={refStr} />
+            </div>
+          ) : null}
+        </div>
       </div>
     </Popover>
   );
