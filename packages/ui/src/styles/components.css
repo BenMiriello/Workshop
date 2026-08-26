@@ -664,6 +664,20 @@ a.ws-btn { text-decoration: none; }
   min-width: 44px;
   text-align: right;
 }
+/* On a phone the right rail cannot share the row's width with the title without
+   crushing it to nothing (a running chat adds a whole live label). Below the
+   touch breakpoint the meta drops to its own line under the title, so the name
+   always gets the full width and the counts read left to right beneath it. */
+@media (max-width: 640px) {
+  .ws-chat-row { flex-wrap: wrap; }
+  .ws-chat-row__main { flex-basis: 100%; }
+  .ws-chat-row__meta {
+    width: 100%;
+    justify-content: flex-start;
+    gap: var(--space-3);
+  }
+  .ws-chat-row__when { min-width: 0; text-align: left; }
+}
 
 /* ---- LIST ROW ------------------------------------------------------------ */
 /* The one row shape for every list in the app: tickets and runs today. It is a
