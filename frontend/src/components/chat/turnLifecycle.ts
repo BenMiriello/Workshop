@@ -25,7 +25,7 @@ import { currentActivity } from "./turnStatus";
 /** How closely this tab is following the run. Only ever meaningful while a run
  *  exists, which is why it is nested inside `running` rather than being a
  *  sibling field that has to carry a "not applicable" case. */
-export type WatchState = "attached" | "reconnecting" | "detached";
+type WatchState = "attached" | "reconnecting" | "detached";
 
 export type TurnLifecycle =
   | { kind: "idle" }

@@ -12,6 +12,24 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.6.3 - 2026-08-25 - the transient backoff schedule is a named export
+
+**Additive.** One new export, `TRANSIENT_BACKOFF_MS`. Nothing existing moved:
+`withTransientRetry` now defaults its `backoffMs` parameter to it instead of to
+an inline `[400, 1200, 2500]`, so every existing call behaves byte-identically.
+The parameter type widened from `number[]` to `readonly number[]`, which accepts
+strictly more.
+
+### Added
+
+- `TRANSIENT_BACKOFF_MS` - the three waits (400ms, 1200ms, 2500ms; 4.1s total)
+  a transient network failure is ridden out on. It was a default parameter,
+  which meant a consumer that does its own retrying (a query client's `retry`
+  plus `retryDelay`) could only restate it, and did: one consumer restated the
+  count and took an exponential default, so two mechanisms waited 4.1s and 7.0s
+  for the same backend restart. Derive both the count
+  (`TRANSIENT_BACKOFF_MS.length`) and the delays from this array.
+
 ## 0.6.2
 
 ### Fixed

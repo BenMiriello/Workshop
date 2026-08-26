@@ -94,6 +94,7 @@ export { timeAgo, timeAbsolute, timeAbsoluteShort, formatDuration, timeAgoSecond
 export { formatBytes, formatVramBytes, formatMiB, VRAM_UNKNOWN } from "./bytes";
 export {
   HttpError, ERROR_BODY_CAP, isTransientNetworkError, withTransientRetry, shortHttpError,
+  TRANSIENT_BACKOFF_MS,
 } from "./httpError";
 export {
   userStorage, setCurrentUser, registerDeviceScoped, isDeviceScoped, namespacedKey,

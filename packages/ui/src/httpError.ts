@@ -51,6 +51,20 @@ export function isTransientNetworkError(e: unknown): boolean {
 }
 
 /**
+ * How long a restart window is waited out: three waits, 4.1s in total, then
+ * give up.
+ *
+ * This is exported because the SCHEDULE is part of the rule, not a private
+ * default. A caller that does its own retrying rather than calling
+ * `withTransientRetry` (a query client's `retry` + `retryDelay`, say) derives
+ * both the count and the delays from this array, so every read in an app rides
+ * out the same backend restart on the same clock. When it was a default
+ * parameter here and a restated count there, the two mechanisms waited 4.1s and
+ * 7.0s for the same outage.
+ */
+export const TRANSIENT_BACKOFF_MS = [400, 1200, 2500] as const;
+
+/**
  * Run `fn`, and if it fails with a transient network error (a restart window,
  * a dropped fetch), wait and try again on the given backoff before giving up.
  * A non-transient error, a real refusal the server chose to give, throws at
@@ -60,7 +74,7 @@ export function isTransientNetworkError(e: unknown): boolean {
  */
 export async function withTransientRetry<T>(
   fn: () => Promise<T>,
-  backoffMs: number[] = [400, 1200, 2500],
+  backoffMs: readonly number[] = TRANSIENT_BACKOFF_MS,
 ): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {

@@ -40,7 +40,7 @@ import type { TranscriptBlock } from "./transcriptBlocks";
  *  loading region may still stand over a transcript that holds only these. An
  *  in-flight (`sending`) send is the operator's live action and DOES count as
  *  content. */
-export function isRestoredStub(b: TranscriptBlock): boolean {
+function isRestoredStub(b: TranscriptBlock): boolean {
   return b.kind === "pending" && b.status === "failed";
 }
 

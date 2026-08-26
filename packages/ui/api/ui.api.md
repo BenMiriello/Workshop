@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.6.2
+Version: 0.6.3
 
 ## @workshop/ui
 
@@ -139,6 +139,7 @@ Source: `src/index.ts`
 - Toggle
 - toggleBranch
 - Toolbar
+- TRANSIENT_BACKOFF_MS
 - treeKeyIntent
 - type AgencyTier
 - type AppChatDockOptions

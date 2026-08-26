@@ -27,7 +27,7 @@ import type { ThreadSnapshot } from "./threadStore";
  *  importing it would pull a React hook module into a plain cache module. */
 export type CachedBranch = { id: string | null; name: string; count: number; head: string | null };
 
-export type CachedThread = {
+type CachedThread = {
   snapshot: ThreadSnapshot;
   branch: CachedBranch;
 };
@@ -79,11 +79,6 @@ export class ThreadCache {
    *  otherwise harmless and just ages out via the LRU. */
   delete(threadId: string): void {
     this.entries.delete(threadId);
-  }
-
-  /** Test-only: drop everything. */
-  clear(): void {
-    this.entries.clear();
   }
 }
 
