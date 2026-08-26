@@ -1,6 +1,8 @@
 # The Dashboard (2026-08-25)
 
-Status: SPEC. Nothing here is built. Source of record for Home's first page.
+Status: BUILT 2026-08-26 (commits 3aaeecf3, b9fa2078, 780bc8ae). Source of
+record for Home's first page. Section 6 records what the build changed about
+this document's own answers, because three of them were wrong.
 
 Supersedes nothing. It sits UNDER
 [`navigation-shell-2026-08-20.md`](navigation-shell-2026-08-20.md) (which owns
@@ -190,15 +192,21 @@ section 6 as a gap with a decided answer.
 
 Five gaps. None is worked around in the client.
 
-**Gap 1 — a chat does not say whether it is running.** `ThreadSummary` has no
-live flag, so the pulsing dot has nothing behind it. `chat_log.active_turn()` is
-a meta-only read and `active_turn_id` lives in `meta.json`, which the summary
-cache's fingerprint already stats — so a turn starting or ending invalidates the
-cached row for free. **Add `running: bool` to the summary row.** Both producers
-must emit it (`chat_store._summary_row` AND `chat_list_pg._shape_row`; that
-field-for-field identity is what the latter's docstring says keeps them from
-drifting). The Postgres path has no `active_turn_id` column, so mirror the key
-into the `state` jsonb beside `meta_updated_at`.
+**Gap 1 — the list row does not say whether a chat is running.** THIS WAS
+WRITTEN UP AS A MISSING FACT AND IT IS NOT ONE: the fact exists, the open chat
+already renders it (`chat_log.active_turn`, carried on the per-thread sync
+payload), and what was missing was only a place for it on the LIST row, so a
+surface showing many chats had to make one request per chat. Calling that a gap
+overstated it, and the operator said so.
+
+BUILT DIFFERENTLY FROM WHAT THIS SECTION FIRST SAID, twice over. Mirroring
+`active_turn_id` into Postgres is wrong: `chat_log._LIST_RELEVANT_META_FIELDS`
+deliberately keeps per-turn bookkeeping off the database round trip, and that
+key is rewritten hundreds of times while a turn runs. And putting the
+derivation in both row builders is a fact derived twice, which is a fact that
+can disagree. So it is `chat_store.stamp_running`, applied by the route over
+whichever list source answered: one implementation, both paths, no mirror
+change. Measured over the real store: 134 threads in 2.8ms.
 
 **Gap 2 — context fullness is a per-thread endpoint.** `GET
 /chat/threads/{id}/context` exists, but four rows would mean four calls, and
@@ -242,6 +250,18 @@ the dashboard deliberately differs from the mockup:
 
 When an Activity place is built, these move. Nothing else about the card
 changes.
+
+**What else the build changed.** Two of this document's answers did not survive
+contact with the running page, and both changed toward saying more:
+
+* "Running now" shows runs AND chats with a turn in flight. Jobs alone printed
+  "Nothing running" on an instance with two live turns, which is the kind of
+  confident wrong answer that teaches an operator to stop reading a card. The
+  mockup had it right (its own list carries a streaming chat) and section 4.4
+  originally did not.
+* The row counts are a decision, not constants: three needs-you blocks fit the
+  236px desktop card and two fit the 210px phone card. A fixed three half-drew
+  the last one on a phone. `rowCaps` carries the arithmetic.
 
 ## 7. Colour
 
@@ -327,17 +347,31 @@ not a reason to pilot a library here.
 The 2026-08-23 rule stands and is not optional: typecheck, `check_design.sh`
 and the test suite were all green over a phone layout that put the one column
 that mattered off the right edge of the screen. **A test proves a rule holds;
-only a screenshot proves the screen is right.** `scripts/shoot.sh` at 390x800
-and at 1440 wide, looked at, before this is called done.
+only a screenshot proves the screen is right.**
+
+IT EARNED ITS KEEP AGAIN. Four rounds of `scripts/shoot.sh` at 1440x900 and
+390x800 found seven defects that every gate had passed: blocks half-drawn at
+the clip edge and then clipped at the descenders, titles ellipsizing at a
+quarter of the row because a flex-basis was `auto`, the Apps card cutting its
+second row of tile names in half on a phone, chat tails squeezed to one letter,
+overflow counts computed off an arbitrary fetch cap, "Nothing running" beside
+two running chats, and a row printing its scope twice. See commit 780bc8ae.
+
+A NOTE ON HOW THE SHOTS WERE TAKEN, because it is reusable. `apply.sh`
+correctly defers the backend restart while a turn is in flight, so new routes
+do not serve until the turn ends -- which would have meant shipping this
+unverified. Instead: run the new backend on a spare port, serve `frontend/dist`
+with a ~40-line proxy that strips `/api` the way the edge does, and point the
+shooter at it with `WORKSHOP_PREVIEW_ORIGIN`. Real code, real browser, live
+backend untouched.
 
 Design gates: `bash scripts/check_design.sh`, `npm run typecheck` from the repo
 root, `cd frontend && npm test`.
 
 ## 11. Staging
 
-1. **Backend reads** — gaps 1, 2 and 3. Independently useful (the chat list gets
-   a live flag and a context reading either way) and it is what the page needs
-   in order to be honest rather than half-populated.
-2. **The page** — the grid, the card shell, the four cards, both widths.
+1. **Backend reads** — gaps 1, 2 and 3. DONE, commit 3aaeecf3.
+2. **The page** — the grid, the card shell, the four cards, both widths. DONE,
+   commits b9fa2078 and 780bc8ae.
 3. Later, and NOT part of this: the composer and its context system; an Activity
    place, which is where gap 5's links want to point.
