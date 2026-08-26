@@ -6,7 +6,7 @@ import {
   type ThreadAction, type ThreadState,
 } from "./threadStore";
 import { threadCache } from "./threadCache";
-import { selectCommitted, composeTranscript, type TranscriptBlock } from "./transcriptBlocks";
+import { selectCommitted, composeTranscript, isLiveShown, type TranscriptBlock } from "./transcriptBlocks";
 import type { ChatProblem } from "./chatProblem";
 import { isStale } from "./staleNotice";
 
@@ -91,6 +91,13 @@ export type ThreadLog = {
   sync: () => Promise<void>;
   /** Is a run in flight on this thread, per the server. */
   turnActive: boolean;
+  /** Is the live run's block actually rendered — i.e. does `turnActive` have
+   *  anything on screen to go with it? Not the same question, because the
+   *  server does not clear `active_turn_id` and append the reply atomically
+   *  (see transcriptBlocks' `isLiveShown`). Threaded out so the display-only
+   *  derivations read the transcript's answer instead of computing a second
+   *  one that can disagree with it. */
+  liveShown: boolean;
   /** Has THIS thread's first page landed? False from the render in which the
    *  thread changes until `events?after=0` resolves (or fails).
    *
@@ -561,5 +568,6 @@ export function useThreadLog({
   );
 
   return { state, stateRef, dispatch, transcript, sync, turnActive: !!state.activeTurn,
+           liveShown: isLiveShown(committed, state),
            hydrated, stale, branch, loadOlder, loadingOlder, olderError };
 }

@@ -2,7 +2,7 @@ import type { ReactNode, RefObject } from "react";
 import type { VoiceSnapshot } from "../../lib/voice/client";
 import type { UiCardCtx } from "./uiCardActions";
 import type { TranscriptBlock } from "./transcriptBlocks";
-import { logPlaceholder, noRealContent } from "./chatLogState";
+import type { LogPlaceholder } from "./chatLogState";
 import type { ChatProblem } from "./chatProblem";
 import ChatProblemBlock from "./ChatProblemBlock";
 import MessageList, { SentAttachments, type AnswerPermissionFor } from "./MessageList";
@@ -73,7 +73,7 @@ import { VoiceReply } from "./VoiceTurn";
 
 export default function ChatLog({
   scrollRef, onScroll,
-  loading, error, blocks, isBuild, inFlight,
+  error, blocks, isBuild, placeholder,
   selectedModel, cardCtx, onRetry, onCancelPending, onCancelQueued, onReleaseQueue,
   queueHeld, queueError, workingLabel, elapsed, nowMs,
   answerPermission, liveTurnId, renderBranch, branchHead,
@@ -82,14 +82,18 @@ export default function ChatLog({
 }: {
   scrollRef: RefObject<HTMLDivElement>;
   onScroll: () => void;
-  loading: boolean;
   /** The chat's current chat-scoped failure. The log owns the ERROR one of its
    *  four list states, so when there is nothing else to show this is where that
    *  failure is rendered; the host suppresses its own copy. */
   error: ChatProblem | null;
   blocks: TranscriptBlock[];
   isBuild: boolean;
-  inFlight: boolean;
+  /** Which region, if any, stands in place of the transcript — ALREADY DECIDED.
+   *  Computed by the caller (Chat.tsx) from the rule in chatLogState.ts, which
+   *  this file used to run a second time on the same four inputs. One fact, one
+   *  derivation: see turnLifecycle.ts for the same move made on the turn's
+   *  state. */
+  placeholder: LogPlaceholder;
   selectedModel: string;
   cardCtx: UiCardCtx;
   onRetry: (clientId: string) => void;
@@ -145,12 +149,6 @@ export default function ChatLog({
   vsnap: VoiceSnapshot;
 }) {
   const voiceLive = voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking");
-  // `loading` covers the thread list AND this thread's first page, so the empty
-  // state cannot be reached before the log has actually arrived. The rule is in
-  // chatLogState.ts, where it is tested.
-  const placeholder = logPlaceholder({
-    empty: noRealContent(blocks), loading, error: !!error, inFlight,
-  });
 
   return (
     <div className="chat-log" ref={scrollRef} onScroll={onScroll}>

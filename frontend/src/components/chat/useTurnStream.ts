@@ -43,14 +43,17 @@ const COMMIT_SETTLE_TRIES = 10;
 const COMMIT_SETTLE_MS = 300;
 
 export type TurnStream = {
-  /** A socket for the current run is open (or being retried) here. Chooses the
-   *  indicator's wording; it is NOT the question "is a turn running", which is
-   *  the store's `activeTurn`. */
-  attached: boolean;
   /** This tab has GIVEN UP watching the current run: the reconnect budget was
-   *  spent, or Stop closed the socket. It is NOT `!attached`.
+   *  spent, or Stop closed the socket.
    *
-   *  It used to be read as `!attached`, and that conflated "we stopped
+   *  THERE IS NO `attached` FIELD, deliberately. One was maintained here through
+   *  four setters and returned for months, and no consumer ever read it: Chat
+   *  destructures this hook twice and never takes it. All it did was re-render
+   *  the whole chat on every attach and every detach. Deleted 2026-08-26 with
+   *  the turn-lifecycle fold; do not reintroduce it as the answer to "is a turn
+   *  running" — that is the store's `activeTurn`.
+   *
+   *  `detached` used to be read as `!attached`, and that conflated "we stopped
    *  watching" with "we have not started watching YET" — which is the state
    *  every turn passes through between the server reporting it active and this
    *  tab's attach effect running one tick later. The indicator therefore
@@ -95,7 +98,6 @@ export function useTurnStream({
   onTurnEnd: () => void;
   onError: (problem: ChatProblem | null) => void;
 }): TurnStream {
-  const [attached, setAttached] = useState(false);
   // Only the give-up paths set this. Attaching clears it.
   const [detached, setDetached] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -123,7 +125,6 @@ export function useTurnStream({
     reconnectTimerRef.current = undefined;
     sseRef.current?.close();
     sseRef.current = null;
-    setAttached(false);
     setDetached(false);
     setReconnecting(false);
   }, []);
@@ -139,7 +140,6 @@ export function useTurnStream({
     sseRef.current?.close();
     finishingRef.current = false;
     detachedRef.current.delete(turnId);
-    setAttached(true);
     setDetached(false);
 
     // REWIND BEFORE OPENING THE SOCKET. A fresh EventSource carries no
@@ -358,7 +358,6 @@ export function useTurnStream({
       // A floor, not the expected path: if the commit never showed up, stop
       // claiming a run is in flight and let the poll correct the transcript.
       cb.current.dispatch({ type: "turnCommitted", turnId });
-      setAttached(false);
       setDetached(false);
       setReconnecting(false);
       cb.current.onTurnEnd();
@@ -396,7 +395,6 @@ export function useTurnStream({
         // reset here; leaving it spent is what keeps a genuinely dead stream on
         // the poll's pace instead of back in a tight retry loop.
         finishingRef.current = true;
-        setAttached(false);
         setDetached(true);
         setReconnecting(false);
         // Hand the segments back to the poll: with no socket held, the stream is
@@ -452,6 +450,6 @@ export function useTurnStream({
     sseRef.current = null;
   }, []);
 
-  return { attached, detached, reconnecting, attach, beginStop, stopWatching,
+  return { detached, reconnecting, attach, beginStop, stopWatching,
            closeStream, hasOpenStream, isDetached };
 }

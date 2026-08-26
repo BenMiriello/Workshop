@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { planSend } from "./sendPlan";
-import { TURN_LABEL, elapsedSeconds, turnPhase } from "./turnStatus";
+import { elapsedSeconds } from "./turnStatus";
 
 const idle = { compacting: false, starting: false, turnActive: false, hasThread: true };
 
@@ -85,38 +85,9 @@ describe("planSend", () => {
   });
 });
 
-describe("the working indicator never goes quiet on a running turn", () => {
-  const base = { detached: false, reconnecting: false };
-
-  it("says what a plain turn is doing", () => {
-    expect(TURN_LABEL[turnPhase(base)]).toBe("Working");
-  });
-
-  it("says so while the socket is being retried", () => {
-    expect(TURN_LABEL[turnPhase({ ...base, reconnecting: true })]).toBe("Reconnecting");
-  });
-
-  it("still reports a run this tab has given up watching", () => {
-    // The fifty-minute silence: out of reconnect budget, or stopped watching.
-    // The run is in flight either way.
-    expect(TURN_LABEL[turnPhase({ ...base, detached: true })]).toBe("Still running");
-  });
-
-  it("prefers reconnecting over detached, because it is the more specific fact", () => {
-    expect(turnPhase({ detached: true, reconnecting: true })).toBe("reconnecting");
-  });
-
-  it("does not say 'Still running' before a socket has ever opened", () => {
-    // The regression this signature exists to prevent. At the top of a turn the
-    // tab is not attached YET: the run is known active from the events page and
-    // the attach effect has not run. That is not the detached case, and calling
-    // it one made the indicator flash the wording for a socket that ENDED at
-    // the moment the operator started the turn. `detached` is now a fact the
-    // stream reports (only its give-up paths set it), so an un-attached start
-    // reads as plain work.
-    expect(TURN_LABEL[turnPhase({ detached: false, reconnecting: false })]).toBe("Working");
-  });
-});
+// The working-indicator label cases that stood here have MOVED to
+// turnLifecycle.test.ts, along with `turnPhase`/`TURN_LABEL` themselves. Same
+// cases, same wording, asserted on the selector that replaced them.
 
 describe("elapsedSeconds", () => {
   it("counts from the run's real start, so a reload does not restart the clock", () => {

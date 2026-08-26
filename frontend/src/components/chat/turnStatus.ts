@@ -16,8 +16,16 @@
 //     never had a socket to begin with.
 //
 // The question the indicator answers is "is a run in flight on this thread",
-// which is server state (`meta.active_turn_id`), not socket state. `attached`
-// only chooses the WORDING.
+// which is server state (`meta.active_turn_id`), not socket state. How closely
+// this tab is watching only chooses the WORDING.
+//
+// WHAT LIVES HERE NOW: wording and time. The LIFECYCLE — is a run in flight,
+// which run, is it being stopped, is it on screen — moved to turnLifecycle.ts,
+// where it is one discriminated union built in one place. `turnPhase` and
+// `turnLabel` were this file's half of that question, answered from loose flags
+// the caller had to assemble correctly at each of its call sites; they are
+// replaced by `indicatorLabel` and its siblings. `currentActivity` below is
+// what that selector calls for the plain working case.
 
 // A FOLD IS NOT A PHASE OF A TURN, and it used to be listed here as one. When
 // /compact ran as an ordinary turn, "Compacting" was this indicator's label for
@@ -27,23 +35,6 @@
 // log instead, for as long as it runs. See FoldingNote.
 import type { ChatSegment } from "../../lib/chat";
 import { isRunning } from "./grouping";
-
-export type TurnPhase = "working" | "reconnecting" | "detached" | "stopping";
-
-export const TURN_LABEL: Record<TurnPhase, string> = {
-  working: "Working",
-  reconnecting: "Reconnecting",
-  // Running, but this tab is not the one reading its output. Says the true
-  // thing ("it has not stopped") without implying a stream that is not open.
-  detached: "Still running",
-  // Stop was pressed and the request is in flight. Ending a turn is not
-  // instant: the server has to reach the run, signal its process group and
-  // commit whatever it had produced, and until that returns the indicator was
-  // still saying "Working", which reads as the press having done nothing.
-  // Operator, 2026-08-14: "there's no styling indicating the state of it or if
-  // it's been clicked or what's happening."
-  stopping: "Stopping",
-};
 
 // Maps a tool call name to a short active-verb phrase for the indicator.
 //
@@ -107,45 +98,6 @@ export function currentActivity(segments: ChatSegment[]): string {
     if (seg.t === "approval" && seg.state === "pending") return "Waiting";
   }
   return "Working";
-}
-
-export function turnPhase(o: {
-  // This tab has GIVEN UP watching this run: the reconnect budget is spent, or
-  // the socket was closed and will not be silently re-opened.
-  //
-  // NOT `!attached`, which is what this used to be. A turn is briefly
-  // un-attached at its very start — the server reports the run active on the
-  // events page, and this tab's attach effect runs a tick later — and reading
-  // that window as "detached" made the indicator say "Still running" for a
-  // frame or two at the top of a turn the operator had just started, before
-  // switching to "Working". "Still running" is the wording for a socket that
-  // ENDED; saying it before one has ever opened is simply false, and it is the
-  // first of the states the operator caught on a screen recording.
-  detached: boolean;
-  // The socket dropped and is being retried.
-  reconnecting: boolean;
-  // Stop was pressed and the server has not answered yet.
-  stopping?: boolean;
-}): TurnPhase {
-  // FIRST, because it outranks every other thing the turn could be doing. A
-  // reconnect during a stop is still a stop as far as the reader is concerned:
-  // they asked for it to end and are waiting to hear that it did.
-  if (o.stopping) return "stopping";
-  if (o.reconnecting) return "reconnecting";
-  if (o.detached) return "detached";
-  return "working";
-}
-
-/** Label for the working indicator.
- *
- *  When the phase is "working" and segments are provided, uses `currentActivity`
- *  to reflect what the turn is doing right now rather than the flat "Working".
- *  Non-working phases (stopping, reconnecting, detached) always use their own
- *  fixed label because those describe the CONNECTION state, not the work. */
-export function turnLabel(o: Parameters<typeof turnPhase>[0] & { segments?: ChatSegment[] }): string {
-  const phase = turnPhase(o);
-  if (phase === "working" && o.segments) return currentActivity(o.segments);
-  return TURN_LABEL[phase];
 }
 
 /** Seconds a run has been going, from the epoch ms it started.

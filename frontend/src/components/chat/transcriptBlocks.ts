@@ -554,6 +554,22 @@ export function anchorIndex(blocks: TranscriptBlock[], afterSeq: number): number
   return 0;
 }
 
+/** Is the live run's own block actually on screen?
+ *
+ *  Only when the committed half agrees the run is still writing. See the
+ *  liveTurnId note in selectCommitted: the snapshot can name a run whose reply
+ *  is already committed above, and rendering its draft prints that reply twice.
+ *
+ *  Exported because it is not only an arrangement fact. `turnActive === true`
+ *  does NOT imply an indicator is on screen, so every display-only derivation
+ *  (the 1 Hz clock, the composer's streaming affordances) needs this same
+ *  answer, and needs it to be THE same answer rather than a second copy of the
+ *  rule. It is threaded out through useThreadLog into `deriveTurnLifecycle`. */
+export function isLiveShown(committed: CommittedTranscript, state: ThreadState): boolean {
+  const liveTurn = state.activeTurn;
+  return !!(liveTurn && committed.liveTurnId === liveTurn.turnId);
+}
+
 /** The committed blocks, then the live run, then pending sends.
  *
  *  Cheap by construction: one array copy of the committed block REFERENCES
@@ -580,10 +596,7 @@ export function composeTranscript(
   const tail = lastSeq(state);
   const pending = pendingSends(state);
   const liveTurn = state.activeTurn;
-  // Only when the committed half agrees the run is still writing. See the
-  // liveTurnId note in selectCommitted: the snapshot can name a run whose reply
-  // is already committed above, and rendering its draft prints that reply twice.
-  const liveShown = !!(liveTurn && committed.liveTurnId === liveTurn.turnId);
+  const liveShown = isLiveShown(committed, state);
 
   // A FAILED send is the only one that renders as a `pending` block, because
   // PendingBubble carries its Retry. Every other optimistic send renders as a

@@ -118,7 +118,13 @@ export default function ChatComposer({
   return (
     <div
       ref={composerRef}
-      className={`chat-composer${streaming ? " is-streaming" : ""}${focused ? " is-focused" : ""}${expanded ? " is-expanded" : ""}${sizing ? " is-sizing" : ""}`}
+      // NO `is-streaming`. One was applied here for months and no rule ever
+      // matched it — not in frontend/src/styles.css, not in the kit — so the
+      // composer's documented "streaming appearance" did not exist. The
+      // `streaming` PROP is real and stays: it drives the send tooltip, the two
+      // next-turn hints on the model and permission pickers, and parking a
+      // refetch. Verified dead and removed 2026-08-26.
+      className={`chat-composer${focused ? " is-focused" : ""}${expanded ? " is-expanded" : ""}${sizing ? " is-sizing" : ""}`}
     >
       {showMentions && (
         <CommandPicker

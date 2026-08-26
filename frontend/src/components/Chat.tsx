@@ -40,7 +40,10 @@ import { logPlaceholder, noRealContent } from "./chat/chatLogState";
 import { placementFor, type ChatProblem } from "./chat/chatProblem";
 import { scopeSwitch } from "./chat/scopeSwitch";
 import { STALE_TEXT } from "./chat/staleNotice";
-import { indicatorElapsed, turnLabel } from "./chat/turnStatus";
+import { indicatorElapsed } from "./chat/turnStatus";
+import {
+  deriveTurnLifecycle, indicatorLabel, isBusy, runningTurnId, showIndicator,
+} from "./chat/turnLifecycle";
 import {
   committedClientIds, committedMessages, withoutCommitted,
 } from "./chat/transcriptBlocks";
@@ -251,8 +254,8 @@ export default function Chat({
   // The conversation itself: one store, fed by one endpoint from a cursor.
   const log = useThreadLog({ threadId: activeId, onError: setErr });
   const {
-    state, stateRef, dispatch, transcript, sync, turnActive, hydrated, stale, branch,
-    loadOlder, loadingOlder, olderError,
+    state, stateRef, dispatch, transcript, sync, turnActive, liveShown, hydrated,
+    stale, branch, loadOlder, loadingOlder, olderError,
   } = log;
   // Sends this browser has made that the server has not taken. The ONLY chat
   // state the browser still owns on its own, and it owns it because the server
@@ -901,6 +904,34 @@ export default function Chat({
   // elapsed clock is anchored to the run's real start, so a reload mid-turn
   // shows the true duration and a reconnect does not restart it.
   //
+  // ONE DERIVATION, and everything below reads it. `turnActive`, `starting`,
+  // `stopping`, `reconnecting`, `detached` and the transcript's `liveShown`
+  // used to be assembled at each point of use — twice for the busy check alone,
+  // and a third time inside ChatLog. See turnLifecycle.ts for why that shape
+  // is the defect rather than any one of its combinations.
+  //
+  // THE SEND PATH IS DELIBERATELY NOT ON THIS. `planSend` keeps reading the
+  // server's `activeTurn` directly (useSendPipeline): whether a message starts a
+  // new turn or is injected into a live one is a correctness decision about
+  // server state, not a display decision, and folding `liveShown` into it would
+  // change send semantics. Do not "finish the job" by wiring it up.
+  const lifecycle = deriveTurnLifecycle({
+    activeTurn: state.activeTurn,
+    liveShown,
+    starting: pipeline.starting,
+    stopping,
+    reconnecting: stream.reconnecting,
+    detached: stream.detached,
+  });
+  // Anything that must not read as idle while a send is in the air.
+  const busy = isBusy(lifecycle);
+  // Anything that only matters because there is a live block on screen. NOT
+  // `busy`: an active run whose reply is already committed has nothing to
+  // animate, and the clock below used to tick over it anyway.
+  const indicatorOn = showIndicator(lifecycle);
+
+  // THE 1 Hz CLOCK.
+  //
   // It does not tick while the app is HIDDEN. The clock is derived from the
   // run's start time, so it does not need to be running to be right — it only
   // needs to be re-read when the app comes back, which is what the
@@ -909,7 +940,7 @@ export default function Chat({
   // PWA in the background, which is where a phone pays for it most.
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
-    if (!turnActive) return;
+    if (!indicatorOn) return;
     let id: number | undefined;
     const start = () => {
       if (id === undefined) id = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -923,14 +954,9 @@ export default function Chat({
     if (!document.hidden) start();
     document.addEventListener("visibilitychange", onVisibility);
     return () => { stop(); document.removeEventListener("visibilitychange", onVisibility); };
-  }, [turnActive]);
+  }, [indicatorOn]);
   const elapsed = indicatorElapsed(state.activeTurn?.segments, state.activeTurn?.startedMs ?? null, nowMs);
-  const workingLabel = turnLabel({
-    detached: stream.detached,
-    reconnecting: stream.reconnecting,
-    stopping,
-    segments: state.activeTurn?.segments,
-  });
+  const workingLabel = indicatorLabel(lifecycle);
 
   // ---- Egress banner (build only) -----------------------------------------
   // The one failure that arrives ATTACHED TO A MESSAGE and is nonetheless the
@@ -1285,22 +1311,27 @@ export default function Chat({
   // block goes IN it; when the transcript is full of valid history the log is
   // not the place for it, and the slot above the composer takes it instead.
   // Both draw the same component — see ChatProblemBlock.
-  const logShowsProblem = logPlaceholder({
+  //
+  // COMPUTED HERE, ONCE, AND PASSED DOWN. ChatLog used to run `logPlaceholder`
+  // again on the same four inputs to decide what to render, so the rule had two
+  // callers and the chance to answer two ways. The rule itself is unchanged;
+  // only the number of times it is asked.
+  const logRegion = logPlaceholder({
     empty: noRealContent(transcript),
     loading: logLoading,
     error: !!chatProblem,
-    inFlight: turnActive || pipeline.starting,
-  }) === "error";
+    inFlight: busy,
+  });
+  const logShowsProblem = logRegion === "error";
 
   const logView = (
     <ChatLog
       scrollRef={scrollRef}
       onScroll={onLogScroll}
-      loading={logLoading}
       error={chatProblem}
       blocks={transcript}
       isBuild={build}
-      inFlight={turnActive || pipeline.starting}
+      placeholder={logRegion}
       selectedModel={selectedModel}
       cardCtx={cardCtx}
       onRetry={onRetryAny}
@@ -1313,7 +1344,7 @@ export default function Chat({
       elapsed={elapsed}
       nowMs={nowMs}
       answerPermission={answerPermission}
-      liveTurnId={turnId}
+      liveTurnId={runningTurnId(lifecycle)}
       renderBranch={renderBranch}
       branchHead={branch.head}
       queued={queuedWaiting}
@@ -1359,7 +1390,11 @@ export default function Chat({
       showMentions={showMentions}
       onMentionHover={setMentionSel}
       onMentionPick={pickMention}
-      streaming={turnActive}
+      // `indicatorOn`, not `turnActive`: the send tooltip says the message will queue
+      // behind the current turn, and saying that about a run whose reply is
+      // already in the transcript is simply false. See turnLifecycle's
+      // `showIndicator`.
+      streaming={indicatorOn}
       onSend={send}
       // One rule for "is there anything to send", shared with the Enter key:
       // text, or a finished upload, and never while one is still going up.
