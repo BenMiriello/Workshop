@@ -78,8 +78,8 @@ describe("pick up where you left off", () => {
   });
 
   it("links into the thread it came from", () => {
-    const rows = continueRows([thread({ id: "abc", context_key: "app:birds" })], 4);
-    expect(rows[0].to).toBe("/chat/app%3Abirds?thread=abc");
+    const rows = continueRows([thread({ id: "abc", context_key: "app:atlas" })], 4);
+    expect(rows[0].to).toBe("/chat/app%3Aatlas?thread=abc");
   });
 
   it("never renders an empty title", () => {
