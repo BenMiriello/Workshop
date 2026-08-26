@@ -2,7 +2,7 @@ import type { ReactNode, RefObject } from "react";
 import type { VoiceSnapshot } from "../../lib/voice/client";
 import type { UiCardCtx } from "./uiCardActions";
 import type { TranscriptBlock } from "./transcriptBlocks";
-import { logPlaceholder } from "./chatLogState";
+import { logPlaceholder, noRealContent } from "./chatLogState";
 import type { ChatProblem } from "./chatProblem";
 import ChatProblemBlock from "./ChatProblemBlock";
 import MessageList, { SentAttachments, type AnswerPermissionFor } from "./MessageList";
@@ -149,7 +149,7 @@ export default function ChatLog({
   // state cannot be reached before the log has actually arrived. The rule is in
   // chatLogState.ts, where it is tested.
   const placeholder = logPlaceholder({
-    empty: blocks.length === 0, loading, error: !!error, inFlight,
+    empty: noRealContent(blocks), loading, error: !!error, inFlight,
   });
 
   return (

@@ -36,7 +36,7 @@ import { useSendOutbox, type SendOutbox } from "./chat/useSendOutbox";
 import { useChatScope } from "./chat/useChatScope";
 import { useChatThread } from "./chat/useChatThread";
 import { useSendPipeline, wasFirstExchange } from "./chat/useSendPipeline";
-import { logPlaceholder } from "./chat/chatLogState";
+import { logPlaceholder, noRealContent } from "./chat/chatLogState";
 import { placementFor, type ChatProblem } from "./chat/chatProblem";
 import { scopeSwitch } from "./chat/scopeSwitch";
 import { STALE_TEXT } from "./chat/staleNotice";
@@ -1286,7 +1286,7 @@ export default function Chat({
   // not the place for it, and the slot above the composer takes it instead.
   // Both draw the same component — see ChatProblemBlock.
   const logShowsProblem = logPlaceholder({
-    empty: transcript.length === 0,
+    empty: noRealContent(transcript),
     loading: logLoading,
     error: !!chatProblem,
     inFlight: turnActive || pipeline.starting,
