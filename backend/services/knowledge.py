@@ -319,7 +319,7 @@ def enforce_index_cap(scope_key: str, max_lines: int = 200) -> dict:
     # whose whole job is to be found by somebody who does not know it exists.
     # It is rewritten on every fold, so in practice it is always among the most
     # recent anyway; this is the guarantee, not the common case.
-    _RESERVED = (ARCHIVE_NOTE_ID, WORKING_STATE_NOTE_ID)
+    _RESERVED = (ARCHIVE_NOTE_ID, WORKING_STATE_NOTE_ID, MANIFEST_NOTE_ID)
     demotable = sorted((nid for nid in entries if nid not in _RESERVED), key=_recency)
     keep = max(0, max_lines - _INDEX_HEADER_LINES - len(_RESERVED))
     to_demote = demotable[: max(0, len(demotable) - keep)]
@@ -1295,6 +1295,56 @@ def read_working_state(scope_key: str) -> tuple[str, str]:
         return "", ""
     _author, _type, _pinned, chat = _stored_meta(scope_key, WORKING_STATE_NOTE_ID)
     return _bound_working_state(_sections_only(body)), chat
+
+
+# --- the manifest: a scope's goal / plan / where-to-start --------------------
+# The manifest is what used to be a repo PROJECT.md, moved into memory on the
+# operator's instruction (2026-08-25): "make manifest a memory, not in
+# files/repo". So it lives here as ONE reserved, pinned note per scope, alongside
+# the working state, and is read/edited through the same Memory surface, not as a
+# file that travels with the code.
+#
+# It differs from the working state in two ways that matter:
+#   - AUTHORSHIP is either. A person may write it directly, or an agent may draft
+#     and update it; the platform assumes neither. The working state, by
+#     contrast, is written by compaction.
+#   - It is FREE-FORM. There are no fixed sections and no auto-summary re-feeding
+#     it to itself, so there is no runaway-growth shape to bound. It is just a
+#     note a scope points its "read this first" instruction at.
+# It is pinned and reserved for the same reason the working state is: it is the
+# one note a newcomer to the scope must be able to find without knowing it exists.
+MANIFEST_NOTE_ID = "manifest"
+MANIFEST_TITLE = "Manifest (goal, plan, where to start)"
+MANIFEST_HOOK = ("this scope's goal, plan and where to start, written by the "
+                 "operator or an agent")
+
+
+def write_manifest(scope_key: str, body: str, *, author: str = "") -> dict:
+    """Write (or overwrite) this scope's manifest note. Free-form markdown.
+
+    RAISES on an empty body: a manifest is a deliberate document, and an empty
+    one is a delete, which goes through `delete_note` so the index stays
+    consistent."""
+    text = (body or "").strip()
+    if not text:
+        raise ValueError("refusing to write an empty manifest; delete it instead")
+    return _put_note_sync(
+        scope_key, MANIFEST_NOTE_ID, MANIFEST_TITLE, text + "\n",
+        hook=MANIFEST_HOOK, author=author,
+        # `reference`: it points at the current shape of the work. Not `decision`
+        # (it is not one standing choice) and not `fact` (it is editable intent).
+        note_type="reference",
+        pinned=True,
+    )
+
+
+def read_manifest(scope_key: str) -> str:
+    """This scope's manifest body, or "" when there is none (the normal state of
+    a scope nobody has written one for). No bounding: a manifest is not re-fed to
+    a summarizer, so it has no runaway shape, and the reader is not the prompt's
+    per-turn budget but an agent choosing to read it."""
+    body = get_note(scope_key, MANIFEST_NOTE_ID)
+    return body.strip() if body and body.strip() else ""
 
 
 # --- search + recall ---------------------------------------------------------

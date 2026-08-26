@@ -350,9 +350,32 @@ NOTE_PROTOCOL = (
     "`scope` is optional (default: this chat's scope, else `workshop`) and may be "
     "`workshop`, `project:<slug>`, `app:<name>`, or `agent:<slug>`. Notes are for "
     "durable scoped knowledge, NOT ephemeral scratch. For a choice or tradeoff that "
-    "will outlive the chat (an architectural decision, a policy), open a decision "
-    "record in `docs/decisions/` (the ADR convention) instead of a note."
+    "will outlive the chat (an architectural decision, a policy), record it as a note "
+    "with `\"type\": \"decision\"` in the same block. That is a decision's ONE home: it "
+    "lives in memory, ranks above a plain fact on recall, and is read and edited on the "
+    "Memory page like any note. Do not also write it to a file."
 )
+
+
+# The instructions a scope hands its agent: AGENTS.md is the cross-vendor
+# standard (Linux Foundation), and it is read first. The aliases exist so an
+# IMPORTED repo works with no conversion, and to close a real gap: until now the
+# chat backend read AGENTS.md but never CLAUDE.md, so a convention written in a
+# CLAUDE.md was invisible to a data-mode chat and only ever seen by the Claude
+# Code CLI's own file discovery. First non-empty file wins; a scope should keep
+# one, not several.
+_RULES_FILES = ("AGENTS.md", "CLAUDE.md", ".cursorrules",
+                ".github/copilot-instructions.md")
+
+
+def _agent_rules(read) -> str:
+    """The scope's agent-instructions text, AGENTS.md preferred, common aliases
+    after it. `read` is a provider's own `_read(name)->str`."""
+    for name in _RULES_FILES:
+        text = read(name)
+        if text and text.strip():
+            return text
+    return ""
 
 # Git worktree / branch-philosophy pointer (Phase G3). Points agents at the
 # git-worktree-workflow skill and states the canonical-branch rule inline, so the
@@ -1870,20 +1893,22 @@ class ProjectContextProvider(ContextProvider):
             return default
 
     def persona(self) -> str:
-        rules = self._read("AGENTS.md")
+        rules = _agent_rules(self._read)
         return (
             "You are the build agent for the operator's Workshop Project "
             f"'{self.slug}'. You have full Claude Code tool access inside the "
             f"project directory ({self.dir}). The operator is {operator_name()}, a "
             "senior engineer who dislikes padding. Be direct and brief. Never use em-dashes.\n\n"
-            "Always read PROJECT.md FIRST to ground your work in the current "
-            "goal and constraints, then act. Task state lives in the structured "
-            "store, NOT in TODO.md (which is a generated export, never edit it "
-            "directly). To mark a task done, add a follow-up, or block one, run "
+            "Read this scope's Manifest FIRST to ground your work in the current "
+            "goal and plan, then act. The Manifest is a note in this scope's memory "
+            "(its title is 'Manifest'); read it with the search/notes tools, and keep "
+            "it current when the goal or plan changes. Task state lives in the "
+            "structured store, NOT in TODO.md (which is a generated export, never edit "
+            "it directly). To mark a task done, add a follow-up, or block one, run "
             "`python3 ~/workshop/scripts/project_tasks.py <verb> .` via Bash "
             "(verbs: set-status <id> done, add \"text\", block <id> \"reason\", "
-            "note <id> \"text\", next-ready). When the operator gives a non-trivial "
-            "direction, append a one-line decision note to PROJECT.md.\n\n"
+            "note <id> \"text\", next-ready). When the operator makes a non-trivial "
+            "decision, record it as a decision note (see LEAVING A NOTE).\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
             + LEARNING_NOTE_PROTOCOL + "\n\n" + NOTE_PROTOCOL + "\n\n"
             + git_worktree_rule() + "\n\n"
@@ -1891,19 +1916,18 @@ class ProjectContextProvider(ContextProvider):
         )
 
     def live_context(self) -> str:
-        # Orientation only: the project brief. We deliberately do NOT inject a
-        # ticket roll-up (or any poll of the scope's task store) here. That block
-        # re-appended a fresh copy of the scope's ticket counts on most turns of a
-        # busy scope, because the store changes under the chat constantly — a
-        # per-turn state dump nobody asked for. Ticket state is fetched on demand
-        # instead (the persona already points at `project_tasks.py` and the
-        # `query`/`search` MCP tools), and a real event (a run finishing, a ticket
-        # closing) is delivered as a one-time appended system message, not by
-        # polling the whole list every turn. See docs/platform-redesign/
-        # chat-context-and-compaction-2026-08-25.md.
-        brief = self._read("PROJECT.md")
-        if brief:
-            return "=== PROJECT.md (brief) ===\n" + brief
+        # Nothing is polled into the prompt here. Two things used to be, and both
+        # were removed on the operator's instruction:
+        #   - the ticket roll-up (a per-turn dump of the scope's task store, which
+        #     changes under the chat constantly). Ticket state is pulled on demand
+        #     (`project_tasks.py`, the `query`/`search` tools), and a real event is
+        #     delivered as a one-time appended system message.
+        #   - PROJECT.md, the repo file. The scope's goal/plan is the Manifest, and
+        #     the Manifest is now a MEMORY note (2026-08-25), not a repo file, so it
+        #     rides the ordinary memory index (pinned, its title in MEMORY.md) and
+        #     the agent reads its body on demand rather than having it re-injected.
+        # See docs/platform-redesign/chat-context-and-compaction-2026-08-25.md and
+        # project-context-files-and-flows-2026-08-25.md.
         return ""
 
 
@@ -1996,18 +2020,20 @@ class MakerAgentContextProvider(ContextProvider):
             return default
 
     def persona(self) -> str:
-        rules = self._read("AGENTS.md")
+        rules = _agent_rules(self._read)
         return (
             f"You are the agent '{self.name}' inside the Workshop. You have full "
             f"Claude Code tool access inside the directory {self.dir}. The operator is "
             f"{operator_name()}, a senior engineer who dislikes padding. Be direct and brief. Never use em-dashes.\n\n"
-            "Always read PROJECT.md FIRST to ground your work in the current goal and "
-            "constraints, then act. Task state lives in the structured store, NOT in "
-            "TODO.md (a generated export, never edit it directly). Mark tasks done / add "
+            "Read this scope's Manifest FIRST to ground your work in the current goal "
+            "and plan, then act. The Manifest is a note in this scope's memory (its "
+            "title is 'Manifest'); read it with the search/notes tools, and keep it "
+            "current. Task state lives in the structured store, NOT in TODO.md (a "
+            "generated export, never edit it directly). Mark tasks done / add "
             "follow-ups / block via `python3 ~/workshop/scripts/project_tasks.py <verb> .` "
             "over Bash (set-status <id> done, add \"text\", block <id> \"reason\", "
-            "note <id> \"text\", next-ready). When the operator gives a non-trivial "
-            "direction, append a one-line decision note to PROJECT.md.\n\n"
+            "note <id> \"text\", next-ready). When the operator makes a non-trivial "
+            "decision, record it as a decision note (see LEAVING A NOTE).\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
             + LEARNING_NOTE_PROTOCOL + "\n\n" + NOTE_PROTOCOL + "\n\n"
             + git_worktree_rule() + "\n\n"
@@ -2015,11 +2041,9 @@ class MakerAgentContextProvider(ContextProvider):
         )
 
     def live_context(self) -> str:
-        # Orientation only, no per-turn task-store poll. See the note on
-        # ProjectContextProvider.live_context and the design doc.
-        brief = self._read("PROJECT.md")
-        if brief:
-            return "=== PROJECT.md (brief) ===\n" + brief
+        # Nothing polled into the prompt. The scope's goal/plan is the Manifest, a
+        # memory note that rides the memory index and is read on demand, not a repo
+        # file re-injected each turn. See ProjectContextProvider.live_context.
         return ""
 
 

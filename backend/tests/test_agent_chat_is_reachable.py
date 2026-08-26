@@ -167,8 +167,12 @@ class TestTheAgentAnswers:
         assert p.key == "agent:smith"
         assert p.dir == registry
         assert chat_context.is_build_provider(p)
-        assert "Commit on green." in p.persona()
-        assert "Build the thing." in p.live_context()
+        assert "Commit on green." in p.persona()  # AGENTS.md, read into the persona
+        # live_context no longer polls anything into the prompt: the scope's
+        # goal/plan is the Manifest, a memory note read on demand, not the repo
+        # PROJECT.md re-injected each turn (2026-08-25).
+        assert p.live_context() == ""
+        assert "Build the thing." not in p.live_context()
 
     def test_an_unroled_agent_is_not_handed_a_working_tree(self, store, registry):
         p = chat_context.get_provider("agent:quill")
