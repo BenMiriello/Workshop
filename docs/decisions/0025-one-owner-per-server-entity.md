@@ -297,6 +297,19 @@ clause.
    non-poll timers `usePoll`'s header exempts (retry, audio meter, debounce,
    one-shot, clock tick) do not reach it and so do not trip this.
 
+   **Built 2026-08-25, as `scripts/check_frontend_state.py` (Python, not the
+   `.sh` this section names), and it counts `usePoll` ITSELF as well.** That
+   widening is not scope creep, it is this clause read after the fact: when the
+   clause was written `usePoll` was the DESTINATION, so a hand-rolled interval
+   was the only wrong answer. It is not the destination any more, and the six
+   days between the query layer landing and the dashboard adding four new
+   `usePoll` sites are the proof that leaving the old mechanism un-gated is the
+   same defect one step up. Two counts, pinned at 43 and 4, and they only go
+   down. Timer classification is by hand, in an allowlist inside the script with
+   a reason per entry, rather than by chasing callbacks through the import
+   graph — see the script's header for why an approximate reachability walk is
+   wrong in both directions on this tree.
+
 4. **A file over 600 lines** without a `@oversize:` header line giving the
    reason. Report-only for the 22 files that are over it on the day the check
    lands: the script carries them as a frozen baseline list, fails on any new
