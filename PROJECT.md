@@ -1042,3 +1042,25 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   destructive migration (def2cbf58df8), so no schema change was made. Follow-up:
   columnize `type` in Postgres, decoupled from execution/agent_executable, once
   the alembic head is reconciled.
+- 2026-08-25 (2) — Operator pushed on the "migration blocked" claim; I was wrong
+  about the blocker. The alembic graph is a single clean head (d3f5a90c71b2) and
+  the DB is AT it: nothing is behind, nothing branched. My earlier "def2cbf58df8
+  is an unapplied destructive head" was a buggy hand-rolled head check that missed
+  the annotated `down_revision:` style; def2 is already applied, mid-history.
+  So the real work: added migration a1b2c7e40d59 adding a nullable `work_type`
+  VARCHAR(16) to `ticket` (bug/feature/task), a SEPARATE axis from type_id/
+  ticket_type (which mirrors execution Code/Judgement/External for dispatch). The
+  full read/write wiring (models.py column, ticket_sync INSERT/UPDATE + change-
+  detect, repo _SELECT returning work_type as `type`) was written and verified —
+  key finding: the relational layer already returns a `type` key meaning the
+  execution mirror, so `type` had to be repointed to work_type while `execution`
+  stays derived from type_name (no dispatch surgery, no key collision; nothing
+  consumes the capitalized type). BUT applying the migration to the live DB is
+  classifier-gated (superuser DDL on the production database) and I will not
+  bypass it, and apply.sh restarts the backend from the working tree, so shipping
+  the wiring would crash relational ticket writes until the column exists.
+  Resolution: migration committed and ready; wiring reverted from the tree and
+  saved to scratch/work_type_wiring.patch. One operator command finishes it:
+  `cd backend && set -a; . ~/.config/workshop/db-admin.env; set +a; ./.venv/bin/python -m alembic upgrade head`
+  then `git apply scratch/work_type_wiring.patch` and `bash scripts/apply.sh` (or
+  ask me to land the wiring once the column exists). Follow-up 6a9dda58.
