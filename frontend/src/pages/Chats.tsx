@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Archive, ArchiveRestore, ChevronLeft, MessagesSquare, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronLeft, Filter, MessagesSquare, Plus, Trash2 } from "lucide-react";
 import {
   Button,
   Card,
@@ -9,17 +9,17 @@ import {
   Input,
   Notice,
   PageHeader,
-  Segmented,
+  SectionLabel,
+  Select,
   Skeleton,
   StateBlock,
   StatusDot,
   Tag,
   catFor,
-  type SegmentedOption,
 } from "@workshop/ui";
 import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
 import { newChatHref } from "../lib/chatSelection";
-import { scopeKind, scopeLabel } from "../components/chat/chatScope";
+import { scopeKind, scopeLabel, scopeName } from "../components/chat/chatScope";
 import { DEV_MODE } from "../lib/devMode";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
@@ -51,8 +51,8 @@ type FilterKind = "all" | "development" | "workshop" | "project" | "app" | "agen
 // abbreviation was there to save room in a row that no longer has to fit seven
 // chips, and it was the only scope in the app called one thing here and another
 // everywhere else.
-const KIND_OPTIONS: SegmentedOption<FilterKind>[] = [
-  { value: "all", label: "All" },
+const KIND_OPTIONS: { value: FilterKind; label: string }[] = [
+  { value: "all", label: "Everything" },
   ...(DEV_MODE ? [{ value: "development" as const, label: "Development" }] : []),
   { value: "workshop", label: "Workshop" },
   { value: "project", label: "Projects" },
@@ -63,19 +63,6 @@ const KIND_OPTIONS: SegmentedOption<FilterKind>[] = [
 // Cap the rendered list so a large history never mounts unbounded (design rule
 // 9, overflow state). The filter narrows the list toward the cap.
 const RENDER_CAP = 100;
-
-// The chip row scrolls sideways on a narrow screen instead of setting the page's
-// width. `.ws-segmented` is an inline-flex with no wrap and an absolutely
-// positioned thumb, so it cannot wrap; left alone it made the whole Chats page
-// wider than a phone.
-// The 2px of padding is for the thumb's shadow and the focus ring: `overflow-x`
-// computes `overflow-y` to auto too, so a ring drawn at the edge would clip.
-const CHIP_SCROLL: React.CSSProperties = {
-  minWidth: 0,
-  maxWidth: "100%",
-  overflowX: "auto",
-  padding: "2px",
-};
 
 // When a chat was archived, at the resolution the archive is read at: you are
 // looking for the one you put here, so the day is the useful unit and today is
@@ -131,7 +118,6 @@ export default function Chats() {
   const nav = useNavigate();
   const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [q, setQ] = useState("");
   const [kind, setKind] = useState<FilterKind>("all");
 
   const load = useCallback(() => {
@@ -161,25 +147,17 @@ export default function Chats() {
   );
 
   const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
     return sorted.filter((t) => {
-      if (kind !== "all") {
-        const k = scopeKind(t.context_key);
-        // The Agents filter is keyed on WHO ANSWERS, which is what the operator
-        // is looking for when they pick it. `threadAgent` is the one derivation
-        // of that: an `agent:<slug>` chat, or a chat with an agent whose own
-        // scope is gone. It used to match "carries a non-empty participants
-        // list", a field nothing wrote except a migration and nothing read
-        // except this line.
-        if (kind === "agent") {
-          if (threadAgent(t) === null) return false;
-        } else if (k !== kind) {
-          return false;
-        }
-      }
-      return matches(t, needle);
+      if (kind === "all") return true;
+      // The Agents filter is keyed on WHO ANSWERS, which is what the operator
+      // is looking for when they pick it. `threadAgent` is the one derivation
+      // of that: an `agent:<slug>` chat, or a chat with an agent whose own scope
+      // is gone. It used to match "carries a non-empty participants list", a
+      // field nothing wrote except a migration and nothing read except this line.
+      if (kind === "agent") return threadAgent(t) !== null;
+      return scopeKind(t.context_key) === kind;
     });
-  }, [sorted, q, kind]);
+  }, [sorted, kind]);
 
   const visible = filtered.slice(0, RENDER_CAP);
 
@@ -188,45 +166,34 @@ export default function Chats() {
 
   return (
     <div>
+      {/* Eyebrow then title, the mockup's header: the scope this list belongs
+          to, then the page name. */}
+      <SectionLabel>Workshop</SectionLabel>
       <PageHeader
         title="Chats"
         actions={
-          <Button variant="primary" onClick={newChat}>
-            <Plus aria-hidden /> New chat
-          </Button>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
+            {/* One Filter control carrying the scope, not a row of six chips.
+                It commits on change, a view preference. */}
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)" }}>
+              <Filter size={14} aria-hidden />
+              <span className="ws-muted">Filter</span>
+              <Select
+                aria-label="Filter chats by context"
+                value={kind}
+                onChange={(e) => setKind(e.target.value as FilterKind)}
+              >
+                {KIND_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </Select>
+            </span>
+            <Button variant="primary" onClick={newChat}>
+              <Plus aria-hidden /> New chat
+            </Button>
+          </div>
         }
       />
-
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "var(--space-4)",
-          alignItems: "flex-end",
-          marginBottom: "var(--space-4)",
-        }}
-      >
-        <div style={{ flex: "1 1 260px", maxWidth: 420 }}>
-          <Field label="Search">
-            <Input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Filter by title, context, or last message"
-              spellCheck={false}
-            />
-          </Field>
-        </div>
-        <div style={CHIP_SCROLL}>
-          <Field label="Context">
-            <Segmented
-              ariaLabel="Filter by context"
-              options={KIND_OPTIONS}
-              value={kind}
-              onChange={setKind}
-            />
-          </Field>
-        </div>
-      </div>
 
       {threads === null ? (
         <div style={{ display: "grid", gap: "var(--space-3)" }}>
@@ -253,17 +220,16 @@ export default function Chats() {
         />
       ) : filtered.length === 0 ? (
         <StateBlock
-          title="No matches"
-          hint="Clear the search or pick All to see every chat."
+          title="No chats here"
+          hint="Pick Everything in the filter to see chats from every scope."
         />
       ) : (
         <>
-          <div style={{ display: "grid", gap: "var(--space-2)" }}>
+          <div style={{ display: "grid", gap: "var(--space-3)" }}>
             {visible.map((t) => (
               <Card
                 key={t.id}
                 interactive
-                compact
                 className="ws-chat-row"
                 onClick={() => open(t)}
                 // min-width:0 lets the two ellipsizing lines shrink instead of
@@ -271,28 +237,22 @@ export default function Chats() {
                 // viewport on mobile (the raw grid parent sets no min-width).
                 style={{ cursor: "pointer", minWidth: 0 }}
               >
-                {/* Left column fills the row; title and snippet each ellipsize on
-                    one line. This is the mockup's row shape: the name and its
-                    scope on top, the last line beneath, the counts held off to
-                    the right rather than trailing the snippet. */}
+                {/* The mockup's row: the chat name with its scope tag on top, the
+                    last message on one line beneath, the counts held off to the
+                    right rather than trailing the snippet. No leading icon: every
+                    row is a chat, so a chat glyph on each says nothing. */}
                 <div className="ws-chat-row__main">
                   <div className="ws-chat-row__head">
-                    <MessagesSquare size={14} aria-hidden style={{ flex: "none" }} />
                     <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
-                    <Tag hue={catFor(t.context_key)}>{scopeLabel(t.context_key)}</Tag>
-                    {/* Who answered, only when the scope tag does not already say
-                        so: an agent:<slug> chat already reads "Agent · <slug>". */}
-                    {!t.context_key.startsWith("agent:") && threadAgent(t) && (
-                      <Tag hue={catFor(`agent:${threadAgent(t)}`)}>{threadAgent(t)}</Tag>
-                    )}
+                    <Tag hue={catFor(t.context_key)}>{scopeName(t.context_key)}</Tag>
                   </div>
                   <p className="ws-muted ws-chat-row__snippet">{t.last_message || " "}</p>
                 </div>
-                {/* Right rail: a live dot while a turn is running, then the two
-                    quiet meta columns, length and last activity. */}
+                {/* Right rail: a live dot while a turn is running, then the length
+                    and the last activity, the mockup's two quiet meta columns. */}
                 <div className="ws-chat-row__meta">
                   {t.running && <StatusDot status="running">running</StatusDot>}
-                  <span className="ws-card__meta">{t.message_count} msgs</span>
+                  <span className="ws-card__meta">{t.message_count} turns</span>
                   <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
                 </div>
               </Card>
