@@ -13,8 +13,9 @@
 // correct itself, a refused write says so instead of letting the row silently
 // reappear, and a half-typed answer survives the panel closing.
 
-import { useCallback, useMemo, useState } from "react";
-import { usePoll, shortHttpError } from "@workshop/ui";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { HttpError, shortHttpError } from "@workshop/ui";
 import { jobIsLive } from "../../../lib/jobs";
 import { EMPTY_WORK, type WorkPayload, type WorkTicket } from "./workTypes";
 
@@ -47,48 +48,73 @@ export type ChatWork = {
 const IDLE_MS = 20000;
 const LIVE_MS = 5000;
 
+/** Every ticket in a payload, filed and scope, in one list. */
+function allTickets(data: WorkPayload | undefined): WorkTicket[] {
+  return [...(data?.filed ?? []), ...(data?.scope ?? [])];
+}
+
 export function useChatWork(threadId: string | null, opts: { enabled?: boolean } = {}): ChatWork {
   const { enabled = true } = opts;
-  const [data, setData] = useState<WorkPayload | null>(null);
-  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   const url = threadId ? `/api/chat/threads/${encodeURIComponent(threadId)}/work` : null;
 
-  const load = useCallback(async () => {
+  const qc = useQueryClient();
+  // Memoised because the optimistic write below reads and rewrites this exact
+  // entry, and a fresh array every render would rebuild that path every render.
+  const workKey = useMemo(() => ["chat", "work", threadId], [threadId]);
+
+  const q = useQuery({
+    queryKey: workKey,
+    queryFn: async (): Promise<WorkPayload> => {
+      const r = await fetch(url!);
+      // As `HttpError`, so the one transient-failure judgement in the kit can
+      // tell a restart-window 502 from a real refusal, and so `err` below is
+      // still exactly the `shortHttpError` line it always was.
+      if (!r.ok) {
+        throw new HttpError(
+          r.status,
+          shortHttpError(r.status, r.statusText, await r.text().catch(() => "")).trim(),
+        );
+      }
+      return r.json() as Promise<WorkPayload>;
+    },
     // A blank chat has no thread to scope to. Reading anything unfiltered here
     // would count work belonging to conversations that are not on screen.
-    if (!url) { setData(null); return; }
-    setLoading(true);
-    try {
-      const r = await fetch(url);
-      if (!r.ok) {
-        setErr(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")).trim());
-        setData((v) => v ?? EMPTY_WORK);
-        return;
-      }
-      setData(await r.json());
-      setErr(null);
-    } catch (e) {
-      // A dropped poll leaves the last good state on screen. A panel that
-      // empties itself on a network blip is worse than one that is stale.
-      setErr(String(e));
-      setData((v) => v ?? EMPTY_WORK);
-    } finally {
-      setLoading(false);
-    }
-  }, [url]);
+    enabled: enabled && !!url,
+    // The cadence follows the data: a run in flight is the only time any of this
+    // changes fast enough to be worth five seconds. This is the same rule the
+    // poll it replaces applied, read off the payload instead of off a render.
+    refetchInterval: (query) =>
+      allTickets(query.state.data).some((t) => jobIsLive(t.run?.status)) ? LIVE_MS : IDLE_MS,
+    // This read owns its own cadence, so nothing is gained by holding a window
+    // over it. The app default (30s) would also swallow the catch-up read on
+    // the way back from hidden, which is half of what made pausing a poll safe
+    // to default to (see packages/ui/src/usePoll.ts).
+    staleTime: 0,
+  });
 
-  const tickets = useMemo(() => [...(data?.filed ?? []), ...(data?.scope ?? [])], [data]);
-  // The cadence follows the data: a run in flight is the only time any of this
-  // changes fast enough to be worth five seconds. Changing the interval re-arms
-  // the timer, which is correct here because the value only flips when a run
-  // starts or ends, not on every render.
-  const live = tickets.some((t) => jobIsLive(t.run?.status));
+  const data = q.data;
+  const tickets = useMemo(() => allTickets(data), [data]);
 
-  usePoll(load, live ? LIVE_MS : IDLE_MS, { enabled: enabled && !!url });
+  // ONE LINE FOR TWO KINDS OF FAILURE, unchanged: a dropped read and a refused
+  // write share `err`, and whichever happened last is the one shown. The read
+  // half is mirrored out of the query here rather than derived, because a
+  // refused write is not in the query at all and the two have to take turns.
+  const { isError, error, dataUpdatedAt, errorUpdatedAt, refetch } = q;
+  useEffect(() => {
+    // A dropped poll leaves the last good state on screen. A panel that
+    // empties itself on a network blip is worse than one that is stale.
+    if (isError) setErr(error instanceof HttpError ? error.message : String(error));
+    else if (dataUpdatedAt) setErr(null);
+  }, [isError, error, dataUpdatedAt, errorUpdatedAt]);
+
+  const reload = useCallback(() => {
+    if (!url) return;
+    void refetch();
+  }, [url, refetch]);
 
   const byId = useMemo(() => {
     const m = new Map<string, WorkTicket>();
@@ -108,7 +134,15 @@ export function useChatWork(threadId: string | null, opts: { enabled?: boolean }
     setBusy(itemId);
     // The operator acted, so the row goes now. The re-read below corrects the
     // rare case where the write was refused.
-    setData((v) => (v ? { ...v, inbox: v.inbox.filter((i) => i.id !== itemId) } : v));
+    //
+    // It keeps the cached read's timestamp, because an edit is not a fresh
+    // READ: `err` above mirrors fetch outcomes off `dataUpdatedAt`, and moving
+    // that would let removing a row read as a poll that succeeded.
+    qc.setQueryData<WorkPayload>(
+      workKey,
+      (v) => (v ? { ...v, inbox: v.inbox.filter((i) => i.id !== itemId) } : v),
+      { updatedAt: qc.getQueryState(workKey)?.dataUpdatedAt },
+    );
     try {
       const r = await fetch(`/api/inbox/${encodeURIComponent(itemId)}/${path}`, {
         method: "POST",
@@ -129,9 +163,9 @@ export function useChatWork(threadId: string | null, opts: { enabled?: boolean }
       setErr(`Couldn't ${what}: ${String(e)}`);
     } finally {
       setBusy(null);
-      void load();
+      reload();
     }
-  }, [load]);
+  }, [reload, qc, workKey]);
 
   const answer = useCallback((id: string, text: string) =>
     act(id, "send that answer", "resolve", { answer: text, dismissed: false }), [act]);
@@ -150,10 +184,14 @@ export function useChatWork(threadId: string | null, opts: { enabled?: boolean }
 
   return {
     data: data ?? EMPTY_WORK,
-    loading,
+    // True for every read in flight, poll included, exactly as the `loading`
+    // flag this replaces was.
+    loading: q.isFetching,
     err,
-    cold: data === null,
-    reload: useCallback(() => { void load(); }, [load]),
+    // Nothing has been read yet. A FAILED read counts as read: the panel drops
+    // to the empty payload and draws its rows, which is what `cold` gates.
+    cold: data === undefined && !isError,
+    reload,
     ticket: useCallback((id: string) => byId.get(id), [byId]),
     tickets,
     busy,

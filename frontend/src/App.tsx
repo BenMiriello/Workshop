@@ -11,6 +11,8 @@ import Deploys from "./pages/Deploys";
 import TicketDetail from "./pages/TicketDetail";
 import FocusedChat from "./pages/FocusedChat";
 import { BreadcrumbProvider } from "@workshop/ui";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { queryClient } from "./lib/queryClient";
 import { Shell } from "./components/shell/Shell";
 import { AppProviders, AppSuspense, appRoutes } from "./apps/registry";
 
@@ -100,6 +102,12 @@ function VoiceRedirect() {
 // per-route width logic there is. Do not reintroduce a route-by-route list.
 export default function App() {
   return (
+    // The query cache sits ABOVE every route, so moving between screens does
+    // not throw away what was already read, and INSIDE `AuthProvider` (which
+    // wraps this component in main.tsx), so every query runs with a token.
+    // main.tsx mounts `BrowserRouter` above `AuthProvider`, so "outside the
+    // router" can only mean above the route tree, which is what this is.
+    <QueryClientProvider client={queryClient}>
     <AppProviders>
     <BreadcrumbProvider>
     <Shell>
@@ -211,5 +219,6 @@ export default function App() {
     </Shell>
     </BreadcrumbProvider>
     </AppProviders>
+    </QueryClientProvider>
   );
 }
