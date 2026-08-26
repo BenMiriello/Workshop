@@ -619,15 +619,30 @@ a.ws-btn { text-decoration: none; }
 .ws-chat-row {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   min-width: 0;
+}
+/* The live-state dot: filled in the live tone while a turn is running, a hollow
+   ring at rest. It is the only hue on the row, because liveness is the one thing
+   a chat list is scanned for. */
+.ws-chat-row__state {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  border: 1.5px solid var(--faint);
+  background: transparent;
+  flex: none;
+}
+.ws-chat-row__state[data-live] {
+  background: var(--live);
+  border-color: var(--live);
 }
 .ws-chat-row__main {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 2px;
 }
 .ws-chat-row__head {
   display: flex;
@@ -635,8 +650,8 @@ a.ws-btn { text-decoration: none; }
   gap: var(--space-2);
   min-width: 0;
 }
-/* Only the title gives way when the row is tight; the icon and the scope tags
-   keep their size so a long name ellipsizes rather than crushing its tag. */
+/* Only the title gives way when the row is tight; the scope and agent tags keep
+   their size so a long name ellipsizes rather than crushing its tag. */
 .ws-chat-row__head > :not(.ws-chat-row__title) { flex: none; }
 .ws-chat-row__title {
   flex: 0 1 auto;
@@ -658,23 +673,37 @@ a.ws-btn { text-decoration: none; }
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 .ws-chat-row__when {
-  min-width: 44px;
+  min-width: 36px;
   text-align: right;
 }
+/* Row actions: a control, so neutral at rest and --fg on hover, never a hue. */
+.ws-chat-row__act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ws-chat-row__act:hover { color: var(--fg); }
 /* On a phone the right rail cannot share the row's width with the title without
-   crushing it to nothing (a running chat adds a whole live label). Below the
-   touch breakpoint the meta drops to its own line under the title, so the name
-   always gets the full width and the counts read left to right beneath it. */
+   crushing it to nothing. Below the touch breakpoint the meta drops to its own
+   line under the title, indented past the state dot, so the name always gets the
+   full width and the counts read left to right beneath it. */
 @media (max-width: 640px) {
   .ws-chat-row { flex-wrap: wrap; }
-  .ws-chat-row__main { flex-basis: 100%; }
   .ws-chat-row__meta {
     width: 100%;
     justify-content: flex-start;
     gap: var(--space-3);
+    padding-left: calc(8px + var(--space-3));
   }
   .ws-chat-row__when { min-width: 0; text-align: left; }
 }

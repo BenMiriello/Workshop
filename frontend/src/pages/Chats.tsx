@@ -1,26 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Archive, ArchiveRestore, ChevronLeft, Filter, MessagesSquare, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowDownWideNarrow, ChevronLeft, MessagesSquare, MoreVertical, Plus, Trash2 } from "lucide-react";
 import {
   Button,
   Card,
   ConfirmDialog,
   Field,
   Input,
+  Menu,
+  MenuItem,
+  MenuSeparator,
   Notice,
   PageHeader,
   SectionLabel,
   Select,
   Skeleton,
   StateBlock,
-  StatusDot,
   Tag,
   catFor,
 } from "@workshop/ui";
 import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
 import { newChatHref } from "../lib/chatSelection";
-import { scopeKind, scopeLabel, scopeName } from "../components/chat/chatScope";
-import { DEV_MODE } from "../lib/devMode";
+import { scopeLabel, scopeName } from "../components/chat/chatScope";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -32,33 +33,38 @@ import { DEV_MODE } from "../lib/devMode";
 // here, which meant the list and the picker could name the same scope
 // differently and neither would be wrong.
 
-// Scope-kind view filter (C17). Commits on change (a view preference).
-//
-// The archive is NOT in this control. It was, and it was wrong twice over: it is
-// not a scope kind, so it made a row of "which place" answers carry one "which
-// list" answer; and the seventh chip pushed the row past a phone viewport, which
-// the segmented primitive answers by widening the page rather than wrapping. The
-// archive is a different list and now has its own route, reached from a button
-// at the foot of this page.
-type FilterKind = "all" | "development" | "workshop" | "project" | "app" | "agent";
-// Dev is absent, not present-and-disabled, in a non-dev build — same rule
-// devMode.ts applies to the scope itself: a disabled option still tells every
-// user about a capability they do not have.
-//
-// It sorts ABOVE Workshop, matching `orderScopes` and the chat's own scope
-// picker: Development is where a developer already is, so the root organising
-// layer should not come first. It reads "Development", its real name: the
-// abbreviation was there to save room in a row that no longer has to fit seven
-// chips, and it was the only scope in the app called one thing here and another
-// everywhere else.
-const KIND_OPTIONS: { value: FilterKind; label: string }[] = [
-  { value: "all", label: "Everything" },
-  ...(DEV_MODE ? [{ value: "development" as const, label: "Development" }] : []),
-  { value: "workshop", label: "Workshop" },
-  { value: "project", label: "Projects" },
-  { value: "app", label: "Apps" },
-  { value: "agent", label: "Agents" },
-];
+// How the list is ordered. Recent groups the rows by date; the other two are a
+// single flat list. Commits on change (a view preference).
+type Sort = "recent" | "oldest" | "messages";
+
+// Recency buckets, the mockup's date headings. A chat's bucket comes from the
+// same field the Recent sort orders by (updated_at), so a row's heading and its
+// position always agree.
+const BUCKET_ORDER = ["today", "yesterday", "week", "month", "older"] as const;
+function bucketFor(iso?: string | null): { key: string; label: string } {
+  const t = iso ? new Date(iso) : null;
+  if (!t || Number.isNaN(t.getTime())) return { key: "older", label: "Earlier" };
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const today = startOfDay(new Date());
+  const day = 86_400_000;
+  const ts = startOfDay(t);
+  if (ts >= today) return { key: "today", label: "Today" };
+  if (ts >= today - day) return { key: "yesterday", label: "Yesterday" };
+  if (ts >= today - 7 * day) return { key: "week", label: "Earlier this week" };
+  if (ts >= today - 30 * day) return { key: "month", label: "Earlier this month" };
+  return { key: "older", label: "Earlier" };
+}
+
+// The model that answered, shortened to family and version the way the mockup
+// shows it: "claude-opus-4-8" reads "opus 4.8".
+function shortModel(m?: string | null): string {
+  if (!m) return "";
+  const s = m.replace(/^claude-/, "").replace(/-\d{6,}$/, "");
+  const parts = s.split("-").filter(Boolean);
+  if (parts.length === 0) return s;
+  const ver = parts.slice(1).join(".");
+  return ver ? `${parts[0]} ${ver}` : parts[0];
+}
 
 // Cap the rendered list so a large history never mounts unbounded (design rule
 // 9, overflow state). The filter narrows the list toward the cap.
@@ -118,11 +124,17 @@ export default function Chats() {
   const nav = useNavigate();
   const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [kind, setKind] = useState<FilterKind>("all");
+  const [sort, setSort] = useState<Sort>("recent");
+  // A delete waiting on its confirm dialog, and a one-off action failure that
+  // leaves the list on screen (a Notice, not a whole-page error block).
+  const [pending, setPending] = useState<{ id: string; title: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionErr, setActionErr] = useState<{ text: string; endpoint: string } | null>(null);
 
   const load = useCallback(() => {
     setThreads(null);
     setErr(null);
+    setActionErr(null);
     chatApi
       .listThreads()
       .then(setThreads)
@@ -137,55 +149,80 @@ export default function Chats() {
 
   const newChat = () => nav(newChatHref("general"));
 
-  // Most-recent first, then apply the context-kind and text filters.
-  const sorted = useMemo(
-    () =>
-      threads
-        ? [...threads].sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""))
-        : [],
-    [threads],
-  );
+  const sorted = useMemo(() => {
+    const list = threads ? [...threads] : [];
+    if (sort === "oldest") list.sort((a, b) => (a.updated_at || "").localeCompare(b.updated_at || ""));
+    else if (sort === "messages") list.sort((a, b) => (b.message_count || 0) - (a.message_count || 0));
+    else list.sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+    return list;
+  }, [threads, sort]);
 
-  const filtered = useMemo(() => {
-    return sorted.filter((t) => {
-      if (kind === "all") return true;
-      // The Agents filter is keyed on WHO ANSWERS, which is what the operator
-      // is looking for when they pick it. `threadAgent` is the one derivation
-      // of that: an `agent:<slug>` chat, or a chat with an agent whose own scope
-      // is gone. It used to match "carries a non-empty participants list", a
-      // field nothing wrote except a migration and nothing read except this line.
-      if (kind === "agent") return threadAgent(t) !== null;
-      return scopeKind(t.context_key) === kind;
-    });
-  }, [sorted, kind]);
+  const visible = sorted.slice(0, RENDER_CAP);
 
-  const visible = filtered.slice(0, RENDER_CAP);
+  // Recent groups the rows under date headings; the other sorts are one flat
+  // list, because "most messages" under "Today" would be a heading that lies.
+  const groups = useMemo(() => {
+    if (sort !== "recent") return [{ key: "all", label: "", items: visible }];
+    const byKey = new Map<string, { key: string; label: string; items: ThreadSummary[] }>();
+    for (const t of visible) {
+      const b = bucketFor(t.updated_at);
+      if (!byKey.has(b.key)) byKey.set(b.key, { key: b.key, label: b.label, items: [] });
+      byKey.get(b.key)!.items.push(t);
+    }
+    return BUCKET_ORDER.filter((k) => byKey.has(k)).map((k) => byKey.get(k)!);
+  }, [visible, sort]);
 
   const open = (t: ThreadSummary) =>
     nav(`/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`);
 
+  // Archive is the one action on the row itself: frequent and reversible. It
+  // drops the row locally rather than refetching the whole list to learn one
+  // row left.
+  const archiveOne = async (t: ThreadSummary) => {
+    try {
+      await chatApi.archiveThread(t.id);
+      setThreads((list) => (list ? list.filter((x) => x.id !== t.id) : list));
+    } catch (e) {
+      setActionErr({
+        text: `Couldn't archive "${t.title || "this chat"}": ${e}. It is still here.`,
+        endpoint: `/api/chat/threads/${t.id}/archive`,
+      });
+    }
+  };
+
+  const runDelete = async () => {
+    if (!pending) return;
+    setBusy(true);
+    try {
+      await chatApi.deleteThread(pending.id);
+      setThreads((list) => (list ? list.filter((x) => x.id !== pending.id) : list));
+      setPending(null);
+    } catch (e) {
+      setActionErr({
+        text: `Couldn't delete "${pending.title}": ${e}. It is still here.`,
+        endpoint: `/api/chat/threads/${pending.id}`,
+      });
+      setPending(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div>
-      {/* Eyebrow then title, the mockup's header: the scope this list belongs
-          to, then the page name. */}
-      <SectionLabel>Workshop</SectionLabel>
       <PageHeader
         title="Chats"
         actions={
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
-            {/* One Filter control carrying the scope, not a row of six chips.
-                It commits on change, a view preference. */}
+            {/* Sort, not a scope filter: this is the workshop's own chats page,
+                and the page column already says which place you are in. Commits
+                on change (a view preference). */}
             <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)" }}>
-              <Filter size={14} aria-hidden />
-              <span className="ws-muted">Filter</span>
-              <Select
-                aria-label="Filter chats by context"
-                value={kind}
-                onChange={(e) => setKind(e.target.value as FilterKind)}
-              >
-                {KIND_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
-                ))}
+              <ArrowDownWideNarrow size={14} aria-hidden />
+              <Select aria-label="Sort chats" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
+                <option value="recent">Recent</option>
+                <option value="oldest">Oldest</option>
+                <option value="messages">Most messages</option>
               </Select>
             </span>
             <Button variant="primary" onClick={newChat}>
@@ -195,10 +232,22 @@ export default function Chats() {
         }
       />
 
+      {actionErr && (
+        <div style={{ marginBottom: "var(--space-3)" }}>
+          <Notice
+            tone="error"
+            where={actionErr.endpoint}
+            action={<Button size="sm" variant="ghost" onClick={() => setActionErr(null)}>Dismiss</Button>}
+          >
+            {actionErr.text}
+          </Notice>
+        </div>
+      )}
+
       {threads === null ? (
-        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+        <div style={{ display: "grid", gap: "var(--space-2)" }}>
           {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} style={{ height: 64 }} />
+            <Skeleton key={i} style={{ height: 52 }} />
           ))}
         </div>
       ) : err ? (
@@ -218,62 +267,116 @@ export default function Chats() {
             </Button>
           }
         />
-      ) : filtered.length === 0 ? (
-        <StateBlock
-          title="No chats here"
-          hint="Pick Everything in the filter to see chats from every scope."
-        />
       ) : (
         <>
-          <div style={{ display: "grid", gap: "var(--space-3)" }}>
-            {visible.map((t) => (
-              <Card
-                key={t.id}
-                interactive
-                className="ws-chat-row"
-                onClick={() => open(t)}
-                // min-width:0 lets the two ellipsizing lines shrink instead of
-                // setting the card's min-content width and overflowing the
-                // viewport on mobile (the raw grid parent sets no min-width).
-                style={{ cursor: "pointer", minWidth: 0 }}
-              >
-                {/* The mockup's row: the chat name with its scope tag on top, the
-                    last message on one line beneath, the counts held off to the
-                    right rather than trailing the snippet. No leading icon: every
-                    row is a chat, so a chat glyph on each says nothing. */}
-                <div className="ws-chat-row__main">
-                  <div className="ws-chat-row__head">
-                    <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
-                    <Tag hue={catFor(t.context_key)}>{scopeName(t.context_key)}</Tag>
-                  </div>
-                  <p className="ws-muted ws-chat-row__snippet">{t.last_message || " "}</p>
+          {groups.map((g) => (
+            <div key={g.key} style={{ display: "grid", gap: "var(--space-2)" }}>
+              {g.label && (
+                <div style={{ display: "flex", alignItems: "baseline", gap: "var(--space-2)", margin: "var(--space-4) 0 var(--space-1)" }}>
+                  <SectionLabel>{g.label}</SectionLabel>
+                  <span className="ws-card__meta">{g.items.length}</span>
                 </div>
-                {/* Right rail: a live dot while a turn is running, then the length
-                    and the last activity, the mockup's two quiet meta columns. */}
-                <div className="ws-chat-row__meta">
-                  {t.running && <StatusDot status="running">running</StatusDot>}
-                  <span className="ws-card__meta">{t.message_count} turns</span>
-                  <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
-                </div>
-              </Card>
-            ))}
-          </div>
-          {filtered.length > RENDER_CAP && (
-            <p className="ws-muted" style={{ margin: "var(--space-3) 0 0", textAlign: "center" }}>
-              Showing {RENDER_CAP} of {filtered.length}. Refine the search or context filter to narrow the list.
+              )}
+              {g.items.map((t) => {
+                const agent = threadAgent(t);
+                return (
+                  <Card
+                    key={t.id}
+                    interactive
+                    compact
+                    className="ws-chat-row"
+                    onClick={() => open(t)}
+                    // min-width:0 lets the two ellipsizing lines shrink instead of
+                    // setting the card's min-content width and overflowing the
+                    // viewport on mobile (the raw grid parent sets no min-width).
+                    style={{ cursor: "pointer", minWidth: 0 }}
+                  >
+                    {/* State dot, then name + scope + agent, the last message on
+                        one line, and the quiet meta rail: model, length, age, and
+                        the two row actions. This is the mockup's 5a row. */}
+                    <span className="ws-chat-row__state" data-live={t.running ? "" : undefined} aria-hidden />
+                    <div className="ws-chat-row__main">
+                      <div className="ws-chat-row__head">
+                        <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
+                        <Tag hue={catFor(t.context_key)}>{scopeName(t.context_key)}</Tag>
+                        {/* Who answered, only when the scope tag does not already
+                            say so (an agent:<slug> chat already reads its name). */}
+                        {!t.context_key.startsWith("agent:") && agent && (
+                          <Tag hue={catFor(`agent:${agent}`)}>{agent}</Tag>
+                        )}
+                      </div>
+                      <p className="ws-muted ws-chat-row__snippet">{t.last_message || " "}</p>
+                    </div>
+                    <div className="ws-chat-row__meta">
+                      {t.model && <span className="ws-card__meta">{shortModel(t.model)}</span>}
+                      <span className="ws-card__meta">{t.message_count} turns</span>
+                      <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
+                      <button
+                        type="button"
+                        className="ws-chat-row__act"
+                        title="Archive"
+                        aria-label="Archive chat"
+                        onClick={(e) => { e.stopPropagation(); void archiveOne(t); }}
+                      >
+                        <Archive size={14} aria-hidden />
+                      </button>
+                      {/* The menu opens on its own; the stop keeps its trigger
+                          from also opening the chat behind it. */}
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <Menu
+                          label="Chat actions"
+                          trigger={
+                            <button type="button" className="ws-chat-row__act" title="More" aria-label="More chat actions">
+                              <MoreVertical size={14} aria-hidden />
+                            </button>
+                          }
+                        >
+                          <MenuItem icon={<Archive size={14} aria-hidden />} onSelect={() => void archiveOne(t)}>
+                            Archive
+                          </MenuItem>
+                          <MenuSeparator />
+                          <MenuItem
+                            danger
+                            icon={<Trash2 size={14} aria-hidden />}
+                            onSelect={() => setPending({ id: t.id, title: t.title || "this chat" })}
+                          >
+                            Delete
+                          </MenuItem>
+                        </Menu>
+                      </span>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          ))}
+          {sorted.length > RENDER_CAP && (
+            <p className="ws-muted" style={{ margin: "var(--space-4) 0 0", textAlign: "center" }}>
+              Showing {RENDER_CAP} of {sorted.length}. This list will paginate as it grows.
             </p>
           )}
         </>
       )}
 
       {/* The way into the archive: one quiet control at the foot of the list,
-          where you look after not finding what you came for. It is not a filter
-          on this page, so it does not sit in the filter row. */}
+          where you look after not finding what you came for. */}
       <div style={{ display: "flex", justifyContent: "center", marginTop: "var(--space-5)" }}>
         <Button size="sm" onClick={() => nav("/chats/archived")}>
           <Archive aria-hidden /> Archived chats
         </Button>
       </div>
+
+      {/* Delete is the one destructive verb and there is no undo on the API, so
+          it always confirms. Archive does not: it is reversible from the archive. */}
+      <ConfirmDialog
+        open={pending !== null}
+        busy={busy}
+        onCancel={() => setPending(null)}
+        onConfirm={() => { void runDelete(); }}
+        title="Delete chat?"
+        body={<span>This permanently deletes "{pending?.title}" and its messages. This can't be undone.</span>}
+        confirmLabel="Delete chat"
+      />
     </div>
   );
 }
