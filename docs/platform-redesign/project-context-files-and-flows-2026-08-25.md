@@ -12,6 +12,36 @@ portable (few clear files, no custom junk a person has to strip to port away).
 
 ---
 
+## 0. Decisions taken (operator, 2026-08-25) and what shipped
+
+The operator decided these after reading the proposal below; where they differ
+from the proposal body, the decisions win and the body is kept as reasoning.
+
+- **Manifest is a MEMORY note, not a repo file** (reverses proposal 2b). It lives
+  in the scope's memory as a reserved, pinned "Manifest" note, read and edited on
+  the Memory page. SHIPPED: `knowledge.MANIFEST_NOTE_ID` + `write_manifest` /
+  `read_manifest`; personas point at it; `live_context` no longer injects
+  PROJECT.md.
+- **Decisions have one home, in memory** (a decision-typed note), not
+  `docs/decisions`. SHIPPED: the note block takes `"type": "decision"`;
+  NOTE_PROTOCOL updated.
+- **AGENTS.md loads, with aliases** (proposal 2a, approved). SHIPPED: `_agent_rules`
+  reads AGENTS.md then CLAUDE.md / .cursorrules / copilot-instructions, closing the
+  CLAUDE.md-invisible gap.
+- **New-project button creates and opens a chat**, no form (reverses proposal 6 /
+  decision 4). SHIPPED: the dock "+" creates a blank project and navigates to its
+  chat.
+- **Clear out dead code, but rehome what is still needed** (esp. settings). PARTLY
+  DONE: removed the dead `invalidateAppList`. The larger removal (legacy project
+  trio, inert app-entity write API) and the settings rehoming are deferred because
+  they are entangled with the in-progress project refactor and settings needs a new
+  home first. See section 5 and the closing note.
+
+Follow-up owed: the new-project scaffold still writes a vestigial PROJECT.md file;
+it should seed a Manifest note instead. Small, not done this pass.
+
+---
+
 ## 1. Two research facts that decide the shape
 
 - **Instructions are a solved, portable problem.** AGENTS.md is the cross-vendor
