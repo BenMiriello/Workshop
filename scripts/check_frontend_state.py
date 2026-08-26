@@ -118,12 +118,28 @@ QUERY_LAYER = "frontend/src/lib/queryClient.ts"
 _USEPOLL = re.compile(r"\busePoll\s*\(")
 _SETINTERVAL = re.compile(r"\b(?:window\.)?setInterval\s*\(")
 
-# Timers that are NOT polls: nothing in the callback reaches the network. Each
-# entry is (path, regex matched against the setInterval LINE, reason).
+# Timers that are NOT polls: nothing in the callback reaches the network.
+#
+# TWO LISTS, and the split is a rule this repo enforces elsewhere. A platform
+# file may be named here. An APP file may not: "no platform source file may
+# name a specific app" (CLAUDE.md), measured by check_no_app_names.py, which
+# gates the same reviewer run this checker does. Naming five app paths here
+# raised that gate's literal count and failed the branch that added them.
+#
+# So an app's timer is exempted by a pattern that PROVES it is local -- a state
+# setter that cannot reach the network -- with no path attached. That is the
+# stronger form anyway: it says WHY the timer is not a poll instead of who owns
+# it. `_TIMER_ALLOW` keeps (path, pattern) for platform files, where the path
+# genuinely narrows.
+#
+# Both are matched against a WINDOW (the setInterval line plus the two after
+# it), not that line alone, because the callback body that proves the point is
+# usually on the next line: `timerRef.current = window.setInterval(() => {`
+# says nothing by itself.
 #
 # Keyed by a line pattern rather than a line NUMBER on purpose -- a line number
 # goes stale on the next edit above it and then silently exempts the wrong
-# timer. `recorder.tsx` is why the pattern is needed at all: it holds one real
+# timer. `recorder.tsx` is why a pattern is needed at all: it holds one real
 # poll (the 800ms live publish) and one clock, so a file-level exemption there
 # would hide a poll.
 _TIMER_ALLOW: tuple[tuple[str, str, str], ...] = (
@@ -143,11 +159,6 @@ _TIMER_ALLOW: tuple[tuple[str, str, str], ...] = (
         "clock tick: ages the context-window timestamps in place",
     ),
     (
-        "frontend/src/components/chat/FoldingNote.tsx",
-        r"window\.setInterval",
-        "elapsed-seconds counter for the in-progress fold; pure Date arithmetic",
-    ),
-    (
         "frontend/src/components/chat/work/TicketCard.tsx",
         r"setNow\(Date\.now\(\)\)",
         "clock tick: relative age on the ticket card",
@@ -162,36 +173,28 @@ _TIMER_ALLOW: tuple[tuple[str, str, str], ...] = (
         r"this\.checkDevice\(\)",
         "audio watchdog: checkDevice() inspects the local MediaStreamTrack only",
     ),
-    (
-        "frontend/src/pages/apps/Birds.tsx",
-        r"toLocaleTimeString",
-        "wall-clock label in the cast view",
-    ),
-    (
-        "frontend/src/pages/apps/Location.tsx",
-        r"setTick\(\(x\) => x \+ 1\)",
-        'relative "last fix" label re-render; the server read beside it is a usePoll',
-    ),
-    (
-        "frontend/src/pages/apps/birds/recorder.tsx",
-        r"timerRef\.current = window\.setInterval",
-        "elapsed-seconds recording timer; stops the take at MAX_SECONDS",
-    ),
-    (
-        "frontend/src/pages/apps/health/HealthSettings.tsx",
-        r"setTick\(\(x\) => x \+ 1\)",
-        'relative "last reading" label re-render',
-    ),
-    (
-        "frontend/src/pages/apps/location/LocationSettings.tsx",
-        r"setTick\(\(x\) => x \+ 1\)",
-        'relative "last ping" label re-render',
-    ),
 )
 
+# Exempt ANYWHERE, because the pattern itself proves the callback is local
+# state and cannot reach the network. No path, so an app's own timer needs no
+# platform file to name it. Keep these narrow: each one names a specific state
+# setter, not a shape like `window.setInterval`.
+_TIMER_ALLOW_ANYWHERE: tuple[tuple[str, str], ...] = (
+    (r"setTick\(\(x\) => x \+ 1\)", "re-render tick for a relative-time label"),
+    (r"setElapsed\(", "elapsed-seconds counter; pure Date/number arithmetic"),
+    (r"toLocaleTimeString", "wall-clock label"),
+)
 
-def _allow_rules() -> list[tuple[str, re.Pattern[str], str]]:
-    return [(path, re.compile(pat), why) for path, pat, why in _TIMER_ALLOW]
+# The setInterval line plus the two after it: the callback body that proves a
+# timer is local is usually not on the line that opens it.
+_WINDOW = 3
+
+
+def _allow_rules() -> list[tuple[str | None, re.Pattern[str], str]]:
+    return (
+        [(path, re.compile(pat), why) for path, pat, why in _TIMER_ALLOW]
+        + [(None, re.compile(pat), why) for pat, why in _TIMER_ALLOW_ANYWHERE]
+    )
 
 
 def tracked_files(root: Path = ROOT) -> list[str]:
@@ -249,7 +252,8 @@ def scan(root: Path = ROOT) -> dict:
             body = (root / rel).read_text(errors="replace")
         except OSError:
             continue
-        for i, line in enumerate(body.splitlines(), 1):
+        lines = body.splitlines()
+        for i, line in enumerate(lines, 1):
             stripped = line.strip()
             # A comment is prose, and prose is not a mechanism. Several files
             # here explain in `//` comments why the timer beside them is NOT a
@@ -260,8 +264,12 @@ def scan(root: Path = ROOT) -> dict:
             if _USEPOLL.search(line):
                 polls.append({"file": rel, "line": i, "text": stripped})
             if _SETINTERVAL.search(line):
+                window = "\n".join(lines[i - 1 : i - 1 + _WINDOW])
                 why = next(
-                    (w for path, pat, w in rules if path == rel and pat.search(line)),
+                    (
+                        w for path, pat, w in rules
+                        if (path is None or path == rel) and pat.search(window)
+                    ),
                     None,
                 )
                 (exempt if why else intervals).append(
@@ -271,11 +279,14 @@ def scan(root: Path = ROOT) -> dict:
     # A stale exemption is REPORTED, never failed. Failing it would mean that
     # deleting an allowlisted timer -- unambiguously progress -- breaks the
     # build, which is the ratchet pointing backwards.
-    matched = {(e["file"], e["text"]) for e in exempt}
+    matched = {(e["file"], e["why"]) for e in exempt}
     stale = [
-        {"file": path, "pattern": pat, "why": why}
-        for path, pat, why in _TIMER_ALLOW
-        if not any(f == path and re.compile(pat).search(t) for f, t in matched)
+        {"file": path or "(any)", "pattern": pat, "why": why}
+        for path, pat, why in (
+            [(p, pt, w) for p, pt, w in _TIMER_ALLOW]
+            + [(None, pt, w) for pt, w in _TIMER_ALLOW_ANYWHERE]
+        )
+        if not any((path is None or f == path) and w == why for f, w in matched)
     ]
 
     return {

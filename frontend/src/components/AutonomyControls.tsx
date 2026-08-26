@@ -123,7 +123,9 @@ export default function AutonomyControls() {
   // for a tree never probed, "unknown" for one whose last probe failed -- until
   // the new probe lands. One round trip either way.
   const runnerQuery = useQuery({
-    queryKey: ["queue", "runner", scope],
+    // "dir" is not decoration: without it a tree literally named "targets" would
+    // share the key above, which holds a RunTarget[] rather than {running}.
+    queryKey: ["queue", "runner", "dir", scope],
     queryFn: async (): Promise<{ running: boolean }> => {
       const r = await fetch(`/api/queue/runner?dir=${encodeURIComponent(scope)}`);
       if (!r.ok) throw new Error(String(r.status));
