@@ -364,10 +364,12 @@ GenAI conventions record input, output, cache-read and cache-write tokens as
 four raw counters and define no weighted unit and no cost metric; Langfuse,
 LangSmith, Helicone and Portkey store the same components and derive dollars
 from a versioned price table; Anthropic returns the components and prices each
-separately (cache write 1.25x base input, cache read 0.1x). So the monthly rule
-stores components and caps dollars. The `effective tokens` scalar in
-`counting-tokens-2026-08-25.md` §5 stays the unit of the 5 hour admission
-check, and is not the unit of the budget.
+separately (cache write 1.25x base input, cache read 0.1x). So the ledger stores
+components and every limit caps dollars, the session window and the monthly rule
+alike. There is no second unit: the `effective tokens` scalar an earlier draft of
+`counting-tokens-2026-08-25.md` §5 proposed was withdrawn on 2026-08-25, because
+GitHub shipped that exact composite and deprecated it in June for a
+dollar-derived credit.
 
 ### The default: a quarter of the plan's monthly price
 
