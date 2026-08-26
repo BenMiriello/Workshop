@@ -342,7 +342,7 @@ window for the short limit, and the monthly is what keeps it honest.
 
 ---
 
-## Operator ruling, 2026-08-25: what the monthly cap governs, and its default
+## Operator ruling, 2026-08-25: the cap, the plan setting, and running out
 
 ### The cap is autonomous work only
 
@@ -371,47 +371,136 @@ alike. There is no second unit: the `effective tokens` scalar an earlier draft o
 GitHub shipped that exact composite and deprecated it in June for a
 dollar-derived credit.
 
-### The default: a quarter of the plan's monthly price
+The CLI already enforces a dollar budget natively: `--max-budget-usd <amount>`
+(measured on 2.1.143) stops a `-p` run and returns a result whose subtype is
+`error_max_budget_usd`. A per-run hard stop in the same unit, so the stop at the
+cap in R2 does not have to be reconstructed from token arithmetic.
 
-Anthropic publishes a plan's price and its size relative to Pro, and no token
-figure. It does publish the conversion: usage past the allowance bills as usage
-credits at standard API rates, so API-rate dollars is a denominator the plan
-and the ledger already share.
+### The plan is a setting, and it starts unset
 
-| plan | price | default autonomous cap |
+Anthropic publishes a plan's price and no token figure, and it publishes the
+conversion: usage past the allowance bills as usage credits at standard API
+rates. So the price is a dollar denominator the plan and the ledger already
+share. What an installation does NOT have is the plan. Nothing may be assumed
+about which subscription an owner is on, and nothing infers it silently.
+
+`plan` is a setting with no default. `auth_health.parse_claude_auth_status`
+(`:172`) already reads `subscriptionType` from `claude auth status --json` and
+returns it as `plan`; it separates `pro` from `max` but not 5x from 20x, and
+nothing reads it today. Use it to PREFILL the setting, never to set it: the
+settings screen offers the value it found, the owner confirms or corrects it,
+and the setting stays unset until they do. A value the owner confirmed is not a
+guess, and a prefill from the account's own credential is the shortest path to a
+confirmed one.
+
+Once a plan is set, the offered default for the monthly cap is a quarter of its
+price:
+
+| plan | price | offered default |
 | --- | --- | --- |
 | Pro | $20 / month | $5 / month |
 | Max 5x | $100 / month | $25 / month |
 | Max 20x | $200 / month | $50 / month |
 
-25% of the price. The other 75% is the point of the fraction: it stays free for
-the operator's own interactive use, which is why the cap may not see chat. This
-installation is on Max 5x, so the default here is **$25 per month**. For scale,
-an agentic turn is roughly 90% cache read, which at published prices runs about
-$1.05 per million tokens on Sonnet 5 and $1.75 on Opus 5, so $25 buys 15 to 25
-million tokens a month.
+The other 75% is the point of the fraction: it stays free for the owner's own
+interactive use, which is why the cap may not see chat.
 
-`auth_health.parse_claude_auth_status` (`:172`) already reads
-`subscriptionType` and returns it as `plan`. It separates `pro` from `max` but
-not 5x from 20x, so the tier is free and the multiplier is a setting defaulting
-to 5x.
+**With no plan set there is still a cap.** It is a dollar amount and dollars are
+absolute; the plan is needed only to compute the convenience default. An owner
+who types $30 gets a $30 monthly cap and never names a plan.
 
-### A separate mechanism: the plan-availability gate
+### Where dollar figures appear
 
-The operator raised this and distinguished it from the cap:
+On the main usage page, and not scattered through the product. Beside the
+figures there, one line: "Estimated for the Claude Max 5x plan", naming whatever
+the setting holds, linking to "Configure plan settings". With no plan set the
+same line says the cap is the dollar amount you set. That line is the only
+caveat text; a dollar figure does not get a footnote everywhere it appears.
 
-> "it might be an idea that we could look towards the overall usage, and if
-> there's no more available usage, then we don't run the autonomous system, but
-> that's a different idea than what you're saying."
+### Admission refuses for two independent reasons
 
-A precondition on starting, not a budget. Before an autonomous run begins, ask
-whether the plan has allowance left right now; if the account is sitting at its
-5 hour or weekly limit, do not start, and retry after the reset. No amount, no
-period, no fraction, and it holds even when the monthly cap is untouched. It
-buys what the cap cannot: a worker is never what consumes the last of the plan.
-The cap decides how much of a month autonomous work may have; the gate decides
-whether it may start at all right now.
+Before an autonomous run starts, admission asks two questions, and either one
+refuses:
 
-**Sequencing.** Not enforceable until `counting-tokens-2026-08-25.md` lands:
-today's ledger mixes three units in one column, and pricing a mixed unit yields
-a mixed dollar figure.
+1. **Is there budget left?** The session window and the monthly dollar cap. Our
+   own numbers.
+2. **Does the provider have capacity left?** If the account is sitting at its 5
+   hour or weekly limit, do not start.
+
+The second is decided, not deferred, and it is not a budget: no amount, no
+period, no fraction, and it holds when the cap is untouched. It buys what the
+cap cannot, which is that a worker is never what consumes the last of the plan.
+The cap decides how much of a month autonomous work may have; the capacity
+question decides whether it may start at all right now.
+
+Both belong in `usage_ledger._admission`, which every autonomous start already
+calls and no chat path calls, and both report through the existing `_refusal()`
+record, so a refused run names which of the two stopped it.
+
+### Knowing the provider is out, without asking it
+
+No probe. A synthetic test request costs a request and is stale the moment it
+answers. Exhaustion is learned from real work failing; what is new is that the
+failure is classified and remembered.
+
+WHAT THE CLI ACTUALLY SAYS, measured 2026-08-25 over the session journals in
+`~/.claude/projects` (CLI 2.1.143). A limit arrives as a synthetic assistant
+message with structured fields beside it:
+
+    "model": "<synthetic>",
+    "content": [{"type": "text",
+                 "text": "You've hit your session limit · resets 11pm (America/Los_Angeles)"}],
+    "error": "rate_limit", "isApiErrorMessage": true, "apiErrorStatus": 429
+
+91 records carry "hit your session limit" and 14 carry "hit your weekly limit".
+The CLI's own strings name the limit kinds it distinguishes (`five_hour`,
+`seven_day`, `seven_day_opus`, `seven_day_sonnet`, `overage`) and it also
+distinguishes a 429 that is NOT a usage limit: "Server is temporarily limiting
+requests (not your usage limit)". A bare 429 therefore does not mean the plan is
+spent.
+
+**A reset time is available and it is coarse.** The message carries a wall clock
+reset in the account's timezone, not an ISO timestamp; `resetsAt` exists inside
+the CLI but does not reach the headless result envelope. So parse the reset out
+of the message when it is there and use it; when it is not, wait one 5 hour
+window. That fallback matches the provider's own session window rather than
+inventing a number, and it is the only arbitrary figure in this design.
+
+CLASSIFY THE FAILURE, three outcomes:
+
+- **Clearly a limit.** The record carries `error: "rate_limit"`, or the text
+  matches `You've hit your (session|weekly|Opus|Sonnet) limit` or `You've hit
+  your limit`, or `usage limit reached`. Record it and stop starting work.
+- **Clearly not a limit.** `529 Overloaded`, a 429 whose text says capacity,
+  auth failures, argv errors. Behave as today.
+- **Unclear.** Behave as today. Reading an unknown error as a limit halts the
+  system on a transient fault, which costs more than the attempts it saves.
+
+Only the first is durable.
+
+WHERE THE FLAG LIVES. `.runtime/provider-block.json`, one record
+`{kind, blocked_until, evidence, seen_at}`, written by whoever saw the failure
+and read by `_admission` before it consults any budget. It expires by timestamp
+and not by anyone clearing it: a `blocked_until` in the past IS unblocked, so a
+stale flag cannot wedge the loop and a crash costs one window at most. A
+successful autonomous turn clears it early. `kind` separates the 5 hour limit
+from the weekly one, so a weekly block can carry the longer deadline its own
+message gave.
+
+WHAT THIS REPLACES. Today's handling is per task and reads every failure the
+same way. `ralph.sh:989` treats a first iteration that exits nonzero with no
+result envelope as an environment failure, logs the first 800 bytes of what the
+CLI said, and exits 5. `project_ralph.sh:1473` counts consecutive 5s per task in
+`.runtime/env-fails/<task_id>`, parks the task after three, and stops the sweep.
+That is the right shape for one ticket that can never start and the wrong shape
+for an account with no capacity: the count is per task, so the loop moves to the
+next ticket and spends three more attempts there, each one a request to
+Anthropic. Measured on this tree: 193 ENV FAILURE lines in `.runtime/ralph.log`,
+six on one task inside ten minutes on 2026-08-23. The classifier goes where that
+800 byte capture already is, and the flag is what makes the answer account wide
+instead of per ticket.
+
+**Sequencing.** The dollar cap is not enforceable until
+`counting-tokens-2026-08-25.md` lands: today's ledger mixes three units in one
+column, and pricing a mixed unit yields a mixed dollar figure. The capacity
+check and the block flag depend on none of that and can land first.
