@@ -164,3 +164,144 @@ reader of this file does not have to hunt them:
 - **The autonomous loop stays off, deliberately.** The operator turned it off
   because it does not yet work correctly, not because arming it is an open
   question. Nothing in this document should be read as proposing to arm it.
+
+## 7. Configurable done, 2026-08-25: a small closed set of conditions
+
+The operator, after the §6 ruling: "the 'done' definition should be
+configurable. but must have some structure. merged can be one condition but
+must say into what branch."
+
+This section sits ON TOP of §6. `merged` stays the default and the only
+default; it becomes one named condition among a closed few rather than the
+sole hardcoded one.
+
+### 7.1 It is the existing `acceptance` field
+
+`acceptance` is already every ticket's record of what done means for it. It is
+declared in `services/tasks.py` (the field table at line 40), normalized by
+`_normalize_acceptance`, persisted as `ticket.acceptance` JSONB
+(`db/models.py:507`), mirrored by `db/ticket_sync.py`, preserved across
+backfills (`db/backfill.py:_PRESERVED`) and read by `ticket_readiness.check`
+as the answer to "does this ticket say what done looks like". A second
+completion-criteria field beside it would be two answers to one question.
+
+**Correction to the prior audit: the acceptance gate is not inert.**
+`scripts/project_ralph.sh` reads `acceptance.kind` (1151), `acceptance.spec`
+(1152), `acceptance.allow_no_diff` (1244) and `acceptance.criteria` (1281),
+executes the criteria in the work tree (`eval_criteria`) and refuses the
+terminal transition when one fails (1406). The measured problem is adoption,
+not dead code: 7 of 259 tickets set the field, so nearly every ticket takes
+the `reviewer` default path.
+
+**`conditions` is a new KEY on that field, and it does not duplicate `kind`,**
+because the two answer different questions at different moments. `kind`,
+`spec`, `criteria` and `allow_no_diff` answer "may the sweep write a terminal
+status at all", asked at the end of a run, inside the sweep. `conditions`
+answers "may that terminal status be `done`", asked at the write, by whoever
+writes it. §6 answered the second question with a hardcoded rule and no field.
+This is that rule given a home.
+
+    acceptance: {
+      "conditions": ["merged", ...] | [{"kind": "merged", "branch": "main"}],
+      "kind": ..., "spec": ..., "criteria": [...], "allow_no_diff": ...
+    }
+
+A bare string is shorthand for `{"kind": <string>}`, normalized in
+`_normalize_acceptance` the way `criteria` already is: an unknown kind is
+dropped, an empty list removes the key, and `acceptance` with no `conditions`
+round-trips exactly as it does today.
+
+### 7.2 The kinds
+
+Measured against GitHub branch protection, GitHub rulesets, GitLab's merge
+checks and approval rules, Jira and the Scrum Guide. Two things hold across
+all of them. Automated checks passing and a review approving are universal.
+Merge is not modelled as a condition anywhere: it is the action the conditions
+gate. Jira has no first-class definition-of-done object at all (Atlassian's
+own guidance is to build one from a custom field), and the Scrum Guide defines
+Definition of Done without naming a single item, so neither supplies structure
+to copy. Only one further item is a first-class toggle in both vendors:
+conversation resolution.
+
+Three kinds, all evaluable from records this repo already keeps.
+
+**`merged`** `{"kind": "merged", "branch": str|None}`. The ticket's change has
+`status == "merged"` into the branch named. Evaluated from `Change.status`,
+which a database check constraint ties to `merged_sha` and `merged_at` being
+non-null (`db/models.py:1327`), and `Change.base_ref`, which is
+`nullable=False` and so always names the branch. `branch` null means the
+scope's default branch (§7.4). ON BY DEFAULT.
+
+**`gates`** `{"kind": "gates"}`. Every required gate on the change passed.
+Evaluated from `Change.gates`, written by `change_gates.record_reviewer_run`
+from `reviewer.sh`'s JSON. The required set is `change_gates.GATE_NAMES` minus
+`claim_check.ADVISORY_GATES`; `skipped` counts as satisfied, matching GitHub,
+where a required check is met by `successful`, `skipped` or `neutral`. The
+evaluator exists: `auto_merge._gates_complete` and `_gates_green`.
+
+**`operator`** `{"kind": "operator"}`. A person accepted it, rather than a
+policy. Evaluated from `Change.merged_by == "operator"`, one of
+`db.models.MERGE_ACTORS`. On top of `merged` this narrows rather than adds: it
+says the merge must not have been an auto-merge.
+
+`acceptance.criteria` and `acceptance.spec` are deliberately NOT condition
+kinds. They are already hard pre-transition gates in the sweep, and the
+criteria results already land on the change as the `acceptance_criteria` gate,
+so requiring them again would be the same fact checked twice.
+
+Considered and excluded, with what each would take:
+
+- **Threads resolved.** GitHub's "Require conversation resolution", GitLab's
+  "All discussions are resolved". Nothing in this tree stores a comment on a
+  change, so this needs a comment record, a resolved flag and a surface to
+  resolve on before it can be a condition.
+- **Released.** §2's third orthogonal fact. No tag or release object exists
+  here.
+- **Up to date with base.** `worktrees.branch_state` computes `ahead`/`behind`
+  but stores nothing, and a clean merge already subsumes it.
+- **Documentation updated, acceptance criteria met, deployed to staging.** The
+  recurring agile items that no vendor enforces, because no machine can check
+  them. They stay prose on the ticket's `Output:` line.
+
+### 7.3 Unevaluable is unmet, and it blocks
+
+A condition that cannot be evaluated (no change record, no database, an
+unreadable gates payload, an exception anywhere) is a condition that failed,
+so the `done` write is refused. This is `auto_merge`'s existing rule and its
+existing mechanism: `_safely` turns any exception into a failed `Condition`,
+and `assess` evaluates every condition rather than short-circuiting so the
+refusal can say what else was true.
+
+### 7.4 Where the default lives
+
+`services/done_policy.py` over `.runtime/done-policy.json`, the third instance
+of the idiom `scope_execution.py` established and `merge_policy.py` already
+follows: keyed by scope key and never by a path, an unknown value clamps to
+the default, and setting a scope back to the default deletes its key so the
+file is only ever the list of scopes the operator deliberately changed.
+
+`DEFAULT_CONDITIONS = ("merged",)`. Nothing else is on by default. It is the
+condition the operator ruled on in §6 and the one whose absence produced the
+original defect; every other kind is opt-in.
+
+The branch that `merged` means: `worktrees._canonical_branch` already answers
+this, preferring the project record's tracked `repo.default_branch` and
+falling back to `git_service.main_branch`. Measured 2026-08-25: no project in
+`.runtime/projects.json` carries a `repo` binding, so every scope in this
+checkout resolves by the fallback today. There is no per-scope branch override
+and none is added here; `done_policy` stores the condition set, and the branch
+comes from the project record, which is where a branch name already lives.
+
+### 7.5 How a per-ticket set composes with the scope default
+
+Union. A ticket's `acceptance.conditions` ADD to its scope's set and cannot
+subtract from it, so a ticket cannot weaken the §6 ruling. The exemption for
+work that legitimately has no change is unchanged and stays where §6 put it:
+there is no change, so there is nothing unmerged to refuse.
+
+### 7.6 The refusal
+
+Unchanged in kind from §6, wider in content: it names every unmet condition
+and why each is unmet, in the `Condition.detail` sentence `auto_merge` already
+writes for the merge basis. A refusal that only says "not done" is the same
+unbacked assertion this whole document exists to remove.
