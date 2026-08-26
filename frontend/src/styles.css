@@ -1502,7 +1502,14 @@ a.chat-receipt--link:hover > svg { color: var(--you); }
    managed address is always reachable. Same underline-at-rest rule as
    `.ws-md a` and `.chat-receipt--link` above -- readable as a link with no
    hover, since the operator is often on a phone. */
-.ws-ref { display: inline-flex; align-items: center; gap: 0.3rem; font-size: var(--fs-xs); }
+.ws-ref {
+  display: inline-flex; align-items: flex-start; gap: 0.3rem;
+  font-size: var(--fs-xs); line-height: 1.35;
+}
+/* Icon anchors to the START of the first line. A title that wraps on a narrow
+   screen stays left-aligned under it, instead of the icon floating to the
+   vertical middle of the wrapped block (which align-items: center did). */
+.ws-ref > svg { flex: 0 0 auto; margin-top: 0.12em; }
 .ws-ref--unresolved { color: var(--faint); }
 
 button.ws-ref--trigger {
@@ -1519,15 +1526,17 @@ button.ws-ref--trigger:hover > svg { color: var(--you); }
    be inert at best. The kit's vw-capped default plus useAnchoredPlacement's
    clamped position (menuPlacement.ts) is what keeps this on screen on a phone. */
 .ws-ref-card { display: flex; gap: var(--space-3); align-items: flex-start; }
-/* Preview left, never wider than the info column beside it. */
+/* Preview sizes to its content: for the common icon-only ref that is just the
+   28px glyph, so the info column takes the rest and the card reads square
+   rather than leaving a wide empty column. A thumbnail grows up to 8rem. */
 .ws-ref-card__preview {
-  flex: 0 0 40%; max-width: 40%; min-height: 3rem;
+  flex: 0 0 auto; max-width: 8rem; min-height: 2.5rem;
   display: flex; align-items: center; justify-content: center; color: var(--muted);
 }
 .ws-ref-card__thumb {
   max-width: 100%; max-height: 8rem; border-radius: var(--radius-md); display: block;
 }
-.ws-ref-card__info { flex: 1 1 60%; min-width: 0; }
+.ws-ref-card__info { flex: 1 1 auto; min-width: 0; }
 .ws-ref-card__title { font-weight: 600; overflow-wrap: anywhere; }
 .ws-ref-card__meta {
   color: var(--muted); font-size: var(--fs-sm); margin-top: var(--space-1);
