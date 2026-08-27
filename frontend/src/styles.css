@@ -3481,13 +3481,16 @@ p.chat-workpanel__note { margin: 0; }
 @media (max-width: 900px) {
   .ws-dashboard__grid {
     grid-template-columns: 1fr;
-    /* Shorter than the desktop card because four of these stack into one
-       column, and taller than the 210px it was because that held two rows.
-       Seven one-line rows, four blocks, and the rest is a scroll away. */
-    grid-auto-rows: 300px;
+    /* A CARD SIZES TO ITS CONTENT HERE, up to a cap. Nothing lines up in a
+       single column, so the equal-height rule that makes the desktop grid a
+       grid buys nothing on a phone and costs real screen: the apps card, with
+       six tiles, was padding 200px of empty box before the next card started.
+       The cap is what keeps a 113-row list from becoming the whole page; past
+       it the card scrolls exactly as it does on a desktop. */
+    grid-auto-rows: auto;
     gap: 11px;
   }
-  .ws-dashcard { padding: 14px; }
+  .ws-dashcard { padding: 14px; max-height: 300px; }
   /* Tighter, so more than one row of tiles is on screen at a phone width. */
   .ws-dashapps { gap: 10px 14px; }
   .ws-dashapps__tile { gap: var(--space-1); }
