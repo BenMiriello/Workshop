@@ -375,9 +375,14 @@ is 0 against 2.2G on disk.
   - How the operator's 102 app-source files leave the repo via an overlay repo at
     `apps/`. Carries the only current gate numbers in the corpus.
 - [`fresh-clone-assertion-design-2026-08-24.md`](fresh-clone-assertion-design-2026-08-24.md)
-  - CURRENT (declared design, not built). BUILT: NOT.
-  - The executable definition of "app separation is done" as four assertions in
-    `scripts/check_fresh_clone.sh`. That script does not exist.
+  - CURRENT (declared design). BUILT: PARTLY, 2026-08-27.
+  - The executable definition of "app separation is done" as assertions in
+    `scripts/check_fresh_clone.sh`. That script EXISTS now and is wired into
+    `reviewer.sh`. Three of five assertions are implemented (no app source, no
+    personal data, no hardcoded identity with docs in scope); the two needing a
+    build and a Postgres cluster print as NOT IMPLEMENTED on every run and are
+    the remaining work. Absolute mode fails today, on 106 app-source files and
+    3 identity categories: that is the honest state, not a broken gate.
 - [`app-artifact-spec-2026-08-24.md`](app-artifact-spec-2026-08-24.md)
   - CURRENT (declared SPEC). BUILT: NOT.
   - Source tree to Release (immutable content-addressed artifacts) to Deployment

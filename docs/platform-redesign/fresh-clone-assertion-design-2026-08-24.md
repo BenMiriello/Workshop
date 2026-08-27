@@ -1,6 +1,19 @@
 # `scripts/check_fresh_clone.sh`: the executable definition of "app separation is done"
 
-**Status: design, not built. 2026-08-24.** Specifies the command named in
+**Status: design, PARTLY BUILT 2026-08-27.** `scripts/check_fresh_clone.sh`
+exists and is wired into `reviewer.sh`. Implemented: assertion 1 (no app
+source), assertion 4 (no hardcoded identity, `--all` so docs are in scope, via
+the `--tree` option this document asks for in section 4.2, which was added at
+the same time), plus one assertion this document does not have -- a maintained
+list of personal-data path patterns that must be absent, which is what caught
+the five tracked screenshots, the yard recording and the committed ticket
+directory. NOT implemented: assertions 2 and 3, the build and the boot; they
+print as NOT IMPLEMENTED on every run rather than being pinned as expected
+failures, because an unwritten check is a different claim from a failing one.
+The pin mechanism in section 5 is therefore also unbuilt. Everything below is
+the original 2026-08-24 design text.
+
+Specifies the command named in
 [`app-separation-why-it-recurs-2026-08-24.md`](app-separation-why-it-recurs-2026-08-24.md)
 section 4. That document argues for the instrument; this one specifies it, and
 corrects three of its four assertions against what the repository actually does
