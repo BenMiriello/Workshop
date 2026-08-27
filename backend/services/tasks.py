@@ -1806,9 +1806,11 @@ def reclaim(root: Path, *, now: datetime | None = None, ttl: int = LEASE_TTL_SEC
     a task forever (self-healing 2d). A stale claim under its attempt cap returns
     to `todo` (re-runnable next sweep); a stale claim AT the cap lands in `parked`
     (dead-letter, visible to the operator, never re-picked). The monotonic
-    `claim_token` is left intact so a zombie that later tries to finalize is
-    fenced. Returns [{id, action}] for logging. Cheap: scans lock-free first and
-    only takes the lock when there is actually something to reclaim.
+    The monotonic `claim_token` is ADVANCED, which is what actually fences a
+    zombie that later tries to finalize; releasing the lease alone did not,
+    because `update` compares against the record. Returns [{id, action}] for
+    logging. Cheap: scans lock-free first and only takes the lock when there is
+    actually something to reclaim.
 
     THE PRESCAN READS `_load`, NOT `_read_store` (fixed 2026-08-23). It used to
     open with `_read_store(root)`, which reads the RETIRED `.tasks.json` file
@@ -1840,12 +1842,28 @@ def reclaim(root: Path, *, now: datetime | None = None, ttl: int = LEASE_TTL_SEC
             cap = t.get("max_attempts") or attempt_cap
             t["lease_until"] = None
             t["claim_pid"] = None
-            # AND THE LEASE, or the reclaim does not actually free the ticket:
-            # the next `claim()` would find the dead worker's row still held and
-            # refuse. Released at the record's generation, which is the one the
-            # lease carries, and `claim_token` is deliberately left intact here
-            # exactly as it always has been -- the next acquire bumps it.
-            _release_ticket_lease(t["id"], _as_int(t.get("claim_token"), 0))
+            # AND THE FENCE, not merely the lease. This used to RELEASE at the
+            # record's generation and leave `claim_token` intact, on the reasoning
+            # that "the next acquire bumps it". That is true and it does not cover
+            # the window BEFORE the next acquire: `update`'s fence compares against
+            # the RECORD's `claim_token`, not the lease row, so expiring the lease
+            # fences nobody. A crashed worker coming back in that window presents
+            # the token it still holds, it MATCHES, and its late `done` lands on a
+            # ticket already handed to someone else, with its work on an abandoned
+            # branch. Reproduced on a file-backed store before this change.
+            #
+            # The rule this restores: any act that ends a worker's right to a
+            # ticket must ADVANCE the generation, not just release the lease. An
+            # operator edit already does exactly that (`update`'s Fix 1); reclaim
+            # is the same kind of act by a higher authority and now behaves the
+            # same way. `_fence_ticket_lease` is the one helper for it, and it
+            # subsumes the release: `lease_repo.fence` bumps the generation AND
+            # expires the row in a single statement, so the ticket is still freed
+            # for the next `claim()`. Monotonic by construction, since
+            # `_acquire_ticket_lease` carries the record's value in as
+            # `min_generation`, so a fresh lease row can never fence backwards.
+            t["claim_token"] = _fence_ticket_lease(
+                t["id"], _as_int(t.get("claim_token"), 0))
             if attempts >= cap:
                 t["status"] = "parked"
                 t["blocked_reason"] = (
