@@ -282,14 +282,12 @@ def register_builtin_stores() -> None:
     runtime = _runtime_root()
     declare("secrets", "env", runtime / "secrets", type="Secret")
 
-    # The notes vault (~/notes). Declared in place: the vault stays a plain folder
-    # of Markdown that real Obsidian opens untouched. Registering it makes it
-    # ADDRESSABLE — until now it was the one live data set with no URI, so no
-    # grant could name it and no per-folder policy could be expressed about it.
-    # The path comes from permissions.NOTES_VAULT_ROOT, which reads the same
-    # WORKSHOP_NOTES_VAULT override notes_vault.vault_root() reads.
-    from services import permissions
-    declare("notes", "vault", permissions.NOTES_VAULT_ROOT, type="Note")
+    # The notes vault used to be declared HERE, four lines below a comment
+    # saying app-specific stores are not. It moved onto the notes app's own
+    # AppSpec on 2026-08-27 (`store_owner="notes"` keeps the `notes:vault` URI
+    # unchanged), so an installation without that app no longer declares a store
+    # over a folder in the user's home directory. See
+    # docs/platform-redesign/memory-page-and-file-viewer-2026-08-27.md 1.2.
 
     # Chat attachments. Content-addressed blobs live per-owner under
     # .runtime/users/<id>/files (chat_attachments.py). Declaring the store makes an

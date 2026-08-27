@@ -44,13 +44,33 @@ export const NO_DIRECTORY: DirectoryEntry = { pageId: null, open: false };
  * Leaving only forgets WHICH page the decision belonged to -- `open` is left
  * alone, because the panel stays mounted (section 3.4, correction 3) and the
  * shell hides it by asking whether the page you are on is the registered one.
+ *
+ * UNLESS YOU ARRIVED AT SOMETHING SPECIFIC (`openOnArrival: false`).
+ *
+ * "Arrival opens the tree" was written for an app place whose column starts
+ * COLLAPSED: there is no row to tap twice, so without it the tree is
+ * unreachable. It predates links that land directly on a document, and it had
+ * no way to tell the two cases apart. The operator hit that on 2026-08-27:
+ * following a link to a note put the file picker over the page column, on top
+ * of the note the link had just opened, which he read as the page not knowing
+ * where it was (memory-page-and-file-viewer-2026-08-27.md D3).
+ *
+ * So a page that arrives with a document already selected says so, and the tree
+ * stays where it was. This narrows the rule rather than replacing it: arriving
+ * at the page ITSELF, with nothing open, still opens the tree, which is the
+ * case the rule was written for. A page that does not pass the flag is
+ * unchanged.
  */
-export function enterDirectory(state: DirectoryEntry, pageId: string | null): DirectoryEntry {
+export function enterDirectory(
+  state: DirectoryEntry,
+  pageId: string | null,
+  openOnArrival = true,
+): DirectoryEntry {
   if (pageId === null) {
     return state.pageId === null ? state : { pageId: null, open: state.open };
   }
   if (state.pageId === pageId) return state;
-  return { pageId, open: true };
+  return { pageId, open: openOnArrival };
 }
 
 /** The operator worked the toggle: the chevron on the row, the back header, or

@@ -5,8 +5,21 @@
 //
 // ON A DESKTOP the tree lives in the shell's page column (the directory
 // takeover, components/shell/directory.tsx) and the content area is the
-// document beside it. There is room for a page header, it is not a repeat of
-// anything, and it stays. Nothing below changes desktop.
+// document beside it. Browsing the tree, there is room for a page header, it is
+// not a repeat of anything, and it stays.
+//
+// AN OPEN DOCUMENT TAKES EVERYTHING ON A DESKTOP TOO (2026-08-27,
+// memory-page-and-file-viewer-2026-08-27.md D4). `documentOpen` used to be
+// consulted only on a phone, so a desktop drew the page's h1, its description,
+// its view switch and its whole search-refresh-new row ABOVE every open note
+// and every open file. The operator's report walking Memory: "if we're viewing
+// an individual memory file, why would this be here? This doesn't make sense."
+// It does not. A document carries its own header (`DocumentBar`) with its own
+// name, its own toggle and its own Save, and everything the page row offered is
+// either on the tree's toolbar beside it or is about a different document.
+//
+// So the rule is one rule on both viewports: the tree gets the page's chrome,
+// a document gets none. The phone answers are unchanged.
 //
 // ON A PHONE the tree IS the content (docs/platform-redesign/
 // shell-mockup-spec-2026-08-22.md section 4), and everything a page header
@@ -45,6 +58,7 @@ export type DirectoryChrome = {
 };
 
 export function directoryChrome({ wide, documentOpen }: DirectoryChromeInput): DirectoryChrome {
+  if (documentOpen) return { header: false, controls: false, actionBar: false };
   if (wide) return { header: true, controls: true, actionBar: false };
-  return { header: false, controls: false, actionBar: !documentOpen };
+  return { header: false, controls: false, actionBar: true };
 }

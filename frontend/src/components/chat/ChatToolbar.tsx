@@ -1,8 +1,8 @@
 import {
   Archive, ChevronLeft, Maximize2, MessagesSquare,
-  MoreVertical, PanelsTopLeft, Pencil, Plus, Ticket,
+  MoreVertical, PanelsTopLeft, Pencil, Plus, Share2, Ticket,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@workshop/ui";
 import type { Provider, ThreadSummary } from "../../lib/chat";
 import {
@@ -10,7 +10,9 @@ import {
   type ChatMode, type ChatVariant,
 } from "./chatScope";
 import type { ChatDrawer } from "./drawers";
+import { getPolicy, type MemoryPolicy } from "../../lib/memoryPolicy";
 import { keepFocusOnTap } from "./keepFocus";
+import { ChatShareDialog } from "./ChatShare";
 import RecentChatsMenu from "./RecentChatsMenu";
 import ScopeIcon from "./ScopeIcon";
 import { workTitle } from "./work/workRows";
@@ -134,6 +136,20 @@ export default function ChatToolbar({
   onNavigate: (to: string) => void;
 }) {
   const workOpen = drawer === "work";
+  // The sharing dialog, and the policy it edits. Fetched on FIRST OPEN and not
+  // on mount: this toolbar is on screen in every chat and most chats are never
+  // shared, so the request would be paid for on every conversation to serve a
+  // dialog almost nobody opens. Failing to load is not surfaced, because the
+  // dialog still works without it: an absent policy resolves to the stored
+  // default, which is what the backend would apply anyway.
+  const [sharing, setSharing] = useState(false);
+  const [policy, setPolicy] = useState<MemoryPolicy | null>(null);
+  useEffect(() => {
+    if (!sharing || policy) return;
+    let live = true;
+    void getPolicy().then((p) => { if (live) setPolicy(p); }).catch(() => {});
+    return () => { live = false; };
+  }, [sharing, policy]);
 
   return (
     // Same rule as the composer's action row: with the keyboard up, a tap here
@@ -293,6 +309,14 @@ export default function ChatToolbar({
         {activeId && (
           <>
             <MenuSeparator />
+            {/* WHO ELSE FINDS THIS CHAT. A property of the conversation, so it
+                is filed with the rest of what you can do to one. It arrived here
+                on 2026-08-27 from a badge overlaid on a card in the Memory
+                page's Chats tab, which went with that tab; see
+                components/chat/ChatShare.tsx for the whole history. */}
+            <MenuItem icon={<Share2 size={14} />} onSelect={() => setSharing(true)}>
+              Sharing
+            </MenuItem>
             {/* ARCHIVE, NOT DELETE, and no confirmation. Closing a chat is a
                 thing the operator does constantly; destroying one is rare. The
                 common gesture is the reversible one, and a reversible action
@@ -304,6 +328,21 @@ export default function ChatToolbar({
           </>
         )}
       </Menu>
+
+      {/* OUTSIDE the Menu: selecting an item closes it, which would unmount a
+          dialog rendered as its child before it ever painted. The policy is
+          fetched by the dialog's first open rather than on every toolbar mount,
+          because most chats are never shared. */}
+      {sharing && activeId && (
+        <ChatShareDialog
+          threadId={activeId}
+          scope={activeProvider}
+          title={activeThreadTitle || "Chat"}
+          policy={policy}
+          onSaved={setPolicy}
+          onClose={() => setSharing(false)}
+        />
+      )}
     </div>
   );
 }

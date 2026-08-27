@@ -34,6 +34,16 @@
 //     caused by the placeholder, not decisions: the rendered-versus-source rule
 //     stands (file-viewer-and-editor-2026-08-22.md section 4).
 //
+// A NOTE WEARS THIS BAR TOO, in the `title` variant (2026-08-27,
+// memory-page-and-file-viewer-2026-08-27.md D7). The 2026-08-22 design kept a
+// note on the record shape with an `ActionBar` on the grounds that a note has
+// no filename and this bar would print its title twice in mono. That was an
+// argument against the MONO FACE, not against the shared bar: `variant="title"`
+// draws the name in the sans face at prose weight, which is what a title is,
+// and the `path` slot carries the note's scope instead of a directory. The
+// operator asked for one viewer and one editor across notes and files on
+// 2026-08-27, and once the face is right there is nothing else a note needed.
+//
 // THE HEADER CARRIES THE ACTIONS AND THERE IS NO STICKY ActionBar HERE, which
 // is the one deliberate departure from the surrounding pattern and is written
 // down in full in `documentBar.ts` and in both consumers. frontend/CLAUDE.md
@@ -47,9 +57,22 @@ import type { ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
 import { cx } from "./cx";
 
+/** Whether the thing this bar names is a FILE (a path, so mono) or a RECORD
+ *  (a title, so sans at prose weight). The only difference is the face and the
+ *  weight; every control, every state and the whole geometry are shared. */
+export type DocumentBarVariant = "file" | "title";
+
 export interface DocumentBarProps {
-  /** The file's own name. Mono, because a filename is not prose. */
+  /** The file's own name, or the record's title. Mono in the `file` variant,
+   *  because a filename is not prose; sans in `title`, because a title is. */
   name: string;
+  /** Which face the name is drawn in. Defaults to `file`. */
+  variant?: DocumentBarVariant;
+  /** Editing the name in place. When given, the name becomes an input rather
+   *  than a span, which is the one thing a title needs that a filename does not:
+   *  a note has no rename route anywhere else, so this bar is where its title is
+   *  changed (D7, and the wikilink rewrite in D11 is what makes that safe). */
+  onNameChange?: (next: string) => void;
   /** The directory that holds it, drawn ahead of the name in --faint. Hidden
    *  below 900px, where the header is a back control and there is no room. */
   path?: string;
@@ -72,10 +95,25 @@ export interface DocumentBarProps {
 }
 
 export function DocumentBar({
-  name, path, dirty = false, onBack, backLabel, meta, children, className,
+  name, variant = "file", onNameChange, path, dirty = false, onBack, backLabel,
+  meta, children, className,
 }: DocumentBarProps) {
+  const nameEl = onNameChange ? (
+    // Sized to its own content so the bar's layout does not jump as you type,
+    // and so a short title does not sit in a wide empty box. `size` is the
+    // cheapest way to do that without measuring in JS.
+    <input
+      className="ws-docbar__name ws-docbar__nameinput"
+      value={name}
+      size={Math.max(8, Math.min(60, name.length + 1))}
+      onChange={(e) => onNameChange(e.target.value)}
+      aria-label="Title"
+    />
+  ) : (
+    <span className="ws-docbar__name">{name}</span>
+  );
   return (
-    <div className={cx("ws-docbar", className)}>
+    <div className={cx("ws-docbar", variant === "title" && "ws-docbar--title", className)}>
       {onBack ? (
         // ONE tap target: the chevron and the name are a single button, not a
         // back button standing next to a label.
@@ -91,7 +129,7 @@ export function DocumentBar({
       ) : (
         <>
           {path && <span className="ws-docbar__path">{path}</span>}
-          <span className="ws-docbar__name">{name}</span>
+          {nameEl}
         </>
       )}
 

@@ -231,11 +231,17 @@ export function FileDrill({
     <div className={cx("ws-drill", className)}>
       {trailBar}
       <div className="ws-drill__level" aria-label={label} role="group">
-        {shown.map((node) => {
+        {shown.map((node, i) => {
           const branch = node.kind === "branch";
           const Icon = fileTreeIconFor(node, false);
           const selected = node.id === selectedId;
-          return (
+          // The same rule the desktop tree uses (`flattenTree`): a header when
+          // the group CHANGES, so a level with one group or none draws none.
+          // Memory's root is three different address kinds on a phone too.
+          const head = node.group && (i === 0 || node.group !== shown[i - 1].group)
+            ? <div key={`${node.group}::group`} className="ws-drill__group" role="presentation">{node.group}</div>
+            : null;
+          const row = (
             <button
               key={node.id}
               type="button"
@@ -253,6 +259,7 @@ export function FileDrill({
               {branch && <ChevronRight className="ws-drill__into" aria-hidden />}
             </button>
           );
+          return head ? [head, row] : row;
         })}
       </div>
       {hidden > 0 && (

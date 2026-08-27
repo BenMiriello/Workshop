@@ -198,6 +198,9 @@ export function buildPlaces(
     pages: [
       { id: "all", label: "All chats", to: "/chats", Icon: icons.chats },
       { id: "archived", label: "Archived", to: "/chats/archived", Icon: icons.archived },
+      // Everything attached to a chat. Moved here from the Memory page's tab
+      // switch on 2026-08-27 (memory-page-and-file-viewer-2026-08-27.md D1).
+      { id: "files", label: "Files", to: "/chats/files", Icon: icons.attachments },
     ],
   };
 

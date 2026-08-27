@@ -39,14 +39,14 @@ export type ViewableAttachment = {
 };
 
 export default function AttachmentViewer({
-  file, onClose, inMemory,
+  file, onClose, onFilesPage,
 }: {
   file: ViewableAttachment;
   onClose: () => void;
-  /** Set when the viewer was opened FROM the Memory page, which suppresses the
-   *  "Open in Memory" link. A control that navigates you to where you already
+  /** Set when the viewer was opened FROM the files page, which suppresses the
+   *  "Open in Files" link. A control that navigates you to where you already
    *  are is noise. */
-  inMemory?: boolean;
+  onFilesPage?: boolean;
 }) {
   const url = chatApi.attachmentUrl(file.id);
   const [failed, setFailed] = useState(false);
@@ -129,13 +129,13 @@ export default function AttachmentViewer({
               <Download size={16} aria-hidden /> Download original
             </a>
           )}
-          {!inMemory && (
+          {!onFilesPage && (
             <Link
               className="ws-btn ws-btn--ghost ws-btn--sm"
-              to={`/memory?tab=files&file=${encodeURIComponent(file.id)}`}
+              to={`/chats/files?file=${encodeURIComponent(file.id)}`}
               onClick={onClose}
             >
-              <FolderOpen size={16} aria-hidden /> Open in Memory
+              <FolderOpen size={16} aria-hidden /> Open in Files
             </Link>
           )}
           <Button onClick={onClose} data-autofocus>Close</Button>

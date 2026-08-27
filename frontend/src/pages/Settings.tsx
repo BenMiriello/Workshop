@@ -225,7 +225,7 @@ function MemorySection() {
     {
       key: "chat",
       label: "chat transcripts",
-      hint: "Applies to every transcript you already have, not just the next one. A transcript is the biggest, least curated thing here, so the default keeps it to its own scope. File a note if you want the substance to travel further, or change one chat's own setting from its card on the Memory page.",
+      hint: "Applies to every transcript you already have, not just the next one. A transcript is the biggest, least curated thing here, so the default keeps it to its own scope. File a note if you want the substance to travel further, or change one chat's own setting from Sharing in that chat's actions menu.",
     },
   ];
 
@@ -259,7 +259,70 @@ function MemorySection() {
           Couldn't save memory settings.
         </Notice>
       )}
+
+      <IndexStatus />
     </Section>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// The search index, and how it is built. This is what makes a search over notes
+// and documents work at all, so "is it up to date and what is doing the
+// embedding" is a real question about how Memory is configured.
+//
+// IT USED TO BE ON THE MEMORY PAGE, in one muted line under every view: "15,909
+// chunks indexed | <model name>". The operator's read on 2026-08-27: "at the
+// bottom of every page we show the number of chunks indexed and then the local
+// model used to embed it, and I don't know why that's here at all. That
+// shouldn't be here. Are we doing anything like this anywhere else?" We are
+// not, and it should not be: it is a readout about the machinery, on the page
+// whose whole job is the content. Here it is beside the other answers about how
+// memory behaves. See memory-page-and-file-viewer-2026-08-27.md D10.
+// ----------------------------------------------------------------------------
+
+type IndexStatusResp = {
+  chunks: number;
+  model: string;
+  embedder_ok: boolean;
+  embedder_error: string;
+};
+
+function IndexStatus() {
+  const [status, setStatus] = useState<IndexStatusResp | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    // Cheap: it reads two already-cached files. Silent on failure, because a
+    // readout that cannot be read is not a thing the operator has to act on and
+    // this is not the section's subject.
+    fetch("/api/memory/status")
+      .then((r) => (r.ok ? (r.json() as Promise<IndexStatusResp>) : Promise.reject(new Error(String(r.status)))))
+      .then((j) => { if (live) setStatus(j); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+
+  if (!status) return null;
+  return (
+    <>
+      <Row
+        label="Search index"
+        hint={
+          status.embedder_ok
+            ? `${status.chunks.toLocaleString()} chunks of notes, documents, chats and tickets, embedded by ${status.model}. Rebuilt as things are written.`
+            : `${status.chunks.toLocaleString()} chunks, embedded by ${status.model}. Nothing written since the embedder stopped is searchable.`
+        }
+      >
+        {status.embedder_ok
+          ? <StatusPill status="ok">Ready</StatusPill>
+          : <StatusPill status="warn">Embedder offline</StatusPill>}
+      </Row>
+      {!status.embedder_ok && status.embedder_error && (
+        <Notice tone="warn" detail={status.embedder_error} where="GET /api/memory/status">
+          New notes are not being indexed until this is fixed.
+        </Notice>
+      )}
+    </>
   );
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FILE_TREE_MAX_ROWS_PER_LEVEL,
+  activePathIds,
   drillCursor,
   drillInto,
   drillParent,
@@ -383,5 +384,90 @@ describe("what Up means, and what the bar prints", () => {
   it("prints the whole trail, root first, joined with a slash", () => {
     expect(drillTrailText(drillTrail(root))).toBe("src");
     expect(drillTrailText(drillTrail(root, [dir("lib"), dir("lib/net")]))).toBe("src / lib / net");
+  });
+});
+
+// ---- Group headers (2026-08-27, memory-page-and-file-viewer D9) -------------
+// Memory's root holds three different address kinds at once (a scope key, a
+// role key, a repo-relative path) and used to draw them as one list of roots.
+
+describe("flattenTree group headers", () => {
+  const grouped = (): FileTreeLevels =>
+    levelReady({}, "", {
+      nodes: [
+        { ...dir("workshop"), group: "Scopes" },
+        { ...dir("development"), group: "Scopes" },
+        { ...dir("role:reviewer"), group: "Roles" },
+        { ...dir("docs"), group: "Documents" },
+      ],
+    });
+
+  it("emits one header per run, not one per node", () => {
+    const rows = flattenTree(root, grouped(), new Set());
+    expect(keys(rows)).toEqual([
+      "::group::Scopes",
+      "workshop",
+      "development",
+      "::group::Roles",
+      "role:reviewer",
+      "::group::Documents",
+      "docs",
+    ]);
+  });
+
+  it("draws the header at the depth of the rows it introduces", () => {
+    const rows = flattenTree(root, grouped(), new Set());
+    expect(rows.every((r) => r.depth === 0)).toBe(true);
+  });
+
+  it("draws no headers at all when nothing carries a group", () => {
+    const rows = flattenTree(root, fixture(), new Set());
+    expect(rows.some((r) => r.kind === "group")).toBe(false);
+  });
+
+  it("keeps a group header out of the keyboard sequence", () => {
+    const rows = flattenTree(root, grouped(), new Set());
+    // Down from the first row reaches the next NODE, not the header above it.
+    expect(treeKeyIntent(rows, "workshop", "ArrowDown")).toEqual({
+      type: "focus",
+      id: "development",
+    });
+  });
+});
+
+// ---- Which folder you are in (D6) ------------------------------------------
+
+describe("activePathIds", () => {
+  const open = new Set(["src", "src/lib"]);
+
+  it("marks every branch enclosing the selection", () => {
+    const rows = flattenTree(root, fixture(), open);
+    expect([...activePathIds(rows, "src/lib/cx.ts")]).toEqual(["src/lib", "src"]);
+  });
+
+  it("marks the ancestors of a selected branch, not the branch itself", () => {
+    const rows = flattenTree(root, fixture(), open);
+    const path = activePathIds(rows, "src/lib");
+    expect([...path]).toEqual(["src"]);
+    expect(path.has("src/lib")).toBe(false);
+  });
+
+  it("is empty for a top-level selection", () => {
+    const rows = flattenTree(root, fixture(), open);
+    expect(activePathIds(rows, "README.md").size).toBe(0);
+  });
+
+  it("is empty when nothing is selected, or the selection is collapsed away", () => {
+    const rows = flattenTree(root, fixture(), open);
+    expect(activePathIds(rows, null).size).toBe(0);
+    const closed = flattenTree(root, fixture(), new Set());
+    expect(activePathIds(closed, "src/lib/cx.ts").size).toBe(0);
+  });
+
+  it("does not mistake an earlier sibling's subtree for an ancestor", () => {
+    // src/ is open ABOVE README.md, so a naive backward walk that took any
+    // shallower row would pick up src/lib on the way to README.md.
+    const rows = flattenTree(root, fixture(), open);
+    expect(activePathIds(rows, "README.md").size).toBe(0);
   });
 });

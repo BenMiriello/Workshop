@@ -12,6 +12,56 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.7.0 - 2026-08-27 - a tree you can navigate, and one header for a note and a file
+
+**Minor, because `FileTreeRow` gained a variant.** A consumer that switches
+exhaustively on `row.kind` will not compile until it handles `"group"`. Nothing
+was removed and no existing prop changed meaning; every other item here is
+additive and every existing caller renders exactly as before.
+
+Driven by the operator's walkthrough of the Memory page on 2026-08-27, written
+up in `docs/platform-redesign/memory-page-and-file-viewer-2026-08-27.md`.
+
+### Added
+
+- **`FileTree` draws a caret.** A chevron leads every branch row, right when
+  closed and down when open; a leaf gets a spacer of the same width so labels
+  line up. This REVERSES the "NO DISCLOSURE TRIANGLES" rule this component
+  shipped with (`shell-mockup-spec-2026-08-22.md` section 5): the operator
+  overruled it directly, on the grounds that a tree without one is missing the
+  essentials. The caret is decoration, not a second hit target: the row still
+  opens the branch and `treeKeyIntent` is unchanged.
+- **`FileTree` marks the folder you are in.** Every branch enclosing the
+  selection carries `is-onpath`. Derived inside the component from the flattened
+  rows by the new exported `activePathIds(rows, selectedId)`, so no caller has
+  to compute an ancestry the tree already knows and the mark cannot disagree
+  with the selection.
+- **`FileTreeNode.group?: string`.** When one level holds more than one kind of
+  thing, `flattenTree` emits a `{ kind: "group", label }` row above each run.
+  A level whose nodes carry no group draws no headers, so nothing existing
+  changes. `FileDrill` follows the same rule on a phone. Group rows are
+  `role="presentation"`: not selectable, not focusable, skipped by the keymap.
+- **`DocumentBar` gained `variant` (`"file" | "title"`) and `onNameChange`.**
+  The `title` variant draws the name in the sans face at prose weight so a
+  record's title reads as a title rather than as a filename, and
+  `onNameChange` turns it into an in-place input. This is what lets a note and
+  a file share one header, superseding
+  `file-viewer-and-editor-2026-08-22.md` section 4's split between a note (a
+  record with an `ActionBar`) and a document (a file with this bar). The old
+  argument against sharing was that it would print a title twice in mono; that
+  was an argument against the mono face, which the variant answers.
+
+### Changed
+
+- **`.ws-docbar` is sticky.** The header stays on screen while the document
+  under it scrolls. It carries Save, the form toggle and the dirty dot, so
+  scrolling it away took the document's controls with it.
+- **`.ws-doc--full` applies on a desktop too**, via a `--doc-editor-h` custom
+  property the desktop media query overrides. It was phone-only, which left a
+  desktop document as a page scrolling around a `60vh` editor scrolling inside
+  it. Consumers that already pass `takeover` are unaffected; a consumer that
+  wants the desktop shape now applies `ws-doc--full` on both.
+
 ## 0.6.4 - 2026-08-27 - a mermaid fence renders as a diagram
 
 **Additive.** No export moved and no prop changed. `Markdown` now draws a

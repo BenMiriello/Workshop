@@ -60,8 +60,39 @@ function countOf(n: number): string {
   return String(n);
 }
 
-function scopeNode(key: string, children: number): FileTreeNode {
-  return { ...memoryFileNode({ kind: "scope", scope: key }), detail: countOf(children) };
+// THE ROOT'S THREE KINDS, NAMED (2026-08-27,
+// memory-page-and-file-viewer-2026-08-27.md D9).
+//
+// Memory's root holds three different ADDRESS kinds and used to draw them as one
+// undifferentiated list of roots: `workshop` and `development` (scope keys),
+// `role:reviewer` (a role key, which `scope_tree.py` deliberately gives a null
+// parent because it is "the second axis, not a tree node" -- and a null parent
+// renders at level 0), and `Documents` (a synthetic node whose children are
+// repo-relative paths, not scope/id pairs). The only thing telling them apart on
+// screen was an icon. The operator's read: "development and role reviewer both
+// have sort of like a stack icon next to it, and I don't know what that means,
+// and then documents is just a folder... it seems like some old thing left over".
+//
+// Nothing here moves and no address changes: the fix is to SAY what the three
+// kinds are. `role:reviewer` is not leftover, it is a live second axis that was
+// being drawn as if it were a first-axis root.
+const GROUP_SCOPES = "Scopes";
+const GROUP_ROLES = "Roles";
+const GROUP_DOCS = "Documents";
+
+/** Whether a root-level scope key is a ROLE. `scope_tree.parse` treats `role:`
+ *  as its own kind and gives it no parent, which is exactly why it surfaces at
+ *  the root beside the real scope roots. */
+function isRoleScope(key: string): boolean {
+  return key.startsWith("role:");
+}
+
+function scopeNode(key: string, children: number, group?: string): FileTreeNode {
+  return {
+    ...memoryFileNode({ kind: "scope", scope: key }),
+    detail: countOf(children),
+    ...(group ? { group } : {}),
+  };
 }
 
 /** A note's row. The stored title is what a reader recognises, so it overrides
@@ -100,7 +131,11 @@ function docDirCount(docs: readonly DocRow[], dir: string): number {
 }
 
 function docsNode(docs: readonly DocRow[]): FileTreeNode {
-  return { ...memoryFileNode({ kind: "docs" }), detail: countOf(docDirCount(docs, DOCS_ROOT)) };
+  return {
+    ...memoryFileNode({ kind: "docs" }),
+    detail: countOf(docDirCount(docs, DOCS_ROOT)),
+    group: GROUP_DOCS,
+  };
 }
 
 export const MEMORY_ROOT_NODE: FileTreeNode = memoryFileNode({ kind: "root" });
@@ -173,15 +208,26 @@ export function createMemorySource(): MemorySource {
     switch (node.kind) {
       case "root": {
         const [tree, all, allDocs] = await Promise.all([scopes(), notes(), docs()]);
+        // Grouped, and in group order: `flattenTree` emits a header when the
+        // group CHANGES, so roles interleaved with scopes would draw a header
+        // per row. The backend already sorts scopes; this only partitions them.
+        const roots = childScopes(tree, null);
         return {
           nodes: [
-            ...childScopes(tree, null).map((k) => scopeNode(k, scopeCount(tree, all, k))),
+            ...roots.filter((k) => !isRoleScope(k))
+              .map((k) => scopeNode(k, scopeCount(tree, all, k), GROUP_SCOPES)),
+            ...roots.filter(isRoleScope)
+              .map((k) => scopeNode(k, scopeCount(tree, all, k), GROUP_ROLES)),
             docsNode(allDocs),
           ],
         };
       }
       case "scope": {
         const [tree, all] = await Promise.all([scopes(), notes()]);
+        // No groups below the root: a scope's level is scopes and notes, which
+        // the face and the icon already tell apart, and a header per row is
+        // noise. Grouping answers "what ARE these three different things", and
+        // that question only arises at the root.
         return {
           nodes: [
             ...childScopes(tree, node.scope).map((k) => scopeNode(k, scopeCount(tree, all, k))),

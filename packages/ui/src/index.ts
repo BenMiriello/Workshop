@@ -66,7 +66,7 @@ export { FileDrill, type FileDrillProps } from "./FileDrill";
 // `treeKeyIntent` are exported because a caller that draws its own rows still
 // wants this tree's row model and keymap rather than a second one.
 export {
-  flattenTree, treeKeyIntent, toggleBranch, nodesById, FILE_TREE_MAX_ROWS_PER_LEVEL,
+  flattenTree, treeKeyIntent, toggleBranch, nodesById, activePathIds, FILE_TREE_MAX_ROWS_PER_LEVEL,
   drillTrail, drillCursor, drillParent, drillInto, drillUp, drillUpIntent, drillTrailText,
   type FileDrillTrail, type FileDrillUpIntent,
   type FileTreeAdapter, type FileTreeNode, type FileTreeNodeKind, type FileTreeIconHint,
@@ -78,7 +78,7 @@ export {
 // which is a subpath because it carries CodeMirror; this carries nothing, so it
 // lives here and a surface that renders markdown rather than an editor can
 // still use it.
-export { DocumentBar, type DocumentBarProps } from "./DocumentBar";
+export { DocumentBar, type DocumentBarProps, type DocumentBarVariant } from "./DocumentBar";
 export {
   documentBar, type DocumentBarInput, type DocumentBarModel, type DocumentForm,
 } from "./documentBar";

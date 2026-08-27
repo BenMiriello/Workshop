@@ -39,7 +39,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { FolderTree, Lock, Plus } from "lucide-react";
+import { FilePlus, FolderTree, Lock, Search } from "lucide-react";
 import {
   Badge, Button, Card, DocumentBar, Field, FileDrill, FileTree, Input, Modal, Notice,
   Skeleton, Stack, StateBlock, cx, documentBar, drillTrail, formatBytes, shortHttpError, timeAgo,
@@ -520,23 +520,30 @@ function FilesBody({ app }: { app: AppRecord }) {
     <>
       {host && createPortal(
         <>
+          {/* Kit controls, same bar Memory draws (2026-08-27, D5). It was a
+              hand-built `<button>` and a bare `<input>` with their own CSS, and
+              the two never lined up with each other or with anything else. */}
           <div className="ws-pagecol__dirtoolbar">
-            <button
-              type="button"
-              className="ws-dirtoolbar__new"
+            <div className="ws-dirtoolbar__search">
+              <Search size={13} aria-hidden className="ws-dirtoolbar__searchicon" />
+              <Input
+                className="ws-dirtoolbar__searchinput"
+                value={filterText}
+                onChange={(e) => setFilterText(e.target.value)}
+                placeholder="Filter"
+                aria-label="Filter files"
+              />
+            </div>
+            <Button
+              size="sm"
+              icon
+              variant="ghost"
               onClick={() => setCreatingFile(true)}
               aria-label="New file"
+              title="New file"
             >
-              <Plus size={12} aria-hidden /> New
-            </button>
-            <input
-              type="text"
-              className="ws-dirtoolbar__filter"
-              placeholder="Filter"
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              aria-label="Filter files"
-            />
+              <FilePlus aria-hidden />
+            </Button>
           </div>
           <div className="ws-pagecol__treescroll">
             <FileTree

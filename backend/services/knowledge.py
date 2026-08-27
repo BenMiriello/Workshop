@@ -942,6 +942,64 @@ def _with_meta(body: str, author: str, note_type_: str, pinned: bool | None,
 
 
 # --- writes ------------------------------------------------------------------
+def _rewrite_wikilink(body: str, old_title: str, new_title: str) -> str:
+    """Every `[[old title]]` in `body` becomes `[[new title]]`, preserving the
+    optional `#anchor` and `|label` the wikilink syntax allows.
+
+    Matching is case-insensitive on the target because `extract_refs` resolves
+    it that way (`titles.get(target.lower())`), so a link written with different
+    capitalisation is a link that resolves, and therefore a link that breaks.
+    """
+    import re as _re
+
+    def sub(m: "_re.Match[str]") -> str:
+        target, rest = m.group(1), m.group(2) or ""
+        if target.strip().lower() != old_title.strip().lower():
+            return m.group(0)
+        return f"[[{new_title}{rest}]]"
+
+    return _re.sub(r"\[\[([^\]|#\n]+)((?:#[^\]|\n]*)?(?:\|[^\]\n]*)?)\]\]", sub, body)
+
+
+def _retitle_wikilinks(scope_key: str, note_id: str, old_title: str, new_title: str) -> None:
+    """Rewrite `[[old_title]]` to `[[new_title]]` in every note that links here.
+
+    The sources come from the backlink INDEX, not a corpus scan: the index is
+    already in memory and already answers exactly this question. Each rewritten
+    source is written back through the same atomic write the note write uses,
+    and its own backlink row is left alone -- the refs it resolves to are
+    unchanged, only the text naming one of them moved.
+    """
+    from services import backlinks, refs
+
+    target = refs.note_ref(scope_key, note_id)
+    for source in backlinks.referenced_by(target):
+        # `parse_ref` RAISES on anything it cannot round-trip, and the index
+        # holds ticket and chat refs too, so this skips rather than fails.
+        try:
+            parsed = refs.parse_ref(source)
+        except ValueError:
+            continue
+        if parsed.kind != "note":
+            continue
+        src_scope, _, src_id = parsed.key.partition("/")
+        if not src_scope or not src_id:
+            continue
+        try:
+            d = scope_dir(src_scope, create=False)
+        except Exception:
+            continue
+        path = d / f"{src_id}.md"
+        if not path.is_file():
+            continue
+        body = path.read_text(encoding="utf-8")
+        rewritten = _rewrite_wikilink(body, old_title, new_title)
+        if rewritten != body:
+            _atomic_write(path, rewritten)
+            log.info("retitle: rewrote [[%s]] -> [[%s]] in %s/%s",
+                     old_title, new_title, src_scope, src_id)
+
+
 async def put_note(scope_key: str, note_id: str, title: str, content: str, hook: str = "",
                    author: str = "", note_type: str = "", pinned: bool | None = None,
                    chat_id: str = "") -> dict:
@@ -995,8 +1053,39 @@ def _put_note_sync(scope_key: str, note_id: str, title: str, content: str, hook:
                             chat_id, stored_chat))
 
     idx = _read_index(scope_key)
-    idx[note_id] = {"title": (title or note_id).strip(), "hook": (hook or "").strip()}
+    old_title = (idx.get(note_id) or {}).get("title", "")
+    new_title = (title or note_id).strip()
+    idx[note_id] = {"title": new_title, "hook": (hook or "").strip()}
     _write_index(scope_key, idx)
+
+    # RETITLING REWRITES THE WIKILINKS THAT POINT AT THIS NOTE.
+    #
+    # `refs.extract_refs` resolves `[[Title]]` to a note id by TITLE LOOKUP, at
+    # the SOURCE's write time. So a retitle leaves every inbound `[[old title]]`
+    # naming something that no longer exists -- and the damage is delayed and
+    # silent: the backlink row survives, because it stores the RESOLVED
+    # `workshop:note/<scope>/<id>` and nothing rewrites targets, and then the
+    # edge vanishes the next time that source happens to be saved and
+    # re-extracted. Measured 2026-08-27
+    # (memory-page-and-file-viewer-2026-08-27.md 1.6 and D11); it became worth
+    # fixing rather than documenting when the title became editable in one
+    # obvious place on the Memory page.
+    #
+    # Only notes are rewritten, and that is the whole set rather than a
+    # simplification: `services/tasks` and `services/chat_store` both call
+    # `extract_refs` WITHOUT `note_scope`, so a ticket body and a chat receipt
+    # never produce a wikilink-derived note ref in the first place.
+    if old_title and old_title != new_title:
+        try:
+            _retitle_wikilinks(scope_key, note_id, old_title, new_title)
+        except Exception:
+            # The note is renamed either way. Refusing the rename because a
+            # referring note could not be rewritten would be worse than a
+            # reported partial, and this is the log entry that reports it.
+            log.warning("wikilink rewrite FAILED after retitling %s/%s from %r to %r; "
+                        "inbound [[%s]] links are now stale",
+                        scope_key, note_id, old_title, new_title, old_title,
+                        exc_info=True)
 
     # Keep the always-loaded index bounded (Claude Code 200-line rule). Best-effort:
     # a demotion failure must never fail the note write that just succeeded.

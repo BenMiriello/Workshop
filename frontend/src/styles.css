@@ -3186,38 +3186,51 @@ p.chat-workpanel__note { margin: 0; }
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
 }
-/* 34px toolbar: New (bordered) + Filter (bare input). Section 5 of
-   shell-mockup-spec-2026-08-22.md, which calls this out as the visible
-   expression of navigation-shell sec 3.5. */
+/* THE DIRECTORY TOOLBAR: a search field, then the page's icon actions.
+   Rebuilt from kit controls on 2026-08-27
+   (docs/platform-redesign/memory-page-and-file-viewer-2026-08-27.md D5).
+
+   WHAT WAS WRONG WITH IT, in the operator's words: "the contents of the plus
+   new button and the filter row, it's not centered vertically, mushed up
+   against the tops and the bottom, and the filter is a different size from the
+   plus new button, and the filter doesn't have anything surrounding it, no
+   border. And the plus new has more distance from the left than it does from
+   the top and the bottom." All of that was one cause: a hand-rolled `<button>`
+   and a bare `<input>` with their own geometry, in a 34px bar with 28px
+   children, the button having horizontal padding and no `display: flex` so its
+   icon sat on the text baseline rather than centred.
+
+   So there is no bespoke control here any more. The bar is 40px, which is what
+   a --control-h-sm control needs before it touches both edges, and everything
+   in it is a kit `Button` or a kit `Input`, centred and sized because
+   everything else in the system is. Only the two things the kit cannot know
+   are set here: the field stretches, and the leading search glyph sits inside
+   it. */
 .ws-pagecol__dirtoolbar {
   flex: 0 0 auto;
-  display: flex; align-items: center; gap: 6px;
-  height: 34px;
-  padding: 0 10px;
+  display: flex; align-items: center; gap: var(--space-1);
+  height: 40px;
+  padding: 0 var(--space-2);
   border-bottom: 1px solid var(--border);
 }
-.ws-dirtoolbar__new {
-  flex: 0 0 auto;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: none;
-  font-family: inherit; font-size: 12px;
-  color: var(--fg); cursor: pointer;
-}
-.ws-dirtoolbar__new:hover { background: var(--card-hover); }
-.ws-dirtoolbar__filter {
+.ws-dirtoolbar__search {
+  position: relative;
   flex: 1 1 auto; min-width: 0;
-  height: 28px;
-  padding: 0 6px;
-  border: none; border-radius: 6px;
-  background: none;
-  font-family: inherit; font-size: 12px;
-  color: var(--fg);
+  display: flex; align-items: center;
 }
-.ws-dirtoolbar__filter::placeholder { color: var(--faint); }
-.ws-dirtoolbar__filter:focus { outline: none; background: var(--bg-inset); }
+.ws-dirtoolbar__searchicon {
+  position: absolute;
+  left: var(--space-2);
+  color: var(--faint);
+  pointer-events: none;
+}
+.ws-dirtoolbar__searchinput {
+  width: 100%;
+  height: var(--control-h-sm);
+  /* Room for the glyph on the left. The right is the normal inset. */
+  padding-left: calc(var(--space-2) + 13px + var(--space-2));
+  font-size: var(--fs-sm);
+}
 .ws-pagecol__treescroll {
   flex: 1 1 auto; min-height: 0;
   overflow: auto;

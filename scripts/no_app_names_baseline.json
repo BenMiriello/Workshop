@@ -1,5 +1,5 @@
 {
-  "_comment": "Ratchet baseline for check_no_app_names.py. These counts may only go DOWN. The target for all three is zero: content reaches it at extraction (stage 7), imports at the AppSpec seams (stage 4). `watched` is sticky on purpose, so an app that leaves the catalog is still scanned for leftovers.",
+  "_comment": "Ratchet baseline for check_no_app_names.py. These counts may only go DOWN. The target for all four is zero: content reaches it at extraction (stage 7), imports at the AppSpec seams (stage 4), home_path_sites when every path in $HOME comes from config. `watched` is sticky on purpose, so an app that leaves the catalog is still scanned for leftovers.",
   "watched": [
     "birds",
     "budget",
@@ -12,7 +12,8 @@
   ],
   "content_files": 106,
   "import_sites": 20,
-  "literal_sites": 302,
+  "literal_sites": 291,
+  "home_path_sites": 7,
   "raised": {
     "content_files": {
       "from": 102,

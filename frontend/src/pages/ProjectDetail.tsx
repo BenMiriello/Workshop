@@ -190,7 +190,7 @@ function ProjectStoresSection({ slug }: { slug: string }) {
       ) : stores.length === 0 ? (
         <StateBlock
           title="No project-hosted stores"
-          hint="This project owns no stores. Its agents read the shared workshop knowledge instead."
+          hint="This project owns no stores. Its agents read the shared workshop notes instead."
         />
       ) : (
         <Card compact style={{ padding: "var(--space-3)" }}>

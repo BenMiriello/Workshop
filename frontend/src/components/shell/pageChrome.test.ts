@@ -10,14 +10,22 @@ describe("directoryChrome", () => {
     });
   });
 
-  it("keeps the desktop header while a document is open beside the tree", () => {
-    // The desktop tree lives in the page column, so an open file takes over
-    // nothing and the header is not in its way.
+  it("draws nothing above an open document on a desktop either", () => {
+    // 2026-08-27 (D4). This used to assert the opposite, on the theory that the
+    // desktop tree lives in the page column so an open file is not in the
+    // header's way. It is the other way round: the header was in the FILE's
+    // way, and the operator read the page's search-and-new row sitting over a
+    // note he had opened as the page not knowing what it was showing.
     expect(directoryChrome({ wide: true, documentOpen: true })).toEqual({
-      header: true,
-      controls: true,
+      header: false,
+      controls: false,
       actionBar: false,
     });
+  });
+
+  it("gives a document the same answer on both viewports", () => {
+    expect(directoryChrome({ wide: true, documentOpen: true }))
+      .toEqual(directoryChrome({ wide: false, documentOpen: true }));
   });
 
   it("draws no header and no controls above the tree on a phone", () => {

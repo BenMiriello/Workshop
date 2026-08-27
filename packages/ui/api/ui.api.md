@@ -6,7 +6,7 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.6.4
+Version: 0.7.0
 
 ## @workshop/ui
 
@@ -15,6 +15,7 @@ Source: `src/index.ts`
 - _resetCurrentUserForTest
 - _resetDeviceScopedForTest
 - ActionBar
+- activePathIds
 - AGENCY_LABEL
 - AgencyChip
 - AgencyDot
@@ -151,6 +152,7 @@ Source: `src/index.ts`
 - type DocumentBarInput
 - type DocumentBarModel
 - type DocumentBarProps
+- type DocumentBarVariant
 - type DocumentForm
 - type EditMode
 - type FileDrillProps

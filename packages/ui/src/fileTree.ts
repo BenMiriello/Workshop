@@ -53,6 +53,17 @@ export type FileTreeNode = {
   /** Unsaved edits live in this node. The desktop tree draws the 6px amber dot
    *  from section 5; the phone row has no dot. */
   dirty?: boolean;
+  /** What KIND of thing this row is, when one level holds more than one kind.
+   *  Consecutive nodes sharing a group get one header row above them
+   *  (`flattenTree` emits it); a level where every node has the same group, or
+   *  none, draws no headers at all and is unchanged.
+   *
+   *  This exists because Memory's root holds three different address kinds at
+   *  once -- a scope key, a role key and a repo-relative path -- and drew them
+   *  as one undifferentiated list of roots, which is exactly as confusing as it
+   *  sounds (memory-page-and-file-viewer-2026-08-27.md sections 1.3, 1.4 and
+   *  D9). The adapter names the kinds because only the adapter knows them. */
+  group?: string;
 };
 
 /** One level, as the adapter returns it. `filtered` reports what the source
@@ -84,6 +95,7 @@ export type FileTreeLevels = Readonly<Record<string, FileTreeLevelState>>;
 
 export type FileTreeRow =
   | { kind: "node"; key: string; depth: number; node: FileTreeNode; open: boolean }
+  | { kind: "group"; key: string; depth: number; label: string }
   | { kind: "loading"; key: string; depth: number; parentId: string; label: string }
   | { kind: "error"; key: string; depth: number; parentId: string; label: string; message: string }
   | { kind: "empty"; key: string; depth: number; parentId: string; label: string }
@@ -285,9 +297,21 @@ export function flattenTree(
       }
     }
     const shown = max > 0 ? state.nodes.slice(0, max) : state.nodes;
+    // A header is emitted when the group CHANGES, so a level with one group (or
+    // none) gets no headers and every existing adapter is untouched. It is
+    // drawn at the same depth as the rows it introduces, and it is not a node:
+    // it has no id, is not selectable, is not focusable, and `treeKeyIntent`
+    // walks straight past it.
+    let group: string | undefined;
+    let first = true;
     for (const node of shown) {
       if (seen.has(node.id)) continue;
       seen.add(node.id);
+      if (node.group && (first || node.group !== group)) {
+        rows.push({ kind: "group", key: `${parent.id}::group::${node.group}`, depth, label: node.group });
+      }
+      group = node.group;
+      first = false;
       const isOpen = node.kind === "branch" && open.has(node.id);
       rows.push({ kind: "node", key: node.id, depth, node, open: isOpen });
       if (isOpen) emit(node, depth + 1, false);
@@ -314,6 +338,41 @@ export function flattenTree(
 
   emit(root, 0, true);
   return rows;
+}
+
+/**
+ * The branches ENCLOSING the selected row, as ids.
+ *
+ * A tree that shows only which file is selected leaves you unable to say which
+ * folder you are standing in, which is one of the two things the operator named
+ * as missing on 2026-08-27 (memory-page-and-file-viewer-2026-08-27.md D6). The
+ * fix is a mark on every ancestor, and the ancestors are already implied by the
+ * flat row list: walking BACKWARDS from the selected row, any row at a smaller
+ * depth than the smallest seen so far encloses it.
+ *
+ * Derived rather than passed in, so it cannot disagree with what is on screen,
+ * and so no caller has to compute an ancestry the tree already knows. Returns
+ * an empty set when nothing is selected or the selection is not on screen (its
+ * branch is collapsed), which is correct: there is no path to draw.
+ */
+export function activePathIds(
+  rows: readonly FileTreeRow[],
+  selectedId: string | null,
+): Set<string> {
+  const out = new Set<string>();
+  if (!selectedId) return out;
+  const at = rows.findIndex((r) => r.kind === "node" && r.node.id === selectedId);
+  if (at < 0) return out;
+  let depth = (rows[at] as Extract<FileTreeRow, { kind: "node" }>).depth;
+  for (let i = at - 1; i >= 0 && depth > 0; i--) {
+    const row = rows[i];
+    if (row.kind !== "node") continue;
+    if (row.depth < depth) {
+      out.add(row.node.id);
+      depth = row.depth;
+    }
+  }
+  return out;
 }
 
 /** Every node the tree currently knows about, by id. The row model carries

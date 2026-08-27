@@ -29,18 +29,33 @@
 // The test from frontend/CLAUDE.md: would this space be empty if the failure
 // had not happened? Under an open branch beside four other open branches, no.
 //
-// NO DISCLOSURE TRIANGLES, and that is the geometry rather than an omission:
-// shell-mockup-spec-2026-08-22.md section 5 draws the 27px row as icon, label
-// and an optional dirty dot, nothing else. The row itself opens and closes the
-// branch, and the arrow keys still do (`treeKeyIntent`). A folder reads as a
-// folder because it is in the SANS face and a file is in the MONO face, which
-// is section 5's rule and the same one `FileDrill` follows on a phone.
+// A CARET, AND A MARK ON THE FOLDER YOU ARE IN. This file used to say "NO
+// DISCLOSURE TRIANGLES", from shell-mockup-spec-2026-08-22.md section 5, which
+// draws the 27px row as icon, label and an optional dirty dot and nothing else.
+// The operator overruled that on 2026-08-27 walking the Memory page: a tree
+// without a caret and without any sign of which folder encloses the open file
+// is missing what he called "the essentials", and the sans/mono face rule alone
+// was not carrying it (memory-page-and-file-viewer-2026-08-27.md D6).
+//
+// So a branch row leads with a chevron, right when closed and down when open,
+// and a leaf row leads with a spacer of the same width so every label in a
+// level starts at the same x. The caret is DECORATION, not a second control:
+// the row itself still opens and closes the branch and the arrow keys still do
+// (`treeKeyIntent`), because two hit targets on one row that do almost the same
+// thing is how a tree gets a click you cannot predict.
+//
+// The enclosing branches carry `is-onpath`, derived from the rows by
+// `activePathIds` rather than passed in, so the mark cannot disagree with the
+// selection. The sans/mono face rule from section 5 stays: it is still what
+// tells a folder from a file, the caret just makes it legible at a glance.
 //
 // A file icon is a CONTROL, not content (design rule 3): neutral at rest, `--fg`
 // on hover, never a categorical hue. All styling is in components.css under
 // `.ws-tree`; there are no colors in this file.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  ChevronDown,
+  ChevronRight,
   Database,
   File as FileIcon,
   FileCode,
@@ -56,6 +71,7 @@ import { cx } from "./cx";
 import { Button } from "./controls";
 import { Notice, Skeleton, StateBlock } from "./feedback";
 import {
+  activePathIds,
   flattenTree,
   levelFailed,
   levelLoading,
@@ -187,6 +203,9 @@ export function FileTree({
 
   const byId = useMemo(() => nodesById(adapter.root, levels), [adapter.root, levels]);
 
+  // Which branches enclose the selection. Pure, derived from what is drawn.
+  const onPath = useMemo(() => activePathIds(rows, selectedId ?? null), [rows, selectedId]);
+
   const retry = useCallback(
     (id: string) => {
       const node = byId.get(id);
@@ -287,6 +306,7 @@ export function FileTree({
           key={row.key}
           row={row}
           selectedId={selectedId ?? null}
+          onPath={onPath}
           isTabStop={row.key === tabStop}
           onActivate={activate}
           onFocusRow={setFocusId}
@@ -304,6 +324,7 @@ export function FileTree({
 function TreeRow({
   row,
   selectedId,
+  onPath,
   isTabStop,
   onActivate,
   onFocusRow,
@@ -312,6 +333,8 @@ function TreeRow({
 }: {
   row: FileTreeRow;
   selectedId: string | null;
+  /** Branch ids enclosing the selection, from `activePathIds`. */
+  onPath: ReadonlySet<string>;
   isTabStop: boolean;
   onActivate: (node: FileTreeNode) => void;
   /** Tabbing into the tree lands on a row without any keystroke, so the row
@@ -320,6 +343,17 @@ function TreeRow({
   onRetry: (parentId: string) => void;
   register: (el: HTMLDivElement | null) => void;
 }) {
+  if (row.kind === "group") {
+    // A LABEL, NOT A ROW. `role="presentation"` keeps it out of the tree's item
+    // sequence, so it is not selectable, not focusable, and arrow keys walk
+    // past it; it exists to say what the rows under it ARE.
+    return (
+      <div className="ws-tree__group" style={indent(row.depth)} role="presentation">
+        {row.label}
+      </div>
+    );
+  }
+
   if (row.kind === "loading") {
     return (
       <div className="ws-tree__aside" style={indent(row.depth)} aria-busy="true">
@@ -378,6 +412,7 @@ function TreeRow({
   const branch = node.kind === "branch";
   const Icon = fileTreeIconFor(node, open);
   const selected = node.id === selectedId;
+  const Caret = open ? ChevronDown : ChevronRight;
 
   return (
     <div
@@ -391,11 +426,19 @@ function TreeRow({
         "ws-tree__row",
         branch ? "ws-tree__row--folder" : "ws-tree__row--file",
         selected && "is-selected",
+        !selected && onPath.has(node.id) && "is-onpath",
       )}
       style={indent(row.depth)}
       onClick={() => onActivate(node)}
       onFocus={() => onFocusRow(node.id)}
     >
+      {branch ? (
+        <Caret className="ws-tree__caret" aria-hidden />
+      ) : (
+        // The same width, so a file's label lines up with its siblings' rather
+        // than sliding left under the folders above it.
+        <span className="ws-tree__caret ws-tree__caret--none" aria-hidden />
+      )}
       <Icon className="ws-tree__icon" aria-hidden />
       <span className="ws-tree__label">{node.label}</span>
       {node.dirty && (

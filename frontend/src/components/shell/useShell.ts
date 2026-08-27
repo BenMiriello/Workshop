@@ -18,6 +18,7 @@ import {
   FileText,
   FolderGit2,
   FolderTree,
+  Paperclip,
   GitPullRequestArrow,
   Gauge,
   House,
@@ -69,6 +70,8 @@ const ICONS = {
   deploys: Rocket,
   memory: Brain,
   files: FolderTree,
+  // Attached to a chat, which is a paperclip and not a directory.
+  attachments: Paperclip,
   usage: Gauge,
   settings: SettingsIcon,
   // Settings' own page rows.

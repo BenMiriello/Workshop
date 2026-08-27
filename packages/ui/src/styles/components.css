@@ -3389,12 +3389,21 @@ span.ws-filterchip__open { cursor: default; }
   flex-direction: column;
   min-width: 0;
 }
+/* STICKY, so the name of what you are reading is on screen the whole time you
+   are reading it. The operator's report on 2026-08-27 was that "the title sort
+   of scrolls up and away if you scroll down within the viewer, which doesn't
+   make sense", and it does not: this bar carries Save, the form toggle and the
+   dirty dot, so scrolling it off takes the document's controls with it. */
 .ws-docbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   flex: 0 0 auto;
   height: var(--docbar-h);
   display: flex; align-items: center; gap: var(--space-2);
   padding: 0 var(--space-3);
   border-bottom: 1px solid var(--border);
+  background: var(--bg);
   min-width: 0;
 }
 /* THE COMBINED BACK-PLUS-FILENAME CONTROL. A chevron immediately followed by
@@ -3423,6 +3432,32 @@ span.ws-filterchip__open { cursor: default; }
 }
 .ws-docbar__path { flex: 0 1 auto; color: var(--faint); }
 .ws-docbar__name { flex: 0 1 auto; color: var(--fg); }
+/* THE TITLE VARIANT (DocumentBar.tsx, 2026-08-27). A record's title is prose,
+   so it is drawn in the sans face at the body size; everything else about the
+   bar is identical, which is the point of sharing it. */
+.ws-docbar--title .ws-docbar__name {
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semi);
+}
+.ws-docbar--title .ws-docbar__path { font-family: var(--font-sans); }
+/* The title, editable in place. It reads as the title until you are in it: no
+   box at rest, the box on focus, so the bar does not look like a form. */
+.ws-docbar__nameinput {
+  min-width: 0;
+  padding: 2px var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+.ws-docbar__nameinput:hover { border-color: var(--border); }
+.ws-docbar__nameinput:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--bg-inset);
+}
 /* The dirty dot, and it is drawn ONLY when the document is dirty. --warn is
    the amber the mockup drew by hand, solved for both modes. */
 .ws-docbar__dot {
@@ -3493,8 +3528,9 @@ span.ws-filterchip__open { cursor: default; }
 /* The editor fills what is left of the viewport instead of taking a fraction of
    it: bar one, this bar, and the body's own padding are the only things above
    and below it. `100dvh` rather than `100vh` because a phone's URL bar moves. */
-.ws-doc--full .ws-editor {
-  height: calc(100dvh - var(--bar1-h) - var(--docbar-h) - var(--space-3) - var(--space-5));
+.ws-doc--full .ws-editor { height: var(--doc-editor-h); }
+.ws-doc--full {
+  --doc-editor-h: calc(100dvh - var(--bar1-h) - var(--docbar-h) - var(--space-3) - var(--space-5));
 }
 
 @media (min-width: 900px) {
@@ -3503,6 +3539,14 @@ span.ws-filterchip__open { cursor: default; }
   .ws-docbar__meta { display: inline-flex; }
   .ws-docbar__discard { display: inline-flex; }
   .ws-doc__body { padding: var(--space-5) 0 var(--space-6); }
+  /* A DESKTOP DOCUMENT OWNS THE CONTENT AREA TOO (2026-08-27, D8). `--full` was
+     phone-only, which is why a desktop document had the page scrolling around a
+     60vh editor that scrolled inside it: two scrollers, and the operator hit
+     both. The same rule now applies on both, with the desktop body padding in
+     the sum so the editor ends exactly where the viewport does. */
+  .ws-doc--full {
+    --doc-editor-h: calc(100dvh - var(--bar1-h) - var(--docbar-h) - var(--space-5) - var(--space-6));
+  }
 }
 
 /* ---- THE 16px FLOOR: nothing zooms the page when you focus it ------------- */
@@ -4119,11 +4163,15 @@ span.ws-filterchip__open { cursor: default; }
    One flat list of rows indented by `--ws-tree-depth`, so the DOM is not nested
    and a virtualizer can be dropped in later without a new row shape.
 
-   NO DISCLOSURE TRIANGLES. Section 5 has none, and there is no `__twist` here
-   to style: the row opens its own branch, and a folder is told from a file by
-   the FACE (sans versus mono) plus the ink, which is the same rule the phone
-   list follows. There is likewise no meta column on this row; the 252px column
-   has no width to spend on one, and the phone list is where it lives.
+   A CARET LEADS EVERY ROW, and a leaf's is an invisible spacer of the same
+   width so labels line up down a level. Section 5 had none; the operator asked
+   for one on 2026-08-27 (memory-page-and-file-viewer-2026-08-27.md D6). It is
+   decoration and not a control -- no hover state of its own, no hit target --
+   because the row already opens the branch. The FACE rule (sans is a folder,
+   mono is a file) is unchanged and still does the work; the caret makes it
+   readable without having to notice a typeface. There is no meta column on this
+   row; the 252px column has no width to spend on one, and the phone list is
+   where it lives.
 
    A file icon is a CONTROL, not content (rule 3): `--muted` at rest, `--fg` when
    the row is hovered, never a categorical hue. The two hues in here are states:
@@ -4164,6 +4212,42 @@ span.ws-filterchip__open { cursor: default; }
 .ws-tree__row--file { font-family: var(--font-mono); color: var(--muted); }
 .ws-tree__row:hover { background: var(--bg-inset); }
 .ws-tree__row.is-selected { background: var(--accent-soft); color: var(--accent); }
+/* WHICH FOLDER YOU ARE IN. Every branch enclosing the selection, at a weight
+   below the selection's own so the two never compete: no fill, just the full
+   --fg ink and a caret that stops being muted. The second half of D6. */
+.ws-tree__row.is-onpath { color: var(--fg); }
+.ws-tree__row.is-onpath .ws-tree__icon,
+.ws-tree__row.is-onpath .ws-tree__caret { color: var(--fg); opacity: 1; }
+.ws-tree__caret {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  opacity: 0.6;
+  color: var(--muted);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+/* A leaf's caret is width only. `visibility` rather than `display: none` so it
+   still occupies its column and every label in a level starts at one x. */
+.ws-tree__caret--none { visibility: hidden; }
+.ws-tree__row:hover .ws-tree__caret { color: var(--fg); }
+.ws-tree__row.is-selected .ws-tree__caret { color: var(--accent); opacity: 1; }
+/* WHAT THE ROWS UNDER THIS ARE. A level holding more than one kind of address
+   (Memory's root: scopes, roles, documents) labels each run instead of drawing
+   them as one undifferentiated list. A label, not a row: it is
+   role="presentation", so nothing selects it and the arrow keys walk past. */
+.ws-tree__group {
+  padding-right: var(--space-2);
+  padding-left: calc(var(--space-2) + var(--ws-tree-depth, 0) * var(--ws-tree-indent));
+  margin-top: var(--space-2);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semi);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  user-select: none;
+}
+.ws-tree__group:first-child { margin-top: 0; }
 .ws-tree__icon {
   width: 12px;
   height: 12px;
@@ -4293,6 +4377,20 @@ span.ws-filterchip__open { cursor: default; }
 }
 /* Same rule as the desktop tree, and the reason it is worth repeating: sans
    versus mono is how a folder and a file are told apart in this design. */
+/* The phone half of the same group label. Wider gutter than the desktop tree
+   because a 52px full-bleed row has room for one, and the phone is where a
+   level's rows are furthest from anything that would otherwise explain them. */
+.ws-drill__group {
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semi);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  user-select: none;
+}
+.ws-drill__group:first-child { padding-top: var(--space-1); }
 .ws-drill__row--folder { font-family: var(--font-sans); }
 .ws-drill__row--file { font-family: var(--font-mono); }
 .ws-drill__row--pending { cursor: default; }

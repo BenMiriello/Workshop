@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """No platform source file may name a specific app. Measured, ratcheted.
 
+AND, since 2026-08-27, NO PLATFORM SOURCE FILE MAY NAME A FOLDER IN $HOME. That
+is the fourth count (`home_path_sites`), and it exists because the first three
+structurally could not see a whole class of the same defect: the notes app's
+vault lived at a hardcoded `~/notes` in three platform files for months while
+this script reported ZERO for all three of them, because the violation is not an
+app NAME. The reasoning is at `_HOME_PATH_PATTERNS` below and in
+docs/platform-redesign/memory-page-and-file-viewer-2026-08-27.md sections 1.2
+and D12. If you are here because a count is failing, read that one first: a gate
+that cannot see the violation is the thing this file is most against.
+
 Rule (CLAUDE.md, and section 6 of
 docs/platform-redesign/app-is-the-entity-2026-08-20.md): an app declares what it
 is and the platform reads the declaration. A deploy for another user must
@@ -200,6 +210,66 @@ _AMBIGUOUS: dict[str, tuple[str, ...]] = {
 }
 
 # A literal only counts in one of these shapes. Free prose does not.
+# ---- A FOURTH COUNT: platform source may not name a path in $HOME ----------
+#
+# WHY THIS EXISTS, and it is worth reading before touching it. The notes app's
+# Markdown vault (`~/notes`) was hardcoded in three platform files for months
+# while this script reported ZERO findings for all three, and the operator kept
+# reporting the same problem and being told the counts were clean. Measured
+# 2026-08-27 (memory-page-and-file-viewer-2026-08-27.md 1.2). Three independent
+# blind spots, each sufficient on its own:
+#
+#   1. the alphabet is the app ids from `roster()`, and the literal is `notes`,
+#      not `notes-app`;
+#   2. `services/notes_vault.py` matches the app-CONTENT path patterns, so it is
+#      filed as the app's own source and never inspected;
+#   3. `notes` is on the `_AMBIGUOUS` suppression list, because it is an
+#      ordinary English word.
+#
+# No amount of tuning the app alphabet finds it, because the violation is not an
+# app NAME. It is a platform file reaching into a specific folder in the user's
+# home directory -- which is the same class of defect (the platform knowing a
+# fact it has no business knowing) wearing a shape this gate could not see.
+#
+# So this counts that shape directly, mechanically, and with its own baseline:
+# `Path.home() / "<name>"`, `os.path.expanduser("~/<name>")`, and a `~/<name>`
+# literal in a string. A path derived from config or an environment variable is
+# not a finding; only a NAME written into platform source is.
+_HOME_PATH_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Path.home() / "notes"   |   Path.home()/"notes"
+    re.compile(r"""Path\.home\(\)\s*/\s*['"]([^'"/]+)['"]"""),
+    # os.path.expanduser("~/notes")  |  expanduser('~/notes')
+    re.compile(r"""expanduser\(\s*['"]~/([^'"]+)['"]"""),
+    # a bare "~/notes" in a string, which is how it reaches the operator's screen
+    re.compile(r"""['"]~/([A-Za-z0-9_.-]+)"""),
+)
+
+# `~/` on its own, and the paths this system legitimately owns: its own state
+# lives under the operator's home by design, and naming it is not a dependency
+# on somebody else's folder. Everything else is a finding.
+_HOME_PATH_ALLOWED = frozenset({
+    ".claude", ".config", ".local", ".cache", ".ssh", ".gitconfig",
+    "workshop",
+})
+
+
+def _home_path_names(line: str) -> list[str]:
+    """The home-directory folder names a line hardcodes, if any.
+
+    Deduped, because the patterns overlap on purpose: `Path.home() / "notes"`
+    written as a string literal matches two of them, and one line reaching one
+    folder is ONE finding. Counting it twice would make the ratchet's numbers
+    depend on how the line happens to be spelled.
+    """
+    seen: dict[str, None] = {}
+    for pat in _HOME_PATH_PATTERNS:
+        for m in pat.finditer(line):
+            name = m.group(1).strip().strip("/").split("/")[0]
+            if name and name not in _HOME_PATH_ALLOWED:
+                seen[name] = None
+    return list(seen)
+
+
 def _literal_patterns(app: str) -> tuple[re.Pattern[str], ...]:
     a = re.escape(app)
     short = re.escape(app.removesuffix("-app"))
@@ -276,6 +346,7 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
     content: dict[str, list[str]] = {a: [] for a in apps}
     imports: list[dict] = []
     literals: list[dict] = []
+    home_paths: list[dict] = []
 
     for rel in files:
         # The gate's own memory is not a violation. `watched` in the baseline is
@@ -283,6 +354,14 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
         # ratchet counts itself: eight literals that can only ever be removed by
         # forgetting which apps to watch for.
         if rel == str(BASELINE.relative_to(ROOT)):
+            continue
+        # And neither is the gate itself. Same reason as the baseline above: the
+        # patterns it matches on are written down IN it, in its own prose and
+        # its own regexes, so without this it counts its own explanation of what
+        # it counts. That reaches a comment line for the app literals and does
+        # not for these, because a docstring's continuation lines start with
+        # neither `#` nor `//`.
+        if rel == "scripts/check_no_app_names.py":
             continue
         owner = next((a for a in apps if any(p.search(rel) for p in content_pat[a])), None)
         if owner:
@@ -310,6 +389,13 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
             # that got scanned as code.
             if stripped.startswith(("#", "//", "*", "/*")):
                 continue
+            # A hardcoded folder in the user's home directory. Checked on the
+            # SAME non-comment lines as the literals above, and deliberately
+            # NOT suppressed by `_AMBIGUOUS`: the whole reason this count
+            # exists is that the suppression list is what hid it.
+            for name in _home_path_names(line):
+                home_paths.append({"file": rel, "line": i, "name": name})
+
             for app in apps:
                 if not any(p.search(line) for p in literal_pat[app]):
                     continue
@@ -323,8 +409,10 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
         "content_by_app": {a: len(v) for a, v in sorted(content.items()) if v},
         "import_sites": len(imports),
         "literal_sites": len(literals),
+        "home_path_sites": len(home_paths),
         "imports": imports,
         "literals": literals,
+        "home_paths": home_paths,
     }
 
 
@@ -379,7 +467,7 @@ def main() -> int:
         # prints on every run until the count comes back down.
         raised = {
             k: (base.get(k), result[k])
-            for k in ("content_files", "import_sites", "literal_sites")
+            for k in ("content_files", "import_sites", "literal_sites", "home_path_sites")
             if base.get(k) is not None and result[k] > base[k]
         }
         if raised and not args.because:
@@ -390,8 +478,9 @@ def main() -> int:
         payload = {
             "_comment": (
                 "Ratchet baseline for check_no_app_names.py. These counts may only "
-                "go DOWN. The target for all three is zero: content reaches it at "
-                "extraction (stage 7), imports at the AppSpec seams (stage 4). "
+                "go DOWN. The target for all four is zero: content reaches it at "
+                "extraction (stage 7), imports at the AppSpec seams (stage 4), "
+                "home_path_sites when every path in $HOME comes from config. "
                 "`watched` is sticky on purpose, so an app that leaves the catalog "
                 "is still scanned for leftovers."
             ),
@@ -399,6 +488,7 @@ def main() -> int:
             "content_files": result["content_files"],
             "import_sites": result["import_sites"],
             "literal_sites": result["literal_sites"],
+            "home_path_sites": result["home_path_sites"],
         }
         if raised:
             payload["raised"] = {
@@ -426,7 +516,7 @@ def main() -> int:
             payload["since_ref"] = args.since
             payload["since"] = {
                 k: since_counts[k]
-                for k in ("content_files", "import_sites", "literal_sites")
+                for k in ("content_files", "import_sites", "literal_sites", "home_path_sites")
             }
         print(json.dumps(payload, indent=2))
         return 0
@@ -437,6 +527,7 @@ def main() -> int:
         print(f"             {n:>4}  {app}")
     print(f"  imports  {result['import_sites']:>4}  platform files importing an app module")
     print(f"  literals {result['literal_sites']:>4}  platform lines naming an app")
+    print(f"  homepath {result['home_path_sites']:>4}  platform lines hardcoding a folder in $HOME")
 
     if not base:
         print("\nno baseline; run --write-baseline to pin one")
@@ -451,7 +542,7 @@ def main() -> int:
     against = f"the base ref {args.since}" if since_counts is not None else "the pinned baseline"
 
     failed = False
-    for key in ("content_files", "import_sites", "literal_sites"):
+    for key in ("content_files", "import_sites", "literal_sites", "home_path_sites"):
         was, now = judge_against.get(key), result[key]
         if was is None:
             continue
@@ -468,7 +559,7 @@ def main() -> int:
     if since_counts is not None and base:
         stale = [
             f"{k}: pinned {base[k]} -> now {result[k]}"
-            for k in ("content_files", "import_sites", "literal_sites")
+            for k in ("content_files", "import_sites", "literal_sites", "home_path_sites")
             if base.get(k) is not None and result[k] > base[k]
         ]
         if stale:

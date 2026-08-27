@@ -52,9 +52,14 @@ export type DirectoryRegistration = {
   pageId: string;
   /** What that header row reads, and what the back control names. */
   label: string;
-  /** Whether the page needs the 34px directory toolbar slot rendered between
-   *  the back header and the tree body. Memory does not; Files does. */
+  /** Whether the page needs the directory toolbar slot rendered between the
+   *  back header and the tree body. Memory does not; Files does. */
   hasToolbar?: boolean;
+  /** Whether ARRIVING at this page should open the tree over the page list.
+   *  Defaults to true, which is the rule in `directoryEntry.ts`. A page passes
+   *  false when it arrived with a document already open, so a link to one
+   *  document does not put the picker over the thing it just opened. */
+  openOnArrival?: boolean;
 };
 
 type DirectoryState = {
@@ -109,7 +114,7 @@ export function DirectoryProvider({
       ) return prev;
       return reg;
     });
-    setEntry((prev) => enterDirectory(prev, reg?.pageId ?? null));
+    setEntry((prev) => enterDirectory(prev, reg?.pageId ?? null, reg?.openOnArrival ?? true));
   }, []);
 
   // THE TREE HAS TO BRING ITS COLUMN WITH IT. It is drawn inside column two,
@@ -169,11 +174,20 @@ export function useDirectory(): DirectoryState {
  */
 export function useDirectoryPage(reg: DirectoryRegistration & { enabled?: boolean }) {
   const { register, host, toolbarHost, open, setOpen } = useDirectory();
-  const { pageId, label, hasToolbar, enabled = true } = reg;
+  const { pageId, label, hasToolbar, openOnArrival = true, enabled = true } = reg;
+
+  // `openOnArrival` is deliberately NOT in the dependency list. It is read once,
+  // at the moment the page registers, because it answers "what was on screen
+  // when you got here" -- and `register` ignores a repeat registration for the
+  // same pageId anyway, so re-running on every change would be a no-op that
+  // only risks re-registering the page mid-visit and re-opening a tree the
+  // operator had closed.
+  const arrivalRef = useRef(openOnArrival);
+  arrivalRef.current = openOnArrival;
 
   useEffect(() => {
     if (!enabled) return;
-    register({ pageId, label, hasToolbar });
+    register({ pageId, label, hasToolbar, openOnArrival: arrivalRef.current });
     return () => register(null);
   }, [register, pageId, label, hasToolbar, enabled]);
 

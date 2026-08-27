@@ -132,6 +132,16 @@ class AppSpec:
     # lazily so a store whose directory does not exist yet costs nothing at
     # import time. `per_owner` stores resolve under the owner's runtime dir.
     stores: tuple[tuple[str, Callable[[], Any], str, bool], ...] = ()
+    # The owner segment of this app's store URIs, when it is not the app id.
+    #
+    # It exists for exactly one reason: an app whose stores were declared in
+    # platform code BEFORE they were declared here, under a URI that is already
+    # written down elsewhere. Moving such a store onto its AppSpec is the fix
+    # (a store must exist exactly while the app that owns it is installed);
+    # renaming its URI at the same time is a separate, breaking change that
+    # nothing here needs. So the URI is pinned and the ownership moves.
+    # Empty means the app id, which is what a new app should always use.
+    store_owner: str = ""
     # Paths the PUBLIC edge must NEVER forward to this app: unauthenticated or
     # loopback-trusted ingest that would otherwise inherit the proxy's trust.
     # `_exact` is for an ingest POST whose siblings under the same prefix are
@@ -501,9 +511,12 @@ def _wearables_spec() -> AppSpec:
 
 def _notes_spec() -> AppSpec:
     from routes import notes
-    from services import notes_store_adapter, notes_vault
+    from services import notes_store_adapter, notes_vault, permissions
     return AppSpec(
         id="notes-app",
+        # `notes:vault`, not `notes-app:vault`. The URI predates this
+        # declaration; see `store_owner`.
+        store_owner="notes",
         card={
             "title": "Notes",
             "tagline": "Markdown vault — wikilinks, backlinks, search",
@@ -519,6 +532,19 @@ def _notes_spec() -> AppSpec:
         mounts=(
             RouterMount(notes.router, deps=(Depends(require_user),)),
         ),
+        # THE VAULT IS THIS APP'S STORE, declared here rather than in
+        # `stores.register_builtin_stores` (2026-08-27,
+        # memory-page-and-file-viewer-2026-08-27.md D1 and section 1.2).
+        #
+        # It sat in the platform's own block, four lines under a comment reading
+        # "Everything app-specific is declared on that app's AppSpec and
+        # registered below, so a store exists exactly while the app that owns it
+        # is installed" -- so the file contradicted itself, and an installation
+        # without this app still declared a store over a folder in the user's
+        # home directory. The path still comes from `permissions.NOTES_VAULT_ROOT`
+        # and nothing about the folder changes; what changes is that the store
+        # exists only while the app does.
+        stores=(("vault", lambda: permissions.NOTES_VAULT_ROOT, "Note", False),),
         # Searchable, but only when asked for by name: `vault` is deliberately
         # absent from index_collectors_default.
         index_collectors={"vault": notes_vault.collect_index_chunks},
@@ -834,9 +860,13 @@ def installed_secret_env() -> tuple[str, ...]:
 
 
 def installed_stores() -> list[tuple[str, str, object, str, bool]]:
-    """(app_id, name, path_factory, type, per_owner) for every installed app."""
+    """(store_owner, name, path_factory, type, per_owner) for every installed app.
+
+    The first element is the URI's owner segment, which is the app id unless the
+    spec pins a different one (`AppSpec.store_owner`).
+    """
     return [
-        (spec.id, name, factory, type_, per_owner)
+        (spec.store_owner or spec.id, name, factory, type_, per_owner)
         for spec in installed_specs()
         for (name, factory, type_, per_owner) in spec.stores
     ]

@@ -34,33 +34,41 @@
 // which is where this app already did it correctly: `useEditMode` for the draft,
 // the kit `Editor` while editing, `Markdown` when not.
 //
-// ---- THE TWO SHAPES ON THIS PAGE, AND WHY THEY DIFFER ----------------------
+// ---- ONE SHAPE, FOR A NOTE AND FOR A FILE ---------------------------------
 //
-// A DOCUMENT IS A FILE and wears the kit's `DocumentBar`: the same header the
-// Files tab draws, measured in shell-mockup-spec-2026-08-22.md section 6, with
-// the same pure `documentBar()` rule deciding what is in it. That is the point
-// of the shared chrome: a markdown file in Memory and a source file in an app
-// are the same surface with the toggle switched on.
+// BOTH wear the kit's `DocumentBar`: the same header the Files tab draws,
+// measured in shell-mockup-spec-2026-08-22.md section 6, with the same pure
+// `documentBar()` rule deciding what is in it. A file gets `variant="file"`
+// (its name in mono, its directory ahead of it); a note gets `variant="title"`
+// (its title in the sans face, its scope ahead of it, and the title editable in
+// place). Everything else is identical.
 //
-// THE HEADER CARRIES THE ACTIONS THERE, and there is no sticky `ActionBar` on
-// it. rule 7 requires an EXPLICIT COMMIT for a content write, not one particular
-// container for it; the header is that commit, permanently on screen. Two Saves
-// and two "unsaved" markers on one screen is the duplication this repo keeps
-// deleting, and on a phone an open document hides the bottom bar (spec section
-// 6), so the ActionBar's Save would be unreachable exactly when it mattered. The
-// unsaved DOT replaces the "unsaved" pill, and the dot going out is the receipt.
+// THIS FILE USED TO ARGUE THE OPPOSITE, and the argument is worth keeping
+// because it is the kind that sounds right. It said: a note is a RECORD, not a
+// file; it has no path and no filename, it has a title, a hook, a type, a
+// pinned flag, an author and backlinks, and its edit mode is a FORM over five
+// fields of which the markdown body is one. So it kept the record-page shape
+// and a sticky `ActionBar`, and giving it a filename header "would have meant
+// printing its title twice, in mono, above itself".
 //
-// A NOTE IS A RECORD, not a file. It has no path and no filename; it has a
-// title, a hook, a type, a pinned flag, an author and backlinks, and its edit
-// mode is a FORM over five fields of which the markdown body is one. So it keeps
-// the record-page shape (frontend/CLAUDE.md, "A record page is not a list page")
-// and its `ActionBar`, which is rule 7's own case. Giving it a filename header
-// would have meant printing its title twice, in mono, above itself.
+// The operator overruled it on 2026-08-27, and the reasoning holds up: the mono
+// face was the real objection and a variant answers it, the other four fields
+// are FIELDS and belong in the body with the rest of the body, and what a reader
+// wants is one viewer and one editor rather than two that differ for reasons
+// only this file knows. See memory-page-and-file-viewer-2026-08-27.md D7.
+//
+// THE HEADER CARRIES THE ACTIONS, and there is no sticky `ActionBar` on either
+// shape now. Rule 7 requires an EXPLICIT COMMIT for a content write, not one
+// particular container for it; the header is that commit, permanently on screen
+// because it is sticky. Two Saves and two "unsaved" markers on one screen is the
+// duplication this repo keeps deleting, and on a phone an open document hides
+// the bottom bar (spec section 6), so the ActionBar's Save would be unreachable
+// exactly when it mattered. The unsaved DOT replaces the "unsaved" pill, and the
+// dot going out is the receipt.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Eye, Lock, Pencil, Pin, Trash2 } from "lucide-react";
 import {
-  ActionBar,
   Badge,
   Button,
   Checkbox,
@@ -78,7 +86,6 @@ import {
   StatusDot,
   Tag,
   catFor,
-  cx,
   documentBar,
   timeAbsolute,
   useEditMode,
@@ -100,13 +107,6 @@ import { NOTE_TYPES, authorLabel, chatRefsIn, noteTypeLabel, type NoteType } fro
 type NoteDetail = components["schemas"]["NoteDetail"];
 type NoteSummary = components["schemas"]["NoteSummary"];
 type FileContent = components["schemas"]["FileContent"];
-
-/** The editor's height when the document is one pane among others (a note's
- *  form, or a desktop document beside the tree). A fixed height rather than a
- *  stretch because the page scrolls: an editor that grows without bound pushes
- *  everything under it off the end of a long document. In the phone takeover it
- *  is not used at all; `.ws-doc--full` sizes the editor to the viewport. */
-const EDITOR_HEIGHT = "60vh";
 
 // ---- Shared pieces ---------------------------------------------------------
 
@@ -189,7 +189,7 @@ export function NoteDocument({
   /** A write landed: the tree and any list above it are now out of date. */
   onChanged: () => void;
   onDeleted: () => void;
-  /** Controls the page wants beside this document's own (New note, Up). */
+  /** Controls the page wants beside this document's own (Up, on a phone). */
   actions?: React.ReactNode;
 }) {
   const base = `/api/knowledge/${encodeURIComponent(scope)}/notes`;
@@ -199,6 +199,10 @@ export function NoteDocument({
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Which form is on screen. Independent of whether an edit is open, exactly as
+  // it is for a document: `form` is the reader's choice, and switching back to
+  // the rendered view does not throw a draft away, it previews it.
+  const [form, setForm] = useState<DocumentForm>("rendered");
 
   // Two reads, because the store answers two questions in two places: the
   // per-note GET carries the body and the provenance, and title/hook/updated
@@ -209,6 +213,7 @@ export function NoteDocument({
     let live = true;
     setLoaded(null);
     setErr(null);
+    setForm("rendered");
     Promise.all([
       getJson<NoteDetail>(`${base}/${encodeURIComponent(noteId)}`),
       getJson<NoteSummary[]>(base),
@@ -296,113 +301,166 @@ export function NoteDocument({
   }
   if (!loaded) return <LoadingDocument />;
 
+  const bar = documentBar({ writable: true, hasRenderedForm: true, form, dirty: edit.dirty });
+  const title = edit.editing ? edit.draft.title : loaded.title;
+  const body = edit.editing ? edit.draft.content : loaded.content;
+  const hook = edit.editing ? edit.draft.hook : loaded.hook;
   const href = scopeHref(scope);
 
+  const goForm = (to: DocumentForm) => {
+    // Entering the source form IS entering the edit, the same as a document.
+    if (to === "source" && !edit.editing) edit.begin();
+    setForm(to);
+  };
+
   return (
-    <Stack gap="lg">
-      <Row between wrap style={{ gap: "var(--space-3)", alignItems: "flex-start" }}>
-        <Stack gap="sm">
-          <h2 className="ws-memory__title">{loaded.title || noteId}</h2>
-          <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-            {href ? (
-              <Link to={href} className="ws-bc__link">
-                <Tag hue={catFor(scope)}>{scopeLabel(scope)}</Tag>
-              </Link>
-            ) : (
-              <Tag hue={catFor(scope)}>{scopeLabel(scope)}</Tag>
-            )}
-            <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{noteTypeLabel(loaded.type)}</span>
-            {loaded.pinned && (
-              <StatusDot status="ok"><Pin size={12} strokeWidth={1.8} aria-hidden /> Pinned</StatusDot>
-            )}
-          </Row>
-        </Stack>
-        {!edit.editing && (
-          <Row wrap style={{ gap: "var(--space-2)" }}>
-            {actions}
-            <Button onClick={edit.begin}><Pencil aria-hidden /> Edit</Button>
-            <Button variant="danger-ghost" onClick={() => setConfirmDel(true)}>
-              <Trash2 aria-hidden /> Delete
-            </Button>
-          </Row>
+    <div className="ws-doc ws-doc--full">
+      {/* THE HEADER IS THE TITLE, and nothing else (2026-08-27, D7). It used to
+          be a Row carrying an h2, a scope Tag, the type word, a Pinned dot and
+          three buttons, above a page that ALSO drew its own header and search
+          row; the operator asked for it "stripped down to just the name, the
+          title of it". The `title` variant draws it in the sans face, and in
+          edit mode it is an input, which is the only place a note's title can
+          be changed: there is no rename route for a note anywhere.
+
+          This is the same bar a document wears. The 2026-08-22 design kept the
+          two apart on the grounds that a note is a record and not a file; what
+          a reader actually wants is one viewer and one editor, and everything
+          a note has that a file does not is a field, which belongs in the body
+          with the other fields. */}
+      <DocumentBar
+        name={title || noteId}
+        variant="title"
+        onNameChange={edit.editing ? (v) => edit.set("title", v) : undefined}
+        path={scopeLabel(scope)}
+        dirty={edit.dirty}
+      >
+        {actions}
+        {bar.toggle && (
+          <Button size="sm" variant="ghost" onClick={() => goForm(bar.toggle!.to)}>
+            {bar.toggle.to === "source"
+              ? <><Pencil aria-hidden /> {bar.toggle.label}</>
+              : <><Eye aria-hidden /> {bar.toggle.label}</>}
+          </Button>
         )}
-      </Row>
-
-      {saveErr && <Notice tone="error" detail={saveErr}>That didn't save.</Notice>}
-
-      {edit.editing ? (
-        <>
-          <Field label="Title" htmlFor="memory-note-title">
-            <Input
-              id="memory-note-title"
-              value={edit.draft.title}
-              onChange={(e) => edit.set("title", e.target.value)}
-              data-autofocus
-            />
-          </Field>
-          <Field
-            label="Hook"
-            htmlFor="memory-note-hook"
-            optional
-            help="A one-line summary shown in the index and lists."
+        {bar.discard && (
+          <Button
+            className="ws-docbar__discard"
+            size="sm"
+            variant="ghost"
+            disabled={edit.saving}
+            onClick={() => { edit.cancel(); setForm("rendered"); }}
           >
-            <Input
-              id="memory-note-hook"
-              value={edit.draft.hook}
-              onChange={(e) => edit.set("hook", e.target.value)}
-            />
-          </Field>
-          <Row wrap style={{ gap: "var(--space-4)" }}>
-            <Field label="Type" htmlFor="memory-note-type" inline>
-              <Select
-                id="memory-note-type"
-                value={edit.draft.type}
-                onChange={(e) => edit.set("type", e.target.value as NoteType)}
+            Discard
+          </Button>
+        )}
+        {bar.save && (
+          <Button
+            size="sm"
+            variant="primary"
+            loading={edit.saving}
+            disabled={!bar.saveEnabled}
+            onClick={() => { void edit.save().catch(() => {}); }}
+          >
+            Save
+          </Button>
+        )}
+        {!edit.editing && (
+          <Button
+            size="sm"
+            variant="danger-ghost"
+            onClick={() => setConfirmDel(true)}
+            aria-label="Delete note"
+            title="Delete note"
+            icon
+          >
+            <Trash2 aria-hidden />
+          </Button>
+        )}
+      </DocumentBar>
+
+      <div className="ws-doc__body">
+        <Stack gap="lg">
+          {saveErr && <Notice tone="error" detail={saveErr}>That didn't save.</Notice>}
+
+          {form === "source" ? (
+            <>
+              {/* THE NOTE'S OTHER FIELDS. They are only on screen while you are
+                  editing, because reading a note is reading its body: the type
+                  and the pinned flag are already stated below it, in the one
+                  muted line that carries the provenance. */}
+              <Field
+                label="Hook"
+                htmlFor="memory-note-hook"
+                optional
+                help="A one-line summary shown in the index and lists."
               >
-                {NOTE_TYPES.map((t) => (
-                  <option key={t} value={t}>{noteTypeLabel(t)}</option>
-                ))}
-              </Select>
-            </Field>
-            <Checkbox checked={edit.draft.pinned} onChange={(v) => edit.set("pinned", v)} label="Pinned" />
-          </Row>
-          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-            Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope.
-          </p>
-          {/* The SOURCE form. `prose` is the markdown profile from section 4.1:
-              soft wrap and history, no line numbers and no folding. */}
-          <Editor
-            value={edit.draft.content}
-            onChange={(v) => edit.set("content", v)}
-            path="note.md"
-            profile="prose"
-            height={EDITOR_HEIGHT}
-            ariaLabel="Note body, markdown source"
-          />
-          <ActionBar flash={edit.flash ? "Saved" : undefined}>
-            <Button variant="primary" loading={edit.saving} onClick={() => { void edit.save().catch(() => {}); }}>
-              Save
-            </Button>
-            <Button variant="ghost" onClick={edit.cancel}>Cancel</Button>
-            {edit.dirty && <Badge>unsaved</Badge>}
-          </ActionBar>
-        </>
-      ) : (
-        <>
-          {loaded.hook && <p className="ws-memory__hook">{loaded.hook}</p>}
-          {/* The RENDERED form. This is the whole point of the ticket: Memory
-              printed its bodies inside a pre-wrap paragraph and never rendered
-              a heading, a list or a table. */}
-          {loaded.content.trim() ? (
-            <Markdown>{loaded.content}</Markdown>
+                <Input
+                  id="memory-note-hook"
+                  value={hook}
+                  onChange={(e) => edit.set("hook", e.target.value)}
+                />
+              </Field>
+              <Row wrap style={{ gap: "var(--space-4)", alignItems: "flex-end" }}>
+                <Field label="Type" htmlFor="memory-note-type" inline>
+                  <Select
+                    id="memory-note-type"
+                    value={edit.draft.type}
+                    onChange={(e) => edit.set("type", e.target.value as NoteType)}
+                  >
+                    {NOTE_TYPES.map((t) => (
+                      <option key={t} value={t}>{noteTypeLabel(t)}</option>
+                    ))}
+                  </Select>
+                </Field>
+                <Checkbox checked={edit.draft.pinned} onChange={(v) => edit.set("pinned", v)} label="Pinned" />
+              </Row>
+              <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+                Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope.
+              </p>
+              <Editor
+                value={body}
+                onChange={(v) => {
+                  // Live, so the first keystroke is what opens the edit.
+                  if (!edit.editing) edit.begin();
+                  edit.patch({ content: v });
+                }}
+                path="note.md"
+                profile="prose"
+                ariaLabel="Note body, markdown source"
+              />
+            </>
           ) : (
-            <p className="ws-muted" style={{ margin: 0 }}>This note has no body yet. Edit it to write one.</p>
+            <>
+              {hook && <p className="ws-memory__hook">{hook}</p>}
+              {body.trim() ? (
+                <Markdown>{body}</Markdown>
+              ) : (
+                <p className="ws-muted" style={{ margin: 0 }}>This note has no body yet. Edit it to write one.</p>
+              )}
+              {/* WHAT THIS NOTE IS AND WHERE IT CAME FROM, under it rather than
+                  over it. The scope is a link because it is the one thing here
+                  that goes somewhere. */}
+              <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                {href ? (
+                  <Link to={href} className="ws-bc__link">
+                    <Tag hue={catFor(scope)}>{scopeLabel(scope)}</Tag>
+                  </Link>
+                ) : (
+                  <Tag hue={catFor(scope)}>{scopeLabel(scope)}</Tag>
+                )}
+                <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{noteTypeLabel(loaded.type)}</span>
+                {loaded.pinned && (
+                  <StatusDot status="ok"><Pin size={12} strokeWidth={1.8} aria-hidden /> Pinned</StatusDot>
+                )}
+              </Row>
+              <Provenance author={loaded.author} updated={loaded.updated} body={loaded.content} />
+              <ReferencedBy scope={scope} noteId={noteId} />
+              {edit.flash && <p className="ws-muted" style={{ margin: 0 }}>Saved.</p>}
+            </>
           )}
-          <Provenance author={loaded.author} updated={loaded.updated} body={loaded.content} />
-          <ReferencedBy scope={scope} noteId={noteId} />
-          {edit.flash && <p className="ws-muted" style={{ margin: 0 }}>Saved.</p>}
-        </>
-      )}
+        </Stack>
+      </div>
 
       <ConfirmDialog
         open={confirmDel}
@@ -413,7 +471,7 @@ export function NoteDocument({
         body={<>This removes the note from <strong>{scopeLabel(scope)}</strong>. It can't be undone.</>}
         confirmLabel="Delete note"
       />
-    </Stack>
+    </div>
   );
 }
 
@@ -433,8 +491,12 @@ export function DocDocument({
    *  replaces the Up bar (shell-mockup-spec-2026-08-22.md sections 4.1 and 6). */
   onBack?: () => void;
   backLabel?: string;
-  /** The document owns the whole content area. The same boolean the shell is
-   *  told about, so the two halves of the takeover cannot disagree. */
+  /** The PHONE takeover: the shell is also collapsing the page toolbar and
+   *  hiding the Up bar, and this is the same boolean, so the two halves cannot
+   *  disagree. It no longer decides the document's LAYOUT: `ws-doc--full` is
+   *  unconditional now (D8), because a document owns the content area on a
+   *  desktop too. What it still decides is the phone-only editor sizing, which
+   *  the class handles, and the back control in the header. */
   takeover?: boolean;
 }) {
   const [file, setFile] = useState<FileContent | null>(null);
@@ -518,7 +580,13 @@ export function DocDocument({
   };
 
   return (
-    <div className={cx("ws-doc", takeover && "ws-doc--full")}>
+    // ALWAYS `--full` (2026-08-27, D8). It was phone-only, which left a desktop
+    // document as a page scrolling around a 60vh editor scrolling inside it:
+    // two scrollers, and the operator hit both ("the page sort of scrolls
+    // around it, and then you can scroll within it... multiple nested scroll
+    // zones"). Now the bar sticks, the editor ends where the viewport does, and
+    // there is one scroller on both viewports.
+    <div className="ws-doc ws-doc--full">
       <DocumentBar
         name={baseName(path)}
         path={dirName(path)}
@@ -588,7 +656,8 @@ export function DocDocument({
                 path={path}
                 profile="prose"
                 editable={canEdit}
-                height={takeover ? undefined : EDITOR_HEIGHT}
+                // No height: `.ws-doc--full` sizes it to what is left of the
+                // viewport, on both viewports now.
                 ariaLabel={`${baseName(path)}, markdown source`}
               />
             </>
