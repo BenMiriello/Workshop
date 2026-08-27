@@ -742,7 +742,7 @@ def _summary_row(thread_id: str) -> dict | None:
         "archived_at": meta.get("archived_at"),
         "last_user_at": last_user_at,
         "message_count": len(msgs),
-        "last_message": ((last.get("content") or "")[:120] if last else ""),
+        "last_message": ((last.get("content") or "")[:300] if last else ""),
         # HOW FULL THE WINDOW IS, the same pair `GET /threads/{id}/context`
         # prefers: the size the model itself reported on the last turn, over the
         # one table (`services/context_window`). Null when no turn has completed

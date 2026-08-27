@@ -1477,7 +1477,7 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
         "created_at": t.get("created_at"),
         "updated_at": t.get("updated_at"),
         "message_count": len(msgs),
-        "last_message": (msgs[-1]["content"][:120] if msgs else ""),
+        "last_message": (msgs[-1]["content"][:300] if msgs else ""),
     }
 
 

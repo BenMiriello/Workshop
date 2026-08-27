@@ -93,7 +93,7 @@ def _shape_row(row: dict) -> dict:
         "archived_at": _iso(row.get("archived_at")),
         "last_user_at": _iso(row.get("last_user_at")),
         "message_count": int(row.get("message_count") or 0),
-        "last_message": (row.get("last_message") or "")[:120],
+        "last_message": (row.get("last_message") or "")[:300],
         # HOW FULL THE WINDOW IS. `context_tokens` is a real mirrored column
         # (db.models.App -> chat_thread), so this path has the same fact the
         # file fold reads out of meta, and both resolve the denominator through

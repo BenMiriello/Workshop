@@ -427,8 +427,14 @@ a.ws-btn { text-decoration: none; }
 .ws-card__title { margin: 0; font-size: var(--fs-lg); font-weight: var(--fw-semi); letter-spacing: -0.01em; line-height: var(--lh-tight); }
 .ws-card__meta { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--fs-sm); }
 .ws-card__body { margin-top: var(--space-3); }
-.ws-card--interactive { cursor: pointer; transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out); }
-.ws-card--interactive:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.ws-card--interactive { cursor: pointer; transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+/* Only a device that can truly hover gets the hover treatment. A touch screen
+   reports :hover on the last-tapped element and holds it, so a tapped card would
+   stay lifted until something else was tapped. Gating on (hover: hover) is what
+   keeps that state from sticking on a phone. */
+@media (hover: hover) {
+  .ws-card--interactive:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+}
 .ws-card--interactive:focus-visible { box-shadow: var(--focus-ring); }
 .ws-card--flat { background: transparent; box-shadow: none; }
 .ws-card--raised { box-shadow: var(--shadow-md); }
@@ -628,6 +634,16 @@ a.ws-btn { text-decoration: none; }
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+}
+/* A chat row does not lift on hover (a lift reads as jumpy in a dense list); it
+   takes the quiet background wash the list rows use, and only on a device that
+   can hover so it never sticks after a tap. */
+@media (hover: hover) {
+  .ws-chat-row.ws-card--interactive:hover {
+    transform: none;
+    box-shadow: var(--shadow-card);
+    background: var(--card-hover);
+  }
 }
 /* Line one: the state dot, the scope icon, the title, then the meta trailing
    right. align-items:center keeps the dot and icon on the title's line. */
