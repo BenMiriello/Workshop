@@ -508,7 +508,7 @@ workshop self-repo has no remote and is the primary place agents collide.
 
 `POST /projects/import` already clones an arbitrary repo URL, but with two holes to
 close before it is the "start on GitHub, integrate in the app" path the operator
-described: it does **not** run `reject_blocked` (no Veritus-owner guard on the
+described: it does **not** run `reject_blocked` (no blocked-owner guard on the
 clone URL — this must be added, it brushes a hard rule) and it does **not** set the
 `repo` binding (so an imported app cannot publish). Both are small and both are
 required. Import then becomes symmetric with create: an app can originate in the
@@ -608,7 +608,8 @@ first; the environments view answers the second.
   the existing isolation. Per-user resource budgets (§6.4) are the multi-tenant
   governance layer, which is legitimate production infrastructure, not the
   single-user guardrail cruft the working agreement forbids.
-- **Veritus separation**: import must call `reject_blocked` (§8.3). Non-negotiable.
+- **Blocked-owner separation**: import must call `reject_blocked` (§8.3), so a clone
+  URL naming an account in `WORKSHOP_BLOCKED_REPO_OWNERS` is refused. Non-negotiable.
 
 ---
 

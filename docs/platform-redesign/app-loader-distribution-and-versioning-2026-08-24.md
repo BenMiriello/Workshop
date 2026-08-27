@@ -528,8 +528,8 @@ and are restated so the open set is in one place.
    org could not be checked from this host (the egress guard blocks a shell network utility from reaching the
    public registry; check it from your own terminal). If the scope is taken, publishing means renaming the
    package, which is 46-plus import sites plus every `exports` subpath. Section 4 is designed so this is an
-   upgrade and not a prerequisite: nothing is blocked on the answer. `veritusagent` is out of scope as a host
-   for any of this.
+   upgrade and not a prerequisite: nothing is blocked on the answer. Any account named in this install's
+   `WORKSHOP_BLOCKED_REPO_OWNERS` is out of scope as a host for any of this.
 2. **Whether the kit channel is ever served over HTTP, or stays file-path only.** The `file:` form needs no
    auth and works offline, and it is the default. The HTTP route is designed but its npm auth story is
    inferred, not measured (section 4.3). Deciding "file only, for now" costs nothing and removes two routes

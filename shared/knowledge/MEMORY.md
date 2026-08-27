@@ -90,7 +90,7 @@
 - [Transcript splitting: a delegation is atomic, and the ending goes on the last block that EXISTS](transcript-splitting-a-delegation-is-atomic-and-19ff4398f60.md)
 - [Turns must pick up new messages without dropping output](turns-must-pick-up-new-messages-without-dropping-1a0028fb2b1.md)
 - [UI info on hover via title attribute, not inline text](ui-info-on-hover-via-title-attribute-not-inline-1a0028fb2e2.md)
-- [Veritus is the operator's work boundary, kept separate](veritus-is-the-operator-s-work-boundary-kept-sep-1a0028fb2ef.md)
+- [The operator's work org is a hard boundary, kept out of this install](work-org-is-a-hard-boundary-kept-out-of-this-ins-1a0028fb2ef.md)
 - [work-reviewer had invalid YAML for months](work-reviewer-had-invalid-yaml-for-months-1a0028fb2db.md)
 - [Workshop must be deployable with nothing hardcoded](workshop-must-be-deployable-with-nothing-hardcod-1a0028fb2ee.md)
 - [Workshop terminology needs clear distinct roles](workshop-terminology-needs-clear-distinct-roles-1a0028fb28f.md)

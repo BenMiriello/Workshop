@@ -419,7 +419,7 @@ Every note, one line. `[W]` = workshop scope, `[D]` = development, others named.
 
 **Security, boundaries and portability**
 
-- `[W] veritus-is-the-operator-s-work-boundary-kept-sep` never reference or depend on the work org.
+- `[W] work-org-is-a-hard-boundary-kept-out-of-this-ins` never reference or depend on the operator's work org; the blocked-owner list comes from instance config (`WORKSHOP_BLOCKED_REPO_OWNERS`), never from source.
 - `[W] workshop-must-be-deployable-with-nothing-hardcod` no personal or machine data in platform source.
 - `[W] paths-and-machine-identity-must-derive-from-conf` paths, hostnames, snowflakes, map center from config.
 - `[W] personal-data-files-should-be-gitignored` relay corpus and store policies untracked.
