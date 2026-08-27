@@ -513,7 +513,17 @@ export function ChatsArchived() {
   });
   const threads = q0.data ?? null;
   const err = q0.isError ? String(q0.error) : null;
-  const load = useCallback(() => { void q0.refetch(); }, [q0]);
+  // `q0.refetch` and not `q0`: the query RESULT is a new object every render,
+  // so depending on it memoizes nothing and would become a refetch loop the
+  // moment this went into another dependency array. The bound method is stable.
+  // Clearing `actionErr` is what the hand-rolled `load()` did, and a Retry that
+  // left a failed restore's notice on screen would be reporting the wrong
+  // request.
+  const refetchArchive = q0.refetch;
+  const load = useCallback(() => {
+    setActionErr(null);
+    void refetchArchive();
+  }, [refetchArchive]);
 
   // Restore and delete both END with the row gone from the list on screen, so
   // they drop it locally rather than re-fetching: the archive can be long, and
@@ -609,19 +619,27 @@ export function ChatsArchived() {
         </div>
       )}
 
-      {threads === null ? (
-        <div style={{ display: "grid", gap: "var(--space-2)" }}>
-          {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} style={{ height: 52 }} />
-          ))}
-        </div>
-      ) : err ? (
+      {/* ERROR BEFORE LOADING, the same order the live list uses above. The
+          hand-rolled `load()` this replaced ended its catch with
+          `setThreads([])`, which is what let a failed read fall past the
+          `threads === null` check and reach the error block. A query leaves
+          `data` undefined on failure, so testing null first would show four
+          skeletons forever and make this StateBlock and its Retry unreachable
+          -- a page that never stops loading rather than one that says what
+          went wrong. */}
+      {err ? (
         <StateBlock
           variant="error"
           title="Couldn't load the archive"
           hint={<code>GET /api/chat/threads?archived=true: {err}</code>}
           action={<Button size="sm" onClick={load}>Retry</Button>}
         />
+      ) : threads === null ? (
+        <div style={{ display: "grid", gap: "var(--space-2)" }}>
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} style={{ height: 52 }} />
+          ))}
+        </div>
       ) : threads.length === 0 ? (
         <StateBlock
           title="Nothing archived"

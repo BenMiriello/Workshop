@@ -592,7 +592,11 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
           state.pending, action.events, superseded ? state.queued : action.queued),
         activeTurn,
         syncedAt: Math.max(state.syncedAt, requestedAt),
-        hasMoreOlder: action.hasMore !== undefined ? action.hasMore : state.hasMoreOlder,
+        // Guarded like the other wholesale fields: a late tail page landing
+        // after a `loadOlder` has already paged past it would put the "load
+        // earlier" affordance back for history this tab already holds.
+        hasMoreOlder: !superseded && action.hasMore !== undefined
+          ? action.hasMore : state.hasMoreOlder,
       };
     }
 
