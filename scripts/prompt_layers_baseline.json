@@ -1,0 +1,4 @@
+{
+  "_note": "MEASURED FLOOR, 2026-08-27: zero. The eleven violations this gate was built for were removed in the same commit, so there is nothing to inherit and this is an ABSOLUTE gate, not a ratchet. If a genuinely unavoidable entry is ever added here, date it and say why; check_ratchets_not_loosened.py blocks re-pinning inside a review.",
+  "allowed": []
+}

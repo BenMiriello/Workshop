@@ -35,6 +35,44 @@ it.** On 2026-08-09 a whole session of width fixes was correct in source, never
 built, and the operator said three times that it wasn't done, while the stale
 warning fired after every commit and went unread. `apply.sh` is what clears it.
 
+### This tree IS the running app (relocated out of L2, 2026-08-27)
+
+Until 2026-08-27 the seven facts below were a hardcoded `is_self` block inside
+`chat_context.runtime_briefing()` — a paraphrase of this file, shipped as
+PLATFORM prompt text to every installation, one clause of it addressing the
+operator as "him". The briefing now states only the generalized version (a
+self-hosting installation serves a built bundle, so finish editing and then run
+its apply step) and points the agent at these rules, which `provider.persona()`
+already injects as "Project-local agent rules". This is the authority; keep it
+here.
+
+- **There is no separate deployment.** Your edits change the app the operator is
+  using right now. Don't pick ports or start servers — they are already running.
+- **The apply step is `bash scripts/apply.sh`**, run once as your FINAL action
+  after all editing. `--check` reports drift without acting. See the section
+  above and [`docs/applying-changes.md`](docs/applying-changes.md).
+- **Nothing reloads on its own.** Vite's hot reload covers only the `:5173` dev
+  origin, which is not the origin the operator is on; the backend does not
+  auto-reload at all. A restart is a pause, not a break: in-flight turns are
+  adopted again on the way back up.
+- **Built-in apps** live in `frontend/src/pages/apps/<app>`, with their backend
+  logic in `backend/services/<app>`.
+- **The `@workshop/ui` kit** at `packages/ui` is platform-owned and compiles
+  INTO the bundle, so editing it needs a rebuild too. Import by package name;
+  see [`packages/ui/CONTRIBUTING.md`](packages/ui/CONTRIBUTING.md) and
+  [`frontend/CLAUDE.md`](frontend/CLAUDE.md).
+- **Validate before claiming done:** `npm run typecheck` from the repo root plus
+  `bash scripts/check_design.sh` for UI; a quick import check for backend.
+- **Commits:** real repo, real history, unrelated work in progress. Never
+  `git add -A`. Stage only the files you changed.
+
+**How the operator likes to be talked to is L3, not platform text.** Four
+personas asserted "a senior engineer who dislikes padding"; that is a fact about
+one person and it now belongs in the operator's own custom instructions at
+`/settings/instructions`. The platform still names the operator
+(`WORKSHOP_OPERATOR_NAME`) and still asks every assistant to be direct and brief,
+which is product doctrine and true for everyone.
+
 ## Platform design (current: 2026-08-20)
 
 The authoritative model lives in [`docs/platform-redesign/entity-model-2026-07-18.md`](docs/platform-redesign/entity-model-2026-07-18.md) (start there) with the phase docs riding on top of it: `autonomy-model-*`, `latitude-model-*`, `primitive-roles-*`, `chat-scope-design-*`, `chat-work-linkage-*`, `resource-access-interface-spec-*`, and the sequenced `final-plan-agent-generalize-and-bridge-fold-2026-07-16.md` + `coherence-migration-plan-2026-07-18.md`. Agents are keyed by `role` (closed enum: maker/reviewer/triager/keeper/broker). The older `runtime` axis (builder/assistant) is GONE (verified 2026-08-20): there is no `runtime` field (`agents_registry.py`, "THERE IS NO `runtime` FIELD"; `AgentDetail.tsx`, "typed by ROLE, there is no `runtime` field"), dispatch is by role (`isMaker`), and `_role_for_runtime` no longer exists in the tree. Do not write new code against `runtime`. NOTE: `is_build_provider` in `chat_context.py` is a SEPARATE, still-live concept, not the retired axis: it means "this chat runs the full agentic toolset" (a maker/project chat) versus a narrow data chat. The genuinely stale "build" leftovers are the dead `build` branch in `frontend/src/lib/scope.ts` and the legacy `/agents/build/{slug}` routes (retire per `app-is-the-entity-2026-08-20.md` §5). Read the phase docs before touching the agents/projects/chat/apps systems.
@@ -45,7 +83,7 @@ The authoritative model lives in [`docs/platform-redesign/entity-model-2026-07-1
 
 **Know which prompt layer you are writing into.** The contract is [`docs/platform-redesign/agent-context-and-toolkit-2026-08-20.md`](docs/platform-redesign/agent-context-and-toolkit-2026-08-20.md) §"The four-layer contract", highest authority first: **L0** kernel (fixed, confidential, `chat_context.PLATFORM_KERNEL`), **L1** orientation manifest (generated, tool-centric, `services/orientation.py`), **L2** scope/app persona (`provider.persona()` plus the shared constants beside it), **L3** the operator's own custom instructions (`services/custom_instructions.py`, per owner per scope, edited at `/settings/instructions`). Plus one slot the contract does not name: **`AGENTS.md`** in a scope's own directory, read by `persona()` and injected as "Project-local agent rules".
 
-L0 to L2 are PLATFORM text: every installation and every user gets them, so they may carry only generalized product doctrine. They may not carry a fact about one checkout (a doc path, a repo convention, a named person, an operator's habits) and may not assume the reader's pronouns. This is the same rule as "no platform source file may name a specific app", applied to prompt text instead of code, and it has no gate yet, so it is on you. Anything true of THIS repo rather than of Workshop goes in this file, in `AGENTS.md`, or in L3 — never in `chat_context.py`. Worked example: the ticket convention below was written into L2 on 2026-08-22 and moved out on 2026-08-23.
+L0 to L2 are PLATFORM text: every installation and every user gets them, so they may carry only generalized product doctrine. They may not carry a fact about one checkout (a doc path, a repo convention, a named person, an operator's habits) and may not assume the reader's pronouns. This is the same rule as "no platform source file may name a specific app", applied to prompt text instead of code. It is gated as of 2026-08-27 by `python3 scripts/check_prompt_layers.py` (declaration in `scripts/prompt_layer_rules.json`, floor pinned at ZERO in `scripts/prompt_layers_baseline.json`), which runs unconditionally in `reviewer.sh` and fails the run on `installation_fact_in_platform_prompt`. It detects gendered pronouns, `~/` and host paths, `.md` filenames and a declared vendor list in the prose string literals of L0/L1/L2 and the MCP tool schemas. Anything true of THIS repo rather than of Workshop goes in this file, in `AGENTS.md`, or in L3 — never in `chat_context.py`; anything true of this INSTALLATION rather than of every installation is declared in `backend/services/installation.py` and set in `~/.config/workshop/instance.env`. Worked example: the ticket convention below was written into L2 on 2026-08-22 and moved out on 2026-08-23.
 
 **Writing a ticket:** [`docs/ticket-writing.md`](docs/ticket-writing.md). A ticket has two readers, the worker (which gets the body and nothing else) and the operator (opening it on a phone weeks later to decide something), and the four labels `ticket_format.py` enforces only ever served the first.
 

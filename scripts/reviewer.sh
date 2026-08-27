@@ -553,6 +553,33 @@ fi
 NO_APP_NAMES_CHECK="skipped"
 _delta_check NO_APP_NAMES_CHECK "check_no_app_names.py" "no_app_names_baseline.json"
 
+# 4.6c-iiic No installation-specific fact in PLATFORM prompt text. Same rule as
+# no-app-names, applied to prompt strings instead of code: CLAUDE.md's "L0 to L2
+# are PLATFORM text ... it has no gate yet, so it is on you". It had not been on
+# anyone -- 11 violations on 2026-08-27, including "live for him until the bundle
+# is rebuilt", `~/workshop/scripts/project_tasks.py` in two personas, and a
+# nine-name egress allowlist with a tailnet assumption.
+#
+# UNCONDITIONAL, for the reason spelled out above check_no_app_names.py: a rule
+# this central cannot be enforced only on diffs that happen to touch the right
+# path, and a new persona is by definition written in a file nobody thought to
+# add to a gate list.
+#
+# ABSOLUTE, not a ratchet, and it can be: the eleven were fixed in the commit
+# that added the checker, so the tree is at zero and there is nothing inherited
+# to forgive. `allowed` in scripts/prompt_layer_rules.json is the escape hatch
+# and is empty; check_ratchets_not_loosened.py blocks re-pinning inside a review.
+PROMPT_LAYERS_CHECK="skipped"
+if [[ -f "$WORKSHOP/scripts/check_prompt_layers.py" ]]; then
+  if python3 "$WORKSHOP/scripts/check_prompt_layers.py" >/dev/null 2>&1; then
+    PROMPT_LAYERS_CHECK="ok"
+  else
+    PROMPT_LAYERS_CHECK="fail"
+  fi
+else
+  AMBIGUOUS+=("prompt_layers_check_unavailable")
+fi
+
 # One state mechanism for server reads (ADR 0025, "The check" clause 3,
 # generalised to usePoll itself now that the query layer exists). Counts the two
 # LEGACY mechanisms under frontend/src -- usePoll call sites and polling
@@ -866,6 +893,10 @@ if [[ "$NO_APP_NAMES_CHECK" == "fail" ]]; then
   REASONS+=("app_name_in_platform_source")
   COMPLETE="false"
 fi
+if [[ "$PROMPT_LAYERS_CHECK" == "fail" ]]; then
+  REASONS+=("installation_fact_in_platform_prompt")
+  COMPLETE="false"
+fi
 if [[ "$FRONTEND_STATE_CHECK" == "fail" ]]; then
   REASONS+=("frontend_state_regression")
   COMPLETE="false"
@@ -962,7 +993,7 @@ TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 export ONE_DEF_CHECK ONE_DEF_COUNT OCCUPANCY_NOTICE DOC_STATUS_NOTICE
-export FRONTEND_STATE_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK MEMORY_REACHABLE_CHECK
+export FRONTEND_STATE_CHECK RATCHETS_NOT_LOOSENED_CHECK MODULE_LAYOUT_CHECK NO_PROCESS_GLOBALS_CHECK RESPONSE_MODEL_CHECK NO_RAW_STORAGE_CHECK GENERATED_CLIENT_CHECK DUPLICATE_HELPERS_CHECK OPAQUE_FIELDS_CHECK ROUTES_ANSWER_CHECK NO_STATE_IN_SOURCE_CHECK NO_RAW_PATHS_CHECK NO_APP_NAMES_CHECK PROMPT_LAYERS_CHECK MEMORY_REACHABLE_CHECK
 RESULT_JSON=$(python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -1002,6 +1033,10 @@ out = {
     "no_state_in_source": os.environ.get("NO_STATE_IN_SOURCE_CHECK", "skipped"),
     "no_raw_paths": os.environ.get("NO_RAW_PATHS_CHECK", "skipped"),
     "no_app_names": os.environ.get("NO_APP_NAMES_CHECK", "skipped"),
+    # Absolute, not ratcheted: L0/L1/L2 prompt text is at zero
+    # installation-specific facts, so a new one is not incremental debt,
+    # it is a fact about this checkout shipped to every installation.
+    "prompt_layers": os.environ.get("PROMPT_LAYERS_CHECK", "skipped"),
     "frontend_state": os.environ.get("FRONTEND_STATE_CHECK", "skipped"),
     "response_model": os.environ.get("RESPONSE_MODEL_CHECK", "skipped"),
     # Absolute, not ratcheted: the tree is at zero raw storage calls, so any
@@ -1041,7 +1076,7 @@ PYEOF
 printf '%s\n' "$RESULT_JSON"
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK frontend_state=$FRONTEND_STATE_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK one_def=$ONE_DEF_CHECK ratchets_not_loosened=$RATCHETS_NOT_LOOSENED_CHECK module_layout=$MODULE_LAYOUT_CHECK no_process_globals=$NO_PROCESS_GLOBALS_CHECK no_state_in_source=$NO_STATE_IN_SOURCE_CHECK no_raw_paths=$NO_RAW_PATHS_CHECK no_app_names=$NO_APP_NAMES_CHECK prompt_layers=$PROMPT_LAYERS_CHECK frontend_state=$FRONTEND_STATE_CHECK response_model=$RESPONSE_MODEL_CHECK no_raw_storage=$NO_RAW_STORAGE_CHECK generated_client=$GENERATED_CLIENT_CHECK opaque_fields=$OPAQUE_FIELDS_CHECK routes_answer=$ROUTES_ANSWER_CHECK memory_reachable=$MEMORY_REACHABLE_CHECK duplicate_helpers=$DUPLICATE_HELPERS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 if [[ -n "$OCCUPANCY_NOTICE" ]]; then
   echo "[$(ts)] occupancy notice: $(printf '%s' "$OCCUPANCY_NOTICE" | tr '\n' ' ')" >> "$LOG"
 fi

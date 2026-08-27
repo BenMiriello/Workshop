@@ -2096,7 +2096,7 @@ def _summary_prompt(prev_summary: str, to_fold: list[dict]) -> str:
         "- Open questions: things genuinely undecided, each with who owns the "
         "answer (the operator, or this session).\n\n"
         "Preserve file paths, identifiers and numbers verbatim, and preserve the "
-        "operator's stated preferences in his own words. Drop pleasantries, "
+        "operator's stated preferences in their own words. Drop pleasantries, "
         "repetition, and narration of the work as it happened. Write plainly, no "
         "em-dashes, no emojis. Keep the whole thing under about 500 words: it is "
         "carried in every later prompt, so its length is a cost paid on every "

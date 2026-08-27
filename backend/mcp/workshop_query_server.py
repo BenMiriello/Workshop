@@ -82,8 +82,8 @@ SEARCH_TOOL_SCHEMA = {
             "items": {"type": "string", "enum": ["note", "doc", "chat", "ticket", "vault"]},
             "description": (
                 "Restrict to some sources. Default: note, doc, chat and ticket. "
-                "'vault' is the operator's personal Obsidian notes and is only "
-                "searched when you ask for it by name."
+                "'vault' is an external personal-notes vault this installation "
+                "has connected, and is only searched when you ask for it by name."
             ),
         },
         "scope": {

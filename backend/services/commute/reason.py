@@ -39,14 +39,14 @@ RELAY_LOCAL_URL = os.environ.get("WORKSHOP_RELAY_LOCAL_URL", "http://127.0.0.1:8
 
 SYSTEM = (
     "You are the operator's commute assistant. You receive a JSON 'brief' (the live "
-    "scored commute) plus 'patterns' (what his PAST commutes actually looked like) "
+    "scored commute) plus 'patterns' (what the operator's PAST commutes actually looked like) "
     "and 'data_quality'. Produce ONE message as STRICT JSON, no prose around it:\n"
     '{"kind":"brief|alert|insight|nudge","severity":"ok|info|caution|urgent",'
     '"headline":"<=1 line, the single most important thing","detail":"1-2 lines: '
     'concrete times/route","reasoning":"why; cite the signal you used","confidence":'
     '"high|medium|low","action":"optional imperative or null"}\n\n'
     "Rules:\n"
-    "- Be concise and concrete. The headline is the one thing he should know.\n"
+    "- Be concise and concrete. The headline is the one thing they should know.\n"
     "- data_quality.location fields, read them EXACTLY: 'meters_from_destination' "
     "is DISTANCE to the destination (not a time and not staleness); "
     "'fix_age_seconds' is how old the GPS fix is. Never describe a distance in "
@@ -54,19 +54,19 @@ SYSTEM = (
     "location is simply unknown; say that, don't invent a number.\n"
     "- Confidence MUST reflect data_quality: thin/stale/low-coverage data => low, and "
     "say so in reasoning rather than inventing a conclusion.\n"
-    "- Reason adaptively from patterns: if his real leg times / transfer waits / "
-    "punctuality suggest a risk (e.g. he routinely leaves a minute late and just "
+    "- Reason adaptively from patterns: if their real leg times / transfer waits / "
+    "punctuality suggest a risk (e.g. they routinely leave a minute late and just "
     "misses a connection), name it. Do NOT use a fixed checklist.\n"
-    "- Only escalate severity for genuine LATE risk; never nag when he's on-time/early.\n"
+    "- Only escalate severity for genuine LATE risk; never nag when they are on-time/early.\n"
     "- FREQUENT service (Muni Metro, headway ~5-15 min): a single late vehicle is "
-    "NOT a late risk; he simply boards the next one. Only flag a transit delay if "
-    "it is SYSTEMIC (most upcoming trains late) or it makes him miss an INFREQUENT "
+    "NOT a late risk; they simply board the next one. Only flag a transit delay if "
+    "it is SYSTEMIC (most upcoming trains late) or it makes them miss an INFREQUENT "
     "connection (e.g. a specific Caltrain, every 30-60 min). Never harp about one "
     "delayed train on a high-frequency line.\n"
-    "- If data_quality.location.available is false, you do NOT know where he is or "
-    "whether he has left. Do NOT tell him to 'leave now' or assume he's at the "
+    "- If data_quality.location.available is false, you do NOT know where they are or "
+    "whether they have left. Do NOT tell them to 'leave now' or assume they are at the "
     "origin. Frame timing CONDITIONALLY ('if you haven't boarded yet…') and lead "
-    "with the fact that his location is unconfirmed.\n"
+    "with the fact that their location is unconfirmed.\n"
     "- kind 'insight' is for a post-commute observation; 'brief' for a pre/during "
     "status; 'alert' for an active late-risk; 'nudge' for a small actionable tip.\n"
     "Output JSON only."
@@ -116,12 +116,18 @@ def _oauth_token() -> str | None:
 
 
 def _claude_bin() -> str | None:
+    """The CLI binary, or None.
+
+    The `~/.nvm/versions/node/v22.22.3/bin/claude` entry that used to sit in
+    this list was one machine's node version in one operator's home: it went
+    stale on the next nvm upgrade and was meaningless anywhere else. PATH plus
+    the standard system prefix cover every install that has the CLI, and an
+    install whose binary is somewhere else says so with COMMUTE_CLAUDE_BIN,
+    which was already the documented escape hatch.
+    """
     return (os.environ.get("COMMUTE_CLAUDE_BIN")
             or shutil.which("claude")
-            or next((p for p in [
-                os.path.expanduser("~/.nvm/versions/node/v22.22.3/bin/claude"),
-                "/usr/local/bin/claude",
-            ] if os.path.exists(p)), None))
+            or next((p for p in ["/usr/local/bin/claude"] if os.path.exists(p)), None))
 
 
 def _call_claude(prompt: str) -> dict[str, Any] | None:

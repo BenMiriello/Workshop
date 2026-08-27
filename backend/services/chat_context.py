@@ -40,6 +40,34 @@ def operator_name() -> str:
     persona label is request-time text."""
     return os.environ.get("WORKSHOP_OPERATOR_NAME", "").strip() or "the operator"
 
+
+# WHAT the operator is like is NOT here, and must not come back. Four personas
+# used to assert "a senior engineer who dislikes padding" — a hardcoded fact
+# about one person, shipped as platform text to every installation. The platform
+# may name the operator (above, env-declared); a characterisation of them is L3,
+# services/custom_instructions.py, authored by the operator at
+# /settings/instructions. See scripts/check_prompt_layers.py.
+
+
+def _task_cli() -> str:
+    """The platform's task CLI, as a command an agent can actually run.
+
+    `scripts/project_tasks.py` ships with every Workshop installation, so the
+    capability and the tool are product doctrine. What was NOT doctrine is the
+    `~/workshop` prefix two personas spelled: that is one operator's home
+    layout. Resolved from the install root instead."""
+    return f"python3 {paths.workshop_root() / 'scripts' / 'project_tasks.py'}"
+
+
+def _tasks_export_name() -> str:
+    """The generated task export's filename, from the module that writes it.
+
+    Personas warn agents not to hand-edit it. The warning is doctrine (the store
+    is authoritative everywhere); the literal filename belongs to services.tasks,
+    which owns the export, not to a string in a persona."""
+    from services import tasks as _tasks
+    return _tasks.EXPORT_NAME
+
 # The three pickable models surfaced in the composer's model selector, full ids.
 # Sourced from llm_router so they never drift from the actual call tiers.
 from services import llm_router as _llm  # noqa: E402
@@ -665,7 +693,7 @@ def role_preamble(
 
     where = cwd or "the working directory"
     tools = tool_summary or (
-        _inst.runner_grant("toolset")
+        "the " + _inst.runner_grant("toolset")
         + " (Read, Write, Edit, Bash, Grep, Glob, and the rest)"
     )
     # WHICH HOSTS AND WHICH NETWORKS ARE THIS INSTALLATION'S FACTS, not the
@@ -1668,7 +1696,7 @@ class ContextProvider:
         return (
             "You are the operator's personal assistant and work orchestrator "
             "inside the Workshop app. "
-            f"The operator is {operator_name()}, a senior engineer who dislikes padding. Be direct "
+            f"The operator is {operator_name()}. Be direct "
             "and brief. Use short paragraphs or tight bullet lists. No emojis. Never use em-dashes.\n\n"
             "Work placement. Reason from these principles, not rules:\n\n"
             "1. Do small things now. The operator asked you, not a queue. A read, an answer, "
@@ -1899,19 +1927,21 @@ class ProjectContextProvider(ContextProvider):
             return default
 
     def persona(self) -> str:
+        from services import installation as _inst
+
         rules = _agent_rules(self._read)
         return (
             "You are the build agent for the operator's Workshop Project "
-            f"'{self.slug}'. You have full Claude Code tool access inside the "
-            f"project directory ({self.dir}). The operator is {operator_name()}, a "
-            "senior engineer who dislikes padding. Be direct and brief. Never use em-dashes.\n\n"
+            f"'{self.slug}'. You have {_inst.runner_grant('tool access')} inside the "
+            f"project directory ({self.dir}). The operator is {operator_name()}. "
+            "Be direct and brief. Never use em-dashes.\n\n"
             "Read this scope's Manifest FIRST to ground your work in the current "
             "goal and plan, then act. The Manifest is a note in this scope's memory "
             "(its title is 'Manifest'); read it with the search/notes tools, and keep "
             "it current when the goal or plan changes. Task state lives in the "
-            "structured store, NOT in TODO.md (which is a generated export, never edit "
-            "it directly). To mark a task done, add a follow-up, or block one, run "
-            "`python3 ~/workshop/scripts/project_tasks.py <verb> .` via Bash "
+            f"structured store, NOT in {_tasks_export_name()} (which is a generated "
+            "export, never edit it directly). To mark a task done, add a follow-up, "
+            f"or block one, run `{_task_cli()} <verb> .` via Bash "
             "(verbs: set-status <id> done, add \"text\", block <id> \"reason\", "
             "note <id> \"text\", next-ready). When the operator makes a non-trivial "
             "decision, record it as a decision note (see LEAVING A NOTE).\n\n"
@@ -2026,17 +2056,19 @@ class MakerAgentContextProvider(ContextProvider):
             return default
 
     def persona(self) -> str:
+        from services import installation as _inst
+
         rules = _agent_rules(self._read)
         return (
-            f"You are the agent '{self.name}' inside the Workshop. You have full "
-            f"Claude Code tool access inside the directory {self.dir}. The operator is "
-            f"{operator_name()}, a senior engineer who dislikes padding. Be direct and brief. Never use em-dashes.\n\n"
+            f"You are the agent '{self.name}' inside the Workshop. You have "
+            f"{_inst.runner_grant('tool access')} inside the directory {self.dir}. The operator is "
+            f"{operator_name()}. Be direct and brief. Never use em-dashes.\n\n"
             "Read this scope's Manifest FIRST to ground your work in the current goal "
             "and plan, then act. The Manifest is a note in this scope's memory (its "
             "title is 'Manifest'); read it with the search/notes tools, and keep it "
-            "current. Task state lives in the structured store, NOT in TODO.md (a "
-            "generated export, never edit it directly). Mark tasks done / add "
-            "follow-ups / block via `python3 ~/workshop/scripts/project_tasks.py <verb> .` "
+            f"current. Task state lives in the structured store, NOT in "
+            f"{_tasks_export_name()} (a generated export, never edit it directly). "
+            f"Mark tasks done / add follow-ups / block via `{_task_cli()} <verb> .` "
             "over Bash (set-status <id> done, add \"text\", block <id> \"reason\", "
             "note <id> \"text\", next-ready). When the operator makes a non-trivial "
             "decision, record it as a decision note (see LEAVING A NOTE).\n\n"
@@ -2075,7 +2107,7 @@ class AssistantAgentContextProvider(ContextProvider):
     def persona(self) -> str:
         base = (
             f"You are {self.name}, an assistant agent inside the Workshop app. The "
-            f"operator is {operator_name()}, a senior engineer who dislikes padding. "
+            f"operator is {operator_name()}. "
             "Be direct and brief. Use short paragraphs or tight bullet lists. No emojis. Never use em-dashes."
         )
         if self.purpose:
@@ -2296,10 +2328,12 @@ def capability_for(
     Returns (tools_active, tool_summary). tool_summary is human-readable text
     for the preamble's layer-1 tool list.
     """
+    from services import installation
+
     if is_build_provider(provider):
         return True, (
-            "full Claude Code tool access (Read, Write, Edit, Bash, Grep, Glob, "
-            "MultiEdit, and the rest)"
+            installation.runner_grant("tool access")
+            + " (Read, Write, Edit, Bash, Grep, Glob, MultiEdit, and the rest)"
         )
     if enable_chat_tools:
         # Every data/assistant agent is tools-active: web search + fetch, plus any

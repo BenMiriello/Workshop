@@ -1,0 +1,75 @@
+{
+  "_note": "Declaration for scripts/check_prompt_layers.py. L0/L1/L2 prompt text and MCP tool descriptions are PLATFORM text: every installation and every user receives them, so they may carry only generalized product doctrine. Every fact this checker knows is in this file, not in the script.",
+  "surfaces": [
+    {
+      "path": "backend/services/chat_context.py",
+      "why": "L0 PLATFORM_KERNEL, the role/agent preambles, the runtime briefing, and every L2 persona"
+    },
+    {
+      "path": "backend/services/orientation.py",
+      "why": "L1, the generated orientation manifest"
+    },
+    {
+      "path": "backend/services/app_persona.py",
+      "why": "L2 for built-in app assistants"
+    },
+    {
+      "path": "backend/mcp/workshop_query_server.py",
+      "why": "MCP tool names/descriptions/schemas reach the model identically to L2"
+    },
+    {
+      "path": "backend/routes/chat.py",
+      "symbols": [
+        "_DISTILL_PROMPT",
+        "_summary_prompt"
+      ],
+      "why": "the ticket distiller and the working-state fold; the rest of this module is route code, not prompt text"
+    }
+  ],
+  "patterns": {
+    "gendered-pronoun": {
+      "regex": "\\b(he|him|his|she|her|hers|himself|herself)\\b",
+      "ignorecase": true,
+      "fix": "platform text does not know the reader's or the operator's pronouns; write 'they' or name the role"
+    },
+    "host-path": {
+      "regex": "(~/|(?<![\\w.])/(?:home|Users|root|etc|var|opt|tmp)/)",
+      "ignorecase": false,
+      "fix": "one host's filesystem layout; resolve it at runtime (wsplatform.paths) or declare it in the installation config"
+    },
+    "doc-filename": {
+      "regex": "[\\w./-]+\\.md\\b",
+      "ignorecase": false,
+      "fix": "a doc path is a fact about one checkout; put it in that repo's AGENTS.md / CLAUDE.md, or take the name from the module that owns the file"
+    },
+    "vendor-name": {
+      "from_vendors": true,
+      "ignorecase": true,
+      "fix": "name the capability, not the vendor; declare the vendor in the installation config (services/installation.py)"
+    }
+  },
+  "vendors": [
+    "Anthropic",
+    "Claude Code",
+    "ChatGPT",
+    "Copilot",
+    "Cursor",
+    "GitHub",
+    "GitLab",
+    "Bitbucket",
+    "Obsidian",
+    "Notion",
+    "Tailscale",
+    "tailnet",
+    "Cloudflare",
+    "npmjs",
+    "pypi",
+    "crates.io",
+    "jsdelivr",
+    "unpkg",
+    "esm.sh",
+    "huggingface",
+    "proxy.golang.org"
+  ],
+  "_baseline": "prompt_layers_baseline.json"
+}
