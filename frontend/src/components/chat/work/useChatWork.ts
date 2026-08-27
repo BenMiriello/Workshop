@@ -18,6 +18,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { HttpError, shortHttpError } from "@workshop/ui";
 import { jobIsLive } from "../../../lib/jobs";
 import { EMPTY_WORK, type WorkPayload, type WorkTicket } from "./workTypes";
+import { queryKeys } from "../../../lib/queryKeys";
 
 export type SnoozePreset = "hour" | "tomorrow";
 
@@ -64,7 +65,7 @@ export function useChatWork(threadId: string | null, opts: { enabled?: boolean }
   const qc = useQueryClient();
   // Memoised because the optimistic write below reads and rewrites this exact
   // entry, and a fresh array every render would rebuild that path every render.
-  const workKey = useMemo(() => ["chat", "work", threadId], [threadId]);
+  const workKey = useMemo(() => queryKeys.chat.work(threadId), [threadId]);
 
   const q = useQuery({
     queryKey: workKey,

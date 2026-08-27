@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { GitBranch } from "lucide-react";
 import { Menu, MenuItem, MenuLabel } from "@workshop/ui";
 import { chatApi, type Branch } from "../../lib/chat";
+import { queryKeys } from "../../lib/queryKeys";
 
 // WHICH LINE OF THE CONVERSATION AM I ON, and switch to another (ADR 0020).
 //
@@ -70,7 +71,7 @@ export default function BranchPicker({
   // served from cache. The click toggles, so a click that CLOSES the menu reads
   // too; that was already true and is left alone.
   const { data: branches, isError, refetch } = useQuery({
-    queryKey: ["chat", "branches", threadId],
+    queryKey: queryKeys.chat.branches(threadId),
     queryFn: () => chatApi.listBranches(threadId).then((r) => r.branches),
     enabled: false,
     // Not retried, because the read this replaces was not: a picker that comes

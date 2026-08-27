@@ -1,0 +1,128 @@
+// EVERY QUERY KEY IN THE PLATFORM, IN ONE PLACE.
+//
+// A query key is the cache's identity for a fact. Two readers of one endpoint
+// share a cache entry, an in-flight request, and an invalidation only if they
+// spell the key identically -- and TanStack types a key as `unknown[]`, so a
+// key that is spelled differently is not a type error, not a lint error, and
+// not a test failure. It is simply a second cache entry that nothing keeps in
+// step with the first.
+//
+// That is not hypothetical. `GET /api/chat/threads` had two owners:
+// `["chat", "threads", null]` (the dashboard's thread cards and the chat
+// toolbar's recent-chats menu) and `["chat", "threads"]` (the Chats page).
+// `useThreads.ts` even documented the convention -- "`["chat", "threads",
+// <scope>]` is the one they are collapsing onto" -- and the Chats page, written
+// afterwards, used the two-element spelling. The result was two polls of one
+// URL at two cadences, and an archive on the Chats page that wrote through to
+// its own copy while the dashboard kept listing the chat it had just archived.
+//
+// So keys are not written at call sites any more. They are constructed here,
+// by a function per fact, and `check_frontend_state.py` fails a build that
+// writes an array literal into a `queryKey` outside this file. A misspelling
+// becomes a missing export, which is a compile error -- which is the only kind
+// of error that actually stops this recurring.
+//
+// APPS DO NOT APPEAR HERE. A platform source file may not name a specific app
+// (CLAUDE.md, `scripts/check_no_app_names.py`), so an app's keys live in the
+// app's own directory beside its fetchers. `apps.runStatus(slug)` below is the
+// platform's generic per-app service probe, which takes the slug as data; it
+// does not know any app's name.
+
+/** A key, once built. Readonly so a caller cannot mutate a shared tuple. */
+export type QueryKey = readonly unknown[];
+
+/**
+ * A chat's scope filter. `null` means "every scope", which is what the
+ * cross-context readers (the dashboard, the recent-chats menu, the Chats page)
+ * ask for. It is an explicit slot rather than an absent one so that "all
+ * scopes" and "some scope" are the same shape and cannot collide.
+ */
+export type ThreadScope = string | null;
+
+export const queryKeys = {
+  chat: {
+    /** Everything under `chat`. The prefix an invalidation uses to reach it all. */
+    all: () => ["chat"] as const,
+    /**
+     * `GET /api/chat/threads` -- the LIVE list. The scope slot is REQUIRED,
+     * including the `null` that means every scope: an omitted slot is what made
+     * the Chats page miss the dashboard's entry.
+     *
+     * `"live"` is a discriminant, not decoration. The same route also serves the
+     * archive (`?archived=true`), which is a DIFFERENT list rather than a wider
+     * one, so it needs its own entry -- and putting the archive's marker in the
+     * scope slot would collide with a scope that happened to be called
+     * "archived". A fixed discriminant ahead of the scope cannot collide, and
+     * both lists still sit under the `["chat", "threads"]` prefix, so one
+     * invalidation after a write reaches every copy of either.
+     */
+    threads: (scope: ThreadScope) => ["chat", "threads", "live", scope] as const,
+    /** `GET /api/chat/threads?archived=true`. Its own list; see above. */
+    threadsArchived: () => ["chat", "threads", "archived"] as const,
+    /** The prefix over BOTH lists and every scope, for invalidating after a write. */
+    threadsAll: () => ["chat", "threads"] as const,
+    context: (threadId: string | null) => ["chat", "context", threadId] as const,
+    work: (threadId: string | null) => ["chat", "work", threadId] as const,
+    branches: (threadId: string | null) => ["chat", "branches", threadId] as const,
+    mentionable: (threadId: string | null) => ["chat", "mentionable", threadId] as const,
+    prefs: () => ["chat", "prefs"] as const,
+    providers: (scope: string | null, mode: string) => ["chat", "providers", scope, mode] as const,
+  },
+
+  jobs: {
+    all: () => ["jobs"] as const,
+    feed: (filter: string) => ["jobs", "feed", filter] as const,
+    running: (limit: number) => ["jobs", "running", limit] as const,
+    detail: (id: string) => ["jobs", "detail", id] as const,
+    children: (id: string) => ["jobs", "children", id] as const,
+  },
+
+  agents: {
+    all: () => ["agents"] as const,
+    list: () => ["agents", "list"] as const,
+    maker: (agentId: string) => ["agents", agentId, "maker"] as const,
+    autonomyStatus: () => ["agents", "autonomy", "status"] as const,
+    autonomyControls: () => ["agents", "autonomy", "status", "controls"] as const,
+  },
+
+  tasks: {
+    all: () => ["tasks"] as const,
+    list: (scope: string) => ["tasks", scope] as const,
+    detail: (scope: string, id: string) => ["tasks", scope, id, "detail"] as const,
+  },
+
+  usage: {
+    all: () => ["usage"] as const,
+    page: (window: string) => ["usage", "page", window] as const,
+    /** The dashboard's rolling window tile, which is not the Usage page's read. */
+    window: (window: string) => ["usage", window] as const,
+  },
+
+  queue: {
+    all: () => ["queue"] as const,
+    runnerTargets: () => ["queue", "runner", "targets"] as const,
+    runnerDir: (scope: string) => ["queue", "runner", "dir", scope] as const,
+  },
+
+  projects: {
+    autonomy: (slug: string) => ["projects", slug, "autonomy"] as const,
+  },
+
+  /**
+   * The platform's own per-app reads. The slug is DATA -- it arrives from the
+   * app registry at runtime -- so this names no app.
+   */
+  apps: {
+    runStatus: (slug: string) => ["apps", slug, "run", "status"] as const,
+  },
+
+  presence: {
+    directory: (subjectKind: string | null) => ["presence", "directory", subjectKind] as const,
+    branches: (addr: string) => ["branches", addr] as const,
+    control: (sessionId: string) => ["control", sessionId] as const,
+  },
+
+  inbox: {
+    list: (limit: number) => ["inbox", limit] as const,
+  },
+} as const;

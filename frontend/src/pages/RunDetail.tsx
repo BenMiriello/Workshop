@@ -9,6 +9,7 @@ import {
   runOutcome,
 } from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
+import { queryKeys } from "../lib/queryKeys";
 
 // One RUN's detail: its binding, trigger, timing, outcome, and freeform
 // evidence. Linked from Work's Runs tab, Home attention cards, and an agent's
@@ -220,7 +221,7 @@ export default function JobDetail() {
   // payload rather than off a render, so the cadence and the page cannot
   // describe different runs.
   const jobQuery = useQuery({
-    queryKey: ["jobs", "detail", id],
+    queryKey: queryKeys.jobs.detail(id),
     queryFn: async (): Promise<Job | null> => {
       const r = await fetch(`/api/jobs/${encodeURIComponent(id)}`);
       // A PRUNED RUN IS AN ANSWER, not a failure: it gets its own region, so it
@@ -257,7 +258,7 @@ export default function JobDetail() {
   // against the other -- the children render as their own section -- so the
   // page is the same; the request pattern is two timers instead of one.
   const childrenQuery = useQuery({
-    queryKey: ["jobs", "children", id],
+    queryKey: queryKeys.jobs.children(id),
     queryFn: async (): Promise<Job[]> => {
       // A failed child read was swallowed into an empty list, never onto the
       // page's error region. Unchanged.

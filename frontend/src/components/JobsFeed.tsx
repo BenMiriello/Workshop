@@ -6,6 +6,7 @@ import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronRight, ChevronDown } 
 
 import { type Job, jobStatusKind as statusKind, runHref } from "../lib/jobs";
 import { runTicketScope, ticketHref } from "../lib/tasks";
+import { queryKeys } from "../lib/queryKeys";
 
 // The Jobs feed: one list for every bounded execution (cron task, drained
 // event, project sweep, supervisor heartbeat, manual run). Reads /api/jobs
@@ -116,7 +117,7 @@ export default function JobsFeed() {
   // request instead of the old filter's rows; going back to a filter looked at
   // within `gcTime` paints instantly, which is new and strictly additive.
   const q = useQuery({
-    queryKey: ["jobs", "feed", filter],
+    queryKey: queryKeys.jobs.feed(filter),
     queryFn: async (): Promise<JobsResp> => {
       const status = filter === "all" ? "" : `&status=${filter}`;
       const r = await fetch(`/api/jobs?limit=100${status}`);

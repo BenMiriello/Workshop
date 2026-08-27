@@ -19,6 +19,7 @@ import {
   StateBlock,
 } from "@workshop/ui";
 import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
+import { queryKeys } from "../lib/queryKeys";
 import { newChatHref } from "../lib/chatSelection";
 import { scopeKind, scopeLabel, scopeName } from "../components/chat/chatScope";
 import { pulseDelay } from "./chatPulse";
@@ -74,8 +75,15 @@ function shortModel(m?: string | null): string {
 // mounts unbounded and the reader never meets a wall of rows.
 const PAGE = 20;
 
-// The live list's cache key, shared so an action can update it in place.
-const THREADS_KEY = ["chat", "threads"] as const;
+// THE LIVE LIST'S CACHE KEY IS NOT SPELLED HERE. It used to be, as
+// `["chat", "threads"]`, while the dashboard's thread cards and the chat
+// toolbar's recent-chats menu read the same URL under `["chat", "threads",
+// null]`. Two spellings are two cache entries: this page polled the endpoint on
+// its own, and archiving a chat here wrote through to this copy while the
+// dashboard went on listing the chat that had just been archived.
+//
+// Keys come from `lib/queryKeys` now, so the three readers cannot disagree
+// about how the fact is named. See the comment at the top of that file.
 
 // When a chat was archived, at the resolution the archive is read at: you are
 // looking for the one you put here, so the day is the useful unit and today is
@@ -178,7 +186,7 @@ export default function Chats() {
   // last message) is the point; the payload is small and cached, so a tick that
   // changes nothing re-renders nothing.
   const q = useQuery({
-    queryKey: THREADS_KEY,
+    queryKey: queryKeys.chat.threads(null),
     queryFn: () => chatApi.listThreads(),
     refetchInterval: 4000,
     staleTime: 0,
@@ -191,8 +199,21 @@ export default function Chats() {
 
   // Drop a row from the cached list at once (archive and delete both end with it
   // gone); the next poll reconciles with the server.
-  const dropThread = (id: string) =>
-    qc.setQueryData<ThreadSummary[]>(THREADS_KEY, (old) => (old ? old.filter((x) => x.id !== id) : old));
+  // Drop the row from EVERY cached list at once, not just this page's. Archive
+  // and delete both end with the chat gone from the live list wherever it is
+  // shown, and the dashboard and the recent-chats menu hold their own entries
+  // under the same prefix. Predicate-matching the prefix reaches all of them
+  // without this page having to know who else is reading.
+  const dropThread = (id: string) => {
+    qc.setQueriesData<ThreadSummary[]>(
+      { queryKey: queryKeys.chat.threadsAll() },
+      (old) => (old ? old.filter((x) => x.id !== id) : old),
+    );
+    // The archive GAINED a row when this was an archive rather than a delete,
+    // and this page cannot tell which from here, so the archive re-reads rather
+    // than being patched. It is not mounted, so this costs nothing until it is.
+    void qc.invalidateQueries({ queryKey: queryKeys.chat.threadsArchived() });
+  };
 
   const newChat = () => nav(newChatHref("general"));
 
@@ -464,8 +485,7 @@ export default function Chats() {
  * chats and then deleting them. Separate mounts cannot show each other's data.
  */
 export function ChatsArchived() {
-  const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
@@ -478,21 +498,22 @@ export function ChatsArchived() {
   // narrows so a new query starts at the top.
   const [shown, setShown] = useState(PAGE);
 
-  const load = useCallback(() => {
-    setThreads(null);
-    setErr(null);
-    setActionErr(null);
-    chatApi
-      .listThreads(undefined, true)
-      .then(setThreads)
-      .catch((e) => {
-        setErr(String(e));
-        setThreads([]);
-      });
-  }, []);
-  useEffect(() => {
-    load();
-  }, [load]);
+  // THE SAME QUERY LAYER THE LIVE LIST USES. This was a `useState` + a
+  // `useEffect` + a hand-rolled `load()`, which is how one page came to hold two
+  // different answers to "where does a chat list come from": the live list
+  // polled through the cache and this one re-fetched into local state. The two
+  // mechanisms is the whole defect -- new code picks whichever it sees first.
+  //
+  // No `refetchInterval`: the archive does not move on its own. Something has to
+  // archive a chat for it to change, and whatever did that invalidates this key.
+  const q0 = useQuery({
+    queryKey: queryKeys.chat.threadsArchived(),
+    queryFn: () => chatApi.listThreads(undefined, true),
+    retry: false,
+  });
+  const threads = q0.data ?? null;
+  const err = q0.isError ? String(q0.error) : null;
+  const load = useCallback(() => { void q0.refetch(); }, [q0]);
 
   // Restore and delete both END with the row gone from the list on screen, so
   // they drop it locally rather than re-fetching: the archive can be long, and
@@ -504,7 +525,14 @@ export function ChatsArchived() {
     try {
       if (action === "restore") await chatApi.restoreThread(id);
       else await chatApi.deleteThread(id);
-      setThreads((list) => (list ? list.filter((t) => t.id !== id) : list));
+      qc.setQueryData<ThreadSummary[]>(
+        queryKeys.chat.threadsArchived(),
+        (list) => (list ? list.filter((t) => t.id !== id) : list),
+      );
+      // A restore puts the chat BACK on the live list, so the live readers have
+      // to hear about it. A delete does not, but invalidating either way is one
+      // branch fewer and the live list is polling anyway.
+      if (action === "restore") void qc.invalidateQueries({ queryKey: queryKeys.chat.threadsAll() });
       setPending(null);
       setActionErr(null);
     } catch (e) {
@@ -520,7 +548,7 @@ export function ChatsArchived() {
     } finally {
       setBusy(false);
     }
-  }, [pending]);
+  }, [pending, qc]);
 
   // The server's order, which is most-recently-archived first: it answers "where
   // did the one I just archived go", where updated_at would sort by a

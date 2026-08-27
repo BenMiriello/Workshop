@@ -23,6 +23,7 @@ import {
   type UsageSeries,
   type UsageWindow,
 } from "../lib/usage";
+import { queryKeys } from "../lib/queryKeys";
 
 // The Usage page. Reads GET /api/usage (services.usage_ledger.status) for a
 // selectable window: 5h / 24h / 7d / 30d / all time.
@@ -124,7 +125,7 @@ export default function Usage() {
   const qc = useQueryClient();
   // Memoised because the budget Save below writes this exact entry, and a fresh
   // array every render would rebuild that path every render.
-  const usageKey = useMemo(() => ["usage", "page", win], [win]);
+  const usageKey = useMemo(() => queryKeys.usage.page(win), [win]);
 
   // ONE QUERY OVER THREE CALLS, not three queries, because the read this
   // replaces was already all-or-nothing: `Promise.all` rejects on the first

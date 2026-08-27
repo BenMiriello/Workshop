@@ -14,6 +14,7 @@ import { runHref } from "../lib/jobs";
 import { ticketHref } from "../lib/tasks";
 import { scopeLabel } from "../lib/scope";
 import { armLevelName, makerPrimary, makerStatus, peerNote, type MakerSummary } from "../lib/makers";
+import { queryKeys } from "../lib/queryKeys";
 
 // Roster item enriched with the O6/O7 autonomy fields the backend now returns on
 // GET /api/agents/ (autonomy preset + role + latitude). Kept local so the shared
@@ -261,7 +262,7 @@ export default function Agents() {
   // that mount read, so the agents leg came out of it in the same edit rather
   // than becoming a duplicate first request.
   const agentsQuery = useQuery({
-    queryKey: ["agents", "list"],
+    queryKey: queryKeys.agents.list(),
     queryFn: async (): Promise<RosterAgent[]> => {
       const r = await fetch("/api/agents/");
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
@@ -300,7 +301,7 @@ export default function Agents() {
   }, []);
 
   const supQuery = useQuery({
-    queryKey: ["agents", "autonomy", "status"],
+    queryKey: queryKeys.agents.autonomyStatus(),
     queryFn: readSup,
     refetchInterval: 15_000,
     staleTime: 0,

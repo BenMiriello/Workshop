@@ -7,6 +7,7 @@ import {
 import { DashboardCard, DashboardCardFoot, DashboardState } from "./DashboardCard";
 import { useRowCaps } from "./useRowCaps";
 import type { ThreadsRead } from "./useThreads";
+import { queryKeys } from "../../lib/queryKeys";
 
 // WHAT IS MOVING WITHOUT YOU. Runs in flight, and what the window has cost.
 //
@@ -32,13 +33,13 @@ const POLLED = { staleTime: 0, retry: false } as const;
 
 export function RunningCard({ read }: { read: ThreadsRead }) {
   const runsQuery = useQuery({
-    queryKey: ["jobs", "running", RUNS_LIMIT],
+    queryKey: queryKeys.jobs.running(RUNS_LIMIT),
     queryFn: () => fetchRunning(RUNS_LIMIT),
     refetchInterval: RUNS_POLL_MS,
     ...POLLED,
   });
   const usageQuery = useQuery({
-    queryKey: ["usage", "5h"],
+    queryKey: queryKeys.usage.window("5h"),
     queryFn: fetchUsage,
     refetchInterval: USAGE_POLL_MS,
     ...POLLED,

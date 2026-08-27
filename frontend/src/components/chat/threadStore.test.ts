@@ -35,6 +35,54 @@ describe("eventsReceived", () => {
   });
 });
 
+// Syncs overlap by design and resolve out of order (see `syncedAt`). The turn
+// was already guarded; the rest of the wholesale-replaced snapshot was not.
+describe("out-of-order syncs", () => {
+  const queued = (clientId: string) => [{ client_id: clientId, text: clientId, ts: "t" }];
+
+  it("a late response does not restore a queue a newer one already emptied", () => {
+    // Unsend a queued message: the write empties the strip, then a poll that
+    // was already in flight lands with the pre-write queue. It must not win.
+    const s = apply(initialThreadState("t"),
+      { type: "eventsReceived", events: [], lastSeq: 0, activeTurn: null,
+        queued: queued("q1"), requestedAt: 2000 },
+      { type: "eventsReceived", events: [], lastSeq: 0, activeTurn: null,
+        queued: [], requestedAt: 3000 },
+      { type: "eventsReceived", events: [], lastSeq: 0, activeTurn: null,
+        queued: queued("q1"), requestedAt: 1000 });
+    expect(s.queued).toEqual([]);
+  });
+
+  it("still merges the events a late response carried", () => {
+    // The log is append-only and deduped by id, so an older page's events are
+    // still true. Only the fields that REPLACE are held back.
+    const s = apply(initialThreadState("t"),
+      { type: "eventsReceived", events: [ev(2)], lastSeq: 2, activeTurn: null,
+        queued: [], requestedAt: 3000 },
+      { type: "eventsReceived", events: [ev(1)], lastSeq: 1, activeTurn: null,
+        queued: queued("q1"), requestedAt: 1000 });
+    expect(committedEvents(s).map((e) => e.seq)).toEqual([1, 2]);
+    expect(s.queued).toEqual([]);
+  });
+
+  it("applies the first response, whose predecessor is the zero timestamp", () => {
+    const s = apply(initialThreadState("t"),
+      { type: "eventsReceived", events: [], lastSeq: 0, activeTurn: null,
+        queued: queued("q1"), requestedAt: 1000 });
+    expect(s.queued).toHaveLength(1);
+  });
+
+  it("treats an undated response as current, never as stale", () => {
+    // `requestedAt` is optional: a caller that cannot date its response must
+    // not be silently ignored forever after one dated sync.
+    const s = apply(initialThreadState("t"),
+      { type: "eventsReceived", events: [], lastSeq: 0, activeTurn: null,
+        queued: queued("q1"), requestedAt: Date.now() },
+      { type: "eventsReceived", events: [], lastSeq: 0, activeTurn: null, queued: [] });
+    expect(s.queued).toEqual([]);
+  });
+});
+
 describe("hasMoreOlder", () => {
   it("is set by a fresh (tail) page that says hasMore", () => {
     const s = apply(initialThreadState("t"),
@@ -492,7 +540,7 @@ describe("eventsReceived does not churn the committed log", () => {
 // rather than a new source of the reordering/wrong-thread bugs ADR 0018 and
 // this store's own header exist to remove.
 describe("seedThread", () => {
-  it("adopts the snapshot's committed log, cursor and run", () => {
+  it("adopts the snapshot's committed log and cursor", () => {
     const loaded = apply(initialThreadState("t1"),
       { type: "eventsReceived", events: [ev(1), ev(2), ev(3)], lastSeq: 3, activeTurn: null });
     const snapshot = snapshotThread(loaded);
@@ -528,6 +576,27 @@ describe("seedThread", () => {
     const s = threadReducer(withPending, { type: "seedThread", threadId: "t1", snapshot });
     expect(pendingSends(s)).toEqual([]);
     expect(s.clock).toBe(0);
+  });
+
+  it("never carries a run in flight: a cached activeTurn is a claim about the past", () => {
+    // The working indicator, the elapsed clock, and the EventSource Chat.tsx
+    // opens against `activeTurn.turnId` are all driven by this field. A cached
+    // one paints a turn that has usually already ended, and the attach it
+    // triggers re-stamps `localStartedAt` to now -- which makes `adoptTurn`
+    // read the catch-up sync's own `active_turn: null` as STALE and keep the
+    // phantom. The only honest answer between a seed and its catch-up is none.
+    const running = apply(initialThreadState("t1"), {
+      type: "eventsReceived",
+      events: [ev(1)],
+      lastSeq: 1,
+      activeTurn: { turn_id: "run-1", started_seq: 1, live: { meta: { segments: [] } } },
+    });
+    expect(running.activeTurn).not.toBeNull();
+    const s = threadReducer(initialThreadState(null), {
+      type: "seedThread", threadId: "t1", snapshot: snapshotThread(running),
+    });
+    expect(committedEvents(s).map((e) => e.seq)).toEqual([1]);
+    expect(s.activeTurn).toBeNull();
   });
 
   it("a branch change drops a seeded snapshot outright rather than merging it", () => {

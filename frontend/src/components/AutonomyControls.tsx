@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Button, ConfirmDialog, Notice, Select, StatusDot, Toggle, SettingsSection, SettingsRow as Row } from "@workshop/ui";
 import { Power, Play, Square } from "lucide-react";
 import { describeAutonomy } from "../lib/autonomy";
+import { queryKeys } from "../lib/queryKeys";
 
 // Autonomy controls. The global cron-autonomy pause (AUTONOMY_DISABLED) and the
 // queue runner. The AUTONOMY_DISABLED switch is operationally load-bearing and
@@ -85,7 +86,7 @@ export default function AutonomyControls() {
   // mean", and a key is the read INCLUDING that. The two never mount together
   // (Settings and the roster are different routes), so nothing is read twice.
   const statusQuery = useQuery({
-    queryKey: ["agents", "autonomy", "status", "controls"],
+    queryKey: queryKeys.agents.autonomyControls(),
     queryFn: async (): Promise<AutonomyStatus | null> => {
       const r = await fetch("/api/agents/autonomy/status");
       return r.ok ? ((await r.json()) as AutonomyStatus) : null;
@@ -96,7 +97,7 @@ export default function AutonomyControls() {
   const auto = statusQuery.data ?? null;
 
   const targetsQuery = useQuery({
-    queryKey: ["queue", "runner", "targets"],
+    queryKey: queryKeys.queue.runnerTargets(),
     queryFn: async (): Promise<RunTarget[]> => {
       const r = await fetch("/api/queue/runner/targets");
       if (!r.ok) throw new Error(String(r.status));
@@ -125,7 +126,7 @@ export default function AutonomyControls() {
   const runnerQuery = useQuery({
     // "dir" is not decoration: without it a tree literally named "targets" would
     // share the key above, which holds a RunTarget[] rather than {running}.
-    queryKey: ["queue", "runner", "dir", scope],
+    queryKey: queryKeys.queue.runnerDir(scope),
     queryFn: async (): Promise<{ running: boolean }> => {
       const r = await fetch(`/api/queue/runner?dir=${encodeURIComponent(scope)}`);
       if (!r.ok) throw new Error(String(r.status));

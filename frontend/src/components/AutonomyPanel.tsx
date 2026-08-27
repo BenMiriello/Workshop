@@ -8,6 +8,7 @@ import {
 
 import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib/tasks";
 import { jobStatusKind } from "../lib/jobs";
+import { queryKeys } from "../lib/queryKeys";
 
 // Autonomy = how a PROJECT decides when to work its own task queue through the
 // Ralph loop. The PRIMARY control is a preset (Section
@@ -182,7 +183,7 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const cfgQuery = useQuery({
-    queryKey: ["projects", slug, "autonomy"],
+    queryKey: queryKeys.projects.autonomy(slug),
     queryFn: async (): Promise<Autonomy> => {
       const r = await fetch(getUrl);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));

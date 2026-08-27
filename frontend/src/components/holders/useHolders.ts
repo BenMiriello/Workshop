@@ -22,6 +22,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { shortHttpError } from "@workshop/ui";
 import { treeWriters, trunkLabel, type BranchRecord, type DirectoryEntry } from "../../lib/holders";
+import { queryKeys } from "../../lib/queryKeys";
 
 // Presence beats every 30s and a lease's TTL is 90s (design section 5), so a
 // 15s read is inside the window in which a holder can change without this view
@@ -55,7 +56,7 @@ export function useDirectory(
   // The filter is in the key, so two surfaces asking about different subject
   // kinds cannot be served each other's answer.
   const q = useQuery({
-    queryKey: ["presence", "directory", subjectKind ?? null],
+    queryKey: queryKeys.presence.directory(subjectKind ?? null),
     queryFn: async (): Promise<DirectoryEntry[]> => {
       const qs = subjectKind ? `?subject_kind=${encodeURIComponent(subjectKind)}` : "";
       const d = await readJson<{ entries: DirectoryEntry[] }>(`/api/presence/directory${qs}`);
@@ -101,7 +102,7 @@ export function useBranches(
     : appId ? `app_id=${encodeURIComponent(appId)}` : "";
 
   const q = useQuery({
-    queryKey: ["branches", addr],
+    queryKey: queryKeys.presence.branches(addr),
     // AN APP WITH NO TREE ANSWERS `[]` WITHOUT ASKING, which is what the `if
     // (!key)` at the top of the load this replaces did. It is not `enabled:
     // false`: that would report the hook as cold forever, and "this app has no

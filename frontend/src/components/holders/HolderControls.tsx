@@ -10,6 +10,7 @@ import {
   offerableVerbs, preemptWarning, subjectLine,
   type Caller, type ControlAccepted, type ControlRequest, type DirectoryEntry,
 } from "../../lib/holders";
+import { queryKeys } from "../../lib/queryKeys";
 
 // WHAT YOU CAN DO ABOUT A SESSION THAT IS ALREADY WORKING. Queue, steer, take
 // over (workspace-ownership-and-leases-2026-08-22.md section 8), rendered
@@ -71,7 +72,7 @@ export default function HolderControls({
   const qc = useQueryClient();
   // Memoised because `submit` below writes this exact entry from the route's
   // own answer, and a fresh array every render would rebuild that path.
-  const controlKey = useMemo(() => ["control", sid], [sid]);
+  const controlKey = useMemo(() => queryKeys.presence.control(sid), [sid]);
 
   const q = useQuery({
     queryKey: controlKey,

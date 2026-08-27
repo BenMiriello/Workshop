@@ -5,6 +5,7 @@ import { Menu, MenuItem, MenuSeparator } from "@workshop/ui";
 import { chatApi, type ThreadSummary } from "../../lib/chat";
 import { scopeKind } from "./chatScope";
 import ScopeIcon from "./ScopeIcon";
+import { queryKeys } from "../../lib/queryKeys";
 
 // Trim a full cross-scope list to the recent few this menu shows, newest first.
 const recentSlice = (list: ThreadSummary[]): ThreadSummary[] =>
@@ -62,7 +63,7 @@ export default function RecentChatsMenu({
   const q = useQuery({
     // The shared key. The scope slot is null because this list is deliberately
     // cross-scope, which is the same list the dashboard reads.
-    queryKey: ["chat", "threads", null],
+    queryKey: queryKeys.chat.threads(null),
     queryFn: () => chatApi.listThreads(),
     // On open, not on mount. The cached list is still read and painted.
     enabled: false,

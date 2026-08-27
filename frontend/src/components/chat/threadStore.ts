@@ -151,6 +151,22 @@ export type ThreadState = {
    *  describing something that is not happening, which is the whole class of
    *  bug this chat is being rebuilt to remove. */
   cut: { count: number; mode: "clear" | "compact" } | null;
+  /** WHEN THE NEWEST APPLIED SYNC WAS ASKED FOR, so a slower older one cannot
+   *  overwrite it. Syncs overlap by design -- the 60s backstop poll, the
+   *  thread change-stream, the settle loop at the end of a turn, compaction's
+   *  un-awaited `void sync()`, and every queue write all call it -- and they
+   *  resolve out of order. `adoptTurn` has always guarded the live turn against
+   *  that; nothing guarded the rest of the snapshot, so unsending a queued
+   *  message emptied the strip and then an older in-flight poll put the message
+   *  back, until the next sync removed it again.
+   *
+   *  EVENTS ARE EXEMPT and must stay exempt: the log is append-only and deduped
+   *  by id, so an older page can only ever contribute events that are still
+   *  true. It is the fields that REPLACE wholesale -- the server's queue and the
+   *  context cut -- that a late answer must not touch. 0 until the first sync,
+   *  which is older than any real timestamp, so a first response always applies.
+   *  Not cacheable: it dates a request this session made. */
+  syncedAt: number;
   activeTurn: ActiveTurn | null;
   /** Bumped on every pending write, so `at` is strictly increasing. */
   clock: number;
@@ -263,11 +279,33 @@ export type ThreadAction =
   | { type: "seedThread"; threadId: string; snapshot: ThreadSnapshot };
 
 /** The subset of `ThreadState` a cache can honestly reseed: the committed log,
- *  the cursor it was read up to, the live run, the server's queue and the
- *  context cut. NOT `pending` or `clock` — see `seedThread` above. */
+ *  the cursor it was read up to, the server's queue and the context cut. NOT
+ *  `pending` or `clock` — see `seedThread` above.
+ *
+ *  AND NOT `activeTurn`. `threadCache.ts` has always listed "the working
+ *  indicator's truth" among the things it must not carry, and it carried it
+ *  anyway; this type is where that happened. A cached `activeTurn` is not a
+ *  stale reading of a live fact, it is a claim about the PRESENT made from a
+ *  record of the past, and every consumer treats it as current:
+ *
+ *    - the transcript paints a working indicator with an elapsed clock,
+ *    - `Chat.tsx`'s attach effect opens a real `EventSource` against the
+ *      recorded turn id, which by then is usually a turn that ended minutes
+ *      ago,
+ *    - that attach dispatches `turnReattached`, which re-stamps
+ *      `localStartedAt` to NOW — so when the catch-up sync comes back saying
+ *      `active_turn: null`, `adoptTurn`'s staleness guard reads its own
+ *      response as older than the turn and KEEPS the phantom (see the
+ *      `requestedAt` comparison below). It clears on a later sync, or when the
+ *      dead socket errors, at which point the whole end-of-turn cascade fires
+ *      for a turn nobody was watching.
+ *
+ *  There is no cached answer to "is a run in flight". The server has the only
+ *  one, it arrives on the catch-up sync a seed already schedules, and until it
+ *  does the honest thing to show is no indicator rather than a wrong one. */
 export type ThreadSnapshot = Pick<
   ThreadState,
-  "threadId" | "byId" | "order" | "idBySeq" | "cursor" | "cut" | "activeTurn"
+  "threadId" | "byId" | "order" | "idBySeq" | "cursor" | "cut"
   | "queued" | "queueHeld" | "queueError" | "hasMoreOlder"
 >;
 
@@ -283,7 +321,6 @@ export function snapshotThread(state: ThreadState): ThreadSnapshot {
     idBySeq: state.idBySeq,
     cursor: state.cursor,
     cut: state.cut,
-    activeTurn: state.activeTurn,
     queued: state.queued,
     queueHeld: state.queueHeld,
     queueError: state.queueError,
@@ -303,6 +340,7 @@ export function initialThreadState(threadId: string | null = null): ThreadState 
     queueHeld: false,
     queueError: "",
     cut: null,
+    syncedAt: 0,
     activeTurn: null,
     clock: 0,
     hasMoreOlder: false,
@@ -519,8 +557,12 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       // No `requestedAt` means the caller cannot date its response, so it is
       // treated as current — the guard only ever suppresses a demonstrably
       // older answer.
-      let activeTurn = adoptTurn(
-        action.activeTurn, state.activeTurn, action.requestedAt ?? Date.now());
+      const requestedAt = action.requestedAt ?? Date.now();
+      let activeTurn = adoptTurn(action.activeTurn, state.activeTurn, requestedAt);
+      // THIS RESPONSE IS OLDER THAN ONE ALREADY APPLIED. Its events are still
+      // merged above (append-only, deduped by id, so they can only be true),
+      // but every field it would REPLACE is left alone. See `syncedAt`.
+      const superseded = requestedAt < state.syncedAt;
       // The live half of the cut. The server seals the turn it is driving; this
       // seals what THIS tab is rendering, on the same trigger, so a message
       // typed in another tab still closes the block here.
@@ -538,15 +580,18 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         // client that "merged" it could show a message the server has already
         // sent or hide one another device just queued. Identity is stable
         // (client_id), so React keys survive the swap.
-        queued: sameQueue(state.queued, action.queued) ? state.queued
+        queued: superseded || sameQueue(state.queued, action.queued) ? state.queued
           : (action.queued ?? state.queued),
-        queueHeld: action.queueHeld ?? state.queueHeld,
-        queueError: action.queueError ?? state.queueError,
-        cut: nextCut(state.cut, action),
+        queueHeld: superseded ? state.queueHeld : (action.queueHeld ?? state.queueHeld),
+        queueError: superseded ? state.queueError : (action.queueError ?? state.queueError),
+        cut: superseded ? state.cut : nextCut(state.cut, action),
         // A message that made it out of the queue and into the log is no longer
-        // pending here either: it was OUR send, arriving late.
-        pending: reconcilePending(state.pending, action.events, action.queued),
+        // pending here either: it was OUR send, arriving late. Reconciled against
+        // the queue that is actually current, not a superseded one.
+        pending: reconcilePending(
+          state.pending, action.events, superseded ? state.queued : action.queued),
         activeTurn,
+        syncedAt: Math.max(state.syncedAt, requestedAt),
         hasMoreOlder: action.hasMore !== undefined ? action.hasMore : state.hasMoreOlder,
       };
     }
@@ -741,6 +786,11 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       // mismatch this is just an ordinary reset; no data from the mismatched
       // snapshot is ever assigned to `state`.
       if (action.snapshot.threadId !== action.threadId) return initialThreadState(action.threadId);
+      // Spreading OVER `initialThreadState` is what keeps the excluded fields
+      // at their empty values: `pending`, `clock` and `activeTurn` are not in
+      // the snapshot type, so a seeded thread starts with no unacknowledged
+      // sends and no run in flight, and learns about a real one from the
+      // catch-up sync.
       return { ...initialThreadState(action.threadId), ...action.snapshot };
     }
 

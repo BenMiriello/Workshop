@@ -42,6 +42,7 @@ import { nextWorkParams } from "../lib/workParams";
 import {
   EditableBody, EditableTitle, PickEditor, PropRow, TextEditor,
 } from "../components/tickets/fields";
+import { queryKeys } from "../lib/queryKeys";
 
 // A ticket can only be launched from `todo`.
 const RUNNABLE_STATUSES = new Set(["todo"]);
@@ -146,7 +147,7 @@ export default function TicketDetail() {
   const qc = useQueryClient();
   // Memoised because every write below patches this exact entry, and a fresh
   // array every render would rebuild that path every render.
-  const detailKey = useMemo(() => ["tasks", scope, id, "detail"], [scope, id]);
+  const detailKey = useMemo(() => queryKeys.tasks.detail(scope, id), [scope, id]);
 
   // ONE QUERY OVER TWO CALLS, not two queries, because the read this replaces
   // was already all-or-nothing: `Promise.all` plus a throw on either response

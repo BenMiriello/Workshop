@@ -4,6 +4,7 @@ import { timeAgo } from "@workshop/ui";
 import { fetchNeedsYou, fitRows, moreLabel, needsRows } from "../../lib/dashboard";
 import { DashboardCard, DashboardState } from "./DashboardCard";
 import { useRowCaps } from "./useRowCaps";
+import { queryKeys } from "../../lib/queryKeys";
 
 // WHAT WANTS THE OPERATOR, across every scope. The one alarm on this page.
 //
@@ -25,7 +26,7 @@ const LIMIT = 12;
 
 export function NeedsYouCard() {
   const q = useQuery({
-    queryKey: ["inbox", LIMIT],
+    queryKey: queryKeys.inbox.list(LIMIT),
     queryFn: () => fetchNeedsYou(LIMIT),
     refetchInterval: POLL_MS,
     // Owns its own cadence, so no staleness window over it: that would swallow

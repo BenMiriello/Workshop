@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchThreads, type ThreadSummary } from "../../lib/dashboard";
+import { queryKeys } from "../../lib/queryKeys";
 
 // ONE THREADS READ FOR THE PAGE, because two cards want it: "Pick up where you
 // left off" needs the list, and "Running now" needs the ones with a turn in
@@ -27,7 +28,7 @@ export type ThreadsRead = {
 
 export function useThreads(): ThreadsRead {
   const q = useQuery({
-    queryKey: ["chat", "threads", null],
+    queryKey: queryKeys.chat.threads(null),
     queryFn: fetchThreads,
     refetchInterval: POLL_MS,
     // This read owns its own cadence, so a staleness window over it would only

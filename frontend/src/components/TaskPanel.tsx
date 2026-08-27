@@ -20,6 +20,7 @@ import {
   description as taskDescription,
   cleanTitle,
 } from "../lib/tasks";
+import { queryKeys } from "../lib/queryKeys";
 
 // Reusable task panel over the canonical cross-scope Task API. It renders EVERY
 // shipped status (todo/doing/in_review/blocked/parked/done/cancelled) through the
@@ -161,7 +162,7 @@ export default function TaskPanel({
   // tickets. Returning to a scope inside `gcTime` now paints instantly, which
   // is new and strictly additive.
   const q = useQuery({
-    queryKey: ["tasks", scope],
+    queryKey: queryKeys.tasks.list(scope),
     queryFn: async (): Promise<Task[]> => {
       const r = await fetch(endpoint);
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));

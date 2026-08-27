@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { chatApi, type CardState, type Thread, type ThreadSummary } from "../../lib/chat";
 import { withTransientRetry } from "@workshop/ui";
 import {
@@ -8,6 +8,11 @@ import {
 import { chatModeDef, type ChatModeId } from "./chatModes";
 import type { ChatProblem } from "./chatProblem";
 import type { SendOutbox } from "./useSendOutbox";
+import { queryKeys } from "../../lib/queryKeys";
+
+/** A stable empty list, so a hook whose query has not resolved yet does not
+ *  hand a fresh array to every consumer on every render. */
+const NO_THREADS: ThreadSummary[] = [];
 
 /** The request `chatApi.listThreads` makes, named so an error block can point at
  *  the thing that actually failed. */
@@ -98,7 +103,42 @@ export function useChatThread({
   /** The focused route has nothing left to show once its thread is deleted. */
   onLeaveForList: () => void;
 }): ChatThread {
-  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  // THE PICKER'S LIST LIVES IN THE QUERY CACHE, NOT IN THIS HOOK. It was a
+  // `useState` here, and `GET /api/chat/threads` has three other readers: the
+  // dashboard's thread cards, the chat toolbar's recent-chats menu, and the
+  // Chats page. Renaming a chat patched THIS copy and nothing else, so the
+  // toolbar title changed instantly and the recent-chats menu went on painting
+  // the old title; archiving left the archived chat listed on the dashboard.
+  //
+  // `enabled: false` because this hook does not own the FETCH -- the resolver
+  // below issues the read as part of a larger sequence (it needs the list in
+  // hand to pick a thread) and writes the result back through `setThreads`.
+  // What moves here is where the answer is KEPT, so that a write reaches every
+  // reader instead of one. The scope slot is real: a scoped list is genuinely a
+  // different list from the cross-scope one, which is why a write patches its
+  // own entry for immediacy and then invalidates the shared prefix, rather than
+  // pretending one patch can reach all of them.
+  const qc = useQueryClient();
+  const threadsKey = useMemo(() => queryKeys.chat.threads(scope ?? null), [scope]);
+  const threadsQuery = useQuery({
+    queryKey: threadsKey,
+    queryFn: () => chatApi.listThreads(scope),
+    enabled: false,
+  });
+  const threads = threadsQuery.data ?? NO_THREADS;
+  const setThreads = useCallback(
+    (next: ThreadSummary[] | ((prev: ThreadSummary[]) => ThreadSummary[])) => {
+      qc.setQueryData<ThreadSummary[]>(threadsKey, (prev) =>
+        typeof next === "function" ? next(prev ?? []) : next);
+    },
+    [qc, threadsKey],
+  );
+  /** Tell every other reader of the thread list that it changed. Optimistic
+   *  patches above keep THIS view instant; this is what keeps the others true. */
+  const invalidateThreadLists = useCallback(
+    () => { void qc.invalidateQueries({ queryKey: queryKeys.chat.threadsAll() }); },
+    [qc],
+  );
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loadingThreads, setLoadingThreads] = useState(true);
   const [cardStates, setCardStates] = useState<Record<string, CardState>>({});
@@ -148,7 +188,7 @@ export function useChatThread({
       });
       return [];
     }
-  }, [scope, onError]);
+  }, [scope, onError, setThreads]);
 
   // The namer runs detached and takes as long as it takes. This used to look
   // ONCE, 2.5 seconds later, and a namer slower than that left "New chat" in the
@@ -205,7 +245,7 @@ export function useChatThread({
   // retried for the same reason the effect swallowed the failure: the platform
   // default already stands, so there is nothing a second request could rescue.
   const prefsQuery = useQuery({
-    queryKey: ["chat", "prefs"],
+    queryKey: queryKeys.chat.prefs(),
     queryFn: () => chatApi.getChatPrefs(),
     retry: false,
     refetchOnWindowFocus: false,
@@ -399,8 +439,9 @@ export function useChatThread({
     // just started was unreachable the moment you navigated away: it wasn't in
     // the local list, and nothing remembered you were in it.
     setThreads((list) => (list.some((x) => x.id === row.id) ? list : [row, ...list]));
+    invalidateThreadLists();
     adoptThreadId(row.id);
-  }, [adoptThreadId]);
+  }, [adoptThreadId, setThreads, invalidateThreadLists]);
 
   // ARCHIVING is what closing a chat from its own menu does. It is the same
   // motion the delete used to be (leave the conversation, take it out of the
@@ -435,7 +476,10 @@ export function useChatThread({
       newChat();
     }
     void refreshThreads();
-  }, [newChat, refreshThreads, scope, variant, onLeaveForList, onError]);
+    // The archived chat has to leave the dashboard's cards and the toolbar's
+    // recent-chats menu too, not just this picker; and the ARCHIVE gained a row.
+    invalidateThreadLists();
+  }, [newChat, refreshThreads, scope, variant, onLeaveForList, onError, invalidateThreadLists]);
 
   const saveRename = useCallback(async (title: string) => {
     const id = activeIdRef.current;
@@ -444,6 +488,7 @@ export function useChatThread({
     try {
       const t = await chatApi.renameThread(id, title);
       setThreads((list) => list.map((x) => (x.id === t.id ? { ...x, title: t.title } : x)));
+      invalidateThreadLists();
       setRenameOpen(false);
     } catch (e) {
       onError({
@@ -453,7 +498,10 @@ export function useChatThread({
     } finally {
       setRenameBusy(false);
     }
-  }, [onError]);
+    // `setThreads` is keyed on the scope now, so it MUST be a dependency: a
+    // callback that captured the previous scope's writer would patch the
+    // previous scope's cache entry after a scope change.
+  }, [onError, setThreads, invalidateThreadLists]);
 
   const activeThreadTitle = activeId ? threads.find((t) => t.id === activeId)?.title : undefined;
 

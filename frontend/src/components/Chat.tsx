@@ -54,6 +54,7 @@ import { useDraft } from "../lib/draftSync";
 import VoiceSettings from "./VoiceSettings";
 import { type UiCardCtx } from "./chat/uiCardActions";
 import { computeSupersededKeys } from "./chat/UiCard";
+import { queryKeys } from "../lib/queryKeys";
 
 // The unified chat. COMPOSITION over one store and a handful of hooks, each of
 // which owns one seam:
@@ -789,7 +790,7 @@ export default function Chat({
   // menu that does not open; one that retries is a request the code this
   // replaces never made.
   const mentionableQuery = useQuery<MentionableAgent[]>({
-    queryKey: ["chat", "mentionable", activeId],
+    queryKey: queryKeys.chat.mentionable(activeId),
     queryFn: ({ signal }) =>
       fetch(`/api/chat/threads/${encodeURIComponent(activeId!)}/mentionable`, { signal })
         .then((r) => (r.ok ? r.json() : { agents: [] }))

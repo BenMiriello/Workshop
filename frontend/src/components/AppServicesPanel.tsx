@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { Boxes, ExternalLink, RefreshCw, Play, Square, ScrollText, RotateCw, Eye, TriangleAlert } from "lucide-react";
 
 import { appWorkInFlight, type AppStatus, type Service } from "../lib/appServices";
+import { queryKeys } from "../lib/queryKeys";
 
 // Run: the single place a project becomes a running thing on this host. Drives
 // the backend app_runner — one app made of N services (each its own process +
@@ -80,7 +81,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
   const qc = useQueryClient();
   // Memoised because `act` below writes this exact entry, and a fresh array
   // every render would rebuild that path every render.
-  const statusKey = useMemo(() => ["apps", slug, "run", "status"], [slug]);
+  const statusKey = useMemo(() => queryKeys.apps.runStatus(slug), [slug]);
 
   // A DROPPED STATUS READ SAYS NOTHING AND KEEPS THE LAST GOOD PANEL, which is
   // what the `if (r.ok)` and the swallowed `catch` this replaces did: this read

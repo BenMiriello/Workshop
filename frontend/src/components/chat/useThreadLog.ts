@@ -192,6 +192,14 @@ export function useThreadLog({
   const loadOlder = useCallback(async () => {
     const id = threadIdRef.current;
     if (!id || loadingOlderRef.current) return;
+    // THE BRANCH IS PART OF WHAT THIS PAGE IS OF, not just the thread. A branch
+    // change re-reads from zero (`reset` + `eventsReceived`, in `sync` below)
+    // under the SAME thread id, so the `threadIdRef` check after the await
+    // cannot see it: an older page requested on the abandoned line would come
+    // back, pass that check, and prepend the other branch's messages above the
+    // ones now on screen. Capturing the branch here and re-checking it there is
+    // the same identity guard, applied to the axis that actually moved.
+    const branchAt = branchRef.current.id;
     // The oldest seq this tab currently holds IS the floor of the last page it
     // read (the initial tail, or an earlier "older" page), so it is exactly
     // the `before` the contract asks for — see `hasMoreOlder` in threadStore.
@@ -203,14 +211,16 @@ export function useThreadLog({
     setOlderError(null);
     try {
       const page = await chatApi.threadEvents(id, 0, { tail: INITIAL_TAIL, before });
-      if (threadIdRef.current !== id) return;
+      if (threadIdRef.current !== id || branchRef.current.id !== branchAt) return;
       dispatch({
         type: "olderEventsReceived",
         events: page.events || [],
         hasMore: page.has_more ?? false,
       });
     } catch (e) {
-      if (threadIdRef.current === id) setOlderError(`Couldn't load earlier messages: ${e}`);
+      if (threadIdRef.current === id && branchRef.current.id === branchAt) {
+        setOlderError(`Couldn't load earlier messages: ${e}`);
+      }
     } finally {
       loadingOlderRef.current = false;
       setLoadingOlder(false);
@@ -250,10 +260,26 @@ export function useThreadLog({
       if (branchRef.current.id !== nextBranch) {
         const first = branchRef.current.id === undefined;
         branchRef.current.id = nextBranch;
+        // ALL THREE FIELDS MOVE TOGETHER. Only `id` used to be written here,
+        // which left `count` and `head` at the previous branch's values (0 and
+        // null on a first response). The very next sync then took the `else if`
+        // below, found a "change" that was only this omission, and called
+        // `setBranch` with values identical to the ones already held -- a fresh
+        // object, so a full re-render of the chat and a rewrite of the thread
+        // cache, on the second sync of every thread.
+        branchRef.current.count = page.branch_count ?? 0;
+        branchRef.current.head = page.branch?.head ?? null;
         setBranch({ id: nextBranch, name: page.branch?.name ?? "",
                     count: page.branch_count ?? 0,
                     head: page.branch?.head ?? null });
         if (!first) {
+          // An older page in flight belongs to the line being left. `loadOlder`
+          // will drop its response on the branch guard, but the flag it set has
+          // to come off here or the first page of the NEW line is refused as
+          // "already loading" until that response lands.
+          loadingOlderRef.current = false;
+          setLoadingOlder(false);
+          setOlderError(null);
           // Learned about the change on this very response, which was fetched
           // from the OLD cursor. Ask again from zero; the re-read replaces what
           // we hold.

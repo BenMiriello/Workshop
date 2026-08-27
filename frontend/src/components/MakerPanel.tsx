@@ -16,6 +16,7 @@ import {
   armLevelGloss, armLevelName, ceilingLine, makerPrimary, makerStatus,
   START_HELP, STOP_HELP, type ArmLevel, type MakerState,
 } from "../lib/makers";
+import { queryKeys } from "../lib/queryKeys";
 
 // WHAT IS DOING MY TICKETS, on the agent that does them.
 //
@@ -60,7 +61,7 @@ export default function MakerPanel({
   const qc = useQueryClient();
   // Memoised because `post` below writes this exact entry, and a fresh array
   // every render would rebuild that path every render.
-  const makerKey = useMemo(() => ["agents", agentId, "maker"], [agentId]);
+  const makerKey = useMemo(() => queryKeys.agents.maker(agentId), [agentId]);
 
   // Activity is the reason this page exists, so it is polled. The interval
   // matches the roster's.
