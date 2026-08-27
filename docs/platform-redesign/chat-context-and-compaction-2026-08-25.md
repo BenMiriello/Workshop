@@ -59,6 +59,73 @@ Empirically measured 2026-08-25 (small Haiku sessions, this box, CLI 2.1.143):
 > same day: across any compaction, ours or the CLI's, images and documents are
 > dropped and only text survives.
 
+> **RE-MEASURED 2026-08-27, and the correction above does not go far enough.**
+> The auto-compaction half is confirmed independently: a re-scan of all 5,329
+> session transcripts on this box found 45 `compact_boundary` records, 29 of
+> them `trigger:auto`, every one of those in a run whose own `entrypoint` is
+> `sdk-cli` (attributed per record, not per file: a session file can be appended
+> to by several runs). They fire at 126,003-153,059 pre-tokens and land at
+> 4,773-20,783.
+>
+> **The manual half is FALSE and has been false all along.** Fresh test on this
+> box today, on the installed 2.1.143, spawning the CLI with Workshop's own
+> flags: a `/compact` sent as a turn over `--input-format stream-json` RAN.
+> `trigger:manual`, 27,088 -> 2,104 tokens, `durationMs` 17,446, followed by
+> `<local-command-stdout>Compacted </local-command-stdout>`. It takes an
+> argument too: `/compact Keep only the codeword...` recorded
+> `<command-args>` and the model afterwards knew the codeword and had lost the
+> number. The 2026-08-12 finding was a FALSE NEGATIVE: the local-command block
+> it saw is what a WORKING `/compact` records as well, and the test read the
+> transcript ~2 seconds in, while every real compaction on record takes 12 to
+> 190 seconds. The same false negative is visible in the 2026-08-12 session
+> files themselves, where three `trigger:manual` boundaries fired in `sdk-cli`
+> runs on the same day the claim was written.
+>
+> **The env knobs really are inert, but not for the stated reason.** Both names
+> are present as strings in the installed binary. The 2026-08-25 probe passed
+> `CLAUDE_CODE_AUTO_COMPACT_WINDOW=5000`, and the documentation
+> (`code.claude.com/docs/en/model-config`) says that variable accepts 100K-1M
+> only, so that probe tested nothing. Re-run today with in-range values
+> (window=100,000 with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=25`, and again at
+> `=1`, which puts the trigger below where a session already sits): still zero
+> boundaries. So they are inert in `-p` on 2.1.143, measured properly this time.
+> The `--autocompact` FLAG does not exist on this build (`unknown option`), and
+> `/autocompact` sent as a turn answers "isn't available in this environment"
+> -- which is also the proof that `/compact` is genuinely supported, since the
+> CLI refuses an unavailable command out loud rather than silently.
+>
+> **Images, measured rather than inferred.** An uploaded image is ~200 tokens
+> (a 560x280 PNG measured at 216) and it DOES persist across plain resumed
+> turns: three turns after the upload, with nothing re-sent, the model named a
+> shape and colour it had never been asked about. After a `/compact` it answers
+> `IMAGE NOT VISIBLE`. So the loss is at the compaction (and at any
+> fresh-session rebuild, which is text-only), not at the turn boundary.
+
+> **What the API offers, from vendor documentation read 2026-08-27** (not
+> measured: there is no API path in this tree to measure). Two SEPARATE
+> features, not one. Compaction:
+> `platform.claude.com/docs/en/build-with-claude/compaction`, beta header
+> `compact-2026-01-12`, edit type `compact_20260112`, triggered automatically at
+> a configurable `input_tokens` threshold (default 150,000, minimum 50,000). The
+> response carries a `compaction` content block that the caller MUST append back
+> verbatim; the API then drops every block before it. It accepts custom
+> `instructions`, which REPLACE the default summarizer prompt rather than
+> extending it. Supported on Opus 5, Opus 4.6-4.8, Sonnet 5, Sonnet 4.6, Fable 5
+> and Mythos 5. Caching: put a breakpoint at the end of the system prompt and
+> another on the compaction block, and a compaction rewrites only the messages
+> tier. Compaction iterations are billed separately and are EXCLUDED from the
+> top-level `input_tokens`/`output_tokens`; sum `usage.iterations` for the real
+> figure. Context editing:
+> `platform.claude.com/docs/en/build-with-claude/context-editing`, beta header
+> `context-management-2025-06-27`, with `clear_tool_uses_20250919` (defaults:
+> trigger 100,000 input tokens, keep the last 3 tool uses; `clear_at_least` and
+> `exclude_tools` available) and `clear_thinking_20251015`. Documented as
+> cache-INVALIDATING from the clearing point, which is what `clear_at_least` is
+> for. Neither page says what happens to images or documents inside the region
+> it rewrites; on our own path that question is answered by measurement above,
+> and it should be re-answered by measurement on the API path rather than
+> assumed.
+
 **Consequence:** on the dev/CLI path there is no native compaction to fall back on,
 manual or automatic. If we delete our own fold on that path, an unbounded chat grows
 until it hits the window and errors. So a minimal Workshop-owned compaction has to
