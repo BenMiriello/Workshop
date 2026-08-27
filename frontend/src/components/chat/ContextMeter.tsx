@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { chatApi, type ChatMsg } from "../../lib/chat";
+import { queryKeys } from "../../lib/queryKeys";
 import { estimateContextTokens } from "./chatScope";
 import { contextWindowFor } from "./models";
 import { contextTooltip } from "./contextReading";
@@ -35,7 +36,7 @@ export default function ContextMeter({
   // answers "with what", which is the question that follows it every time.
   onOpen?: () => void;
 }) {
-  const [server, setServer] = useState<{ used: number; window: number } | null>(null);
+  // The server's count is NOT held here. It is the query's data -- see below.
   // A FAILED READ USED TO BE TRACKED HERE and marked in the tooltip, so a
   // browser estimate could not pass itself off as the server's count. The
   // tooltip is two numbers and a slash now (operator, 2026-08-14), which leaves
@@ -61,22 +62,31 @@ export default function ContextMeter({
   // grows every few seconds and the answer cannot change until the turn lands);
   // the flip back to idle is itself a dependency, so a finished turn refetches.
   //
-  // THE QUERY KEY IS THE TRIGGER LIST. It carries exactly what the effect this
-  // replaces had in its dependency array: the thread, the compaction nonce,
-  // the streaming flip (both edges of it), and the message count parked at
-  // `-1` while a turn runs. Nothing else may fire this read.
+  // THE KEY IS THE THREAD. IT USED TO BE THE TRIGGER LIST, and that is the
+  // difference between using a cache and using a cache's key as a dependency
+  // array. The key carried the nonce, the streaming flag and the message count,
+  // so it changed on every message: a new cache entry per message, each one
+  // retired immediately (`gcTime: 0`) because a recurring key would otherwise
+  // serve turn one's reading at the start of turn two -- a number that walks
+  // backwards. Every one of those consequences came from the key churning.
+  //
+  // With the thread as the key there is one entry per conversation, the value
+  // in it is always the newest read, and "walks backwards" is unrepresentable.
+  // The triggers become what they always were, an ordinary dependency array, on
+  // the effect just below.
+  //
+  // What this REMOVES is the `server` useState and the effect that copied the
+  // response into it. That copy existed because the entry was retired on every
+  // turn boundary while the number on screen had to survive one; a stable entry
+  // survives on its own, including across a FAILED refetch, which is the other
+  // thing the copy was for (react-query holds the last good data on error).
   const ctxQuery = useQuery({
-    queryKey: ["chat", "context", activeId, nonce, streaming, streaming ? -1 : messages.length],
+    queryKey: queryKeys.chat.context(activeId),
     queryFn: () => chatApi.threadContext(activeId!),
-    enabled: !!activeId,
-    // A RECURRING KEY MUST NOT BE SERVED FROM CACHE. The parked `-1` key is the
-    // same key on every turn, so a cache hit at the start of turn two would put
-    // the reading from the start of turn ONE back on the meter — older than the
-    // post-turn read that has landed since, i.e. a number that walks backwards.
-    // `gcTime: 0` retires the entry as soon as the key moves on, and
-    // `staleTime: 0` means what does come back is read, never reused.
-    gcTime: 0,
-    staleTime: 0,
+    // NOTHING FIRES THIS READ EXCEPT THE EFFECT BELOW. The triggers are not the
+    // key any more, so the query must not fetch on its own or mounting would be
+    // one read and the trigger effect another.
+    enabled: false,
     // The effect this replaces had no focus and no reconnect trigger. The app
     // default has them (it is preserving `usePoll`'s catch-up read), and here
     // they would be a new read the meter never made.
@@ -91,17 +101,24 @@ export default function ContextMeter({
     retry: false,
   });
 
-  // THE HOLD STAYS LOCAL, and that is the point of this pair of effects. The
-  // cache entry is retired on every turn boundary by the key above, while
-  // `server` has to survive that, and has to survive a FAILED read too: a
-  // meter that drops back to the browser estimate because one read 502'd says
-  // less than one that is a turn stale. So the query owns the fetch and this
-  // owns what stays on screen between fetches.
+  // THE TRIGGER LIST, as a dependency array, which is what it always was: the
+  // thread, the compaction nonce, the streaming flip (both edges of it), and
+  // the message count parked at `-1` while a turn runs -- the transcript grows
+  // every few seconds during a turn and the answer cannot change until it
+  // lands. Nothing else may fire this read.
+  const trigger = streaming ? -1 : messages.length;
+  const refetchCtx = ctxQuery.refetch;
   useEffect(() => {
-    const r = ctxQuery.data;
-    if (!r) return;
-    setServer({ used: r.used_tokens, window: r.window_tokens });
-  }, [ctxQuery.data]);
+    if (activeId) void refetchCtx();
+  }, [activeId, nonce, streaming, trigger, refetchCtx]);
+
+  // The reading on screen IS the cache entry. No copy, so there is nothing to
+  // keep in step with it.
+  const r = ctxQuery.data;
+  const server = useMemo(
+    () => (r ? { used: r.used_tokens, window: r.window_tokens } : null),
+    [r],
+  );
 
   // A read fired OUTSIDE a turn is the post-turn (or idle) read: the stored
   // number is now at least as fresh as anything the stream said, so the held
@@ -117,9 +134,11 @@ export default function ContextMeter({
     if (settled && !streaming) setLive(null);
   }, [settled, streaming, ctxQuery.dataUpdatedAt, ctxQuery.errorUpdatedAt]);
 
-  // Drop a stale count on thread switch rather than showing one chat's usage
-  // against another's transcript.
-  useEffect(() => { setServer(null); setLive(null); }, [activeId]);
+  // Drop the held LIVE reading on a thread switch: it came off the previous
+  // chat's stream. The server count needs no such reset any more -- the key is
+  // the thread, so what a switch reveals is that thread's own last reading (and
+  // the effect above refetches it immediately), never another chat's.
+  useEffect(() => { setLive(null); }, [activeId]);
 
   // THE DRAFT IS DELIBERATELY NOT A DEP OF THIS ONE. estimateContextTokens walks
   // every message AND every segment of the entire log, and `draft` changes on

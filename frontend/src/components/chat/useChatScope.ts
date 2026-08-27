@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "../../lib/queryKeys";
 import { chatApi, type Provider } from "../../lib/chat";
 import { DEFAULT_SCOPE, readProvider, resolveScope, writeProvider } from "../../lib/chatSelection";
 import type { ChatMode } from "./chatScope";
@@ -105,10 +106,13 @@ export function useChatScope({
   // and would stop retrying anything at all.
   const providerScope = scoped ? contextKey : null;
   const providersQuery = useQuery({
-    queryKey: [
-      "chat", "providers", providerScope,
-      effectiveMode, initialThreadId ?? null, !!startNew, providerNonce,
-    ],
+    queryKey: queryKeys.chat.providers({
+      scope: providerScope,
+      mode: effectiveMode,
+      initialThreadId: initialThreadId ?? null,
+      startNew: !!startNew,
+      nonce: providerNonce,
+    }),
     queryFn: () => chatApi.listProviders(providerScope ?? undefined),
     // The effect had no retry. This failure has a visible error block with its
     // own Retry, so retrying under it would only delay the notice and then

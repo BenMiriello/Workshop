@@ -54,6 +54,11 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
+def _head(repo: Path) -> str:
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
 def _commit(repo: Path, msg: str) -> None:
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", msg)
@@ -166,6 +171,55 @@ class TestUsePollRatchet:
         _write(repo, "frontend/src/components/Legacy.test.tsx", _poll_component(9))
         _commit(repo, "a kit definition and a test")
         r = _run(repo, "--since", "HEAD~1")
+        assert r.returncode == 0, r.stdout
+
+
+class TestInlineQueryKeys:
+    """The third metric, and the only one pinned at ZERO rather than at a debt.
+
+    A key spelled at its call site is invisible to every other check in this
+    repo: TanStack types a key as `unknown[]`, so two spellings of one fact
+    compile, lint and test clean while being two cache entries nothing keeps in
+    step. That is not hypothetical -- `["chat","threads",null]` and
+    `["chat","threads"]` shipped together, and archiving a chat on the page
+    holding the second left the dashboard listing it."""
+
+    def test_a_key_literal_at_a_call_site_fails(self, repo: Path):
+        # Committed, because the scan reads TRACKED files: an untracked probe
+        # would pass for the wrong reason and prove nothing.
+        _write(repo, "frontend/src/components/Feed.tsx",
+               'const q = useQuery({ queryKey: ["jobs", "feed", filter] });\n')
+        base = _head(repo)
+        _commit(repo, "a key spelled at its call site")
+        r = _run(repo, "--since", base)
+        assert r.returncode == 1, r.stdout
+        assert "FAIL inline_query_keys: 0 -> 1" in r.stdout
+        assert "new: frontend/src/components/Feed.tsx" in r.stdout
+        # The advice must be about KEYS. It used to fall through to the timer
+        # branch and tell the reader to add their query to a timer allowlist.
+        assert "queryKeys.ts" in r.stdout
+        assert "_TIMER_ALLOW" not in r.stdout.split("FAIL inline_query_keys")[1]
+
+    def test_a_key_built_by_a_factory_passes(self, repo: Path):
+        _write(repo, "frontend/src/components/Feed.tsx",
+               "const q = useQuery({ queryKey: queryKeys.jobs.feed(filter) });\n")
+        base = _head(repo)
+        _commit(repo, "a key built by a factory")
+        r = _run(repo, "--since", base)
+        assert r.returncode == 0, r.stdout
+
+    def test_a_key_module_may_hold_literals_because_that_is_its_job(self, repo: Path):
+        """The registry itself, and an app's own `queries.ts`, are where a key
+        literal IS the definition. Exempted by file NAME, not by path, so the
+        checker names no app."""
+        _write(repo, "frontend/src/lib/queryKeys.ts",
+               'export const k = { feed: (f) => ["jobs", "feed", f] };\n'
+               'const q = useQuery({ queryKey: ["jobs", "feed", f] });\n')
+        _write(repo, "frontend/src/pages/widgets/queries.ts",
+               'const q = useQuery({ queryKey: ["widget", "list"] });\n')
+        base = _head(repo)
+        _commit(repo, "two key modules")
+        r = _run(repo, "--since", base)
         assert r.returncode == 0, r.stdout
 
 

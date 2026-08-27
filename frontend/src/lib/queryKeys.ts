@@ -66,7 +66,22 @@ export const queryKeys = {
     branches: (threadId: string | null) => ["chat", "branches", threadId] as const,
     mentionable: (threadId: string | null) => ["chat", "mentionable", threadId] as const,
     prefs: () => ["chat", "prefs"] as const,
-    providers: (scope: string | null, mode: string) => ["chat", "providers", scope, mode] as const,
+    /**
+     * `GET /api/chat/providers`. THIS KEY CARRIES TRIGGERS, and that is
+     * deliberate rather than an oversight: the read replaces an effect whose
+     * dependency array was all six of these, it is the gate the thread resolver
+     * waits on, and it runs with `staleTime: 0` / `gcTime: 0` so that returning
+     * to a scope re-reads rather than resolving from a list minutes old.
+     * Dropping a trigger would serve a cached list where the code this replaced
+     * made a request. See the call site for the per-trigger reasoning.
+     */
+    providers: (t: {
+      scope: string | null;
+      mode: string;
+      initialThreadId: string | null;
+      startNew: boolean;
+      nonce: number;
+    }) => ["chat", "providers", t.scope, t.mode, t.initialThreadId, t.startNew, t.nonce] as const,
   },
 
   jobs: {

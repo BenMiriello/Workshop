@@ -116,6 +116,19 @@ SCAN_PREFIX = "frontend/src/"
 QUERY_LAYER = "frontend/src/lib/queryClient.ts"
 
 _USEPOLL = re.compile(r"\busePoll\s*\(")
+# A cache key written as an array literal where it is USED, rather than built by
+# a key module. `queryKey: ["chat", "threads"]` and `queryKey: ["chat",
+# "threads", null]` are two cache entries, and TanStack types a key as
+# `unknown[]`, so nothing above this line ever objected: not the compiler, not
+# the linter, not a test. That exact pair shipped -- the dashboard and the
+# recent-chats menu on one spelling, the Chats page on the other -- and an
+# archive on the Chats page left the dashboard listing the archived chat.
+#
+# Matching the literal specifically, not `queryKey:` in general, is the point: a
+# key that comes from a factory (`queryKey: queryKeys.chat.threads(null)`) is a
+# named export, so a misspelling is a compile error, which is the only kind of
+# error that stops this recurring.
+_INLINE_KEY = re.compile(r"\bqueryKey:\s*\[")
 _SETINTERVAL = re.compile(r"\b(?:window\.)?setInterval\s*\(")
 
 # Timers that are NOT polls: nothing in the callback reaches the network.
@@ -243,6 +256,7 @@ def scan(root: Path = ROOT) -> dict:
     rules = _allow_rules()
     polls: list[dict] = []
     intervals: list[dict] = []
+    inline_keys: list[dict] = []
     exempt: list[dict] = []
 
     for rel in tracked_files(root):
@@ -263,6 +277,8 @@ def scan(root: Path = ROOT) -> dict:
                 continue
             if _USEPOLL.search(line):
                 polls.append({"file": rel, "line": i, "text": stripped})
+            if _INLINE_KEY.search(line) and not _is_key_module(rel):
+                inline_keys.append({"file": rel, "line": i, "text": stripped})
             if _SETINTERVAL.search(line):
                 window = "\n".join(lines[i - 1 : i - 1 + _WINDOW])
                 why = next(
@@ -292,8 +308,10 @@ def scan(root: Path = ROOT) -> dict:
     return {
         "usepoll_sites": len(polls),
         "raw_poll_intervals": len(intervals),
+        "inline_query_keys": len(inline_keys),
         "usepoll": polls,
         "intervals": intervals,
+        "inline_keys": inline_keys,
         "exempt_timers": exempt,
         "stale_allowlist_entries": stale,
     }
@@ -318,8 +336,23 @@ def _new_sites(now: list[dict], before: list[dict]) -> list[dict]:
     return out
 
 
-_METRICS = ("usepoll_sites", "raw_poll_intervals")
-_SITES = {"usepoll_sites": "usepoll", "raw_poll_intervals": "intervals"}
+_METRICS = ("usepoll_sites", "raw_poll_intervals", "inline_query_keys")
+_SITES = {
+    "usepoll_sites": "usepoll",
+    "raw_poll_intervals": "intervals",
+    "inline_query_keys": "inline_keys",
+}
+
+
+def _is_key_module(rel: str) -> bool:
+    """A file whose JOB is naming cache keys, where a literal is the definition.
+
+    Named by FILE NAME rather than by path, so this names no app: the platform's
+    registry is `lib/queryKeys.ts` and an app declares its own keys in a
+    `queries.ts` beside its fetchers, because a platform source file may not
+    name a specific app (`scripts/check_no_app_names.py`)."""
+    name = rel.rsplit("/", 1)[-1]
+    return name in ("queryKeys.ts", "queries.ts")
 
 
 def main() -> int:
@@ -384,10 +417,15 @@ def main() -> int:
                 "breaking, MINOR-bump ticket). raw_poll_intervals counts setInterval "
                 "timers that reach the network -- the non-poll timers (clock ticks, "
                 "audio meters, debounces, watchdogs) are exempted one by one, with a "
-                "reason each, in _TIMER_ALLOW inside the checker."
+                "reason each, in _TIMER_ALLOW inside the checker. "
+                "inline_query_keys counts cache keys written as an array literal "
+                "where they are used instead of being built by a key module "
+                "(frontend/src/lib/queryKeys.ts for the platform, a queries.ts "
+                "beside an app's fetchers for an app). It is pinned at 0, so "
+                "unlike the other two it FAILS on the first new one rather than "
+                "freezing a debt: there was no debt left to freeze."
             ),
-            "usepoll_sites": result["usepoll_sites"],
-            "raw_poll_intervals": result["raw_poll_intervals"],
+            **{k: result[k] for k in _METRICS},
         }
         if raised:
             payload["raised"] = {
@@ -420,6 +458,8 @@ def main() -> int:
           f"call sites of usePoll(")
     print(f"  raw_poll_intervals {result['raw_poll_intervals']:>4}  "
           f"setInterval timers that reach the network")
+    print(f"  inline_query_keys  {result['inline_query_keys']:>4}  "
+          f"cache keys spelled at a call site, not built by a key module")
     print(f"  (exempt            {len(result['exempt_timers']):>4}  "
           f"non-poll timers, allowlisted in the checker)")
 
@@ -451,6 +491,14 @@ def main() -> int:
             if key == "usepoll_sites":
                 print(f"       A new server read goes through the query layer "
                       f"({QUERY_LAYER}), not usePoll.")
+            elif key == "inline_query_keys":
+                print( "       A cache key is not spelled where it is used. Two "
+                       "spellings of one fact are two cache entries that nothing "
+                       "keeps in step, and TanStack types a key as `unknown[]`, so "
+                       "nothing else catches it. Add a factory to "
+                       "frontend/src/lib/queryKeys.ts (or to the app's own "
+                       "queries.ts) and call it, so a misspelling is a missing "
+                       "export instead of a silent second entry.")
             else:
                 print(f"       If this timer does NOT reach the network (clock tick, "
                       f"audio meter, debounce, watchdog), add it to _TIMER_ALLOW in "
