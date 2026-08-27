@@ -4,10 +4,13 @@ import { pulseDelayMs, PULSE_MS, PULSE_SLOTS } from "./chatPulse";
 const STEP = PULSE_MS / PULSE_SLOTS; // 300ms
 
 describe("pulseDelayMs", () => {
-  it("offsets each consecutive dot by exactly 1/6 of the cycle", () => {
-    const now = 0;
+  it("lags each dot below by exactly 1/6 of the cycle, so the ripple runs DOWN", () => {
+    // A dot that lags starts LATER in the animation, which is a less-negative
+    // delay. Pick a clock phase high enough that no slot wraps, so the pure step
+    // is visible: each next dot's delay is greater by one step.
+    const now = 1700;
     for (let i = 1; i < PULSE_SLOTS; i++) {
-      expect(pulseDelayMs(i - 1, now) - pulseDelayMs(i, now)).toBe(STEP);
+      expect(pulseDelayMs(i, now) - pulseDelayMs(i - 1, now)).toBe(STEP);
     }
   });
 
