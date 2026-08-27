@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { Archive, ArchiveRestore, ChevronLeft, MessagesSquare, MoreVertical, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronLeft, MoreVertical, Plus, Trash2 } from "lucide-react";
 import {
   Button,
   Card,
@@ -17,8 +17,6 @@ import {
   Select,
   Skeleton,
   StateBlock,
-  Tag,
-  catFor,
 } from "@workshop/ui";
 import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
 import { newChatHref } from "../lib/chatSelection";
@@ -74,9 +72,6 @@ function shortModel(m?: string | null): string {
 // the foot scrolls into view (see the observer below), so a long history never
 // mounts unbounded and the reader never meets a wall of rows.
 const PAGE = 20;
-
-// The archive is a separate, search-filtered list; it keeps a plain cap.
-const ARCHIVE_CAP = 100;
 
 // The live list's cache key, shared so an action can update it in place.
 const THREADS_KEY = ["chat", "threads"] as const;
@@ -447,6 +442,10 @@ export function ChatsArchived() {
   // list) because the list is still good: one row's action failed, and the row
   // is still there to try again.
   const [actionErr, setActionErr] = useState<{ text: string; endpoint: string } | null>(null);
+  // How many rows are mounted. Grows a page at a time as the foot scrolls into
+  // view, the same infinite-scroll the live list uses; reset when the search
+  // narrows so a new query starts at the top.
+  const [shown, setShown] = useState(PAGE);
 
   const load = useCallback(() => {
     setThreads(null);
@@ -500,7 +499,26 @@ export function ChatsArchived() {
     return (threads ?? []).filter((t) => matches(t, needle));
   }, [threads, q]);
 
-  const visible = filtered.slice(0, ARCHIVE_CAP);
+  // Reset the page only when the search changes, not when the list reloads:
+  // a re-narrow starts at the top, a restore/delete drop does not.
+  useEffect(() => { setShown(PAGE); }, [q]);
+
+  const visible = filtered.slice(0, shown);
+  const more = shown < filtered.length;
+
+  // Load the next page when the foot nears the viewport (same observer the live
+  // list uses). rootMargin starts it early so the scroll never stops at the seam.
+  const sentinel = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || !more) return;
+    const io = new IntersectionObserver(
+      (entries) => { if (entries[0]?.isIntersecting) setShown((n) => n + PAGE); },
+      { rootMargin: "400px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [more, filtered.length]);
 
   return (
     <div>
@@ -533,9 +551,9 @@ export function ChatsArchived() {
       )}
 
       {threads === null ? (
-        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+        <div style={{ display: "grid", gap: "var(--space-2)" }}>
           {[0, 1, 2, 3].map((i) => (
-            <Skeleton key={i} style={{ height: 64 }} />
+            <Skeleton key={i} style={{ height: 52 }} />
           ))}
         </div>
       ) : err ? (
@@ -564,46 +582,72 @@ export function ChatsArchived() {
               buttons, and both of them ask first. */}
           <div style={{ display: "grid", gap: "var(--space-2)" }}>
             {visible.map((t) => (
-              <Card key={t.id} compact className="ws-chat-card" style={{ minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0, overflow: "hidden" }}>
-                  <MessagesSquare size={14} aria-hidden style={{ flex: "none" }} />
-                  <strong style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {t.title || "New chat"}
-                  </strong>
-                  <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flex: "none", marginLeft: "auto" }}>
-                    <Tag hue={catFor(t.context_key)}>{scopeLabel(t.context_key)}</Tag>
+              <Card key={t.id} compact className="ws-chat-row" style={{ minWidth: 0 }}>
+                {/* Same row shape as the live list, minus the live-state dot (an
+                    archived chat is closed, so it can never be running). Line one:
+                    the scope's own icon, the name, then the meta right-justified.
+                    Line two: the last message. */}
+                <div className="ws-chat-row__head">
+                  <span
+                    className="ws-chat-row__scope"
+                    title={scopeName(t.context_key)}
+                    aria-label={scopeLabel(t.context_key)}
+                  >
+                    <ChatScopeGlyph contextKey={t.context_key} />
                   </span>
-                </div>
-                <div className="ws-chat-card__last">
-                  <p className="ws-muted ws-chat-card__snippet">{t.last_message || " "}</p>
-                  <span className="ws-card__meta ws-chat-card__count">{t.message_count}</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap", marginTop: "var(--space-2)" }}>
-                  <span className="ws-card__meta">{archivedLabel(t.archived_at)}</span>
-                  <span style={{ display: "flex", gap: "var(--space-2)", marginLeft: "auto" }}>
-                    <Button
-                      size="sm"
+                  <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
+                  <div className="ws-chat-row__meta">
+                    {t.model && (
+                      <>
+                        <span className="ws-card__meta ws-chat-row__model">{shortModel(t.model)}</span>
+                        <span className="ws-chat-row__sep ws-chat-row__sep--model" aria-hidden>·</span>
+                      </>
+                    )}
+                    <span className="ws-card__meta">{t.message_count} turns</span>
+                    <span className="ws-chat-row__sep" aria-hidden>·</span>
+                    <span className="ws-card__meta ws-chat-row__when">{archivedLabel(t.archived_at)}</span>
+                    {/* Restore is the frequent, reversible action, so it sits on
+                        the row; Delete is the one destructive verb, so it lives in
+                        the menu. Both still confirm. */}
+                    <button
+                      type="button"
+                      className="ws-chat-row__act"
+                      title="Restore"
+                      aria-label="Restore chat"
                       onClick={() => setPending({ id: t.id, title: t.title || "this chat", action: "restore" })}
                     >
-                      <ArchiveRestore aria-hidden /> Restore
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      onClick={() => setPending({ id: t.id, title: t.title || "this chat", action: "delete" })}
+                      <ArchiveRestore size={14} aria-hidden />
+                    </button>
+                    <Menu
+                      label="Chat actions"
+                      trigger={
+                        <button type="button" className="ws-chat-row__act" title="More" aria-label="More chat actions">
+                          <MoreVertical size={14} aria-hidden />
+                        </button>
+                      }
                     >
-                      <Trash2 aria-hidden /> Delete
-                    </Button>
-                  </span>
+                      <MenuItem
+                        icon={<ArchiveRestore size={14} aria-hidden />}
+                        onSelect={() => setPending({ id: t.id, title: t.title || "this chat", action: "restore" })}
+                      >
+                        Restore
+                      </MenuItem>
+                      <MenuSeparator />
+                      <MenuItem
+                        danger
+                        icon={<Trash2 size={14} aria-hidden />}
+                        onSelect={() => setPending({ id: t.id, title: t.title || "this chat", action: "delete" })}
+                      >
+                        Delete
+                      </MenuItem>
+                    </Menu>
+                  </div>
                 </div>
+                <p className="ws-muted ws-chat-row__snippet">{t.last_message || " "}</p>
               </Card>
             ))}
           </div>
-          {filtered.length > ARCHIVE_CAP && (
-            <p className="ws-muted" style={{ margin: "var(--space-3) 0 0", textAlign: "center" }}>
-              Showing {ARCHIVE_CAP} of {filtered.length}. Refine the search to narrow the list.
-            </p>
-          )}
+          {more && <div ref={sentinel} aria-hidden style={{ height: 1 }} />}
         </>
       )}
 

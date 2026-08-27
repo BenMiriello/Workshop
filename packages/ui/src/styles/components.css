@@ -589,47 +589,7 @@ a.ws-btn { text-decoration: none; }
   padding-top: var(--space-2);
 }
 
-/* Chat list cards (Chats page): the title row is fixed height; the snippet
-   below is always rendered (even blank) and clamped to 2 lines so a card's
-   height never depends on whether/how long last_message is. */
-/* Snippet + message count share one row: the snippet takes the slack and clamps,
-   the count never shrinks and sits at the baseline of the snippet's last line. */
-/* THE CARD ITSELF. It is a grid item in a raw inline grid on the Chats page,
-   and a grid item's default `min-width: auto` makes it as wide as its widest
-   unbreakable content. A long scope tag or snippet therefore set the card's
-   min-content width and pushed the row past the viewport, giving the whole page
-   a horizontal scroll on a phone. Every other card grid sets this on `.ws-*-grid
-   > li`; this grid has no such rule to hang it on, so the card carries it.
-
-   Chats.tsx has ALWAYS passed this class and said in a comment exactly why. The
-   rule was never written, so the class did nothing and the bug its own comment
-   describes has been live the whole time. Found 2026-08-22 by auditing for class
-   names a component references that no stylesheet defines; scripts/check_undefined_css.py
-   now gates that. */
-.ws-chat-card { min-width: 0; }
-
-.ws-chat-card__last {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-3);
-  min-width: 0;
-}
-.ws-chat-card__count { flex: none; }
-
-.ws-chat-card__snippet {
-  margin: var(--space-1) 0 0;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  font-size: var(--fs-sm);
-  line-height: var(--lh-tight, 1.4);
-  min-height: calc(var(--lh-tight, 1.4) * 2em);
-}
-
-/* ---- CHAT ROW (the /chats list) ------------------------------------------ */
+/* ---- CHAT ROW (the /chats list and the archive) -------------------------- */
 /* A horizontal row: the left column fills the width with the title line and the
    last-message line, each on ONE line and ellipsized; the right rail holds the
    quiet meta (a live dot, the length, the last-activity time) off to the side so
