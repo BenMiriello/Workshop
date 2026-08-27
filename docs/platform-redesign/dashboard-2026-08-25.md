@@ -66,8 +66,12 @@ scrollbar appears.
 Inside it, one grid:
 
 - `grid-template-columns: repeat(auto-fit, minmax(340px, 1fr))`
-- `grid-auto-rows: 236px` — every card the same height, and cards do NOT grow
-  with their content
+- `grid-auto-rows: clamp(320px, calc((100vh - 190px) / 2), 520px)` — every card
+  the same height, sized from the viewport. The 900px content cap over a 340px
+  column minimum means the grid is always two columns and therefore always two
+  rows, so half the screen (less the chrome) is one card. **Superseded 2026-08-26**:
+  this was a flat `236px`, which left a third of a tall screen empty under the
+  grid
 - `gap: 14px`
 - `align-content: start`
 - `max-width: 900px`
@@ -77,16 +81,29 @@ The mockup exposes those four as tunable props (`cardMinWidth` 260-460,
 NOT props in the product. Ship the defaults as constants; a knob whose only
 consumer is a mockup is a knob nobody will ever turn.
 
-FIXED ROWS ARE THE POINT and are the one rule most likely to be lost. Each card
-clips (`overflow: hidden`) and shows a whole number of rows. Nothing scrolls
-inside a card, nothing half-draws at the bottom edge, and a card with more than
-fits says so with its "→" link rather than growing. `auto-fit` means the grid is
-one column at a narrow width and two or three at a wide one with no breakpoint
-list.
+EQUAL ROWS ARE THE POINT; CLIPPING WAS NOT. Every card is the same height, which
+is what makes a row of them read as a grid. What is inside a card is a different
+question, and the first cut got it wrong: each card clipped to a whole number of
+rows (two to four) and named the remainder on its "→" link, so on an instance
+with 113 chats and 9 waiting items the dashboard showed four and three.
+
+**Superseded 2026-08-26, on the operator's correction: a card shows every row it
+was given and SCROLLS.** The mockup drew a handful of rows because a mockup has
+to draw something; that was read as a rule and it was not one. The card body is
+the scroller (`overflow-y: auto`, `scrollbar-gutter: stable`, scroll chaining
+left on so a phone reader is not trapped), and `rowCaps`/`fitRows` and the
+per-width row arithmetic behind them are deleted. A "→" link names an overflow
+only when the SERVER capped the read, never because the card ran out of pixels.
+
+`auto-fit` means the grid is one column at a narrow width and two at a wide one
+with no breakpoint list.
 
 **Phone.** The same four cards stacked in source order, page padding
-`12px 12px 16px`, gap `11px`, each card `flex: none; max-height: 210px;
-padding: 14px`. No page header: the shell's bar one already says where you are,
+`12px 12px 16px`, gap `11px`, each card `padding: 14px; max-height: 300px` over
+`grid-auto-rows: auto` — a card SIZES TO ITS CONTENT here and the cap only stops
+a long list from becoming the whole page. Nothing lines up in a single column,
+so equal heights buy nothing and cost screen: at a flat height the apps card
+padded 200px of empty box under six tiles. No page header: the shell's bar one already says where you are,
 and a `PageHeader` reading "Dashboard" under a bar reading "Workshop" is exactly
 the ~290px of duplicated chrome the 2026-08-23 screenshot pass removed from
 Files and Memory.
@@ -106,10 +123,10 @@ Body: a wrapping row of tiles, `gap: 14px 16px`, aligned to the start. A tile is
 a 46px rounded square (`--bg-inset` fill, 1px `--border`, 12px radius) over a
 12px name, ellipsised. The glyph is the app's declared icon or a monogram.
 
-The card is fixed height, so the tile count that fits is bounded. Anything past
-that paginates with dots under the tiles (6px, `gap: 7px`, the active one
-`--fg`-ish, the rest `--border-strong`), and the dots are only drawn when there
-is more than one page. Tapping a tile opens that app.
+Every installed app is drawn, and the card scrolls if they do not all fit.
+**Superseded 2026-08-26**: this paginated eight at a time behind a row of dots,
+which was the short card's constraint wearing a control. Tapping a tile opens
+that app.
 
 THE LIST IS THE DOCK'S LIST. `apps/registry.appPlaces()` — the same function
 `useShell` builds dock tiles from. Not `/api/apps`, not a second catalog. The
@@ -120,9 +137,11 @@ prevents.
 
 Head: `NEEDS YOU`, a count, and `inbox →`.
 
-The whole card changes colour when it is non-empty: the border and the label go
-`--warn`, and the count is `--warn`. That is the mockup's one alarm and it is
-deliberate. Empty, it is an ordinary card reading "Nothing waiting on you."
+The head carries a count and nothing else. **Superseded 2026-08-26**: the border
+and the label went `--warn` while anything was waiting, which on a real instance
+is always, so it was a permanent yellow box rather than an alarm. A hue that
+does not vary is not information (`frontend/CLAUDE.md`, "What color is for").
+Empty, the card reads "Nothing waiting on you."
 
 A row is an inset block (`--bg-inset`, 1px `--border`, 8px radius, padding
 9px 10px) with two lines:
@@ -259,9 +278,12 @@ contact with the running page, and both changed toward saying more:
   confident wrong answer that teaches an operator to stop reading a card. The
   mockup had it right (its own list carries a streaming chat) and section 4.4
   originally did not.
-* The row counts are a decision, not constants: three needs-you blocks fit the
-  236px desktop card and two fit the 210px phone card. A fixed three half-drew
-  the last one on a phone. `rowCaps` carries the arithmetic.
+* The row counts were a decision, then they stopped being one. They started as
+  constants, became per-width arithmetic (`rowCaps`: three needs-you blocks fit
+  the 236px desktop card, two fit the 210px phone card, and a fixed three
+  half-drew the last one on a phone), and on 2026-08-26 were deleted outright:
+  the card scrolls, so nothing decides how many rows the operator may see. The
+  arithmetic was a careful answer to a question that should not have been asked.
 
 ## 7. Colour
 
@@ -307,10 +329,10 @@ Built from kit primitives: `Card`, `Row`, `Stack`, `SectionLabel`, `StateBlock`
 the tiles. The context ring is lifted from `components/chat/ContextMeter` rather
 than redrawn.
 
-The mockup's fixed-height card with a clipped row list is the one genuinely new
-shape. It becomes ONE component (the card shell in `DashboardGrid.tsx`) that all
-four cards use, so "how many rows fit" and "how the head is laid out" are
-answered once.
+The equal-height card with a scrolling row list is the one genuinely new shape.
+It is ONE component (the card shell in `DashboardCard.tsx`) that all four cards
+use, so "how a card scrolls", "how its states read" and "how the head is laid
+out" are answered once rather than four times.
 
 ## 9. State
 
