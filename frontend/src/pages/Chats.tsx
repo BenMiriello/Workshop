@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { Archive, ArchiveRestore, ArrowDownWideNarrow, ChevronLeft, MessagesSquare, MoreVertical, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronLeft, MessagesSquare, MoreVertical, Plus, Trash2 } from "lucide-react";
 import {
   Button,
   Card,
@@ -251,16 +251,18 @@ export default function Chats() {
         actions={
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
             {/* Sort, not a scope filter: this is the workshop's own chats page,
-                and the page column already says which place you are in. Commits
-                on change (a view preference). */}
-            <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)" }}>
-              <ArrowDownWideNarrow size={14} aria-hidden />
-              <Select aria-label="Sort chats" value={sort} onChange={(e) => setSort(e.target.value as Sort)}>
-                <option value="recent">Recent</option>
-                <option value="oldest">Oldest</option>
-                <option value="messages">Most messages</option>
-              </Select>
-            </span>
+                and the page column already says which place you are in. A bare
+                Select (it carries its own chevron); commits on change. */}
+            <Select
+              aria-label="Sort chats"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as Sort)}
+              style={{ width: "auto" }}
+            >
+              <option value="recent">Recent</option>
+              <option value="oldest">Oldest</option>
+              <option value="messages">Most messages</option>
+            </Select>
             <Button variant="primary" onClick={newChat}>
               <Plus aria-hidden /> New chat
             </Button>
