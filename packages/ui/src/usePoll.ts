@@ -1,4 +1,36 @@
-// One way to poll, for the whole app.
+// One way to poll, for the whole app. DEPRECATED: the app does not poll for
+// server state any more, it reads it through `@tanstack/react-query`.
+//
+// WHAT THIS HOOK ACTUALLY IS, because the name has misled every reader of it:
+// a visibility-aware interval. It runs a function on a timer, pauses while the
+// document is hidden and runs it again on the way back. It fetches nothing,
+// knows nothing about requests, and RETURNS VOID -- so every caller that used
+// it to read the server hand-rolled its own state for the data, the loading
+// flag and the error, and several fired two or three requests per tick into
+// independent setStates, which is how one screen came to show three lists from
+// three different ticks.
+//
+// The query layer replaced that: 21 of the 23 call sites in Workshop moved onto
+// it (`frontend/src/lib/queryClient.ts`, which teaches the focus manager the
+// same `visibilitychange` + `focus` pair this hook listens on, so nothing was
+// lost in the move). Do not add a caller. A new server read is a query.
+//
+// TWO CALLERS REMAIN, and neither is a poll of a cacheable fact:
+//
+//   * the chat's socket re-attach (`Chat.tsx`) makes no request at all -- it
+//     re-opens an EventSource for a run the server has already said is in
+//     flight -- and it wants exactly the pause-and-catch-up this hook gives.
+//     A query cannot express a timer that fetches nothing.
+//
+//   * the chat transcript's backstop sync (`useThreadLog.ts`) IS periodic
+//     network access, and it is the one thing genuinely blocking deletion. It
+//     is not cache-shaped: a query entry holds one response per key, while that
+//     value is the FOLD of an initial tail page, every `after=<cursor>` page
+//     since, every `before=` page scrolled in, and every SSE frame. What makes
+//     re-entering a thread cheap is the cached CURSOR, and a query
+//     revalidation would re-fetch the tail instead, truncating a thread the
+//     operator had scrolled up in and jumping the restored scroll position.
+//     Retiring this hook means restructuring that read first, not porting it.
 //
 // Workshop is installed as a PWA and is never closed, so "poll every N seconds
 // while mounted" is not the harmless thing it looks like: a backgrounded phone
@@ -35,6 +67,11 @@ export function pollShouldRun(
 
 /**
  * Call `fn` every `intervalMs` while mounted.
+ *
+ * @deprecated Server state is read through the query layer
+ * (`frontend/src/lib/queryClient.ts`), not polled. This is a visibility-aware
+ * interval that fetches nothing; see this module's header for the two callers
+ * that legitimately remain and what has to change before it can be deleted.
  *
  * @param opts.enabled     poll only while true. Default true. Flipping it to
  *                         false stops the timer; flipping it back runs `fn`

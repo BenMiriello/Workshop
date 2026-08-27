@@ -188,6 +188,28 @@ _TIMER_ALLOW: tuple[tuple[str, str, str], ...] = (
     ),
 )
 
+# A `usePoll` THAT IS NOT A POLL. Same reasoning as `_TIMER_ALLOW` above,
+# applied to the hook: `usePoll` is not a fetching mechanism, it is a
+# visibility-aware interval that happens to be named after its commonest use
+# (read its own header -- "what this does NOT replace: timers that are not
+# polls"). So a caller can be on it while making no server read at all, and
+# counting that caller makes the number say there is a read left to migrate
+# when there is not.
+#
+# Matched against a WINDOW like the timer list, because the callback body that
+# proves the point is on the following lines, and keyed by a line PATTERN
+# rather than a number so it cannot go stale onto a different call.
+_POLL_ALLOW: tuple[tuple[str, str, str], ...] = (
+    (
+        "frontend/src/components/Chat.tsx",
+        r"stateRef\.current\.activeTurn\?\.turnId",
+        "not a read: re-opens the SSE socket for a run the SERVER already said is "
+        "in flight. It fetches nothing -- the fact it acts on arrives on the "
+        "transcript sync -- and it needs the pause-while-hidden and run-on-return "
+        "that this hook exists for, which a query cannot express.",
+    ),
+)
+
 # Exempt ANYWHERE, because the pattern itself proves the callback is local
 # state and cannot reach the network. No path, so an app's own timer needs no
 # platform file to name it. Keep these narrow: each one names a specific state
@@ -201,6 +223,9 @@ _TIMER_ALLOW_ANYWHERE: tuple[tuple[str, str], ...] = (
 # The setInterval line plus the two after it: the callback body that proves a
 # timer is local is usually not on the line that opens it.
 _WINDOW = 3
+# `usePoll(` is usually followed by an inline lambda, so the body that proves a
+# caller is not making a request is several lines down, not one.
+_POLL_WINDOW = 6
 
 
 def _allow_rules() -> list[tuple[str | None, re.Pattern[str], str]]:
@@ -254,7 +279,9 @@ def scan(root: Path = ROOT) -> dict:
     scans. Re-deriving it per tree would let the exemption set shrink underneath
     the base scan and report a regression that is really the allowlist moving."""
     rules = _allow_rules()
+    poll_rules = _POLL_ALLOW
     polls: list[dict] = []
+    exempt_polls: list[dict] = []
     intervals: list[dict] = []
     inline_keys: list[dict] = []
     exempt: list[dict] = []
@@ -276,7 +303,15 @@ def scan(root: Path = ROOT) -> dict:
             if stripped.startswith(("//", "*", "/*")):
                 continue
             if _USEPOLL.search(line):
-                polls.append({"file": rel, "line": i, "text": stripped})
+                window = "\n".join(lines[i - 1 : i - 1 + _POLL_WINDOW])
+                why = next(
+                    (w for path, pat, w in poll_rules
+                     if path == rel and re.search(pat, window)),
+                    None,
+                )
+                (exempt_polls if why else polls).append(
+                    {"file": rel, "line": i, "text": stripped, **({"why": why} if why else {})}
+                )
             if _INLINE_KEY.search(line) and not _is_key_module(rel):
                 inline_keys.append({"file": rel, "line": i, "text": stripped})
             if _SETINTERVAL.search(line):
@@ -313,6 +348,7 @@ def scan(root: Path = ROOT) -> dict:
         "intervals": intervals,
         "inline_keys": inline_keys,
         "exempt_timers": exempt,
+        "exempt_polls": exempt_polls,
         "stale_allowlist_entries": stale,
     }
 
@@ -462,6 +498,8 @@ def main() -> int:
           f"cache keys spelled at a call site, not built by a key module")
     print(f"  (exempt            {len(result['exempt_timers']):>4}  "
           f"non-poll timers, allowlisted in the checker)")
+    for e in result["exempt_polls"]:
+        print(f"  (exempt usePoll         {e['file']}:{e['line']} — {e['why'].split('.')[0]})")
 
     for s in result["stale_allowlist_entries"]:
         print(f"  stale allowlist entry, nothing matches it any more: "
