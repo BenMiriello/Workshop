@@ -5,7 +5,7 @@ import {
   CheckSquare, ChevronUp, FilePlus, FileText, FolderTree, MessageSquare,
   Plus, RefreshCw, Search,
 } from "lucide-react";
-import { Button, PageActionBar, Row, Stack, Select, Input, Textarea, Field, Modal, StateBlock, Skeleton, Tag, Checkbox, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, shortHttpError } from "@workshop/ui";
+import { Button, PageActionBar, PageHeader, Row, Stack, Select, Input, Textarea, Field, Modal, StateBlock, Skeleton, Tag, Checkbox, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, shortHttpError } from "@workshop/ui";
 import { scopeLabel } from "../lib/tasks";
 import { useIsWide } from "../lib/useMediaQuery";
 import { useDirectoryPage } from "../components/shell/directory";
@@ -479,6 +479,20 @@ function Library() {
           </div>
         </>,
         host,
+      )}
+      {/* THE PAGE HEADER, and it is the tree's, not the document's. `chrome`
+          answers false for both of the cases that used to be wrong: a phone,
+          where bar one and the selected tab already say all of this, and an
+          OPEN DOCUMENT on either viewport, where the document's own header is
+          the header and this was landing on top of it (D4).
+
+          It carries no actions. Those are on the tree's toolbar in the page
+          column, next to the tree they act on. */}
+      {chrome.header && (
+        <PageHeader
+          title="Memory"
+          sub="The notes and documents this system knows, by scope. What agents read and write."
+        />
       )}
       {/* THE PAGE HAS NO CONTROL ROW ANY MORE (D5). It used to draw Search,
           Refresh and New note here, above the tree on a desktop -- and, because
