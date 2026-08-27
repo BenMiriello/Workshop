@@ -3293,12 +3293,18 @@ p.chat-workpanel__note { margin: 0; }
   width: 100%; max-width: 900px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  /* THE ROW HEIGHT IS THE ONLY THING THAT SETS A CARD'S SIZE, and it is set so
-     a card holds a useful stretch of its list -- about nine one-line rows, or
-     five of the two-line blocks. It was 236px, which held four and three, and a
-     dashboard that showed four of a hundred and thirty chats is a dashboard
-     nobody can use. Past the fold the card SCROLLS; it does not drop rows. */
-  grid-auto-rows: 372px;
+  /* THE ROW HEIGHT IS THE ONLY THING THAT SETS A CARD'S SIZE, and it is set
+     from the VIEWPORT, because the grid is always two columns here (the 900px
+     content cap over a 340px minimum) and therefore always two rows: half the
+     screen, less the chrome above and a margin below, is exactly one card.
+
+     It was a flat 236px, which held four one-line rows and three blocks while
+     leaving a third of a tall screen empty under the grid -- a dashboard that
+     showed four of a hundred and thirty chats and then stopped. The clamp keeps
+     it sane at both ends: never shorter than a useful stretch on a laptop, and
+     never a 700px box on a tall monitor. Past the fold the card SCROLLS; it
+     does not drop rows. */
+  grid-auto-rows: clamp(320px, calc((100vh - 190px) / 2), 520px);
   gap: 14px;
   align-content: start;
 }
