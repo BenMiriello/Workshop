@@ -441,3 +441,56 @@ Filed 2026-08-27, all in the `development` scope:
 - MEM-11 `8e8e46300577472190a809285acbc8ea`  index readout -> Settings (D10)
 - MEM-12 `378dd09d321a4f588edc0c21a1172628`  retitle rewrites wikilinks (D11)
 - MEM-13 `3732b1225fb6479d819567e5a370a7eb`  home-path purity check (D12)
+
+### Outcome
+
+All thirteen closed 2026-08-27, in four commits on
+`feat/client-state-consolidation`. Verified: `npm run typecheck` clean,
+`bash scripts/check_design.sh` clean, 1,439 frontend tests and 441 kit
+tests pass, `check_no_app_names.py` exits 0 against a re-pinned baseline,
+and the backend suite shows zero new failures against the base commit
+(27 pre-existing failures, unchanged; one fixed).
+
+Screenshots read at 1440x900 and 390x800, per frontend/CLAUDE.md. Two
+defects were found that way and nothing else would have caught either:
+
+- `DocumentBar`'s `path` had always been DOCUMENTED as hidden below
+  900px and no rule did it. It went unnoticed because the only phone
+  caller passed `onBack`, which replaces the path and the name with the
+  combined back control. A note passes no `onBack`, so at 390px its
+  scope ate the width its title needed and the header read
+  "De... A card that files a d...".
+- The Files page kept a Search button beside its search field and a
+  Refresh beside that, and the three did not line up: the same
+  mismatched-controls defect that this whole pass is about, reproduced
+  in the page I had just moved.
+
+Filed, not built:
+
+- MEM-14 `16a7933d49ee468ca489225bde0f68f2` fold `.runtime/learnings`
+  into the note store (D2's remaining half).
+- MEM-15 `a6d994a9561d4502b9c5bb9419c8f4c7` rename the API prefixes to
+  one word (D2's code half).
+
+### Two calls left with the operator
+
+Neither blocks anything; both are recorded here because they are his to
+make, not mine.
+
+1. **`role:reviewer`.** It is a whole scope KIND -- branches in the
+   parser, the labeller, the prompt injector and the layered read -- for
+   two hand-written files totalling 180 bytes, committed once on
+   2026-07-31 and never written at runtime. It is now LABELLED rather
+   than removed, because deleting a scope kind deletes knowledge somebody
+   wrote deliberately, and that is a decision rather than a cleanup. If
+   the role axis is not going to carry anything, retiring it removes a
+   concept from four places.
+
+2. **Nothing moved on disk.** `Documents` is still a synthetic root
+   sibling of the scopes, and `shared/knowledge/` is still where
+   `ownership.py:149-153` pins it. Section 1.6 is the measurement behind
+   that: 42 backlink edges with no rewrite path, 15,909 index chunks
+   keyed on filesystem paths, and `workshop:doc/` resolving against the
+   repo root rather than `docs/`, so moving a file under `docs/` kills
+   every ref to it silently. The operator's own instruction was to leave
+   it if moving would break references. It would.
