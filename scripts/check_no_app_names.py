@@ -566,7 +566,14 @@ def main() -> int:
                 "extraction (stage 7), imports at the AppSpec seams (stage 4), "
                 "home_path_sites when every path in $HOME comes from config. "
                 "`watched` is sticky on purpose, so an app that leaves the catalog "
-                "is still scanned for leftovers."
+                "is still scanned for leftovers. "
+                "NOTE 2026-08-27: content/imports/literals were re-pinned at a "
+                "HIGHER measured value on this date, once, because the scan area "
+                "was widened from six directories to the tracked tree and an "
+                "app-content file stopped short-circuiting out of all four checks. "
+                "Nobody added those lines; the gate could not previously see them. "
+                "See `raised` below for the full reason, which prints on every run "
+                "until each count comes back down."
             ),
             "watched": result["watched"],
             "content_files": result["content_files"],

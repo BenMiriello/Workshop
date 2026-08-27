@@ -61,6 +61,7 @@
 #   scripts/check_no_hardcoding.sh --all        # include docs/ and *.md
 #   scripts/check_no_hardcoding.sh --json       # machine-readable
 #   scripts/check_no_hardcoding.sh --since REV  # gate mode: fail only on THIS run's regression
+#   scripts/check_no_hardcoding.sh --tree DIR   # scan DIR, needles from THIS machine
 #
 # Exit 0 = clean, 1 = violation(s), 2 = the --since ref could not be read.
 
@@ -71,12 +72,15 @@ cd "$WORKSHOP" || { echo "check_no_hardcoding: workshop unreachable"; exit 1; }
 INCLUDE_DOCS=0
 AS_JSON=0
 SINCE=""
+TREE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --all)     INCLUDE_DOCS=1 ;;
     --json)    AS_JSON=1 ;;
     --since)   SINCE="${2:-}"; shift ;;
     --since=*) SINCE="${1#--since=}" ;;
+    --tree)    TREE="${2:-}"; shift ;;
+    --tree=*)  TREE="${1#--tree=}" ;;
   esac
   shift
 done
@@ -223,7 +227,21 @@ scan_tree() { # $1=dir  $2=NOW|BASE
   done
 }
 
-scan_tree "$WORKSHOP" NOW
+# `--tree DIR`: SCAN somewhere else, but ASK THIS MACHINE who it is.
+#
+# For scripts/check_fresh_clone.sh, which scans a clone. Needles must still come
+# from the host, because `git clone` does not copy `.git/config` and this
+# checkout sets `user.name` repo-locally: needles re-derived inside a clone are
+# a shorter list, so the clone under-reports and looks cleaner than the tree it
+# came from. That is "the needle list shrinking underneath the scan", the same
+# failure delta mode already avoids by computing needles once. Measured
+# 2026-08-24: 6 identity hits in a clone against 25 on the host.
+SCAN_TARGET="$WORKSHOP"
+if [[ -n "$TREE" ]]; then
+  [[ -d "$TREE" ]] || { echo "check_no_hardcoding: --tree '$TREE' is not a directory" >&2; exit 2; }
+  SCAN_TARGET="$TREE"
+fi
+scan_tree "$SCAN_TARGET" NOW
 
 # --- delta mode --------------------------------------------------------------
 DELTA=0

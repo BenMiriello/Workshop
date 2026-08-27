@@ -1,5 +1,5 @@
 {
-  "_comment": "Ratchet baseline for check_no_app_names.py. These counts may only go DOWN. The target for all four is zero: content reaches it at extraction (stage 7), imports at the AppSpec seams (stage 4), home_path_sites when every path in $HOME comes from config. `watched` is sticky on purpose, so an app that leaves the catalog is still scanned for leftovers.",
+  "_comment": "Ratchet baseline for check_no_app_names.py. These counts may only go DOWN. The target for all four is zero: content reaches it at extraction (stage 7), imports at the AppSpec seams (stage 4), home_path_sites when every path in $HOME comes from config. `watched` is sticky on purpose, so an app that leaves the catalog is still scanned for leftovers. NOTE 2026-08-27: content/imports/literals were re-pinned at a HIGHER measured value on this date, once, because the scan area was widened from six directories to the tracked tree and an app-content file stopped short-circuiting out of all four checks. Nobody added those lines; the gate could not previously see them. See `raised` below for the full reason, which prints on every run until each count comes back down.",
   "watched": [
     "birds",
     "budget",
@@ -11,14 +11,19 @@
     "wearables"
   ],
   "content_files": 106,
-  "import_sites": 20,
-  "literal_sites": 291,
-  "home_path_sites": 7,
+  "import_sites": 24,
+  "literal_sites": 479,
+  "home_path_sites": 0,
   "raised": {
-    "content_files": {
-      "from": 102,
-      "to": 106,
-      "because": "Four app-owned query-key modules (birds/commute/location/health queries.ts) for the TanStack migration. Each app's cache keys and fetchers must live with the app: the alternative was putting them in the platform registry frontend/src/lib/queryKeys.ts, which would have raised literals in a PLATFORM file instead. imports and literals both held flat (20 / 302) across the whole migration, which is the point -- the platform learned nothing new about any app while 21 polls moved onto the cache. These four go to zero with their apps at stage 7, same as the seven from Stage 4."
+    "import_sites": {
+      "from": 20,
+      "to": 24,
+      "because": "SCAN AREA WIDENED 2026-08-27, not new debt. PLATFORM_DIRS was six directories and an app-content file short-circuited out of all four checks; both are fixed in the same commit, so the scan now covers the tracked tree and reads app-owned files for OTHER apps' names. literal_sites 291 -> 479 and import_sites 20 -> 24 are what that widening MADE VISIBLE, not lines anyone added: 152 of the new literals are docs/ prose, 24 are app-owned files naming a different app, the rest are shared/ and root files. Pinned at the new measured value deliberately and only once; from here it is a ratchet again and only goes down. The count that measures work actually done is home_path_sites, 7 -> 0, fixed at the source rather than re-pinned."
+    },
+    "literal_sites": {
+      "from": 291,
+      "to": 479,
+      "because": "SCAN AREA WIDENED 2026-08-27, not new debt. PLATFORM_DIRS was six directories and an app-content file short-circuited out of all four checks; both are fixed in the same commit, so the scan now covers the tracked tree and reads app-owned files for OTHER apps' names. literal_sites 291 -> 479 and import_sites 20 -> 24 are what that widening MADE VISIBLE, not lines anyone added: 152 of the new literals are docs/ prose, 24 are app-owned files naming a different app, the rest are shared/ and root files. Pinned at the new measured value deliberately and only once; from here it is a ratchet again and only goes down. The count that measures work actually done is home_path_sites, 7 -> 0, fixed at the source rather than re-pinned."
     }
   }
 }

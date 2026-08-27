@@ -627,6 +627,30 @@ fi
 FRONTEND_STATE_CHECK="skipped"
 _delta_check FRONTEND_STATE_CHECK "check_frontend_state.py" "frontend_state_baseline.json"
 
+# 4.6c-x THE FRESH-CLONE ASSERTION: what a stranger's clone actually contains.
+# UNCONDITIONAL, like the two whole-tree checks above it, and for the same
+# reason -- the gate this one supplements (check_pluggable_apps.sh) was scoped
+# to five files and reported "clean" for five weeks while the violation grew.
+#
+# This is the check `docs/INDEX-knowledge-2026-08-26.md:542` has cited as the
+# only acceptable evidence that app separation is done, and which did not exist
+# until 2026-08-27. It clones the repo and asks what came out, which is the one
+# question no in-tree grep can answer: from inside an install, an untracked
+# file, a gitignored directory and a tracked one all look the same.
+#
+# Three of the five assertions in the design doc are implemented (no app
+# source, no personal data, no hardcoded identity INCLUDING docs); the two that
+# need a build and a database are not, and the script prints them as NOT
+# IMPLEMENTED on every run rather than letting an exit code imply them.
+#
+# `--since` because absolute mode fails today on 106 inherited app-source files
+# and 210 inherited doc references -- gating a worker on that is the documented
+# cause of 2,066 loop jobs with tasks_done: 0. Absolute mode is what a human
+# runs before claiming separation is done: `bash scripts/check_fresh_clone.sh`.
+# Costs ~14s (two clones); see the script's header.
+FRESH_CLONE_CHECK="skipped"
+_delta_check FRESH_CLONE_CHECK "check_fresh_clone.sh"
+
 # 4.6c-iv response_model= on every route (ADR 0023, §2.4). Gated on touching a
 # routes/ file specifically (narrower than the two checks above, because this
 # one IS scoped per-file) and uses `--only-changed` exactly like
@@ -902,6 +926,10 @@ if [[ "$HARDCODE_DOCS_CHECK" == "fail" ]]; then
   REASONS+=("hardcoded_identity_in_docs")
   COMPLETE="false"
 fi
+if [[ "$FRESH_CLONE_CHECK" == "fail" ]]; then
+  REASONS+=("fresh_clone_regression")
+  COMPLETE="false"
+fi
 if [[ "$ONE_DEF_CHECK" == "fail" ]]; then
   REASONS+=("duplicate_definitions:${ONE_DEF_COUNT}")
   COMPLETE="false"
@@ -1054,6 +1082,9 @@ out = {
     # used to pass. Separate verdict so "code clean, docs dirty" cannot read
     # as clean. See section 4.6b-ii.
     "hardcoding_docs": os.environ.get("HARDCODE_DOCS_CHECK", "skip"),
+    # What a `git clone` of this repo actually hands a stranger. Three of five
+    # assertions implemented; the script names the other two on every run.
+    "fresh_clone": os.environ.get("FRESH_CLONE_CHECK", "skipped"),
     # T6 ratchet (coherence-overhaul-2026-08-16.md §7). `one_definition` gates
     # (see REASONS above); `occupancy_notice` and `doc_status_notice` are pure
     # visibility, never affecting `complete` — R2 is explicit that a
