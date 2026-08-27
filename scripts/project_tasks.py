@@ -208,14 +208,55 @@ def _slim(t: dict | None) -> dict:
     }
 
 
-def _opt_int(v):
-    """An optional int CLI arg: empty string / None -> None (no fence / no pid)."""
-    if v is None or v == "":
+# What OMITTING each flag means, so the error can say it rather than make the
+# caller guess. Absence is a supported choice at every one of these; an empty
+# value is not a way to express it.
+_ABSENCE_MEANS = {
+    "--expect-claim-token": "Omit the flag entirely to make an operator write, which is never fenced",
+    "claim_token": "A heartbeat has no unfenced form; pass the token the claim returned",
+    "--pid": "Omit the flag entirely to record no pid",
+}
+
+
+def _opt_int(v, flag: str):
+    """An optional int CLI arg: OMITTED -> None. PRESENT -> must parse, or error.
+
+    Omitting the flag is a real, supported choice and keeps its meaning exactly:
+    for `--expect-claim-token` it means "this is an operator write, do not fence
+    it", which is what lets an operator take a ticket back from a worker; for
+    `--pid` it means "no pid recorded". A flag that is PRESENT but unparseable is
+    a different thing, a caller bug, and is refused.
+
+    THE EMPTY STRING IS THE CASE THAT MATTERS, because that is what a shell
+    produces from "${VAR:-}" when VAR is unset, and every fence call site is
+    written that way. This used to map "" to None, which did not merely fail to
+    fence: `tasks.update` reads `expect_claim_token is None` as an operator
+    write, so an empty token SILENTLY UPGRADED the call's authority past what it
+    asked for. It got worse from there, because update's Fix 1 then saw an
+    unfenced material edit to a ticket a worker held and bumped the generation,
+    fencing out the very run that made the call while its status change still
+    landed. Both halves were silent: nothing logged, and the exit code was 0, so
+    a caller could not tell a fence that passed from a fence never applied.
+
+    THE SAME COERCION ON `--pid` was deliberately considered and gets the same
+    answer. A malformed pid read as "no pid recorded" changes which tickets
+    `reclaim` considers stale, so it is an error too. Only true absence is
+    optional, and for the same reason in both cases: absence is a decision the
+    caller made, an unparseable value is one it did not.
+    """
+    if v is None:
         return None
+    s = str(v).strip()
+    if not s:
+        raise ValueError(
+            f"{flag} was given an empty value. {_ABSENCE_MEANS.get(flag, 'Omit the flag to leave it unset')}, "
+            f"but an empty value is not the way to say so: it used to be read as "
+            f"absence silently, which for a fence meant the call was promoted to an "
+            f"operator write with more authority than it asked for.")
     try:
-        return int(v)
+        return int(s)
     except (TypeError, ValueError):
-        return None
+        raise ValueError(f"{flag} expects an integer, got {v!r}")
 
 
 def main(argv: list[str]) -> int:
@@ -357,16 +398,18 @@ def main(argv: list[str]) -> int:
             t = tasks.update(root, a.task_id, status=a.status, job_id=a.job_id,
                              blocked_reason=a.reason,
                              restore_attempt=bool(getattr(a, "restore_attempt", False)),
-                             expect_claim_token=_opt_int(a.expect_claim_token))
+                             expect_claim_token=_opt_int(a.expect_claim_token,
+                                                         "--expect-claim-token"))
             print(json.dumps(_slim(t)))
             return 0
         if a.cmd == "claim":
             t = tasks.claim(root, a.task_id, a.job_id, assignee=a.assignee,
-                            pid=_opt_int(a.pid))
+                            pid=_opt_int(a.pid, "--pid"))
             print(json.dumps(_slim(t)))
             return 0
         if a.cmd == "heartbeat":
-            t = tasks.heartbeat(root, a.task_id, _opt_int(a.claim_token),
+            t = tasks.heartbeat(root, a.task_id,
+                                _opt_int(a.claim_token, "claim_token"),
                                 assignee=a.assignee)
             print(json.dumps(_slim(t)))
             return 0
@@ -395,7 +438,8 @@ def main(argv: list[str]) -> int:
                     request["proposal"] = {"uri": a.proposal_uri, "verb": a.proposal_verb}
             t = tasks.update(root, a.task_id, status="blocked", blocked_reason=a.reason,
                              blocked_request=request,
-                             expect_claim_token=_opt_int(a.expect_claim_token))
+                             expect_claim_token=_opt_int(a.expect_claim_token,
+                                                         "--expect-claim-token"))
             print(json.dumps(_slim(t)))
             return 0
         if a.cmd == "set-awaiting":
@@ -406,7 +450,8 @@ def main(argv: list[str]) -> int:
             files = [l.strip() for l in sys.stdin.read().splitlines() if l.strip()]
             bad = tasks.enforce_touches(
                 root, a.task_id, files, job_id=a.job_id,
-                expect_claim_token=_opt_int(a.expect_claim_token))
+                expect_claim_token=_opt_int(a.expect_claim_token,
+                                            "--expect-claim-token"))
             print(json.dumps({"violations": bad, "blocked": bool(bad)}))
             return 0
     except ValueError as e:
