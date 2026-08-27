@@ -1,101 +1,118 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { MapPin, Trash2, Eye, EyeOff, Copy, Check } from "lucide-react";
-import { Button, ConfirmDialog, StatusDot, SettingsSection, SettingsRow as Row, timeAgo, usePoll } from "@workshop/ui";
+import { MapPin, Trash2, Eye, EyeOff, Copy, Check, ArrowUpRight } from "lucide-react";
+import {
+  Button, ConfirmDialog, Notice, Skeleton, StatusDot,
+  SettingsSection, SettingsRow as Row, timeAgo,
+} from "@workshop/ui";
+import { useClearLocationHistory, useLatestLocation } from "./queries";
 
-// Location app settings — Owntracks status + privacy. Moved verbatim out of the
-// platform Settings page (Phase 5 settings split) so it lives inside the app it
-// configures. Renders inside the Location page's <AppSettings> slot.
-
-type LocationLatest = {
-  ts?: string;
-  lat?: number;
-  lng?: number;
-  accuracy_m?: number;
-  source?: string;
-} | null;
+// Location app settings: Owntracks status + privacy. Renders inside the
+// Location page's <AppSettings> slot, and also stands alone on the platform
+// Settings page.
+//
+// IT READS THE SAME CACHE ENTRY AS THE PAGE AROUND IT. This panel used to poll
+// `/api/location/latest` on its own 30s timer into its own `useState`, while
+// the page it renders inside polled the same URL on another one. Two timers on
+// one fact meant the position quoted here and the position quoted six inches
+// above it could be a full interval apart. Both now call `useLatestLocation()`
+// (./queries.ts), so there is one key, one value, and no way for the two to
+// disagree. The clear-history write is shared the same way, so the panel and
+// the page cannot invalidate different things.
 
 export default function LocationSettings() {
-  const [latest, setLatest] = useState<LocationLatest>(null);
   const [, setTick] = useState(0);
   const [confirmClear, setConfirmClear] = useState(false);
-  const [clearing, setClearing] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/location/latest");
-      const j = r.ok ? await r.json() : null;
-      setLatest((j as LocationLatest) || null);
-    } catch {
-      setLatest(null);
-    }
-  }, []);
-
-  usePoll(load, 30_000);
+  const latestQ = useLatestLocation();
+  const clear = useClearLocationHistory();
+  const latest = latestQ.data ?? null;
 
   // Relative "last ping" label re-render, not a server read: pausing it while
-  // hidden is harmless and it is not what usePoll is for.
+  // hidden is harmless and it is not what the poll is for.
   useEffect(() => {
     const tick = setInterval(() => setTick((x) => x + 1), 10_000);
     return () => clearInterval(tick);
   }, []);
 
   const ageS = latest?.ts ? Math.max(0, Math.round((Date.now() - Date.parse(latest.ts)) / 1000)) : null;
-  const stale = ageS != null && ageS > 30 * 60; // > 30min with no ping → likely a problem
-  const noData = !latest?.ts;
-
-  const onClearHistory = async () => {
-    setClearing(true);
-    try {
-      await fetch("/api/location/history", { method: "DELETE" });
-      await load();
-    } finally {
-      setClearing(false);
-      setConfirmClear(false);
-    }
-  };
+  const stale = ageS != null && ageS > 30 * 60; // > 30min with no ping -> likely a problem
 
   return (
     <SettingsSection icon={MapPin} title="Location">
       <Row label="status">
-        {noData ? (
-          <StatusDot status="danger">no data, Owntracks not publishing yet</StatusDot>
-        ) : stale ? (
-          <StatusDot status="warn">stale ({timeAgo(latest!.ts!)}), check Owntracks app</StatusDot>
+        {latestQ.isPending ? (
+          <Skeleton width="14rem" />
+        ) : latest?.ts ? (
+          stale ? (
+            <StatusDot status="warn">stale ({timeAgo(latest.ts)}), check Owntracks app</StatusDot>
+          ) : (
+            <StatusDot status="ok">live · last ping {timeAgo(latest.ts)}</StatusDot>
+          )
+        ) : latestQ.isError ? (
+          // NOT "no data": a 200 with a null body means nothing has ever been
+          // recorded, a failed request means the panel does not know. The line
+          // below says which one this is.
+          <span className="ws-muted">unknown</span>
         ) : (
-          <StatusDot status="ok">live · last ping {timeAgo(latest!.ts!)}</StatusDot>
+          <StatusDot status="danger">no data, Owntracks not publishing yet</StatusDot>
         )}
       </Row>
       <Row label="source">{latest?.source || "–"}</Row>
       {latest?.lat != null && (
         <Row label="position">
           <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
-            {latest.lat.toFixed(5)}, {latest.lng?.toFixed(5)}
+            {latest.lat.toFixed(5)}, {latest.lng.toFixed(5)}
             {latest.accuracy_m != null && ` · ±${Math.round(latest.accuracy_m)}m`}
           </span>
         </Row>
       )}
+      {/* A LINE, not a region: the rest of the panel is still on screen and one
+          thing beside it went wrong. A sibling of the Row rather than a child,
+          because SettingsRow wraps its children in a span and Notice is a div. */}
+      {latestQ.isError && (
+        <Notice
+          tone="error"
+          where="/api/location/latest"
+          action={<Button size="sm" variant="ghost" onClick={() => void latestQ.refetch()}>Retry</Button>}
+        >
+          Could not load the latest position.
+        </Notice>
+      )}
       <Row label="iOS app">
-        <a href="https://owntracks.org/booklet/features/ios/" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
+        <a className="ws-link" href="https://owntracks.org/booklet/features/ios/" target="_blank" rel="noopener noreferrer">
           Owntracks
         </a>
       </Row>
       <OwntracksCredentials />
       <Row label="history">
-        <Link to="/apps/location" style={{ color: "var(--accent)" }}>full history viewer ↗</Link>
+        <Link className="ws-link" to="/apps/location">
+          full history viewer <ArrowUpRight size={14} strokeWidth={1.8} aria-hidden />
+        </Link>
         {" · "}
-        <Button size="sm" variant="danger-ghost" onClick={() => setConfirmClear(true)}>
+        <Button size="sm" variant="danger-ghost" onClick={() => { clear.reset(); setConfirmClear(true); }}>
           <Trash2 aria-hidden /> Clear all
         </Button>
       </Row>
       <ConfirmDialog
         open={confirmClear}
         onCancel={() => setConfirmClear(false)}
-        onConfirm={onClearHistory}
+        onConfirm={() => clear.mutate(undefined, { onSuccess: () => setConfirmClear(false) })}
         title="Clear all location history?"
-        body="Every recorded position is deleted. This can't be undone."
+        body={
+          <>
+            Every recorded position is deleted. This can't be undone.
+            {/* The form is right here, so a rejected submit is a line inside it,
+                never a region (frontend/CLAUDE.md, "A region or a line"). The
+                write used to be fire and forget: a failed DELETE closed the
+                dialog and said nothing. */}
+            {clear.isError && (
+              <Notice tone="error" detail={clear.error.message}>Nothing was deleted.</Notice>
+            )}
+          </>
+        }
         confirmLabel="Clear history"
-        busy={clearing}
+        busy={clear.isPending}
       />
     </SettingsSection>
   );

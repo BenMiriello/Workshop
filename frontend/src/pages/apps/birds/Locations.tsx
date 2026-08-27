@@ -1,16 +1,30 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapPin, Star, Smartphone, RotateCcw, Pencil, Check, X, Trash2, ChevronRight } from "lucide-react";
-import { useShowNonBird, nonBirdQuery } from "./settings";
-import { API, jget } from "./ui";
+import { Button, Notice, Skeleton, StateBlock } from "@workshop/ui";
+import { useShowNonBird } from "./settings";
 import AddressPicker from "./AddressPicker";
 import type { Place } from "./geocode";
-import { usePoll } from "@workshop/ui";
+import {
+  birdsKeys, fetchHome, fetchLocations, fetchLocationsArchived,
+  mergeLocations, removeLocation, restoreLocation, saveLocation, useSetHome,
+  type HomeRead,
+} from "./queries";
 
 // All the places birds have been heard. Mirrors the Devices page: each place is a
 // read-only card with a per-card Edit pencil that opens an INLINE editor (no
 // separate page), a home star INSIDE the card that toggles on/off, and a soft
 // remove that keeps every detection and is restorable.
+//
+// THREE FACTS, THREE QUERIES. This page ran one `usePoll` that fired two reads
+// into two `useState`s with `.catch(() => {})` on both, so the live list and the
+// archive could be from different ticks and a backend that had been down for ten
+// minutes looked like a page that simply never changed. The live list, the
+// archive and "which place is home" are separate facts with separate lifetimes,
+// and they are now separate cache entries on the keys in `queries.ts` -- the same
+// keys the scope provider and the Devices page read, so the list is fetched once
+// for all three.
 
 const REFRESH_MS = 8000;
 
@@ -18,32 +32,68 @@ type Loc = {
   id: number; name: string; lat: number | null; lon: number | null; address?: string | null;
   detections: number; species: number; last_ts: string | null; devices: string[];
 };
+type LocList = { locations: Loc[] };
+
+// One empty array, so "no rows yet" is referentially stable and an effect that
+// depends on the list does not re-run on every render before the first response.
+const NO_LOCS: Loc[] = [];
 
 export default function Locations() {
-  const [locs, setLocs] = useState<Loc[]>([]);
-  const [removed, setRemoved] = useState<Loc[]>([]);
-  const [home, setHome] = useState<string | null>(null);
-  const [editing, setEditing] = useState<number | null>(null);
+  const qc = useQueryClient();
   const [showNonBird] = useShowNonBird();
-  const nb = nonBirdQuery(showNonBird);
+  const nb = { includeNonBird: showNonBird };
+  const [editing, setEditing] = useState<number | null>(null);
+  const [restoreErr, setRestoreErr] = useState<string | null>(null);
   const [params] = useSearchParams();
   const focusId = Number(params.get("id") || 0);
   const focusCard = useRef<HTMLElement | null>(null);
 
-  const load = useCallback(() => {
-    jget<{ locations: Loc[]; home: string | null }>(`/locations?_=1${nb}`)
-      .then((d) => { setLocs(d.locations); setHome(d.home); }).catch(() => {});
-    jget<{ locations: Loc[] }>(`/locations?archived=1${nb}`)
-      .then((d) => setRemoved(d.locations)).catch(() => {});
-  }, [nb]);
-  usePoll(load, REFRESH_MS);
+  // The live list. It owns its own cadence (the counts move as detections land),
+  // so no staleness window sits over it and it does not retry: a failed tick is
+  // followed by the next tick, which is what the poll it replaces did.
+  const live = useQuery({
+    queryKey: birdsKeys.locations(nb),
+    queryFn: () => fetchLocations<LocList>(nb),
+    refetchInterval: REFRESH_MS,
+    staleTime: 0,
+    retry: false,
+    // Toggling the non-bird filter changes the key. Keep the rows on screen
+    // while the new ones load rather than blanking the page.
+    placeholderData: keepPreviousData,
+  });
+
+  // The archive does NOT get a cadence. Nothing moves in it on its own: a row
+  // appears when this page removes a place and disappears when it restores one,
+  // and both of those invalidate it. It still re-reads when the tab comes back
+  // (the client's global focus handling), so a change made on another device is
+  // picked up on return instead of costing a request every eight seconds.
+  const archived = useQuery({
+    queryKey: birdsKeys.locationsArchived(nb),
+    queryFn: () => fetchLocationsArchived<LocList>(nb),
+    retry: false,
+    placeholderData: keepPreviousData,
+  });
+
+  // Home is one shared setting, and this is the ONLY thing the star reads. It
+  // also arrives inside the `/locations` payload, and reading it from there is
+  // what let a list refetch overwrite an optimistic toggle (see `useSetHome`).
+  // A setting only the operator changes needs no poll of its own: the write
+  // updates it, and the client re-reads on focus.
+  const homeQ = useQuery({ queryKey: birdsKeys.home(), queryFn: () => fetchHome<HomeRead>() });
+  const setHome = useSetHome();
+
+  const locs = live.data?.locations ?? NO_LOCS;
+  const removed = archived.data?.locations ?? NO_LOCS;
+  const home = homeQ.data?.home ?? null;
 
   // Arrived at via a place's edit pencil (?id=…, e.g. from the Place dropdown):
-  // open that card's editor and bring it into view — same as Devices' ?token=.
-  const consumedFocus = useRef(false);
+  // open that card's editor and bring it into view, the same as Devices' ?token=.
+  // Keyed by the id it consumed rather than a boolean, so arriving at a SECOND
+  // place's pencil without leaving the page opens that one too.
+  const consumedFocus = useRef<number | null>(null);
   useEffect(() => {
-    if (focusId && !consumedFocus.current && locs.some((l) => l.id === focusId)) {
-      consumedFocus.current = true;
+    if (focusId && consumedFocus.current !== focusId && locs.some((l) => l.id === focusId)) {
+      consumedFocus.current = focusId;
       setEditing(focusId);
     }
   }, [focusId, locs]);
@@ -51,18 +101,14 @@ export default function Locations() {
     if (editing && focusCard.current) focusCard.current.scrollIntoView({ block: "center" });
   }, [editing]);
 
-  // Home is one shared setting. Clicking the star toggles it: set this place, or
-  // clear home entirely (empty source) when it is already home.
-  const toggleHome = useCallback((id: number, makeHome: boolean) => {
-    const fd = new FormData(); fd.append("source", makeHome ? `loc:${id}` : "");
-    setHome(makeHome ? `loc:${id}` : ""); // optimistic
-    fetch(`${API}/home`, { method: "POST", body: fd }).catch(() => {});
-  }, []);
+  const restore = (id: number) => {
+    setRestoreErr(null);
+    restoreLocation(id)
+      .then(() => qc.invalidateQueries({ queryKey: birdsKeys.locationsAll() }))
+      .catch((e) => setRestoreErr(String(e)));
+  };
 
-  const restore = useCallback((id: number) => {
-    const fd = new FormData(); fd.append("location_id", String(id));
-    fetch(`${API}/location/restore`, { method: "POST", body: fd }).then(() => setTimeout(load, 150)).catch(() => {});
-  }, [load]);
+  const listErr = live.isError ? String(live.error) : null;
 
   return (
     <div>
@@ -73,25 +119,79 @@ export default function Locations() {
         <Link to="/apps/birds/devices" className="btn sm"><Smartphone size={14} /> Devices</Link>
       </div>
 
-      <div style={{ display: "grid", gap: ".7rem" }}>
-        {locs.map((L) => (
-          <LocationCard key={L.id} L={L} isHome={home === `loc:${L.id}`}
-            editing={editing === L.id}
-            onEdit={() => setEditing(L.id)} onClose={() => setEditing(null)}
-            onToggleHome={(mk) => toggleHome(L.id, mk)}
-            onChanged={load} others={locs.filter((o) => o.id !== L.id)}
-            cardRef={editing === L.id ? focusCard : undefined} />
-        ))}
-        {locs.length === 0 && (
-          <p className="muted">No locations yet. Start listening on a device to create one.</p>
-        )}
-      </div>
+      {setHome.isError && (
+        <div style={{ marginBottom: ".7rem" }}>
+          <Notice tone="error" action={<Button size="sm" variant="ghost" onClick={() => setHome.reset()}>Dismiss</Button>}>
+            Could not change the home location. The star is back to what the server has.
+          </Notice>
+        </div>
+      )}
 
-      {removed.length > 0 && (
+      {/* A failed read with rows still on screen is a LINE beside them; a failed
+          read with nothing to show is the REGION below. */}
+      {listErr && live.data && (
+        <div style={{ marginBottom: ".7rem" }}>
+          <Notice tone="warn" action={<Button size="sm" variant="ghost" onClick={() => void live.refetch()}>Retry</Button>}>
+            These places are not refreshing.
+          </Notice>
+        </div>
+      )}
+
+      {listErr && !live.data ? (
+        <StateBlock
+          variant="error"
+          title="Couldn't load locations"
+          hint={<code>GET /api/birds/locations: {listErr}</code>}
+          action={<Button size="sm" onClick={() => void live.refetch()}>Retry</Button>}
+        />
+      ) : live.isPending ? (
+        <div style={{ display: "grid", gap: ".7rem" }}>
+          {[0, 1, 2].map((i) => <Skeleton key={i} style={{ height: 78 }} />)}
+        </div>
+      ) : locs.length === 0 ? (
+        <StateBlock
+          title="No locations yet"
+          hint="Start listening on a device. The first detection creates the place it was heard at."
+        />
+      ) : (
+        <div style={{ display: "grid", gap: ".7rem" }}>
+          {locs.map((L) => (
+            // THE KEY CARRIES THE EDITING FLAG ON PURPOSE. Opening the editor
+            // mounts a fresh card, so its draft is seeded once, from the record
+            // as it was at that moment. A refetch that changes the record under
+            // an OPEN editor cannot re-seed it, because nothing remounts: the
+            // effect that used to do the re-seeding threw away whatever the
+            // operator had typed whenever another device touched the same place.
+            <LocationCard key={editing === L.id ? `${L.id}:edit` : L.id}
+              L={L} isHome={home === `loc:${L.id}`}
+              editing={editing === L.id}
+              onEdit={() => setEditing(L.id)} onClose={() => setEditing(null)}
+              onToggleHome={(mk) => setHome.mutate(mk ? `loc:${L.id}` : "")}
+              others={locs.filter((o) => o.id !== L.id)}
+              cardRef={editing === L.id ? focusCard : undefined} />
+          ))}
+        </div>
+      )}
+
+      {(removed.length > 0 || archived.isError || restoreErr) && (
         <section style={{ marginTop: "1.5rem" }}>
           <div className="muted" style={{ fontSize: ".78rem", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: ".4rem" }}>
             Removed locations
           </div>
+          {archived.isError && (
+            <div style={{ marginBottom: ".5rem" }}>
+              <Notice tone="error" action={<Button size="sm" variant="ghost" onClick={() => void archived.refetch()}>Retry</Button>}>
+                Couldn't load removed locations.
+              </Notice>
+            </div>
+          )}
+          {restoreErr && (
+            <div style={{ marginBottom: ".5rem" }}>
+              <Notice tone="error" detail={restoreErr} action={<Button size="sm" variant="ghost" onClick={() => setRestoreErr(null)}>Dismiss</Button>}>
+                Could not restore that location.
+              </Notice>
+            </div>
+          )}
           <div style={{ display: "grid", gap: ".5rem" }}>
             {removed.map((L) => (
               <div key={L.id} className="card" style={{ padding: ".6rem .9rem", display: "flex", alignItems: "center", gap: ".6rem", opacity: 0.85 }}>
@@ -111,60 +211,58 @@ export default function Locations() {
   );
 }
 
-function LocationCard({ L, isHome, editing, onEdit, onClose, onToggleHome, onChanged, others, cardRef }: {
+function LocationCard({ L, isHome, editing, onEdit, onClose, onToggleHome, others, cardRef }: {
   L: Loc; isHome: boolean; editing: boolean;
   onEdit: () => void; onClose: () => void; onToggleHome: (makeHome: boolean) => void;
-  onChanged: () => void; others: { id: number; name: string }[]; cardRef?: React.RefObject<HTMLElement | null>;
+  others: { id: number; name: string }[]; cardRef?: React.RefObject<HTMLElement | null>;
 }) {
+  const qc = useQueryClient();
   const hasPlace = L.lat != null && L.lon != null;
   const needsAddress = !hasPlace;
+  // The draft, seeded from the record AT MOUNT, which the parent's key makes the
+  // moment the editor opened. There is no re-seeding effect and there must not
+  // be one: while this editor is open it is the only owner of these fields.
+  const [name, setName] = useState(L.name && L.name !== "Untitled location" ? L.name : "");
   // The "Address or GPS" field shows the ACTUAL address (not the display name);
   // the display name is its own field below.
-  const seedPlace = (): Place | null => hasPlace
+  const [place, setPlace] = useState<Place | null>(() => hasPlace
     ? { short: L.address || `${L.lat!.toFixed(5)}, ${L.lon!.toFixed(5)}`, label: L.address || "", lat: L.lat!, lon: L.lon! }
-    : null;
-  const [name, setName] = useState(L.name && L.name !== "Untitled location" ? L.name : "");
-  const [place, setPlace] = useState<Place | null>(seedPlace);
+    : null);
   const [confirmDel, setConfirmDel] = useState(false);
   const [mergeTarget, setMergeTarget] = useState("");
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  // Re-seed the draft whenever the editor opens (or the place changes under it).
-  useEffect(() => {
-    if (editing) {
-      setName(L.name && L.name !== "Untitled location" ? L.name : "");
-      setPlace(seedPlace());
-      setConfirmDel(false); setMergeTarget("");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, L.name, L.address, L.lat, L.lon]);
+  // A write, then the invalidation that used to be `setTimeout(load, 150)`. The
+  // editor stays OPEN on a failure and says so: it used to close in `.finally`,
+  // which looked exactly like a save that worked.
+  const run = (work: Promise<unknown>, invalidate: readonly (readonly unknown[])[]) => {
+    setBusy(true); setErr(null);
+    work
+      .then(() => {
+        for (const key of invalidate) void qc.invalidateQueries({ queryKey: key });
+        onClose();
+      })
+      .catch((e) => { setErr(String(e)); setBusy(false); });
+  };
 
   const save = () => {
     if (!place) return;
-    setBusy(true);
-    const fd = new FormData();
-    fd.append("location_id", String(L.id));
-    fd.append("name", name.trim() || place.short);
-    fd.append("lat", String(place.lat));
-    fd.append("lon", String(place.lon));
-    fd.append("address", place.label || place.short);
-    fetch(`${API}/location`, { method: "POST", body: fd })
-      .finally(() => { setBusy(false); onClose(); setTimeout(onChanged, 200); });
+    run(saveLocation({
+      id: L.id,
+      name: name.trim() || place.short,
+      lat: place.lat,
+      lon: place.lon,
+      address: place.label || place.short,
+    }), [birdsKeys.locationsAll(), birdsKeys.locationAll(L.id)]);
   };
 
-  const remove = () => {
-    setBusy(true);
-    fetch(`${API}/location?location_id=${L.id}`, { method: "DELETE" })
-      .finally(() => { setBusy(false); onClose(); setTimeout(onChanged, 150); });
-  };
-
+  // A remove or a merge moves this place's detections, so every count in the app
+  // is downstream of it. Only what is mounted re-reads; the rest is marked stale.
+  const remove = () => run(removeLocation(L.id), [birdsKeys.all()]);
   const merge = () => {
     if (!mergeTarget) return;
-    setBusy(true);
-    const fd = new FormData();
-    fd.append("src", String(L.id)); fd.append("dst", mergeTarget);
-    fetch(`${API}/location/merge`, { method: "POST", body: fd })
-      .finally(() => { setBusy(false); onClose(); setTimeout(onChanged, 200); });
+    run(mergeLocations({ src: L.id, dst: Number(mergeTarget) }), [birdsKeys.all()]);
   };
 
   const sub = `${L.species} species · ${L.detections.toLocaleString()} detections${L.devices.length ? ` · ${L.devices.join(", ")}` : ""}`;
@@ -212,6 +310,10 @@ function LocationCard({ L, isHome, editing, onEdit, onClose, onToggleHome, onCha
           <p className="muted" style={{ fontSize: ".74rem", margin: 0 }}>
             A location must be a verified address or GPS point. Adaptive devices within ~40&nbsp;m merge into it automatically.
           </p>
+
+          {/* The form is right here, so a rejected write is a line above the
+              buttons, never a region. */}
+          {err && <Notice tone="error" detail={err}>That did not go through.</Notice>}
 
           {!confirmDel ? (
             <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap", paddingTop: ".5rem", borderTop: "1px solid var(--border)" }}>

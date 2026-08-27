@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Bird, Mic, Square, SlidersHorizontal, Smartphone, Loader2, X, ChevronDown, ChevronRight, Pencil, Waypoints, CalendarDays, AudioLines, MapPin, ListChecks } from "lucide-react";
+import { Button, Notice } from "@workshop/ui";
 import { useRecorder } from "./recorder";
-import { jget } from "./ui";
+import { birdsKeys, fetchDevices } from "./queries";
 
 // Navigation for the Birds app, the SINGLE source of navigable sections. The
 // responsive chrome (BirdsShell) renders these; pages never hand-roll section
@@ -96,10 +98,33 @@ export function InlineSelect({ icon, value, options, onChange, ariaLabel, onEdit
 
 // Listen on this device: an icon only (name on hover), with an optional "adopt an
 // existing device" picker for a brand-new browser. Reachable from every page.
+//
+// THE PICKER READS THE SAME DEVICE LIST THE DEVICES PAGE DOES, on the shared
+// key, so opening it after visiting that page is served from cache and the two
+// can never show different devices. `enabled` is what keeps "on open, not on
+// mount": every page in the app renders this button, and none of them should
+// pay for a device list nobody asked to see.
+//
+// IT ALSO STOPS LYING ABOUT A FAILED READ. The list used to land in a
+// `useState` with `.catch(() => setDevices([]))`, so a backend that could not
+// answer rendered as "No other registered devices." on a browser that has
+// several. An empty list and an unanswered question are different things and
+// they now say different things.
 export function ListenButton() {
   const rec = useRecorder();
   const [adopting, setAdopting] = useState(false);
-  const [devices, setDevices] = useState<KnownDevice[] | null>(null);
+  const devicesQ = useQuery({
+    queryKey: birdsKeys.devices(),
+    queryFn: () => fetchDevices<{ devices: KnownDevice[] }>(),
+    enabled: adopting,
+    // One tap, one attempt: this picker is open in front of someone waiting on
+    // it, and a retry schedule under it is just a longer spinner.
+    retry: false,
+  });
+  // Adopting means taking over ANOTHER device's identity, so this browser's own
+  // is not on the menu. Filtered here rather than in the query: the cache entry
+  // is shared, and the entry holds the endpoint's answer, not one caller's view.
+  const others = (devicesQ.data?.devices ?? []).filter((d) => d.token !== rec.device.token);
 
   if (rec.recording) {
     return <button className="btn sm" title="Stop listening" aria-label="Stop listening" onClick={rec.stop}><Square size={16} /></button>;
@@ -108,27 +133,26 @@ export function ListenButton() {
     return <button className="btn sm" title="Resume listening" aria-label="Resume listening" onClick={rec.start}><Mic size={16} /></button>;
   }
 
-  const openAdopt = () => {
-    setAdopting(true);
-    if (!devices) {
-      jget<{ devices: KnownDevice[] }>("/devices")
-        .then((r) => setDevices(r.devices.filter((d) => d.token !== rec.device.token)))
-        .catch(() => setDevices([]));
-    }
-  };
-
   if (adopting) {
     return (
       <span style={{ display: "inline-flex", gap: ".4rem", alignItems: "center", flexWrap: "wrap" }}>
-        {devices === null
-          ? <Loader2 size={14} className="muted" style={{ animation: "spin 1s linear infinite" }} />
-          : devices.length === 0
-            ? <span className="muted" style={{ fontSize: ".85rem" }}>No other registered devices.</span>
-            : devices.map((d) => (
-                <button key={d.token} className="btn sm" onClick={() => { rec.adoptDevice(d.token, d.name); setAdopting(false); rec.start(); }}>
-                  <Smartphone size={14} /> {d.name}
-                </button>
-              ))
+        {/* Asked in this order because the first frame after the tap has neither
+            data nor an error yet, and "No other registered devices." is a bad
+            thing to flash at someone who has three. A read that failed with a
+            cached list still shows the list: those devices are still adoptable. */}
+        {!devicesQ.data && devicesQ.isError
+          ? <Notice tone="error" action={<Button size="sm" variant="ghost" onClick={() => void devicesQ.refetch()}>Retry</Button>}>
+              Couldn't load your devices.
+            </Notice>
+          : !devicesQ.data
+            ? <Loader2 size={14} className="muted" style={{ animation: "spin 1s linear infinite" }} />
+            : others.length === 0
+              ? <span className="muted" style={{ fontSize: ".85rem" }}>No other registered devices.</span>
+              : others.map((d) => (
+                  <button key={d.token} className="btn sm" onClick={() => { rec.adoptDevice(d.token, d.name); setAdopting(false); rec.start(); }}>
+                    <Smartphone size={14} /> {d.name}
+                  </button>
+                ))
         }
         <button className="btn sm" title="Cancel" onClick={() => setAdopting(false)}><X size={14} /></button>
       </span>
@@ -147,7 +171,7 @@ export function ListenButton() {
         <Mic size={16} />
       </button>
       {!rec.device.name && (
-        <button className="btn sm" title="This is a new browser. Adopt an existing device?" onClick={openAdopt}>
+        <button className="btn sm" title="This is a new browser. Adopt an existing device?" onClick={() => setAdopting(true)}>
           <Smartphone size={14} />
         </button>
       )}

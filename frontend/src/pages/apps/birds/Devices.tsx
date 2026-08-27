@@ -1,15 +1,29 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Smartphone, Radio, MapPin, Trash2, X, Check, Pencil, RotateCcw, Users } from "lucide-react";
+import { Button, Notice, Skeleton, StateBlock, StatusPill, timeAgo } from "@workshop/ui";
 import { useRecorder, type DeviceMode } from "./recorder";
-import { StatusPill, timeAgo, usePoll } from "@workshop/ui";
-import { API, jget, isRecording } from "./ui";
+import { isRecording } from "./ui";
+import { useShowNonBird } from "./settings";
+import {
+  birdsKeys, fetchDevices, fetchDevicesArchived, fetchLocations,
+  removeDevice, restoreDevice, saveDevice,
+} from "./queries";
 
 // Devices that listen. Each is adaptive (follows its current GPS) or fixed
 // (pinned to one location, the way the Pi will be). A device is read-only until
 // you open it with Edit; only then can you change it or remove it. Removal is a
-// soft archive — the device and all its detections are kept and can be restored.
+// soft archive: the device and all its detections are kept and can be restored.
 // The device you are on is highlighted; editing it updates this browser too.
+//
+// THREE FACTS, THREE QUERIES. One `usePoll` used to fire all three reads into
+// three `useState`s, every one of them ending in `.catch(() => {})`, so the
+// live list, the archive and the locations menu could each be from a different
+// tick and a backend that was down looked like a page that had stopped
+// changing. They are separate facts and they now have separate cache entries,
+// on the keys in `queries.ts` -- the locations one is the same entry the
+// Locations page and the scope provider read.
 
 type Dev = {
   token: string; name: string; mode: DeviceMode;
@@ -20,6 +34,13 @@ type Dev = {
   shared: boolean; owner_user_id: number | null;
 };
 type Loc = { id: number; name: string };
+type DevList = { devices: Dev[] };
+
+// One empty array, so "no rows yet" is referentially stable and an effect that
+// depends on the list does not re-run on every render before the first response.
+const NO_DEVS: Dev[] = [];
+
+const REFRESH_MS = 15000;
 
 // Relative "last active" so a stale device reads at a glance. @workshop/ui's
 // `timeAgo` is the one formatter; only the empty-input wording is local
@@ -54,30 +75,58 @@ function metaParts(dev: Dev): string {
 }
 
 export default function Devices() {
+  const qc = useQueryClient();
   const rec = useRecorder();
-  const [devices, setDevices] = useState<Dev[]>([]);
-  const [removed, setRemoved] = useState<Dev[]>([]);
-  const [locs, setLocs] = useState<Loc[]>([]);
+  const [showNonBird] = useShowNonBird();
   const [editing, setEditing] = useState<string | null>(null);
+  const [restoreErr, setRestoreErr] = useState<string | null>(null);
   const [params] = useSearchParams();
   const focusTok = params.get("token") || "";
   const focusCard = useRef<HTMLElement | null>(null);
 
-  const load = useCallback(() => {
-    jget<{ devices: Dev[] }>(`/devices`).then((d) => setDevices(d.devices)).catch(() => {});
-    jget<{ devices: Dev[] }>(`/devices?archived=1`).then((d) => setRemoved(d.devices)).catch(() => {});
-    jget<{ locations: Loc[] }>(`/locations`).then((d) => setLocs(d.locations)).catch(() => {});
-  }, []);
-  // Poll so the "Recording" indicator reflects current liveness without a manual
-  // reload (a fixed device like the yard Pi posts continuously).
-  usePoll(load, 15000);
+  // The live list keeps its cadence: the "Recording" indicator is derived from
+  // `last_seen`, so liveness IS this read (a fixed device like the yard Pi posts
+  // continuously). It owns that cadence, so nothing stales it and it does not
+  // retry; a failed tick is followed by the next one.
+  const live = useQuery({
+    queryKey: birdsKeys.devices(),
+    queryFn: () => fetchDevices<DevList>(),
+    refetchInterval: REFRESH_MS,
+    staleTime: 0,
+    retry: false,
+  });
+
+  // The archive gets no cadence. Nothing moves in it on its own: a row appears
+  // when this page removes a device and disappears when it restores one, and
+  // both of those invalidate it. It still re-reads on the way back to the tab.
+  const archived = useQuery({
+    queryKey: birdsKeys.devicesArchived(),
+    queryFn: () => fetchDevicesArchived<DevList>(),
+    retry: false,
+  });
+
+  // Locations are ONLY the options in a fixed device's pinned-location menu, so
+  // they are read when an editor is open and not on a 15s loop the menu is not
+  // on screen for. Same key and same filter as the Locations page, so opening an
+  // editor after visiting that page is served from cache.
+  const nb = { includeNonBird: showNonBird };
+  const locsQ = useQuery({
+    queryKey: birdsKeys.locations(nb),
+    queryFn: () => fetchLocations<{ locations: Loc[] }>(nb),
+    enabled: editing !== null,
+    placeholderData: keepPreviousData,
+  });
+
+  const devices = live.data?.devices ?? NO_DEVS;
+  const removed = archived.data?.devices ?? NO_DEVS;
 
   // When arrived at via a device's edit pencil (?token=…), open that device's
-  // editor and bring it into view.
-  const consumedFocus = useRef(false);
+  // editor and bring it into view. Keyed by the token it consumed rather than a
+  // boolean, so a second device's pencil opens that one too.
+  const consumedFocus = useRef<string | null>(null);
   useEffect(() => {
-    if (focusTok && !consumedFocus.current && devices.some((d) => d.token === focusTok)) {
-      consumedFocus.current = true;
+    if (focusTok && consumedFocus.current !== focusTok && devices.some((d) => d.token === focusTok)) {
+      consumedFocus.current = focusTok;
       setEditing(focusTok);
     }
   }, [focusTok, devices]);
@@ -85,10 +134,14 @@ export default function Devices() {
     if (editing && focusCard.current) focusCard.current.scrollIntoView({ block: "center" });
   }, [editing]);
 
-  const restore = useCallback((token: string) => {
-    const fd = new FormData(); fd.append("token", token);
-    fetch(`${API}/device/restore`, { method: "POST", body: fd }).then(() => setTimeout(load, 150)).catch(() => {});
-  }, [load]);
+  const restore = (token: string) => {
+    setRestoreErr(null);
+    restoreDevice(token)
+      .then(() => qc.invalidateQueries({ queryKey: birdsKeys.devicesAll() }))
+      .catch((e) => setRestoreErr(String(e)));
+  };
+
+  const listErr = live.isError ? String(live.error) : null;
 
   return (
     <div>
@@ -99,21 +152,70 @@ export default function Devices() {
         <Link to="/apps/birds/locations" className="btn sm"><MapPin size={14} /> Locations</Link>
       </div>
 
-      <div style={{ display: "grid", gap: ".7rem" }}>
-        {devices.map((dev) => (
-          <DeviceCard key={dev.token} dev={dev} locs={locs} current={dev.token === rec.device.token}
-            editing={editing === dev.token}
-            onEdit={() => setEditing(dev.token)} onClose={() => setEditing(null)}
-            onChanged={load} cardRef={editing === dev.token ? focusCard : undefined} />
-        ))}
-        {devices.length === 0 && <p className="muted">No devices yet. Start listening to register this one.</p>}
-      </div>
+      {/* A failed read with rows still on screen is a LINE beside them; a failed
+          read with nothing to show is the REGION below. */}
+      {listErr && live.data && (
+        <div style={{ marginBottom: ".7rem" }}>
+          <Notice tone="warn" action={<Button size="sm" variant="ghost" onClick={() => void live.refetch()}>Retry</Button>}>
+            These devices are not refreshing, so Recording may be out of date.
+          </Notice>
+        </div>
+      )}
 
-      {removed.length > 0 && (
+      {listErr && !live.data ? (
+        <StateBlock
+          variant="error"
+          title="Couldn't load devices"
+          hint={<code>GET /api/birds/devices: {listErr}</code>}
+          action={<Button size="sm" onClick={() => void live.refetch()}>Retry</Button>}
+        />
+      ) : live.isPending ? (
+        <div style={{ display: "grid", gap: ".7rem" }}>
+          {[0, 1, 2].map((i) => <Skeleton key={i} style={{ height: 96 }} />)}
+        </div>
+      ) : devices.length === 0 ? (
+        <StateBlock
+          title="No devices yet"
+          hint="Tap Listen in the header to register this browser as a device."
+        />
+      ) : (
+        <div style={{ display: "grid", gap: ".7rem" }}>
+          {devices.map((dev) => (
+            // THE KEY CARRIES THE EDITING FLAG ON PURPOSE. Opening the editor
+            // mounts a fresh card, so its draft is seeded once, from the record
+            // as it was at that moment. A refetch that changes the record under
+            // an OPEN editor cannot re-seed it: the effect that used to do that
+            // threw away whatever the operator had typed whenever the device
+            // reported in from somewhere else.
+            <DeviceCard key={editing === dev.token ? `${dev.token}:edit` : dev.token}
+              dev={dev} locs={locsQ.data?.locations ?? []} locsFailed={locsQ.isError}
+              current={dev.token === rec.device.token}
+              editing={editing === dev.token}
+              onEdit={() => setEditing(dev.token)} onClose={() => setEditing(null)}
+              cardRef={editing === dev.token ? focusCard : undefined} />
+          ))}
+        </div>
+      )}
+
+      {(removed.length > 0 || archived.isError || restoreErr) && (
         <section style={{ marginTop: "1.5rem" }}>
           <div className="muted" style={{ fontSize: ".78rem", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: ".4rem" }}>
             Removed devices
           </div>
+          {archived.isError && (
+            <div style={{ marginBottom: ".5rem" }}>
+              <Notice tone="error" action={<Button size="sm" variant="ghost" onClick={() => void archived.refetch()}>Retry</Button>}>
+                Couldn't load removed devices.
+              </Notice>
+            </div>
+          )}
+          {restoreErr && (
+            <div style={{ marginBottom: ".5rem" }}>
+              <Notice tone="error" detail={restoreErr} action={<Button size="sm" variant="ghost" onClick={() => setRestoreErr(null)}>Dismiss</Button>}>
+                Could not restore that device.
+              </Notice>
+            </div>
+          )}
           <div style={{ display: "grid", gap: ".5rem" }}>
             {removed.map((dev) => (
               <div key={dev.token} className="card" style={{ padding: ".6rem .9rem", display: "flex", alignItems: "center", gap: ".6rem", opacity: 0.85 }}>
@@ -133,51 +235,60 @@ export default function Devices() {
   );
 }
 
-function DeviceCard({ dev, locs, current, editing, onEdit, onClose, onChanged, cardRef }: {
-  dev: Dev; locs: Loc[]; current: boolean; editing: boolean;
-  onEdit: () => void; onClose: () => void; onChanged: () => void;
+function DeviceCard({ dev, locs, locsFailed, current, editing, onEdit, onClose, cardRef }: {
+  dev: Dev; locs: Loc[]; locsFailed: boolean; current: boolean; editing: boolean;
+  onEdit: () => void; onClose: () => void;
   cardRef?: React.RefObject<HTMLElement | null>;
 }) {
+  const qc = useQueryClient();
   const rec = useRecorder();
+  // The draft, seeded from the record AT MOUNT, which the parent's key makes the
+  // moment the editor opened. There is no re-seeding effect and there must not
+  // be one: while this editor is open it is the only owner of these fields.
   const [name, setName] = useState(dev.name);
   const [mode, setMode] = useState<DeviceMode>(dev.mode);
   const [fixed, setFixed] = useState<string>(dev.fixed_location_id ? String(dev.fixed_location_id) : "");
   const [shared, setShared] = useState<boolean>(dev.shared);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-  // Re-seed the draft whenever the editor opens (or the device changes under it).
-  useEffect(() => {
-    if (editing) {
-      setName(dev.name); setMode(dev.mode);
-      setFixed(dev.fixed_location_id ? String(dev.fixed_location_id) : "");
-      setShared(dev.shared);
-      setConfirmDel(false);
-    }
-  }, [editing, dev.name, dev.mode, dev.fixed_location_id, dev.shared]);
+  // A write, then the invalidation that used to be `setTimeout(onChanged, 200)`.
+  // The editor stays OPEN and says so when a write is rejected; it used to close
+  // either way, which looked exactly like a save that had worked.
+  const run = (work: Promise<unknown>) => {
+    setBusy(true); setErr(null);
+    work
+      .then(() => { void qc.invalidateQueries({ queryKey: birdsKeys.devicesAll() }); onClose(); })
+      .catch((e) => { setErr(String(e)); setBusy(false); });
+  };
 
   const save = () => {
     const nm = name.trim() || dev.name;
+    // THIS browser's device is also a local preference, so the recorder writes
+    // its own copy (localStorage, and its own upsert). Its setters return void,
+    // which is what the 200ms sleep was standing in for; the canonical write
+    // goes through the same `saveDevice` every other device uses, and the
+    // invalidation is sequenced on THAT rather than on a guess. Both carry the
+    // same values, and the route is an upsert.
     if (current) {
       rec.setDeviceName(nm);
       rec.setMode(mode);
       if (mode === "fixed") rec.setFixedLocation(fixed);
       rec.setShared(shared);
-    } else {
-      const fd = new FormData();
-      fd.append("token", dev.token);
-      fd.append("name", nm);
-      fd.append("mode", mode);
-      if (mode === "fixed") fd.append("fixed_location_id", fixed || "0");
-      fd.append("shared", shared ? "true" : "false");
-      fetch(`${API}/device`, { method: "POST", body: fd }).catch(() => {});
     }
-    onClose(); setTimeout(onChanged, 200);
+    run(saveDevice({
+      token: dev.token,
+      name: nm,
+      mode,
+      // Sent only for a fixed device: the route reads an absent pin as "leave it
+      // alone", which is how an adaptive device keeps the place it was pinned to.
+      fixedLocationId: mode === "fixed" ? fixed : null,
+      shared,
+    }));
   };
 
-  const remove = () => {
-    fetch(`${API}/device?token=${encodeURIComponent(dev.token)}`, { method: "DELETE" })
-      .then(() => { onClose(); setTimeout(onChanged, 150); }).catch(() => {});
-  };
+  const remove = () => run(removeDevice(dev.token));
 
   return (
     <section ref={cardRef as React.RefObject<HTMLElement>} className="card"
@@ -227,6 +338,13 @@ function DeviceCard({ dev, locs, current, editing, onEdit, onClose, onChanged, c
           </select>
         </label>
       )}
+      {/* A field-sized slot gets a LINE, not a region: only the menu is missing,
+          the rest of the card is fine. */}
+      {editing && mode === "fixed" && locsFailed && (
+        <div style={{ marginBottom: ".25rem" }}>
+          <Notice tone="warn">Couldn't load the locations to choose from.</Notice>
+        </div>
+      )}
 
       {/* Sharing: private to you, or visible to your friends at this device's
           location. Works the same whether the device is fixed or adaptive. */}
@@ -253,12 +371,18 @@ function DeviceCard({ dev, locs, current, editing, onEdit, onClose, onChanged, c
 
       <div className="muted" style={{ fontSize: ".76rem", marginTop: ".5rem" }}>{metaParts(dev)}</div>
 
+      {editing && err && (
+        <div style={{ marginTop: ".6rem" }}>
+          <Notice tone="error" detail={err}>That did not go through.</Notice>
+        </div>
+      )}
+
       {editing && !confirmDel && (
         <div style={{ marginTop: ".7rem", paddingTop: ".6rem", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
-          <button className="btn sm danger" onClick={() => setConfirmDel(true)}><Trash2 size={14} /> Remove</button>
+          <button className="btn sm danger" onClick={() => setConfirmDel(true)} disabled={busy}><Trash2 size={14} /> Remove</button>
           <span style={{ flex: 1 }} />
-          <button className="btn sm" onClick={onClose}><X size={14} /> Cancel</button>
-          <button className="btn sm primary" onClick={save}><Check size={14} /> Save</button>
+          <button className="btn sm" onClick={onClose} disabled={busy}><X size={14} /> Cancel</button>
+          <button className="btn sm primary" onClick={save} disabled={busy}><Check size={14} /> Save</button>
         </div>
       )}
 
@@ -269,8 +393,8 @@ function DeviceCard({ dev, locs, current, editing, onEdit, onClose, onChanged, c
               ? `Its ${dev.detections.toLocaleString()} detection${dev.detections === 1 ? "" : "s"} are kept and it can be restored.`
               : "It can be restored from Removed devices."}
           </span>
-          <button className="btn sm" onClick={() => setConfirmDel(false)}><X size={14} /> Cancel</button>
-          <button className="btn sm danger" onClick={remove}><Check size={14} /> Remove</button>
+          <button className="btn sm" onClick={() => setConfirmDel(false)} disabled={busy}><X size={14} /> Cancel</button>
+          <button className="btn sm danger" onClick={remove} disabled={busy}><Check size={14} /> Remove</button>
         </div>
       )}
     </section>

@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TrainFront } from "lucide-react";
 import { StatusDot, SettingsSection, SettingsRow as Row, shortHttpError } from "@workshop/ui";
+import { commuteKeys, commuteScheduleQuery, type SchedulePlace } from "./queries";
 
 // Commute app settings — 511 key status + home/work coordinates. Moved verbatim
 // out of the platform Settings page (Phase 5 settings split). Renders inside the
@@ -17,22 +19,25 @@ type ServiceProbe = {
 
 export default function CommuteSettings() {
   const [services, setServices] = useState<ServiceProbe[] | null>(null);
-  const [schedule, setSchedule] = useState<{ home?: { lat?: number | null; lon?: number | null; address?: string }; work?: { lat?: number | null; lon?: number | null; address?: string } } | null>(null);
+  const qc = useQueryClient();
 
-  const loadSchedule = useCallback(async () => {
-    try {
-      const r = await fetch("/api/commute/schedule");
-      const j = r.ok ? await r.json() : null;
-      setSchedule(j);
-    } catch {
-      setSchedule(null);
-    }
-  }, []);
+  // THE SAME SCHEDULE READ AS THE APP'S OWN SCHEDULE TAB, ON THE SAME KEY.
+  // This panel is co-mounted with the page (Commute.tsx renders both), so the
+  // two hand-rolled reads that were here and there fetched `/commute/schedule`
+  // twice on every open and then drifted: saving coords here refreshed this
+  // copy and left the editor's copy showing the old numbers. One entry, one
+  // request, and the save below invalidates it for both readers.
+  const schedule = useQuery(commuteScheduleQuery()).data ?? null;
+  const refreshSchedule = () => { void qc.invalidateQueries({ queryKey: commuteKeys.schedule() }); };
 
+  // `/api/services/` is a PLATFORM read, not a commute one, and it is read once
+  // on mount rather than polled. Its key belongs in `lib/queryKeys.ts` with the
+  // rest of the platform's keys; keying it under `["commute", ...]` here would
+  // be a second cache entry for a fact this app does not own, which is the
+  // exact failure that registry exists to prevent. Left as it was, deliberately.
   useEffect(() => {
     fetch("/api/services/").then((r) => r.ok ? r.json() : { services: [] }).then((j) => setServices(j.services || []));
-    loadSchedule();
-  }, [loadSchedule]);
+  }, []);
 
   const realtime = services?.find((s) => s.name?.includes("caltrain.gtfs_rt")) || services?.find((s) => s.name?.includes("511"));
 
@@ -53,8 +58,8 @@ export default function CommuteSettings() {
           </span>
         )}
       </Row>
-      <CoordsRow label="home coords" name="home" entry={schedule?.home} onSaved={loadSchedule} />
-      <CoordsRow label="work coords" name="work" entry={schedule?.work} onSaved={loadSchedule} />
+      <CoordsRow label="home coords" name="home" entry={schedule?.home} onSaved={refreshSchedule} />
+      <CoordsRow label="work coords" name="work" entry={schedule?.work} onSaved={refreshSchedule} />
     </SettingsSection>
   );
 }
@@ -67,7 +72,7 @@ function CoordsRow({
 }: {
   label: string;
   name: "home" | "work";
-  entry: { lat?: number | null; lon?: number | null; address?: string } | undefined;
+  entry: SchedulePlace | undefined;
   onSaved: () => void;
 }) {
   const [editing, setEditing] = useState(false);

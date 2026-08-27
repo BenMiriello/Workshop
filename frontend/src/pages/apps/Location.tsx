@@ -1,48 +1,38 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Play, Square } from "lucide-react";
 import {
-  AppSettings, Button, ConfirmDialog, PageHeader, StatusDot,
-  backgroundTrackingSupported, isNativeShell, shortHttpError, startDeviceTracking,
-  stopDeviceTracking, timeAgo, usePoll, type AppChatDockRenderer,
+  AppSettings, Button, ConfirmDialog, Notice, PageHeader, Skeleton, StateBlock, StatusDot,
+  backgroundTrackingSupported, isNativeShell, startDeviceTracking,
+  stopDeviceTracking, timeAgo, type AppChatDockRenderer,
 } from "@workshop/ui";
 import LocationSettings from "./location/LocationSettings";
 // Direct import (not via the ui barrel) so maplibre/pmtiles aren't pulled into
 // every page that touches the design system.
 import { Map, type LngLat } from "@workshop/ui/map";
-// GENERATED backend response types (frontend/CLAUDE.md "API response types
-// are GENERATED"). This is the one deliberately kept cross-boundary import in
-// this file (Stage 4b): the type is a wire contract with the platform's own
-// backend, not platform UI behaviour, and until an extracted app generates
-// its own client from its own service (stage 7+) there is exactly one
-// backend schema to describe the HTTP boundary every app talks to. Hand-
-// writing a duplicate type here is the documented worse option (see
-// frontend/CLAUDE.md, which names this file as the case that motivated
-// generating types at all).
-import type { components } from "../../api/schema.gen";
+// The app's own key registry, fetchers and shared reads. Every server read on
+// this page goes through it: the keys are built in one place (so the settings
+// panel below shares this page's cache entry rather than polling the same URL
+// again) and the generated response types come with them. See ./location/
+// queries.ts for why an app declares its own keys instead of using the
+// platform registry.
+import {
+  fetchHistory, locationKeys, useClearLocationHistory, useLatestLocation,
+  type LocationRecord,
+} from "./location/queries";
 
 // Location app page — read-only view of operator position fed by Owntracks
 // iOS. Web geolocation is gone; this page is a viewer.
-
-// GENERATED, not hand-written. These come from the backend's own OpenAPI
-// schema (`npm run gen:api-types`), which knows them because `routes/location`
-// declares `response_model=` on /latest, /history and /update. The
-// hand-written versions that used to sit here said `accuracy_m?: number` for
-// four fields the backend actually serialises as `number | null` -- a shape
-// the type asserted could never occur, on the one page whose whole job is
-// reading those fields. That is the drift class this pipeline exists to turn
-// into a compile error; see docs/platform-redesign/
-// target-architecture-2026-08-17.md item 2.
-//
-// ADR 0023 envelope: {"items": [...], "page": {"limit", "next_cursor",
-// "total", "offset"}} -- `Page[LocationRecord]` on the backend, which is why
-// the generated name reads the way it does.
-type LocationRecord = components["schemas"]["LocationRecord"];
-type HistoryResp = components["schemas"]["Page_LocationRecord_"];
 
 const PAGE_SIZE = 25;
 // The map draws the full recent breadcrumb, not just the first table page.
 // At OwnTracks "significant" density this spans many days; backend caps at 5000.
 const MAP_TRACK_LIMIT = 2000;
+
+// One frozen array for "no rows yet", so the memos below keep their identity
+// across the 10s re-render tick. `?? []` would hand <Map> a fresh array every
+// render and yank the camera.
+const NO_RECORDS: LocationRecord[] = [];
 
 // Breadcrumb segmentation tunables. A new line segment begins when consecutive
 // fixes are too far apart in time, or imply an impossible speed — so a phone
@@ -141,7 +131,8 @@ function DeviceTrackingCard() {
           </span>
         )}
       </div>
-      {err && <div className="err" style={{ marginTop: "0.5rem" }}>{err}</div>}
+      {/* A line, not a region: the card and its control are still on screen. */}
+      {err && <Notice tone="error" detail={err}>Could not change tracking on this device.</Notice>}
     </div>
   );
 }
@@ -153,103 +144,80 @@ export default function Location({
   groupNav?: ReactNode;
   renderChatDock?: AppChatDockRenderer;
 }) {
-  const [latest, setLatest] = useState<LocationRecord | null>(null);
-  const [records, setRecords] = useState<LocationRecord[]>([]);
-  const [trackRecords, setTrackRecords] = useState<LocationRecord[]>([]);
-  const [total, setTotal] = useState<number | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  // HOW MANY ROWS THE TABLE IS SHOWING, and the only piece of paging state
+  // left. The rows themselves, the total, "is there more" and "is a read in
+  // flight" were four more `useState`s kept in step by hand; every one of them
+  // is now a field on the query below.
+  const [shown, setShown] = useState(PAGE_SIZE);
   const [confirmClear, setConfirmClear] = useState(false);
-  const [clearing, setClearing] = useState(false);
   const [, setTick] = useState(0);
 
-  const loadLatest = useCallback(async () => {
-    try {
-      const r = await fetch("/api/location/latest");
-      const j = r.ok ? await r.json() : null;
-      setLatest((j as LocationRecord) || null);
-    } catch (e) {
-      setErr(String(e));
-    }
-  }, []);
+  // Polled, and SHARED with the settings panel at the bottom of this page: one
+  // key, one cache entry, one value, so the two places on this screen that
+  // quote the position cannot disagree. See ./location/queries.ts.
+  const latestQ = useLatestLocation();
+  const latest = latestQ.data ?? null;
 
-  const loadFirstPage = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await fetch(`/api/location/history?limit=${PAGE_SIZE}&offset=0`);
-      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = (await r.json()) as HistoryResp;
-      const items = j.items || [];
-      setRecords(items);
-      setTotal(j.page?.total ?? null);
-      setHasMore(j.page?.total != null && (j.page.offset ?? 0) + items.length < j.page.total);
-      setErr(null);
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // THE TABLE: A GROWING WINDOW, not a stack of appended pages.
+  //
+  // "Load more" raises `shown`, which changes the key, which re-reads. That is
+  // one cache entry holding one consistent answer, instead of an array grown
+  // by hand from responses that could arrive in any order. It also fixes a
+  // real defect in the paging it replaces: offset paging over a NEWEST-FIRST
+  // list shifts under you, so every ping that landed mid-session made the next
+  // page repeat a row that had already been drawn (invisible, because the rows
+  // were keyed by index). A prefix of the current list cannot do that.
+  //
+  // The previous window stays on screen while the wider one is in flight
+  // (`keepPreviousData`), so clicking "load more" does not blank the table.
+  const historyQ = useQuery({
+    queryKey: locationKeys.history({ limit: shown, offset: 0 }),
+    queryFn: () => fetchHistory({ limit: shown, offset: 0 }),
+    placeholderData: keepPreviousData,
+  });
 
-  // The map shows the whole recent breadcrumb, independent of table paging.
-  const loadTrack = useCallback(async () => {
-    try {
-      const r = await fetch(`/api/location/history?limit=${MAP_TRACK_LIMIT}&offset=0`);
-      if (!r.ok) return;
-      const j = (await r.json()) as HistoryResp;
-      setTrackRecords(j.items || []);
-    } catch {
-      /* map just falls back to the table page if this fails */
-    }
-  }, []);
+  // THE MAP'S TRACK, AND WHY IT IS STILL ITS OWN READ.
+  //
+  // This is the same route as the table's read, at the same offset, and the
+  // table's 25 rows are a strict PREFIX of these 2000 -- so in principle the
+  // table could be a slice of this one array and the page could read the route
+  // once. It is deliberately not, for two reasons:
+  //
+  //  1. The table would then not paint until the whole breadcrumb landed. That
+  //     is hundreds of kilobytes and a much slower backend query, for a table
+  //     whose first screen is 25 rows.
+  //  2. A failed track has to degrade the MAP only. Merged, one slow or failed
+  //     request would take the history list down with it.
+  //
+  // What they do share is the key family, so the clear-history write drops both
+  // with one prefix invalidation, and neither can hold a value the other has
+  // already superseded.
+  const trackQ = useQuery({
+    queryKey: locationKeys.history({ limit: MAP_TRACK_LIMIT, offset: 0 }),
+    queryFn: () => fetchHistory({ limit: MAP_TRACK_LIMIT, offset: 0 }),
+  });
 
-  const loadMore = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await fetch(`/api/location/history?limit=${PAGE_SIZE}&offset=${records.length}`);
-      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const j = (await r.json()) as HistoryResp;
-      const items = j.items || [];
-      setRecords((prev) => [...prev, ...items]);
-      setTotal(j.page?.total ?? null);
-      setHasMore(j.page?.total != null && (j.page.offset ?? 0) + items.length < j.page.total);
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [records.length]);
+  // One writer, shared with the settings panel, so the two cannot invalidate
+  // different things after the same DELETE.
+  const clear = useClearLocationHistory();
 
-  useEffect(() => { loadFirstPage(); loadTrack(); }, [loadFirstPage, loadTrack]);
-  usePoll(loadLatest, 30_000);
+  const records = historyQ.data?.items ?? NO_RECORDS;
+  const trackRecords = trackQ.data?.items ?? NO_RECORDS;
+  const total = historyQ.data?.page?.total ?? null;
+  const hasMore = total != null && records.length < total;
 
   // Relative "last fix" label re-render, not a server read: pausing it while
-  // hidden is harmless and it is not what usePoll is for.
+  // hidden is harmless and it is not what the polls are for.
   useEffect(() => {
     const tick = setInterval(() => setTick((x) => x + 1), 10_000);
     return () => clearInterval(tick);
   }, []);
 
-  const onClear = async () => {
-    setClearing(true);
-    try {
-      const r = await fetch("/api/location/history", { method: "DELETE" });
-      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      await Promise.all([loadLatest(), loadFirstPage(), loadTrack()]);
-      setConfirmClear(false);
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setClearing(false);
-    }
-  };
-
   // Breadcrumb segmented by time/teleport gaps so quiet stretches don't draw as
   // long straight lines. Use the dedicated larger track fetch; fall back to the
-  // table page if empty.
-  // Memoize so the 10s/30s re-render ticks don't hand <Map> fresh array refs
-  // every render (which would refire its sync effect and yank the camera).
+  // table page if it is empty or failed.
+  // Memoize so the 10s re-render tick doesn't hand <Map> fresh array refs every
+  // render (which would refire its sync effect and yank the camera).
   const segments = useMemo(
     () => buildSegments(trackRecords.length ? trackRecords : records),
     [trackRecords, records],
@@ -272,11 +240,12 @@ export default function Location({
   return (
     <div>
       <PageHeader title="Location" actions={groupNav} />
-      {err && <div className="err">{err}</div>}
 
       <div className="card">
         <strong>Latest</strong>
-        {latest ? (
+        {latestQ.isPending ? (
+          <div style={{ marginTop: "0.5rem" }}><Skeleton width="18rem" /></div>
+        ) : latest ? (
           <div
             style={{
               marginTop: "0.5rem",
@@ -301,10 +270,33 @@ export default function Location({
             {latest.heading_deg != null && (<><span className="muted">heading</span><span>{Math.round(latest.heading_deg)}°</span></>)}
             {latest.source && (<><span className="muted">source</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{latest.source}</span></>)}
           </div>
+        ) : latestQ.isError ? (
+          // A REGION, because this space would hold the position if the read
+          // had worked. It is NOT the empty state below: the route answers 200
+          // with a null body when nothing has ever been recorded, so "nothing
+          // yet" and "could not load" are different answers and the card now
+          // says which one it got.
+          <StateBlock
+            variant="error"
+            title="Couldn't load the latest position."
+            hint="The request to /api/location/latest failed."
+            action={<Button size="sm" onClick={() => void latestQ.refetch()}>Retry</Button>}
+          />
         ) : (
-          <p className="muted" style={{ marginTop: "0.5rem" }}>
-            No position recorded yet. Set up the Owntracks app on your phone to start reporting.
-          </p>
+          <StateBlock
+            title="No position recorded yet"
+            hint="Set up the Owntracks app on your phone to start reporting."
+          />
+        )}
+        {/* A dropped poll UNDER a position that is still on screen is a line,
+            not a region: the reader keeps the last fix and its age. */}
+        {latest && latestQ.isError && (
+          <Notice
+            tone="warn"
+            action={<Button size="sm" variant="ghost" onClick={() => void latestQ.refetch()}>Retry</Button>}
+          >
+            Could not refresh the latest position.
+          </Notice>
         )}
       </div>
 
@@ -321,19 +313,56 @@ export default function Location({
           the line breaks into a new segment across a quiet gap rather than guessing a
           straight path. Switch it to "move" mode for a denser trail, at more battery.
         </p>
+        {/* The fallback to the table's rows was silent before, so a failed
+            track drew a short line that looked like a real one. */}
+        {trackQ.isError && (
+          <Notice
+            tone="warn"
+            action={<Button size="sm" variant="ghost" onClick={() => void trackQ.refetch()}>Retry</Button>}
+          >
+            Could not load the full breadcrumb. The map is drawing the rows below instead.
+          </Notice>
+        )}
       </div>
 
       <div className="card">
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "0.5rem" }}>
           <strong>History {total != null ? `(${records.length} of ${total})` : `(${records.length})`}</strong>
-          <Button variant="danger" onClick={() => setConfirmClear(true)}>
+          <Button variant="danger" onClick={() => { clear.reset(); setConfirmClear(true); }}>
             Clear all
           </Button>
         </div>
-        {records.length === 0 ? (
-          <p className="muted" style={{ marginTop: "0.5rem" }}>No history.</p>
+        {historyQ.isPending ? (
+          <div style={{ marginTop: "0.6rem", display: "grid", gap: "0.4rem" }}>
+            <Skeleton width="100%" />
+            <Skeleton width="100%" />
+            <Skeleton width="100%" />
+          </div>
+        ) : records.length === 0 ? (
+          historyQ.isError ? (
+            <StateBlock
+              variant="error"
+              title="Couldn't load history."
+              hint="The request to /api/location/history failed."
+              action={<Button size="sm" onClick={() => void historyQ.refetch()}>Retry</Button>}
+            />
+          ) : (
+            <StateBlock
+              title="No history yet"
+              hint="Positions appear here as soon as the phone reports one."
+            />
+          )
         ) : (
           <>
+            {/* Rows are still on screen, so a failed re-read is a line. */}
+            {historyQ.isError && (
+              <Notice
+                tone="warn"
+                action={<Button size="sm" variant="ghost" onClick={() => void historyQ.refetch()}>Retry</Button>}
+              >
+                Could not refresh the history.
+              </Notice>
+            )}
             <div className="table-scroll" style={{ marginTop: "0.6rem" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.88rem" }}>
                 <thead>
@@ -345,8 +374,11 @@ export default function Location({
                   </tr>
                 </thead>
                 <tbody>
-                  {records.map((r, i) => (
-                    <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
+                  {records.map((r) => (
+                    // Keyed by the fix itself, not by its index: the window
+                    // grows and re-reads, so an index key would let React reuse
+                    // a row for a different position.
+                    <tr key={`${r.ts}-${r.lat}-${r.lng}`} style={{ borderBottom: "1px solid var(--border)" }}>
                       <td style={{ padding: "0.3rem 0.5rem", color: "var(--muted)" }}>{timeAgo(r.ts)}</td>
                       <td style={{ padding: "0.3rem 0.5rem", fontFamily: "ui-monospace, monospace" }}>
                         {r.lat.toFixed(5)}, {r.lng.toFixed(5)}
@@ -362,9 +394,13 @@ export default function Location({
             </div>
             {hasMore && (
               <div style={{ marginTop: "0.7rem", display: "flex", justifyContent: "center" }}>
-                <button onClick={loadMore} disabled={loading}>
-                  {loading ? "Loading…" : `Load ${Math.min(PAGE_SIZE, (total ?? Infinity) - records.length)} more`}
-                </button>
+                <Button
+                  variant="ghost"
+                  loading={historyQ.isFetching}
+                  onClick={() => setShown((n) => n + PAGE_SIZE)}
+                >
+                  {`Load ${Math.min(PAGE_SIZE, (total ?? Infinity) - records.length)} more`}
+                </Button>
               </div>
             )}
           </>
@@ -377,11 +413,21 @@ export default function Location({
       <ConfirmDialog
         open={confirmClear}
         onCancel={() => setConfirmClear(false)}
-        onConfirm={onClear}
+        onConfirm={() => clear.mutate(undefined, { onSuccess: () => setConfirmClear(false) })}
         title="Erase all stored location history?"
-        body="Deletes every position ping Workshop has stored, including the map track. This can't be undone."
+        body={
+          <>
+            Deletes every position ping Workshop has stored, including the map track. This
+            can't be undone.
+            {/* The form is right here, so a rejected submit is a line inside it,
+                never a region (frontend/CLAUDE.md, "A region or a line"). */}
+            {clear.isError && (
+              <Notice tone="error" detail={clear.error.message}>Nothing was deleted.</Notice>
+            )}
+          </>
+        }
         confirmLabel="Erase history"
-        busy={clearing}
+        busy={clear.isPending}
       />
 
       {/* In-app assistant — defaults to location scope (knows last ping + age);

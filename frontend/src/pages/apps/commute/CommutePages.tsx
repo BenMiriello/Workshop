@@ -1,7 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { useMemo, useState } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Circle, RefreshCw, CalendarClock, Check, Play, Dot,
   ChevronDown, ChevronRight, Inbox, Sparkles } from "lucide-react";
-import { ConfirmDialog, StatusPill, Stepper, Tabs, type StatusKind, shortHttpError, timeAgo, usePoll } from "@workshop/ui";
+import { Button, ConfirmDialog, Notice, Skeleton, StateBlock, StatusPill, Stepper, Tabs, type StatusKind, shortHttpError, timeAgo } from "@workshop/ui";
+import {
+  commuteKeys, commuteScheduleQuery, commuteStatusQuery,
+  fetchAlertsRecent, fetchMessages, fetchSources,
+  type ScheduleDoc, type ScheduleEntry,
+} from "./queries";
+
+// EVERY SERVER READ ON THIS PAGE IS A QUERY, and the keys are built in
+// `./queries.ts`. What that replaced was five `usePoll` timers, each with its
+// own `useState` copy of a payload, its own `loading` boolean and its own
+// swallowed error -- including two polls of `/commute/status` at two cadences
+// (one here, one in `useCommuteNative`) and a messages poll that overwrote the
+// pages the reader had asked for. See the comments at each call site.
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -81,6 +94,21 @@ type AlertsResp = { alerts: AlertEntry[] };
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+/** A caught value as a sentence. Used wherever a failed read is SAID. */
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** The placeholder a read shows while it has nothing yet. Three lines, because
+ *  every one of these regions opens with a heading and a couple of rows. */
+function LoadingRows() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+      <Skeleton width="40%" />
+      <Skeleton />
+      <Skeleton width="70%" />
+    </div>
+  );
+}
+
 const statusColor = (s: string): string => {
   if (s === "ok") return "var(--ok)";
   if (s === "needs_key" || s === "missing_deps") return "var(--warn)";
@@ -123,17 +151,44 @@ function RefreshButton({ onPollNow, polling, compact }: {
   );
 }
 
-function StatusTab({ brief, onPollNow, polling }: {
+function StatusTab({ brief, loading, error, pollError, onRetry, onPollNow, polling }: {
   brief: Brief | null;
+  loading: boolean;
+  error: string | null;
+  pollError: string | null;
+  onRetry: () => void;
   onPollNow: () => void;
   polling: boolean;
 }) {
-  if (!brief) return <p>Loading status…</p>;
+  // A REGION when the brief is not there, a LINE when it is (frontend/CLAUDE.md,
+  // "A region or a line"). The old code had neither: a failed read left the
+  // last good brief on screen and said nothing at all, and the parent painted a
+  // bare red paragraph above the tabs.
+  if (!brief) {
+    if (loading) return <LoadingRows />;
+    return (
+      <StateBlock
+        variant="error"
+        title="Couldn't load the commute brief"
+        hint={<>The status read failed. <code>/api/commute/status</code></>}
+        action={<Button onClick={onRetry}>Retry</Button>}
+      />
+    );
+  }
+
+  const notice = error ? (
+    <Notice tone="error" detail={error} action={<Button size="sm" onClick={onRetry}>Retry</Button>}>
+      The brief below stopped updating.
+    </Notice>
+  ) : pollError ? (
+    <Notice tone="error" detail={pollError}>The transit refresh did not go through.</Notice>
+  ) : null;
 
   if (!brief.active) {
     const nx = brief.next_schedule;
     return (
       <div>
+        {notice}
         {nx ? (
           <div className="card" style={{ padding: "1rem 1.1rem", marginBottom: "1rem" }}>
             <p className="muted" style={{ margin: "0 0 0.4rem", display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -167,6 +222,7 @@ function StatusTab({ brief, onPollNow, polling }: {
 
   return (
     <div>
+      {notice}
       {/* Header row */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
         <div>
@@ -308,26 +364,9 @@ const DAYS: { key: DayKey; label: string }[] = [
   { key: "sun", label: "S" },
 ];
 
-type AnchorType = "arrive" | "depart";
-
-type ScheduleEntry = {
-  id: string;
-  direction: "to-work" | "to-home";
-  days: string[];
-  // Anchor model: set the ONE end you care about; the other is derived from
-  // leg durations by the backend (see scoring.resolve_times).
-  anchor?: AnchorType;
-  anchor_time?: string;
-  buffer_minutes?: number;
-  // Legacy two-field form — still read for display of pre-anchor schedules.
-  target_depart_home?: string;
-  target_arrive_work?: string;
-  target_depart_work?: string;
-  target_arrive_home?: string;
-  flex_minutes_late?: number;
-  flex_minutes_early?: number | null;
-  legs_id?: string;
-};
+// The doc and its entries are declared once, beside the key, because the app
+// settings panel reads the same cache entry. See `queries.ts`.
+type AnchorType = NonNullable<ScheduleEntry["anchor"]>;
 
 // Resolve an entry's anchor with a sensible default + legacy fallback so old
 // saved schedules still populate the editor.
@@ -340,55 +379,43 @@ const entryAnchorTime = (s: ScheduleEntry): string => {
     : s.target_depart_home ?? s.target_depart_work ?? "";
 };
 
-type ScheduleDoc = {
-  operator?: string;
-  home?: { address?: string; lat?: number | null; lon?: number | null };
-  work?: { address?: string; lat?: number | null; lon?: number | null };
-  schedules: ScheduleEntry[];
-  notes?: string;
-};
-
 function ScheduleTab() {
-  const [doc, setDoc] = useState<ScheduleDoc | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const qc = useQueryClient();
+  const q = useQuery(commuteScheduleQuery());
+
+  // THE EDIT BUFFER IS LOCAL STATE, AND IT IS THE ONLY LOCAL STATE LEFT HERE.
+  // `draft` is null until the operator changes something; from then on it is
+  // what the form renders and what Save posts. There is no effect copying the
+  // server doc into state, so the read can refetch (the app settings panel
+  // reads this same key, and the app re-reads on focus) without a half-typed
+  // address being replaced under the cursor. A form draft is not cache state
+  // and must never be written back into the cache.
+  const [draft, setDraft] = useState<ScheduleDoc | null>(null);
   const [saved, setSaved] = useState(false);
   const [removingIdx, setRemovingIdx] = useState<number | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/commute/schedule");
-      if (!r.ok) throw new Error(`${r.status}`);
-      setDoc(await r.json());
-      setErr(null);
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const doc = draft ?? q.data ?? null;
+  const setDoc = setDraft;
 
-  useEffect(() => { load(); }, [load]);
-
-  const save = async () => {
-    if (!doc) return;
-    setSaving(true); setErr(null); setSaved(false);
-    try {
+  const save = useMutation({
+    mutationFn: async (next: ScheduleDoc) => {
       const r = await fetch("/api/commute/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: doc }),
+        body: JSON.stringify({ data: next }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+    },
+    onSuccess: async () => {
+      // Drop the draft and let the server's own copy be what the form shows
+      // again, so the editor cannot keep displaying a version the backend
+      // normalised. One invalidation reaches every reader of the key.
+      setDraft(null);
       setSaved(true);
-      setTimeout(() => setSaved(false), 1800);
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
+      window.setTimeout(() => setSaved(false), 1800);
+      await qc.invalidateQueries({ queryKey: commuteKeys.schedule() });
+    },
+  });
 
   const updateAddress = (which: "home" | "work", address: string) => {
     if (!doc) return;
@@ -430,11 +457,31 @@ function ScheduleTab() {
     setRemovingIdx(null);
   };
 
-  if (loading) return <p>Loading schedule…</p>;
-  if (!doc) return <p className="err">{err || "no schedule loaded"}</p>;
+  if (q.isPending) return <LoadingRows />;
+  if (!doc) {
+    // The form is what is missing, so this is a region.
+    return (
+      <StateBlock
+        variant="error"
+        title="Couldn't load the schedule"
+        hint={<>The weekly plan could not be read. <code>/api/commute/schedule</code></>}
+        action={<Button onClick={() => void q.refetch()}>Retry</Button>}
+      />
+    );
+  }
 
   return (
     <div>
+      {/* A rejected save is a LINE: the form it was rejected from is right here. */}
+      {save.isError && (
+        <Notice
+          tone="error"
+          detail={errText(save.error)}
+          action={<Button size="sm" onClick={() => save.mutate(doc)}>Try again</Button>}
+        >
+          The schedule was not saved.
+        </Notice>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", gap: "0.5rem", flexWrap: "wrap" }}>
         <h3 style={{ margin: 0, fontSize: "1rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Schedule</h3>
         <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
@@ -443,8 +490,7 @@ function ScheduleTab() {
               <Check size={13} strokeWidth={2.4} aria-hidden /> saved
             </span>
           )}
-          {err && <span style={{ color: "var(--err)", fontSize: "0.82rem" }}>{err}</span>}
-          <button onClick={save} disabled={saving}>{saving ? "saving…" : "save"}</button>
+          <Button onClick={() => save.mutate(doc)} disabled={save.isPending}>{save.isPending ? "saving…" : "save"}</Button>
         </div>
       </div>
 
@@ -628,29 +674,35 @@ const inputStyle: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
+const SOURCES_POLL_MS = 30_000;
+
 function SourcesTab() {
-  const [data, setData] = useState<SourcesResp | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  // The Refresh button and the 30s cadence are the same read now. They used to
+  // be one `useCallback` shared by an onClick and a `usePoll`, which is the
+  // same idea with two copies of the in-flight flag.
+  const q = useQuery({
+    queryKey: commuteKeys.sources(),
+    queryFn: () => fetchSources<SourcesResp>(),
+    refetchInterval: SOURCES_POLL_MS,
+    // Owns its own cadence: a staleness window over it would swallow the
+    // catch-up read on the way back from hidden.
+    staleTime: 0,
+    // `usePoll` does not retry; the next tick is the retry.
+    retry: false,
+  });
+  const data = q.data ?? null;
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      const r = await fetch("/api/commute/sources");
-      if (!r.ok) throw new Error(`${r.status}`);
-      setData(await r.json());
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  usePoll(refresh, 30_000);
-
-  if (err) return <p className="err">Backend error: {err}</p>;
-  if (!data) return <p>Loading sources…</p>;
+  if (!data) {
+    if (q.isPending) return <LoadingRows />;
+    return (
+      <StateBlock
+        variant="error"
+        title="Couldn't load sources"
+        hint={<>The feed registry could not be read. <code>/api/commute/sources</code></>}
+        action={<Button onClick={() => void q.refetch()}>Retry</Button>}
+      />
+    );
+  }
 
   const registry = data.registry ?? {};
   const status = data.status ?? {};
@@ -675,12 +727,26 @@ function SourcesTab() {
 
   return (
     <div>
+      {/* A dropped tick beside a list that is still drawn: a line, not a region. */}
+      {q.isError && (
+        <Notice tone="error" detail={errText(q.error)} action={<Button size="sm" onClick={() => void q.refetch()}>Retry</Button>}>
+          Source health is out of date.
+        </Notice>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <p className="muted" style={{ margin: 0 }}>{sources.length} source{sources.length === 1 ? "" : "s"}</p>
-        <button onClick={refresh} disabled={loading}>{loading ? "…" : "Refresh"}</button>
+        {/* The label does not change on a tick. `isFetching` is true every thirty
+            seconds whether or not anyone asked, and a button that renames itself
+            on a timer reads as something happening. Dimming while a read is in
+            flight is the feedback; a repeat click is coalesced by the query
+            layer anyway. */}
+        <Button onClick={() => void q.refetch()} disabled={q.isFetching}>Refresh</Button>
       </div>
       {sources.length === 0 ? (
-        <p className="muted">No sources configured.</p>
+        <StateBlock
+          title="No sources configured"
+          hint="Transit feeds come from the backend source registry. Add one there and it appears here with its health."
+        />
       ) : (
         <ul className="cards">
           {sources.map((src) => {
@@ -715,40 +781,59 @@ function SourcesTab() {
   );
 }
 
+const ALERTS_POLL_MS = 30_000;
+// The tail this view shows. It is in the key as well as in the URL, so a
+// 50-row answer can never be served to a caller that asked for fewer.
+const ALERTS_LIMIT = 50;
+
 function AlertsTab() {
-  const [data, setData] = useState<AlertsResp | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const q = useQuery({
+    queryKey: commuteKeys.alertsRecent({ limit: ALERTS_LIMIT }),
+    queryFn: () => fetchAlertsRecent<AlertsResp>({ limit: ALERTS_LIMIT }),
+    refetchInterval: ALERTS_POLL_MS,
+    staleTime: 0,
+    retry: false,
+  });
+  const data = q.data ?? null;
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      const r = await fetch("/api/commute/alerts/recent?limit=50");
-      if (!r.ok) throw new Error(`${r.status}`);
-      setData(await r.json());
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  usePoll(refresh, 30_000);
-
-  if (err) return <p className="err">Backend error: {err}</p>;
-  if (!data) return <p>Loading alerts…</p>;
+  if (!data) {
+    if (q.isPending) return <LoadingRows />;
+    return (
+      <StateBlock
+        variant="error"
+        title="Couldn't load alerts"
+        hint={<>The dispatch log could not be read. <code>/api/commute/alerts/recent</code></>}
+        action={<Button onClick={() => void q.refetch()}>Retry</Button>}
+      />
+    );
+  }
 
   const alerts = [...(data.alerts ?? [])].reverse();
 
   return (
     <div>
+      {q.isError && (
+        <Notice tone="error" detail={errText(q.error)} action={<Button size="sm" onClick={() => void q.refetch()}>Retry</Button>}>
+          The dispatch log is out of date.
+        </Notice>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-        <p className="muted" style={{ margin: 0 }}>{alerts.length} dispatch{alerts.length === 1 ? "" : "es"}</p>
-        <button onClick={refresh} disabled={loading}>{loading ? "…" : "Refresh"}</button>
+        <p className="muted" style={{ margin: 0 }}>
+          {alerts.length} dispatch{alerts.length === 1 ? "" : "es"}
+          {alerts.length >= ALERTS_LIMIT ? ` (latest ${ALERTS_LIMIT})` : ""}
+        </p>
+        {/* The label does not change on a tick. `isFetching` is true every thirty
+            seconds whether or not anyone asked, and a button that renames itself
+            on a timer reads as something happening. Dimming while a read is in
+            flight is the feedback; a repeat click is coalesced by the query
+            layer anyway. */}
+        <Button onClick={() => void q.refetch()} disabled={q.isFetching}>Refresh</Button>
       </div>
       {alerts.length === 0 ? (
-        <p className="muted">No alerts dispatched yet.</p>
+        <StateBlock
+          title="No alerts dispatched yet"
+          hint="An alert is recorded when the commute watcher sends one. Use Check now on the Now tab to run a check immediately."
+        />
       ) : (
         <div className="table-scroll">
           <table>
@@ -915,62 +1000,79 @@ function HistoryRow({ msg }: { msg: Msg }) {
 }
 
 const PAGE = 12;
+const MESSAGES_POLL_MS = 30_000;
 
 function NowTab() {
-  const [items, setItems] = useState<Msg[]>([]);
-  const [total, setTotal] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [checking, setChecking] = useState(false);
+  const qc = useQueryClient();
 
-  const loadFirst = useCallback(async () => {
-    try {
-      const r = await fetch(`/api/commute/messages?limit=${PAGE}&offset=0`);
-      if (!r.ok) throw new Error(`${r.status}`);
-      const d: MsgResp = await r.json();
-      setItems(d.messages);
-      setTotal(d.total);
-      setHasMore(d.has_more);
-      setErr(null);
-    } catch (e) {
-      setErr(String(e));
+  // THE PAGED FEED IS ONE QUERY, WHICH IS THE FIX FOR A REAL BUG. It was a
+  // `usePoll` over page 1 that called `setItems(page1)` every thirty seconds,
+  // beside a "Load more" that appended pages 2..n to the same array: opening
+  // three pages and waiting out one tick silently collapsed the list back to
+  // twelve rows, with the reader's scroll position stranded below the end of
+  // it. The pages the reader has opened are now the query's own state, so the
+  // tick refetches ALL of them, in order, into the slots they already occupy.
+  const q = useInfiniteQuery({
+    queryKey: commuteKeys.messagesPaged({ limit: PAGE }),
+    queryFn: ({ pageParam }) => fetchMessages<MsgResp>({ limit: PAGE, offset: pageParam }),
+    initialPageParam: 0,
+    // The next offset is how many rows the SERVER has handed over, not how many
+    // are rendered: the render list drops repeats (below) and paging by the
+    // deduped count would skip a message.
+    getNextPageParam: (last, pages) =>
+      last.has_more ? pages.reduce((n, page) => n + page.messages.length, 0) : undefined,
+    refetchInterval: MESSAGES_POLL_MS,
+    staleTime: 0,
+    retry: false,
+  });
+
+  const pages = q.data?.pages;
+  // Offset paging over a list that grows at the HEAD repeats a row: a message
+  // that arrives between two page reads pushes its neighbour across the
+  // boundary, and the same id comes back in both pages. Deduping here is what
+  // keeps that from rendering twice under one React key.
+  const items = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Msg[] = [];
+    for (const page of pages ?? []) {
+      for (const m of page.messages) {
+        if (seen.has(m.id)) continue;
+        seen.add(m.id);
+        out.push(m);
+      }
     }
-  }, []);
+    return out;
+  }, [pages]);
+  const total = pages?.[0]?.total ?? 0;
 
-  const loadMore = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await fetch(`/api/commute/messages?limit=${PAGE}&offset=${items.length}`);
-      if (!r.ok) throw new Error(`${r.status}`);
-      const d: MsgResp = await r.json();
-      setItems((prev) => [...prev, ...d.messages]);
-      setHasMore(d.has_more);
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [items.length]);
-
-  // "Check now" composes a fresh adaptive message server-side and reloads.
-  const checkNow = useCallback(async () => {
-    setChecking(true);
-    try {
-      await fetch("/api/commute/reason", {
+  // "Check now" composes a fresh adaptive message server-side. The write does
+  // not know what it produced, so it does not patch the list: it invalidates
+  // it, and every page the reader has open is re-read. Awaiting the
+  // invalidation is what keeps the button in its working state until the new
+  // message is actually on screen.
+  const checkNow = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/commute/reason", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ checkpoint: "during", dispatch: "no", force_llm: true }),
       });
-      await loadFirst();
-    } finally {
-      setChecking(false);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: commuteKeys.messagesAll() }),
+  });
+
+  if (items.length === 0) {
+    if (q.isPending) return <LoadingRows />;
+    if (q.isError) {
+      return (
+        <StateBlock
+          variant="error"
+          title="Couldn't load messages"
+          hint={<>The commute feed could not be read. <code>/api/commute/messages</code></>}
+          action={<Button onClick={() => void q.refetch()}>Retry</Button>}
+        />
+      );
     }
-  }, [loadFirst]);
-
-  usePoll(loadFirst, 30_000);
-
-  if (err && items.length === 0) {
-    return <p className="err">Couldn’t load messages: {err} <code>/api/commute/messages</code></p>;
   }
 
   const top = items[0];
@@ -978,22 +1080,27 @@ function NowTab() {
 
   return (
     <div>
+      {q.isError && (
+        <Notice tone="error" detail={errText(q.error)} action={<Button size="sm" onClick={() => void q.refetch()}>Retry</Button>}>
+          The feed below is out of date.
+        </Notice>
+      )}
+      {checkNow.isError && (
+        <Notice tone="error" detail={errText(checkNow.error)}>The check did not run.</Notice>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <p className="muted" style={{ margin: 0 }}>{total} message{total === 1 ? "" : "s"}</p>
-        <button onClick={checkNow} disabled={checking}
-          style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
-          <Sparkles size={14} /> {checking ? "Thinking…" : "Check now"}
-        </button>
+        <Button onClick={() => checkNow.mutate()} disabled={checkNow.isPending}>
+          <Sparkles size={14} aria-hidden /> {checkNow.isPending ? "Thinking…" : "Check now"}
+        </Button>
       </div>
 
       {items.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "2rem 1rem", color: "var(--muted)" }}>
-          <Inbox size={28} strokeWidth={1.6} />
-          <p style={{ margin: "0.5rem 0 0" }}>No commute messages yet.</p>
-          <p style={{ margin: "0.25rem 0 0", fontSize: "0.85rem" }}>
-            They arrive automatically around your commute. Tap <strong>Check now</strong> for an on-demand read.
-          </p>
-        </div>
+        <StateBlock
+          icon={<Inbox aria-hidden />}
+          title="No commute messages yet"
+          hint={<>They arrive automatically around your commute. Use <strong>Check now</strong> for an on-demand read.</>}
+        />
       ) : (
         <>
           {top && <TopMessageCard msg={top} />}
@@ -1005,9 +1112,11 @@ function NowTab() {
               </ul>
             </>
           )}
-          {hasMore && (
+          {q.hasNextPage && (
             <div style={{ textAlign: "center", marginTop: "0.9rem" }}>
-              <button onClick={loadMore} disabled={loading}>{loading ? "…" : "Load more"}</button>
+              <Button onClick={() => void q.fetchNextPage()} disabled={q.isFetchingNextPage}>
+                {q.isFetchingNextPage ? "Loading…" : "Load more"}
+              </Button>
             </div>
           )}
         </>
@@ -1028,34 +1137,39 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "alerts", label: "Alerts" },
 ];
 
+const STATUS_POLL_MS = 30_000;
+
 export default function Commute() {
   const [tab, setTab] = useState<Tab>("now");
-  const [brief, setBrief] = useState<Brief | null>(null);
-  const [briefErr, setBriefErr] = useState<string | null>(null);
-  const [polling, setPolling] = useState(false);
+  const qc = useQueryClient();
 
-  const loadBrief = useCallback(async () => {
-    try {
-      const r = await fetch("/api/commute/status");
-      if (!r.ok) throw new Error(`${r.status}`);
-      setBrief(await r.json());
-      setBriefErr(null);
-    } catch (e) {
-      setBriefErr(String(e));
-    }
-  }, []);
+  // ONE STATUS READ FOR THE WHOLE APP, AND ONLY WHERE IT IS RENDERED.
+  //
+  // There were two: this one at 30s and `useCommuteNative`'s at 60s, each with
+  // its own copy of the brief. They are two observers of one cache entry now
+  // (`commuteStatusQuery`), so the app makes one request per tick no matter how
+  // many readers there are.
+  //
+  // `enabled` is the second half. The brief is painted by the Status tab and
+  // nowhere else, and it was polled on every tab: four fifths of those requests
+  // fetched a payload nobody could see. Leaving the tab stops this reader; it
+  // does not stop the native one, because the phone's notification and Live
+  // Activity must not depend on which tab is open.
+  const statusQuery = useQuery(commuteStatusQuery<Brief>({
+    enabled: tab === "status",
+    refetchMs: STATUS_POLL_MS,
+  }));
 
-  const pollNow = useCallback(async () => {
-    setPolling(true);
-    try {
-      await fetch("/api/commute/poll", { method: "POST" });
-      await loadBrief();
-    } finally {
-      setPolling(false);
-    }
-  }, [loadBrief]);
-
-  usePoll(loadBrief, 30_000);
+  // "Refresh transit data" re-fetches the upstream feeds server-side, then the
+  // brief is invalidated rather than re-read by hand, so every reader of the
+  // key (including the native one) sees the result of the poll.
+  const pollNow = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/commute/poll", { method: "POST" });
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: commuteKeys.status() }),
+  });
 
   const select = (t: Tab) => {
     setTab(t);
@@ -1064,16 +1178,22 @@ export default function Commute() {
 
   return (
     <div>
-      {briefErr && tab === "status" && (
-        <p className="err" style={{ marginBottom: "0.75rem" }}>Status error: {briefErr}</p>
-      )}
-
       <div style={{ marginBottom: "var(--space-5)" }}>
         <Tabs items={TABS.map((t) => ({ value: t.key, label: t.label }))} value={tab} onChange={select} />
       </div>
 
       {tab === "now" && <NowTab />}
-      {tab === "status" && <StatusTab brief={brief} onPollNow={pollNow} polling={polling} />}
+      {tab === "status" && (
+        <StatusTab
+          brief={statusQuery.data ?? null}
+          loading={statusQuery.isPending}
+          error={statusQuery.isError ? errText(statusQuery.error) : null}
+          pollError={pollNow.isError ? errText(pollNow.error) : null}
+          onRetry={() => void statusQuery.refetch()}
+          onPollNow={() => pollNow.mutate()}
+          polling={pollNow.isPending}
+        />
+      )}
       {tab === "schedule" && <ScheduleTab />}
       {tab === "sources" && <SourcesTab />}
       {tab === "alerts" && <AlertsTab />}

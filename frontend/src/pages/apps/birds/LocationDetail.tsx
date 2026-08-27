@@ -1,15 +1,33 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapPin, Radio, Star, Pencil, Check, X, AlertTriangle, ChevronRight, Trash2 } from "lucide-react";
-import { useCrumbLabel, usePoll } from "@workshop/ui";
-import { API, jget } from "./ui";
+import { Button, Notice, Skeleton, StateBlock, useCrumbLabel } from "@workshop/ui";
+import { useShowNonBird } from "./settings";
 import AddressPicker from "./AddressPicker";
 import type { Place } from "./geocode";
+import {
+  birdsKeys, fetchHome, fetchLocationSummary, fetchLocations,
+  mergeLocations, removeLocation, saveLocation, useSetHome,
+  type HomeRead,
+} from "./queries";
 
 // The editing surface for one place: rename it, pin its coordinates (so adaptive
 // devices merge into it), set it home, merge it into another, and see the devices
 // reporting here. Browsing the birds heard here is the Place dropdown on the
-// home page — this page links straight into that view.
+// home page; this page links straight into that view.
+//
+// TWO FACTS, TWO QUERIES. This page read `/location/summary` and `/home` in one
+// `Promise.all` behind one `usePoll`, so a failure in either wiped both and the
+// error state could not tell you which one broke. They are unrelated: one is
+// this record, one is a global setting, and `/home` is the same entry the
+// Locations page and the header read.
+//
+// THE COMPANION EFFECT IS GONE. `usePoll` reads its callback through a ref, so a
+// changed closure never re-ran it and the page compensated with
+// `useEffect(() => refresh(), [id, refresh])` plus `immediate: false`. A query
+// refetches when its key changes, by itself; porting the effect would have meant
+// two reads per navigation.
 
 const REFRESH_MS = 12000;
 
@@ -21,46 +39,108 @@ type Summary = {
 export default function LocationDetail() {
   const [params] = useSearchParams();
   const id = Number(params.get("id") || 0);
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [home, setHome] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
+  const [showNonBird] = useShowNonBird();
+  // The non-bird filter is sent now, where it used to be dropped. These counts
+  // and the ones on the page behind "View birds heard here" are the same
+  // question, and they disagreed whenever the filter was on because only one of
+  // them asked it.
+  const sp = { locationId: id, includeNonBird: showNonBird, device: "" };
+
+  // NO `keepPreviousData` here, and that is not an oversight. This key changes
+  // only when the RECORD changes, so the previous data is a DIFFERENT place;
+  // holding it would put another location's name and counts under this one's
+  // title. A refetch on an unchanged key never blanks the page on its own, which
+  // is what that rule is there to protect.
+  const summaryQ = useQuery({
+    queryKey: birdsKeys.locationSummary(sp),
+    queryFn: () => fetchLocationSummary<Summary>(sp),
+    enabled: id > 0,
+    refetchInterval: REFRESH_MS,
+    staleTime: 0,
+    retry: false,
+  });
+
+  // Which place is home: a shared setting, its own entry, and the only thing the
+  // star reads or writes. No cadence of its own; the write updates it and the
+  // client re-reads it when the tab comes back.
+  const homeQ = useQuery({ queryKey: birdsKeys.home(), queryFn: () => fetchHome<HomeRead>() });
+  const setHome = useSetHome();
+
+  const summary = summaryQ.data ?? null;
   useCrumbLabel(summary?.name);
 
-  const refresh = useCallback(() => {
-    if (!id) return;
-    Promise.all([
-      jget<Summary>(`/location/summary?location_id=${id}`),
-      jget<{ home: string | null }>(`/home`),
-    ]).then(([s, h]) => { setSummary(s); setHome(h.home); })
-      .catch((e) => setErr(String(e)));
-  }, [id]);
+  // The open editor is identified by the record it belongs to, not by a boolean:
+  // navigating to another place (the merge redirect does exactly that) closes it
+  // with no effect and no reset.
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const editing = id > 0 && editingId === id;
 
-  useEffect(() => { if (id) refresh(); }, [id, refresh]);
-  usePoll(refresh, REFRESH_MS, { enabled: !!id, immediate: false });
-
-  // A location with no pinned place needs one — open the editor automatically.
-  const autoOpened = useRef(false);
+  // A location with no pinned place needs one, so the editor opens itself.
+  // ONCE PER PLACE: the ref holds the id it fired for, so a 12s refetch that
+  // returns the same record cannot re-open an editor the operator moved on
+  // from, and arriving at a SECOND place with no coordinates still opens.
+  const autoOpenedFor = useRef<number | null>(null);
   useEffect(() => {
-    if (summary && summary.lat == null && !autoOpened.current) { autoOpened.current = true; setEditing(true); }
-  }, [summary]);
+    if (!summary || summary.lat != null || autoOpenedFor.current === id) return;
+    autoOpenedFor.current = id;
+    setEditingId(id);
+  }, [id, summary]);
 
-  // Toggle home: set this place, or clear home entirely (empty source) when it is
-  // already home.
-  const toggleHome = useCallback((makeHome: boolean) => {
-    const fd = new FormData(); fd.append("source", makeHome ? `loc:${id}` : "");
-    setHome(makeHome ? `loc:${id}` : "");
-    fetch(`${API}/home`, { method: "POST", body: fd }).catch(() => {});
-  }, [id]);
+  if (!id) {
+    return (
+      <Wrap>
+        <StateBlock
+          title="No location selected"
+          hint="Open a place from the Locations list, or from a device's card."
+          action={<Link to="/apps/birds/locations" className="btn sm">Locations</Link>}
+        />
+      </Wrap>
+    );
+  }
 
-  if (!id) return <Wrap><p className="error">No location selected.</p></Wrap>;
-  if (err && !summary) return <Wrap><p className="error">Could not load: {err}</p></Wrap>;
-  if (!summary) return <Wrap><p className="muted">Loading…</p></Wrap>;
+  if (summaryQ.isError && !summary) {
+    return (
+      <Wrap>
+        <StateBlock
+          variant="error"
+          title="Couldn't load this location"
+          hint={<code>GET /api/birds/location/summary: {String(summaryQ.error)}</code>}
+          action={<Button size="sm" onClick={() => void summaryQ.refetch()}>Retry</Button>}
+        />
+      </Wrap>
+    );
+  }
 
-  const isHome = home === `loc:${id}`;
+  if (!summary) {
+    return (
+      <Wrap>
+        <Skeleton style={{ height: 96, marginBottom: "1rem" }} />
+        <Skeleton style={{ height: 64 }} />
+      </Wrap>
+    );
+  }
+
+  const isHome = homeQ.data?.home === `loc:${id}`;
 
   return (
     <Wrap name={summary.name}>
+      {/* The record is on screen, so a dropped refresh or a rejected write is a
+          line beside it, never a region over it. */}
+      {summaryQ.isError && (
+        <div style={{ marginBottom: ".7rem" }}>
+          <Notice tone="warn" action={<Button size="sm" variant="ghost" onClick={() => void summaryQ.refetch()}>Retry</Button>}>
+            This place is not refreshing.
+          </Notice>
+        </div>
+      )}
+      {setHome.isError && (
+        <div style={{ marginBottom: ".7rem" }}>
+          <Notice tone="error" action={<Button size="sm" variant="ghost" onClick={() => setHome.reset()}>Dismiss</Button>}>
+            Could not change the home location. The star is back to what the server has.
+          </Notice>
+        </div>
+      )}
+
       {/* Identity card: the name, the home star, and the Edit pencil all live
           INSIDE this card (not in a header above it); editing expands in place. */}
       <section className="card" style={{ padding: "1rem", marginBottom: "1rem",
@@ -68,13 +148,13 @@ export default function LocationDetail() {
         <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: editing ? ".6rem" : 0 }}>
           <MapPin size={16} className="muted" style={{ flexShrink: 0 }} />
           <span style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{summary.name}</span>
-          <button onClick={() => toggleHome(!isHome)} title={isHome ? "Home (tap to unset)" : "Set as home"}
+          <button onClick={() => setHome.mutate(isHome ? "" : `loc:${id}`)} title={isHome ? "Home (tap to unset)" : "Set as home"}
             aria-pressed={isHome} aria-label={isHome ? "Unset as home" : "Set as home"}
             style={{ background: "none", border: "none", cursor: "pointer", color: isHome ? "var(--warn-solid)" : "var(--muted)", flexShrink: 0, padding: ".15rem" }}>
             <Star size={18} fill={isHome ? "var(--warn-solid)" : "none"} />
           </button>
           {!editing && (
-            <button className="btn sm" title="Edit this location" aria-label="Edit this location" onClick={() => setEditing(true)} style={{ flexShrink: 0 }}>
+            <button className="btn sm" title="Edit this location" aria-label="Edit this location" onClick={() => setEditingId(id)} style={{ flexShrink: 0 }}>
               <Pencil size={14} />
             </button>
           )}
@@ -86,10 +166,13 @@ export default function LocationDetail() {
           <div style={{ marginTop: ".5rem", display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
             <AlertTriangle size={15} style={{ color: "var(--warn)" }} />
             <span style={{ flex: 1, fontSize: ".85rem" }}>This location has no real place yet.</span>
-            <button className="btn sm" onClick={() => setEditing(true)}>Set address</button>
+            <button className="btn sm" onClick={() => setEditingId(id)}>Set address</button>
           </div>
         )}
-        {editing && <EditLocation summary={summary} onDone={() => { setEditing(false); refresh(); }} />}
+        {/* Mounted only while open, so its draft is seeded once, from the record
+            as it was when the editor opened. A 12s refetch under an open editor
+            cannot overwrite what the operator has typed. */}
+        {editing && <EditLocation summary={summary} onDone={() => setEditingId(null)} />}
       </section>
 
       <Link to={`/apps/birds?source=loc:${id}`} className="card"
@@ -117,51 +200,68 @@ export default function LocationDetail() {
 
 function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => void }) {
   const nav = useNavigate();
+  const qc = useQueryClient();
+  const [showNonBird] = useShowNonBird();
+  const nb = { includeNonBird: showNonBird };
   const hasPlace = summary.lat != null && summary.lon != null;
   const [name, setName] = useState(summary.name && summary.name !== "Untitled location" ? summary.name : "");
   // The "Address or GPS" field shows the real address, not the display name
   // (which has its own field below).
-  const [place, setPlace] = useState<Place | null>(
+  const [place, setPlace] = useState<Place | null>(() =>
     hasPlace ? { short: summary.address || `${summary.lat!.toFixed(5)}, ${summary.lon!.toFixed(5)}`, label: summary.address || "", lat: summary.lat!, lon: summary.lon! } : null);
   const [busy, setBusy] = useState(false);
-  const [others, setOthers] = useState<{ id: number; name: string }[]>([]);
+  const [err, setErr] = useState<string | null>(null);
   const [target, setTarget] = useState("");
   const [confirmDel, setConfirmDel] = useState(false);
 
-  useEffect(() => {
-    jget<{ locations: { id: number; name: string }[] }>(`/locations`)
-      .then((d) => setOthers(d.locations.filter((l) => l.id !== summary.id)))
-      .catch(() => {});
-  }, [summary.id]);
+  // The merge menu is the SAME list the Locations page shows, on the same key,
+  // so opening this editor after visiting that page costs nothing. It used to be
+  // a third spelling of `/locations` in its own `useState`.
+  const locsQ = useQuery({
+    queryKey: birdsKeys.locations(nb),
+    queryFn: () => fetchLocations<{ locations: { id: number; name: string }[] }>(nb),
+    placeholderData: keepPreviousData,
+  });
+  const others = (locsQ.data?.locations ?? []).filter((l) => l.id !== summary.id);
 
-  const merge = () => {
-    if (!target) return;
-    setBusy(true);
-    const fd = new FormData();
-    fd.append("src", String(summary.id));
-    fd.append("dst", target);
-    fetch(`${API}/location/merge`, { method: "POST", body: fd })
-      .then(() => nav(`/apps/birds/location?id=${target}`))
-      .catch(() => setBusy(false));
-  };
-
-  const remove = () => {
-    setBusy(true);
-    fetch(`${API}/location?location_id=${summary.id}`, { method: "DELETE" })
-      .then(() => nav("/apps/birds"))
-      .catch(() => setBusy(false));
+  // A write, then the invalidation that used to be a caller's re-read. The
+  // editor stays open and says so when one is rejected; it used to close in
+  // `.finally`, which looked exactly like a save that worked.
+  const run = (work: Promise<unknown>, then: () => void) => {
+    setBusy(true); setErr(null);
+    work.then(then).catch((e) => { setErr(String(e)); setBusy(false); });
   };
 
   const save = () => {
     if (!place) return;
-    setBusy(true);
-    const fd = new FormData();
-    fd.append("location_id", String(summary.id));
-    fd.append("name", name.trim() || place.short);
-    fd.append("lat", String(place.lat));
-    fd.append("lon", String(place.lon));
-    fd.append("address", place.label || place.short);
-    fetch(`${API}/location`, { method: "POST", body: fd }).finally(() => { setBusy(false); onDone(); });
+    run(saveLocation({
+      id: summary.id,
+      name: name.trim() || place.short,
+      lat: place.lat,
+      lon: place.lon,
+      address: place.label || place.short,
+    }), () => {
+      void qc.invalidateQueries({ queryKey: birdsKeys.locationAll(summary.id) });
+      void qc.invalidateQueries({ queryKey: birdsKeys.locationsAll() });
+      onDone();
+    });
+  };
+
+  // A merge or a remove moves this place's detections, so every count in the app
+  // is downstream of it. Only what is mounted re-reads; the rest is marked stale.
+  const merge = () => {
+    if (!target) return;
+    run(mergeLocations({ src: summary.id, dst: Number(target) }), () => {
+      void qc.invalidateQueries({ queryKey: birdsKeys.all() });
+      nav(`/apps/birds/location?id=${target}`);
+    });
+  };
+
+  const remove = () => {
+    run(removeLocation(summary.id), () => {
+      void qc.invalidateQueries({ queryKey: birdsKeys.all() });
+      nav("/apps/birds");
+    });
   };
 
   return (
@@ -178,12 +278,17 @@ function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => voi
         <p className="muted" style={{ fontSize: ".75rem", margin: 0 }}>
           A location must be a verified address or GPS point. Adaptive devices within ~40 m merge into it automatically.
         </p>
+        {err && <Notice tone="error" detail={err}>That did not go through.</Notice>}
         <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap" }}>
           <button className="btn primary" onClick={save} disabled={busy || !place}><Check size={14} /> Save</button>
-          {hasPlace && <button className="btn" onClick={onDone}><X size={14} /> Cancel</button>}
+          {hasPlace && <button className="btn" onClick={onDone} disabled={busy}><X size={14} /> Cancel</button>}
         </div>
 
-        {others.length > 0 && (
+        {locsQ.isError ? (
+          <Notice tone="warn" action={<Button size="sm" variant="ghost" onClick={() => void locsQ.refetch()}>Retry</Button>}>
+            Couldn't load the other locations, so merging is unavailable.
+          </Notice>
+        ) : others.length > 0 && (
           <div style={{ marginTop: ".6rem", paddingTop: ".7rem", borderTop: "1px solid var(--border)" }}>
             <div className="muted" style={lbl}>Or merge this location into another</div>
             <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", marginTop: ".25rem" }}>
@@ -219,8 +324,8 @@ function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => voi
   );
 }
 
-// Page chrome: just the title now — the home star and Edit pencil live INSIDE the
-// identity card (above), not in this header.
+// Page chrome: just the title now, since the home star and Edit pencil live
+// INSIDE the identity card (above), not in this header.
 function Wrap({ children, name }: { children: React.ReactNode; name?: string }) {
   return (
     <div>
