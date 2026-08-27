@@ -118,13 +118,31 @@ class TestEffectiveMatchesTheWorker:
         assert int(CACHE_READ_WEIGHT * 9) == 0
 
     def test_per_call_then_sum_is_not_the_same_as_sum_then_weight(self):
-        """The documented reason effective() is applied per call: truncation
-        does not distribute, and per-call is what the worker's numbers were
-        built from."""
+        """Truncation does not distribute, which is why TurnMeter has to choose.
+        It weights the deduplicated total ONCE, matching what ralph.sh does with
+        the result envelope's aggregate usage."""
         calls = [Usage(cache_read=9)] * 5
         per_call = sum(effective(c) for c in calls)
         summed = effective(Usage(cache_read=45))
         assert per_call == 0 and summed == 4
+
+    def test_the_meter_weights_the_total_once(self):
+        m = TurnMeter()
+        for i in range(5):
+            m.observe(f"msg_{i}", {"cache_read_input_tokens": 9})
+        assert m.calls == 5
+        assert m.effective == 4, "the meter weighted per call instead of once"
+
+    def test_it_diverges_from_ralph_only_on_malformed_input(self):
+        """Deliberate, and the one place the transcription above does not apply.
+        ralph's bare int() raises on junk and its except zeroes the WHOLE block;
+        parse() clamps the offending field and keeps the rest. Keeping the good
+        components is the better answer for a metering path, but it is a
+        difference and it is written down rather than discovered later."""
+        block = {"input_tokens": 500, "cache_read_input_tokens": "nonsense"}
+        assert effective(parse(block)) == 500
+        with pytest.raises((TypeError, ValueError)):
+            self._ralph(block)
 
 
 class TestDeduplicationByMessageId:
@@ -264,3 +282,44 @@ def test_the_module_imports_nothing_from_services():
     src = (Path(__file__).resolve().parents[1] / "services" / "token_usage.py").read_text()
     code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
     assert "from services" not in code and "import services" not in code
+
+
+class TestABlockThatReportsNothingIsNotACall:
+    """Real journals carry non-sidechain assistant records with model
+    "<synthetic>" whose usage is all zeros: 213 of 35,568 parent calls measured
+    on this machine 2026-08-26, each with a distinct id so deduplication cannot
+    suppress them, and in 7 of 4,450 sessions the LAST parent call is one.
+
+    build_streaming guards exactly this today ("if ctx and ctx != last_ctx"), so
+    a meter that did not would be a regression against the helper it replaces.
+    """
+
+    def test_a_zero_block_does_not_reset_occupancy(self):
+        m = TurnMeter()
+        m.observe("real", {"cache_read_input_tokens": 344_256})
+        m.observe("synthetic", {"input_tokens": 0, "cache_read_input_tokens": 0,
+                                "cache_creation_input_tokens": 0,
+                                "output_tokens": 0})
+        assert m.occupancy == 344_256, "a synthetic frame emptied the window"
+
+    def test_a_zero_block_is_not_counted_as_a_call(self):
+        """`calls` is meant to predict cost, and a call that reported nothing
+        costs nothing."""
+        m = TurnMeter()
+        m.observe("real", {"input_tokens": 10})
+        m.observe("synthetic", {"input_tokens": 0})
+        assert m.calls == 1
+
+    def test_the_frame_is_still_counted(self):
+        """Frames are the raw stream count and must stay honest, or the
+        inflation ratio this module exists to expose would be understated."""
+        m = TurnMeter()
+        m.observe("real", {"input_tokens": 10})
+        m.observe("synthetic", {})
+        assert m.frames == 2 and m.calls == 1
+
+    def test_an_unparseable_block_is_treated_the_same_way(self):
+        m = TurnMeter()
+        m.observe("real", {"cache_read_input_tokens": 5_000})
+        m.observe("junk", "not a usage block")
+        assert m.calls == 1 and m.occupancy == 5_000

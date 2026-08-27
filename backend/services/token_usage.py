@@ -24,17 +24,21 @@ does.
 DEDUPLICATION IS THE OTHER HALF. The CLI emits one journal frame per content
 block, and every frame of one assistant message carries the SAME usage object.
 Adding frames instead of calls is not a rounding error. Measured 2026-08-26 over
-four real session journals in this repo:
+every session journal on this machine with at least 20 usage frames:
 
-    frames  calls   frame_sum      dedup_sum     inflation
-       267    118   50,371,949     22,689,203      2.22x
-       138     60   17,697,608      7,503,105      2.36x
-        55     19    4,433,928      1,537,305      2.88x
-       176     80   24,589,642     11,887,153      2.07x
+    sessions                    198
+    frames / calls       62,132 / 30,939   (2.01 frames per call)
+    naive frame sum      15,543,567,184
+    deduplicated sum      7,882,407,921
+    AGGREGATE INFLATION           1.97x
+    per session            min 1.23x, median 2.00x, max 3.27x
 
-(counting-tokens-2026-08-25.md reported 1.54x and 1.59x from two turns; on
-current journals it is worse than that, not better.) One assistant message was
-observed carrying the identical usage object across exactly three frames.
+(counting-tokens-2026-08-25.md reported 1.54x and 1.59x from two turns. The
+whole-corpus median is 2.00x, so the effect is larger than that sample showed,
+not smaller.) One assistant message was observed carrying an identical usage
+object across exactly three frames, which is the case the test fixture
+reproduces. The measurement is over live files that grow as sessions run, so
+re-running it will not return these exact totals; the ratio is the stable part.
 
 Pure stdlib and no `services.*` imports on purpose, so this is importable from
 the FastAPI app, from voice_worker, and from the shell through the usage_ledger
@@ -82,7 +86,12 @@ class Usage:
         )
 
     def as_dict(self) -> dict[str, int]:
-        """The shape a ledger row stores under `components`."""
+        """Components as a plain dict.
+
+        This is the shape ticket c0bac5ad will store on a ledger row under
+        `components`. `usage_ledger.record()` does NOT write it today, and this
+        module deliberately does not change that.
+        """
         return {"input": self.input, "cache_read": self.cache_read,
                 "cache_creation": self.cache_creation, "output": self.output}
 
@@ -142,9 +151,9 @@ def effective(u: Usage) -> int:
     deliberately so this module and the worker cannot disagree by a token, which
     is the whole point of moving the arithmetic here.
 
-    APPLY PER CALL AND THEN SUM, never sum components and weight once: the two
-    differ by the truncation, and per-call is what the existing worker numbers
-    were built from. `TurnMeter.effective` does it the same way.
+    Truncation does not distribute, so weighting each call and summing is NOT
+    the same as summing components and weighting once. `TurnMeter.effective`
+    does the latter; see its docstring for which and why.
     """
     return (u.input
             + int(CACHE_READ_WEIGHT * u.cache_read)
@@ -193,6 +202,20 @@ class TurnMeter:
         """
         u = parse(usage)
         self._frames += 1
+        if u == Usage():
+            # A BLOCK THAT REPORTS NOTHING IS NOT A CALL. Real journals carry
+            # non-sidechain assistant records with model "<synthetic>" whose
+            # usage is all zeros: measured 2026-08-26, 213 of 35,568 parent
+            # calls across this machine's journals, each with a distinct id so
+            # deduplication cannot suppress them, and in 7 of 4,450 sessions the
+            # LAST parent call is one of them.
+            #
+            # Counting them would do two wrong things: report an empty window
+            # after real readings up to 344,256, and inflate `calls`, which is
+            # meant to predict cost. `build_streaming` guards exactly this today
+            # ("if ctx and ctx != last_ctx"), so not guarding it here would be a
+            # regression against the helper this module replaces.
+            return
         first_time = True
         if message_id:
             if message_id in self._calls:
@@ -263,14 +286,20 @@ class TurnMeter:
 
     @property
     def effective(self) -> int:
-        """(c) Rate-limit-shaped draw-down, weighted PER CALL and then summed,
-        which is how the worker has always computed it."""
-        total = 0
-        for mid in self._order:
-            total += effective(self._calls[mid])
-        for u in self._anonymous:
-            total += effective(u)
-        return total
+        """(c) Rate-limit-shaped draw-down: the deduplicated components weighted
+        ONCE, not each call weighted and then summed.
+
+        Truncation does not distribute, so the two differ (by tens of tokens on
+        a real session, which is negligible in itself). Weighting once is chosen
+        for two reasons that are not about the size of the gap. It is what the
+        worker actually does: `ralph.sh` reads the single aggregate usage of the
+        result envelope and applies the expression one time, so per-call-then-sum
+        would have been a new behaviour wearing a compatibility argument. And it
+        makes the turn total a pure function of the stored components, which is
+        the property that lets a past row be re-evaluated under a different
+        weight instead of being stuck with whatever was computed at write time.
+        """
+        return effective(self.totals)
 
     @property
     def result_totals(self) -> Usage | None:
