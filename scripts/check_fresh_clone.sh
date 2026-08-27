@@ -130,8 +130,10 @@ PERSONAL_DATA_PATTERNS=(
   ':(glob)**/TODO.md'
   # Security audits of one operator's own machine: real account names, home
   # directory modes, ACLs, known-fixed weaknesses. Five were tracked until
-  # 2026-08-27; they live in the gitignored docs/masini/ now.
-  'docs/masini/**' 'docs/security-audit-*' 'docs/security-fixes-*'
+  # 2026-08-27. The per-instance records directory they moved to is named after
+  # the MACHINE, so it is read from .gitignore below rather than typed here --
+  # this file must no more name one deployment than the platform source may.
+  'docs/security-audit-*' 'docs/security-fixes-*'
   # Raw unedited voice dictation. Three navigation-shell transcripts, 38 KB,
   # tracked until 2026-08-27.
   ':(glob)**/TRANSCRIPT-*'
@@ -167,6 +169,17 @@ PERSONAL_DATA_ALLOWED=(
   'frontend/public/favicon*'
   'mobile/assets/*'
 )
+
+# The per-instance documentation directories, ASKED OF THE REPO rather than
+# typed. .gitignore already declares which doc subtrees are one deployment's
+# operational records ("Tenant operational records: bring-up playbook and
+# security audits of one operator's own box"), and their names are machine
+# names. Reading them keeps this list identity-free and, more usefully, means a
+# NEW instance-records directory is covered the moment it is gitignored,
+# instead of the day somebody remembers to add it here.
+while IFS= read -r _d; do
+  [[ -n "$_d" ]] && PERSONAL_DATA_PATTERNS+=("${_d}**")
+done < <(grep -E '^docs/[A-Za-z0-9_.-]+/$' "$WORKSHOP/.gitignore" 2>/dev/null)
 
 # `apps/` and `agents/` must carry templates and nothing else.
 TEMPLATE_ONLY_ROOTS=("agents" "apps" "projects")
