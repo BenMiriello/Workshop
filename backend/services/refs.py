@@ -12,7 +12,7 @@ refuses (`resolve_ref`).
     workshop:note/<scope>/<id>
     workshop:doc/<repo-relative-path>
     workshop:ticket/<id>
-    workshop:chat/<thread-id>#<message-id>
+    workshop:chat/<thread-id>[#<message-id>]
     workshop:run/<id>
     workshop:project/<slug>
     workshop:agent/<slug>
@@ -68,9 +68,9 @@ def parse_ref(text: str) -> Ref:
         if not scope or not note_id or "/" in note_id:
             raise ValueError(f"note ref needs <scope>/<id>: {text!r}")
     elif kind == "chat":
-        thread_id, sep, message_id = key.partition("#")
-        if not sep or not thread_id or not message_id:
-            raise ValueError(f"chat ref needs <thread-id>#<message-id>: {text!r}")
+        thread_id, sep, _message_id = key.partition("#")
+        if not thread_id:
+            raise ValueError(f"chat ref needs a <thread-id>: {text!r}")
     elif kind == "doc":
         if not _clean_doc_path(key):
             raise ValueError(f"doc ref must be a clean repo-relative path: {text!r}")
@@ -323,13 +323,13 @@ def _resolve_ticket(ref: Ref) -> dict | None:
 
 
 def _resolve_chat(ref: Ref) -> dict | None:
+    """Resolves on thread existence alone -- stored chat messages carry no
+    `id` field, so a `#<message-id>` (when given) is passed through to the
+    href as an anchor only, never checked against the thread's messages."""
     from services import chat_store
     thread_id, _, message_id = ref.key.partition("#")
     thread = chat_store.get_thread(thread_id)
     if thread is None:
-        return None
-    found = any(m.get("id") == message_id for m in (thread.get("messages") or []))
-    if not found:
         return None
     context_key = thread.get("context_key") or "general"
     status = "archived" if thread.get("archived_at") else "active"
@@ -338,10 +338,13 @@ def _resolve_chat(ref: Ref) -> dict | None:
          for m in (thread.get("messages") or []) if m.get("role") == "user"),
         "",
     )
+    href = f"/chat/{context_key}?thread={thread_id}"
+    if message_id:
+        href += f"#msg-{message_id}"
     return {
         "kind": "chat",
         "title": thread.get("title") or "Chat",
-        "href": f"/chat/{context_key}?thread={thread_id}#msg-{message_id}",
+        "href": href,
         "status": status,
         "preview": {"excerpt": _excerpt(opening)},
     }

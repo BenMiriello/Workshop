@@ -23,7 +23,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import backlinks, knowledge, ownership, refs, tasks  # noqa: E402
+from services import backlinks, chat_store, knowledge, ownership, refs, tasks  # noqa: E402
 
 
 # --- parse / serialize ---------------------------------------------------------
@@ -33,6 +33,7 @@ class TestParseSerialize:
         "workshop:doc/docs/decisions/0001-foo.md",
         "workshop:ticket/abc123",
         "workshop:chat/thread-1#msg-1",
+        "workshop:chat/thread-1",
         "workshop:run/job_123",
         "workshop:project/birds",
         "workshop:agent/reviewer",
@@ -55,7 +56,7 @@ class TestParseSerialize:
     @pytest.mark.parametrize("bad", [
         "", "not-a-ref", "workshop:", "workshop:bogus/x",
         "workshop:note/", "workshop:note/onlyscope",
-        "workshop:chat/no-hash", "workshop:chat/#no-thread",
+        "workshop:chat/#no-thread",
     ])
     def test_bad_shapes_raise(self, bad):
         with pytest.raises(ValueError):
@@ -217,6 +218,34 @@ class TestTicketResolutionAndBacklinks:
         ]
         assert tasks.remove(scoped, source["id"])
         assert backlinks.referenced_by(refs.ticket_ref(target["id"])) == []
+
+
+class TestChatResolution:
+    """Stored chat messages carry no `id` field (role/content/ts/meta only),
+    so a chat ref resolves on thread existence alone. The `#<message-id>`
+    suffix, when given, is parse-only and becomes an href anchor -- it is
+    never checked against the thread's messages."""
+
+    def test_bare_thread_ref_resolves(self, tree):
+        thread = chat_store.create_thread(context_key="general", title="Hi")
+        got = refs.resolve_ref(f"workshop:chat/{thread['id']}")
+        assert got is not None
+        assert got["kind"] == "chat"
+        assert got["title"] == "Hi"
+        assert got["href"] == f"/chat/general?thread={thread['id']}"
+        assert got["status"] == "active"
+
+    def test_missing_thread_refuses(self, tree):
+        assert refs.resolve_ref("workshop:chat/does-not-exist") is None
+
+    def test_hash_message_id_form_still_parses_and_resolves(self, tree):
+        thread = chat_store.create_thread(context_key="general", title="Hi")
+        ref_str = refs.chat_ref(thread["id"], "msg-anything")
+        parsed = refs.parse_ref(ref_str)
+        assert parsed.kind == "chat"
+        got = refs.resolve_ref(ref_str)
+        assert got is not None
+        assert got["href"] == f"/chat/general?thread={thread['id']}#msg-msg-anything"
 
 
 class TestBacklinksStoreDirectly:
