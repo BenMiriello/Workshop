@@ -1345,7 +1345,17 @@ print(len(crit))
   # no `touches` is unrestricted, so this is a pure no-op for every task that does
   # not opt in — which is all of them today. Checked BEFORE the acceptance legs: a
   # run that wrote outside its lane does not get to be `done` on its way past.
-  TOUCH_FILES=$(printf '%s' "$EVIDENCE" | jq -r '.files[]?' 2>/dev/null)
+  #
+  # SKIPPED ENTIRELY FOR A DISPLACED RUN (rc=9). This gate runs before the `case`
+  # and ends in `continue`, so without this guard a displaced run that committed
+  # outside its declared lane would never reach the rc=9 leg at all: it would take
+  # this branch instead, which writes an evidence line onto the ticket UNFENCED,
+  # increments BLOCKED and finishes the child `failed` -- every one of the three
+  # things a displacement must not do, on exactly the path that exists to prevent
+  # them. A run that lost its claim does not get judged against the lane of a
+  # ticket that is no longer its own.
+  TOUCH_FILES=""
+  (( RC != 9 )) && TOUCH_FILES=$(printf '%s' "$EVIDENCE" | jq -r '.files[]?' 2>/dev/null)
   if [[ -n "$TOUCH_FILES" ]]; then
     TOUCH_OUT=$(printf '%s\n' "$TOUCH_FILES" | python3 "$PTASKS" check-touches "$DIR" "$TASK_ID" \
                   --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" 2>>"$LOG")
@@ -1575,7 +1585,11 @@ print(len(crit))
         log "task=$TASK_ID displaced with commits on branch wt/$WT_SLUG/$WT_BRANCH_SLUG at ${HEAD:0:12} (not merged, not noted on the ticket: it is no longer ours)"
       fi
       job_finish_child "$CHILD_JOB" cancelled "$RC" "$EVIDENCE"
-      log "task=$TASK_ID DISPLACED: claim lost mid-run, run stopped; ticket left exactly as the operator/reclaimer set it (no attempt consumed, no status written)"
+      # Says "this leg consumes nothing", NOT "the run cost nothing": `claim`
+      # already incremented attempts when the ticket was taken, and this leg
+      # deliberately does not hand it back, the same way `reclaim` does not
+      # re-bump an attempt the claim already counted.
+      log "task=$TASK_ID DISPLACED: claim lost mid-run, run stopped; ticket left exactly as the operator/reclaimer set it (no status written, no attempt refunded and none newly consumed here)"
       ;;
     1|2)
       # rc=1 (iteration cap) / rc=2 (wall cap): the run did NOT converge. Finish

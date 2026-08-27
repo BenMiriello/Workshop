@@ -185,29 +185,56 @@ trap release_presence EXIT
 heartbeat_task() {
   beat_presence
   [[ -z "$TASK_ID" || -z "$CLAIM_TOKEN" || -z "$STORE_DIR" ]] && return 0
-  local out hb_id
-  out=$(python3 "$PTASKS" heartbeat "$STORE_DIR" "$TASK_ID" "$CLAIM_TOKEN" 2>>"$LOG")
-  hb_id=$(printf '%s' "$out" | python3 -c "import json,sys
-try: print((json.load(sys.stdin) or {}).get('id') or '')
-except Exception: print('')" 2>/dev/null || echo "")
-  if [[ -z "$hb_id" ]]; then
-    # A NO-OP HERE MEANS WE LOST THE TICKET, and every reason it can happen has
-    # the same consequence. `tasks.heartbeat` returns None when the generation
-    # does not match (an operator edit, a reclaim, or a preempt bumped it) and
-    # when the ticket is no longer `doing`. In all of them this run's right to
-    # the ticket has ended.
-    #
-    # This used to log "continuing best-effort" and carry on, which meant the run
-    # spent up to another hour of wall clock and tokens on a ticket it no longer
-    # owned, kept writing into a worktree a new claimant may already hold, and
-    # only found out when its final status write was fenced and refused. The
-    # read-only tree mount that would stop the tree half of this is built but its
-    # flag is off, so ending the run is the only thing standing between a
-    # displacement and two workers writing the same directory.
-    log "heartbeat FENCED for task=$TASK_ID: this run no longer holds the claim (operator edit, reclaim or preempt). Stopping; the ticket belongs to someone else now."
-    return 1
+  # ONLY A STORE THAT ANSWERS AND SAYS THE CLAIM IS GONE IS A DISPLACEMENT.
+  #
+  # This distinction is load-bearing now that the answer ends the run. "No id in
+  # the output" has several causes and they do NOT have the same consequence:
+  #   - exit 0 with no id: `tasks.heartbeat` returned None, which means the
+  #     generation no longer matches (operator edit, reclaim, preempt) or the
+  #     ticket is not `doing`. We lost it. STOP.
+  #   - non-zero exit, or output we cannot read: the ticket store errored, the
+  #     database blipped mid-run, python failed, the argument was rejected. The
+  #     store did not say we lost the claim; it said nothing. CONTINUE.
+  # Collapsing the second into the first would turn a transient Postgres error
+  # into a killed run, and because this leg writes no status the ticket would sit
+  # `doing` behind a live sweep pid (so the dead-pid reclaim path does not fire)
+  # having already spent an attempt, with every log line blaming "DISPLACED".
+  local out rc verdict
+  out=$(python3 "$PTASKS" heartbeat "$STORE_DIR" "$TASK_ID" "$CLAIM_TOKEN" 2>>"$LOG"); rc=$?
+  if (( rc != 0 )); then
+    log "heartbeat could not reach the ticket store for task=$TASK_ID (exit $rc); continuing. NOT a displacement: the store did not answer, so it never said the claim was lost."
+    return 0
   fi
-  return 0
+  verdict=$(printf '%s' "$out" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('unreadable'); raise SystemExit(0)
+if not isinstance(d, dict) or d.get('error'):
+    print('unreadable')
+elif d.get('id'):
+    print('ok')
+else:
+    print('fenced')
+" 2>/dev/null || echo unreadable)
+  case "$verdict" in
+    ok) return 0 ;;
+    fenced)
+      # WE LOST THE TICKET. This used to log "continuing best-effort" and carry
+      # on, which meant the run spent up to another hour of wall clock and tokens
+      # on a ticket it no longer owned, kept writing into a worktree a new
+      # claimant may already hold, and only found out when its final status write
+      # was fenced and refused. The read-only tree mount that would stop the tree
+      # half of this is built but its flag is off, so ending the run is the only
+      # thing standing between a displacement and two workers writing one
+      # directory.
+      log "heartbeat FENCED for task=$TASK_ID: this run no longer holds the claim (operator edit, reclaim or preempt). Stopping; the ticket belongs to someone else now."
+      return 1 ;;
+    *)
+      log "heartbeat for task=$TASK_ID returned output this run could not read; continuing. NOT a displacement: only a store that answers and says the claim is gone is one."
+      return 0 ;;
+  esac
 }
 
 # Per-tree log + reviewer scoping. A project run (DIR != WORKSHOP) logs into the
@@ -797,18 +824,21 @@ PREV_REJECT_SIG=""; SAME_REJECT_COUNT=0
 PREV_DIFF_SIG="";   SAME_DIFF_COUNT=0
 
 while (( iter < MAX_ITER )); do
-  iter=$((iter + 1))
-
   # Renew the task-store lease at the TOP of each iteration, before the (possibly
   # multi-minute) claude turn below, so the reclaimer sees a fresh heartbeat well
   # inside the TTL for the whole iteration. Inert for a standalone ralph (Fix 2).
   #
-  # Checked BEFORE the turn, not after, because the whole point is to not spend
-  # another iteration on a ticket we no longer hold.
+  # Checked BEFORE the turn, because the whole point is to not spend another
+  # iteration on a ticket we no longer hold; and before `iter` is counted, so a
+  # run displaced at the top of iteration 1 does not write `iterations: 1` into a
+  # receipt having made zero model calls, which reads as "it did the work and
+  # then lost the claim".
   if ! heartbeat_task; then
     exit_code=9
     break
   fi
+
+  iter=$((iter + 1))
 
   # Wall-time check.
   ELAPSED=$(( $(date +%s) - START_EPOCH ))

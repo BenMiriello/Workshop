@@ -249,10 +249,10 @@ def _opt_int(v, flag: str):
     s = str(v).strip()
     if not s:
         raise ValueError(
-            f"{flag} was given an empty value. {_ABSENCE_MEANS.get(flag, 'Omit the flag to leave it unset')}, "
-            f"but an empty value is not the way to say so: it used to be read as "
-            f"absence silently, which for a fence meant the call was promoted to an "
-            f"operator write with more authority than it asked for.")
+            f"{flag} was given an empty value. "
+            f"{_ABSENCE_MEANS.get(flag, 'Omit the flag to leave it unset')}, but an "
+            f"empty value is not the way to say so: it used to be read as absence, "
+            f"silently.")
     try:
         return int(s)
     except (TypeError, ValueError):

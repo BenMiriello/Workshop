@@ -91,9 +91,17 @@ def test_a_zombie_cannot_finalize_a_parked_ticket(tmp_path):
     assert tasks.get_task(root, task_id)["status"] == "parked"
 
 
-def test_a_zombie_heartbeat_is_refused_too(tmp_path):
-    """The same generation guards the heartbeat, so advancing it on reclaim is
-    what lets a displaced worker find out it was displaced."""
+def test_a_zombie_heartbeat_is_refused_BY_THE_GENERATION(tmp_path):
+    """The heartbeat is how a displaced worker finds out, so it must be the
+    GENERATION that refuses it, not the status.
+
+    Stated that precisely because the naive version of this test passes without
+    the fix: after a reclaim the ticket is `todo`, and `heartbeat` already
+    refuses anything that is not `doing`, so a status check alone would satisfy
+    it while the fence stayed broken. Re-claiming puts the ticket back into
+    `doing` under a NEW generation, which removes the status from the argument
+    and leaves only the number.
+    """
     from services import tasks
 
     root = tmp_path / "scope"
@@ -101,7 +109,14 @@ def test_a_zombie_heartbeat_is_refused_too(tmp_path):
     task_id, zombie_token = _claim_then_crash(root)
     tasks.reclaim(root, now=_past_the_lease())
 
-    assert tasks.heartbeat(root, task_id, zombie_token) is None
+    # Someone else now holds it, and it is `doing` again.
+    fresh = tasks.claim(root, task_id, "job-2", pid=1)
+    assert fresh is not None and fresh["status"] == "doing"
+
+    assert tasks.heartbeat(root, task_id, zombie_token) is None, (
+        "the old generation was accepted while the ticket was doing")
+    assert tasks.heartbeat(root, task_id, fresh["claim_token"]) is not None, (
+        "the current holder's heartbeat must still work")
 
 
 def test_the_next_claimant_is_not_harmed(tmp_path):

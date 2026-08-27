@@ -38,10 +38,11 @@ def _extract(script: Path, name: str) -> str:
     return src[start:end]
 
 
-def _run_heartbeat(cli_stdout: str, tmp_path: Path) -> int:
+def _run_heartbeat(cli_stdout: str, tmp_path: Path, cli_rc: int = 0) -> int:
     """Run ralph.sh's own heartbeat_task against a stubbed ticket CLI."""
     fake_cli = tmp_path / "fake_ptasks.py"
-    fake_cli.write_text(f"import sys\nprint({cli_stdout!r})\n")
+    fake_cli.write_text(
+        f"import sys\nprint({cli_stdout!r})\nsys.exit({cli_rc})\n")
     fn = _extract(RALPH, "heartbeat_task")
     prog = (
         "beat_presence() { :; }\n"
@@ -155,3 +156,64 @@ def test_a_displacement_is_not_counted_as_a_task_failure():
 def test_the_scripts_still_parse(script):
     assert subprocess.run(["bash", "-n", str(script)],
                           capture_output=True).returncode == 0
+
+
+# ONLY A STORE THAT ANSWERS AND SAYS THE CLAIM IS GONE IS A DISPLACEMENT.
+#
+# These guard the thing that makes ending the run safe. "No id in the output" has
+# several causes: the store said we lost the ticket, or the store errored, the
+# database blipped mid-run, python failed, the argument was rejected. Only the
+# first is a displacement. Collapsing them would turn a transient Postgres error
+# into a killed run, and because the rc=9 leg writes no status the ticket would
+# sit `doing` behind a live sweep pid, so the dead-pid reclaim path would not
+# fire, having already spent an attempt, with every log line blaming "DISPLACED".
+# A repeating store fault would walk a ticket to its attempt cap that way.
+
+
+def test_a_store_that_errors_is_not_a_displacement(tmp_path):
+    assert _run_heartbeat("{}", tmp_path, cli_rc=1) == 0
+
+
+def test_a_store_error_payload_is_not_a_displacement(tmp_path):
+    """project_tasks.py prints {"error": ...} and exits 1 for a bad argument."""
+    assert _run_heartbeat('{"error": "--expect-claim-token expects an integer"}',
+                          tmp_path, cli_rc=1) == 0
+
+
+def test_unreadable_output_is_not_a_displacement(tmp_path):
+    """A traceback on stdout, a truncated write, anything that is not JSON."""
+    assert _run_heartbeat("Traceback (most recent call last):", tmp_path) == 0
+    assert _run_heartbeat("[]", tmp_path) == 0
+
+
+def test_an_error_payload_on_a_zero_exit_is_still_not_a_displacement(tmp_path):
+    """Belt and braces: the verdict is read from the payload too, so a future
+    caller that reports an error without a non-zero exit is still not read as
+    the store saying the claim was lost."""
+    assert _run_heartbeat('{"error": "boom"}', tmp_path, cli_rc=0) == 0
+
+
+def test_the_comment_does_not_claim_every_cause_is_the_same():
+    """The first version of this fix carried a comment asserting that every
+    reason the heartbeat returns no id has the same consequence. That was false
+    and it was load-bearing, since it is the justification for ending the run."""
+    src = RALPH.read_text()
+    assert "every reason it can happen has the same consequence" not in src
+    assert "ONLY A STORE THAT ANSWERS" in src
+
+
+def test_the_touches_gate_does_not_intercept_a_displaced_run():
+    """The touches gate runs BEFORE the case statement and ends in `continue`,
+    so without a guard a displaced run that committed outside its declared lane
+    never reaches the rc=9 leg at all. It takes the touches branch instead, which
+    writes an evidence line onto the ticket unfenced, increments BLOCKED and
+    finishes the child `failed`: all three of the things a displacement must not
+    do, on exactly the path that exists to prevent them.
+
+    Latent today because no ticket declares `touches`, which is precisely why it
+    needs a test rather than a reader noticing.
+    """
+    src = SWEEP.read_text()
+    gate = src[src.index("TOUCH_FILES="):src.index('if [[ -n "$TOUCH_FILES" ]]')]
+    assert "RC != 9" in _code_only(gate), (
+        "the touches gate does not exempt a displaced run")

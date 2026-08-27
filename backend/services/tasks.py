@@ -1806,7 +1806,7 @@ def reclaim(root: Path, *, now: datetime | None = None, ttl: int = LEASE_TTL_SEC
     a task forever (self-healing 2d). A stale claim under its attempt cap returns
     to `todo` (re-runnable next sweep); a stale claim AT the cap lands in `parked`
     (dead-letter, visible to the operator, never re-picked). The monotonic
-    The monotonic `claim_token` is ADVANCED, which is what actually fences a
+    `claim_token` is ADVANCED, which is what actually fences a
     zombie that later tries to finalize; releasing the lease alone did not,
     because `update` compares against the record. Returns [{id, action}] for
     logging. Cheap: scans lock-free first and only takes the lock when there is
