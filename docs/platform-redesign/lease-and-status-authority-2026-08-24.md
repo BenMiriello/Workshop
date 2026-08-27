@@ -74,6 +74,31 @@ worker's). That distinction is sound and this plan keeps it.
 Six things. Two are proven defects, one is a proven design hole, three are the
 missing half of C2. None of them is "the lease is wrong".
 
+> **FM1, FM5 and FM6 are CLOSED as of 2026-08-26.** They are kept below as
+> written, in the present tense, because the diagnosis is the useful part and
+> rewriting it would lose the evidence. What shipped:
+>
+> - **FM1** (zombie write): `tasks.reclaim` now advances the generation through
+>   `_fence_ticket_lease` instead of releasing at it, so a reclaimed worker's
+>   token can no longer match. Commit `78a195d2`, ticket `0fb57b31`. Two things
+>   this did NOT fix are filed rather than left implied: the generation is
+>   written to the database per ticket while the records persist once after the
+>   loop, so a failure between them still re-opens the window (`8968195a`), and
+>   the relational half of the fence has no executed test (`ffb0c019`).
+> - **FM5** (displaced worker keeps working): a fenced heartbeat now ends the run
+>   with exit 9 and the sweep has its own leg for it, consuming no attempt and
+>   writing no status. Commits `cb819ea9` and `015a64e0`, ticket `4c59ee01`. The
+>   quoted "continuing best-effort" line below no longer exists. Note the trap
+>   found in review: only exit 0 with no id is a displacement, because treating a
+>   store error the same way turns a database blip into a killed run.
+> - **FM6** (empty token promoted): the CLI refuses a present-but-empty or
+>   unparseable fence value instead of coercing it to "no fence". Commit
+>   `30563d01`, ticket `e9a313c3`.
+>
+> The tree half of FM5 is still open: `WORKSHOP_TREE_LEASE_MOUNT` remains off,
+> which is why ending the run is currently the only thing stopping two workers
+> writing one directory.
+
 ### FM1. A zombie worker can write `done` in the window between reclaim and re-claim. PROVEN.
 
 `tasks.reclaim` deliberately leaves `claim_token` intact
