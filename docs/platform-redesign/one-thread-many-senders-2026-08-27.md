@@ -98,8 +98,17 @@ responder) and **handback**. Not "mode".
 ### 2.4 Autonomy is unchanged
 
 Per-agent, three values, default `reactive`, global brake as an overlay
-(`autonomy-model-2026-07-18.md`, accepted). Nothing here touches it. Latitude
-stays deleted (`work-status-contract-2026-08-24.md` §6).
+(`autonomy-model-2026-07-18.md`, accepted). Nothing here touches it.
+
+CORRECTION, 2026-08-27: an earlier revision of this section said "latitude
+stays deleted", repeating `work-status-contract-2026-08-24.md` §6. That doc
+*decided* to delete it; the deletion never happened. Measured on this tree:
+`backend/services/latitude.py` is 211 lines, there is a live `<Select>` at
+`frontend/src/components/TaskPanel.tsx:471`, and the field survives in 20+
+files. It is set on 1 of 348 tickets, 0 of 215 file-store tasks and 0 of 25
+agent definitions, so it is dead in use but alive in code. This is the exact
+failure mode this corpus keeps hitting, committed here by the document that
+warns about it.
 
 ## 3. So what is an agent
 
