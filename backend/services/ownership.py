@@ -115,7 +115,7 @@ def caller_is_operator() -> bool:
     true, literal answer for all of them, and every caller that isn't the
     operator gets none of it rather than someone else's. Fails closed (False)
     on an unset owner or a bootstrap that hasn't run. See
-    docs/security-audit-2026-08-11-scope-separation.md.
+    docs/masini/security-audit-2026-08-11-scope-separation.md.
     """
     from services import auth_store
     try:

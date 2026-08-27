@@ -3,7 +3,7 @@
 **Status:** living reference. Describes how security *is meant to work* on this system — the trust
 model, the invariants that must hold, and the accepted tradeoffs — so future work has a baseline to
 design against and re-audit toward. It is not a change log; point-in-time audits (e.g.
-`security-audit-2026-07-18.md`) record what was actually true on a date and what got fixed.
+`masini/security-audit-2026-07-18.md`) record what was actually true on a date and what got fixed.
 
 **Last reviewed:** 2026-07-18. Re-review whenever the auth model, the public edge, the app-runner
 isolation, or the host user/group layout changes.
@@ -148,7 +148,7 @@ identity for the autonomy loop (a sub-user *without* the docker group), plus roo
 Docker for the app runner (§5). Until that exists, the honest posture is: an agent turn can do
 anything the service user can do, up to and including host root via the docker socket. The completion gate
 (`reviewer.sh`) is a **quality** control (it checks the committed diff), not a safety control (it
-never inspects the turn's Bash actions). See `security-audit-2026-07-18-agents.md`.
+never inspects the turn's Bash actions). See `masini/security-audit-2026-07-18-agents.md`.
 
 ## 6. Network exposure model
 

@@ -108,7 +108,7 @@ def chat_cwd() -> Path:
     same reason the notes vault is: two accounts running a scope-less turn
     should not share a scratch directory either.
 
-    See docs/security-audit-2026-08-11-scope-separation.md section 2.
+    See docs/masini/security-audit-2026-08-11-scope-separation.md section 2.
     """
     env = os.environ.get("WORKSHOP_CHAT_CWD")
     if env:

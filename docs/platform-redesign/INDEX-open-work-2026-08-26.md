@@ -511,7 +511,7 @@ one.
 **These cannot be executed by an agent.** Each needs root, another host
 user's account, or a decision only the operator can make. An autonomous
 run should skip them. Nine are traceable to
-`docs/security-audit-2026-07-18.md`; `source.ref` on these is an audit
+`docs/masini/security-audit-2026-07-18.md`; `source.ref` on these is an audit
 slug, not a chat id.
 
 - `4a79ffc5` (P80) [SEC-A1] Run every chat and autonomy turn as a

@@ -316,7 +316,8 @@ The user asked whether the final mobile system is standard. Recorded for the nex
 - `source/support.js` — generated runtime. Never edit.
 - `source/github.md` — repo association.
 - `HANDOFF.md` — this file.
-- `TRANSCRIPT-session-1.md`, `TRANSCRIPT-session-2.md`.
+- `TRANSCRIPT-session-1.md`, `TRANSCRIPT-session-2.md` — moved 2026-08-27 to the
+  untracked `docs/masini/`; see README.md.
 
 ## Where state lives now (updated)
 

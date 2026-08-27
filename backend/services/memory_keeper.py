@@ -186,7 +186,7 @@ def _safe_scope(scope_key: str) -> str:
     a build agent writes those files, so "not reachable" is a statement about
     today's callers rather than about this function. Validated the same way
     `learnings._valid_scope` does, which is the module that already got this
-    right. See docs/security-audit-2026-08-11-scope-separation.md section 2.
+    right. See docs/masini/security-audit-2026-08-11-scope-separation.md section 2.
     """
     from services import learnings
     return learnings._valid_scope(scope_key).replace(":", "-")

@@ -13,7 +13,7 @@ knowledge layer, a role-uniqueness check and a secrets AAD are all keyed by, so
 two owners each minting `project:alpha` would be alias multiplication, not
 isolation. Uniqueness is enforced by the namespace; ownership is enforced here.
 
-See docs/security-audit-2026-08-11-scope-separation.md section 9.
+See docs/masini/security-audit-2026-08-11-scope-separation.md section 9.
 """
 from __future__ import annotations
 

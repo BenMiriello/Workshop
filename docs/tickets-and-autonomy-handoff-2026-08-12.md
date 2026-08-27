@@ -40,7 +40,7 @@ are enough.
 | the block/escalate and clarifying-question flows | `platform-redesign/blocked-and-escalate-flow-2026-07-18.md`, `clarifying-question-flow-2026-07-18.md` |
 | where a note vs a doc vs scratch goes | `shared/knowledge/notes-and-docs-policy.md` and the `notes-and-docs` skill |
 | the knowledge stores as they actually are | `memory-stores-audit-2026-08-12.md` (predates the auto-recall removal, so its "PULL, top 3" column is now wrong) |
-| execution isolation, and why nothing here is security | `security-audit-2026-07-18-agents.md` (A1-A6) + `platform-redesign/agent-governance-addendum-2026-08-04.md:47-65` |
+| execution isolation, and why nothing here is security | `masini/security-audit-2026-07-18-agents.md` (A1-A6) + `platform-redesign/agent-governance-addendum-2026-08-04.md:47-65` |
 | what dev mode gates, and why `workshop` is not a build target | `platform-redesign/dev-mode-and-development-scope-2026-08-09.md` + ADR 0014 |
 | the standing "do not enable autonomy yet" sequence | `platform-redesign/continuation-2026-07-31.md:211-321` |
 

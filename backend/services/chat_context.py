@@ -381,16 +381,26 @@ def _agent_rules(read) -> str:
 # git-worktree-workflow skill and states the canonical-branch rule inline, so the
 # discipline holds even before the skill body is opened. Brief on purpose; the
 # full philosophy lives in shared/skills/git-worktree-workflow/SKILL.md.
-_GIT_WORKTREE_RULE_BASE = (
-    "=== BRANCHES + WORKTREES ===\n"
-    "In a project bound to a GitHub remote, follow the git-worktree-workflow skill. "
-    "The canonical branch is the project's tracked repo.default_branch (usually "
-    "`main`): branch off `origin/<default_branch>` onto a short-lived "
-    "`wt/<slug>/<task-id>` branch, keep changes small and self-contained, rebase on "
-    "the default branch before you publish, then open a PR and merge on a green "
-    "reviewer gate. Never push to or reference the Workshop platform repo's own "
-    "remote, and only ever work under this installation's own GitHub account."
-)
+#
+# The HOSTING VENDOR is not named here. It is one installation's fact, declared
+# as WORKSHOP_GIT_FORGE (services/installation.py) exactly the way the blocked
+# owners beside it are, and the rule reads correctly when nothing is declared.
+def _git_worktree_rule_base() -> str:
+    from services import installation as _inst
+
+    forge = _inst.git_forge()
+    return (
+        "=== BRANCHES + WORKTREES ===\n"
+        "In a project bound to a git remote, follow the git-worktree-workflow skill. "
+        "The canonical branch is the project's tracked repo.default_branch (usually "
+        "`main`): branch off `origin/<default_branch>` onto a short-lived "
+        "`wt/<slug>/<task-id>` branch, keep changes small and self-contained, rebase on "
+        "the default branch before you publish, then open a PR and merge on a green "
+        "reviewer gate. Never push to or reference the Workshop platform repo's own "
+        "remote, and only ever work under "
+        + (f"this installation's own {forge} account." if forge
+           else "the account this installation was configured with.")
+    )
 
 
 def git_worktree_rule() -> str:
@@ -403,11 +413,12 @@ def git_worktree_rule() -> str:
     """
     from services import github as gh_repo
 
+    base = _git_worktree_rule_base()
     blocked = gh_repo.blocked_owners()
     if not blocked:
-        return _GIT_WORKTREE_RULE_BASE
+        return base
     names = ", ".join(sorted(blocked))
-    return _GIT_WORKTREE_RULE_BASE + (
+    return base + (
         f" Never touch these accounts, which are out of scope for this "
         f"installation: {names}."
     )
@@ -518,8 +529,8 @@ DELEGATION_RULE = (
     "or the Workshop's own scheduler instead. Most of these are DEFERRED tools: "
     "only their names are in your prompt, and ToolSearch fetches a schema on "
     "demand (`select:Monitor,CronCreate`). Fetch the one you need when you need "
-    "it rather than up front. Full table, and the traps that have actually bitten "
-    "agents here: docs/agent-tooling-and-wakeups.md."
+    "it rather than up front; a search with no filter lists what this session "
+    "actually has."
 )
 
 
@@ -650,34 +661,42 @@ def role_preamble(
             + "\n\n" + UI_CARD_PROTOCOL
             + "\n\n" + _STYLE_RULE
         )
+    from services import installation as _inst
+
     where = cwd or "the working directory"
     tools = tool_summary or (
-        "full Claude Code toolset (Read, Write, Edit, Bash, Grep, Glob, and the "
-        "rest)"
+        _inst.runner_grant("toolset")
+        + " (Read, Write, Edit, Bash, Grep, Glob, and the rest)"
     )
+    # WHICH HOSTS AND WHICH NETWORKS ARE THIS INSTALLATION'S FACTS, not the
+    # platform's. They used to be prose: a nine-name registry allowlist and "the
+    # tailnet is always reachable", shipped to every installation whether or not
+    # either was true there. Declared now (services/installation.py); undeclared
+    # means the sentence generalizes rather than guessing.
+    _nets = _inst.reachable_networks()
+    nets = " and ".join(_nets) + (" is" if len(_nets) == 1 else " are")
+    hosts = _inst.egress_allowed_hosts()
     if is_build:
-        # Build contexts run under ~/workshop/{projects,branches,build-agents},
-        # where the egress + git guards already ALLOW clone/install from standard
-        # dev hosts (and any host for the operator's private projects). Telling a
-        # builder "egress is blocked" is false and wastes turns — state what is
-        # actually true so it just does the work.
+        # Build contexts run under the installation's project/worktree roots,
+        # where the egress + git guards already ALLOW clone/install from the
+        # declared dev hosts. Telling a builder "egress is blocked" is false and
+        # wastes turns — state what is actually true so it just does the work.
         egress = (
             "NETWORK + GIT: you CAN `git clone` and install dependencies "
-            "(npm/pnpm/yarn/bun, pip/uv, cargo, go) from standard registries "
-            "(github.com, npmjs, pypi, crates.io, proxy.golang.org, jsdelivr/"
-            "unpkg/esm.sh, huggingface). Loopback (127.0.0.1) and the tailnet are "
-            "always reachable. PUBLISHING goes through the Workshop platform, NOT "
-            "your shell: `git push` to main/master, force-push, and repointing "
-            "`origin` are blocked by design. Commit locally and tell the operator "
-            "to publish/deploy through Workshop. If a specific fetch is genuinely "
-            "blocked, say so plainly rather than pretending it worked."
+            "(npm/pnpm/yarn/bun, pip/uv, cargo, go) from the source and package "
+            "hosts this installation allows"
+            + (f" ({', '.join(hosts)})" if hosts else "")
+            + f". {nets[0].upper() + nets[1:]} always reachable. PUBLISHING goes through the Workshop "
+            "platform, NOT your shell: `git push` to main/master, force-push, and "
+            "repointing `origin` are blocked by design. Commit locally and tell "
+            "the operator to publish/deploy through Workshop. If a specific fetch "
+            "is genuinely blocked, say so plainly rather than pretending it worked."
         )
     else:
         egress = (
             "NETWORK EGRESS IS RESTRICTED: external network access (git clone, "
-            "npm install, curl/wget to public hosts like github.com or "
-            "registry.npmjs.org) is BLOCKED in this environment. Only loopback "
-            "(127.0.0.1) and the tailnet are reachable. If a task needs an external "
+            "package installs, curl/wget to public hosts) is BLOCKED in this "
+            f"environment. Only {nets} reachable. If a task needs an external "
             "fetch, do NOT promise it and do NOT pretend it succeeded: surface that "
             "it is blocked and ask the operator to run it in their own terminal or "
             "to approve the host."
@@ -819,8 +838,8 @@ def _last_apply_line() -> str:
             f"- HEADS UP: the last backend restart did not complete "
             f"(outcome={raw.get('outcome')}, pid {raw.get('old_pid')} -> "
             f"{raw.get('new_pid')}, at {str(raw.get('when', ''))[:19]}). The "
-            f"backend may be serving older code than the tree. Check with "
-            f"`bash scripts/apply.sh --check`."
+            f"backend may be serving older code than the tree. Re-run this "
+            f"installation's apply step and check its result."
         )
     except Exception:
         return ""
@@ -1145,6 +1164,8 @@ def runtime_briefing(provider: "ContextProvider") -> str:
     platform owns so the agent shouldn't fight it). Re-sent every turn."""
     if not is_build_provider(provider):
         return ""
+    from services import installation as _inst
+
     dirp = provider.dir
     slug = getattr(provider, "slug", "") or ""
     project_slug = getattr(provider, "project_slug", None) or slug
@@ -1159,7 +1180,7 @@ def runtime_briefing(provider: "ContextProvider") -> str:
     lines = ["=== RUNTIME BRIEFING (your environment; re-read every turn) ==="]
     lines.append(f"Working directory (cwd): {display_dir}. All relative paths resolve here.")
     lines.append(
-        "Host: Linux, shell: bash. You ARE a Claude Code session with the full "
+        f"Host: Linux, shell: bash. You ARE {_inst.runner_session()} with the full "
         "default toolset (Read, Write, Edit, MultiEdit, Bash, Grep, Glob, "
         "WebFetch, WebSearch, Task). Use them directly. Don't ask the operator "
         "to run things you can run yourself."
@@ -1168,7 +1189,7 @@ def runtime_briefing(provider: "ContextProvider") -> str:
         "NAMING A DOC, NOTE, OR TICKET IN YOUR REPLY: when you point the operator "
         "at one, write it as a managed link so it renders as a clickable chip, not "
         "raw text. A markdown doc is `[label](workshop:doc/<repo-relative-path>)` "
-        "(label is usually the filename, e.g. [PROJECT.md](workshop:doc/PROJECT.md)); "
+        "(the label is usually the filename); "
         "a note is `[title](workshop:note/<scope>/<id>)`; a ticket is "
         "`[title](workshop:ticket/<id>)`. The operator gets a chip with a preview "
         "and a copy-path action. Do this when you actually reference the thing, not "
@@ -1186,37 +1207,24 @@ def runtime_briefing(provider: "ContextProvider") -> str:
     # sections below do not apply.
     if getattr(provider, "is_self", False):
         lines.append(
-            "THIS PROJECT IS THE LIVE WORKSHOP. You are editing the running app "
-            "itself (the monorepo at ~/workshop). There is NO separate deployment; "
-            "your edits change the app the operator is using right now.\n"
-            "- APPLYING YOUR CHANGE: when you have FINISHED editing, run "
-            "`bash scripts/apply.sh` as your FINAL action. It works out what is "
-            "stale (the built bundle the operator's origin serves, the backend, "
-            "the dev server, the edge) and fixes only that. It takes no arguments, "
-            "it is idempotent, and it is SAFE TO RUN AT ANY TIME, concurrently "
-            "with any other agent -- you do not need to coordinate, wait, or ask. "
-            "The only rule: finish all your edits first, then run it once at the "
-            "end. `bash scripts/apply.sh --check` reports drift without acting. "
-            "Detail: docs/applying-changes.md.\n"
-            "- The operator views the BUILT origin, so a frontend edit is NOT "
-            "live for him until the bundle is rebuilt; apply.sh does that. Vite's "
-            "hot reload only covers the :5173 dev origin, which is not the one he "
-            "is on. The backend does not auto-reload at all. A restart is a pause, "
-            "not a break: in-flight turns are adopted again on the way back up.\n"
-            "- FRONTEND (frontend/, Vite + React): built-in apps live "
-            "in frontend/src/pages/apps/<app> (backend logic in backend/services/<app>); "
-            "shared primitives come from the @workshop/ui kit at packages/ui (import by "
-            "package name; the kit is platform-owned, see packages/ui/CONTRIBUTING.md). "
-            "The kit compiles INTO the bundle, so editing it needs a rebuild too. "
-            "Follow frontend/CLAUDE.md (design "
-            "system: lucide icons, no inline hex, the five status kinds).\n"
-            "- VALIDATE before claiming done: `npm run typecheck` (from the repo "
-            "root) + `bash scripts/check_design.sh` for UI; a quick import check "
-            "for backend.\n"
+            "THIS SCOPE IS THE LIVE WORKSHOP INSTALLATION. You are editing the "
+            "running app itself. There is NO separate deployment; your edits "
+            "change the app the operator is using right now.\n"
+            "- APPLYING YOUR CHANGE: a self-hosting installation serves a BUILT "
+            "bundle, so a frontend edit is not visible to the operator until that "
+            "bundle is rebuilt, and a backend process does not necessarily reload "
+            "itself. Finish all your edits first, then run this installation's "
+            "apply step once, as your FINAL action. A restart is a pause, not a "
+            "break: in-flight turns are adopted again on the way back up.\n"
+            "- WHAT THAT STEP IS, which checks must pass before you call a change "
+            "done, and how this tree is laid out are in this scope's own agent "
+            "rules, injected below as project-local agent rules. They are the "
+            "authority on all three; read them before you edit and follow them "
+            "rather than guessing.\n"
             "- COMMITS: this is the real repo with real history and unrelated work in "
             "progress. Do NOT `git add -A` / commit the whole tree. Stage only the files "
-            "you changed, branch off main for non-trivial work, commit only when asked. "
-            "Don't pick ports or start servers; they are already running."
+            "you changed, branch off the default branch for non-trivial work, commit "
+            "only when asked. Don't pick ports or start servers; they are already running."
         )
         receipt = _last_apply_line()
         if receipt:
@@ -1234,8 +1242,8 @@ def runtime_briefing(provider: "ContextProvider") -> str:
     if is_scaffold and builtin:
         lines.append(
             f"NOTE: this directory is an empty scaffold, but '{slug}' is an "
-            "existing built-in Workshop app whose LIVE code is in the monorepo "
-            "(~/workshop/backend and ~/workshop/frontend), NOT here. Do not "
+            "existing built-in Workshop app whose LIVE code is in the platform "
+            "installation's own source tree, NOT here. Do not "
             "scaffold a fresh app. Read the real code there, and confirm with "
             "the operator which files to edit. You may edit the monorepo files "
             "for this app."
@@ -1831,7 +1839,7 @@ def contained_project_dir(slug: str) -> _Path:
 
     `resolve()` before comparing, so a symlink inside `projects/` pointing out
     of it is caught too. See
-    docs/security-audit-2026-08-11-scope-separation.md section 2.
+    docs/masini/security-audit-2026-08-11-scope-separation.md section 2.
     """
     root = _projects_root().resolve()
     candidate = (root / slug).resolve()

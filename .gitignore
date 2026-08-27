@@ -127,9 +127,23 @@ shared/relay-corpus.jsonl
 # file stopped being written, so a tracked copy could only go stale in the diff
 # of every future commit. The file itself stays on disk as the cutover backup;
 # this untracks it rather than deleting it.
-/.tasks.json
-shared/queue/.tasks.json
-/TODO.md
+#
+# DELIBERATELY UNANCHORED, since 2026-08-27. These were `/.tasks.json` and
+# `/TODO.md`, matching only at the repo root -- so a worker's ticket directory
+# anywhere else was fair game for `git add`, and one was committed: the
+# hex-named `4a79ffc515844ca2a48a369b7ca7b0a7/` (379d82fa) carried a live
+# ticket queue in the repo for anyone who cloned it. Four more such directories
+# are on disk right now. A work queue is instance state at ANY depth, so the
+# pattern matches at any depth, and the tracked exceptions are named below
+# rather than relied on to be the only ones the anchor happened to spare.
+.tasks.json
+TODO.md
+# The scaffold templates ship a TODO.md as scaffold CONTENT (it is what a new
+# project starts from), and shared/queue/TODO.md is the tracked human-readable
+# queue. Both are source, so both are re-included. Their sibling .tasks.json is
+# not: that is the machine state.
+!/projects/_templates/**/TODO.md
+!/shared/queue/TODO.md
 
 # Tenant operational records: bring-up playbook and security audits of one
 # operator's own box. Kept on disk, not shipped as platform documentation.

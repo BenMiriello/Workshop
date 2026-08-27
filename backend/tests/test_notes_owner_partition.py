@@ -5,7 +5,7 @@
 resolves through `vault_root()`. That function returned ONE global directory,
 so any authenticated account could list, read, overwrite, rename and delete
 every note in the operator's vault — not a check that could be bypassed, an
-absence of one. See docs/security-audit-2026-08-11-scope-separation.md section 3.
+absence of one. See docs/masini/security-audit-2026-08-11-scope-separation.md section 3.
 
 The operator's own vault does not move: real Obsidian is pointed at `~/notes`,
 and this module deliberately does not own that editor.

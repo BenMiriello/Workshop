@@ -57,7 +57,7 @@ def vault_root() -> Path:
     Note this is where the vault DIVERGES from `permissions.NOTES_VAULT_ROOT`,
     which names the operator's vault specifically for the instance-level Store
     declaration (`services/stores.py`). See
-    docs/security-audit-2026-08-11-scope-separation.md section 3.
+    docs/masini/security-audit-2026-08-11-scope-separation.md section 3.
     """
     from services import ownership
     if ownership.caller_is_operator() or ownership.owner_or_none() is None:

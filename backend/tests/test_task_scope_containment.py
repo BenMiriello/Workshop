@@ -15,7 +15,7 @@ test against the platform repo — so `agent:../..` was caught and everything
 deeper was not. That is the same shape as the `project:` traversal fixed
 alongside it, on the branch that also ran something.
 
-See docs/security-audit-2026-08-11-scope-separation.md section 2.
+See docs/masini/security-audit-2026-08-11-scope-separation.md section 2.
 """
 from __future__ import annotations
 

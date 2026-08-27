@@ -197,7 +197,7 @@ def _pin_owner() -> None:
     background loops). What changed is that an ordinary chat turn now passes
     its real caller instead of this always defaulting to the operator
     regardless of who was actually asking — see
-    docs/security-audit-2026-08-11-scope-separation.md section 3.
+    docs/masini/security-audit-2026-08-11-scope-separation.md section 3.
     """
     try:
         from services import auth_store, ownership

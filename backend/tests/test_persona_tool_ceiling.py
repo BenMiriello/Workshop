@@ -9,7 +9,7 @@ same fallback `general` ran at when it could read and edit the platform's own
 source. So `Bash` in one of these files is an unscoped shell in the operator's
 home, and nothing but the current contents of the directory said otherwise.
 
-See docs/security-audit-2026-08-11-scope-separation.md section 4.
+See docs/masini/security-audit-2026-08-11-scope-separation.md section 4.
 """
 from __future__ import annotations
 

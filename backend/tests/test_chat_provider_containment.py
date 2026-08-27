@@ -6,7 +6,7 @@ repo: `project:<slug>` had NO validation between the raw HTTP `context_key` and
 `ProjectContextProvider`'s own `_projects_root() / slug` join, and
 `build:<slug>` defaulted an unknown slug's cwd to the platform repo outright.
 Either gave a chat full agentic tools (bypassPermissions, no --allowedTools) at
-a cwd nothing had vetted. See docs/security-audit-2026-08-11-scope-separation.md
+a cwd nothing had vetted. See docs/masini/security-audit-2026-08-11-scope-separation.md
 section 2.
 """
 import importlib
