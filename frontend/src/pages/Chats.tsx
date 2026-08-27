@@ -21,6 +21,7 @@ import {
 import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
 import { newChatHref } from "../lib/chatSelection";
 import { scopeKind, scopeLabel, scopeName } from "../components/chat/chatScope";
+import { pulseDelay } from "./chatPulse";
 import ScopeIcon from "../components/chat/ScopeIcon";
 import { appIcon } from "../apps/registry";
 import { AppGlyph } from "../lib/appIcon";
@@ -139,6 +140,26 @@ function ChatScopeGlyph({ contextKey }: { contextKey: string }) {
   return <ScopeIcon kind={kind} />;
 }
 
+// The live-state dot: a hollow ring at rest, filled and pulsing while a turn
+// runs, on the orchestrated, offset phase from chatPulse.
+function RunningDot({ running, ordinal }: { running: boolean; ordinal: number }) {
+  // Compute the delay once, on the transition into running, and hold it; clear
+  // it on the way out so a later restart gets a fresh phase. Every other render
+  // reuses the same string, so the inline style is stable and the running
+  // animation is never disturbed by a poll re-render or an ordinal shift.
+  const delay = useRef<string | undefined>(undefined);
+  if (running && delay.current === undefined) delay.current = pulseDelay(ordinal);
+  else if (!running && delay.current !== undefined) delay.current = undefined;
+  return (
+    <span
+      className="ws-chat-row__state"
+      data-live={running ? "" : undefined}
+      style={running ? { animationDelay: delay.current } : undefined}
+      aria-hidden
+    />
+  );
+}
+
 export default function Chats() {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -216,6 +237,16 @@ export default function Chats() {
     }
     return BUCKET_ORDER.filter((k) => byKey.has(k)).map((k) => byKey.get(k)!);
   }, [visible, sort]);
+
+  // Each running dot's position among the running dots, top to bottom. It feeds
+  // the 1/6 pulse offset, and is read only at the instant a dot goes live (see
+  // RunningDot), so a shift here never disturbs a dot already pulsing.
+  const runningOrdinals = useMemo(() => {
+    const m = new Map<string, number>();
+    let n = 0;
+    for (const g of groups) for (const t of g.items) if (t.running) m.set(t.id, n++);
+    return m;
+  }, [groups]);
 
   const open = (t: ThreadSummary) =>
     nav(`/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`);
@@ -342,7 +373,7 @@ export default function Chats() {
                       justified. Line two: the last message. Two lines at every
                       width. */}
                   <div className="ws-chat-row__head">
-                    <span className="ws-chat-row__state" data-live={t.running ? "" : undefined} aria-hidden />
+                    <RunningDot running={!!t.running} ordinal={runningOrdinals.get(t.id) ?? 0} />
                     <span
                       className="ws-chat-row__scope"
                       title={scopeName(t.context_key)}
