@@ -1484,6 +1484,72 @@ def _looks_like_auth_failure(text: str) -> bool:
     return any(h in low for h in _AUTH_HINTS)
 
 
+# Signatures that a `--resume` failed because the SESSION is gone or unusable
+# (missing on disk, written under a cwd the CLI can no longer reach, corrupted),
+# as opposed to a transient failure a perfectly good session should survive. The
+# CLI reports a missing session as "No conversation found with session ID" (see
+# session_alive). This is the only class where detaching the thread's session is
+# the right self-heal; on anything else, detaching throws away a durable
+# transcript the operator was mid-conversation with.
+_RESUME_MISS_HINTS = (
+    "no conversation found",
+    "conversation found with session",
+    "could not resume",
+    "couldn't resume",
+    "unable to resume",
+    "failed to resume",
+    "session not found",
+    "no such session",
+)
+
+# Signatures of a TRANSIENT failure: a rate limit, an overloaded upstream, an
+# expired credential, a dropped socket. None of these is the session's fault, so
+# the session must be kept and retried, not discarded. Auth hints are handled by
+# `_looks_like_auth_failure` and folded in below.
+_TRANSIENT_HINTS = (
+    "overloaded", "rate limit", "rate_limit", "too many requests",
+    "429", "529", "503", "502", "500 ", "timeout", "timed out",
+    "temporarily", "try again", "session limit", "hit your",
+    "connection", "network", "econnreset", "socket hang up", "reset by peer",
+)
+
+
+def _looks_like_resume_miss(text: str) -> bool:
+    low = (text or "").lower()
+    return any(h in low for h in _RESUME_MISS_HINTS)
+
+
+def _looks_like_transient(text: str) -> bool:
+    low = (text or "").lower()
+    return any(h in low for h in _TRANSIENT_HINTS)
+
+
+def _resume_failure_is_session_fault(detail: str, produced_output: bool) -> bool:
+    """Whether a FAILED `--resume` turn should detach the thread's session.
+
+    True only when the session itself is the suspect. The old rule detached on
+    ANY error, which meant a single 529, an expired token, or a dropped socket
+    threw away a durable transcript and forced a lossy summary+tail rebuild on
+    the next turn. Context must not leave before a compaction, so:
+
+      - an explicit resume-miss signature ("No conversation found") -> the
+        session is gone, detach;
+      - a recognized transient (rate limit / overload / auth / network) -> the
+        session is fine, keep it;
+      - no signature either way: a resume that produced NO output died at
+        startup, which points at the session (missing or corrupt) -> detach; one
+        that produced output loaded the session fine and failed later for some
+        other reason -> keep. The no-output arm preserves the original anti-loop
+        guard (a genuinely broken session is not retried forever) without
+        nuking a good session on a transient error.
+    """
+    if _looks_like_resume_miss(detail):
+        return True
+    if _looks_like_auth_failure(detail) or _looks_like_transient(detail):
+        return False
+    return not produced_output
+
+
 # The repo root, resolved from this file so it carries no machine-identifying
 # literal (check_no_hardcoding fails on those). Everything the operator works on
 # lives under it; anything absolute outside it is system detail a chat has no
@@ -3339,19 +3405,33 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
             chat_store.note_auto_compact(turn.thread_id)
         except Exception as e:
             log.warning("turn %s: auto-compact marker failed: %s", turn.id, e)
-    # Self-heal a bad resume. If a turn that was RESUMING this thread's session
-    # failed outright, the session is the prime suspect (pruned, corrupted, or
-    # written under a different cwd). Detach it so the next turn mints a fresh one
-    # and re-sends the assembled history — retrying the same broken resume forever
-    # is what turns one bad session into a chat that "always errors".
+    # Self-heal a bad resume, but ONLY when the session is actually the fault.
+    # A turn resuming this thread's session that fails is not proof the session
+    # is broken: a rate limit, an overloaded upstream, an expired token, or a
+    # dropped socket fails the turn while the transcript on disk is perfectly
+    # good. Detaching on every error (the old rule) discarded that transcript and
+    # forced a lossy summary+tail rebuild next turn, which is context leaving
+    # before a compaction. So detach only on a genuine resume miss (or a startup
+    # failure that produced nothing and carries no transient signature); keep the
+    # session on a transient failure and retry it. The original anti-loop guard
+    # (a truly broken session is not resumed forever) is preserved by the
+    # no-output arm of _resume_failure_is_session_fault.
     if is_error and meta.get("resume") and meta.get("session_id"):
-        try:
-            thread = chat_store.get_thread(turn.thread_id)
-            if thread and thread.get("claude_session") == meta["session_id"]:
-                chat_store.clear_thread_session(turn.thread_id)
-                log.info("turn %s: detached failed session %s", turn.id, meta["session_id"])
-        except Exception as e:
-            log.debug("turn %s: session detach failed: %s", turn.id, e)
+        detail = f"{turn.error or ''} {_stderr_tail(turn.id)}"
+        produced = bool(turn.final_text) or _did_visible_work(turn.segments)
+        if _resume_failure_is_session_fault(detail, produced):
+            try:
+                thread = chat_store.get_thread(turn.thread_id)
+                if thread and thread.get("claude_session") == meta["session_id"]:
+                    chat_store.clear_thread_session(turn.thread_id)
+                    log.info("turn %s: detached failed session %s (session fault)",
+                             turn.id, meta["session_id"])
+            except Exception as e:
+                log.debug("turn %s: session detach failed: %s", turn.id, e)
+        else:
+            log.info("turn %s: resume errored but the session is not the fault "
+                     "(transient or post-load failure); keeping session %s",
+                     turn.id, meta["session_id"])
     # Record the real context occupancy reported by the model this turn, so the
     # composer meter reflects the live window (and its post-compaction drop)
     # instead of the ever-growing stored transcript. Only on a successful turn
