@@ -1,10 +1,29 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bird, Filter, Target, Check, History, Mic, HardDrive, Waypoints, User, LogOut, RefreshCw } from "lucide-react";
 import { useShowNonBird } from "./settings";
 import BirdsHeader from "./BirdsHeader";
-import { Toggle, Button, Segmented, timeAbsoluteShort } from "@workshop/ui";
+import { Notice, Toggle, Button, Segmented, timeAbsoluteShort } from "@workshop/ui";
 import { API, pct } from "./ui";
+import {
+  authKeys, birdsKeys, fetchAnalyzeSettings, fetchAtlasSettings, fetchAtlasStatus,
+  fetchRecordingsSettings, fetchSession, rebuildAtlas, recomputeDetections,
+  saveAnalyzeSettings, saveAtlasSettings, saveRecordingsSettings,
+  type RecordingsSettings, type SettingsRead,
+} from "./queries";
+
+// SIX HAND-ROLLED SERVER READS USED TO LIVE IN THIS FILE, one `useState` +
+// `useEffect` per section, and two of them read the SAME endpoint. They are all
+// cache entries now, on the keys in `queries.ts` -- which is also how the
+// recordings toggle here and the ones on the Recordings page and a bird's page
+// came to be the same fact rather than three copies of it.
+//
+// WHAT IS *NOT* IN THE CACHE, deliberately: the accuracy form's draft. A
+// half-moved slider is not a server fact and must not be one; a background
+// re-read that landed on it would drag the control out from under the operator
+// mid-drag. The draft is local, seeded once, and the server value beside it is
+// what Save writes over and what "unsaved" is measured against.
 
 // Settings for the Birds app. The non-bird filter is display-only: BirdNET keeps
 // detecting and storing every class (so nothing is lost and the toggle is
@@ -17,17 +36,34 @@ const NON_BIRD_EXAMPLES = [
   "Environmental / Noise",
 ];
 
+/**
+ * WHO IS SIGNED IN. One read, one entry, two readers.
+ *
+ * This endpoint was fetched TWICE in this file: once for the account card and
+ * once for `useIsAdmin`. Two requests for one answer, and they could not even
+ * be relied on to agree -- a failure meant "hide the account card" to one and
+ * "you are the admin" to the other, so a flaky moment could show a member the
+ * admin-only controls while telling them they were not signed in.
+ *
+ * It does not retry: a 401 or a 404 is the server ANSWERING (the tailnet
+ * Workshop build has no session concept at this path), and a network failure
+ * means offline, where the honest fallback is "treat me as the operator" --
+ * which is what both hand-rolled reads did in their `.catch`.
+ */
+function useSession() {
+  return useQuery({
+    queryKey: authKeys.session(),
+    queryFn: () => fetchSession(),
+    retry: false,
+  });
+}
+
 // Account card. Only renders in the standalone app (where /api/auth/me resolves a
-// session); on the tailnet Workshop app that endpoint 404s, so this stays hidden.
+// session); on the tailnet Workshop app there is no session at that path, so this
+// stays hidden.
 function AccountSection() {
-  const [user, setUser] = useState<{ email: string; name?: string | null } | null | undefined>(undefined);
-  useEffect(() => {
-    fetch("/api/auth/me", { credentials: "same-origin" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setUser(d ? d.user : null))
-      .catch(() => setUser(null));
-  }, []);
-  if (!user) return null; // loading (undefined) or no auth (null) -> nothing
+  const user = useSession().data?.user;
+  if (!user) return null; // loading, no auth, or unreachable -> nothing
 
   const signOut = async () => {
     try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); } catch { /* ignore */ }
@@ -50,18 +86,14 @@ function AccountSection() {
   );
 }
 
-// Admin vs member. On the tailnet Workshop app /api/auth/me 404s, so we treat
-// "no auth" as the operator (admin). In the standalone, a 'member' is not admin.
-// null while loading, so admin-only sections don't flash for a member.
+// Admin vs member, off the SAME entry the account card reads. On the tailnet
+// Workshop app there is no session at that path, so we treat "no auth" as the
+// operator (admin). In the standalone, a 'member' is not admin. `null` while the
+// answer is still outstanding, so admin-only sections don't flash for a member.
 function useIsAdmin(): boolean | null {
-  const [admin, setAdmin] = useState<boolean | null>(null);
-  useEffect(() => {
-    fetch("/api/auth/me", { credentials: "same-origin" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setAdmin(d?.user ? d.user.role === "admin" : true))
-      .catch(() => setAdmin(true));
-  }, []);
-  return admin;
+  const q = useSession();
+  if (q.isPending) return null;
+  return q.data?.user ? q.data.user.role === "admin" : true;
 }
 
 export default function BirdSettings() {
@@ -130,6 +162,36 @@ function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
   return <Toggle checked={on} onChange={onChange} />;
 }
 
+/**
+ * A settings section whose read FAILED. All three of these used to return
+ * `null` on a failed read -- the section simply was not on the page, with the
+ * failure swallowed in a `.catch(() => {})` and one of them carrying a comment
+ * that said so ("offline: section just stays in loading"). A control that is
+ * missing and a control that does not exist look identical, so the honest
+ * reading of a Birds Settings page with the backend down was "this build has no
+ * accuracy settings".
+ *
+ * A LINE, NOT A REGION, and the heading is why. The section keeps its title, so
+ * the screen still says WHICH settings could not be read and one thing went
+ * wrong beside that. Three stacked 120px dashed panels for one backend being
+ * down is the exact shape `frontend/CLAUDE.md` calls out as the wrong answer.
+ */
+function SectionFailed({ title, icon, where, onRetry }: {
+  title: string; icon: React.ReactNode; where: string; onRetry: () => void;
+}) {
+  return (
+    <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
+      <h3 style={{ margin: "0 0 .6rem", display: "flex", alignItems: "center", gap: ".4rem", fontSize: "1rem" }}>
+        {icon} {title}
+      </h3>
+      <Notice tone="error" detail={where}
+        action={<Button size="sm" variant="ghost" onClick={onRetry}>Retry</Button>}>
+        Couldn't load these settings.
+      </Notice>
+    </section>
+  );
+}
+
 type Smart = {
   min_conf: number; sensitivity: number; sf_thresh: number;
   new_species_hits: number; prior_floor: number;
@@ -159,23 +221,43 @@ const presetValue = (k: RangeKey) => RANGE_PRESETS.find((p) => p.key === k)!.val
 // (Always / Never) live on each bird's page; storage + saved clips are managed on
 // the Recordings page. A single boolean → commit on change.
 function RecordingSettings() {
-  const [save, setSave] = useState<boolean | null>(null);
+  const qc = useQueryClient();
+  // The SAME key the Recordings page and a bird's page read. One entry, so this
+  // toggle and the copy of it over there cannot disagree.
+  const q = useQuery({
+    queryKey: birdsKeys.recordingsSettings(),
+    queryFn: () => fetchRecordingsSettings<SettingsRead<RecordingsSettings>>(),
+  });
 
-  useEffect(() => {
-    fetch(`${API}/recordings/settings`).then((r) => r.json())
-      .then((d) => setSave(!!d.settings.rec_save)).catch(() => {});
-  }, []);
+  // OPTIMISTIC, AND CANCELLED-IN. The toggle moves at once because a boolean is
+  // cheap and reversible, but a read already in flight has to be dropped first
+  // or it lands afterwards carrying the PRE-write value and flips the switch
+  // back. Same shape as `useSetHome` in `queries.ts`, and the same reason.
+  //
+  // The write REPLACED a `window.dispatchEvent(new CustomEvent(
+  // "bird-settings-change"))`: a hand-rolled invalidation that every interested
+  // page had to remember to subscribe to, telling them all to re-read
+  // everything. An invalidation of the recordings prefix says which fact moved.
+  const toggle = useMutation({
+    mutationFn: (v: boolean) => saveRecordingsSettings<RecordingsSettings>({ recSave: v }),
+    onMutate: async (v: boolean) => {
+      await qc.cancelQueries({ queryKey: birdsKeys.recordingsSettings() });
+      const prev = qc.getQueryData<SettingsRead<RecordingsSettings>>(birdsKeys.recordingsSettings());
+      if (prev) qc.setQueryData(birdsKeys.recordingsSettings(), { settings: { ...prev.settings, rec_save: v } });
+      return { prev };
+    },
+    onSuccess: (d) => { qc.setQueryData(birdsKeys.recordingsSettings(), d); },
+    onError: (_e, _v, ctx) => { qc.setQueryData(birdsKeys.recordingsSettings(), ctx?.prev); },
+    // Whether clips are being saved changes the storage picture and the list of
+    // what is on disk, so the whole recordings prefix catches up.
+    onSettled: () => { void qc.invalidateQueries({ queryKey: birdsKeys.recordingsAll() }); },
+  });
 
-  const toggle = useCallback((v: boolean) => {
-    setSave(v); // optimistic
-    const fd = new FormData(); fd.append("rec_save", String(v));
-    fetch(`${API}/recordings/settings`, { method: "POST", body: fd })
-      .then((r) => r.json())
-      .then((d) => setSave(!!d.settings.rec_save))
-      .then(() => window.dispatchEvent(new CustomEvent("bird-settings-change")))
-      .catch(() => {});
-  }, []);
-
+  if (q.isError) {
+    return <SectionFailed title="Recordings" icon={<Mic size={17} strokeWidth={1.8} />}
+      where={`GET ${API}/recordings/settings: ${String(q.error)}`} onRetry={() => void q.refetch()} />;
+  }
+  const save = q.data ? !!q.data.settings.rec_save : null;
   if (save == null) return null;
   return (
     <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
@@ -183,7 +265,7 @@ function RecordingSettings() {
         <Mic size={17} strokeWidth={1.8} /> Recordings
       </h3>
       <label style={{ display: "flex", alignItems: "flex-start", gap: ".7rem", cursor: "pointer" }}>
-        <span style={{ paddingTop: ".15rem" }}><Toggle checked={save} onChange={toggle} /></span>
+        <span style={{ paddingTop: ".15rem" }}><Toggle checked={save} onChange={(v) => toggle.mutate(v)} /></span>
         <span>
           <span style={{ fontWeight: 500 }}>Save recordings of detections</span>
           <span className="muted" style={{ display: "block", fontSize: ".84rem", marginTop: ".15rem" }}>
@@ -193,6 +275,15 @@ function RecordingSettings() {
           </span>
         </span>
       </label>
+      {/* The control is right here, so a rejected write is a line under it. */}
+      {toggle.isError && (
+        <div style={{ marginTop: ".7rem" }}>
+          <Notice tone="error" detail={String(toggle.error)}
+            action={<Button size="sm" variant="ghost" onClick={() => toggle.reset()}>Dismiss</Button>}>
+            That did not save. The switch is back to what the server has.
+          </Notice>
+        </div>
+      )}
       <p className="muted" style={{ fontSize: ".82rem", margin: ".9rem 0 0", display: "flex", alignItems: "center", gap: ".4rem" }}>
         <HardDrive size={14} />
         <Link to="/apps/birds/recordings" style={{ color: "var(--accent)", textDecoration: "none" }}>
@@ -207,47 +298,92 @@ function RecordingSettings() {
 // exemplars per acoustic cluster so each can be labelled by ear. Own toggle, own
 // small budget — runs alongside or instead of the recordings save.
 type AtlasStat = { embedded: number; clusters: number; labeled_clusters: number; last_build: string | null; version: number };
+type AtlasCfg = { atlas_clip_save: boolean };
+
+// How often to look for the rebuild to land, and how long to keep looking. The
+// build is a detached batch job; the only thing that says it finished is the
+// version moving, and if the job dies nothing ever says so, which is why the
+// watch is bounded rather than open-ended.
+const REBUILD_WATCH_MS = 2500;
+const REBUILD_GIVE_UP_MS = 120_000;
 
 function AtlasSettings() {
-  const [save, setSave] = useState<boolean | null>(null);
-  const [stat, setStat] = useState<AtlasStat | null>(null);
-  const [building, setBuilding] = useState(false);
+  const qc = useQueryClient();
+  const cfgQ = useQuery({
+    queryKey: birdsKeys.atlasSettings(),
+    queryFn: () => fetchAtlasSettings<SettingsRead<AtlasCfg>>(),
+  });
 
-  const loadStat = useCallback(() => {
-    fetch(`${API}/atlas/status`).then((r) => r.json()).then(setStat).catch(() => {});
-  }, []);
+  // THE REBUILD WATCH, AS A STOP CONDITION RATHER THAN A TIMER. This was a
+  // `setInterval` that re-read `/atlas/status` every 2.5s into a component-local
+  // `useState`, plus a `setTimeout` to clear it -- a second, private copy of a
+  // fact the Atlas page also polls, on its own cadence, and neither could see
+  // the other. It is the SAME cache entry now, and the watch is a STOP
+  // CONDITION on that entry: `refetchInterval` is asked again after every tick
+  // and answers "keep watching" only while a rebuild we asked for has not
+  // landed. The version moving ends it, and there is no timer to clear and
+  // nothing to leak if this section unmounts mid-build.
+  const [watch, setWatch] = useState<{ fromVersion: number } | null>(null);
+  const statQ = useQuery({
+    queryKey: birdsKeys.atlasStatus(),
+    queryFn: () => fetchAtlasStatus<AtlasStat>(),
+    retry: false,
+    // No cadence at rest. It ticks only between "we asked for a rebuild" and
+    // "the version moved", and the version moving IS the stop condition.
+    refetchInterval: (q) => {
+      if (!watch) return false;
+      return (q.state.data?.version ?? watch.fromVersion) === watch.fromVersion
+        ? REBUILD_WATCH_MS : false;
+    },
+  });
+  const stat = statQ.data ?? null;
+  // Landed = the version we started from is not the version we see now.
+  const watching = watch != null && (stat?.version ?? watch.fromVersion) === watch.fromVersion;
+
+  const rebuild = useMutation({
+    mutationFn: rebuildAtlas,
+    // Only watch if the job actually STARTED. The route answers 200 with
+    // `{started: false}` when the builder is not installed, and the old code
+    // treated that as a launch: the button spun for the full two minutes and
+    // then gave up in silence, on a machine where a rebuild is not possible at
+    // all. There is also nothing to watch for if we never learned the version
+    // we are watching away from.
+    onSuccess: (r) => { if (r.started && stat) setWatch({ fromVersion: stat.version }); },
+  });
+  const building = rebuild.isPending || watching;
+
+  // The give-up bound. A one-shot timeout, not a poll: if the detached job never
+  // reports, the button has to come back rather than say "Rebuilding…" forever.
   useEffect(() => {
-    fetch(`${API}/atlas/settings`).then((r) => r.json())
-      .then((d) => setSave(!!d.settings.atlas_clip_save)).catch(() => {});
-    loadStat();
-  }, [loadStat]);
+    if (!watching) return;
+    const id = window.setTimeout(() => setWatch(null), REBUILD_GIVE_UP_MS);
+    return () => window.clearTimeout(id);
+  }, [watching]);
 
-  // Manual trigger lives here (not on the map). The Atlas also rebuilds itself
-  // nightly; this is for an on-demand refresh. Poll until the version bumps.
-  const rebuild = useCallback(() => {
-    setBuilding(true);
-    const before = stat?.version ?? 0;
-    fetch(`${API}/atlas/rebuild`, { method: "POST" }).catch(() => {});
-    const t = setInterval(() => {
-      fetch(`${API}/atlas/status`).then((r) => r.json()).then((s: AtlasStat) => {
-        setStat(s);
-        if (s.version !== before) { setBuilding(false); clearInterval(t); }
-      }).catch(() => {});
-    }, 2500);
-    setTimeout(() => { clearInterval(t); setBuilding(false); }, 120000);
-  }, [stat]);
   const fmtBuilt = (iso: string | null) => (iso ? timeAbsoluteShort(iso) || "never" : "never");
 
-  const toggle = useCallback((v: boolean) => {
-    setSave(v);
-    const fd = new FormData(); fd.append("atlas_clip_save", String(v));
-    fetch(`${API}/atlas/settings`, { method: "POST", body: fd })
-      .then((r) => r.json())
-      .then((d) => setSave(!!d.settings.atlas_clip_save))
-      .then(() => window.dispatchEvent(new CustomEvent("bird-settings-change")))
-      .catch(() => {});
-  }, []);
+  const toggle = useMutation({
+    mutationFn: (v: boolean) => saveAtlasSettings<AtlasCfg>({ clipSave: v }),
+    onMutate: async (v: boolean) => {
+      await qc.cancelQueries({ queryKey: birdsKeys.atlasSettings() });
+      const prev = qc.getQueryData<SettingsRead<AtlasCfg>>(birdsKeys.atlasSettings());
+      if (prev) qc.setQueryData(birdsKeys.atlasSettings(), { settings: { ...prev.settings, atlas_clip_save: v } });
+      return { prev };
+    },
+    onSuccess: (d) => { qc.setQueryData(birdsKeys.atlasSettings(), d); },
+    onError: (_e, _v, ctx) => { qc.setQueryData(birdsKeys.atlasSettings(), ctx?.prev); },
+    // Replaces a `bird-settings-change` broadcast. The Atlas page's status line
+    // reads `clip_save` to decide whether to offer "turn on Atlas clips", so
+    // status is the one other entry this moves -- NOT the projection itself,
+    // which a clip budget cannot change.
+    onSettled: () => { void qc.invalidateQueries({ queryKey: birdsKeys.atlasStatus() }); },
+  });
 
+  if (cfgQ.isError) {
+    return <SectionFailed title="Soundscape Atlas" icon={<Waypoints size={17} strokeWidth={1.8} />}
+      where={`GET ${API}/atlas/settings: ${String(cfgQ.error)}`} onRetry={() => void cfgQ.refetch()} />;
+  }
+  const save = cfgQ.data ? !!cfgQ.data.settings.atlas_clip_save : null;
   if (save == null) return null;
   return (
     <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
@@ -255,7 +391,7 @@ function AtlasSettings() {
         <Waypoints size={17} strokeWidth={1.8} /> Soundscape Atlas
       </h3>
       <label style={{ display: "flex", alignItems: "flex-start", gap: ".7rem", cursor: "pointer" }}>
-        <span style={{ paddingTop: ".15rem" }}><Toggle checked={save} onChange={toggle} /></span>
+        <span style={{ paddingTop: ".15rem" }}><Toggle checked={save} onChange={(v) => toggle.mutate(v)} /></span>
         <span>
           <span style={{ fontWeight: 500 }}>Save call-type exemplar clips</span>
           <span className="muted" style={{ display: "block", fontSize: ".84rem", marginTop: ".15rem" }}>
@@ -274,11 +410,31 @@ function AtlasSettings() {
           </span>
         </div>
         <span style={{ marginLeft: "auto" }}>
-          <Button onClick={rebuild} disabled={building}>
+          <Button onClick={() => rebuild.mutate()} disabled={building}>
             <RefreshCw size={15} className={building ? "spin" : undefined} /> {building ? "Rebuilding…" : "Rebuild now"}
           </Button>
         </span>
       </div>
+      {/* Both controls are right here, so a rejected write is a line, never a
+          region. The rebuild POST used to be fire-and-forget (`.catch(() => {})`),
+          so a builder that is not installed looked exactly like one that had
+          started: the button spun for two minutes and then gave up in silence. */}
+      {toggle.isError && (
+        <div style={{ marginTop: ".7rem" }}>
+          <Notice tone="error" detail={String(toggle.error)}
+            action={<Button size="sm" variant="ghost" onClick={() => toggle.reset()}>Dismiss</Button>}>
+            That did not save. The switch is back to what the server has.
+          </Notice>
+        </div>
+      )}
+      {(rebuild.isError || rebuild.data?.started === false) && (
+        <div style={{ marginTop: ".7rem" }}>
+          <Notice tone="error" detail={rebuild.error ? String(rebuild.error) : rebuild.data?.error}
+            action={<Button size="sm" variant="ghost" onClick={() => rebuild.reset()}>Dismiss</Button>}>
+            The rebuild did not start.
+          </Notice>
+        </div>
+      )}
       <p className="muted" style={{ fontSize: ".82rem", margin: ".9rem 0 0", display: "flex", alignItems: "center", gap: ".4rem" }}>
         <Waypoints size={14} />
         <Link to="/apps/birds/atlas" style={{ color: "var(--accent)", textDecoration: "none" }}>
@@ -292,51 +448,63 @@ function AtlasSettings() {
 // Detection accuracy: the knobs that stop BirdNET reporting birds it never heard.
 // These are config writes, so they commit on an explicit Save (design rule 7).
 function AccuracySettings() {
-  const [base, setBase] = useState<Smart | null>(null);
-  const [draft, setDraft] = useState<Smart | null>(null);
-  const [saving, setSaving] = useState(false);
+  const q = useQuery({
+    queryKey: birdsKeys.analyzeSettings(),
+    queryFn: () => fetchAnalyzeSettings<SettingsRead<Smart>>(),
+  });
+  // The form seeds its draft AT MOUNT, so it mounts once the settings are here
+  // and not before. Same idiom as the inline editors on the Locations page: the
+  // draft is seeded by mounting rather than by an effect, which is what makes
+  // it impossible for a later re-read to reach in and re-seed it.
+  if (q.isError) {
+    return <SectionFailed title="Detection accuracy" icon={<Target size={17} strokeWidth={1.8} />}
+      where={`GET ${API}/analyze/settings: ${String(q.error)}`} onRetry={() => void q.refetch()} />;
+  }
+  if (!q.data) return null;
+  return <AccuracyForm settings={q.data.settings} />;
+}
+
+function AccuracyForm({ settings }: { settings: Smart }) {
+  const qc = useQueryClient();
+  // THE DRAFT IS LOCAL AND STAYS LOCAL. A config form is the one place a
+  // background refetch must not reach: the operator is mid-drag on a slider and
+  // the value on screen is theirs, not the server's, until they press Save.
+  const [draft, setDraft] = useState<Smart>(settings);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => {
-    fetch(`${API}/analyze/settings`).then((r) => r.json())
-      .then((d) => { setBase(d.settings); setDraft(d.settings); })
-      .catch(() => { /* offline: section just stays in loading */ });
-  }, []);
+  // Measured against the SERVER value, not against a frozen copy of it. If the
+  // settings move under this screen, the form is genuinely out of step with the
+  // server and "unsaved" is the true thing to say.
+  const dirty = settings.min_conf !== draft.min_conf
+    || presetKey(settings.sf_thresh) !== presetKey(draft.sf_thresh)
+    || settings.new_species_hits !== draft.new_species_hits;
 
-  const [recomputing, setRecomputing] = useState(false);
-  const [recomputed, setRecomputed] = useState<{ hidden: number; species: number } | null>(null);
+  const save = useMutation({
+    mutationFn: () => saveAnalyzeSettings<Smart>({
+      minConf: draft.min_conf,
+      sfThresh: presetValue(presetKey(draft.sf_thresh)),
+      newSpeciesHits: draft.new_species_hits,
+    }),
+    onSuccess: (d) => {
+      qc.setQueryData(birdsKeys.analyzeSettings(), d);
+      setDraft(d.settings);
+      setSaved(true);
+    },
+  });
 
-  const dirty = !!base && !!draft && (
-    base.min_conf !== draft.min_conf ||
-    presetKey(base.sf_thresh) !== presetKey(draft.sf_thresh) ||
-    base.new_species_hits !== draft.new_species_hits);
+  // Re-scoring history hides or reveals detections EVERYWHERE, so this is the
+  // one write in this file whose blast radius really is the whole app. It used
+  // to say so by broadcasting `bird-settings-change` and hoping every page had
+  // subscribed; it says so now by invalidating the app's prefix, which reaches
+  // the pages that are mounted and marks the rest stale for when they are.
+  const recompute = useMutation({
+    mutationFn: recomputeDetections,
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: birdsKeys.all() }); },
+  });
+  const recomputed = recompute.data
+    ? { hidden: recompute.data.hidden ?? 0, species: (recompute.data.species_hidden || []).length }
+    : null;
 
-  const save = useCallback(async () => {
-    if (!draft) return;
-    setSaving(true); setSaved(false);
-    const fd = new FormData();
-    fd.append("min_conf", String(draft.min_conf));
-    fd.append("sf_thresh", String(presetValue(presetKey(draft.sf_thresh))));
-    fd.append("new_species_hits", String(draft.new_species_hits));
-    try {
-      const r = await fetch(`${API}/analyze/settings`, { method: "POST", body: fd });
-      const d = await r.json();
-      setBase(d.settings); setDraft(d.settings); setSaved(true);
-    } finally { setSaving(false); }
-  }, [draft]);
-
-  const recompute = useCallback(async () => {
-    setRecomputing(true); setRecomputed(null);
-    try {
-      const r = await fetch(`${API}/analyze/recompute`, { method: "POST" });
-      const d = await r.json();
-      setRecomputed({ hidden: d.hidden ?? 0, species: (d.species_hidden || []).length });
-      // Tell every open Birds view to refetch now-filtered data.
-      window.dispatchEvent(new CustomEvent("bird-settings-change"));
-    } finally { setRecomputing(false); }
-  }, []);
-
-  if (!draft) return null;
   const curKey = presetKey(draft.sf_thresh);
 
   return (
@@ -396,9 +564,18 @@ function AccuracySettings() {
         </div>
       </div>
 
+      {save.isError && (
+        <div style={{ marginTop: "1rem" }}>
+          <Notice tone="error" detail={String(save.error)}
+            action={<Button size="sm" variant="ghost" onClick={() => save.reset()}>Dismiss</Button>}>
+            These settings did not save. Nothing on the server changed.
+          </Notice>
+        </div>
+      )}
+
       <div style={{ display: "flex", alignItems: "center", gap: ".6rem", marginTop: "1rem" }}>
-        <Button onClick={save} disabled={!dirty || saving}>
-          {saving ? "Saving…" : "Save"}
+        <Button onClick={() => { setSaved(false); save.mutate(); }} disabled={!dirty || save.isPending}>
+          {save.isPending ? "Saving…" : "Save"}
         </Button>
         {saved && !dirty && (
           <span className="muted" style={{ fontSize: ".82rem", display: "flex", alignItems: "center", gap: ".3rem" }}>
@@ -416,8 +593,8 @@ function AccuracySettings() {
           are hidden, not deleted, and running it again can bring them back.
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap" }}>
-          <Button variant="ghost" onClick={recompute} disabled={recomputing}>
-            {recomputing ? "Re-checking…" : "Re-apply to past detections"}
+          <Button variant="ghost" onClick={() => recompute.mutate()} disabled={recompute.isPending}>
+            {recompute.isPending ? "Re-checking…" : "Re-apply to past detections"}
           </Button>
           {recomputed && (
             <span className="muted" style={{ fontSize: ".82rem" }}>
@@ -427,6 +604,14 @@ function AccuracySettings() {
             </span>
           )}
         </div>
+        {recompute.isError && (
+          <div style={{ marginTop: ".7rem" }}>
+            <Notice tone="error" detail={String(recompute.error)}
+              action={<Button size="sm" variant="ghost" onClick={() => recompute.reset()}>Dismiss</Button>}>
+              Could not re-check past detections.
+            </Notice>
+          </div>
+        )}
       </div>
     </section>
   );

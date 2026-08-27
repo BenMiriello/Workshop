@@ -206,6 +206,15 @@ export const birdsKeys = {
     days: number;
   }) => ["birds", "bird", p.sci, p.status, p.locationId, p.device, p.days] as const,
 
+  /**
+   * The prefix over every read of one bird's page, ACROSS species and filters.
+   * `/bird` answers with `save_mode` and `clip_count` in the same payload as the
+   * detections, so a write to a bird's recordings or to one detection's status
+   * has to reach this whole family; a page that only knows the species and
+   * filters it is currently showing cannot name the entries it invalidated.
+   */
+  birdAll: () => ["birds", "bird"] as const,
+
   /** `GET /api/birds/recordings/settings` -- read by three pages, written by two. */
   recordingsSettings: () => ["birds", "recordings", "settings"] as const,
   /**
@@ -245,6 +254,51 @@ export const birdsKeys = {
   analyzeHealth: () => ["birds", "analyze", "health"] as const,
   /** `GET /api/birds/analyze/settings`. */
   analyzeSettings: () => ["birds", "analyze", "settings"] as const,
+
+  /**
+   * `GET /api/birds/now` -- the forecast card for ONE place. The location is in
+   * the key rather than in a closure: the card used to hold the response in
+   * `useState` beside a five-minute `usePoll`, and because `usePoll` reads its
+   * callback through a ref, changing places did not re-read at all -- the new
+   * place's name sat above the old place's forecast until the next tick, up to
+   * five minutes later.
+   */
+  now: (p: { locationId: number }) => ["birds", "now", p.locationId] as const,
+
+  /** `GET /api/birds/forecast/week`. `days` is the window and is in the key. */
+  forecastWeek: (p: { locationId: number; days: number }) =>
+    ["birds", "forecast", "week", p.locationId, p.days] as const,
+
+  /**
+   * `GET /api/birds/species-events` -- the individual detections behind one
+   * species row, revealed when the row is expanded. `status` and `locationId`
+   * are both on the wire and both in the key; `locationId` is `null` for the
+   * unscoped read, the same explicit-slot shape `live` uses.
+   */
+  speciesEvents: (p: { sci: string; status: BirdStatus; locationId: number | null }) =>
+    ["birds", "species-events", p.sci, p.status, p.locationId] as const,
+} as const;
+
+/**
+ * `/api/environment/*` -- sunrise/sunset and hourly weather for a place and a
+ * day, which the activity chart overlays on its times-of-day view.
+ *
+ * OUTSIDE THE `birds` PREFIX ON PURPOSE. These are platform reads that the
+ * Birds app happens to be the only current caller of, and they are not
+ * downstream of anything Birds writes: confirming a detection or merging a
+ * location cannot change when the sun rose. Under `["birds", ...]` every
+ * invalidation of the app prefix would re-read them for nothing.
+ *
+ * The DATE is the key, not the `start`/`end` timestamps the conditions route
+ * takes. Those are a pure function of the date (its local midnight and its last
+ * second), so keying by them would spell one fact two ways whenever the string
+ * was built a moment apart.
+ */
+export const envKeys = {
+  astro: (p: { locationId: number; date: string }) =>
+    ["environment", "astro", p.locationId, p.date] as const,
+  conditions: (p: { locationId: number; date: string }) =>
+    ["environment", "conditions", p.locationId, p.date] as const,
 } as const;
 
 // The fetchers. One per fact, taking the SAME params object as its key, so a
@@ -352,6 +406,40 @@ export const fetchAnalyzeHealth = <T>(): Promise<T> => jget<T>("/analyze/health"
 
 export const fetchAnalyzeSettings = <T>(): Promise<T> => jget<T>("/analyze/settings");
 
+export const fetchNow = <T>(p: { locationId: number }): Promise<T> =>
+  jget<T>(`/now${qs({ location_id: p.locationId })}`);
+
+export const fetchForecastWeek = <T>(p: { locationId: number; days: number }): Promise<T> =>
+  jget<T>(`/forecast/week${qs({ location_id: p.locationId, days: p.days })}`);
+
+export const fetchSpeciesEvents = <T>(
+  p: { sci: string; status: BirdStatus; locationId: number | null },
+): Promise<T> =>
+  jget<T>(`/species-events${qs({ sci: p.sci, status: p.status, location_id: p.locationId })}`);
+
+/**
+ * The environment reads do not go through `jget`, which prefixes `/api/birds`.
+ * Same contract though: a non-2xx THROWS. The chart used to read `r.ok ? json :
+ * null` and merge the null, so a failed overlay was indistinguishable from a day
+ * with no weather recorded.
+ */
+async function envGet<T>(path: string): Promise<T> {
+  const r = await fetch(`/api/environment${path}`);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json() as Promise<T>;
+}
+
+export const fetchAstro = <T>(p: { locationId: number; date: string }): Promise<T> =>
+  envGet<T>(`/astro${qs({ location_id: p.locationId, date: p.date })}`);
+
+/** The day's hourly conditions. `start`/`end` are derived here, from the date. */
+export const fetchConditions = <T>(p: { locationId: number; date: string }): Promise<T> =>
+  envGet<T>(`/conditions${qs({
+    location_id: p.locationId,
+    start: new Date(`${p.date}T00:00:00`).toISOString(),
+    end: new Date(`${p.date}T23:59:59`).toISOString(),
+  })}`);
+
 // ---------------------------------------------------------------------------
 // THE WRITES, BESIDE THE KEYS THEY INVALIDATE.
 //
@@ -450,5 +538,242 @@ export function useSetHome() {
       void qc.invalidateQueries({ queryKey: birdsKeys.home() });
     },
     onSettled: () => { void qc.invalidateQueries({ queryKey: birdsKeys.locationsAll() }); },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// THE SESSION, AND WHY IT IS NOT UNDER THE `birds` PREFIX.
+//
+// `GET /api/auth/me` is a platform route, not an app one, and nothing Birds
+// writes can change who is signed in -- so an invalidation of `birdsKeys.all()`
+// after a merge or a confirm must not re-read it. Same reasoning as `envKeys`
+// above, and the same shape.
+//
+// ONE FACT, ONE ENTRY, and that is the point of it being here at all.
+// `BirdSettings.tsx` read this endpoint TWICE in one file: once in the account
+// card and once in `useIsAdmin`, each with its own `useState` and its own
+// `useEffect`. Two requests for one answer, which could disagree -- and they
+// disagreed in the direction that matters, because a failure meant "no account
+// card" to the first reader and "you are the admin" to the second.
+
+/**
+ * The signed-in user, as the two deployments spell it.
+ *
+ * The standalone app answers `{user: {...}}` (`apps/birds/springer/app.py`).
+ * The Workshop backend answers the user object bare, so `user` is absent there
+ * and every caller reads that as "no session", which is the behaviour this app
+ * wants on the tailnet: no account card, and the operator is the admin.
+ */
+export type BirdsSession = { user?: { email: string; name?: string | null; role?: string } | null };
+
+/**
+ * Resolve the session. A non-2xx is an ANSWER (`401`/`404` both mean "no
+ * session here"), so it resolves to `{}` rather than throwing; only a network
+ * failure rejects, and the call site turns that into "treat me as the admin",
+ * exactly as the two hand-rolled reads did.
+ */
+export const fetchSession = async (): Promise<BirdsSession> => {
+  const r = await fetch("/api/auth/me", { credentials: "same-origin" });
+  if (!r.ok) return {};
+  return (await r.json()) as BirdsSession;
+};
+
+export const authKeys = {
+  session: () => ["auth", "session"] as const,
+} as const;
+
+// ---------------------------------------------------------------------------
+// THE SETTINGS WRITES.
+//
+// All four routes take a FORM body and answer with the WHOLE settings object
+// they just wrote (`backend/routes/birds.py`), so a call site never has to
+// guess what the server settled on -- it writes the answer straight into the
+// cache entry the read uses. Each was previously a bare `fetch(...).then(r =>
+// r.json()).catch(() => {})` inside the component that owned the control, so a
+// REJECTED save left the toggle sitting in the position the operator had just
+// moved it to.
+
+/** `GET /api/birds/atlas/settings` and `/recordings/settings` answer shape. */
+export type SettingsRead<T> = { settings: T };
+
+export const saveRecordingsSettings = <T>(p: { recSave: boolean }): Promise<SettingsRead<T>> =>
+  apost<SettingsRead<T>>("/recordings/settings", { rec_save: p.recSave });
+
+export const saveAtlasSettings = <T>(p: { clipSave: boolean }): Promise<SettingsRead<T>> =>
+  apost<SettingsRead<T>>("/atlas/settings", { atlas_clip_save: p.clipSave });
+
+export const saveAnalyzeSettings = <T>(p: {
+  minConf: number; sfThresh: number; newSpeciesHits: number;
+}): Promise<SettingsRead<T>> =>
+  apost<SettingsRead<T>>("/analyze/settings", {
+    min_conf: p.minConf, sf_thresh: p.sfThresh, new_species_hits: p.newSpeciesHits,
+  });
+
+/**
+ * Kick off an Atlas rebuild. Returns as soon as the batch job is DETACHED, not
+ * when it finishes: progress is observable only through `atlas/status`, whose
+ * `version` bumps when the new projection lands. The call site watches for that
+ * bump; nothing here can wait for it.
+ */
+export const rebuildAtlas = (): Promise<{ started: boolean; error?: string }> =>
+  apost<{ started: boolean; error?: string }>("/atlas/rebuild", {});
+
+/** Re-apply the range filter to already-stored detections. Reversible. */
+export const recomputeDetections = (): Promise<{ hidden?: number; species_hidden?: unknown[] }> =>
+  apost<{ hidden?: number; species_hidden?: unknown[] }>("/analyze/recompute", {});
+
+/**
+ * Name (or, with `""`, un-name) an Atlas call cluster. An empty label sends NO
+ * `label` field at all, because the route's `Form(None)` reads an absent field
+ * as "clear it" and an empty string as a label of `""`.
+ */
+export const saveClusterLabel = (p: { clusterId: number; label: string }): Promise<unknown> =>
+  apost(`/atlas/cluster/${p.clusterId}/label`, p.label ? { label: p.label } : {});
+
+// ---------------------------------------------------------------------------
+// RECORDINGS: ONE SHAPE, AND THE WRITES THAT USED TO BE A WINDOW EVENT.
+//
+// Every write below was a bare `fetch(...).then(() => { load(); window
+// .dispatchEvent(new CustomEvent("bird-settings-change")) })` in whichever page
+// owned the button. The `load()` re-read that page and nothing else; the event
+// re-read whoever happened to be listening. That is `invalidateQueries` spelled
+// by hand, minus the dedup, minus the in-flight cancellation, and minus every
+// reader that had not personally subscribed. Two pages spelled the pin and the
+// delete separately, byte for byte.
+//
+// None of them checked `r.ok`, so a rejected write closed the dialog and moved
+// the control exactly as an accepted one did. `apost` and `adel` both throw, so
+// the mutation's `isError` is now what the page reads to say a write failed.
+
+/**
+ * The recording budget, as `GET /recordings/settings` returns it
+ * (`birds_analyze.rec_settings()`).
+ *
+ * ONE SHAPE FOR THREE READERS. The recordings page declared
+ * `{rec_storage_mb, rec_when_full}`, the bird page declared `{rec_save}`, and
+ * the settings page declares its own again -- three partial hand-written types
+ * for one route, kept in step by a window event. They share a cache entry now,
+ * so they have to share a type or the entry means a different thing to each
+ * reader that touches it.
+ */
+export type RecordingsSettings = {
+  rec_storage_mb: number;
+  rec_when_full: "evict_old" | "stop";
+  rec_save: boolean;
+  rec_warn_ratio: number;
+};
+
+/** A per-species recording rule: follow the app default, keep everything, keep nothing. */
+export type SpeciesSaveMode = "default" | "keep" | "never";
+
+/** A detection's trust state, as the re-classify buttons set it. */
+export type DetectionStatus = "confirmed" | "suggested" | "rejected";
+
+/**
+ * `POST /recordings/settings` with the STORAGE BUDGET only.
+ *
+ * Deliberately separate from `saveRecordingsSettings` above, which writes
+ * `rec_save`. The route is a PATCH: `Form(None)` means an absent field is left
+ * alone, so a writer must send only the fields it owns. One helper sending all
+ * three would let the recordings page's Save quietly write back whatever
+ * `rec_save` its cached copy happened to hold, undoing a toggle made on the
+ * settings page.
+ */
+export const saveRecordingsBudget = (p: {
+  storageMb: number; whenFull: "evict_old" | "stop";
+}): Promise<SettingsRead<RecordingsSettings>> =>
+  apost<SettingsRead<RecordingsSettings>>("/recordings/settings", {
+    rec_storage_mb: p.storageMb, rec_when_full: p.whenFull,
+  });
+
+/**
+ * Save the storage budget. The POST answers with the EFFECTIVE settings, so
+ * success needs no confirming read -- the response is the new value and is
+ * written straight into the entry the three readers share. The status IS
+ * computed against the cap, so that one entry is invalidated.
+ */
+export function useSaveRecordingsBudget() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: saveRecordingsBudget,
+    onSuccess: (data) => {
+      qc.setQueryData<SettingsRead<RecordingsSettings>>(birdsKeys.recordingsSettings(), data);
+      void qc.invalidateQueries({ queryKey: birdsKeys.recordingsStatus() });
+    },
+  });
+}
+
+/**
+ * Pin or unpin one clip. A pinned clip is protected from eviction, so this moves
+ * `protected_bytes` in `/recordings/status` as well as the row it was clicked
+ * on: the whole recordings family is invalidated, not the one list the button
+ * happened to be in.
+ */
+export function usePinRecording() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { id: number; pinned: boolean }) =>
+      apost(`/recordings/${p.id}/pin`, { pinned: p.pinned }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: birdsKeys.recordingsAll() }); },
+  });
+}
+
+/** Delete one clip. Changes the list, the storage totals, and the owning bird's `clip_count`. */
+export function useDeleteRecording() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => adel(`/recordings/${id}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: birdsKeys.recordingsAll() });
+      void qc.invalidateQueries({ queryKey: birdsKeys.birdAll() });
+    },
+  });
+}
+
+/** Delete every clip of one species, pinned ones included. Same reach as a single delete. */
+export function useClearSpeciesRecordings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (sci: string) => adel(`/recordings?sci=${encodeURIComponent(sci)}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: birdsKeys.recordingsAll() });
+      void qc.invalidateQueries({ queryKey: birdsKeys.birdAll() });
+    },
+  });
+}
+
+/**
+ * Set one species' recording rule. `save_mode` is part of the BIRD payload, and
+ * "keep" makes that bird's clips protected, so it reaches both families.
+ */
+export function useSetSpeciesSaveMode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { sci: string; mode: SpeciesSaveMode }) =>
+      apost<{ save_mode: SpeciesSaveMode }>("/species/recording", { sci: p.sci, save_mode: p.mode }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: birdsKeys.birdAll() });
+      void qc.invalidateQueries({ queryKey: birdsKeys.recordingsAll() });
+    },
+  });
+}
+
+/**
+ * Re-classify one detection between confirmed / suggested / rejected.
+ *
+ * INVALIDATES THE WHOLE APP, and that is not laziness. A detection's status is
+ * what every aggregate in Birds counts: the species lists, the location
+ * summaries, the activity bars and the dashboard totals are all derived from
+ * these rows, and a rejected one drops out of all of them. The button used to
+ * re-read only the page it was on, so every other open view kept the old number
+ * until its own poll happened to land. Only MOUNTED queries actually refetch;
+ * the rest are marked stale and re-read when something looks at them.
+ */
+export function useSetDetectionStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (p: { id: number; status: DetectionStatus }) =>
+      apost("/detection/status", { id: p.id, status: p.status }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: birdsKeys.all() }); },
   });
 }

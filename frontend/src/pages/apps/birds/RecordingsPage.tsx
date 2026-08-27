@@ -1,20 +1,44 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Pin, PinOff, Trash2, Save, MapPin } from "lucide-react";
-import { useCrumbTrail, type Crumb, Segmented, Stepper, ConfirmDialog, formatBytes, usePoll } from "@workshop/ui";
-import { API, jget, pct, SpeciesLink, BirdThumb } from "./ui";
-import { useRecStatus, PlayButton } from "./recordings";
+import { useQuery } from "@tanstack/react-query";
+import {
+  useCrumbTrail, type Crumb, Segmented, Stepper, ConfirmDialog, formatBytes,
+  Button, Notice, Skeleton, StateBlock,
+} from "@workshop/ui";
+import { pct, SpeciesLink, BirdThumb } from "./ui";
+import { useRecStatus, useRecordingsSettings, PlayButton, type RecStatus } from "./recordings";
+import {
+  birdsKeys, fetchRecordings, useDeleteRecording, usePinRecording,
+  useSaveRecordingsBudget, type RecordingsSettings,
+} from "./queries";
 import BirdsHeader from "./BirdsHeader";
 
 // Recordings management: the storage meter, the budget settings (cap + what to do
 // when full), and the full list of saved clips with per-clip pin / delete. This
 // is where the homepage banner links to.
+//
+// THREE FACTS, THREE ENTRIES, NONE OF THEM OWNED HERE. The status, the budget
+// and the clip list are each read by another page too, so all three are keyed in
+// `queries.ts` and shared. The page used to hold the list in a `useState` behind
+// a 12s `usePoll`, re-read it by hand after every write, and then ALSO broadcast
+// a window event to tell the other pages to re-read theirs.
+
+/** The newest N clips. In the key, because the bird page asks for a different N. */
+const LIST_LIMIT = 300;
+/** The list moves on its own as detections are saved, so it keeps a cadence. */
+const LIST_MS = 12000;
 
 type Rec = {
   id: number; scientific_name: string; common_name: string;
   location_id: number | null; location: string | null; at: string;
   bytes: number; confidence: number; pinned: boolean; protected: boolean;
 };
-type RecSettings = { rec_storage_mb: number; rec_when_full: "evict_old" | "stop" };
+type RecList = { items: Rec[]; total: number };
+
+// One empty array, so "no clips" is referentially stable across renders.
+const NO_RECS: Rec[] = [];
+
+const cardStyle: React.CSSProperties = { padding: "1rem", marginBottom: "1rem" };
 
 export default function Recordings() {
   useCrumbTrail([
@@ -23,56 +47,96 @@ export default function Recordings() {
     { label: "Recordings" },
   ] as Crumb[]);
 
-  const status = useRecStatus(8000);
-  const [items, setItems] = useState<Rec[] | null>(null);
-  const [total, setTotal] = useState(0);
-  const [err, setErr] = useState<string | null>(null);
+  const statusQ = useRecStatus();
   const [confirm, setConfirm] = useState<Rec | null>(null);
 
-  const load = useCallback(() => {
-    jget<{ items: Rec[]; total: number }>("/recordings?limit=300")
-      .then((d) => { setItems(d.items); setTotal(d.total); })
-      .catch((e) => setErr(String(e)));
-  }, []);
-  usePoll(load, 12000);
+  // The whole list, unfiltered by species. Both parameters that reach the URL
+  // are in the key.
+  const listParams = { sci: null, limit: LIST_LIMIT };
+  const list = useQuery({
+    queryKey: birdsKeys.recordings(listParams),
+    queryFn: () => fetchRecordings<RecList>(listParams),
+    // Owns its cadence, so nothing sits stale over it and a failed tick is
+    // followed by the next tick rather than a retry. No `keepPreviousData`: the
+    // key never changes on this page, so a refetch already keeps the rows.
+    refetchInterval: LIST_MS,
+    staleTime: 0,
+    retry: false,
+  });
 
-  const pin = (r: Rec) => {
-    const fd = new FormData(); fd.append("pinned", String(!r.pinned));
-    fetch(`${API}/recordings/${r.id}/pin`, { method: "POST", body: fd })
-      .then(() => { load(); window.dispatchEvent(new CustomEvent("bird-settings-change")); });
-  };
-  const del = (r: Rec) => {
-    fetch(`${API}/recordings/${r.id}`, { method: "DELETE" })
-      .then(() => { setConfirm(null); load(); window.dispatchEvent(new CustomEvent("bird-settings-change")); });
-  };
+  const pin = usePinRecording();
+  const del = useDeleteRecording();
+
+  const items = list.data?.items ?? NO_RECS;
+  const total = list.data?.total ?? 0;
+  const listErr = list.isError ? String(list.error) : null;
+  const writeErr = pin.error ?? del.error;
 
   return (
     <div>
       <BirdsHeader title="Recordings" />
 
-      {status && (
-        <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
-          <UsageMeter status={status} />
-        </section>
-      )}
+      <section className="card" style={cardStyle}>
+        {statusQ.data && <UsageMeter status={statusQ.data} />}
+        {statusQ.isPending && <Skeleton style={{ height: 62 }} />}
+        {statusQ.isError && (
+          <div style={{ marginTop: statusQ.data ? ".6rem" : 0 }}>
+            <Notice
+              tone={statusQ.data ? "warn" : "error"}
+              action={<Button size="sm" variant="ghost" onClick={() => void statusQ.refetch()}>Retry</Button>}
+            >
+              {statusQ.data ? "Storage usage is not refreshing." : "Could not read storage usage."}
+            </Notice>
+          </div>
+        )}
+      </section>
 
-      <RecordingSettings onSaved={() => window.dispatchEvent(new CustomEvent("bird-settings-change"))} />
+      <RecordingSettings />
 
-      <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
+      <section className="card" style={cardStyle}>
         <h3 style={{ margin: "0 0 .6rem", fontSize: "1rem" }}>
           Saved clips {total > 0 && <span className="muted" style={{ fontWeight: 400 }}>({total})</span>}
         </h3>
 
-        {err && !items && <p className="error">Could not load: {err}</p>}
-        {!items && !err && <p className="muted">Loading…</p>}
-        {items && items.length === 0 && (
-          <p className="muted" style={{ fontSize: ".88rem" }}>
-            No recordings yet. Turn on recording for a bird from its page to start saving the
-            audio of its detections.
-          </p>
+        {/* A rejected pin or delete is a line beside a list that is still on
+            screen, never a region. */}
+        {writeErr && (
+          <div style={{ marginBottom: ".6rem" }}>
+            <Notice
+              tone="error"
+              detail={String(writeErr)}
+              action={<Button size="sm" variant="ghost" onClick={() => { pin.reset(); del.reset(); }}>Dismiss</Button>}
+            >
+              That did not go through.
+            </Notice>
+          </div>
         )}
 
-        {items && items.length > 0 && (
+        {listErr && list.data && (
+          <div style={{ marginBottom: ".6rem" }}>
+            <Notice tone="warn" action={<Button size="sm" variant="ghost" onClick={() => void list.refetch()}>Retry</Button>}>
+              These clips are not refreshing.
+            </Notice>
+          </div>
+        )}
+
+        {listErr && !list.data ? (
+          <StateBlock
+            variant="error"
+            title="Couldn't load recordings"
+            hint={<code>GET /api/birds/recordings: {listErr}</code>}
+            action={<Button size="sm" onClick={() => void list.refetch()}>Retry</Button>}
+          />
+        ) : list.isPending ? (
+          <div style={{ display: "grid", gap: ".5rem" }}>
+            {[0, 1, 2].map((i) => <Skeleton key={i} style={{ height: 48 }} />)}
+          </div>
+        ) : items.length === 0 ? (
+          <StateBlock
+            title="No recordings yet"
+            hint="Open a bird and set its recording rule to Always. The audio of its detections is saved from then on."
+          />
+        ) : (
           <div style={{ display: "flex", flexDirection: "column" }}>
             {items.map((r) => (
               <div key={r.id} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".5rem 0", borderTop: "1px solid var(--border)" }}>
@@ -90,7 +154,8 @@ export default function Recordings() {
                 </SpeciesLink>
                 <span className="pill neutral" style={{ flexShrink: 0 }}>{pct(r.confidence)}</span>
                 <span className="muted" style={{ fontSize: ".75rem", minWidth: 56, textAlign: "right", flexShrink: 0 }}>{formatBytes(r.bytes)}</span>
-                <button type="button" className={`bird-act${r.pinned ? " ok" : ""}`} onClick={() => pin(r)}
+                <button type="button" className={`bird-act${r.pinned ? " ok" : ""}`} disabled={pin.isPending}
+                  onClick={() => pin.mutate({ id: r.id, pinned: !r.pinned })}
                   title={r.pinned ? "Pinned. Protected from auto-cleanup. Click to unpin." : "Pin to keep this recording (deleted last)"}>
                   {r.pinned ? <Pin size={15} /> : <PinOff size={15} />}
                 </button>
@@ -99,6 +164,12 @@ export default function Recordings() {
                 </button>
               </div>
             ))}
+            {/* The fourth state: the list is capped, so say what is not in it. */}
+            {total > items.length && (
+              <p className="muted" style={{ fontSize: ".76rem", margin: ".6rem 0 0" }}>
+                Showing the newest {items.length} of {total} clips.
+              </p>
+            )}
           </div>
         )}
       </section>
@@ -109,15 +180,20 @@ export default function Recordings() {
         body={confirm ? `Permanently delete this ${confirm.common_name} clip from ${confirm.at}. This cannot be undone.` : ""}
         confirmLabel="Delete"
         onCancel={() => setConfirm(null)}
-        onConfirm={() => confirm && del(confirm)}
+        onConfirm={() => {
+          if (!confirm) return;
+          // The dialog closes and the outcome is reported on the page behind it:
+          // a failure has nowhere to be seen inside a dialog that has gone.
+          del.mutate(confirm.id);
+          setConfirm(null);
+        }}
       />
     </div>
   );
 }
 
 // Used / cap bar with the protected portion marked. Color escalates with state.
-function UsageMeter({ status }: { status: ReturnType<typeof useRecStatus> }) {
-  if (!status) return null;
+function UsageMeter({ status }: { status: RecStatus }) {
   const usedFrac = Math.min(1, status.cap_bytes ? status.used_bytes / status.cap_bytes : 0);
   const protFrac = Math.min(usedFrac, status.cap_bytes ? status.protected_bytes / status.cap_bytes : 0);
   const barColor = status.state === "error" ? "var(--danger)" : status.state === "warn" ? "var(--warn)" : "var(--accent)";
@@ -150,64 +226,96 @@ function UsageMeter({ status }: { status: ReturnType<typeof useRecStatus> }) {
 }
 
 // Budget config — a config write, so it commits on an explicit Save (design rule 7).
-function RecordingSettings({ onSaved }: { onSaved: () => void }) {
-  const [base, setBase] = useState<RecSettings | null>(null);
-  const [draft, setDraft] = useState<RecSettings | null>(null);
-  const [saving, setSaving] = useState(false);
+//
+// The read is the SHARED settings entry. This used to be a private `useEffect`
+// fetch with `.catch(() => {})` and `if (!draft) return null`, so a settings
+// route that was down removed the whole section from the page with no trace.
+function RecordingSettings() {
+  const q = useRecordingsSettings();
 
-  useEffect(() => {
-    jget<{ settings: RecSettings }>("/recordings/settings")
-      .then((d) => { setBase(d.settings); setDraft(d.settings); }).catch(() => {});
-  }, []);
+  if (q.isPending) {
+    return <section className="card" style={cardStyle}><Skeleton style={{ height: 120 }} /></section>;
+  }
+  if (!q.data) {
+    return (
+      <section className="card" style={cardStyle}>
+        <Notice
+          tone="error"
+          where="/api/birds/recordings/settings"
+          action={<Button size="sm" variant="ghost" onClick={() => void q.refetch()}>Retry</Button>}
+        >
+          Could not load the storage settings.
+        </Notice>
+      </section>
+    );
+  }
+  return <RecordingSettingsForm settings={q.data.settings} />;
+}
 
-  const dirty = !!base && !!draft && (base.rec_storage_mb !== draft.rec_storage_mb || base.rec_when_full !== draft.rec_when_full);
-  const save = useCallback(async () => {
-    if (!draft) return;
-    setSaving(true);
-    const fd = new FormData();
-    fd.append("rec_storage_mb", String(draft.rec_storage_mb));
-    fd.append("rec_when_full", draft.rec_when_full);
-    try {
-      const r = await fetch(`${API}/recordings/settings`, { method: "POST", body: fd });
-      const d = await r.json();
-      setBase(d.settings); setDraft(d.settings); onSaved();
-    } finally { setSaving(false); }
-  }, [draft, onSaved]);
+function RecordingSettingsForm({ settings }: { settings: RecordingsSettings }) {
+  // Seeded ONCE, at mount. `settings` keeps arriving -- the entry is re-read on
+  // focus and after any recordings write -- and a re-seeding effect would throw
+  // away whatever the operator had typed. `dirty` compares the draft against the
+  // live server value instead, which is the question the Save button is actually
+  // asking. Only the two fields this form owns are drafted: `rec_save` belongs
+  // to the settings page and is not ours to write back.
+  const [draft, setDraft] = useState({
+    storageMb: settings.rec_storage_mb,
+    whenFull: settings.rec_when_full,
+  });
+  const save = useSaveRecordingsBudget();
+  const dirty = draft.storageMb !== settings.rec_storage_mb || draft.whenFull !== settings.rec_when_full;
 
-  if (!draft) return null;
   return (
-    <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
+    <section className="card" style={cardStyle}>
       <h3 style={{ margin: "0 0 .8rem", fontSize: "1rem" }}>Storage settings</h3>
       <div style={{ display: "grid", gap: "1.1rem" }}>
         <div>
           <div style={{ fontWeight: 500, marginBottom: ".35rem" }}>Total storage limit</div>
-          <Stepper value={draft.rec_storage_mb} onChange={(v) => setDraft({ ...draft, rec_storage_mb: v })}
+          <Stepper value={draft.storageMb} onChange={(v) => setDraft({ ...draft, storageMb: v })}
             min={50} max={20000} step={250} suffix="MB" ariaLabel="Storage limit in MB" />
           <div className="muted" style={{ fontSize: ".78rem", marginTop: ".35rem" }}>
-            How much disk saved clips may use, across all birds. About {Math.round(draft.rec_storage_mb / 0.024)} clips at this size.
+            How much disk saved clips may use, across all birds. About {Math.round(draft.storageMb / 0.024)} clips at this size.
           </div>
         </div>
         <div>
           <div style={{ fontWeight: 500, marginBottom: ".35rem" }}>When full</div>
           <Segmented<"evict_old" | "stop">
             ariaLabel="What to do when storage is full"
-            value={draft.rec_when_full}
-            onChange={(v) => setDraft({ ...draft, rec_when_full: v })}
+            value={draft.whenFull}
+            onChange={(v) => setDraft({ ...draft, whenFull: v })}
             options={[
               { value: "evict_old", label: "Remove oldest" },
               { value: "stop", label: "Stop saving" },
             ]}
           />
           <div className="muted" style={{ fontSize: ".78rem", marginTop: ".5rem" }}>
-            {draft.rec_when_full === "evict_old"
+            {draft.whenFull === "evict_old"
               ? "Automatically delete the oldest recordings to make room. Pinned and 'save all' recordings are never removed."
               : "Stop saving new recordings once full, keeping everything you have. You'll see a warning when this happens."}
           </div>
         </div>
       </div>
+
+      {/* The form is right here, so a rejected save is a line above its own
+          button. It used to be swallowed by a `try/finally`, which looked
+          exactly like a save that worked. */}
+      {save.isError && (
+        <div style={{ marginTop: ".8rem" }}>
+          <Notice
+            tone="error"
+            detail={String(save.error)}
+            action={<Button size="sm" variant="ghost" onClick={() => save.reset()}>Dismiss</Button>}
+          >
+            That did not save.
+          </Notice>
+        </div>
+      )}
+
       <div style={{ marginTop: "1rem" }}>
-        <button className="btn" onClick={save} disabled={!dirty || saving}>
-          <Save size={15} /> {saving ? "Saving…" : "Save"}
+        <button className="btn" disabled={!dirty || save.isPending}
+          onClick={() => save.mutate({ storageMb: draft.storageMb, whenFull: draft.whenFull })}>
+          <Save size={15} /> {save.isPending ? "Saving…" : "Save"}
         </button>
       </div>
     </section>

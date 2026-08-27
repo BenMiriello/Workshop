@@ -1,13 +1,15 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Sunrise, Sunset, Moon, Droplets, Wind, Bird } from "lucide-react";
 import {
   Area, Bar, CartesianGrid, ComposedChart, ErrorBar, LabelList, Line,
   ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { Skeleton, StateBlock, ChartTooltip, CHART_TARGET, userStorage } from "@workshop/ui";
+import { Button, Skeleton, StateBlock, ChartTooltip, CHART_TARGET, userStorage } from "@workshop/ui";
 import BirdsHeader from "./BirdsHeader";
-import { API, hh, CHART_SERIES } from "./ui";
+import { hh, CHART_SERIES } from "./ui";
+import { birdsKeys, fetchForecastWeek } from "./queries";
 import { wx, OUTLOOK, localTime, dayLen, type Level } from "./forecastUtil";
 
 // The 7-day BIRD forecast: the bird activity is the subject. A week-activity graph
@@ -49,9 +51,11 @@ function localHourOf(iso?: string | null): number | null {
   return Number.isNaN(d.getTime()) ? null : d.getHours() + d.getMinutes() / 60;
 }
 
+// The window this page asks for, and part of its key: a different number of days
+// is a different answer, not a wider one.
+const FORECAST_DAYS = 7;
+
 export default function ForecastWeek() {
-  const [week, setWeek] = useState<Week | null>(null);
-  const [err, setErr] = useState(false);
   const [sel, setSel] = useState(0);
   const [locationId] = useState(() => {
     const ls = userStorage.local.getItem("birds-source");
@@ -59,21 +63,25 @@ export default function ForecastWeek() {
     return 6; // the yard station is the default place
   });
 
-  useEffect(() => {
-    let live = true;
-    fetch(`${API}/forecast/week?location_id=${locationId}&days=7`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((d) => { if (live) setWeek(d); })
-      .catch(() => { if (live) setErr(true); });
-    return () => { live = false; };
-  }, [locationId]);
+  // A read with no cadence at all: a seven-day forecast does not move minute to
+  // minute, and the client re-reads it on the way back to the tab. The
+  // `let live = true` guard the effect carried is gone with the effect -- a
+  // cancelled render cannot land a response in a cache entry keyed by the
+  // request that asked for it, so there is nothing left for the flag to protect.
+  const p = { locationId, days: FORECAST_DAYS };
+  const weekQ = useQuery({
+    queryKey: birdsKeys.forecastWeek(p),
+    queryFn: () => fetchForecastWeek<Week>(p),
+  });
+  const week = weekQ.data;
 
   return (
     <div>
       <BirdsHeader title="7-day forecast" />
-      {err ? (
+      {weekQ.isError ? (
         <StateBlock variant="error" title="Couldn't load the forecast"
-          hint={`GET ${API}/forecast/week failed.`} />
+          hint={<code>GET /api/birds/forecast/week: {String(weekQ.error)}</code>}
+          action={<Button size="sm" onClick={() => void weekQ.refetch()}>Retry</Button>} />
       ) : !week ? (
         <Skeleton style={{ height: 320 }} />
       ) : week.days.length === 0 ? (

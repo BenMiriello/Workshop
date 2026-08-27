@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Sunrise, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
 import { Segmented, Toggle } from "@workshop/ui";
 import { hh, Chart, CHART_SERIES } from "./ui";
+import { envKeys, fetchAstro, fetchConditions } from "./queries";
 
 // One Activity card with two views you switch between (not two separate cards):
 //   Per day      — detections per calendar day; click a bar to drill into that
@@ -19,6 +21,26 @@ type View = "day" | "hour";
 // view — used to overlay dawn/dusk markers and a temperature line on the
 // times-of-day chart. Populated from /environment when a real location is in scope.
 type EnvData = { srHour: number | null; ssHour: number | null; temps: (number | null)[] };
+type AstroRead = { sunrise?: string | null; sunset?: string | null };
+type ConditionsRead = { conditions?: { ts_hour: string; temp?: number | null }[] };
+
+// "YYYY-MM-DDTHH:MM..." -> the local hour as a fraction, or null.
+function localHour(iso?: string | null): number | null {
+  if (!iso) return null;
+  const dt = new Date(iso);
+  return Number.isNaN(dt.getTime()) ? null : dt.getHours() + dt.getMinutes() / 60;
+}
+
+/** The chart's environment overlay, as a pure function of the two responses. */
+function buildEnv(a: AstroRead | null, c: ConditionsRead | null): EnvData {
+  // Conditions are stored in °C (Open-Meteo default); show °F to match the
+  // rest of the app (US locale).
+  const temps: (number | null)[] = Array(24).fill(null);
+  for (const row of c?.conditions ?? []) {
+    if (row.temp != null) temps[new Date(row.ts_hour).getHours()] = Math.round(row.temp * 9 / 5 + 32);
+  }
+  return { srHour: localHour(a?.sunrise), ssHour: localHour(a?.sunset), temps };
+}
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -32,7 +54,6 @@ export default function ActivityCard({ daily, hourly, locationId }: { daily: Day
   const [showWeather, setShowWeather] = useState(false); // temperature overlay — off by default
   const [showDiversity, setShowDiversity] = useState(false); // species-richness line — off by default
   const [dayMetric, setDayMetric] = useState<"presence" | "count">("presence"); // day-over-day: presence over chatter
-  const [env, setEnv] = useState<EnvData | null>(null);
 
   const dailyAsc = useMemo(
     () => [...daily].sort((a, b) => (a.date < b.date ? -1 : 1)), [daily]);
@@ -54,35 +75,49 @@ export default function ActivityCard({ daily, hourly, locationId }: { daily: Day
     if (datum?.date && datum.hourly) { setDay(datum.date); setView("hour"); }
   };
 
-  // Pull dawn/dusk + hourly temperature for the day in view (local-time aligned
-  // to the chart's hour buckets). Only when a real location with coords is in
-  // scope and we're on the times-of-day view.
-  useEffect(() => {
-    if (locationId == null || view !== "hour") { setEnv(null); return; }
-    const date = day ?? today();
-    const start = new Date(`${date}T00:00:00`).toISOString();
-    const end = new Date(`${date}T23:59:59`).toISOString();
-    let cancelled = false;
-    Promise.all([
-      fetch(`/api/environment/astro?location_id=${locationId}&date=${date}`).then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/environment/conditions?location_id=${locationId}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`).then((r) => (r.ok ? r.json() : null)),
-    ]).then(([a, c]: [any, any]) => {
-      if (cancelled) return;
-      // Conditions are stored in °C (Open-Meteo default); show °F to match the
-      // rest of the app (US locale).
-      const temps: (number | null)[] = Array(24).fill(null);
-      for (const row of c?.conditions ?? []) {
-        if (row.temp != null) temps[new Date(row.ts_hour).getHours()] = Math.round(row.temp * 9 / 5 + 32);
-      }
-      const localHour = (iso?: string | null) => {
-        if (!iso) return null;
-        const dt = new Date(iso);
-        return dt.getHours() + dt.getMinutes() / 60;
-      };
-      setEnv({ srHour: localHour(a?.sunrise), ssHour: localHour(a?.sunset), temps });
-    }).catch(() => { if (!cancelled) setEnv(null); });
-    return () => { cancelled = true; };
-  }, [locationId, view, day]);
+  // Dawn/dusk + hourly temperature for the day in view (local-time aligned to
+  // the chart's hour buckets). Only when a real location with coords is in scope
+  // and we are on the times-of-day view -- which is `enabled`, not an early
+  // return inside an effect that also had to remember to clear the state again.
+  //
+  // TWO READS, TWO ENTRIES, keyed by the place and the DAY. They were one
+  // `Promise.all` in an effect with a `let cancelled` flag, which is the guard
+  // this migration removes on purpose: a response now lands in the cache entry
+  // for the request that asked for it, so the day you switched away from has
+  // nowhere to write. Both are `null` when the overlay is not in view, and the
+  // sunrise line and the temperature toggle simply are not offered.
+  //
+  // `keepPreviousData` on both, because the effect it replaces never cleared
+  // this either: picking another day left the previous day's markers up until
+  // the new ones landed. Without it the sunrise line and the Temperature toggle
+  // would blink out of the header on every day change, which is the flicker
+  // this migration is supposed to be removing rather than adding.
+  const inView = locationId != null && view === "hour";
+  const date = day ?? today();
+  const envParams = { locationId: locationId ?? 0, date };
+  const astroQ = useQuery({
+    queryKey: envKeys.astro(envParams),
+    queryFn: () => fetchAstro<AstroRead>(envParams),
+    enabled: inView,
+    placeholderData: keepPreviousData,
+  });
+  const conditionsQ = useQuery({
+    queryKey: envKeys.conditions(envParams),
+    queryFn: () => fetchConditions<ConditionsRead>(envParams),
+    enabled: inView,
+    placeholderData: keepPreviousData,
+  });
+
+  // The merge is a pure function of the two responses. It used to be an effect
+  // writing to state, which is what made the chart draw once without the overlay
+  // and again with it.
+  const env = useMemo<EnvData | null>(() => {
+    if (!inView) return null;
+    const a = astroQ.data;
+    const c = conditionsQ.data;
+    if (!a && !c) return null;
+    return buildEnv(a ?? null, c ?? null);
+  }, [inView, astroQ.data, conditionsQ.data]);
 
   // Merge temperature into the hour data; build dawn/dusk markers + the optional
   // temperature overlay.

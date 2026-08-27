@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Sunrise, Sunset, Moon, Sun, Bird, Gauge, AlertTriangle } from "lucide-react";
-import { API, hh } from "./ui";
+import { hh } from "./ui";
+import { birdsKeys, fetchNow } from "./queries";
 import { wx, OUTLOOK, cToF, localTime, dayLen, pressureSub, untilLabel, type Level } from "./forecastUtil";
-import { usePoll } from "@workshop/ui";
 
 // The "Bird forecast" card. The forecast LEADS: activity level, what's likely now
 // (Tier 1 conditional ranking), and the day's expected shape. Reasoning + calibration
@@ -58,16 +58,36 @@ function Tile({ icon, label, value, sub }: { icon: React.ReactNode; label: strin
   );
 }
 
+// The forecast is recomputed hourly on the backend and its inputs (weather,
+// light, the hour of day) move on that scale, so this is the app's slowest read
+// by an order of magnitude. It owns that cadence and does not retry: a failed
+// read is followed by the next one.
+const NOW_MS = 5 * 60 * 1000;
+
 export default function NowCard({ locationId }: { locationId: number }) {
-  const [now, setNow] = useState<Now | null>(null);
-  const [err, setErr] = useState(false);
+  const p = { locationId };
+  // NO `keepPreviousData`, deliberately, and it is the opposite call from the
+  // dashboard around it. The dashboard keeps its previous answer because the
+  // alternative is blanking four cards for a round trip; here the previous
+  // answer is ANOTHER PLACE'S forecast, and "likely around 3 PM: ..." under a
+  // place those birds were not heard at is worse than the card being absent for
+  // a moment. The place is in the key, so changing it re-reads immediately --
+  // which the poll this replaces did not do at all: `usePoll` reads its callback
+  // through a ref, so switching places left the old forecast up for as long as
+  // five minutes.
+  const nowQ = useQuery({
+    queryKey: birdsKeys.now(p),
+    queryFn: () => fetchNow<Now>(p),
+    refetchInterval: NOW_MS,
+    staleTime: 0,
+    retry: false,
+  });
 
-  usePoll(() => fetch(`${API}/now?location_id=${locationId}`)
-    .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-    .then((d) => { setNow(d); setErr(false); })
-    .catch(() => { setErr(true); }), 5 * 60 * 1000, { immediate: true });
-
-  if (err || !now || !now.astro) return null;
+  const now = nowQ.data;
+  // A peek card with nothing to peek at renders NOTHING, which is what it did
+  // before and is right: this is a supporting card on a page that has plenty
+  // else on it, and a place with no coordinates has no forecast to fail at.
+  if (!now || !now.astro) return null;
   const a = now.astro;
   const w = now.weather;
   const cond = wx(w?.wx_code ?? null);

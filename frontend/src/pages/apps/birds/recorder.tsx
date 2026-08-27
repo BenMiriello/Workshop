@@ -4,7 +4,9 @@ import {
 import { reverseGeocode } from "./geocode";
 import { specColor } from "./specColor";
 import { localizeEvents, type SpecCol, type SpeciesEvent, type Sample } from "./specLocalize";
-import { userStorage, usePoll } from "@workshop/ui";
+import { useQuery } from "@tanstack/react-query";
+import { userStorage } from "@workshop/ui";
+import { birdsKeys, fetchAnalyzeHealth } from "./queries";
 
 // App-root recorder: captures THIS device's mic and streams live BirdNET
 // detections. Lives above the router so listening keeps running while you move
@@ -21,6 +23,7 @@ const WINDOW_S = 3;
 const STEP_S = 0.5; // post every 0.5s (6 overlapping 3s windows) — tighter time
                     // localization for the spectrogram markers; ~2x analyzer load.
 const MAX_SECONDS = 3600; // safety auto-stop at 1h
+const HEALTH_MS = 20_000;  // analyzer heartbeat; see the query in the provider
 
 const TOKEN_KEY = "birdDeviceToken";
 const NAME_KEY = "birdDeviceName";
@@ -207,7 +210,6 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [nowHearing, setNowHearing] = useState<Det[]>([]);
   const [liveLog, setLiveLog] = useState<LogEntry[]>(() => loadJSON<LogEntry[]>(SESS_LOG_KEY, []));
   const [sessionSpecies, setSessionSpecies] = useState<SpeciesRow[]>(() => loadJSON<SpeciesRow[]>(SESS_SPECIES_KEY, []));
-  const [analyzerUp, setAnalyzerUp] = useState<boolean | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Bumped only when the SET of spectrogram markers changes (one resolves to a
   // bird, or one scrolls off) — NOT every frame. Per-frame x updates are done
@@ -301,22 +303,47 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       .catch(() => { /* offline: keep cache */ });
   }, []);
 
-  // Poll the analyzer health, don't just check once at mount. A single failed
-  // probe (e.g. the backend was briefly restarting) used to set analyzerUp=false
-  // permanently, which DISABLES the Listen button until a manual reload. Re-probing
-  // every 20s lets the button recover on its own once the analyzer is reachable.
+  // Re-probe the analyzer health, don't just check once at mount. A single
+  // failed probe (e.g. the backend was briefly restarting) used to set
+  // analyzerUp=false permanently, which DISABLES the Listen button until a
+  // manual reload. Re-probing every 20s lets the button recover on its own once
+  // the analyzer is reachable.
   //
-  // whenHidden: "continue" is deliberate, and it is the opposite of the call
-  // made for LiveFeed.tsx's 1.2s poll on the same feature. LiveFeed is the
-  // WATCHING side: nobody is looking at a hidden tab, so pausing costs nothing.
-  // This is the BROADCASTING side, and a phone whose screen has slept is its
-  // normal operating state. If this probe pauses, analyzerUp is frozen at
-  // whatever it was when the screen went off, so the Listen button cannot
-  // recover on its own, which is the exact defect the poll was added to fix.
-  usePoll(() => fetch(`${API}/analyze/health`).then((r) => r.json())
-    .then((h) => setAnalyzerUp(!!h.up))
-    .catch(() => setAnalyzerUp(false)),
-    20000, { whenHidden: "continue" });
+  // THREE OPTIONS HERE ARE LOAD-BEARING, and each one is holding up a sentence
+  // of the paragraph above.
+  //
+  // `refetchIntervalInBackground` is the `whenHidden: "continue"` this read
+  // carried before, and it is deliberate: it is the opposite of the call made
+  // for LiveFeed.tsx's 1.2s poll on the same feature. LiveFeed is the WATCHING
+  // side, so nobody is looking at a hidden tab and pausing costs nothing. This
+  // is the BROADCASTING side, and a phone whose screen has slept is its normal
+  // operating state. If this probe pauses, `analyzerUp` is frozen at whatever it
+  // was when the screen went off and the Listen button cannot recover on its
+  // own, which is the exact defect the probe was added to fix. This provider is
+  // mounted around the WHOLE session, so this is the one read in the app that
+  // deliberately keeps running everywhere, including with the screen off.
+  //
+  // `retry: false`, because this read owns its own cadence and the app's default
+  // is to ride a transient failure out. Riding one out is exactly wrong here:
+  // "unreachable right now" is the ANSWER this probe exists to deliver, and a
+  // retry schedule would hold the last-known value on screen through it. A
+  // failed probe reports down, and the next tick 20s later is the recovery.
+  //
+  // `staleTime: 0` because a cadence and a staleness window over the same read
+  // disagree by construction: the window would suppress a tick that the cadence
+  // just asked for.
+  const health = useQuery({
+    queryKey: birdsKeys.analyzeHealth(),
+    queryFn: () => fetchAnalyzeHealth<{ up?: boolean }>(),
+    refetchInterval: HEALTH_MS,
+    refetchIntervalInBackground: true,
+    staleTime: 0,
+    retry: false,
+  });
+  // `null` means "not answered yet", and the Listen button reads it as such:
+  // only an explicit `false` warns. An error IS false -- the probe not
+  // completing is what "the analyzer is not running" means.
+  const analyzerUp: boolean | null = health.isPending ? null : !!health.data?.up;
 
   useEffect(() => {
     // Refresh this device's user-agent on load so it can be identified ("Chrome
@@ -335,6 +362,16 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
 
   // Re-hydrate when the tab is brought back to the foreground, so a setting
   // changed on another screen takes effect here without a manual reload.
+  //
+  // THIS IS NOT REDUNDANT WITH THE QUERY CLIENT'S GLOBAL FOCUS HANDLING, and it
+  // looks like it is, which is why the reason is written down. `queryClient.ts`
+  // teaches the focus manager `visibilitychange` AND `focus`, but that reaches
+  // QUERIES: it refetches cache entries. `hydrateFromServer` is not a query and
+  // is not going to become one -- it is the authority-adoption path, which
+  // WRITES localStorage and deliberately skips while recording so a refresh
+  // mid-session cannot yank the live mode out from under it. Delete this
+  // listener and a device re-pinned from the Pi admin view stops arriving until
+  // a manual reload. If it ever does move into the cache, this goes with it.
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === "visible") hydrateFromServer(); };
     document.addEventListener("visibilitychange", onVis);

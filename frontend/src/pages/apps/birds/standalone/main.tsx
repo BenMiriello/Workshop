@@ -6,11 +6,13 @@
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { QueryClientProvider } from "@tanstack/react-query";
 import "@workshop/ui/tokens.css";
 import "@workshop/ui/styles.css";
 import "../../../../styles.css";
 import { RecorderProvider } from "../recorder";
 import { BreadcrumbProvider } from "@workshop/ui";
+import { queryClient } from "../../../../lib/queryClient";
 import { BirdsScopeProvider } from "../scope";
 import BirdsShell from "../BirdsShell";
 import Birds from "../../Birds";
@@ -197,10 +199,18 @@ function Gate() {
   );
 }
 
+// THE QUERY CLIENT IS PART OF THE APP, NOT PART OF WORKSHOP'S SHELL. These are
+// the same page components `/apps/birds` mounts, and they read the server
+// through `@tanstack/react-query` (`lib/queryClient.ts`) -- the scope provider
+// included, so without this every route here throws "No QueryClient set"
+// before it paints. The Workshop shell mounts the same client in `App.tsx`;
+// this entry has no shell, so it mounts it itself. One client per document.
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <Gate />
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Gate />
+      </BrowserRouter>
+    </QueryClientProvider>
   </React.StrictMode>,
 );

@@ -1,31 +1,52 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   MapPin, Smartphone, ExternalLink, Mic, Pin, PinOff, Trash2,
   Check, Ban, CircleDashed, ChevronDown,
 } from "lucide-react";
-import { useCrumbTrail, type Crumb, ConfirmDialog, Segmented, formatBytes, usePoll } from "@workshop/ui";
+import {
+  useCrumbTrail, type Crumb, ConfirmDialog, Segmented, formatBytes,
+  Button, Notice, Skeleton, StateBlock,
+} from "@workshop/ui";
 import { useBirdInfo } from "./birdinfo";
-import { pct, conf, jget, apost, API, Stat, StatGrid } from "./ui";
+import { pct, conf, Stat, StatGrid } from "./ui";
 import ActivityCard from "./ActivityCard";
 import BirdsHeader from "./BirdsHeader";
 import { useBirdsScope } from "./scope";
-import { PlayButton } from "./recordings";
+import { PlayButton, useRecordingsSettings } from "./recordings";
+import {
+  birdsKeys, fetchBirdDetail, fetchRecordings,
+  useClearSpeciesRecordings, useDeleteRecording, usePinRecording,
+  useSetDetectionStatus, useSetSpeciesSaveMode,
+  type DetectionStatus, type SpeciesSaveMode,
+} from "./queries";
 
 // One species' page: photo + description (client-side reference lookup), stats,
 // the same activity charts as the rest of the app (NOT subject to the status
 // filter), and the individual detections. The detections list is where you
 // filter by confirmed/suggested/rejected and re-classify single events; each row
 // links into its device and location.
+//
+// THE FIVE PARAMETERS ARE IN THE KEY. `/bird` takes sci, status, location_id,
+// device and days, and all five used to live in a `useCallback` closure behind a
+// `usePoll`, with a companion effect re-running the read whenever that closure
+// changed. Nothing distinguished two requests, so switching the time window or
+// the status filter while a slow request was in flight could land the OLD
+// filter's answer on top of the new one. A different URL is a different cache
+// entry now, and the stale one has nowhere to land.
 
 const REFRESH_MS = 8000;
+/** The newest N clips of one bird. In the key; the recordings page asks for 300. */
+const CLIP_LIMIT = 200;
+
 type DetStatus = "all" | "confirmed" | "suggested" | "rejected";
 
 type LocOpt = { id: number; name: string; count: number };
 type DevOpt = { token: string; name: string; count: number };
 type DetRow = {
   id: number; at: string; confidence: number; occurrence: number | null;
-  status: "confirmed" | "suggested" | "rejected";
+  status: DetectionStatus;
   location_id: number | null; location: string | null;
   device: string | null; device_token: string | null; recording_id: number | null;
 };
@@ -37,36 +58,55 @@ type Detail = {
   hourly: { hour: number; count: number }[];
   by_day: { date: string; count: number; hourly: number[] }[];
   locations: LocOpt[]; devices: DevOpt[];
-  save_mode: "default" | "keep" | "never";
+  save_mode: SpeciesSaveMode;
   clip_count: number; list_count: number;
   recent: DetRow[];
 };
 
 export default function BirdDetail() {
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
   const sci = params.get("sci") || "";
+  // A DIFFERENT SPECIES IS A DIFFERENT RECORD, so it gets a different component
+  // instance. `placeholderData: keepPreviousData` below is what stops a filter
+  // change from blanking the page, and it must not span a species change: it
+  // would paint one bird's stats, clips and detections under another bird's
+  // name for as long as the new read takes. Remounting on `sci` is the one line
+  // that keeps "keep the rows on screen" honest.
+  return <BirdBody key={sci} sci={sci} />;
+}
+
+function BirdBody({ sci }: { sci: string }) {
+  const [params, setParams] = useSearchParams();
   // Bird detail uses the global Location · Device · Time scope (no local pickers).
-  const { selected, deviceTok, days: scopeDays, setDevice } = useBirdsScope();
-  const locId = selected?.kind === "loc" && selected.id != null ? String(selected.id) : "";
-  const device = deviceTok;
-  const days = String(scopeDays);
+  const { selected, deviceTok, days, setDevice } = useBirdsScope();
+  const locationId = selected?.kind === "loc" && selected.id != null ? selected.id : null;
   // Detection-list filter (page-local, not scope). Falls back to the `status` a
   // species link carried in (e.g. tapping a Suggested species lands on it).
   const status = (params.get("dstatus") || params.get("status") || "all") as DetStatus;
-  const [d, setD] = useState<Detail | null>(null);
-  const [err, setErr] = useState<string | null>(null);
   const info = useBirdInfo(sci || null, null);
 
-  const reload = useCallback(() => {
-    const qs = new URLSearchParams({ sci, status });
-    if (locId) qs.set("location_id", locId);
-    if (device) qs.set("device", device);
-    qs.set("days", days);
-    return jget<Detail>(`/bird?${qs.toString()}`).then(setD).catch((e) => setErr(String(e)));
-  }, [sci, locId, device, days, status]);
+  const detailParams = { sci, status, locationId, device: deviceTok, days };
+  const q = useQuery({
+    queryKey: birdsKeys.birdDetail(detailParams),
+    queryFn: () => fetchBirdDetail<Detail>(detailParams),
+    enabled: !!sci,
+    // Owns its own cadence, so nothing sits stale over it and a failed tick is
+    // followed by the next tick rather than a retry, as the poll it replaces
+    // did. There is NO companion effect: changing a filter changes the key and
+    // the query refetches by itself. Porting the old one would have meant two
+    // requests and a blank frame between them.
+    refetchInterval: REFRESH_MS,
+    staleTime: 0,
+    retry: false,
+    placeholderData: keepPreviousData,
+  });
+  const d = q.data;
+  const err = q.isError ? String(q.error) : null;
 
-  useEffect(() => { if (sci) void reload(); }, [sci, reload]);
-  usePoll(reload, REFRESH_MS, { enabled: !!sci, immediate: false });
+  // One mutation for the whole list, so one line reports a rejected write. Each
+  // row used to own a `busy` flag and a `.finally`, which swallowed the failure
+  // entirely: a re-classify the server refused looked exactly like one it took.
+  const setStatus = useSetDetectionStatus();
 
   // Only the detection-status filter is page-local now; Location/Device/Time come
   // from the global scope. Always write it (including "all") and drop any legacy
@@ -79,13 +119,13 @@ export default function BirdDetail() {
   };
 
   const common = d?.common_name || params.get("common") || info?.common_name || sci;
-  const place = locId ? d?.locations.find((l) => String(l.id) === locId)?.name : null;
+  const place = locationId != null ? d?.locations.find((l) => l.id === locationId)?.name : null;
 
   const trail: Crumb[] = [
     { label: "Apps", to: "/apps" },
     { label: "Birds", to: "/apps/birds" },
   ];
-  if (locId && place) trail.push({ label: place, to: `/apps/birds?source=loc:${locId}` });
+  if (locationId != null && place) trail.push({ label: place, to: `/apps/birds?source=loc:${locationId}` });
   trail.push({ label: common });
   useCrumbTrail(trail);
 
@@ -114,8 +154,37 @@ export default function BirdDetail() {
         </div>
       </section>
 
-      {err && !d && <p className="error">Could not load: {err}</p>}
-      {!d && !err && <p className="muted">Loading…</p>}
+      {/* Arriving with no `sci` used to sit on "Loading…" forever: the read was
+          disabled and nothing said why. */}
+      {!sci && (
+        <StateBlock
+          title="No species selected"
+          hint="Open a bird from the species list, or from a detection row."
+        />
+      )}
+
+      {sci && err && !d && (
+        <StateBlock
+          variant="error"
+          title="Couldn't load this bird"
+          hint={<code>GET /api/birds/bird: {err}</code>}
+          action={<Button size="sm" onClick={() => void q.refetch()}>Retry</Button>}
+        />
+      )}
+
+      {sci && err && d && (
+        <div style={{ marginBottom: ".7rem" }}>
+          <Notice tone="warn" action={<Button size="sm" variant="ghost" onClick={() => void q.refetch()}>Retry</Button>}>
+            This page is not refreshing.
+          </Notice>
+        </div>
+      )}
+
+      {sci && !d && !err && (
+        <div style={{ display: "grid", gap: ".7rem" }}>
+          {[0, 1, 2].map((i) => <Skeleton key={i} style={{ height: 96 }} />)}
+        </div>
+      )}
 
       {d && (
         <>
@@ -127,7 +196,7 @@ export default function BirdDetail() {
             {d.occurrence != null && <Stat label="Local likelihood" value={pct(d.occurrence)} />}
           </StatGrid>
 
-          <BirdRecordings sci={sci} common={common} initialMode={d.save_mode} clipCount={d.clip_count} onChange={reload} />
+          <BirdRecordings sci={sci} common={common} mode={d.save_mode} clipCount={d.clip_count} />
 
           {d.count > 0 && <ActivityCard daily={d.by_day} hourly={d.hourly} />}
 
@@ -146,13 +215,33 @@ export default function BirdDetail() {
                 ]}
               />
             </div>
+
+            {setStatus.isError && (
+              <div style={{ marginBottom: ".5rem" }}>
+                <Notice
+                  tone="error"
+                  detail={String(setStatus.error)}
+                  action={<Button size="sm" variant="ghost" onClick={() => setStatus.reset()}>Dismiss</Button>}
+                >
+                  Could not change that detection.
+                </Notice>
+              </div>
+            )}
+
             {d.recent.length === 0
-              ? <p className="muted" style={{ margin: ".3rem 0 0" }}>No {status === "all" ? "" : status + " "}detections for this filter.</p>
+              ? (
+                <StateBlock
+                  title={status === "all" ? "No detections in this range" : `No ${status} detections`}
+                  hint="Change the filter above, or widen the time window in the scope bar."
+                />
+              )
               : (
                 <div>
                   {d.recent.map((r) => (
-                    <DetectionRow key={r.id} r={r} hideLoc={!!locId} onChanged={reload}
-                      onDevice={(t) => setDevice(t)} />
+                    <DetectionRow key={r.id} r={r} hideLoc={locationId != null}
+                      busy={setStatus.isPending && setStatus.variables?.id === r.id}
+                      onSetStatus={(s) => setStatus.mutate({ id: r.id, status: s })}
+                      onDevice={setDevice} />
                   ))}
                 </div>
               )}
@@ -170,15 +259,14 @@ const h3: React.CSSProperties = { margin: "0 0 .4rem", fontSize: "1rem" };
 // clickable chips (inline when there's room, revealed by the chevron on narrow
 // screens). The trio of buttons re-classifies this single event between
 // confirmed / suggested / rejected.
-function DetectionRow({ r, hideLoc, onChanged, onDevice }: {
-  r: DetRow; hideLoc: boolean; onChanged: () => void; onDevice: (token: string) => void;
+function DetectionRow({ r, hideLoc, busy, onSetStatus, onDevice }: {
+  r: DetRow; hideLoc: boolean; busy: boolean;
+  onSetStatus: (status: DetectionStatus) => void; onDevice: (token: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const set = (status: "confirmed" | "suggested" | "rejected") => {
+  const set = (status: DetectionStatus) => {
     if (status === r.status || busy) return;
-    setBusy(true);
-    apost("/detection/status", { id: r.id, status }).then(() => onChanged()).finally(() => setBusy(false));
+    onSetStatus(status);
   };
   const chips = (
     <span className="bird-det-meta">
@@ -221,56 +309,49 @@ function DetectionRow({ r, hideLoc, onChanged, onDevice }: {
 // inline Default/Always/Never toggle (detail on hover), then the clips below.
 // Deliberately separate from the confirm/reject controls: changing the save mode
 // never changes a detection's status.
+//
+// NOTHING HERE IS MIRRORED IN LOCAL STATE ANY MORE. The mode was a `useState`
+// re-seeded from its prop by an effect (two owners of one fact); the app-wide
+// save default was a private fetch plus a window-event subscription; the clips
+// were a `useState` filled by an effect that also blanked it. All three are the
+// server's, read from the entries that own them.
 type Clip = { id: number; at: string; location: string | null; bytes: number; confidence: number; pinned: boolean; protected: boolean };
-type SaveMode = "default" | "keep" | "never";
 
-function BirdRecordings({ sci, common, initialMode, clipCount, onChange }: {
-  sci: string; common: string; initialMode: SaveMode; clipCount: number; onChange: () => void;
+const NO_CLIPS: Clip[] = [];
+
+function BirdRecordings({ sci, common, mode, clipCount }: {
+  sci: string; common: string; mode: SpeciesSaveMode; clipCount: number;
 }) {
-  const [mode, setMode] = useState<SaveMode>(initialMode);
-  const [globalSave, setGlobalSave] = useState<boolean | null>(null);
-  const [clips, setClips] = useState<Clip[] | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [confirmDel, setConfirmDel] = useState<Clip | null>(null);
 
-  useEffect(() => { setMode(initialMode); }, [initialMode]);
-  useEffect(() => {
-    const fetchGlobal = () => jget<{ settings: { rec_save: boolean } }>("/recordings/settings")
-      .then((d) => setGlobalSave(d.settings.rec_save)).catch(() => {});
-    fetchGlobal();
-    window.addEventListener("bird-settings-change", fetchGlobal);
-    return () => window.removeEventListener("bird-settings-change", fetchGlobal);
-  }, []);
+  // The shared settings entry, read here only to say what "Default" means.
+  const settings = useRecordingsSettings();
+  const globalSave = settings.data?.settings.rec_save ?? null;
 
-  const loadClips = useCallback(() => {
-    jget<{ items: Clip[] }>(`/recordings?sci=${encodeURIComponent(sci)}&limit=200`)
-      .then((d) => setClips(d.items)).catch(() => setClips([]));
-  }, [sci]);
-  useEffect(() => { if (clipCount > 0) loadClips(); else setClips([]); }, [clipCount, loadClips]);
+  const clipParams = { sci, limit: CLIP_LIMIT };
+  const clipsQ = useQuery({
+    queryKey: birdsKeys.recordings(clipParams),
+    queryFn: () => fetchRecordings<{ items: Clip[] }>(clipParams),
+    // Nothing to ask for until the bird has clips, and the count arrives in the
+    // page's own payload. `enabled` is the whole of the effect that used to fire
+    // this read and blank the list on the way.
+    enabled: clipCount > 0,
+    retry: false,
+  });
+  const clips = clipsQ.data?.items ?? NO_CLIPS;
 
-  const choose = useCallback((m: SaveMode) => {
-    setMode(m);
-    const fd = new FormData(); fd.append("sci", sci); fd.append("save_mode", m);
-    fetch(`${API}/species/recording`, { method: "POST", body: fd })
-      .then((r) => r.json())
-      .then((d: { save_mode: SaveMode }) => setMode(d.save_mode))
-      .then(() => { window.dispatchEvent(new CustomEvent("bird-settings-change")); onChange(); })
-      .catch(() => {});
-  }, [sci, onChange]);
+  const saveMode = useSetSpeciesSaveMode();
+  // What is in flight while it is in flight, and the server's answer as soon as
+  // there is one. No mirror, so no re-seeding effect and no way for the control
+  // to disagree with the page it sits on.
+  const shownMode = saveMode.isPending && saveMode.variables ? saveMode.variables.mode : mode;
 
-  const pin = (c: Clip) => {
-    const fd = new FormData(); fd.append("pinned", String(!c.pinned));
-    fetch(`${API}/recordings/${c.id}/pin`, { method: "POST", body: fd })
-      .then(() => { loadClips(); window.dispatchEvent(new CustomEvent("bird-settings-change")); });
-  };
-  const del = (c: Clip) => {
-    fetch(`${API}/recordings/${c.id}`, { method: "DELETE" })
-      .then(() => { setConfirmDel(null); loadClips(); onChange(); window.dispatchEvent(new CustomEvent("bird-settings-change")); });
-  };
-  const clearAll = () => {
-    fetch(`${API}/recordings?sci=${encodeURIComponent(sci)}`, { method: "DELETE" })
-      .then(() => { setConfirmClear(false); setClips([]); onChange(); window.dispatchEvent(new CustomEvent("bird-settings-change")); });
-  };
+  const pin = usePinRecording();
+  const del = useDeleteRecording();
+  const clear = useClearSpeciesRecordings();
+  const writeErr = saveMode.error ?? pin.error ?? del.error ?? clear.error;
+  const resetWrites = () => { saveMode.reset(); pin.reset(); del.reset(); clear.reset(); };
 
   const defaultState = globalSave == null ? "the app default" : globalSave ? "saving (app default on)" : "not saving (app default off)";
   const hint = `Default: follow ${defaultState}. Always: keep every clip, never auto-delete. Never: skip this bird.`;
@@ -282,10 +363,10 @@ function BirdRecordings({ sci, common, initialMode, clipCount, onChange }: {
           <Mic size={17} strokeWidth={1.8} /> Recordings
         </h3>
         <span title={hint} style={{ display: "inline-flex" }}>
-          <Segmented<SaveMode>
+          <Segmented<SpeciesSaveMode>
             ariaLabel="Save recordings for this bird"
-            value={mode}
-            onChange={choose}
+            value={shownMode}
+            onChange={(m) => saveMode.mutate({ sci, mode: m })}
             options={[
               { value: "default", label: "Default" },
               { value: "keep", label: "Always" },
@@ -301,30 +382,78 @@ function BirdRecordings({ sci, common, initialMode, clipCount, onChange }: {
         )}
       </div>
 
-      {clipCount === 0
-        ? <p className="muted" style={{ fontSize: ".82rem", margin: ".5rem 0 0" }}>No clips saved yet.</p>
-        : clips && clips.length > 0 && (
-          <div style={{ marginTop: ".5rem", display: "flex", flexDirection: "column", maxHeight: 320, overflowY: "auto" }}>
-            {clips.map((c) => (
-              <div key={c.id} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".45rem 0", borderTop: "1px solid var(--border)", fontSize: ".84rem" }}>
-                <PlayButton recId={c.id} size={26} />
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span className="mono muted">{c.at}</span>
-                  {c.location && <span className="muted" style={{ marginLeft: ".5rem", display: "inline-flex", alignItems: "center", gap: ".25rem" }}><MapPin size={10} /> {c.location}</span>}
-                </span>
-                <span className="muted" style={{ fontSize: ".74rem" }}>{formatBytes(c.bytes)}</span>
-                <span className="muted" style={{ fontSize: ".78rem" }}>{conf(c.confidence)}</span>
-                <button type="button" className={`bird-act${c.pinned ? " ok" : ""}`} onClick={() => pin(c)}
-                  title={c.pinned ? "Pinned. Click to unpin." : "Pin to keep this recording (deleted last)"}>
-                  {c.pinned ? <Pin size={14} /> : <PinOff size={14} />}
-                </button>
-                <button type="button" className="bird-act danger" onClick={() => setConfirmDel(c)} title="Delete this recording">
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+      {writeErr && (
+        <div style={{ marginTop: ".6rem" }}>
+          <Notice
+            tone="error"
+            detail={String(writeErr)}
+            action={<Button size="sm" variant="ghost" onClick={resetWrites}>Dismiss</Button>}
+          >
+            That did not go through.
+          </Notice>
+        </div>
+      )}
+
+      {clipCount === 0 ? (
+        <p className="muted" style={{ fontSize: ".82rem", margin: ".5rem 0 0" }}>
+          No clips saved yet. Set this bird to Always to keep the audio of every detection.
+        </p>
+      ) : (
+        <>
+          {clipsQ.isPending && (
+            <div style={{ marginTop: ".5rem", display: "grid", gap: ".35rem" }}>
+              {[0, 1].map((i) => <Skeleton key={i} style={{ height: 34 }} />)}
+            </div>
+          )}
+
+          {/* A failed clip read used to `.catch(() => setClips([]))`, so it was
+              indistinguishable from a bird with no clips. */}
+          {clipsQ.isError && (
+            <div style={{ marginTop: ".5rem" }}>
+              <Notice tone="error" action={<Button size="sm" variant="ghost" onClick={() => void clipsQ.refetch()}>Retry</Button>}>
+                Could not load the saved clips.
+              </Notice>
+            </div>
+          )}
+
+          {clipsQ.isSuccess && clips.length === 0 && (
+            <p className="muted" style={{ fontSize: ".82rem", margin: ".5rem 0 0" }}>
+              These clips have been removed.
+            </p>
+          )}
+
+          {clips.length > 0 && (
+            <div style={{ marginTop: ".5rem", display: "flex", flexDirection: "column", maxHeight: 320, overflowY: "auto" }}>
+              {clips.map((c) => (
+                <div key={c.id} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".45rem 0", borderTop: "1px solid var(--border)", fontSize: ".84rem" }}>
+                  <PlayButton recId={c.id} size={26} />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span className="mono muted">{c.at}</span>
+                    {c.location && <span className="muted" style={{ marginLeft: ".5rem", display: "inline-flex", alignItems: "center", gap: ".25rem" }}><MapPin size={10} /> {c.location}</span>}
+                  </span>
+                  <span className="muted" style={{ fontSize: ".74rem" }}>{formatBytes(c.bytes)}</span>
+                  <span className="muted" style={{ fontSize: ".78rem" }}>{conf(c.confidence)}</span>
+                  <button type="button" className={`bird-act${c.pinned ? " ok" : ""}`} disabled={pin.isPending}
+                    onClick={() => pin.mutate({ id: c.id, pinned: !c.pinned })}
+                    title={c.pinned ? "Pinned. Click to unpin." : "Pin to keep this recording (deleted last)"}>
+                    {c.pinned ? <Pin size={14} /> : <PinOff size={14} />}
+                  </button>
+                  <button type="button" className="bird-act danger" onClick={() => setConfirmDel(c)} title="Delete this recording">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* The list is capped, so say what is not in it. */}
+          {clipCount > clips.length && clips.length > 0 && (
+            <p className="muted" style={{ fontSize: ".76rem", margin: ".5rem 0 0" }}>
+              Showing the newest {clips.length} of {clipCount} clips.
+            </p>
+          )}
+        </>
+      )}
 
       <ConfirmDialog
         open={confirmClear}
@@ -332,7 +461,7 @@ function BirdRecordings({ sci, common, initialMode, clipCount, onChange }: {
         body={`Permanently delete all ${clipCount} saved clip${clipCount === 1 ? "" : "s"} of ${common}, including pinned ones. Detections and stats are unaffected. This cannot be undone.`}
         confirmLabel="Delete all"
         onCancel={() => setConfirmClear(false)}
-        onConfirm={clearAll}
+        onConfirm={() => { clear.mutate(sci); setConfirmClear(false); }}
       />
       <ConfirmDialog
         open={!!confirmDel}
@@ -340,7 +469,13 @@ function BirdRecordings({ sci, common, initialMode, clipCount, onChange }: {
         body={confirmDel ? `Permanently delete this clip from ${confirmDel.at}. This cannot be undone.` : ""}
         confirmLabel="Delete"
         onCancel={() => setConfirmDel(null)}
-        onConfirm={() => confirmDel && del(confirmDel)}
+        onConfirm={() => {
+          if (!confirmDel) return;
+          // The dialog closes and the outcome is reported behind it: a failure
+          // has nowhere to be seen inside a dialog that has gone.
+          del.mutate(confirmDel.id);
+          setConfirmDel(null);
+        }}
       />
     </section>
   );

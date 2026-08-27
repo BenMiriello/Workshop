@@ -1,10 +1,13 @@
 import { useCallback, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Check, X, RotateCcw, Sparkles } from "lucide-react";
+import { Button, Notice } from "@workshop/ui";
 
 // Auto-confirmed species are shown exactly like confirmed ones; only the hover
 // text distinguishes them, per the operator's request.
 const AUTO_HOVER = "Auto-confirmed due to a separate full confirmation, confidence threshold, and location settings";
-import { pct, jget, apost, BirdThumb, SpeciesLink } from "./ui";
+import { pct, apost, BirdThumb, SpeciesLink } from "./ui";
+import { birdsKeys, fetchSpeciesEvents } from "./queries";
 import { PlayButton } from "./recordings";
 
 // One species in a dashboard list, with ONE consistent interaction rule:
@@ -27,55 +30,78 @@ export type SpeciesAgg = {
 };
 type Ev = { id: number; at: string; confidence: number; device: string | null; status: string; location: string | null; recording_id: number | null };
 
-export default function SpeciesRow({ s, locId, status, lat, lon, onChanged }: {
+export default function SpeciesRow({ s, locId, status, lat, lon }: {
   s: SpeciesAgg; locId?: number; status: TrustStatus;
-  lat?: number | null; lon?: number | null; onChanged: () => void;
+  lat?: number | null; lon?: number | null;
 }) {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [events, setEvents] = useState<Ev[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const [confirmMute, setConfirmMute] = useState(false);
   const canAct = !!(lat && lon);
 
-  const loadEvents = useCallback(() => {
-    const qs = new URLSearchParams({ sci: s.scientific_name, status });
-    if (locId) qs.set("location_id", String(locId));
-    return jget<{ events: Ev[] }>(`/species-events?${qs.toString()}`).then((r) => setEvents(r.events)).catch(() => setEvents([]));
-  }, [s.scientific_name, status, locId]);
+  // THE DETECTIONS BEHIND THIS ROW, READ BY BEING OPEN. Expanding does not
+  // "trigger a load" any more: `enabled` is the open flag, so opening a row that
+  // was already opened is served from the cache instead of re-fetching, and
+  // closing one cancels nothing that is still needed. The species, the status
+  // and the place are all in the key (`queries.ts`) rather than in a callback's
+  // closure, which is what kept a slow answer for one status from landing in a
+  // row the operator had already switched.
+  const eventsQ = useQuery({
+    queryKey: birdsKeys.speciesEvents({ sci: s.scientific_name, status, locationId: locId ?? null }),
+    queryFn: () => fetchSpeciesEvents<{ events: Ev[] }>({
+      sci: s.scientific_name, status, locationId: locId ?? null,
+    }),
+    enabled: open,
+    retry: false,
+  });
+  const events = eventsQ.data?.events ?? null;
 
-  const toggle = useCallback(() => {
-    const next = !open;
-    setOpen(next);
-    // Expanding a row only reveals its detections — it does NOT acknowledge the
-    // species or touch the "New" badge, so the row never jumps position when you
-    // open it. "New" is purely a time window (first heard < 24h ago), set by the
-    // backend; nothing the user does here changes it.
-    if (next) loadEvents();
-  }, [open, loadEvents]);
+  // Expanding a row only reveals its detections — it does NOT acknowledge the
+  // species or touch the "New" badge, so the row never jumps position when you
+  // open it. "New" is purely a time window (first heard < 24h ago), set by the
+  // backend; nothing the user does here changes it.
+  const toggle = useCallback(() => setOpen((v) => !v), []);
 
-  const refresh = useCallback(() => { loadEvents(); onChanged(); }, [loadEvents, onChanged]);
+  // WHAT A WRITE HERE CHANGES, IT SAYS. Confirming, rejecting or muting moves a
+  // species between the three status lists AND changes this place's counts, the
+  // dashboard's top birds, and the detections behind every status of this row.
+  // That is the whole app prefix, so it is invalidated as one -- and only what
+  // is mounted re-reads; the rest is simply marked stale. It replaces an
+  // `onChanged` callback threaded down from the page, which re-ran that page's
+  // loader and left every other view holding numbers the write had just changed.
+  const invalidate = useCallback(
+    () => qc.invalidateQueries({ queryKey: birdsKeys.all() }), [qc]);
 
-  const setEvent = useCallback(async (id: number, to: "rejected" | "suggested" | "confirmed") => {
-    setBusy(true);
-    try { await apost("/detection/status", { id, status: to }); await refresh(); }
+  // A rejected write used to be invisible: `try { ... } finally { setBusy(false) }`
+  // with no catch, so the row simply did not change and the operator was left to
+  // guess. `apost` throws on a non-2xx, and the row now says so.
+  const write = useCallback(async (work: () => Promise<unknown>) => {
+    setBusy(true); setErr(null);
+    try { await work(); await invalidate(); }
+    catch (e) { setErr(String(e)); }
     finally { setBusy(false); }
-  }, [refresh]);
+  }, [invalidate]);
+
+  const setEvent = useCallback(
+    (id: number, to: "rejected" | "suggested" | "confirmed") =>
+      write(() => apost("/detection/status", { id, status: to })),
+    [write]);
 
   // Species-level actions (need coords). confirm arms auto-confirm + sweeps;
   // mute moves to Rejected + stops future; unmute reverses it.
   const speciesAct = useCallback(async (kind: "confirm" | "mute" | "unmute") => {
     if (!canAct) return;
-    setBusy(true);
-    try {
+    await write(async () => {
       const body = { sci: s.scientific_name, common: s.common_name, lat, lon } as Record<string, string | number | boolean>;
       if (kind === "confirm") await apost("/species/auto", { ...body, on: true });
       else if (kind === "mute") await apost("/species/mute", body);
       else await apost("/species/unmute", body);
       window.dispatchEvent(new CustomEvent("bird-settings-change"));
       setConfirmMute(false);
-      await refresh();
-    } finally { setBusy(false); }
-  }, [canAct, s, lat, lon, refresh]);
+    });
+  }, [canAct, s, lat, lon, write]);
 
   return (
     <div style={{ borderTop: "1px solid var(--border)" }}>
@@ -119,7 +145,23 @@ export default function SpeciesRow({ s, locId, status, lat, lon, onChanged }: {
 
       {open && (
         <div style={{ padding: "0 0 .7rem .2rem" }}>
-          {events === null && <p className="muted" style={{ fontSize: ".8rem", margin: ".2rem 0" }}>Loading…</p>}
+          {/* The row is open and its content is a few lines, so a failure here is
+              a line too, in the space the detections would have filled. */}
+          {eventsQ.isError && (
+            <div style={{ margin: ".3rem 0" }}>
+              <Notice tone="error" action={<Button size="sm" variant="ghost" onClick={() => void eventsQ.refetch()}>Retry</Button>}>
+                Couldn't load these detections.
+              </Notice>
+            </div>
+          )}
+          {err && (
+            <div style={{ margin: ".3rem 0" }}>
+              <Notice tone="error" detail={err} action={<Button size="sm" variant="ghost" onClick={() => setErr(null)}>Dismiss</Button>}>
+                That did not go through.
+              </Notice>
+            </div>
+          )}
+          {eventsQ.isPending && <p className="muted" style={{ fontSize: ".8rem", margin: ".2rem 0" }}>Loading…</p>}
           {events && events.length === 0 && <p className="muted" style={{ fontSize: ".8rem", margin: ".2rem 0" }}>No detections.</p>}
           {events && events.map((e) => (
             <div key={e.id} style={{ display: "flex", alignItems: "center", gap: ".5rem", padding: ".25rem 0", fontSize: ".82rem" }}>

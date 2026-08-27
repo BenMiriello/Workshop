@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Waypoints, Tag as TagIcon, Volume2, Info, Map as MapIcon, ZoomIn, ZoomOut, Maximize2, X, ScatterChart, Grid3x3, Sparkles } from "lucide-react";
-import { Button, Segmented, StateBlock, Skeleton, StatusPill, catFor, type CatHue, timeAbsoluteShort, usePoll } from "@workshop/ui";
+import { Button, Notice, Segmented, StateBlock, Skeleton, StatusPill, catFor, type CatHue, timeAbsoluteShort } from "@workshop/ui";
 import BirdsHeader, { InlineSelect } from "./BirdsHeader";
 import { ClipPlayButton } from "./recordings";
-import { jget, apost, API, conf } from "./ui";
+import { API, conf } from "./ui";
+import {
+  birdsKeys, fetchAtlas, fetchAtlasClusterClips, fetchAtlasInsights,
+  fetchAtlasSpecies, fetchAtlasStatus, saveClusterLabel,
+} from "./queries";
 import { scatterSVG, heatSVG, noveltySVG } from "./atlasInsightCharts";
 
 // The Soundscape Atlas: every stored detection is a point in a learned acoustic
@@ -33,6 +38,12 @@ type ClusterClips = {
 };
 
 const CALL_TYPES = ["song", "contact", "alarm", "flight", "begging", "other"];
+// The build is nightly, so the only thing this cadence has to catch is a rebuild
+// that lands while the page is open. It pauses while the tab is hidden (the
+// client's default) because nobody is reading a map they cannot see.
+const STATUS_MS = 60_000;
+// The insight views' window. It is in the URL, so it is in the key.
+const INSIGHT_DAYS = 30;
 // Mirrors the backend MIN_SPECIES_N: a species needs this many embedded detections
 // before its calls are split into call-type clusters.
 const SPECIES_SPLIT_MIN = 20;
@@ -59,51 +70,104 @@ function useThemeColors() {
 const fmtTime = timeAbsoluteShort;
 
 export default function Atlas() {
+  const qc = useQueryClient();
   const colors = useThemeColors();
-  const [status, setStatus] = useState<AtlasStatus | null>(null);
   const [scope, setScope] = useState<"global" | "species">("global");
-  const [speciesList, setSpeciesList] = useState<SpeciesRow[] | null>(null);
   const [species, setSpecies] = useState<string>("");
-  const [data, setData] = useState<AtlasData | null>(null);
-  const [err, setErr] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [sel, setSel] = useState<Point | null>(null);
-  const [activeCluster, setActiveCluster] = useState<number | null>(null);
 
-  const loadStatus = useCallback(() => {
-    jget<AtlasStatus>("/atlas/status").then(setStatus).catch(() => setStatus(null));
-  }, []);
+  // THE SELECTION IS AN ID, NOT A POINT, and that is the whole fix for the
+  // defect this page had. A rebuild re-projects every detection, so the point
+  // objects are replaced wholesale and their x/y move. Holding the object meant
+  // the only safe thing to do on a rebuild was throw the selection away, which
+  // is what `load()` did -- so a nightly build landing while the operator had a
+  // cluster open closed it and cleared the dot, with no explanation.
+  //
+  // Holding the ID instead makes the honest rule expressible: KEEP THE
+  // SELECTION IF IT STILL RESOLVES, DROP IT IF IT DOES NOT. A detection that
+  // survived the rebuild is still that detection, and re-resolving it against
+  // the new points picks up its new coordinates, so the popover follows the dot
+  // instead of pointing at where it used to be. A detection that is gone (or a
+  // scope the operator switched away from) resolves to nothing and the
+  // selection clears -- not because we discarded it, but because there is
+  // nothing left to select. No effect, no reset, nothing to keep in step.
+  const [selId, setSelId] = useState<number | null>(null);
+  const [clusterId, setClusterId] = useState<number | null>(null);
+
+  const statusQ = useQuery({
+    queryKey: birdsKeys.atlasStatus(),
+    queryFn: () => fetchAtlasStatus<AtlasStatus>(),
+    // This read owns its own cadence, so it neither goes stale nor retries: a
+    // failed tick is followed by the next tick, which is what the poll it
+    // replaces did.
+    refetchInterval: STATUS_MS,
+    staleTime: 0,
+    retry: false,
+  });
+  const status = statusQ.data ?? null;
+
+  const speciesQ = useQuery({
+    queryKey: birdsKeys.atlasSpecies(),
+    queryFn: () => fetchAtlasSpecies<{ species: SpeciesRow[] }>(),
+  });
+  const speciesList = speciesQ.data?.species ?? null;
+  // The species picker DEFAULTS to the first row rather than being seeded into
+  // state by an effect. An effect that writes `species` on first response is a
+  // second owner of the same value, and it fought the operator's own choice
+  // every time the list re-read.
+  const sci = species || speciesList?.[0]?.scientific_name || "";
+  // In species scope with nothing to pick, the points query is `enabled: false`
+  // and therefore permanently pending. That must read as "nothing here yet",
+  // not as a skeleton that never resolves.
+  const noSpecies = scope === "species" && speciesList != null && speciesList.length === 0;
+
+  // A REBUILD IS A NEW VERSION, and everything derived from the projection is
+  // downstream of it: the points, the species menu, each cluster's clips, the
+  // insight views. One invalidation reaches all of them, and the queries that
+  // are actually mounted re-read while the rest are simply marked stale. This
+  // replaces two hand-rolled reactions (a re-fetch of the species list keyed on
+  // `status?.version`, and a `lastVersion` ref that called `load()`), and it is
+  // also the ONLY reaction to a version bump: a cluster label write bumps the
+  // version server-side, so its handler re-reads status and lets this fire.
+  //
+  // `atlasAll()` covers `atlasStatus()` too. That costs one extra status read
+  // per rebuild and buys one prefix instead of four; the refetch it triggers
+  // carries the same version, so this does not re-enter.
+  const version = status?.version ?? null;
+  const seenVersion = useRef<number | null>(null);
   useEffect(() => {
-    jget<{ species: SpeciesRow[] }>("/atlas/species")
-      .then((r) => { setSpeciesList(r.species); if (r.species[0] && !species) setSpecies(r.species[0].scientific_name); })
-      .catch(() => setSpeciesList([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status?.version]);
+    if (version == null) return;
+    const prev = seenVersion.current;
+    seenVersion.current = version;
+    if (prev != null && prev !== version) void qc.invalidateQueries({ queryKey: birdsKeys.atlasAll() });
+  }, [version, qc]);
 
-  const load = useCallback(() => {
-    setLoading(true); setErr(false); setSel(null); setActiveCluster(null);
-    const q = scope === "species"
-      ? `/atlas?scope=species&species=${encodeURIComponent(species)}`
-      : "/atlas?scope=global";
-    jget<AtlasData>(q).then((d) => { setData(d); setLoading(false); })
-      .catch(() => { setErr(true); setLoading(false); });
-  }, [scope, species]);
-  useEffect(() => {
-    if (scope === "species" && !species) return;
-    load();
-  }, [load, scope, species]);
+  // The points. Both URL parameters are in the key, so switching scope or
+  // species resolves as its own cache entry and a slow answer for the place you
+  // just left has nowhere to land. There is no companion effect: a key change
+  // IS the refetch.
+  const atlasParams = { scope, species: scope === "species" ? sci : null } as const;
+  const dataQ = useQuery({
+    queryKey: birdsKeys.atlas(atlasParams),
+    queryFn: () => fetchAtlas<AtlasData>(atlasParams),
+    // In species scope there is nothing to ask for until the menu has loaded.
+    enabled: scope === "global" || !!sci,
+    // Keep the map on screen while the next one loads instead of blanking it.
+    placeholderData: keepPreviousData,
+  });
+  const data = dataQ.data ?? null;
+  const dataErr = dataQ.isError ? String(dataQ.error) : null;
 
-  // The Atlas rebuilds itself nightly (and Settings has a manual trigger). Poll
-  // status slowly so a rebuild that lands while this page is open refreshes the
-  // view — when the version bumps, reload the points.
-  usePoll(loadStatus, 60000);
-  const lastVersion = useRef(status?.version);
-  useEffect(() => {
-    if (status && lastVersion.current != null && status.version !== lastVersion.current) load();
-    if (status) lastVersion.current = status.version;
-  }, [status, load]);
+  // Both resolved against the points currently on screen. See `selId` above.
+  const sel = useMemo(
+    () => (selId == null ? null : data?.points.find((p) => p.det_id === selId) ?? null),
+    [selId, data],
+  );
+  const activeCluster = clusterId != null && data?.clusters.some((c) => c.id === clusterId)
+    ? clusterId : null;
 
-  const colorForSpecies = (sci: string) => colors.cat[catFor(sci)];
+  // Stable, so the canvas redraws when a colour or a selection changes and not
+  // once per render. See the draw effect in `Scatter`.
+  const colorForSpecies = useCallback((s: string) => colors.cat[catFor(s)], [colors]);
   const clusterColors = useMemo(() => {
     const m: Record<number, string> = {};
     const hues = Object.keys(colors.cat);
@@ -125,7 +189,7 @@ export default function Atlas() {
         />
         {scope === "species" && speciesList && speciesList.length > 0 && (
           <InlineSelect
-            icon={<MapIcon size={14} />} ariaLabel="Species" value={species}
+            icon={<MapIcon size={14} />} ariaLabel="Species" value={sci}
             onChange={setSpecies}
             options={speciesList.map((s) => ({
               value: s.scientific_name,
@@ -135,12 +199,24 @@ export default function Atlas() {
         )}
       </div>
 
-      {loading ? (
-        <Skeleton style={{ height: 420 }} />
-      ) : err ? (
+      {/* A failed read with the map still on screen is a LINE beside it; a
+          failed read with nothing to show is the REGION below. */}
+      {dataErr && data && (
+        <div style={{ marginBottom: ".7rem" }}>
+          <Notice tone="warn" action={<Button size="sm" variant="ghost" onClick={() => void dataQ.refetch()}>Retry</Button>}>
+            This map is not refreshing.
+          </Notice>
+        </div>
+      )}
+
+      {dataErr && !data ? (
         <StateBlock variant="error" title="Couldn't load the Atlas"
-          hint={`Fetch failed: GET ${API}/atlas. Retry once detections + a build exist.`}
-          action={<Button onClick={load}>Retry</Button>} />
+          hint={`GET ${API}/atlas: ${dataErr}. Retry once detections and a build exist.`}
+          action={<Button onClick={() => void dataQ.refetch()}>Retry</Button>} />
+      ) : noSpecies ? (
+        <EmptyAtlas status={status} scope={scope} />
+      ) : dataQ.isPending ? (
+        <Skeleton style={{ height: 420 }} />
       ) : !data || data.points.length === 0 ? (
         <EmptyAtlas status={status} scope={scope} />
       ) : (
@@ -149,18 +225,23 @@ export default function Atlas() {
             <Scatter
               data={data} scope={scope} colors={colors}
               colorForSpecies={colorForSpecies} clusterColors={clusterColors}
-              sel={sel} setSel={(p) => { setSel(p); if (scope === "species" && p?.cluster_id) setActiveCluster(p.cluster_id); }}
+              sel={sel} setSel={(p) => { setSelId(p?.det_id ?? null); if (scope === "species" && p?.cluster_id) setClusterId(p.cluster_id); }}
               activeCluster={activeCluster}
             />
             <aside className="atlas-side">
               {scope === "species" ? (
                 <ClusterPanel
                   data={data} clusterColors={clusterColors} activeCluster={activeCluster}
-                  setActiveCluster={setActiveCluster} onLabeled={() => { loadStatus(); load(); }}
+                  setActiveCluster={setClusterId}
+                  // Naming a cluster bumps the Atlas version on the server, so
+                  // re-reading STATUS is the whole reaction: the version watcher
+                  // above pulls the points, the menu and the insights forward.
+                  // One path for "the projection changed", however it changed.
+                  onLabeled={() => { void qc.invalidateQueries({ queryKey: birdsKeys.atlasStatus() }); }}
                 />
               ) : (
                 <OverviewLegend data={data} colorForSpecies={colorForSpecies}
-                  onPick={(sci) => { setScope("species"); setSpecies(sci); }} />
+                  onPick={(s) => { setScope("species"); setSpecies(s); }} />
               )}
             </aside>
           </div>
@@ -183,18 +264,29 @@ type InsightsData = {
 };
 
 function Insights() {
-  const [d, setD] = useState<InsightsData | null>(null);
-  const [err, setErr] = useState(false);
-  useEffect(() => {
-    let live = true;
-    fetch(`${API}/atlas/insights?days=30`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then((x) => { if (live) setD(x); })
-      .catch(() => { if (live) setErr(true); });
-    return () => { live = false; };
-  }, []);
-  if (err) return null;
-  if (!d) return <Skeleton style={{ height: 200, marginTop: "1rem" }} />;
+  // No `let live = true` teardown guard, and it is not an oversight: that flag
+  // existed to stop a response arriving after unmount from writing into a dead
+  // component's `useState`. There is no component-local copy to write into any
+  // more -- the answer lands in the cache, keyed by the window it was asked
+  // for, and an unmounted reader simply is not there to read it.
+  const q = useQuery({
+    queryKey: birdsKeys.atlasInsights({ days: INSIGHT_DAYS }),
+    queryFn: () => fetchAtlasInsights<InsightsData>({ days: INSIGHT_DAYS }),
+  });
+  if (q.isPending) return <Skeleton style={{ height: 200, marginTop: "1rem" }} />;
+  // These views used to VANISH on a failed read, which is indistinguishable
+  // from a yard with nothing to say about it. The space would be empty if the
+  // failure had not happened, so it is a region.
+  if (!q.data) {
+    return (
+      <div style={{ marginTop: "1.25rem" }}>
+        <StateBlock variant="error" title="Couldn't load the soundscape readings"
+          hint={`GET ${API}/atlas/insights: ${String(q.error)}`}
+          action={<Button size="sm" onClick={() => void q.refetch()}>Retry</Button>} />
+      </div>
+    );
+  }
+  const d = q.data;
   return (
     <div style={{ marginTop: "1.25rem", display: "grid", gap: "1rem" }}>
       <PresenceChatter rows={d.scatter} />
@@ -297,33 +389,26 @@ function Scatter({ data, scope, colors, colorForSpecies, clusterColors, sel, set
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const view = useRef({ scale: 1, ox: 0, oy: 0 });
-  const [, force] = useState(0);
 
   const popColor = (p: Point) =>
     scope === "species" && p.cluster_id != null
       ? (clusterColors[p.cluster_id] || colors.muted)
       : colorForSpecies(p.sci);
 
-  // World bounds -> fit into the canvas with padding, recomputed when data changes.
-  const bounds = useMemo(() => {
+  // The world extent, as FOUR NUMBERS rather than an object, because `fit`
+  // depends on it and a refetch that returns the same extent hands back a new
+  // object. Keyed on the object, every re-read of the points -- including the
+  // one the client runs when the tab comes back -- snapped the operator's pan
+  // and zoom back to the default. Keyed on the numbers, only the extent
+  // actually MOVING refits, which is what a rebuild does and a refresh does
+  // not.
+  const { minX, maxX, minY, maxY } = useMemo(() => {
     const xs = data.points.map((p) => p.x), ys = data.points.map((p) => p.y);
-    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-    return { minX, maxX, minY, maxY };
-  }, [data]);
-
-  const fit = useCallback(() => {
-    const cv = canvasRef.current; if (!cv) return;
-    const w = cv.clientWidth, h = cv.clientHeight, pad = 28;
-    const bw = bounds.maxX - bounds.minX || 1, bh = bounds.maxY - bounds.minY || 1;
-    const scale = Math.min((w - pad * 2) / bw, (h - pad * 2) / bh);
-    view.current = {
-      scale,
-      ox: pad - bounds.minX * scale + (w - pad * 2 - bw * scale) / 2,
-      oy: pad - bounds.minY * scale + (h - pad * 2 - bh * scale) / 2,
+    return {
+      minX: Math.min(...xs), maxX: Math.max(...xs),
+      minY: Math.min(...ys), maxY: Math.max(...ys),
     };
-    force((n) => n + 1);
-  }, [bounds]);
-  useEffect(() => { fit(); }, [fit]);
+  }, [data.points]);
 
   const draw = useCallback(() => {
     const cv = canvasRef.current; if (!cv) return;
@@ -365,7 +450,38 @@ function Scatter({ data, scope, colors, colorForSpecies, clusterColors, sel, set
       }
     }
   }, [data, scope, clusterColors, colorForSpecies, colors, sel, activeCluster]);
-  useEffect(() => { draw(); });
+
+  // Fit the extent into the canvas. It calls `draw` through a REF on purpose:
+  // fitting must be triggered by the extent moving and by nothing else, so
+  // `draw` may not be a dependency -- selecting a point changes `draw`, and a
+  // refit there would throw away the operator's pan and zoom mid-interaction.
+  const drawRef = useRef(draw);
+  drawRef.current = draw;
+  const fit = useCallback(() => {
+    const cv = canvasRef.current; if (!cv) return;
+    const w = cv.clientWidth, h = cv.clientHeight, pad = 28;
+    const bw = maxX - minX || 1, bh = maxY - minY || 1;
+    const scale = Math.min((w - pad * 2) / bw, (h - pad * 2) / bh);
+    view.current = {
+      scale,
+      ox: pad - minX * scale + (w - pad * 2 - bw * scale) / 2,
+      oy: pad - minY * scale + (h - pad * 2 - bh * scale) / 2,
+    };
+    drawRef.current();
+  }, [minX, maxX, minY, maxY]);
+  // FIT BEFORE DRAW, and the order of these two is the order they run in: a
+  // draw that lands before the first fit paints the whole map at scale 1 in the
+  // top-left corner for one frame.
+  useEffect(() => { fit(); }, [fit]);
+
+  // THIS EFFECT USED TO HAVE NO DEPENDENCY ARRAY, so the whole map repainted on
+  // every render of this component -- including once a minute, for a status
+  // tick that changes nothing on the canvas. It has one now, and the two things
+  // that made a dependency array useless here are fixed with it: `draw` is a
+  // `useCallback` whose inputs are all memoized (`colorForSpecies` is a
+  // `useCallback` in the parent, not a fresh lambda per render), and the fit
+  // pass no longer bumps a counter to provoke a repaint.
+  useEffect(() => { draw(); }, [draw]);
 
   const hit = (mx: number, my: number): Point | null => {
     const { scale, ox, oy } = view.current;
@@ -519,19 +635,28 @@ function ClusterRow({ cluster, groupNo, color, active, onToggle, onLabeled }: {
   cluster: Cluster; groupNo: number; color: string; active: boolean; onToggle: () => void; onLabeled: () => void;
 }) {
   const [label, setLabel] = useState(cluster.label || "");
-  const [clips, setClips] = useState<ClusterClips | null>(null);
-  const [saving, setSaving] = useState(false);
   useEffect(() => { setLabel(cluster.label || ""); }, [cluster.label]);
-  useEffect(() => {
-    if (active && !clips) jget<ClusterClips>(`/atlas/cluster/${cluster.id}/clips`).then(setClips).catch(() => setClips(null));
-  }, [active, cluster.id, clips]);
 
-  const save = (next: string) => {
-    setLabel(next); setSaving(true);
-    apost(`/atlas/cluster/${cluster.id}/label`, next ? { label: next } : {})
-      .then(() => { setSaving(false); onLabeled(); })
-      .catch(() => setSaving(false));
-  };
+  // Fetched when the group is OPENED and cached under the cluster's own key, so
+  // closing and reopening it is free. The hand-rolled version guarded on `!clips`
+  // and set `clips` back to null on a failure, which meant a group whose clips
+  // failed once never tried again and sat on "Loading…" for as long as the page
+  // stayed open.
+  const clipsQ = useQuery({
+    queryKey: birdsKeys.atlasClusterClips(cluster.id),
+    queryFn: () => fetchAtlasClusterClips<ClusterClips>(cluster.id),
+    enabled: active,
+  });
+  const clips = clipsQ.data ?? null;
+
+  const saveM = useMutation({
+    mutationFn: (next: string) => saveClusterLabel({ clusterId: cluster.id, label: next }),
+    onSuccess: onLabeled,
+  });
+  // The chip moves at once, because a name is cheap and reversible. A REJECTED
+  // write used to be swallowed whole (`.catch(() => setSaving(false))`), so the
+  // chip stayed lit on a name the server never took; now the row says so.
+  const save = (next: string) => { setLabel(next); saveM.mutate(next); };
 
   // Playable samples for this group: the dedicated Atlas exemplar pool first, then
   // any saved recordings of its members. Either is enough to listen + name by ear.
@@ -554,8 +679,12 @@ function ClusterRow({ cluster, groupNo, color, active, onToggle, onLabeled }: {
           <span className="muted" style={{ fontSize: ".78rem", display: "inline-flex", alignItems: "center", gap: ".3rem", marginBottom: ".4rem" }}>
             <Volume2 size={13} /> Listen to a few
           </span>
-          {clips === null ? (
-            <span className="muted" style={{ fontSize: ".8rem", display: "block" }}>Loading…</span>
+          {clipsQ.isPending ? (
+            <Skeleton style={{ height: 30 }} />
+          ) : clipsQ.isError ? (
+            <Notice tone="warn" action={<Button size="sm" variant="ghost" onClick={() => void clipsQ.refetch()}>Retry</Button>}>
+              Couldn't load this group's audio.
+            </Notice>
           ) : exemplars.length === 0 ? (
             <span className="muted" style={{ fontSize: ".8rem", display: "block" }}>
               No saved audio for this group yet. Tap its points on the map to listen, or turn on Atlas clips in Settings.
@@ -574,10 +703,18 @@ function ClusterRow({ cluster, groupNo, color, active, onToggle, onLabeled }: {
             {CALL_TYPES.map((t) => (
               <button key={t} type="button"
                 className={`atlas-chip${label === t ? " is-on" : ""}`}
-                disabled={saving}
+                disabled={saveM.isPending}
                 onClick={() => save(label === t ? "" : t)}>{cap(t)}</button>
             ))}
           </div>
+          {saveM.isError && (
+            <div style={{ marginTop: ".4rem" }}>
+              <Notice tone="error" detail={String(saveM.error)}
+                action={<Button size="sm" variant="ghost" onClick={() => saveM.reset()}>Dismiss</Button>}>
+                That name did not go through.
+              </Notice>
+            </div>
+          )}
         </div>
       )}
     </div>
