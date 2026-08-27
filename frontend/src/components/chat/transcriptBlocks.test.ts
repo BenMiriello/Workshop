@@ -630,15 +630,24 @@ describe("a message handed to a running turn", () => {
   const dimOf = (state: ThreadState): (boolean | undefined)[] =>
     selectTranscript(state).map((b) => (b.kind === "message" ? !!b.inflight : undefined));
 
-  it("reads as solid once the working indicator sits below it", () => {
-    // The turn emitted "a", then the message landed, then the trailing working
-    // stretch renders BELOW the message. Indicator below = reached = solid, the
-    // operator's own equivalence ("whether it's read and whether the indicator
-    // is below it are the same").
+  it("stays dim while the only thing below it is the indicator", () => {
+    // The turn emitted "a", THEN the message landed, and the trailing stretch
+    // below it is EMPTY: it carries the working indicator and nothing else.
+    //
+    // This used to assert solid, on the reading that the indicator sitting
+    // below the message proved the turn had reached it. It does not. A turn
+    // that is still running must render its indicator somewhere, and that
+    // somewhere is always below the newest message, so the trailing slice is
+    // guaranteed by the layout and proves nothing at all. The operator saw the
+    // consequence on 2026-08-27: "my messages immediately get promoted to
+    // having been read... within like a fraction of a second, especially given
+    // that there are no responses before or after that message for a while."
+    //
+    // Content below it is the evidence; a slice below it is not.
     const s = midRun([cut(text("a"), "c1")]);
     expect(shape(selectTranscript(s)))
       .toEqual(["live:a", "user:are you reading this", "live:*"]);
-    expect(dimOf(s)).toEqual([undefined, false, undefined]);
+    expect(dimOf(s)).toEqual([undefined, true, undefined]);
   });
 
   it("stays solid when the turn's next work renders below it", () => {
@@ -664,6 +673,28 @@ describe("a pending send's place in the log", () => {
       threadReducer(s, { type: "sendStarted", clientId, text, ts: "2026-08-11T00:00:00Z" }),
       { type: "sendFailed", clientId, error: "Not sent." },
     );
+
+  it("does not claim the server confirmed it while the POST is still in flight", () => {
+    // `.chat-bubble--inflight` is the 0.55 opacity, and its absence is what
+    // plays the confirm fade that styles.css calls "the server just confirmed
+    // this" signal. A send rendering solid the moment it is typed is therefore
+    // the UI asserting a confirmation that has not happened -- reported
+    // 2026-08-27 as messages "immediately promoted to having been read...
+    // within like a fraction of a second".
+    const sending = threadReducer(stateOf([user("a")]),
+      { type: "sendStarted", clientId: "c1", text: "b", ts: "2026-08-11T00:00:00Z" });
+    const dim = (s: ThreadState) => selectTranscript(s)
+      .filter((b) => b.kind === "message")
+      .map((b) => !!(b as { inflight?: boolean }).inflight);
+    expect(dim(sending)).toEqual([false, true]);
+
+    // The POST came back. NOW it is solid, and the fade means what it says.
+    const acked = threadReducer(sending, { type: "sendAcked", clientId: "c1" });
+    expect(dim(acked)).toEqual([false, false]);
+    // And it never moved or changed identity across that transition, which is
+    // what keeps the handover an in-place update rather than a remount.
+    expect(shape(selectTranscript(acked))).toEqual(["user:a", "user:b"]);
+  });
 
   it("renders last while it is still in flight, which is where it belongs", () => {
     // A non-failed send renders as a MessageBubble (keyed by client_id), not a

@@ -346,6 +346,36 @@ function workingPieceIndex(pieces: Piece[]): number {
   return any ? work[work.length - 1] : work[0];
 }
 
+/** The last slice that actually SAID something, or -1 if the run has not spoken.
+ *
+ *  THIS IS THE READ STATE, AND IT IS NOT `workingPieceIndex`. The two were one
+ *  function, and that is the bug the operator reported on 2026-08-27: "my
+ *  messages immediately get promoted to having been read... within like a
+ *  fraction of a second, especially given that there are no responses before or
+ *  after that message for a while."
+ *
+ *  A message cut into a running turn ALWAYS has a trailing work slice rendered
+ *  below it, because a turn that is still going must show its indicator
+ *  somewhere and that somewhere is below the newest message. `workingPieceIndex`
+ *  returns that trailing slice as soon as any earlier slice has content, so
+ *  `i > workingAt` was false and the message went solid the instant it was cut
+ *  in. The slice below it was EMPTY: it was the indicator, not an answer.
+ *
+ *  "Work below it" is the right rule; "a slice below it" is not. A slice below
+ *  it is guaranteed by the layout, so it proved nothing and every mid-turn
+ *  message read as answered on arrival. Content below it is the actual evidence
+ *  the turn got there. When nothing has content this is -1, so every message is
+ *  dim, which is the same answer the old `work[0]` floor gave for a run that had
+ *  emitted nothing. */
+function spokenThroughIndex(pieces: Piece[]): number {
+  let last = -1;
+  for (let i = 0; i < pieces.length; i++) {
+    const p = pieces[i];
+    if (isWork(p) && p.work.length) last = i;
+  }
+  return last;
+}
+
 /** The run in flight, cut the same way. One slice carries the working
  *  indicator, and it is emitted even when empty, because "a turn is running and
  *  has produced nothing yet" still has to be visible.
@@ -377,13 +407,19 @@ function liveBlocks(
   const pieces = cutPieces(segments, interrupts, cutHead);
   const out: TranscriptBlock[] = [];
   const workingAt = workingPieceIndex(pieces);
+  // Where the INDICATOR sits and what the turn has REACHED are two questions.
+  // The indicator keeps `workingAt` (it must render somewhere, and that is
+  // below the newest message); the read state uses the last slice with content.
+  const spokenThrough = spokenThroughIndex(pieces);
   for (let i = 0; i < pieces.length; i++) {
     const piece = pieces[i];
     if (!isWork(piece)) {
       const m = piece.msg;
       out.push({ kind: "message", key: msgKey(m), id: m.id, seq: m.seq, msg: msgFromEvent(m),
-                 // Below the working slice = not reached yet = dim. See header.
-                 inflight: i > workingAt });
+                 // No work WITH CONTENT below it = not reached yet = dim.
+                 // See spokenThroughIndex: a trailing empty slice is the
+                 // indicator, not an answer, and it used to count as proof.
+                 inflight: i > spokenThrough });
       continue;
     }
     if (piece.work.length || i === workingAt) {
@@ -618,8 +654,25 @@ export function composeTranscript(
       ...(p.attachments?.length ? { meta: { attachments: p.attachments } } : {}),
     },
   });
+  // A SEND THE SERVER HAS NOT ANSWERED YET IS DIM, and that is not decoration:
+  // `.chat-bubble--inflight` is the 0.55 opacity, and leaving it renders the
+  // confirm animation, which styles.css calls "the server just confirmed this"
+  // signal. So a send that renders solid the moment it is typed is the UI
+  // stating a confirmation that has not happened.
+  //
+  // It regressed when a non-failed send stopped rendering as a `PendingBubble`
+  // (which set `--inflight` itself) and started rendering through the same
+  // MessageBubble as its committed form, to keep one identity across the
+  // handover and stop the remount and the jump. That was right about identity
+  // and dropped the dim with it, because MessageBubble only dims what the
+  // BLOCK marks inflight. Marking it here restores the state without touching
+  // the key, so the handover is still an in-place update.
+  //
+  // `sending` is dim; `sent` (the POST came back) is solid, which is what makes
+  // the dim-to-solid fade mean something. `failed` renders as a PendingBubble
+  // because that is what carries Retry.
   const toBlock = (p: PendingSend): TranscriptBlock =>
-    p.status === "failed" ? asPending(p) : asMessage(p);
+    p.status === "failed" ? asPending(p) : asMessage(p, p.status === "sending");
 
   // THE CONVERSATION'S FIRST MESSAGE IS NEVER BELOW THE WORKING INDICATOR.
   // `duringActiveTurn` is captured from `!!state.activeTurn` at send time, and on
