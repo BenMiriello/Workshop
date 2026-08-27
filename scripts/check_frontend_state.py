@@ -128,6 +128,16 @@ _USEPOLL = re.compile(r"\busePoll\s*\(")
 # key that comes from a factory (`queryKey: queryKeys.chat.threads(null)`) is a
 # named export, so a misspelling is a compile error, which is the only kind of
 # error that stops this recurring.
+#
+# AND THERE IS NO EXEMPTION FOR THE KEY MODULES, deliberately. A factory writes
+# its tuple as a RETURN VALUE (`locations: (p) => ["birds", "locations", p]`),
+# which this pattern does not match, so the modules need no carve-out in order
+# to define their keys. An earlier version exempted any file named `queries.ts`
+# or `queryKeys.ts`; it protected nothing -- there is not one such literal in
+# any of them -- while opening a real hole, because those files also hold the
+# shared HOOKS (`useLiveFeeds`, `useYardFeed`, `commuteStatusQuery`), so most of
+# the app's `useQuery` calls sat inside the exemption. The rule is now what it
+# says: a key is never spelled at a call site, wherever that call site lives.
 _INLINE_KEY = re.compile(r"\bqueryKey:\s*\[")
 _SETINTERVAL = re.compile(r"\b(?:window\.)?setInterval\s*\(")
 
@@ -228,6 +238,24 @@ _WINDOW = 3
 _POLL_WINDOW = 6
 
 
+def _poll_window(lines: list[str], i: int) -> str:
+    """The lines a `usePoll(` exemption pattern may prove itself against.
+
+    Bounded at the NEXT `usePoll(`, not at a flat line count. `usePoll` takes an
+    inline lambda, so the body that shows a caller makes no request is several
+    lines down -- but a fixed window reaches PAST the end of that call and into
+    the next one, and then a single exempt pattern silently exempts every poll
+    written above it. A file with three real polls followed by one socket
+    re-attach counted as one site instead of three, which is the ratchet
+    reporting progress that did not happen."""
+    out: list[str] = []
+    for line in lines[i - 1 : i - 1 + _POLL_WINDOW]:
+        if out and _USEPOLL.search(line):
+            break
+        out.append(line)
+    return "\n".join(out)
+
+
 def _allow_rules() -> list[tuple[str | None, re.Pattern[str], str]]:
     return (
         [(path, re.compile(pat), why) for path, pat, why in _TIMER_ALLOW]
@@ -303,7 +331,7 @@ def scan(root: Path = ROOT) -> dict:
             if stripped.startswith(("//", "*", "/*")):
                 continue
             if _USEPOLL.search(line):
-                window = "\n".join(lines[i - 1 : i - 1 + _POLL_WINDOW])
+                window = _poll_window(lines, i)
                 why = next(
                     (w for path, pat, w in poll_rules
                      if path == rel and re.search(pat, window)),
@@ -312,7 +340,7 @@ def scan(root: Path = ROOT) -> dict:
                 (exempt_polls if why else polls).append(
                     {"file": rel, "line": i, "text": stripped, **({"why": why} if why else {})}
                 )
-            if _INLINE_KEY.search(line) and not _is_key_module(rel):
+            if _INLINE_KEY.search(line):
                 inline_keys.append({"file": rel, "line": i, "text": stripped})
             if _SETINTERVAL.search(line):
                 window = "\n".join(lines[i - 1 : i - 1 + _WINDOW])
@@ -331,11 +359,17 @@ def scan(root: Path = ROOT) -> dict:
     # deleting an allowlisted timer -- unambiguously progress -- breaks the
     # build, which is the ratchet pointing backwards.
     matched = {(e["file"], e["why"]) for e in exempt}
+    matched |= {(e["file"], e["why"]) for e in exempt_polls}
     stale = [
         {"file": path or "(any)", "pattern": pat, "why": why}
         for path, pat, why in (
             [(p, pt, w) for p, pt, w in _TIMER_ALLOW]
             + [(None, pt, w) for pt, w in _TIMER_ALLOW_ANYWHERE]
+            # A stale POLL exemption matters more than a stale timer one: it
+            # silently turns back into a counted site and fails the build with
+            # no hint why. Its pattern keys on a line of chat code, which the
+            # rest of this branch was actively editing.
+            + [(p, pt, w) for p, pt, w in _POLL_ALLOW]
         )
         if not any((path is None or f == path) and w == why for f, w in matched)
     ]
@@ -379,16 +413,6 @@ _SITES = {
     "inline_query_keys": "inline_keys",
 }
 
-
-def _is_key_module(rel: str) -> bool:
-    """A file whose JOB is naming cache keys, where a literal is the definition.
-
-    Named by FILE NAME rather than by path, so this names no app: the platform's
-    registry is `lib/queryKeys.ts` and an app declares its own keys in a
-    `queries.ts` beside its fetchers, because a platform source file may not
-    name a specific app (`scripts/check_no_app_names.py`)."""
-    name = rel.rsplit("/", 1)[-1]
-    return name in ("queryKeys.ts", "queries.ts")
 
 
 def main() -> int:

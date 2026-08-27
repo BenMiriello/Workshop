@@ -77,6 +77,19 @@ def _write(repo: Path, rel: str, body: str) -> None:
     path.write_text(body)
 
 
+def _allow(repo: Path, path: str, pattern: str, why: str) -> None:
+    """Append a `_POLL_ALLOW` entry to the checker copy inside the throwaway
+    repo, the same way a reviewer would see one added in a diff."""
+    f = repo / "scripts" / _SCRIPT
+    src = f.read_text()
+    marker = "_POLL_ALLOW: tuple[tuple[str, str, str], ...] = (\n"
+    assert marker in src
+    # `!r` already emits a valid Python literal; prefixing it with `r` as well
+    # would make the escapes literal backslashes and match nothing.
+    entry = f"    ({path!r}, {pattern!r}, {why!r}),\n"
+    f.write_text(src.replace(marker, marker + entry, 1))
+
+
 def _poll_component(n: int) -> str:
     """A component with `n` usePoll reads, written the legacy way."""
     body = 'import { usePoll } from "@workshop/ui";\n\nexport function Legacy() {\n'
@@ -208,19 +221,80 @@ class TestInlineQueryKeys:
         r = _run(repo, "--since", base)
         assert r.returncode == 0, r.stdout
 
-    def test_a_key_module_may_hold_literals_because_that_is_its_job(self, repo: Path):
-        """The registry itself, and an app's own `queries.ts`, are where a key
-        literal IS the definition. Exempted by file NAME, not by path, so the
-        checker names no app."""
+    def test_a_factory_definition_is_not_a_call_site(self, repo: Path):
+        """A key module needs no exemption: a factory writes its tuple as a
+        RETURN VALUE, which the pattern does not match."""
         _write(repo, "frontend/src/lib/queryKeys.ts",
-               'export const k = { feed: (f) => ["jobs", "feed", f] };\n'
-               'const q = useQuery({ queryKey: ["jobs", "feed", f] });\n')
-        _write(repo, "frontend/src/pages/widgets/queries.ts",
-               'const q = useQuery({ queryKey: ["widget", "list"] });\n')
+               'export const k = { feed: (f) => ["jobs", "feed", f] };\n')
         base = _head(repo)
-        _commit(repo, "two key modules")
+        _commit(repo, "a key factory")
         r = _run(repo, "--since", base)
         assert r.returncode == 0, r.stdout
+
+    def test_the_rule_holds_inside_a_key_module_too(self, repo: Path):
+        """There is NO file exemption, and this is why. `queries.ts` also holds
+        an app's shared HOOKS, so exempting the file put most of the app's
+        `useQuery` calls outside the rule while protecting no real literal."""
+        _write(repo, "frontend/src/pages/widgets/queries.ts",
+               'export const k = { list: () => ["widget", "list"] };\n'
+               'export const useList = () => useQuery({ queryKey: ["widget", "list"] });\n')
+        base = _head(repo)
+        _commit(repo, "a call site hiding in a key module")
+        r = _run(repo, "--since", base)
+        assert r.returncode == 1, r.stdout
+        assert "inline_query_keys: 0 -> 1" in r.stdout
+
+
+class TestPollExemption:
+    """`_POLL_ALLOW`, the one mechanism here that can REMOVE a site from a
+    ratcheted count without anything being migrated.
+
+    `usePoll` is a visibility-aware interval, not a fetching mechanism, so a
+    caller can be on it while making no server read -- and counting that caller
+    makes the number claim there is a read left to migrate when there is not.
+    But an exemption that drops a count needs the same evidence as a fix, which
+    is what these pin."""
+
+    def test_an_exempt_poll_is_not_counted_but_is_printed(self, repo: Path):
+        r = _run(repo, "--json")
+        counted = json.loads(r.stdout)["usepoll_sites"]
+        _write(repo, "frontend/src/components/Legacy.tsx",
+               _poll_component(3) + "\nusePoll(() => { attachSocket(); }, 5000);\n")
+        _commit(repo, "a usePoll that fetches nothing")
+        # Not exempt yet: a new site fails like any other.
+        assert _run(repo, "--since", "HEAD~1").returncode == 1
+
+        _allow(repo, "frontend/src/components/Legacy.tsx", r"attachSocket\(\)",
+               "not a read: opens a socket, fetches nothing")
+        r = _run(repo, "--json")
+        d = json.loads(r.stdout)
+        assert d["usepoll_sites"] == counted, d["usepoll_sites"]
+        # An exemption must be VISIBLE, not silent.
+        assert "attachSocket" in _run(repo).stdout or "not a read" in _run(repo).stdout
+
+    def test_the_exemption_is_keyed_tightly_enough_to_leave_a_real_poll_counted(
+        self, repo: Path,
+    ):
+        """A file holding one exempt timer AND one real poll must still report
+        the poll -- the same property `_TIMER_ALLOW` has, for the same reason."""
+        _write(repo, "frontend/src/components/Mixed.tsx",
+               "usePoll(() => { attachSocket(); }, 5000);\n"
+               "usePoll(loadFeed, 15000);\n")
+        _commit(repo, "one exempt and one real")
+        _allow(repo, "frontend/src/components/Mixed.tsx", r"attachSocket\(\)",
+               "not a read: opens a socket, fetches nothing")
+        d = json.loads(_run(repo, "--json").stdout)
+        assert d["usepoll_sites"] == 4, d["usepoll_sites"]
+
+    def test_a_stale_poll_exemption_is_reported(self, repo: Path):
+        """It must not go quiet. A stale entry turns its site back into a
+        counted one, which fails the build; without this line the reader gets a
+        FAIL and no hint that an exemption stopped matching."""
+        _allow(repo, "frontend/src/components/Gone.tsx", r"attachSocket\(\)",
+               "not a read: opens a socket, fetches nothing")
+        out = _run(repo).stdout
+        assert "stale allowlist entry" in out
+        assert "Gone.tsx" in out
 
 
 class TestRawPollIntervals:
