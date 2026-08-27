@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { Archive, ArchiveRestore, ArrowDownWideNarrow, ChevronLeft, MessagesSquare, MoreVertical, Plus, Trash2 } from "lucide-react";
 import {
@@ -75,6 +76,9 @@ const PAGE = 20;
 // The archive is a separate, search-filtered list; it keeps a plain cap.
 const ARCHIVE_CAP = 100;
 
+// The live list's cache key, shared so an action can update it in place.
+const THREADS_KEY = ["chat", "threads"] as const;
+
 // When a chat was archived, at the resolution the archive is read at: you are
 // looking for the one you put here, so the day is the useful unit and today is
 // the common case.
@@ -127,8 +131,7 @@ function matches(t: ThreadSummary, needle: string): boolean {
 
 export default function Chats() {
   const nav = useNavigate();
-  const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const qc = useQueryClient();
   const [sort, setSort] = useState<Sort>("recent");
   // A delete waiting on its confirm dialog, and a one-off action failure that
   // leaves the list on screen (a Notice, not a whole-page error block).
@@ -136,24 +139,29 @@ export default function Chats() {
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<{ text: string; endpoint: string } | null>(null);
   // How many rows are mounted. Grows a page at a time as the foot scrolls into
-  // view; reset whenever the list itself changes so a re-sort starts at the top.
+  // view; reset on a re-sort so the new order starts at the top.
   const [shown, setShown] = useState(PAGE);
 
-  const load = useCallback(() => {
-    setThreads(null);
-    setErr(null);
-    setActionErr(null);
-    chatApi
-      .listThreads()
-      .then(setThreads)
-      .catch((e) => {
-        setErr(String(e));
-        setThreads([]);
-      });
-  }, []);
-  useEffect(() => {
-    load();
-  }, [load]);
+  // The list live-updates by polling the shared TanStack client the rest of the
+  // app uses. Short interval because liveness (the running dot, a new turn, a new
+  // last message) is the point; the payload is small and cached, so a tick that
+  // changes nothing re-renders nothing.
+  const q = useQuery({
+    queryKey: THREADS_KEY,
+    queryFn: () => chatApi.listThreads(),
+    refetchInterval: 4000,
+    staleTime: 0,
+    retry: false,
+  });
+  const threads = q.data ?? null;
+  // A failed poll keeps the list on screen; only a failure with nothing to show
+  // yet becomes the whole-page error.
+  const err = q.isError && !q.data ? String(q.error) : null;
+
+  // Drop a row from the cached list at once (archive and delete both end with it
+  // gone); the next poll reconciles with the server.
+  const dropThread = (id: string) =>
+    qc.setQueryData<ThreadSummary[]>(THREADS_KEY, (old) => (old ? old.filter((x) => x.id !== id) : old));
 
   const newChat = () => nav(newChatHref("general"));
 
@@ -165,7 +173,9 @@ export default function Chats() {
     return list;
   }, [threads, sort]);
 
-  useEffect(() => { setShown(PAGE); }, [sort, threads]);
+  // Reset only on a re-sort, NOT on every poll: a refetch returns a new array
+  // each tick, and resetting on that would snap the list back to the first page.
+  useEffect(() => { setShown(PAGE); }, [sort]);
 
   const visible = sorted.slice(0, shown);
   const more = shown < sorted.length;
@@ -206,7 +216,7 @@ export default function Chats() {
   const archiveOne = async (t: ThreadSummary) => {
     try {
       await chatApi.archiveThread(t.id);
-      setThreads((list) => (list ? list.filter((x) => x.id !== t.id) : list));
+      dropThread(t.id);
     } catch (e) {
       setActionErr({
         text: `Couldn't archive "${t.title || "this chat"}": ${e}. It is still here.`,
@@ -220,7 +230,7 @@ export default function Chats() {
     setBusy(true);
     try {
       await chatApi.deleteThread(pending.id);
-      setThreads((list) => (list ? list.filter((x) => x.id !== pending.id) : list));
+      dropThread(pending.id);
       setPending(null);
     } catch (e) {
       setActionErr({
@@ -269,19 +279,19 @@ export default function Chats() {
         </div>
       )}
 
-      {threads === null ? (
+      {err ? (
+        <StateBlock
+          variant="error"
+          title="Couldn't load chats"
+          hint={<code>GET /api/chat/threads: {err}</code>}
+          action={<Button size="sm" onClick={() => void q.refetch()}>Retry</Button>}
+        />
+      ) : threads === null ? (
         <div style={{ display: "grid", gap: "var(--space-2)" }}>
           {[0, 1, 2, 3].map((i) => (
             <Skeleton key={i} style={{ height: 52 }} />
           ))}
         </div>
-      ) : err ? (
-        <StateBlock
-          variant="error"
-          title="Couldn't load chats"
-          hint={<code>GET /api/chat/threads: {err}</code>}
-          action={<Button size="sm" onClick={load}>Retry</Button>}
-        />
       ) : threads.length === 0 ? (
         <StateBlock
           title="No chats yet"
@@ -329,8 +339,14 @@ export default function Chats() {
                     </span>
                     <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
                     <div className="ws-chat-row__meta">
-                      {t.model && <span className="ws-card__meta ws-chat-row__model">{shortModel(t.model)}</span>}
+                      {t.model && (
+                        <>
+                          <span className="ws-card__meta ws-chat-row__model">{shortModel(t.model)}</span>
+                          <span className="ws-chat-row__sep ws-chat-row__sep--model" aria-hidden>·</span>
+                        </>
+                      )}
                       <span className="ws-card__meta">{t.message_count} turns</span>
+                      <span className="ws-chat-row__sep" aria-hidden>·</span>
                       <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
                       <button
                         type="button"

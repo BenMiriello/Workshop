@@ -703,6 +703,9 @@ a.ws-btn { text-decoration: none; }
   min-width: 36px;
   text-align: right;
 }
+/* A faint dot between the meta sections (model, turns, age). It is a separator,
+   so it is the quietest ink and never a control. */
+.ws-chat-row__sep { color: var(--faint); user-select: none; }
 /* Line two: the snippet. It gets the whole row width, flush left under the dot,
    and only ellipsizes when the message truly runs past the row's right edge. */
 .ws-chat-row__snippet {
@@ -735,6 +738,7 @@ a.ws-btn { text-decoration: none; }
 @media (max-width: 640px) {
   .ws-chat-row__meta { gap: var(--space-2); }
   .ws-chat-row__meta .ws-chat-row__model,
+  .ws-chat-row__meta .ws-chat-row__sep--model,
   .ws-chat-row__meta .ws-chat-row__archive { display: none; }
 }
 /* A date-group heading (label + count). It owns the group's vertical rhythm:
