@@ -3430,7 +3430,15 @@ span.ws-filterchip__open { cursor: default; }
   font-family: var(--font-mono); font-size: var(--fs-xs);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.ws-docbar__path { flex: 0 1 auto; color: var(--faint); }
+/* THE PATH IS DESKTOP ONLY, which is what `DocumentBarProps.path` has always
+   claimed ("Hidden below 900px, where the header is a back control and there is
+   no room") and what no rule actually did. It got away with it because the only
+   phone caller passed `onBack`, which replaces the path and the name with the
+   combined back control -- until a NOTE wore this bar (2026-08-27) with no back
+   control, and its scope ate the width its title needed: at 390px the header
+   read "De... A card that files a d...". A truncated word is worse than an
+   absent one; the scope is on screen a second time under the body. */
+.ws-docbar__path { display: none; flex: 0 1 auto; color: var(--faint); }
 .ws-docbar__name { flex: 0 1 auto; color: var(--fg); }
 /* THE TITLE VARIANT (DocumentBar.tsx, 2026-08-27). A record's title is prose,
    so it is drawn in the sans face at the body size; everything else about the
@@ -3536,6 +3544,7 @@ span.ws-filterchip__open { cursor: default; }
 @media (min-width: 900px) {
   .ws-doc { --docbar-h: 46px; --doc-gutter-w: 56px; }
   .ws-docbar { padding: 0 var(--space-4); }
+  .ws-docbar__path { display: inline; }
   .ws-docbar__meta { display: inline-flex; }
   .ws-docbar__discard { display: inline-flex; }
   .ws-doc__body { padding: var(--space-5) 0 var(--space-6); }

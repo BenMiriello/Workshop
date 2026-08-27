@@ -131,22 +131,31 @@ export default function ChatFiles() {
           ))}
         </Select>
       </Field>
+      {/* ONE FIELD, ENTER TO SEARCH, and no submit button beside it. Same rule
+          as Memory's directory toolbar (memory-page-and-file-viewer-2026-08-27.md
+          D5): a Search button next to a search field is a second control for
+          the thing the field already does, and it never lined up with the
+          Refresh beside it, which is exactly what the operator was pointing at
+          when he said the controls in these rows do not match. */}
       <Field label="Search" inline>
-        <form
-          onSubmit={(e) => { e.preventDefault(); setApplied(query); }}
-          style={{ display: "flex", gap: "var(--space-2)" }}
-        >
+        <form onSubmit={(e) => { e.preventDefault(); setApplied(query); }}>
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Find by filename"
-            aria-label="Search files"
+            aria-label="Search files by name. Press Enter to search."
           />
-          <Button size="sm" type="submit">Search</Button>
         </form>
       </Field>
-      <Button size="sm" onClick={refresh} loading={loading}>
-        <RefreshCw aria-hidden /> Refresh
+      <Button
+        size="sm"
+        icon
+        onClick={refresh}
+        loading={loading}
+        aria-label="Reload files"
+        title="Reload"
+      >
+        <RefreshCw aria-hidden />
       </Button>
     </Row>
   );
