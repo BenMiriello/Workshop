@@ -24,6 +24,8 @@ import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
 import { newChatHref } from "../lib/chatSelection";
 import { scopeKind, scopeLabel, scopeName } from "../components/chat/chatScope";
 import ScopeIcon from "../components/chat/ScopeIcon";
+import { appIcon } from "../apps/registry";
+import { AppGlyph } from "../lib/appIcon";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -127,6 +129,19 @@ function matches(t: ThreadSummary, needle: string): boolean {
     scopeLabel(t.context_key).toLowerCase().includes(needle) ||
     (agent !== null && agent.toLowerCase().includes(needle))
   );
+}
+
+// The glyph that leads a row. An app chat shows the app's OWN declared icon
+// (Budget's piggy bank, Birds' bird), resolved through the apps registry. Every
+// other scope, and any app that declared no icon, shows the kind icon, which is
+// the reliable backup.
+function ChatScopeGlyph({ contextKey }: { contextKey: string }) {
+  const kind = scopeKind(contextKey);
+  if (kind === "app") {
+    const declared = appIcon(scopeName(contextKey));
+    if (declared) return <AppGlyph icon={declared} name={scopeName(contextKey)} size={14} />;
+  }
+  return <ScopeIcon kind={kind} />;
 }
 
 export default function Chats() {
@@ -338,7 +353,7 @@ export default function Chats() {
                       title={scopeName(t.context_key)}
                       aria-label={scopeLabel(t.context_key)}
                     >
-                      <ScopeIcon kind={scopeKind(t.context_key)} />
+                      <ChatScopeGlyph contextKey={t.context_key} />
                     </span>
                     <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
                     <div className="ws-chat-row__meta">
