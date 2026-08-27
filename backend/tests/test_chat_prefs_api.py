@@ -37,12 +37,25 @@ class TestPrefs:
 
     def test_the_choices_are_named_by_the_server(self, client):
         """The settings control builds from these, so the server owns the list."""
-        assert client.get("/chat/prefs").json()["modes"] == [
-            "direct", "orchestrated", "auto"]
+        assert client.get("/chat/prefs").json()["modes"] == ["direct", "auto"]
+
+    def test_the_retired_mode_is_not_offered(self, client):
+        """`orchestrated` collapsed into `auto` on 2026-08-27. The settings
+        control builds from this list, so leaving it here would let the operator
+        put new chats back on a mode that no longer exists."""
+        assert "orchestrated" not in client.get("/chat/prefs").json()["modes"]
 
     def test_setting_it_sticks(self, client):
-        assert client.post("/chat/prefs", json={"default_mode": "orchestrated"}).status_code == 200
-        assert client.get("/chat/prefs").json()["default_mode"] == "orchestrated"
+        assert client.post("/chat/prefs", json={"default_mode": "auto"}).status_code == 200
+        assert client.get("/chat/prefs").json()["default_mode"] == "auto"
+
+    def test_a_retired_default_is_mapped_forward_not_refused(self, client):
+        """A settings tab opened before the collapse still sends `orchestrated`.
+        It stores as `auto`, which is the same behaviour under its surviving
+        name -- not a 400, and specifically not `direct`."""
+        assert client.post(
+            "/chat/prefs", json={"default_mode": "orchestrated"}).status_code == 200
+        assert client.get("/chat/prefs").json()["default_mode"] == "auto"
 
     def test_junk_is_refused_rather_than_stored(self, client):
         assert client.post("/chat/prefs", json={"default_mode": "sideways"}).status_code == 400
@@ -84,10 +97,10 @@ class TestTurnPostureDefaults:
         """The settings screen must be able to save one control without echoing
         the others back — otherwise every save races the others."""
         client.post("/chat/prefs", json={"default_effort": "low"})
-        client.post("/chat/prefs", json={"default_mode": "orchestrated"})
+        client.post("/chat/prefs", json={"default_mode": "auto"})
         p = client.get("/chat/prefs").json()
         assert p["default_effort"] == "low"
-        assert p["default_mode"] == "orchestrated"
+        assert p["default_mode"] == "auto"
 
     def test_junk_is_refused(self, client):
         assert client.post("/chat/prefs", json={"default_effort": "ultra"}).status_code == 400
@@ -100,14 +113,14 @@ class TestTurnPostureDefaults:
 
 class TestCreateWithMode:
     def test_a_new_chat_follows_the_default(self, client):
-        client.post("/chat/prefs", json={"default_mode": "orchestrated"})
+        client.post("/chat/prefs", json={"default_mode": "auto"})
         r = client.post("/chat/threads", json={"context_key": "general"})
-        assert r.json()["mode"] == "orchestrated"
+        assert r.json()["mode"] == "auto"
 
     def test_a_mode_chosen_on_the_blank_chat_wins(self, client):
         """The toolbar shows the control before the thread exists; the choice
         rides along on creation, or it is silently lost on the first message."""
-        client.post("/chat/prefs", json={"default_mode": "orchestrated"})
+        client.post("/chat/prefs", json={"default_mode": "auto"})
         r = client.post("/chat/threads", json={"context_key": "general", "mode": "direct"})
         assert r.json()["mode"] == "direct"
 

@@ -50,29 +50,48 @@ def _chat_dir() -> Path:
 #   direct        the conversation does the work. Native subagents are available
 #                 for context isolation and report back here; the transcript IS
 #                 the record. Labelled "Direct" in the UI.
-#   orchestrated  work leaves as Tickets run by Workshop agents; the Ticket is
-#                 the record. Labelled "Tickets" in the UI — the stored name is
-#                 kept so existing threads need no migration.
-#   auto          the same as orchestrated, minus the approval step: file and
-#                 run without asking, and stop only for a question that cannot
-#                 be answered. Labelled "File and run on its own" in the UI.
+#   auto          work leaves as Tickets run by Workshop agents; the Ticket is
+#                 the record. Filed and started WITHOUT asking first, stopping
+#                 only for a question that cannot be answered. Labelled "Auto"
+#                 in the UI.
+#
+# THERE WERE THREE. `orchestrated` was "file it but wait for approval" and `auto`
+# was the same thing minus the approval step -- and they differed ONLY in prompt
+# text, never in a code path. The operator states no intended distinction between
+# them (2026-08-27), so there is one mode for "work leaves here" and it is `auto`,
+# which is both the name for the behaviour the operator uses and the value on
+# more threads (85 of 201 against orchestrated's 44, measured before the
+# collapse).
 #
 # `auto` is an EXPLICIT per-chat operator choice and nothing about it is learned.
 # ADR 0006 designed an auto-run preference inferred from past File-and-run
 # choices and stored in the learnings store; that is a different mechanism, it
 # stays Proposed, and this is not it (tickets-in-chat-2026-08-15 §7).
 #
-# DIRECT IS THE DEFAULT. Orchestrated was, and it made every passing remark a
-# candidate for a ticket; work that outlives the chat is the exception, and the
-# exception should be the one you ask for. Threads that set a mode explicitly
-# keep it; threads that never did follow the default, which is what "the default"
-# has to mean for it to be changeable at all.
-CHAT_MODES = ("direct", "orchestrated", "auto")
+# DIRECT IS THE DEFAULT. The mode that files was, and it made every passing
+# remark a candidate for a ticket; work that outlives the chat is the exception,
+# and the exception should be the one you ask for. Threads that set a mode
+# explicitly keep it; threads that never did follow the default, which is what
+# "the default" has to mean for it to be changeable at all.
+CHAT_MODES = ("direct", "auto")
 DEFAULT_CHAT_MODE = "direct"
+
+# Values that are no longer offered but are still written on disk and in the
+# `chat_thread` mirror. Read through `_clamp_mode`, never re-offered.
+#
+# `orchestrated` MAPS TO `auto`, NOT TO THE DEFAULT. Letting it fall through to
+# `direct` would silently turn 44 live threads from "work leaves here" into
+# "work stays here" -- a behaviour change on somebody else's conversation, which
+# is the one thing a rename is not allowed to do. The relational mirror is
+# migrated (revision `a4e2c7b19f30`); the file log is NOT rewritten, because
+# read-time mapping is idempotent and needs no bulk edit of live thread logs.
+_LEGACY_CHAT_MODES = {"orchestrated": "auto"}
 
 
 def _clamp_mode(mode: str | None) -> str:
-    return mode if mode in CHAT_MODES else DEFAULT_CHAT_MODE
+    if mode in CHAT_MODES:
+        return mode                       # type: ignore[return-value]
+    return _LEGACY_CHAT_MODES.get(mode or "", DEFAULT_CHAT_MODE)
 
 
 # The operator's chosen default for NEW chats, overriding DEFAULT_CHAT_MODE.
@@ -500,8 +519,10 @@ def _document(meta: dict, messages: list[dict], seqs: list[int], cut_seq: int = 
     # There is now one source of truth for where a chat lives, and it is
     # `context_key`. A stored copy is written by nobody and trusted by nobody.
     t["scope"] = scope_tree.scope_for_context(ck)
-    if not t.get("mode"):
-        t["mode"] = DEFAULT_CHAT_MODE
+    # CLAMPED, not just defaulted. `_clamp_mode` is what turns a stored legacy
+    # `orchestrated` into `auto` on the way out, so no thread log has to be
+    # rewritten for the enum to have collapsed.
+    t["mode"] = _clamp_mode(t.get("mode"))
     # THE SUMMARY IS THE RESOLVED BOUNDARY'S, OR THERE IS NONE. `meta.summary`
     # is thread-global and reaches here through the copy above; on its own that
     # made going back past a compaction incoherent, because the cut correctly
@@ -567,7 +588,7 @@ def create_thread(
 ) -> dict:
     tid = uuid.uuid4().hex
     # Entity-model 2026-07-18 §7 fields (C11, P1):
-    # - mode: direct (the default), orchestrated, or auto. See CHAT_MODES.
+    # - mode: direct (the default) or auto. See CHAT_MODES.
     #
     # NO `scope` AND NO `scope_locked`. The Scope a chat lives in is derived
     # from its `context_key` on every read (see `_document`), so an explicit
@@ -727,7 +748,7 @@ def _summary_row(thread_id: str) -> dict | None:
         # Entity-model 2026-07-18 §7 fields (C11, P1). `scope` is DERIVED, never
         # stored -- see `_document`.
         "scope": scope_tree.scope_for_context(ck),
-        "mode": meta.get("mode") or DEFAULT_CHAT_MODE,
+        "mode": _clamp_mode(meta.get("mode")),
         # WHO ANSWERS THIS CHAT, when that is an agent. An `agent:<slug>` chat is
         # answered by that agent, so the key IS the answer; `agent_id` carries
         # the historical case, a chat that was with an agent whose scope no
@@ -958,7 +979,8 @@ def _recency_key(summary: dict) -> str:
 
 def set_thread_mode(thread_id: str, mode: str) -> dict | None:
     """Set the per-thread interaction mode. `mode` must be one of CHAT_MODES;
-    anything else clamps to DEFAULT_CHAT_MODE."""
+    a retired value maps forward (`orchestrated` -> `auto`) and anything else
+    clamps to DEFAULT_CHAT_MODE."""
     return _patch(thread_id, mode=_clamp_mode(mode))
 
 

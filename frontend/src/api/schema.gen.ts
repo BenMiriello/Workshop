@@ -4006,7 +4006,7 @@ export interface paths {
         put?: never;
         /**
          * Set Chat Mode
-         * @description Switch a chat between Direct, Orchestrated and Auto.
+         * @description Switch a chat between Direct and Auto.
          *
          *     Cheap and reversible, so it commits on change rather than behind a Save. The
          *     mode is re-stated to the model on every turn (chat_context.chat_mode_block),

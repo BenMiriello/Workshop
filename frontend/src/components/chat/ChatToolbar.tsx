@@ -47,12 +47,12 @@ import { workTitle } from "./work/workRows";
 //  - ANY work control at all, as of 2026-08-15. The overflow used to hold the
 //    last two, and both are gone from it:
 //
-//      "Run work as tickets", a Toggle. It was never a boolean. "Draft it and
-//      ask me" and "File it and run it" are two different answers to the same
-//      question, and the second had no stored value, so a three-way choice was
-//      being asked as a switch. It is the three-way policy in Work settings now
-//      (chatModes gained `auto`), one tap inside the panel that lists what the
-//      policy produces.
+//      "Run work as tickets", a Toggle. It moved into Work settings, one tap
+//      inside the panel that lists what the policy produces, rather than
+//      sitting on the bar as a switch with no room to say what either side
+//      does. (It was briefly a three-way choice, when "draft it and ask me"
+//      and "file it and run it" were separate modes; they were one behaviour
+//      under two names and were collapsed on 2026-08-27.)
 //
 //      "File this chat as a ticket". An action on this chat's work, sitting two
 //      controls away from the list of this chat's work. It is the panel header's

@@ -134,7 +134,7 @@ class CreateThread(BaseModel):
     # straight into the stored field as a second answer to a question
     # `context_key` already answers. A chat's scope is derived from its
     # context_key on every read now (services.scope_tree.scope_for_context).
-    # How this chat handles work (direct | orchestrated | auto). Omitted means
+    # How this chat handles work (direct | auto). Omitted means
     # "use the operator's default for new chats" — the toolbar sends it only
     # when the mode was chosen before the first message, which is the whole
     # point of showing the control on a blank chat.
@@ -162,7 +162,7 @@ class RescopeThread(BaseModel):
 
 
 class SetChatMode(BaseModel):
-    mode: str  # direct | orchestrated | auto (chat_context.CHAT_MODES)
+    mode: str  # direct | auto (chat_context.CHAT_MODES)
 
 
 class ForkThread(BaseModel):
@@ -300,6 +300,22 @@ def _resolve_permission_mode(body_mode: str | None, thread: dict) -> str:
             or model_caps.DEFAULT_PERMISSION_MODE)
 
 
+def _accepted_mode(value: str | None, field: str = "mode") -> str:
+    """A chat mode the API will store, or a 400.
+
+    ACCEPTS A RETIRED VALUE AND MAPS IT FORWARD. `orchestrated` left the enum on
+    2026-08-27 (it and `auto` were one behaviour under two names), but a tab that
+    was open before then still has it in its bundle, and the answer to a stale
+    client naming the mode it has been using for months is that mode's new name
+    -- not a 400 that reads as the control being broken. `chat_store._clamp_mode`
+    owns the mapping; membership is tested BEFORE the clamp so that genuine junk
+    still fails loudly instead of silently becoming the default."""
+    raw = (value or "").strip().lower()
+    if raw not in chat_context.CHAT_MODES and raw not in chat_store._LEGACY_CHAT_MODES:
+        raise HTTPException(400, f"{field} must be one of {list(chat_context.CHAT_MODES)}")
+    return chat_store._clamp_mode(raw)
+
+
 @router.get("/providers", response_model=list[cm.Provider], response_model_exclude_unset=True)
 async def providers(scope: str | None = None):
     return chat_context.list_providers(scope=scope)
@@ -395,11 +411,10 @@ async def remove_draft(key: str):
 
 @router.post("/threads", response_model=cm.ThreadDocument, response_model_exclude_unset=True)
 async def new_thread(body: CreateThread):
-    if body.mode is not None and body.mode not in chat_context.CHAT_MODES:
-        raise HTTPException(400, f"mode must be one of {list(chat_context.CHAT_MODES)}")
+    mode = _accepted_mode(body.mode) if body.mode is not None else None
     return chat_store.create_thread(
         context_key=body.context_key, title=body.title, agent_id=body.agent_id,
-        mode=body.mode,
+        mode=mode,
     )
 
 
@@ -446,9 +461,7 @@ async def get_chat_prefs():
 @router.post("/prefs", response_model=cm.ChatPrefsOut, response_model_exclude_unset=True)
 async def set_chat_prefs(body: ChatPrefs):
     if body.default_mode is not None:
-        if body.default_mode not in chat_context.CHAT_MODES:
-            raise HTTPException(400, f"default_mode must be one of {list(chat_context.CHAT_MODES)}")
-        chat_store.set_default_mode(body.default_mode)
+        chat_store.set_default_mode(_accepted_mode(body.default_mode, "default_mode"))
     if body.default_effort is not None:
         try:
             chat_store.set_default_effort(body.default_effort)
@@ -1391,16 +1404,13 @@ async def spawn_task(thread_id: str, body: SpawnTask):
 
 @router.post("/threads/{thread_id}/mode", response_model=cm.ChatModeSet, response_model_exclude_unset=True)
 async def set_chat_mode(thread_id: str, body: SetChatMode):
-    """Switch a chat between Direct, Orchestrated and Auto.
+    """Switch a chat between Direct and Auto.
 
     Cheap and reversible, so it commits on change rather than behind a Save. The
     mode is re-stated to the model on every turn (chat_context.chat_mode_block),
     which is what lets a switch take effect mid-conversation instead of only on
     a fresh session."""
-    mode = (body.mode or "").strip().lower()
-    if mode not in chat_context.CHAT_MODES:
-        raise HTTPException(400, f"mode must be one of {list(chat_context.CHAT_MODES)}")
-    t = chat_store.set_thread_mode(thread_id, mode)
+    t = chat_store.set_thread_mode(thread_id, _accepted_mode(body.mode))
     if t is None:
         raise HTTPException(404, "thread not found")
     return {"id": thread_id, "mode": t.get("mode")}

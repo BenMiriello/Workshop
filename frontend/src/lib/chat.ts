@@ -3,7 +3,7 @@
 
 // The mode's VALUE SET is a wire fact and belongs to the server; its labels are
 // a UI fact and belong to `chat/chatModes`. This module used to spell the union
-// inline in five places, so adding a third mode meant finding all five.
+// inline in five places, so changing the set of modes meant finding all five.
 import type { ChatModeId } from "../components/chat/chatModes";
 
 // An assistant turn is an ordered list of segments so text and tool calls keep
@@ -624,7 +624,7 @@ export const chatApi = {
   // Move-chat-into-project action). The thread id + history are unchanged; only
   // its context_key moves. Backend validates the key resolves to a real provider
   // (unknown -> 400). Same /api/chat/threads base path as the other calls.
-  // Direct vs Orchestrated. Commits on change: cheap, reversible, and the mode
+  // Direct vs Auto. Commits on change: cheap, reversible, and the mode
   // is re-stated to the model every turn, so a switch takes effect immediately
   // rather than only on a fresh session.
   // Answer a tool-permission request from a running turn. The turn is blocked on

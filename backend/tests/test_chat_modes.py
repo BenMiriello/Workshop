@@ -1,13 +1,21 @@
-"""Direct, Orchestrated, Auto: whether work leaves the conversation, and
-whether it waits to be let out.
+"""Direct and Auto: whether work leaves the conversation.
 
-The first two already existed as a field with no behaviour. The other field in
-that state, `participants`, was deleted in T2 rather than given one; these were
-given one. Those are the two honest endings, and a field must reach one of them.
-These tests pin the behaviour they were given, and in particular that the guard
-is REAL: the prompt asks the model not to file in Direct mode, but a prompt is a
-request. A chat in Direct mode must be unable to file even if the model emits a
-block anyway.
+The field already existed with no behaviour. The other field in that state,
+`participants`, was deleted in T2 rather than given one; this one was given one.
+Those are the two honest endings, and a field must reach one of them. These
+tests pin the behaviour it was given, and in particular that the guard is REAL:
+the prompt asks the model not to file in Direct mode, but a prompt is a request.
+A chat in Direct mode must be unable to file even if the model emits a block
+anyway.
+
+THERE WERE THREE MODES UNTIL 2026-08-27. `orchestrated` ("file it, then wait for
+approval") and `auto` ("file it and run it") differed only in the prose
+`chat_mode_block` emitted, never in a code path, and the operator states no
+intended distinction between them. `auto` absorbed `orchestrated`. The retired
+value is still on disk, so the tests that used to pin its behaviour now pin
+where it LANDS -- on `auto`, and specifically not on `direct`, because falling
+through to the default would turn 44 live threads that file into threads that
+do not.
 """
 import sys
 from pathlib import Path
@@ -38,15 +46,29 @@ class TestModeStatement:
         broken assistant."""
         assert "native subagent" in chat_context.chat_mode_block("direct")
 
-    def test_orchestrated_names_the_ticket_as_the_record(self):
+    def test_auto_names_the_ticket_as_the_record(self):
+        """"Ticket is the record" is the load-bearing sentence of the mode that
+        files: it says WHERE the work lives once it leaves. It was written on
+        the orchestrated branch and had to survive the collapse, or the
+        surviving mode would tell the model to file without saying where the
+        filing goes."""
+        out = chat_context.chat_mode_block("auto")
+        assert "AUTO" in out
+        assert "Ticket is the record" in out
+
+    def test_the_retired_mode_still_names_the_ticket_as_the_record(self):
+        """A thread stored as `orchestrated` gets the auto block, not the direct
+        one. Its prompt still has to say where work goes."""
         out = chat_context.chat_mode_block("orchestrated")
-        assert "ORCHESTRATED" in out
+        assert "AUTO" in out
+        assert "ORCHESTRATED" not in out
         assert "Ticket is the record" in out
 
     def test_unset_defaults_to_direct(self):
-        """DIRECT IS THE DEFAULT (2026-08-05, operator's call). Orchestrated was,
-        which made every passing remark a candidate for a ticket. Work that
-        outlives the chat is the exception and should be the thing you ask for.
+        """DIRECT IS THE DEFAULT (2026-08-05, operator's call). The mode that
+        files was, which made every passing remark a candidate for a ticket.
+        Work that outlives the chat is the exception and should be the thing you
+        ask for.
 
         A chat with no stored mode follows the default rather than being pinned
         to whatever it was created under — otherwise changing the default would
@@ -62,17 +84,74 @@ class TestModeStatement:
         from services import chat_store
         assert chat_context.DEFAULT_CHAT_MODE is chat_store.DEFAULT_CHAT_MODE
         assert chat_store._clamp_mode(None) == "direct"
-        assert chat_store._clamp_mode("orchestrated") == "orchestrated"
+
+
+class TestTheRetiredModeMapsForward:
+    """`orchestrated` is off the enum and still on disk: 44 threads and one
+    prefs file carried it when it was retired, and neither is rewritten. Every
+    read goes through `_clamp_mode`, so this is the whole migration."""
+
+    def test_it_resolves_to_auto(self):
+        from services import chat_store
+        assert chat_store._clamp_mode("orchestrated") == "auto"
+
+    def test_it_specifically_does_not_resolve_to_direct(self):
+        """THE FAILURE THIS EXISTS TO CATCH. A retired value that falls through
+        to the default is not a rename, it is a behaviour change: 44 chats that
+        file work would silently stop filing it. Spelled as its own assertion
+        because `== "auto"` above passes for the wrong reason if someone later
+        makes `auto` the default."""
+        from services import chat_store
+        assert chat_store._clamp_mode("orchestrated") != chat_store.DEFAULT_CHAT_MODE
+        assert chat_store._clamp_mode("orchestrated") != "direct"
+
+    def test_it_is_not_offered_again(self):
+        """Mapped on read, never handed back out. A retired value in the offered
+        list is a control that can put a thread back on it."""
+        from services import chat_store
+        assert "orchestrated" not in chat_store.CHAT_MODES
+
+    def test_junk_still_falls_to_the_default(self):
+        """The forward map is one named value, not a general "anything that
+        files" guess."""
+        from services import chat_store
+        assert chat_store._clamp_mode("sideways") == "direct"
+
+    def test_a_stored_thread_reads_as_auto(self, tmp_path, monkeypatch):
+        """The file log is the record and it is NOT rewritten, so a meta.json
+        written before the collapse has to read as `auto` through the store."""
+        from services import chat_log, chat_store, ownership
+        monkeypatch.setattr(ownership, "_RUNTIME", tmp_path)
+        ownership.set_current_owner(1)
+        try:
+            tid = chat_store.create_thread(context_key="general")["id"]
+            chat_log.patch_meta_sync(tid, mode="orchestrated")
+            assert chat_store.get_thread(tid)["mode"] == "auto"
+            assert [t["mode"] for t in chat_store.list_threads()] == ["auto"]
+        finally:
+            ownership.clear_current_owner()
+
+    def test_a_stored_default_reads_as_auto(self, tmp_path, monkeypatch):
+        """Same for the operator's default for new chats, which lives in
+        prefs.json beside the threads."""
+        from services import chat_store, ownership
+        monkeypatch.setattr(ownership, "_RUNTIME", tmp_path)
+        ownership.set_current_owner(1)
+        try:
+            chat_store._write_pref("default_mode", "orchestrated")
+            assert chat_store.get_default_mode() == "auto"
+            assert chat_store.create_thread("general")["mode"] == "auto"
+        finally:
+            ownership.clear_current_owner()
 
 
 class TestAutoMode:
-    """The third policy: file and run without asking, stop only for a question
-    that cannot be answered. Without it the Work settings control is a two-way
-    switch drawn as a three-way one."""
+    """The one policy for work that leaves: file and run without asking, stop
+    only for a question that cannot be answered."""
 
     def test_it_is_a_mode(self):
         from services import chat_store
-        assert chat_store.CHAT_MODES == ("direct", "orchestrated", "auto")
+        assert chat_store.CHAT_MODES == ("direct", "auto")
         assert chat_store._clamp_mode("auto") == "auto"
 
     def test_it_does_not_become_the_default(self):
@@ -89,8 +168,8 @@ class TestAutoMode:
         assert "WITHOUT asking first" in out
 
     def test_it_keeps_the_ticket_as_the_record(self):
-        """Auto is orchestrated minus the approval step, not a third place for
-        work to live."""
+        """The ticket is where work that leaves lives. The chat links to it; it
+        is not a second place the work is kept."""
         assert "Ticket is the record" in chat_context.chat_mode_block("auto")
 
     def test_the_question_goes_through_the_ticket(self):
@@ -106,8 +185,8 @@ class TestAutoMode:
 
     def test_an_auto_chat_may_file(self, tmp_path, monkeypatch):
         """The filing guard tests for `direct` and nothing else, which is what
-        makes auto file like orchestrated does. Pinned because a guard written
-        as an allowlist later would silently exclude it.
+        makes auto file. Pinned because a guard written as an allowlist later
+        would silently exclude it.
 
         Pointed at a temp store for the reason `test_unset_mode_still_files`
         is: filing into the real workshop queue is a production side effect."""
@@ -160,12 +239,23 @@ class TestModeRoundTrip:
         """The mode line is re-stated every turn, which is what makes a
         mid-chat switch take effect on the next one."""
         from services import chat_store
-        t = chat_store.create_thread(context_key="general", mode="orchestrated")
-        assert "ORCHESTRATED" in chat_context.chat_mode_block(
-            chat_store.get_thread(t["id"])["mode"])
-        client.post(f"/chat/threads/{t['id']}/mode", json={"mode": "auto"})
+        t = chat_store.create_thread(context_key="general", mode="auto")
         assert "AUTO" in chat_context.chat_mode_block(
             chat_store.get_thread(t["id"])["mode"])
+        client.post(f"/chat/threads/{t['id']}/mode", json={"mode": "direct"})
+        assert "DIRECT" in chat_context.chat_mode_block(
+            chat_store.get_thread(t["id"])["mode"])
+
+    def test_the_route_maps_the_retired_value_forward(self, client):
+        """A tab opened before the collapse still has `orchestrated` in its
+        bundle. Refusing it would read as the control being broken on the one
+        chat that has been filing for months; it stores as `auto`."""
+        from services import chat_store
+        t = chat_store.create_thread(context_key="general")
+        r = client.post(f"/chat/threads/{t['id']}/mode", json={"mode": "orchestrated"})
+        assert r.status_code == 200
+        assert r.json()["mode"] == "auto"
+        assert chat_store.get_thread(t["id"])["mode"] == "auto"
 
     def test_junk_is_still_refused(self, client):
         from services import chat_store
@@ -176,7 +266,7 @@ class TestModeRoundTrip:
 
     def test_a_new_chat_can_default_to_auto(self, client):
         """The operator's default for new chats is the same enum, so the
-        settings screen can offer all three."""
+        settings screen can offer both."""
         from services import chat_store
         assert client.post("/chat/prefs", json={"default_mode": "auto"}).status_code == 200
         assert chat_store.create_thread(context_key="general")["mode"] == "auto"

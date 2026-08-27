@@ -902,24 +902,25 @@ from services.chat_store import CHAT_MODES, DEFAULT_CHAT_MODE  # noqa: E402,F401
 def chat_mode_block(mode: str | None) -> str:
     """How this chat handles work, stated every turn.
 
-    Three modes. The first two already existed as a field
-    (`chat_store.set_thread_mode`) with no behaviour, and rather than invent a
-    second vocabulary this gave the existing names their meaning. The third is
-    the operator's explicit "stop asking" setting.
+    TWO modes, because there is one question: does work leave this conversation?
+
+      direct  the conversation does the work itself. Claude Code's native
+              subagents are available for context isolation, and their results
+              come back here. Nothing is tracked outside the chat; the
+              transcript IS the record.
+      auto    work leaves as Tickets, run by Workshop agents under the
+              governance model, reported back. The Ticket is the record, and it
+              is filed and started without asking first.
+
+    There were three. `orchestrated` was "file it, but wait to be let out" and
+    `auto` was the same thing minus that wait -- two answers to a question the
+    operator does not ask, differing in this prose and in nothing else, with no
+    code path between them. They are one mode now, named `auto`, and the
+    language that was worth keeping (the Ticket is the record) came across.
 
     (The field this used to be compared to, `participants`, was never given a
     meaning and is deleted. That is the other half of the same rule: a field
     with no behaviour gets one or gets removed.)
-
-      direct        the conversation does the work itself. Claude Code's native
-                    subagents are available for context isolation, and their
-                    results come back here. Nothing is tracked outside the chat;
-                    the transcript IS the record.
-      orchestrated  work leaves as Tickets, run by Workshop agents under the
-                    governance model, reported back. The Ticket is the record.
-      auto          orchestrated without the approval step: file and run, and
-                    come back only for a question that cannot be answered from
-                    the conversation and the repo.
 
     Re-stated on EVERY turn rather than only in the first-turn persona, because
     the mode is switchable mid-conversation. The protocols themselves are large
@@ -927,9 +928,11 @@ def chat_mode_block(mode: str | None) -> str:
     overriding them in the direction that removes capability (direct) rather
     than adding it.
     """
-    # Clamp rather than test for "direct": an unrecognised value is not a fourth
-    # mode, and letting it fall through here meant junk silently selected
-    # Orchestrated no matter which mode was the default.
+    # Clamp rather than test for "direct": an unrecognised value is not a third
+    # mode, and letting it fall through here meant junk silently selected the
+    # mode that files no matter which mode was the default. The clamp is also
+    # what maps a stored legacy `orchestrated` onto `auto` rather than onto the
+    # default, so a thread that has been filing for months goes on filing.
     from services.chat_store import _clamp_mode
     resolved = _clamp_mode(mode)
     if resolved == "direct":
@@ -942,22 +945,17 @@ def chat_mode_block(mode: str | None) -> str:
             "isolated context, use a native subagent and bring the summary back "
             "here. The transcript is the record."
         )
-    if resolved == "auto":
-        return (
-            "=== CHAT MODE: AUTO ===\n"
-            "Work that outlives this conversation leaves as a Ticket and is "
-            "reported back here. The Ticket is the record; this chat links to "
-            "it. File it and start it WITHOUT asking first: the operator has "
-            "already approved that, so a confirmation question about whether to "
-            "file or whether to run is one he has answered. Come back only for "
-            "a question you cannot answer from this conversation and the work "
-            "itself, and when you do, ask it through the ticket so the answer "
-            "reaches the next attempt."
-        )
     return (
-        "=== CHAT MODE: ORCHESTRATED ===\n"
-        "Work that outlives this conversation leaves as a Ticket and is reported "
-        "back here. The Ticket is the record; this chat links to it."
+        "=== CHAT MODE: AUTO ===\n"
+        "Work that outlives this conversation leaves as a Ticket, is run by "
+        "Workshop agents under the governance model, and is reported back here. "
+        "The Ticket is the record; this chat links to it. File it and start it "
+        "WITHOUT asking first: the operator has already approved that by "
+        "choosing this mode, so a confirmation question about whether to file "
+        "or whether to run is one they have answered. Come back only for a "
+        "question you cannot answer from this conversation and the work itself, "
+        "and when you do, ask it through the ticket so the answer reaches the "
+        "next attempt."
     )
 
 

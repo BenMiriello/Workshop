@@ -675,7 +675,7 @@ def _thread_fields(meta: dict) -> dict:
     # Imported here, not at module scope: `services.chat_store` reaches this
     # module through chat_log -> chat_branches -> chat_repo, so a top-level
     # import would close that loop.
-    from services.chat_store import CHAT_MODES, DEFAULT_CHAT_MODE
+    from services.chat_store import _clamp_mode
     from services import scope_tree
 
     ctx = meta.get("context_key") or "general"
@@ -689,17 +689,19 @@ def _thread_fields(meta: dict) -> dict:
         # every one of the 27 damaged threads. The mirror now self-heals: it
         # writes the current derivation on every sync.
         "scope": scope_tree.scope_for_context(ctx),
-        # THE DEFAULT COMES FROM chat_store, it is not restated here. A thread
-        # whose meta carries no `mode` key at all is the common case (nothing
-        # writes one until the operator switches modes), so this fallback IS
-        # the answer for most threads, and it has to be the same answer the
-        # file fold gives: `chat_store.list_threads` resolves it as
-        # `meta.get("mode") or DEFAULT_CHAT_MODE`. Hardcoding "orchestrated"
-        # here made the mirror disagree with the file about 32 of 68 threads,
-        # every one of them a thread nobody had ever switched. Measured
-        # 2026-08-15 while proving list parity.
-        "mode": meta.get("mode") if meta.get("mode") in CHAT_MODES
-        else DEFAULT_CHAT_MODE,
+        # THE RESOLUTION COMES FROM chat_store, it is not restated here. A
+        # thread whose meta carries no `mode` key at all is the common case
+        # (nothing writes one until the operator switches modes), so the
+        # fallback IS the answer for most threads, and it has to be the same
+        # answer the file fold gives -- `chat_store.list_threads` resolves it
+        # through the very same `_clamp_mode`. Hardcoding "orchestrated" here
+        # made the mirror disagree with the file about 32 of 68 threads, every
+        # one of them a thread nobody had ever switched. Measured 2026-08-15
+        # while proving list parity. Re-spelling the clamp as an `in CHAT_MODES`
+        # test would have quietly reintroduced that disagreement on 2026-08-27,
+        # when `orchestrated` left the enum: it would mirror those threads as
+        # `direct` while the file fold reads them as `auto`.
+        "mode": _clamp_mode(meta.get("mode")),
         "title": (meta.get("title") or None),
         "seed_title": (meta.get("_seed_title") or None),
         "model": meta.get("model") or None,

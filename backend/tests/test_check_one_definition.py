@@ -109,10 +109,16 @@ class TestScanTypescript:
     def test_finds_union_type(self, mod, tmp_path, monkeypatch):
         monkeypatch.setattr(mod, "_WORKSHOP", tmp_path)
         f = tmp_path / "a.ts"
-        f.write_text("export type ChatMode = 'direct' | 'orchestrated' | 'auto';\n")
+        # A SYNTHETIC union, not the real ChatModeId: this pins the scanner's
+        # parsing, and the scanner only looks at declarations of >= 3 string
+        # literals. Spelling a live enum here made the fixture something that
+        # had to be edited whenever that enum changed (it was
+        # `direct | orchestrated | auto` until the chat modes collapsed to two,
+        # at which point the real union stopped being scannable at all).
+        f.write_text("export type WidgetStatus = 'alpha' | 'beta' | 'gamma';\n")
         decls = mod.scan_typescript([f])
         assert len(decls) == 1
-        assert decls[0].values == frozenset({"direct", "orchestrated", "auto"})
+        assert decls[0].values == frozenset({"alpha", "beta", "gamma"})
 
     def test_finds_const_array(self, mod, tmp_path, monkeypatch):
         monkeypatch.setattr(mod, "_WORKSHOP", tmp_path)

@@ -440,8 +440,9 @@ def _sync_record(org_id, user_id, thread_ref: str, ev: dict, meta: dict) -> None
             # THE FULL FIELD SET, not a 3-column stand-in. This used to pass
             # only context_key/scope/title, so mode, model, scope_locked,
             # agent_slug and everything else silently took the column
-            # defaults (mode defaulted to "orchestrated" even for a "direct"
-            # chat) and NOTHING ever corrected them afterward -- the thread
+            # defaults (the mode column's server default was "orchestrated"
+            # then, so a "direct" chat mirrored as orchestrated) and NOTHING
+            # ever corrected them afterward -- the thread
             # list now reads these columns, so a row created this thin would
             # misreport itself for its whole life. `chat_repo._thread_fields`
             # is the same mapping the backfill uses at creation.

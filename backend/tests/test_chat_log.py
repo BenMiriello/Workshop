@@ -601,9 +601,9 @@ class TestMigration:
         assert _seqs(tid) == [1, 2, 3, 4, 5]
 
     def test_the_prefs_file_is_not_a_thread(self, owned):
-        chat_store.set_default_mode("orchestrated")
+        chat_store.set_default_mode("auto")
         assert chat_log.migrate_owner() == {"migrated": 0, "skipped": 0}
-        assert chat_store.get_default_mode() == "orchestrated"
+        assert chat_store.get_default_mode() == "auto"
 
     def test_an_unreadable_document_is_left_where_it_is(self, owned):
         d = chat_log.chat_dir()

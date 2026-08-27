@@ -71,18 +71,18 @@ class TestDefaultModePreference:
         assert chat_store.create_thread("general")["mode"] == "direct"
 
     def test_a_new_chat_starts_in_the_operators_default(self, store):
-        chat_store.set_default_mode("orchestrated")
-        assert chat_store.create_thread("general")["mode"] == "orchestrated"
+        chat_store.set_default_mode("auto")
+        assert chat_store.create_thread("general")["mode"] == "auto"
 
     def test_an_explicit_mode_still_wins(self, store):
-        chat_store.set_default_mode("orchestrated")
+        chat_store.set_default_mode("auto")
         assert chat_store.create_thread("general", mode="direct")["mode"] == "direct"
 
     def test_changing_the_default_leaves_existing_chats_alone(self, store):
         """"Default" means the mode a NEW chat starts in. Rewriting live chats
         would silently move work out of conversations already in flight."""
         tid = chat_store.create_thread("general")["id"]
-        chat_store.set_default_mode("orchestrated")
+        chat_store.set_default_mode("auto")
         assert chat_store.get_thread(tid)["mode"] == "direct"
 
     def test_junk_is_clamped_rather_than_stored(self, store):
@@ -91,6 +91,6 @@ class TestDefaultModePreference:
     def test_the_prefs_file_is_not_a_thread(self, store):
         """It lives in the same directory as the threads, like drafts.json. A
         list that reads it as a thread 500s or shows a ghost chat."""
-        chat_store.set_default_mode("orchestrated")
+        chat_store.set_default_mode("auto")
         chat_store.create_thread("general")
         assert len(chat_store.list_threads()) == 1

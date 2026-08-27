@@ -1383,8 +1383,12 @@ class Change(Base, Timestamps, SoftDelete):
 
 # CHAT_MODES is imported from `services.chat_store` at the top of this file: it
 # was a mirrored restatement here until 2026-08-17, and the two copies had even
-# drifted into different orders. Adding a value there means a migration for
-# `ck_chat_thread_mode` as well; the constraint is not derived at runtime.
+# drifted into different orders. Adding OR REMOVING a value there means a
+# migration for `ck_chat_thread_mode` as well; the constraint is not derived at
+# runtime. Removing one also means a data migration FIRST -- narrowing the
+# constraint under rows that still hold the retired value fails against the
+# live database (see revision `a4e2c7b19f30`, which collapsed `orchestrated`
+# into `auto`).
 MESSAGE_ROLES = ("user", "assistant")
 
 # What a node in the transcript can be. All three occupy a POSITION, which is
@@ -1429,8 +1433,14 @@ class ChatThread(Base, Timestamps, SoftDelete):
     context_key: Mapped[str] = mapped_column(String(128), nullable=False)
     scope: Mapped[str] = mapped_column(String(128), nullable=False)
     scope_locked: Mapped[bool] = mapped_column(nullable=False, server_default=text("false"))
+    # The server default matches `chat_store.DEFAULT_CHAT_MODE`. It used to be
+    # `orchestrated`, which the check constraint no longer admits: a row
+    # inserted without a mode would have failed it. Every writer supplies one
+    # (`db.chat_repo` clamps through `chat_store._clamp_mode`), so this only
+    # ever answers for a hand-written INSERT -- and it should answer with the
+    # same value the file fold gives a thread whose meta carries no mode.
     mode: Mapped[str] = mapped_column(String(16), nullable=False,
-                                      server_default="orchestrated")
+                                      server_default="direct")
 
     # STAGE A (app-is-the-entity-2026-08-20.md sec 4.2, 5.1). Nullable and
     # additive: `scope`/`context_key` remain how a thread is addressed and

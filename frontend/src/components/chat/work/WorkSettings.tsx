@@ -105,12 +105,12 @@ export default function WorkSettings({
           opposite of what the menu row this replaces did. A menu row is one
           line and a description in it wins the width fight with the name; a
           settings row is two lines and the second one is where the difference
-          between "draft it" and "run it" is actually explained. */}
-      {/* A RADIO GROUP, because this is one three-way choice. It was three
-          buttons carrying `aria-pressed`, which a screen reader announces as
-          three independent toggles that happen to look exclusive: nothing said
-          they were alternatives, nothing said how many there were, and arrow
-          keys did not move between them. Settings.tsx states the same choice
+          between keeping work here and sending it out is actually explained. */}
+      {/* A RADIO GROUP, because this is one exclusive choice among the modes
+          `chatModes` offers. It was a set of buttons carrying `aria-pressed`,
+          which a screen reader announces as independent toggles that happen to
+          look exclusive: nothing said they were alternatives, nothing said how
+          many there were, and arrow keys did not move between them. Settings.tsx states the same choice
           with the kit's `Segmented`; that primitive is one compact line per
           option and each option here needs a second line of gloss, so the
           semantics are matched rather than the component. */}

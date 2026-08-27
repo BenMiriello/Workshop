@@ -155,9 +155,9 @@ export function useChatThread({
   const activeIdRef = useRef<string | null>(activeId);
   activeIdRef.current = activeId;
 
-  // How this chat handles work: Direct (stays here, native subagents) or
-  // Orchestrated (leaves as tickets). Server state, mirrored locally so the
-  // control responds immediately. The seed matches chat_store.DEFAULT_CHAT_MODE;
+  // How this chat handles work: Direct (stays here, native subagents) or Auto
+  // (leaves as tickets, filed and run without asking). Server state, mirrored
+  // locally so the control responds immediately. The seed matches chat_store.DEFAULT_CHAT_MODE;
   // a seed that disagrees makes the control flicker to the other mode on open,
   // which reads as the setting not having stuck.
   const [chatMode, setChatMode] = useState<ChatModeId>("direct");

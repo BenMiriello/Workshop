@@ -730,7 +730,10 @@ function ChatSection() {
   }, []);
 
   const current: ChatPrefsDraft = {
-    default_mode: (prefs?.default_mode ?? "direct") as ChatModeId,
+    // Resolved through `chatModeDef`, not cast. The server clamps, but a
+    // retired id (`orchestrated`) reaching this as a bare cast would leave the
+    // Segmented with no matching option, i.e. a blank control.
+    default_mode: chatModeDef(prefs?.default_mode ?? undefined).id,
     default_effort: prefs?.default_effort ?? NO_PREFERENCE,
     default_permission_mode: prefs?.default_permission_mode ?? NO_PREFERENCE,
   };

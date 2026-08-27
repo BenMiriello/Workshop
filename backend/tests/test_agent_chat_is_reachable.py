@@ -112,7 +112,7 @@ class TestTheKeySurvives:
         that somehow got an `agent:` key lost it on the NEXT write of any field,
         because `_promotion_patch` ran inside `_patch`."""
         tid = chat_store.create_thread("agent:quill")["id"]
-        chat_store.set_thread_mode(tid, "orchestrated")
+        chat_store.set_thread_mode(tid, "auto")
         chat_store.set_thread_model(tid, "claude-haiku-4-5-20251001")
         chat_store.append_message(tid, "user", "hello")
         chat_store.archive_thread(tid)
