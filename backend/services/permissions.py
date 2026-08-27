@@ -83,8 +83,16 @@ VERBS = _VERBS
 # per-owner — `notes_vault.vault_root()` returns `.runtime/users/<id>/notes/` for
 # anyone else. So this constant names one real directory for the addressing
 # layer, and is NOT the path a non-operator's note operations resolve against.
-NOTES_VAULT_ROOT = Path(os.environ.get(
-    "WORKSHOP_NOTES_VAULT", str(Path.home() / "notes")))
+# NO HOME-DIRECTORY DEFAULT. This joined a folder name onto `Path.home()`,
+# which is one
+# operator's folder written into platform source: it kept working perfectly on
+# the machine that has it and was wrong on every other, and it is exactly what
+# `home_path_sites` in scripts/check_no_app_names.py counts. `paths.env_path`
+# keeps the documented override and derives the fallback from the runtime
+# directory instead, so an install that has not configured a vault gets
+# `.runtime/notes` -- the same place every NON-operator owner's vault already
+# lives (`notes_vault.vault_root`), rather than a stranger's home.
+NOTES_VAULT_ROOT = paths.env_path("WORKSHOP_NOTES_VAULT", "notes")
 
 OPERATOR = "operator"
 AGENT = "agent"

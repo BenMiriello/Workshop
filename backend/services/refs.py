@@ -165,7 +165,7 @@ def extract_refs(text: str, *, note_scope: str | None = None) -> list[str]:
     sec 12 Phase 3 / sec D of the ticket): a note that links `[[Other Note]]`
     is extracted as `workshop:note/<note_scope>/<id>` through the SAME title
     lookup `resolve_ref` would use, not a second link language. This is scoped
-    to knowledge notes on purpose -- the `~/notes` vault's `[[wikilinks]]`
+    to knowledge notes on purpose -- the Notes app vault's `[[wikilinks]]`
     resolve by vault-relative PATH over a frozen, unrelated corpus (design doc
     sec 9), and forcing them through a scope+id lookup would resolve nothing
     real. See `frontend/src/pages/apps/notes/wikilinks.ts`'s own docstring for

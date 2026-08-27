@@ -29,7 +29,7 @@ const lease: LeaseRef = {
 const entry: DirectoryEntry = {
   session_id: "job_178748",
   session_kind: "run",
-  principal: "clawd-a",
+  principal: "test-principal",
   activity: "working",
   scope: "development",
   subject_kind: "ticket",
@@ -103,7 +103,7 @@ describe("holderStatus", () => {
 
 describe("the holder's lines", () => {
   it("names the principal and the session, because two sweeps look alike", () => {
-    expect(holderName(entry)).toBe("clawd-a (run job_178748)");
+    expect(holderName(entry)).toBe("test-principal (run job_178748)");
     expect(holderName({ ...entry, principal: null })).toBe("run job_178748");
   });
 
@@ -346,7 +346,7 @@ describe("reader staleness", () => {
 
 describe("holderLine", () => {
   it("is one line: who, then what it is doing", () => {
-    expect(holderLine(entry)).toBe("clawd-a (run job_178748), working");
+    expect(holderLine(entry)).toBe("test-principal (run job_178748), working");
   });
 
   it("does not trail a comma when the channel reported no activity", () => {

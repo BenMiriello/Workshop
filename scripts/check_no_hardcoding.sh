@@ -88,6 +88,9 @@ EXCLUDES=(
   ":!scratch/**" ":!tmp/**"
   # .gitignore names the instance paths it excludes; that is its job.
   ":!.gitignore"
+  # The sibling gate writes the home-path forms down in its own prose and
+  # regexes, so scanning it counts its explanation of what it counts.
+  ":!scripts/check_no_app_names.py"
   # Vendored/third-party text: a dependency's own metadata is not our source.
   ":!**/package-lock.json" ":!**/*.lock" ":!**/yarn.lock"
 )
@@ -144,9 +147,45 @@ _grep_in() { # $1=dir, rest = git-grep args
 }
 
 # Any of these is a path that exists on exactly one machine.
+#
+# FIVE FORMS, not one. Until 2026-08-27 this required a literal `/home/` or
+# `/Users/` prefix, so `~/notes`, `$HOME/Development/Workshop`,
+# `Path.home() / "notes"` and `expanduser("~/birdnet/...")` were all invisible
+# to it -- the same defect wearing four other spellings, and the reason a
+# hardcoded vault path survived in three backend files for months while both
+# gates reported clean.
+#
+# A LITERAL NAME JOINED ONTO HOME IS THE VIOLATION, not the API call.
+# `Path(value).expanduser()` on a configured value is the CORRECT pattern and
+# must not be flagged: a naive `expanduser\(|Path\.home\(\)` match returns 218
+# lines in this tree, almost all of them the right thing, and a probe that
+# cries wolf 200 times is a probe nobody reads. So each form is matched only
+# where a NAME follows.
+_HOME_FORMS='(/home/[a-z_][a-z0-9_-]*|/Users/[A-Za-z][A-Za-z0-9_-]*)/'
+_HOME_FORMS+='|["'"'"'`]~/[A-Za-z0-9._-]'
+_HOME_FORMS+='|\$\{?HOME\}?/[A-Za-z0-9._-]'
+_HOME_FORMS+='|Path\.home\(\)[[:space:]]*/[[:space:]]*["'"'"']'
+_HOME_FORMS+='|expanduser\([[:space:]]*["'"'"']~/'
+
+# NOT a finding, each for a stated reason. Kept in step with
+# `_HOME_PATH_ALLOWED` / `_HOME_PATH_TOOLCHAIN` in scripts/check_no_app_names.py,
+# which makes the same judgment for the same reason: is this a fact about THIS
+# INSTALL, or about a TOOL every install of it has?
+#   .claude/.claude.json  the Claude Code CLI's own user config
+#   .config/.local/.cache/.ssh/.gitconfig  XDG and standard user config
+#   .nvm/.cloudflared     third-party tool homes, same path on every machine
+#   workshop              this system's own state, under the home by design
+#   /home/user, /Users/user   the documented placeholder in test fixtures,
+#                         the same role @example.com plays for probe_mail
+#   @WORKSHOP_ROOT@       the substitution token in generated unit files
+_HOME_ALLOWED='@WORKSHOP_ROOT@'
+_HOME_ALLOWED+='|(~|\$\{?HOME\}?)/\.(claude|config|local|cache|ssh|gitconfig|nvm|cloudflared)'
+_HOME_ALLOWED+='|Path\.home\(\)[[:space:]]*/[[:space:]]*["'"'"'](\.claude|\.config|\.local|\.cache|\.ssh|\.gitconfig|workshop)'
+_HOME_ALLOWED+='|(~|\$\{?HOME\}?)/workshop'
+_HOME_ALLOWED+='|/home/user/|/Users/user/'
+
 probe_homes() {
-  _grep_in "$1" -nIE '(/home/[a-z_][a-z0-9_-]*|/Users/[A-Za-z][A-Za-z0-9_-]*)/' \
-    | grep -v '@WORKSHOP_ROOT@' || true
+  _grep_in "$1" -nIE "$_HOME_FORMS" | grep -vE "$_HOME_ALLOWED" || true
 }
 # Every needle, concatenated: one category, one count. Which needle matched is
 # in the printed lines; the gate only needs to know the category got worse.

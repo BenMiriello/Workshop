@@ -10,9 +10,10 @@ Every path that comes from a request is contained to the vault root (resolve +
 read or write outside the vault. Writes are atomic (temp file + `os.replace`) so
 an external editor never observes a half-written file.
 
-The operator's vault lives at `$WORKSHOP_NOTES_VAULT` (default `~/notes`) —
-durable user data outside the (gitignored) repo working tree, independently
-backup-able, and openable in real Obsidian untouched. Every OTHER owner gets
+The operator's vault lives at `$WORKSHOP_NOTES_VAULT` (set in instance.env; no
+default, since a folder in one operator's home is not something platform source
+can know) — durable user data outside the (gitignored) repo working tree,
+independently backup-able, and openable in real Obsidian untouched. Every OTHER owner gets
 their own vault under `.runtime/users/<owner_id>/notes/`; see `vault_root`.
 """
 from __future__ import annotations
@@ -23,17 +24,20 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from wsplatform import paths
+
 
 def operator_vault_root() -> Path:
-    """The operator's own vault: `$WORKSHOP_NOTES_VAULT`, default `~/notes`.
+    """The operator's own vault: `$WORKSHOP_NOTES_VAULT`.
 
-    Kept as a plain folder in the operator's home, outside `.runtime`, because
-    real Obsidian is pointed at it — moving it under the per-owner runtime tree
-    would break an editor this module deliberately does not own.
+    NO HOME-DIRECTORY DEFAULT. This used to fall back to `Path.home() /
+    "notes"`, one operator's folder written into source; see the same note in
+    `services/permissions.py`. An operator who points real Obsidian at a folder
+    in his home sets `WORKSHOP_NOTES_VAULT` to it in instance.env, which is
+    where a fact about one installation belongs. Unconfigured, the vault is
+    `.runtime/notes`, alongside every other owner's.
     """
-    env = os.environ.get("WORKSHOP_NOTES_VAULT")
-    base = Path(env) if env else Path.home() / "notes"
-    root = base.resolve()
+    root = paths.env_path("WORKSHOP_NOTES_VAULT", "notes").resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -57,7 +61,7 @@ def vault_root() -> Path:
     Note this is where the vault DIVERGES from `permissions.NOTES_VAULT_ROOT`,
     which names the operator's vault specifically for the instance-level Store
     declaration (`services/stores.py`). See
-    docs/masini/security-audit-2026-08-11-scope-separation.md section 3.
+    the 2026-08-11 scope-separation security audit section 3.
     """
     from services import ownership
     if ownership.caller_is_operator() or ownership.owner_or_none() is None:

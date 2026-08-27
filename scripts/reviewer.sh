@@ -412,6 +412,38 @@ else
 fi
 export HARDCODE_CHECK
 
+# 4.6b-ii THE SAME CHECK, OVER docs/ AND *.md. Added 2026-08-27.
+#
+# `check_no_hardcoding.sh` excludes `docs/**` and `*.md` unless `--all` is
+# passed, and nothing passed it. So 124 tracked knowledge notes, five security
+# audits of the operator's own machine and 38 KB of his raw voice dictation sat
+# outside every gate this repo actually runs -- while the run above printed
+# "no-hardcoding: clean" and meant only "clean in the half we looked at". A
+# flag that exists and is never passed is not coverage; it is the appearance of
+# coverage, which is worse.
+#
+# So the docs half runs too, as its own gate with its own verdict, delta-mode
+# for the same reason the code half is delta-mode: measured 2026-08-27 the
+# tracked docs tree carries 116 home paths, 95 identity references and 1 email
+# address, none of them written by whatever run is being reviewed, and failing
+# every run on inherited debt is precisely what produced 2,066 loop jobs with
+# `tasks_done: 0`. Delta mode still fails the moment a diff ADDS one, which is
+# the behaviour that was missing entirely.
+#
+# The ABSOLUTE docs number is not swept under this. `scripts/check_no_hardcoding.sh
+# --all` reports it on demand, and `scripts/check_fresh_clone.sh` runs it in
+# absolute mode against a real clone and FAILS on it -- that is the target that
+# is meant to be run and meant to be able to fail.
+HARDCODE_DOCS_CHECK="skip"
+if [[ -x "$WORKSHOP/scripts/check_no_hardcoding.sh" ]]; then
+  if bash "$WORKSHOP/scripts/check_no_hardcoding.sh" --all --since "$WS_BASELINE" >/dev/null 2>&1; then
+    HARDCODE_DOCS_CHECK="ok"
+  else
+    HARDCODE_DOCS_CHECK="fail"
+  fi
+fi
+export HARDCODE_DOCS_CHECK
+
 # 4.6c One definition per enum (R3, coherence-overhaul-2026-08-16.md). Gated on
 # touching a file the checker actually scans (backend .py, frontend/packages-ui
 # .ts/.tsx) — cheap either way (~0.6s full-repo), but a docs-only or shell-only
@@ -866,6 +898,10 @@ if [[ "$HARDCODE_CHECK" == "fail" ]]; then
   REASONS+=("hardcoded_identity")
   COMPLETE="false"
 fi
+if [[ "$HARDCODE_DOCS_CHECK" == "fail" ]]; then
+  REASONS+=("hardcoded_identity_in_docs")
+  COMPLETE="false"
+fi
 if [[ "$ONE_DEF_CHECK" == "fail" ]]; then
   REASONS+=("duplicate_definitions:${ONE_DEF_COUNT}")
   COMPLETE="false"
@@ -1014,6 +1050,10 @@ out = {
     "design":    os.environ["DESIGN_CHECK"],
     "pluggable_apps": os.environ["APPS_CHECK"],
     "hardcoding": os.environ.get("HARDCODE_CHECK", "skip"),
+    # The same probes over docs/ and *.md, which `--all` covers and nothing
+    # used to pass. Separate verdict so "code clean, docs dirty" cannot read
+    # as clean. See section 4.6b-ii.
+    "hardcoding_docs": os.environ.get("HARDCODE_DOCS_CHECK", "skip"),
     # T6 ratchet (coherence-overhaul-2026-08-16.md §7). `one_definition` gates
     # (see REASONS above); `occupancy_notice` and `doc_status_notice` are pure
     # visibility, never affecting `complete` — R2 is explicit that a

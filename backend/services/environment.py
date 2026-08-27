@@ -2,9 +2,11 @@
 Environment / weather data spine for the Birds app.
 
 Self-contained on purpose:
-  - Its OWN SQLite DB (~/birdnet/data/environment.db), separate from the
-    birds browser DB, so concurrent edits to birds_analyze.py never collide
-    and a schema change here can't corrupt detections.
+  - Its OWN SQLite DB ($BIRDNET_ENV_DB, from instance.env -- no default,
+    because a rig's data directory is not something platform source can
+    know), separate from the birds browser DB, so concurrent edits to
+    birds_analyze.py never collide and a schema change here can't corrupt
+    detections.
   - Astro (sun/moon) is pure-stdlib (NOAA sunrise/sunset + synodic moon
     phase) — no third-party deps, no network. Runnable anywhere, anytime.
   - Weather (Open-Meteo) + migration (BirdCast) fetchers use httpx and
@@ -29,14 +31,36 @@ import sqlite3
 import sys
 from datetime import date, datetime, timedelta, timezone
 
-# ---------------------------------------------------------------- paths / db
+from wsplatform import paths
 
-_DB = os.environ.get(
-    "BIRDNET_ENV_DB", os.path.expanduser("~/birdnet/data/environment.db")
-)
-_BROWSER_DB = os.environ.get(
-    "BIRDNET_BROWSER_DB", os.path.expanduser("~/birdnet/data/browser-stations.db")
-)
+# ---------------------------------------------------------------- paths / db
+#
+# BOTH PATHS COME FROM CONFIG, WITH NO DEFAULT. They used to fall back to
+# a folder under the operator's home, which is one rig's answer: correct
+# forever on the box
+# that has it, wrong on every other, and invisible from inside the
+# install that has it. Same class of defect as a hardcoded hostname, and it is
+# what `home_path_sites` in scripts/check_no_app_names.py counts.
+#
+# The two are deliberately different in kind. The environment DB is this
+# module's OWN store -- it is written to, so not having a location is a
+# configuration error and says so. The browser DB belongs to the detection
+# rig; this module only ever reads it, and already treats a missing file as
+# "no detections yet", so an unconfigured one degrades to the same empty
+# answer instead of taking the astro layer down with it.
+_ENV_DB_VAR = "BIRDNET_ENV_DB"
+_BROWSER_DB_VAR = "BIRDNET_BROWSER_DB"
+
+
+def _db() -> str:
+    return str(paths.required_env_path(
+        _ENV_DB_VAR, "this instance's environment/weather SQLite database"))
+
+
+def _browser_db() -> str | None:
+    """The detection rig's browser DB, or None when this install has no rig."""
+    raw = (os.environ.get(_BROWSER_DB_VAR) or "").strip()
+    return os.path.expanduser(raw) if raw else None
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS astro (
@@ -75,8 +99,9 @@ CREATE TABLE IF NOT EXISTS env_meta (key TEXT PRIMARY KEY, value TEXT);
 
 
 def _conn() -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(_DB), exist_ok=True)
-    c = sqlite3.connect(_DB, timeout=10)
+    db = _db()
+    os.makedirs(os.path.dirname(db), exist_ok=True)
+    c = sqlite3.connect(db, timeout=10)
     c.execute("PRAGMA busy_timeout=5000")
     c.executescript(_SCHEMA)
     return c
@@ -166,9 +191,10 @@ def astro_for(lat: float, lon: float, d: date) -> dict:
 
 def _locations():
     """Active locations with coords, read from the birds browser DB."""
-    if not os.path.exists(_BROWSER_DB):
+    bdb = _browser_db()
+    if not bdb or not os.path.exists(bdb):
         return []
-    c = sqlite3.connect(f"file:{_BROWSER_DB}?mode=ro", uri=True)
+    c = sqlite3.connect(f"file:{bdb}?mode=ro", uri=True)
     try:
         rows = c.execute(
             "SELECT id, name, lat, lon FROM locations "
@@ -181,9 +207,10 @@ def _locations():
 
 def _detection_date_range():
     """(min_date, max_date) over stored detections, or (None, None)."""
-    if not os.path.exists(_BROWSER_DB):
+    bdb = _browser_db()
+    if not bdb or not os.path.exists(bdb):
         return None, None
-    c = sqlite3.connect(f"file:{_BROWSER_DB}?mode=ro", uri=True)
+    c = sqlite3.connect(f"file:{bdb}?mode=ro", uri=True)
     try:
         r = c.execute("SELECT min(ts), max(ts) FROM browser_detections").fetchone()
     finally:
@@ -384,7 +411,7 @@ def status() -> dict:
     lo, hi = _detection_date_range()
     return {"astro_rows": a, "conditions_rows": w, "migration_rows": m,
             "detection_range": [lo and lo.isoformat(), hi and hi.isoformat()],
-            "locations": _locations(), "meta": meta, "db": _DB}
+            "locations": _locations(), "meta": meta, "db": _db()}
 
 
 def _main(argv):

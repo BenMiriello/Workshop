@@ -22,7 +22,9 @@
 #
 set -euo pipefail
 
-REPO="${WORKSHOP_REPO:-$HOME/Development/Workshop}"
+# The checkout this script lives in, not one machine's folder layout. This
+# was a fixed subdirectory of the home directory, correct on exactly one Mac.
+REPO="${WORKSHOP_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 MOBILE="$REPO/mobile"
 SCHEME="Workshop"
 CONFIG="Release"

@@ -25,7 +25,8 @@ Usage:
     python3 scripts/import_apple_notes.py --self-test
 
 Options:
-    --vault PATH   Vault root. Default: $WORKSHOP_NOTES_VAULT or ~/notes.
+    --vault PATH   Vault root. Default: $WORKSHOP_NOTES_VAULT (no built-in
+                   default; a vault path is instance config, not source).
     --into NAME    Subfolder inside the vault to import under. Default
                    "Apple Notes". Pass "" to import at the vault root.
     --update       Overwrite notes we previously imported whose Apple source has
@@ -480,7 +481,11 @@ def self_test() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Import Apple Notes export into the Workshop vault.")
     ap.add_argument("export_dir", nargs="?", help="folder holding the Apple Notes export")
-    ap.add_argument("--vault", default=os.environ.get("WORKSHOP_NOTES_VAULT") or str(Path.home() / "notes"))
+    # NO HOME-DIRECTORY DEFAULT: this fell back to a folder name joined onto
+    # `Path.home()`, one operator's folder written into source. The vault location is a
+    # property of the installation, so it comes from instance.env (or the
+    # flag), and an unset one is an error that names the variable.
+    ap.add_argument("--vault", default=os.environ.get("WORKSHOP_NOTES_VAULT"))
     ap.add_argument("--into", default="Apple Notes", help='vault subfolder to import under ("" for root)')
     ap.add_argument("--update", action="store_true", help="update notes whose Apple source changed")
     ap.add_argument("--force", action="store_true", help="overwrite even vault-side edits")
@@ -492,6 +497,9 @@ def main() -> int:
         return self_test()
     if not args.export_dir:
         ap.error("export_dir is required (or pass --self-test)")
+    if not args.vault:
+        ap.error("no vault configured: pass --vault PATH, or set "
+                 "WORKSHOP_NOTES_VAULT in ~/.config/workshop/instance.env")
 
     export_dir = Path(args.export_dir).expanduser().resolve()
     vault = Path(args.vault).expanduser().resolve()

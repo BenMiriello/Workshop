@@ -182,7 +182,7 @@ class TestPreemptOverTheWire:
         body = client.post("/control/sweep-42/preempt",
                            json={"subject_id": "wt-1",
                                  "new_holder_id": "chat-9",
-                                 "actor": "benmiriello",
+                                 "actor": "test-operator",
                                  "human_action": "take over",
                                  "grace_sec": 0}).json()
         q = body["quiesce"]
@@ -203,15 +203,15 @@ class TestPreemptOverTheWire:
         monkeypatch.setattr(control_svc, "preempt", down)
         r = client.post("/control/sweep-42/preempt",
                         json={"subject_id": "wt-1", "new_holder_id": "chat-9",
-                              "actor": "benmiriello",
+                              "actor": "test-operator",
                               "human_action": "take over", "grace_sec": 0})
         assert r.status_code == 503
 
     def test_asking_to_yield_shows_up_on_the_channel(self, client):
-        run_control.request_yield("sweep-42", actor="benmiriello",
+        run_control.request_yield("sweep-42", actor="test-operator",
                                  reason="I need this branch")
         body = client.get("/control/sweep-42").json()
-        assert body["yield_requested_by"] == "benmiriello"
+        assert body["yield_requested_by"] == "test-operator"
         assert body["yield_reason"] == "I need this branch"
         assert body["yield_requested_at"]
 

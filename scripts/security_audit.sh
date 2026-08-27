@@ -7,7 +7,7 @@
 # world-readable file, an auth dependency that got deleted, a firewall that got
 # turned off). One fact per check. Exit 0 = all green, exit 1 = something drifted.
 #
-# Run nightly from cron; see docs/masini/security-audit-2026-07-18.md.
+# Run nightly from cron; see the 2026-07-18 security audit.
 # Run by hand:  bash ~/workshop/scripts/security_audit.sh
 #
 # Pairs with the invariants reference in the same document.

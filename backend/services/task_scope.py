@@ -337,7 +337,7 @@ def _agent_scope_dir(slug: str) -> Path | None:
     Returns None for an escaping or malformed slug, which `root_for_context`
     already treats as "no task scope" — the caller reports an unknown scope
     rather than 500ing. See
-    docs/masini/security-audit-2026-08-11-scope-separation.md section 2.
+    the 2026-08-11 scope-separation security audit section 2.
     """
     from services import ownership
     if not _AGENT_SLUG_RE.fullmatch(slug or ""):

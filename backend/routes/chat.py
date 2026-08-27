@@ -3669,7 +3669,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
     # against. A non-operator caller gets an explicit empty selection instead of
     # the implicit "everything", so the exact same downstream code hands out
     # nothing rather than someone else's accounts. See
-    # docs/masini/security-audit-2026-08-11-scope-separation.md §4.
+    # the 2026-08-11 scope-separation security audit §4.
     if mcp_selection is None and not ownership.caller_is_operator():
         mcp_selection = []
 

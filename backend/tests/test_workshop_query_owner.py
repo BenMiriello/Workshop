@@ -7,7 +7,7 @@ halves: the spawning side (app_registry._platform_mcp_servers) hands the real
 caller down as an env var, and the subprocess side
 (mcp.workshop_query_server._pin_owner) reads it instead of always asking
 auth_store for the operator. See
-docs/masini/security-audit-2026-08-11-scope-separation.md section 3.
+the 2026-08-11 scope-separation security audit section 3.
 """
 from __future__ import annotations
 

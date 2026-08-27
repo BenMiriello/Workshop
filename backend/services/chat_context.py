@@ -1867,7 +1867,7 @@ def contained_project_dir(slug: str) -> _Path:
 
     `resolve()` before comparing, so a symlink inside `projects/` pointing out
     of it is caught too. See
-    docs/masini/security-audit-2026-08-11-scope-separation.md section 2.
+    the 2026-08-11 scope-separation security audit section 2.
     """
     root = _projects_root().resolve()
     candidate = (root / slug).resolve()

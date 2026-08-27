@@ -14,7 +14,7 @@ or agent scope. Reachability, not privilege — `scope_owner.may_reach`.
 
 Not a refusal either way: the note lands, at the scope this chat actually is.
 
-See docs/masini/security-audit-2026-08-11-scope-separation.md sections 3 and 9.
+See the 2026-08-11 scope-separation security audit sections 3 and 9.
 """
 from __future__ import annotations
 

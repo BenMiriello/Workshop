@@ -108,7 +108,7 @@ def chat_cwd() -> Path:
     same reason the notes vault is: two accounts running a scope-less turn
     should not share a scratch directory either.
 
-    See docs/masini/security-audit-2026-08-11-scope-separation.md section 2.
+    See the 2026-08-11 scope-separation security audit section 2.
     """
     env = os.environ.get("WORKSHOP_CHAT_CWD")
     if env:
@@ -251,3 +251,29 @@ def env_path(var: str, *default_parts: str, base: str = "runtime") -> Path:
         return Path(raw).expanduser()
     bases = {"root": root, "runtime": runtime, "shared": shared, "config": config}
     return bases[base](*default_parts)
+
+
+def required_env_path(var: str, purpose: str) -> Path:
+    """Read `var` as a path, or fail loudly. There is NO default.
+
+    For a path that names something OUTSIDE the deployment -- a rig's database,
+    a folder in the operator's home, a mount only this installation has. Those
+    have no platform-derivable default: any value written into source is one
+    machine's answer, and it keeps working perfectly on that machine while being
+    wrong everywhere else, which is the exact defect `check_no_app_names.py`'s
+    `home_path_sites` count exists to find.
+
+    So the value comes from `~/.config/workshop/instance.env` and an absent one
+    is an error with the variable's name in it, the way `WORKSHOP_GITHUB_OWNER`
+    and `WORKSHOP_PUBLIC_ORIGIN` already behave. Contrast `env_path` above,
+    which is for a path that DOES have a sane platform-derived default under
+    root/runtime/config and therefore needs no configuration at all.
+    """
+    raw = (os.environ.get(var) or "").strip()
+    if not raw:
+        raise RuntimeError(
+            f"{var} is not set. It names {purpose}, which is a property of this "
+            f"installation and has no default: set it in "
+            f"{config_dir() / 'instance.env'}."
+        )
+    return Path(raw).expanduser()

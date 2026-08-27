@@ -322,7 +322,7 @@ def test_a_preempt_snapshots_to_a_dangling_ref_and_the_branch_tip_is_unchanged(
     monkeypatch.setattr(control, "_force_stop", _stubbed_stop)
 
     out = _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                               actor="benmiriello",
+                               actor="test-operator",
                                human_action="take-over confirmed in the lease card",
                                grace_sec=0, repo_path=str(repo),
                                worktree_id="wt-1"))
@@ -346,7 +346,7 @@ def test_the_snapshot_holds_what_the_restore_then_deletes(repo, channel,
     monkeypatch.setattr(control, "leases", FakeLeases(_held()))
     monkeypatch.setattr(control, "_force_stop", _stubbed_stop)
     out = _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                               actor="benmiriello", human_action="take over",
+                               actor="test-operator", human_action="take over",
                                grace_sec=0, repo_path=str(repo),
                                worktree_id="wt-1"))
     sha = out["quiesce"]["snapshot_sha"]
@@ -364,7 +364,7 @@ def test_the_tree_is_clean_after_a_preempt_and_the_app_inputs_survive(
     monkeypatch.setattr(control, "leases", FakeLeases(_held()))
     monkeypatch.setattr(control, "_force_stop", _stubbed_stop)
     out = _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                               actor="benmiriello", human_action="take over",
+                               actor="test-operator", human_action="take over",
                                grace_sec=0, repo_path=str(repo),
                                worktree_id="wt-1"))
     assert out["quiesce"]["clean"] is True
@@ -404,7 +404,7 @@ def test_a_stale_index_lock_is_cleared_before_the_lease_is_granted(
 
     monkeypatch.setattr(control, "_force_stop", ordered_stop)
     out = _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                               actor="benmiriello", human_action="take over",
+                               actor="test-operator", human_action="take over",
                                grace_sec=0, repo_path=str(repo),
                                worktree_id="wt-1"))
     assert out["quiesce"]["cleared_index_lock"] is True
@@ -464,7 +464,7 @@ def test_a_holder_that_yields_inside_the_grace_is_never_forced(
 
     fake.get = get
     out = _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                               actor="benmiriello", human_action="take over",
+                               actor="test-operator", human_action="take over",
                                grace_sec=2, repo_path=str(repo),
                                worktree_id="wt-1"))
     assert out["yielded"] is True and out["forced"] is False
@@ -476,11 +476,11 @@ def test_the_holder_is_asked_to_yield_before_the_grace_runs(repo, channel,
     monkeypatch.setattr(control, "leases", FakeLeases(_held()))
     monkeypatch.setattr(control, "_force_stop", _stubbed_stop)
     _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                         actor="benmiriello", human_action="take over",
+                         actor="test-operator", human_action="take over",
                          reason="I need this branch", grace_sec=0,
                          repo_path=str(repo), worktree_id="wt-1"))
     asked = run_control.yield_requested("sweep-42")
-    assert asked and asked["actor"] == "benmiriello"
+    assert asked and asked["actor"] == "test-operator"
     assert asked["reason"] == "I need this branch"
 
 
@@ -490,7 +490,7 @@ def test_the_lease_is_fenced_and_then_granted_to_the_new_holder(
     monkeypatch.setattr(control, "leases", fake)
     monkeypatch.setattr(control, "_force_stop", _stubbed_stop)
     out = _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                               actor="benmiriello", human_action="take over",
+                               actor="test-operator", human_action="take over",
                                grace_sec=0, repo_path=str(repo),
                                worktree_id="wt-1"))
     verbs = [c[0] for c in fake.calls]
@@ -507,7 +507,7 @@ def test_the_timeline_records_preempted_snapshot_and_acquired_with_their_fields(
     monkeypatch.setattr(control, "leases", FakeLeases(_held()))
     monkeypatch.setattr(control, "_force_stop", _stubbed_stop)
     out = _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                               actor="benmiriello",
+                               actor="test-operator",
                                human_action="take-over confirmed in the lease card",
                                reason="I need this branch", grace_sec=0,
                                repo_path=str(repo), worktree_id="wt-1"))
@@ -515,7 +515,7 @@ def test_the_timeline_records_preempted_snapshot_and_acquired_with_their_fields(
     assert kinds == ["preempted", "snapshot", "acquired"]
     by_kind = {e["kind"]: e for e in events}
     # "preempted BY WHOM" (section 9), and why.
-    assert by_kind["preempted"]["actor"] == "benmiriello"
+    assert by_kind["preempted"]["actor"] == "test-operator"
     assert by_kind["preempted"]["detail"] == "I need this branch"
     # "snapshot <sha>", carried in the sha field rather than written into prose.
     assert by_kind["snapshot"]["sha"] == out["quiesce"]["snapshot_sha"]
@@ -531,7 +531,7 @@ def test_the_timeline_kinds_are_the_closed_vocabulary(events, repo, channel,
     monkeypatch.setattr(control, "_force_stop", _stubbed_stop)
     _dirty(repo)
     _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                         actor="benmiriello", human_action="take over",
+                         actor="test-operator", human_action="take over",
                          grace_sec=0, repo_path=str(repo), worktree_id="wt-1"))
     control.steer("sweep-42", "and this", holder_kind="run", worktree_id="wt-1")
     assert {e["kind"] for e in events} <= set(WORKTREE_EVENT_KINDS)
@@ -542,7 +542,7 @@ def test_preempting_a_subject_nobody_holds_just_grants_it(repo, channel,
     fake = FakeLeases(None)
     monkeypatch.setattr(control, "leases", fake)
     out = _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                               actor="benmiriello", human_action="take over",
+                               actor="test-operator", human_action="take over",
                                grace_sec=0, repo_path=str(repo),
                                worktree_id="wt-1"))
     assert out["preempted"] is False and out["detail"] == "nobody was holding it"
@@ -561,7 +561,7 @@ def test_a_timeline_that_cannot_be_written_does_not_fail_the_verb(
     monkeypatch.setattr(control, "leases", FakeLeases(_held()))
     monkeypatch.setattr(control, "_force_stop", _stubbed_stop)
     out = _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                               actor="benmiriello", human_action="take over",
+                               actor="test-operator", human_action="take over",
                                grace_sec=0, repo_path=str(repo),
                                worktree_id="wt-1"))
     # The record is how the event is REMEMBERED, not how it happens.
@@ -588,7 +588,7 @@ def test_no_lease_store_is_not_swallowed_into_a_refusal(repo, channel,
     monkeypatch.setattr(control, "leases", Down())
     with pytest.raises(real_leases.LeasesUnavailable):
         _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                             actor="benmiriello", human_action="take over",
+                             actor="test-operator", human_action="take over",
                              grace_sec=0, repo_path=str(repo)))
 
 
@@ -598,7 +598,7 @@ def test_an_unknown_new_holder_kind_is_refused_before_anything_is_stopped(
     monkeypatch.setattr(control, "leases", fake)
     with pytest.raises(control.ControlRefused):
         _run(control.preempt(subject_id="wt-1", new_holder_id="chat-9",
-                             actor="benmiriello", human_action="take over",
+                             actor="test-operator", human_action="take over",
                              new_holder_kind="daemon", grace_sec=0,
                              repo_path=str(repo)))
     assert fake.calls == []

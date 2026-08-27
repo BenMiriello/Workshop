@@ -11,8 +11,12 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# PATH first, then any nvm-managed node, newest first. The pinned
+# `$HOME/.nvm/versions/node/v22.22.3/bin/node` this used to lead with was one
+# machine's node version: it goes stale on the next nvm upgrade and means
+# nothing anywhere else.
 NODE=""
-for c in "$HOME/.nvm/versions/node/v22.22.3/bin/node" "$(command -v node || true)"; do
+for c in "$(command -v node || true)" $(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | sort -rV); do
   [ -x "$c" ] || continue
   v=$("$c" -e 'process.stdout.write(String(process.versions.node.split(".")[0]))' 2>/dev/null || echo 0)
   if [ "${v:-0}" -ge 20 ]; then NODE="$c"; break; fi

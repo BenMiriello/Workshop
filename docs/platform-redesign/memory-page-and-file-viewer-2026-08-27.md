@@ -78,7 +78,10 @@ tabs are a second door onto something that already has a front one.
 `~/notes` is reachable from platform code in three places:
 
 - `backend/services/permissions.py:86-87` -- `NOTES_VAULT_ROOT`, module
-  level, `Path.home() / "notes"` behind a `WORKSHOP_NOTES_VAULT` override.
+  level, a folder name joined onto `Path.home()` behind a
+  `WORKSHOP_NOTES_VAULT` override. **Fixed 2026-08-27**: it is
+  `paths.env_path("WORKSHOP_NOTES_VAULT", "notes")` now, so an unconfigured
+  install gets `.runtime/notes` rather than a stranger's home directory.
 - `backend/services/stores.py:292` -- `declare("notes", "vault", ...)`,
   inside `register_builtin_stores()`, in the block whose own comment
   (`:280-282`) says "Everything app-specific is declared on that app's

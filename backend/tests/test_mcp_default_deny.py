@@ -8,7 +8,7 @@ can reach" on BOTH the narrow path (a data/app-persona chat's declared
 `provider.mcp_servers`) and the full-agentic path (project/build/development).
 That is correct for the operator's own chats and was always exercised against
 them. `ownership.caller_is_operator` is the gate that keeps it that way for
-anyone else: see docs/masini/security-audit-2026-08-11-scope-separation.md section 4.
+anyone else: see the 2026-08-11 scope-separation security audit section 4.
 
 **These tests assert the argv, not the predicate.** The first version of this
 file tested only that `caller_is_operator()` returns False for a second account

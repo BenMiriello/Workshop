@@ -405,8 +405,9 @@ Every count below is measured, not inferred.
 
 ### 9.5 A named-app dependency the purity gate cannot see
 
-`~/notes` is hardcoded in platform source: `services/permissions.py:86`
-(`NOTES_VAULT_ROOT`, module-level, `Path.home() / "notes"`),
+**FIXED 2026-08-27.** `~/notes` WAS hardcoded in platform source:
+`services/permissions.py:86` (`NOTES_VAULT_ROOT`, module-level, a folder name
+joined onto `Path.home()`),
 `services/stores.py:292`, `services/notes_vault.py:31`. It is operator-visible
 (`Memory.tsx:1381` renders `~/notes` and names Obsidian) and model-visible
 (`workshop_query_server.py:85`).

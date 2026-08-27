@@ -1,7 +1,7 @@
 """memory_policy -- the `share` field (memory-and-documentation-model-2026-08-14.md
 sec 6, sec 12 Phase 5): who a note, doc or chat is quiet toward.
 
-CURATION, NOT CONFINEMENT. Per SEC-A2 (`docs/masini/security-audit-2026-07-18-agents.md`
+CURATION, NOT CONFINEMENT. Per SEC-A2 (the 2026-07-18 agents security audit
 A2, and `scope_tree`'s own module docstring), this box runs as one uid: any
 process here can already read any file directly. `share` never restricts what a
 process may read. It restricts one thing only -- what a SEARCH surfaces -- so

@@ -100,7 +100,7 @@ export function scopeLabel(scope?: string): string {
   // AXES, NOT ONE"). It labels like any other kind; it just sits at the root of
   // the scope picker because it has no parent.
   // `app` was MISSING here, so the Memory tree read "app: budget" beside
-  // "Project: budget" and "Agent: masini": three capitalisations in one list,
+  // "Project: budget" and "Agent: sweeper": three capitalisations in one list,
   // and the one left out is the kind the platform is organised around
   // (app-is-the-entity-2026-08-20.md). `build` is gone rather than relabelled:
   // `build:<slug>` is a deleted spelling (see chatScope.ts and scope.test.ts's

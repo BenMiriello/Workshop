@@ -122,10 +122,40 @@ from _ratchet_delta import extracted_tree  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "scripts" / "no_app_names_baseline.json"
 
-# Directories that are platform source. A file outside all of these (docs/, a
-# dated handoff, a template) is not gated: prose naming an app is a historical
-# record, not a build-time dependency.
-PLATFORM_DIRS = ("backend/", "frontend/src/", "packages/", "scripts/", "infra/", "mobile/")
+# THE WHOLE TRACKED TREE IS SCANNED, since 2026-08-27.
+#
+# This was `PLATFORM_DIRS = ("backend/", "frontend/src/", "packages/",
+# "scripts/", "infra/", "mobile/")` and everything outside it was skipped,
+# on the reasoning that "prose naming an app is a historical record, not a
+# build-time dependency". That reasoning is about `literals` and it was applied
+# to all four counts, so `shared/`, `agents/`, `docs/`, `apps/`,
+# `frontend/public/` and EVERY FILE AT THE REPO ROOT were never looked at by
+# any of them -- including the home-path count added the same week precisely
+# because a whole class of violation was invisible. A gate whose scan area is
+# smaller than the rule's is the failure this file exists to stop.
+#
+# So the scan area is now the tracked tree, and only these are exempt, each
+# because naming the thing IS its job:
+_UNSCANNED = frozenset({
+    # The gate's own memory: `watched` is a list of app names.
+    "scripts/no_app_names_baseline.json",
+    # The gate itself, which writes down the patterns it matches on and would
+    # otherwise count its own explanation of what it counts.
+    "scripts/check_no_app_names.py",
+    # .gitignore's job is to name the instance paths it excludes -- the apps
+    # are in it BECAUSE they are being separated. Same exemption, for the same
+    # reason, that scripts/check_no_hardcoding.sh gives it.
+    ".gitignore",
+})
+
+# Binary payloads. `read_text(errors="replace")` on a PNG produces mojibake that
+# can match anything; a screenshot is not source naming an app.
+_BINARY_SUFFIXES = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".svgz", ".pdf",
+    ".mp3", ".wav", ".m4a", ".ogg", ".mp4", ".mov",
+    ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".zip", ".gz", ".tgz", ".bz2", ".xz", ".db", ".sqlite", ".pmtiles", ".bin",
+})
 
 # Paths that ARE app source. Anything matching is `content`, never `literals`,
 # so an app's own file is not also counted for naming itself.
@@ -252,6 +282,40 @@ _HOME_PATH_ALLOWED = frozenset({
     "workshop",
 })
 
+# AN EXPLICIT, NAMED TOOLCHAIN ALLOWLIST, added 2026-08-27 with the reason for
+# each entry, and reported on every run rather than silently subtracted.
+#
+# The distinction that earns an entry here: is the path a fact about THIS
+# INSTALLATION, or a fact about a TOOL that every installation of it has? The
+# first is a violation no matter how convenient (`~/notes` is one operator's
+# folder). The second is the documented location of a third-party tool's own
+# config, identical on every machine that has the tool, and there is no config
+# value that could sensibly replace it -- an env var pointing at the CLI's own
+# user config would just be a second place to get it wrong.
+#
+# `_HOME_PATH_ALLOWED` above already exempts the `.claude` DIRECTORY, so
+# `~/.claude/plugins` was never counted while `~/.claude.json` -- a sibling
+# file, same tool, same argument -- was, which is an accident of one being a
+# directory rather than a judgment about either. This makes the judgment
+# explicit and keeps it visible: `main()` prints the allowlisted count, so a
+# reader sees "0 findings, 3 allowlisted" and can go read why.
+_HOME_PATH_TOOLCHAIN: dict[str, str] = {
+    ".claude.json": (
+        "the Claude Code CLI's own user-level config, holding the user scope "
+        "and every project's local scope. services/mcp_registry.py reads it to "
+        "show the operator which MCP servers a turn can reach, and "
+        "settings/McpServers.tsx names it so the operator knows which file to "
+        "go edit. Same path on every machine with the CLI installed; not a "
+        "property of this install. Sibling of ~/.claude/, already allowed."
+    ),
+}
+
+# `~/<literal>`, `Path.home() / "<name>"`: a doc explaining what this check
+# matches, written with an angle-bracket placeholder. A real directory name
+# cannot contain `<` or `>`, so this is mechanical, not a judgment call.
+def _is_placeholder(name: str) -> bool:
+    return "<" in name or ">" in name
+
 
 def _home_path_names(line: str) -> list[str]:
     """The home-directory folder names a line hardcodes, if any.
@@ -265,7 +329,21 @@ def _home_path_names(line: str) -> list[str]:
     for pat in _HOME_PATH_PATTERNS:
         for m in pat.finditer(line):
             name = m.group(1).strip().strip("/").split("/")[0]
-            if name and name not in _HOME_PATH_ALLOWED:
+            if not name or _is_placeholder(name):
+                continue
+            if name in _HOME_PATH_ALLOWED or name in _HOME_PATH_TOOLCHAIN:
+                continue
+            seen[name] = None
+    return list(seen)
+
+
+def _home_path_allowlisted(line: str) -> list[str]:
+    """The toolchain-allowlisted home paths on a line. Reported, not gated."""
+    seen: dict[str, None] = {}
+    for pat in _HOME_PATH_PATTERNS:
+        for m in pat.finditer(line):
+            name = m.group(1).strip().strip("/").split("/")[0]
+            if name in _HOME_PATH_TOOLCHAIN:
                 seen[name] = None
     return list(seen)
 
@@ -347,28 +425,26 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
     imports: list[dict] = []
     literals: list[dict] = []
     home_paths: list[dict] = []
+    home_allowlisted: list[dict] = []
 
     for rel in files:
-        # The gate's own memory is not a violation. `watched` in the baseline is
-        # a list of app names, it lives under scripts/, and without this the
-        # ratchet counts itself: eight literals that can only ever be removed by
-        # forgetting which apps to watch for.
-        if rel == str(BASELINE.relative_to(ROOT)):
+        # The three files whose job is to name these things -- see _UNSCANNED.
+        if rel in _UNSCANNED:
             continue
-        # And neither is the gate itself. Same reason as the baseline above: the
-        # patterns it matches on are written down IN it, in its own prose and
-        # its own regexes, so without this it counts its own explanation of what
-        # it counts. That reaches a comment line for the app literals and does
-        # not for these, because a docstring's continuation lines start with
-        # neither `#` nor `//`.
-        if rel == "scripts/check_no_app_names.py":
+        if Path(rel).suffix.lower() in _BINARY_SUFFIXES:
             continue
         owner = next((a for a in apps if any(p.search(rel) for p in content_pat[a])), None)
         if owner:
             content[owner].append(rel)
-            continue  # app source naming itself is not a platform violation
-        if not rel.startswith(PLATFORM_DIRS):
-            continue
+        # NO `continue` HERE, since 2026-08-27, and this is the whole point of
+        # the fix. Being app source used to exempt a file from ALL FOUR checks
+        # when it should only ever have exempted it from ITS OWN NAME. That is
+        # how `services/notes_vault.py` held a hardcoded `~/notes` while the
+        # home-path count -- added the same week specifically to catch `~/notes`
+        # -- reported it clean: the file was filed as the notes app's own
+        # source and then never opened. So an app-owned file is read like any
+        # other, and only the `app == owner` comparisons below are skipped: an
+        # app naming ITSELF is not a violation, an app naming ANOTHER app is.
         path = root / rel
         try:
             body = path.read_text(errors="replace")
@@ -378,6 +454,8 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
             continue
 
         for app in apps:
+            if app == owner:
+                continue
             if _imports_app_module(body, import_short[app]):
                 imports.append({"file": rel, "app": app})
 
@@ -395,8 +473,12 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
             # exists is that the suppression list is what hid it.
             for name in _home_path_names(line):
                 home_paths.append({"file": rel, "line": i, "name": name})
+            for name in _home_path_allowlisted(line):
+                home_allowlisted.append({"file": rel, "line": i, "name": name})
 
             for app in apps:
+                if app == owner:  # an app's own file naming itself
+                    continue
                 if not any(p.search(line) for p in literal_pat[app]):
                     continue
                 if any(p.search(line) for p in ambiguous[app]):
@@ -410,9 +492,11 @@ def scan(apps: list[str], root: Path = ROOT) -> dict:
         "import_sites": len(imports),
         "literal_sites": len(literals),
         "home_path_sites": len(home_paths),
+        "home_path_allowlisted": len(home_allowlisted),
         "imports": imports,
         "literals": literals,
         "home_paths": home_paths,
+        "home_allowlisted": home_allowlisted,
     }
 
 
@@ -528,6 +612,12 @@ def main() -> int:
     print(f"  imports  {result['import_sites']:>4}  platform files importing an app module")
     print(f"  literals {result['literal_sites']:>4}  platform lines naming an app")
     print(f"  homepath {result['home_path_sites']:>4}  platform lines hardcoding a folder in $HOME")
+    if result.get("home_path_allowlisted"):
+        names = sorted({h["name"] for h in result["home_allowlisted"]})
+        print(f"           +{result['home_path_allowlisted']:>3}  allowlisted toolchain path(s) "
+              f"NOT counted: {', '.join(names)}")
+        print( "                 (reason per entry in _HOME_PATH_TOOLCHAIN; "
+               "these are a tool's own config, not this install's)")
 
     if not base:
         print("\nno baseline; run --write-baseline to pin one")
