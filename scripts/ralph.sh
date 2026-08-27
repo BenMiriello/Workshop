@@ -32,6 +32,14 @@
 #   7  — reviewer returned `block-for-decision`: a strict-latitude run whose gate
 #        could not establish completeness. The caller blocks the task with the
 #        reviewer's reason and lets the operator decide. Re-firing cannot fix it.
+#   8  — RESERVED for the budget-cap pause (ticket 70860d58): the run committed
+#        its work and stopped at the cap, resumable. Not emitted here yet; the
+#        number is spoken for so this file and that one cannot both claim it.
+#   9  — DISPLACED: the heartbeat was fenced, so this run no longer holds the
+#        ticket's claim (an operator edit, a reclaim, or a preempt). NOT a task
+#        failure. The caller must not consume an attempt, must not block or park
+#        the ticket, and must not write any status: the ticket already belongs to
+#        somebody else. See scripts/project_ralph.sh's rc=9 leg.
 
 set -u
 
@@ -183,8 +191,23 @@ heartbeat_task() {
 try: print((json.load(sys.stdin) or {}).get('id') or '')
 except Exception: print('')" 2>/dev/null || echo "")
   if [[ -z "$hb_id" ]]; then
-    log "heartbeat no-op for task=$TASK_ID (claim displaced/reclaimed?); continuing best-effort"
+    # A NO-OP HERE MEANS WE LOST THE TICKET, and every reason it can happen has
+    # the same consequence. `tasks.heartbeat` returns None when the generation
+    # does not match (an operator edit, a reclaim, or a preempt bumped it) and
+    # when the ticket is no longer `doing`. In all of them this run's right to
+    # the ticket has ended.
+    #
+    # This used to log "continuing best-effort" and carry on, which meant the run
+    # spent up to another hour of wall clock and tokens on a ticket it no longer
+    # owned, kept writing into a worktree a new claimant may already hold, and
+    # only found out when its final status write was fenced and refused. The
+    # read-only tree mount that would stop the tree half of this is built but its
+    # flag is off, so ending the run is the only thing standing between a
+    # displacement and two workers writing the same directory.
+    log "heartbeat FENCED for task=$TASK_ID: this run no longer holds the claim (operator edit, reclaim or preempt). Stopping; the ticket belongs to someone else now."
+    return 1
   fi
+  return 0
 }
 
 # Per-tree log + reviewer scoping. A project run (DIR != WORKSHOP) logs into the
@@ -779,7 +802,13 @@ while (( iter < MAX_ITER )); do
   # Renew the task-store lease at the TOP of each iteration, before the (possibly
   # multi-minute) claude turn below, so the reclaimer sees a fresh heartbeat well
   # inside the TTL for the whole iteration. Inert for a standalone ralph (Fix 2).
-  heartbeat_task
+  #
+  # Checked BEFORE the turn, not after, because the whole point is to not spend
+  # another iteration on a ticket we no longer hold.
+  if ! heartbeat_task; then
+    exit_code=9
+    break
+  fi
 
   # Wall-time check.
   ELAPSED=$(( $(date +%s) - START_EPOCH ))

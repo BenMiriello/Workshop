@@ -1549,6 +1549,34 @@ print(len(crit))
       log "task=$TASK_ID BLOCKED for decision (strict latitude): $BLOCK_REASON"
       BLOCKED=$((BLOCKED+1))
       job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
+    9)
+      # DISPLACED. ralph's heartbeat was fenced, so that run stopped because it no
+      # longer held this ticket's claim: an operator edit, a reclaim, or a preempt
+      # bumped the generation while it worked. The ticket is somebody else's now.
+      #
+      # This is NOT a task failure and must not be counted as one. It consumes no
+      # attempt, writes no status, and does not block or park, because every one
+      # of those would overwrite whatever the operator or the reclaimer just set,
+      # which is the state that displaced us in the first place. That is the same
+      # reasoning as the `done write fenced` legs above, and this leg deliberately
+      # does the same three things they do: cancel the child job, log plainly, and
+      # move on.
+      #
+      # It is also NOT counted in tasks_failed. The circuit breaker keys on that,
+      # and cooling a scope off because the operator took a ticket back would
+      # punish the scope for the operator using it.
+      #
+      # No `note_unmerged_branch` here, deliberately, even though a displaced run
+      # may have committed: that writes to a ticket this run no longer owns. The
+      # branch is not lost, it is on the cancelled child job's receipt, and the
+      # line below puts it in the sweep log where the 2026-08-23 hunt for eleven
+      # unfindable branches would have found it.
+      if (( WT_MODE == 1 )) && (( COMMITTED == 1 )) && [[ -n "$WT_BRANCH_SLUG" ]]; then
+        log "task=$TASK_ID displaced with commits on branch wt/$WT_SLUG/$WT_BRANCH_SLUG at ${HEAD:0:12} (not merged, not noted on the ticket: it is no longer ours)"
+      fi
+      job_finish_child "$CHILD_JOB" cancelled "$RC" "$EVIDENCE"
+      log "task=$TASK_ID DISPLACED: claim lost mid-run, run stopped; ticket left exactly as the operator/reclaimer set it (no attempt consumed, no status written)"
+      ;;
     1|2)
       # rc=1 (iteration cap) / rc=2 (wall cap): the run did NOT converge. Finish
       # the child FAILED and count it in tasks_failed so a pure-timeout thrash loop
