@@ -47,6 +47,18 @@ Empirically measured 2026-08-25 (small Haiku sessions, this box, CLI 2.1.143):
   and monotonically growing cache_read (a real compaction would collapse it). The
   env knobs have no observable effect in `-p`.
 
+> **CORRECTED 2026-08-27.** The narrow findings above still hold: manual
+> `/compact` is dead in `-p`, and those two env knobs have no observable effect.
+> The GENERALIZATION does not hold. Measured on 2026-08-26 across 28 real
+> headless session files: **29 genuine `trigger:auto` `compact_boundary`
+> events**, firing at roughly 126k-153k tokens and collapsing the context to
+> 6k-20k. `build_streaming` already detects and marks the event. So the CLI path
+> DOES auto-compact; what it does not give us is a way to trigger or tune it.
+> The decision in section 3 that rests on this claim has NOT been revisited and
+> is deliberately left standing here rather than rewritten. Also measured the
+> same day: across any compaction, ours or the CLI's, images and documents are
+> dropped and only text survives.
+
 **Consequence:** on the dev/CLI path there is no native compaction to fall back on,
 manual or automatic. If we delete our own fold on that path, an unbounded chat grows
 until it hits the window and errors. So a minimal Workshop-owned compaction has to
@@ -126,7 +138,9 @@ Decision: **prefer the platform's own compaction, do not out-engineer it.** Conc
   (summarize at a token threshold, at a turn boundary), plus `clear_tool_uses`
   context-editing for tool-output eviction, both behind the API adapter. Our own
   summarizer fold is NOT part of this path and is not referenced by it.
-- **Development / CLI path:** the CLI has no native compaction (section 1), so keep
+- **Development / CLI path:** the CLI has no native compaction (section 1 -- but
+  see the 2026-08-27 correction there: it DOES auto-compact, just untriggerable
+  and untunable, so this decision is open and unrevisited), so keep
   a MINIMAL Workshop fold as the `ClaudeCLIAdapter`'s implementation only. It exists
   because the dev runtime cannot do otherwise, it is dev-only, and production neither
   imports nor is aware of it.
