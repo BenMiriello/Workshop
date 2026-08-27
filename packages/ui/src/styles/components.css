@@ -704,8 +704,14 @@ a.ws-btn { text-decoration: none; }
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  /* Tight: the dot separators are their own flex items, so the gap lands on
+     both sides of each dot. A small gap reads as "model · turns · age" with
+     normal spacing; a large one leaves a weird gulf around every dot. */
+  gap: var(--space-1);
 }
+/* The row actions keep a touch more air from the last meta value and each
+   other, since they are tap targets, not text. */
+.ws-chat-row__meta .ws-chat-row__act { margin-left: var(--space-1); }
 .ws-chat-row__when {
   min-width: 36px;
   text-align: right;
@@ -743,7 +749,6 @@ a.ws-btn { text-decoration: none; }
    least-scanned parts (the model name, then the archive shortcut, which also
    lives in the menu) so the name keeps a readable width. */
 @media (max-width: 640px) {
-  .ws-chat-row__meta { gap: var(--space-2); }
   .ws-chat-row__meta .ws-chat-row__model,
   .ws-chat-row__meta .ws-chat-row__sep--model,
   .ws-chat-row__meta .ws-chat-row__archive { display: none; }
