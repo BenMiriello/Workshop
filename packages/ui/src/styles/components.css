@@ -712,9 +712,13 @@ a.ws-btn { text-decoration: none; }
 /* The row actions keep a touch more air from the last meta value and each
    other, since they are tap targets, not text. */
 .ws-chat-row__meta .ws-chat-row__act { margin-left: var(--space-1); }
+/* The age sits tight after its dot. It used to have a 36px min-width and
+   right-align (from when the meta was a fixed right rail), which pushed the text
+   to the right of that box and opened a gap between the dot and the time. The
+   meta is right-justified as a whole now, so the column needs neither. */
 .ws-chat-row__when {
-  min-width: 36px;
-  text-align: right;
+  min-width: 0;
+  white-space: nowrap;
 }
 /* A faint dot between the meta sections (model, turns, age). It is a separator,
    so it is the quietest ink and never a control. */
