@@ -231,6 +231,13 @@
 .ws-page-header__sub { margin: var(--space-1) 0 0; color: var(--muted); font-size: var(--fs-sm); }
 .ws-page-header__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 
+/* The Chats header keeps its controls on the title's line at every width. The
+   default header wraps a short title's actions onto their own line on a phone,
+   which wastes the line. The title shrinks first; the controls hold their size. */
+.ws-chats-head { flex-wrap: nowrap; align-items: center; }
+.ws-chats-head .ws-page-header__main { flex: 0 1 auto; min-width: 0; }
+.ws-chats-head .ws-page-header__actions { flex: none; flex-wrap: nowrap; }
+
 /* An ENTITY title is content, not a page name: one ticket's sentence, one
    store's id. It wraps, and it is set at reading size. At --fs-xl a sentence
    became a three-line banner that owned the whole first screen, and every

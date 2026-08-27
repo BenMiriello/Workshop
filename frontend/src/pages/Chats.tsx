@@ -246,6 +246,7 @@ export default function Chats() {
   return (
     <div>
       <PageHeader
+        className="ws-chats-head"
         title="Chats"
         actions={
           <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)" }}>
