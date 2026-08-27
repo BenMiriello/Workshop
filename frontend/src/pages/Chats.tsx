@@ -358,13 +358,9 @@ export default function Chats() {
         </>
       )}
 
-      {/* The way into the archive: one quiet control at the foot of the list,
-          where you look after not finding what you came for. */}
-      <div style={{ display: "flex", justifyContent: "center", marginTop: "var(--space-5)" }}>
-        <Button size="sm" onClick={() => nav("/chats/archived")}>
-          <Archive aria-hidden /> Archived chats
-        </Button>
-      </div>
+      {/* The way into the archive is the "Archived" tab in this page's own
+          sub-nav (places.ts). A second button at the foot pointed at the same
+          route, which read as two doors to one room; the tab is the nav. */}
 
       {/* Delete is the one destructive verb and there is no undo on the API, so
           it always confirms. Archive does not: it is reversible from the archive. */}
