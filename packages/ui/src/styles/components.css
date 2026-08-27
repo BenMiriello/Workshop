@@ -196,17 +196,24 @@
 .ws-spacer { flex: 1 1 auto; }
 
 /* ---- SECTION LABEL (the recurring motif) --------------------------------- */
+/* A section label belongs to the content BELOW it, so it hugs that content and
+   takes its breathing room ABOVE, separating from the previous group. It used to
+   be the reverse (0 above, --space-3 below), which read as a label floating away
+   from what it headed. The first-child guard keeps a label that opens its
+   container from adding a stray gap above itself. Adjacent-margin collapse means
+   the top margin does not stack with a preceding element's bottom margin. */
 .ws-section-label {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  margin: 0 0 var(--space-3);
+  margin: var(--space-4) 0 var(--space-2);
   font-size: var(--fs-xs);
   font-weight: var(--fw-semi);
   letter-spacing: var(--label-spacing);
   text-transform: uppercase;
   color: var(--muted);
 }
+.ws-section-label:first-child { margin-top: 0; }
 .ws-section-label svg { width: 14px; height: 14px; stroke-width: 1.8; }
 
 /* ---- PAGE HEADER --------------------------------------------------------- */
@@ -618,10 +625,21 @@ a.ws-btn { text-decoration: none; }
    ws-chat-card, which buried both counts at the end of a two-line snippet. */
 .ws-chat-row {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
+/* Line one: the state dot, the scope icon, the title, then the meta trailing
+   right. align-items:center keeps the dot and icon on the title's line. */
+.ws-chat-row__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+/* Everything on the head line holds its size; only the title gives way, so a
+   long name ellipsizes rather than crushing the icon or the meta. */
+.ws-chat-row__head > :not(.ws-chat-row__title) { flex: none; }
 /* The live-state dot: filled in the live tone while a turn is running, a hollow
    ring at rest. It is the only hue on the row, because liveness is the one thing
    a chat list is scanned for. */
@@ -631,28 +649,19 @@ a.ws-btn { text-decoration: none; }
   border-radius: 999px;
   border: 1.5px solid var(--faint);
   background: transparent;
-  flex: none;
 }
 .ws-chat-row__state[data-live] {
   background: var(--live);
   border-color: var(--live);
 }
-.ws-chat-row__main {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.ws-chat-row__head {
-  display: flex;
+/* The scope's icon says what KIND of place the chat is in (its name is on the
+   title attribute, shown on hover). A glyph that identifies, not a control, so
+   it is muted ink and never a hue. */
+.ws-chat-row__scope {
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
+  color: var(--muted);
 }
-/* Only the title gives way when the row is tight; the scope and agent tags keep
-   their size so a long name ellipsizes rather than crushing its tag. */
-.ws-chat-row__head > :not(.ws-chat-row__title) { flex: none; }
 .ws-chat-row__title {
   flex: 0 1 auto;
   min-width: 0;
@@ -660,17 +669,10 @@ a.ws-btn { text-decoration: none; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ws-chat-row__snippet {
-  margin: 0;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: var(--fs-sm);
-  line-height: var(--lh-tight, 1.4);
-}
+/* The meta trails on the SAME line as the title, pushed to the right edge. Same
+   at every width, so the phone reads as two lines exactly like the desktop. */
 .ws-chat-row__meta {
-  flex: none;
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -678,6 +680,18 @@ a.ws-btn { text-decoration: none; }
 .ws-chat-row__when {
   min-width: 36px;
   text-align: right;
+}
+/* Line two: the snippet, indented to sit under the title, past the dot and the
+   scope icon (8px dot + 14px icon + the two gaps between them and the title). */
+.ws-chat-row__snippet {
+  margin: 0;
+  min-width: 0;
+  padding-left: calc(8px + 14px + var(--space-2) * 2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-tight, 1.4);
 }
 /* Row actions: a control, so neutral at rest and --fg on hover, never a hue. */
 .ws-chat-row__act {
@@ -693,20 +707,28 @@ a.ws-btn { text-decoration: none; }
   cursor: pointer;
 }
 .ws-chat-row__act:hover { color: var(--fg); }
-/* On a phone the right rail cannot share the row's width with the title without
-   crushing it to nothing. Below the touch breakpoint the meta drops to its own
-   line under the title, indented past the state dot, so the name always gets the
-   full width and the counts read left to right beneath it. */
+/* On a narrow phone the meta stays on the title line but sheds its widest,
+   least-scanned parts (the model name, then the archive shortcut, which also
+   lives in the menu) so the name keeps a readable width. */
 @media (max-width: 640px) {
-  .ws-chat-row { flex-wrap: wrap; }
-  .ws-chat-row__meta {
-    width: 100%;
-    justify-content: flex-start;
-    gap: var(--space-3);
-    padding-left: calc(8px + var(--space-2));
-  }
-  .ws-chat-row__when { min-width: 0; text-align: left; }
+  .ws-chat-row__meta { gap: var(--space-2); }
+  .ws-chat-row__meta .ws-chat-row__model,
+  .ws-chat-row__meta .ws-chat-row__archive { display: none; }
 }
+/* A date-group heading (label + count). It owns the group's vertical rhythm:
+   room above to separate from the previous group, the grid gap below carrying
+   the space to its first row. The first group sits directly under the page
+   header, so it takes no top margin. */
+.ws-chatgroup__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+/* The heading owns the group's vertical rhythm, so the label inside it drops its
+   own margins; the grid gap below carries the space to the first row. */
+.ws-chatgroup__head .ws-section-label { margin: 0; }
+.ws-chatgroup:first-of-type .ws-chatgroup__head { margin-top: 0; }
 
 /* ---- LIST ROW ------------------------------------------------------------ */
 /* The one row shape for every list in the app: tickets and runs today. It is a

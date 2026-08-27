@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Archive, ArchiveRestore, ArrowDownWideNarrow, ChevronLeft, MessagesSquare, MoreVertical, Plus, Trash2 } from "lucide-react";
 import {
@@ -21,7 +21,8 @@ import {
 } from "@workshop/ui";
 import { chatApi, threadAgent, type ThreadSummary } from "../lib/chat";
 import { newChatHref } from "../lib/chatSelection";
-import { scopeLabel, scopeName } from "../components/chat/chatScope";
+import { scopeKind, scopeLabel, scopeName } from "../components/chat/chatScope";
+import ScopeIcon from "../components/chat/ScopeIcon";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -66,9 +67,13 @@ function shortModel(m?: string | null): string {
   return ver ? `${parts[0]} ${ver}` : parts[0];
 }
 
-// Cap the rendered list so a large history never mounts unbounded (design rule
-// 9, overflow state). The filter narrows the list toward the cap.
-const RENDER_CAP = 100;
+// One page of rows. The list renders a page at a time and loads the next when
+// the foot scrolls into view (see the observer below), so a long history never
+// mounts unbounded and the reader never meets a wall of rows.
+const PAGE = 20;
+
+// The archive is a separate, search-filtered list; it keeps a plain cap.
+const ARCHIVE_CAP = 100;
 
 // When a chat was archived, at the resolution the archive is read at: you are
 // looking for the one you put here, so the day is the useful unit and today is
@@ -130,6 +135,9 @@ export default function Chats() {
   const [pending, setPending] = useState<{ id: string; title: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<{ text: string; endpoint: string } | null>(null);
+  // How many rows are mounted. Grows a page at a time as the foot scrolls into
+  // view; reset whenever the list itself changes so a re-sort starts at the top.
+  const [shown, setShown] = useState(PAGE);
 
   const load = useCallback(() => {
     setThreads(null);
@@ -157,7 +165,24 @@ export default function Chats() {
     return list;
   }, [threads, sort]);
 
-  const visible = sorted.slice(0, RENDER_CAP);
+  useEffect(() => { setShown(PAGE); }, [sort, threads]);
+
+  const visible = sorted.slice(0, shown);
+  const more = shown < sorted.length;
+
+  // Load the next page when the foot of the list nears the viewport. rootMargin
+  // starts the next page early so the scroll never actually stops at the seam.
+  const sentinel = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || !more) return;
+    const io = new IntersectionObserver(
+      (entries) => { if (entries[0]?.isIntersecting) setShown((n) => n + PAGE); },
+      { rootMargin: "400px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [more, sorted.length]);
 
   // Recent groups the rows under date headings; the other sorts are one flat
   // list, because "most messages" under "Today" would be a heading that lies.
@@ -270,50 +295,46 @@ export default function Chats() {
       ) : (
         <>
           {groups.map((g) => (
-            <div key={g.key} style={{ display: "grid", gap: "var(--space-2)" }}>
+            <div key={g.key} className="ws-chatgroup" style={{ display: "grid", gap: "var(--space-2)" }}>
               {g.label && (
-                <div style={{ display: "flex", alignItems: "baseline", gap: "var(--space-2)", margin: "var(--space-4) 0 var(--space-1)" }}>
+                <div className="ws-chatgroup__head">
                   <SectionLabel>{g.label}</SectionLabel>
                   <span className="ws-card__meta">{g.items.length}</span>
                 </div>
               )}
-              {g.items.map((t) => {
-                const agent = threadAgent(t);
-                return (
-                  <Card
-                    key={t.id}
-                    interactive
-                    compact
-                    className="ws-chat-row"
-                    onClick={() => open(t)}
-                    // min-width:0 lets the two ellipsizing lines shrink instead of
-                    // setting the card's min-content width and overflowing the
-                    // viewport on mobile (the raw grid parent sets no min-width).
-                    style={{ cursor: "pointer", minWidth: 0 }}
-                  >
-                    {/* Name with its state dot and scope + agent, the last
-                        message on one line, and the quiet meta rail: model,
-                        length, age, and the two row actions. The mockup's 5a row. */}
-                    <div className="ws-chat-row__main">
-                      <div className="ws-chat-row__head">
-                        <span className="ws-chat-row__state" data-live={t.running ? "" : undefined} aria-hidden />
-                        <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
-                        <Tag hue={catFor(t.context_key)}>{scopeName(t.context_key)}</Tag>
-                        {/* Who answered, only when the scope tag does not already
-                            say so (an agent:<slug> chat already reads its name). */}
-                        {!t.context_key.startsWith("agent:") && agent && (
-                          <Tag hue={catFor(`agent:${agent}`)}>{agent}</Tag>
-                        )}
-                      </div>
-                      <p className="ws-muted ws-chat-row__snippet">{t.last_message || " "}</p>
-                    </div>
+              {g.items.map((t) => (
+                <Card
+                  key={t.id}
+                  interactive
+                  compact
+                  className="ws-chat-row"
+                  onClick={() => open(t)}
+                  // min-width:0 lets the two ellipsizing lines shrink instead of
+                  // setting the card's min-content width and overflowing the
+                  // viewport on mobile (the raw grid parent sets no min-width).
+                  style={{ cursor: "pointer", minWidth: 0 }}
+                >
+                  {/* Line one: the live-state dot, the scope's own icon (its
+                      name on hover), the chat name, then the meta right-
+                      justified. Line two: the last message. Two lines at every
+                      width. */}
+                  <div className="ws-chat-row__head">
+                    <span className="ws-chat-row__state" data-live={t.running ? "" : undefined} aria-hidden />
+                    <span
+                      className="ws-chat-row__scope"
+                      title={scopeName(t.context_key)}
+                      aria-label={scopeLabel(t.context_key)}
+                    >
+                      <ScopeIcon kind={scopeKind(t.context_key)} />
+                    </span>
+                    <strong className="ws-chat-row__title">{t.title || "New chat"}</strong>
                     <div className="ws-chat-row__meta">
-                      {t.model && <span className="ws-card__meta">{shortModel(t.model)}</span>}
+                      {t.model && <span className="ws-card__meta ws-chat-row__model">{shortModel(t.model)}</span>}
                       <span className="ws-card__meta">{t.message_count} turns</span>
                       <span className="ws-card__meta ws-chat-row__when">{relTime(t.updated_at)}</span>
                       <button
                         type="button"
-                        className="ws-chat-row__act"
+                        className="ws-chat-row__act ws-chat-row__archive"
                         title="Archive"
                         aria-label="Archive chat"
                         onClick={(e) => { e.stopPropagation(); void archiveOne(t); }}
@@ -345,16 +366,13 @@ export default function Chats() {
                         </Menu>
                       </span>
                     </div>
-                  </Card>
-                );
-              })}
+                  </div>
+                  <p className="ws-muted ws-chat-row__snippet">{t.last_message || " "}</p>
+                </Card>
+              ))}
             </div>
           ))}
-          {sorted.length > RENDER_CAP && (
-            <p className="ws-muted" style={{ margin: "var(--space-4) 0 0", textAlign: "center" }}>
-              Showing {RENDER_CAP} of {sorted.length}. This list will paginate as it grows.
-            </p>
-          )}
+          {more && <div ref={sentinel} aria-hidden style={{ height: 1 }} />}
         </>
       )}
 
@@ -448,7 +466,7 @@ export function ChatsArchived() {
     return (threads ?? []).filter((t) => matches(t, needle));
   }, [threads, q]);
 
-  const visible = filtered.slice(0, RENDER_CAP);
+  const visible = filtered.slice(0, ARCHIVE_CAP);
 
   return (
     <div>
@@ -547,9 +565,9 @@ export function ChatsArchived() {
               </Card>
             ))}
           </div>
-          {filtered.length > RENDER_CAP && (
+          {filtered.length > ARCHIVE_CAP && (
             <p className="ws-muted" style={{ margin: "var(--space-3) 0 0", textAlign: "center" }}>
-              Showing {RENDER_CAP} of {filtered.length}. Refine the search to narrow the list.
+              Showing {ARCHIVE_CAP} of {filtered.length}. Refine the search to narrow the list.
             </p>
           )}
         </>
