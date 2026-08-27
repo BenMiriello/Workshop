@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { appIcon, appStatuses } from "../apps/registry";
+import { queryKeys } from "../lib/queryKeys";
 import { AppGlyph } from "../lib/appIcon";
-import type { AppStatus } from "../apps/registry";
 import {
   ExternalLink,
   ChevronDown,
@@ -331,7 +332,23 @@ export default function Apps() {
   const [services, setServices] = useState<ServiceProbe[] | null>(null);
   // Each installed app supplies its own card status (apps/registry). The
   // launcher no longer knows which apps exist or what their endpoints are.
-  const [statuses, setStatuses] = useState<Record<string, AppStatus> | null>(null);
+  //
+  // IT IS A SERVER READ, so it belongs on the query layer, and moving it fixed
+  // a real staleness: it was a one-shot `useEffect` on mount, so a launcher tab
+  // left open showed the status lines it happened to load hours earlier. On a
+  // key it re-reads on focus and on reconnect with everything else, and the
+  // fan-out underneath now goes through each app's own cache entry
+  // (`appStatuses` -> `fetchQuery`), so opening this page just after leaving an
+  // app costs no request at all for that app.
+  //
+  // No cadence of its own: nobody sits on the launcher watching a card. The
+  // app-wide 30s staleness window plus focus is what this needs, and it is what
+  // it gets by declaring neither.
+  const statusQ = useQuery({
+    queryKey: queryKeys.apps.launcherStatuses(),
+    queryFn: appStatuses,
+  });
+  const statuses = statusQ.data ?? null;
 
   const [launcher, setLauncher] = useState<LauncherState>({ kind: "loading" });
   const [mode, setMode] = useState<ViewMode>("view");
@@ -419,15 +436,10 @@ export default function Apps() {
     }
   }, []);
 
-  const loadStatuses = useCallback(async () => {
-    setStatuses(await appStatuses());
-  }, []);
-
   useEffect(() => {
     loadLauncher();
     loadServices();
-    loadStatuses();
-  }, [loadLauncher, loadServices, loadStatuses]);
+  }, [loadLauncher, loadServices]);
 
   const findService = (needle: string) => services?.find((s) => s.name.includes(needle));
 

@@ -92,6 +92,22 @@ export const locationKeys = {
  * is declared `response_model=LocationRecord | None` and returns 200 with a
  * null body. A failed request throws, so a reader can tell "nothing yet" from
  * "could not load", which the current page cannot.
+ *
+ * THE ROUTE ANSWERS WITH THE RECORD BARE. There is no envelope: no `{latest:
+ * ...}`, no `{item: ...}`. `backend/routes/location.py` declares
+ * `response_model=LocationRecord | None` and returns the model itself, and
+ * `backend/tests/test_ownership.py` asserts it by reading `json()["lat"]`.
+ *
+ * That sentence is here because a third reader got it wrong. The app launcher
+ * fetched this URL itself and read `j.latest`, which is `undefined` against
+ * this route for every possible response -- so its card said "no pings yet"
+ * from the day it was written, permanently, while the app page one tap away
+ * showed a live position. Nothing could catch it: the body was parsed as `any`,
+ * both spellings type-check, and "no pings yet" is a perfectly plausible thing
+ * for a launcher card to say. A shared typed fetcher is what makes that class
+ * of disagreement unrepresentable, so EVERY reader of this route goes through
+ * this function -- the app page, the settings panel, and the launcher probe in
+ * `src/apps/registry.tsx`.
  */
 export const fetchLatest = (): Promise<LocationRecord | null> =>
   jget<LocationRecord | null>("/latest");

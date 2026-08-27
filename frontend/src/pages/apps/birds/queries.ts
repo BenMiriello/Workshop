@@ -63,7 +63,7 @@
 // because `ui.tsx` pulls in recharts, and the Birds scope provider is loaded
 // eagerly by the app registry -- importing `ui.tsx` from a module on that path
 // puts the whole charting library in the main chunk for every visitor.
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { API, apost, jget } from "./api";
 
 /** A key, once built. Readonly so a caller cannot mutate a shared tuple. */
@@ -777,3 +777,198 @@ export function useSetDetectionStatus() {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: birdsKeys.all() }); },
   });
 }
+
+// ---------------------------------------------------------------------------
+// THE LIVE READS, AND WHY THEIR CADENCE IS DECLARED HERE.
+//
+// A KEY AND A FETCHER ARE ONLY TWO THIRDS OF A SHARED READ. The third is the
+// CADENCE. Two readers that spell the interval differently are two polls again,
+// on one cache entry this time, which is better but still not one read. So the
+// two genuinely live reads of this app are exported as HOOKS, the same shape
+// `location/queries.ts` uses for `/latest`, and the numbers live here.
+//
+// WHAT WAS THERE BEFORE. `/live` had two readers: the live-feed viewer polled
+// `/live` every 1.2s through `usePoll` into its own `useState`, and the aviary
+// scene ran a raw 5s `setInterval` whose callback awaited `/live` AND
+// `/detections?limit=80` in sequence and pushed the result into a ref. Two
+// timers, two copies of one payload, and the aviary's own copy could be five
+// seconds behind the spectrogram's for the same instant of the same yard.
+//
+// A NOTE ON ORDERING, because it was a real defect rather than a tidiness
+// point. The 1.2s poll had NO ordering guarantee: one response slower than
+// 1200ms and two requests were in flight at once, and whichever landed last
+// won. The spectrogram diffs each payload against the previous one to find the
+// newly-arrived columns, so an out-of-order window has no overlap with what it
+// is diffed against, and the canvas re-enqueues the whole window. Query removes
+// the case: `refetchInterval` calls the observer's fetch with no
+// `cancelRefetch`, so a tick that arrives while a fetch is in flight is handed
+// the IN-FLIGHT promise instead of starting a second request
+// (`query-core/query.js`, `fetch()`). At most one request per key at a time, so
+// responses cannot cross. The canvas still guards the no-overlap case, because
+// a poll that PAUSED while the tab was hidden legitimately comes back to a
+// window that has moved on entirely; see `LiveFeed.tsx`.
+
+/** One species a device is hearing right now, as `/live` reports it. */
+export type LiveHearing = {
+  common_name: string;
+  scientific_name: string;
+  confidence: number;
+  is_bird: boolean;
+};
+
+/** One broadcasting device's rolling window. `cols` is the spectrogram. */
+export type LiveFeedRow = {
+  device_token: string;
+  device: string | null;
+  location: string | null;
+  owner: string | null;
+  cols: number[][];
+  hearing: LiveHearing[];
+};
+
+/** `GET /api/birds/live`. Empty `feeds` is the normal state: nobody broadcasting. */
+export type LiveRead = { feeds: LiveFeedRow[] };
+
+/**
+ * WHAT A READER NEEDS FROM `/live`, which is what sets its cadence. Named by
+ * the need rather than by a number so a call site declares why it wants the
+ * rate it wants, and so the two numbers stay in one place.
+ */
+export type LiveNeed = "spectrogram" | "presence";
+
+const LIVE_MS: Record<LiveNeed, number> = {
+  // A scrolling spectrogram consumes a rolling window of columns and animates
+  // between payloads. It is the tightest cadence in the app and it is the one
+  // that justifies itself: slower and the canvas runs out of columns to scroll.
+  spectrogram: 1200,
+  // Presence only has to answer "was this species heard in the last fifteen
+  // minutes". Five seconds is already three hundred times finer than the window
+  // it feeds; the value is kept as it was rather than tightened for free.
+  presence: 5000,
+};
+
+/**
+ * The live feeds, on ONE cache entry per location.
+ *
+ * The two readers ask for different cadences and that is not a contradiction:
+ * `refetchInterval` is per-observer and the cache entry is shared, so while both
+ * are mounted the entry re-reads at the tighter of the two and BOTH render the
+ * same payload. That is strictly fewer requests than the two timers it replaces
+ * (1.2s + 5s), and it removes the case where the scene and the spectrogram
+ * disagreed about the same moment.
+ *
+ * `staleTime: 0` because this read owns its cadence: the app-wide 30s staleness
+ * default is twenty-five times the spectrogram's interval, so leaving it in
+ * place would serve nearly every tick from cache and stop the feed.
+ *
+ * `retry: false` for the same reason `usePoll` never retried: a failed tick is
+ * followed by the next tick, and the app's transient-retry default would put
+ * extra requests in front of a poll that is about to re-read anyway.
+ */
+export function useLiveFeeds(p: { locationId: number | null; need: LiveNeed }) {
+  const key = { locationId: p.locationId };
+  return useQuery({
+    queryKey: birdsKeys.live(key),
+    queryFn: () => fetchLive<LiveRead>(key),
+    refetchInterval: LIVE_MS[p.need],
+    staleTime: 0,
+    retry: false,
+    // Changing location must not blank the feed while the new one loads.
+    placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * The window of the yard feed the home page already reads.
+ *
+ * ONE NUMBER, TWO CALLERS, ON PURPOSE. `limit` is in the key, so `limit=80` and
+ * `limit=1000` are different cache entries that no invalidation keeps in step
+ * and that cost two requests wherever both are mounted -- which on the Birds
+ * home is always, because the recent card and the aviary scene sit on the same
+ * screen. They collapse onto the LARGER window because it is a superset in
+ * content: both routes answer "the most recent N detections", so the 1000-row
+ * answer already contains every row the 80-row answer would have had.
+ *
+ * `Birds.tsx` spells the same number as `RECENT_LIMIT`; it is the same fact and
+ * the two must stay equal, or the sharing silently stops (two entries again, no
+ * incorrect data). Read it from here when that file is next touched.
+ */
+export const YARD_FEED_LIMIT = 1000;
+
+/** A row of the yard feed, as both of its readers use it. */
+export type YardDetection = {
+  date?: string;
+  time: string;
+  common_name: string;
+  scientific_name: string;
+};
+
+/**
+ * The yard feed, WITHOUT a cadence of its own.
+ *
+ * This is deliberate and it is the whole reason the collapse is a win. A second
+ * observer with its own interval would make the shared entry re-read at the
+ * tighter of the two intervals, and a 1000-row payload fetched more often is
+ * not fresher data, it is more bytes for the same answer. The entry already has
+ * an owner that polls it (the home page's recent card), this reader is always
+ * mounted beside that owner, and it re-reads on mount and on focus like every
+ * other query. Where the owner is NOT mounted there is no yard feed to read:
+ * the card is gated on the yard having any detections at all.
+ *
+ * No `staleTime: 0` either: that is a rule for a read that owns its cadence, and
+ * the app default is what lets a mount beside a card that read two seconds ago
+ * cost nothing. Staleness IS per-observer, so the owner keeping its own zero and
+ * this reader taking the default is not a disagreement.
+ *
+ * `retry` is NOT per-observer, and that is why it is restated here. A query's
+ * retry policy comes from whichever observer triggered the fetch, so two
+ * observers of one entry that disagree about it make the entry's behaviour
+ * depend on who happened to tick first. The owner declared `retry: false`
+ * (a failed tick is followed by the next tick); this matches it, so the answer
+ * is the same either way.
+ */
+export function useYardFeed(p: NonBird) {
+  const q = { ...p, limit: YARD_FEED_LIMIT };
+  return useQuery({
+    queryKey: birdsKeys.detections(q),
+    queryFn: () => fetchDetections<{ detections: YardDetection[] }>(q),
+    retry: false,
+    placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * `GET /api/birds/summary`, in full.
+ *
+ * The scope provider declares a two-field view of this same entry (it only asks
+ * "is there a yard feed at all"). This is the whole shape, for the reader that
+ * needs the counts: the app launcher's status line, which used to fetch the URL
+ * itself and parse an untyped body.
+ *
+ * `available` is unconditionally `true` from this route (`routes/birds.py`), so
+ * a caller wanting "is there anything here" must read the COUNTS, not the flag.
+ */
+export type YardSummary = {
+  available: boolean;
+  total_detections: number;
+  species_count: number;
+  first_date: string | null;
+  last_date: string | null;
+  active_days: number;
+  today: { detections: number; species: number; date: string };
+};
+
+/**
+ * The UNFILTERED summary: the entry the scope provider already reads, and the
+ * one the app launcher's status line wants.
+ *
+ * Exported as a params constant plus a concrete fetcher rather than as a type
+ * the caller applies, so the launcher probe needs no type argument and no
+ * second spelling of `{ includeNonBird: false }`. A probe that has to restate
+ * the params is a probe that can key one request and send another, which is the
+ * defect this whole module exists to make unrepresentable.
+ */
+export const YARD_SUMMARY_PARAMS: NonBird = { includeNonBird: false };
+
+export const fetchYardSummary = (): Promise<YardSummary> =>
+  fetchSummary<YardSummary>(YARD_SUMMARY_PARAMS);

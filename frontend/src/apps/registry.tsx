@@ -22,6 +22,7 @@ import { Suspense } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Route, NavLink, useLocation } from "react-router-dom";
 import { RouteBoundary, RouteSkeleton, lazyPage } from "../lib/lazyPage";
+import { queryClient } from "../lib/queryClient";
 import { timeAgoSeconds, type AppChatDockRenderer } from "@workshop/ui";
 import AppChatDock from "../components/AppChatDock";
 
@@ -88,6 +89,28 @@ import { RecorderProvider } from "../pages/apps/birds/recorder";
 // ---- launcher status ------------------------------------------------------
 // Each loader owns its own failure: a card that cannot reach its app says so
 // rather than the launcher inventing a status for it.
+//
+// A PROBE READS THE APP'S OWN FETCHER, ON THE APP'S OWN KEY. It used to spell
+// the URL and parse the body here, which is how the location card came to read
+// `j.latest` from a route that answers with the record BARE
+// (`response_model=LocationRecord | None`): undefined for every possible
+// response, so that card said "no pings yet" permanently while the app page one
+// tap away showed a live position. Nothing above an untyped `await r.json()`
+// could catch it -- both spellings type-check, and the wrong answer is a
+// perfectly plausible thing for a launcher card to say. Going through the app's
+// exported fetcher makes the two readers unable to disagree, because there is
+// only one of them.
+//
+// AND THROUGH `fetchQuery`, so a probe is a READ OF THE SHARED CACHE ENTRY
+// rather than a second request for a fact the app is already holding. Opening
+// the launcher just after leaving an app costs no request while that app's
+// entry is fresh, and what the probe does fetch is sitting there for the app
+// page when it mounts.
+//
+// The app modules are pulled in DYNAMICALLY, the same way this file loads every
+// app page and for the same reason: an instance without an app should not carry
+// its code, and a launcher probe must not put an app's fetchers in the entry
+// chunk for every visitor.
 
 async function financeStatus(): Promise<AppStatus> {
   try {
@@ -95,8 +118,14 @@ async function financeStatus(): Promise<AppStatus> {
       fetch("/api/finance/cache"),
       fetch("/api/finance/balances"),
     ]);
+    // The balances route carries the answer, so a failure there is a failure of
+    // the card. Substituting an empty roster rendered a 502 from the bank as
+    // the sentence "0 accounts", and a card must not report as fact something
+    // it could not ask about. The cache route is diagnostics and supplies only
+    // the "updated" half, so losing THAT drops that half and keeps the count.
+    if (!balR.ok) return { text: "unavailable", tone: "err" };
+    const bal = await balR.json();
     const status = statusR.ok ? await statusR.json() : { entries: {} };
-    const bal = balR.ok ? await balR.json() : { items: [] };
     const n = (bal.items || []).reduce(
       (s: number, it: { accounts?: unknown[] }) => s + (it.accounts?.length || 0),
       0,
@@ -114,11 +143,18 @@ async function financeStatus(): Promise<AppStatus> {
 
 async function birdsStatus(): Promise<AppStatus> {
   try {
-    const r = await fetch("/api/birds/summary");
-    const s = r.ok ? await r.json() : null;
-    if (!s || !s.available) return { text: "no detections yet", tone: "muted" };
+    const birds = await import("../pages/apps/birds/queries");
+    const s = await queryClient.fetchQuery({
+      queryKey: birds.birdsKeys.summary(birds.YARD_SUMMARY_PARAMS),
+      queryFn: birds.fetchYardSummary,
+    });
+    // `available` is unconditionally true from this route, so it answers
+    // nothing and the COUNT is what says whether there is a feed here yet.
+    // Reading the flag meant a fresh instance rendered "0 species · 0 today"
+    // in the ok tone and the "no detections yet" branch was unreachable.
+    if (!s.species_count) return { text: "no detections yet", tone: "muted" };
     return {
-      text: `${s.species_count || 0} species · ${s.today?.detections || 0} today`,
+      text: `${s.species_count} species · ${s.today?.detections || 0} today`,
       tone: "ok",
     };
   } catch {
@@ -128,12 +164,16 @@ async function birdsStatus(): Promise<AppStatus> {
 
 async function locationStatus(): Promise<AppStatus> {
   try {
-    const r = await fetch("/api/location/latest");
-    const j = r.ok ? await r.json() : { latest: null };
-    const ts = (j.latest as { ts?: string } | null)?.ts;
-    if (!ts) return { text: "no pings yet", tone: "muted" };
-    const age = Math.max(0, Math.round((Date.now() - Date.parse(ts)) / 1000));
-    // A ping age is information, not health — significant-change tracking only
+    const loc = await import("../pages/apps/location/queries");
+    // `null` is the real "nothing recorded yet"; a failed read THROWS and lands
+    // in the catch below. The two used to be the same blank.
+    const rec = await queryClient.fetchQuery({
+      queryKey: loc.locationKeys.latest(),
+      queryFn: loc.fetchLatest,
+    });
+    if (!rec?.ts) return { text: "no pings yet", tone: "muted" };
+    const age = Math.max(0, Math.round((Date.now() - Date.parse(rec.ts)) / 1000));
+    // A ping age is information, not health: significant-change tracking only
     // pings on movement, so hours-old while stationary is normal. Green only
     // when genuinely recent; otherwise neutral.
     return { text: `last ping ${timeAgoSeconds(age)}`, tone: age < 3600 ? "ok" : "muted" };

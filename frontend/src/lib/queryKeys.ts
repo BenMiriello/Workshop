@@ -129,6 +129,14 @@ export const queryKeys = {
    */
   apps: {
     runStatus: (slug: string) => ["apps", slug, "run", "status"] as const,
+    /**
+     * The launcher's status LINES, as one fact: `appStatuses()` in
+     * `src/apps/registry.tsx` fans out to whatever the installed apps declare
+     * and returns a record keyed by app id. No slug slot, because the read
+     * takes no argument -- which app it asked is the registry's business, not
+     * the cache's.
+     */
+    launcherStatuses: () => ["apps", "launcher", "statuses"] as const,
   },
 
   presence: {

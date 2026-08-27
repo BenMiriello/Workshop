@@ -10,14 +10,14 @@
     "notes-app",
     "wearables"
   ],
-  "content_files": 102,
+  "content_files": 106,
   "import_sites": 20,
   "literal_sites": 302,
   "raised": {
     "content_files": {
-      "from": 95,
-      "to": 102,
-      "because": "Stage 4 (the AppSpec seams) moved 560 lines of four apps' business logic out of the platform module services/app_personas.py and the plaid branches out of routes/events.py + services/event_dispatch.py + services/stores.py, into seven app-owned modules (<app>_persona.py, finance_events.py, finance_store_adapter.py, notes_store_adapter.py). More app-source FILES in the repo, fewer platform files that know an app exists: imports 24->20 and literals 315->314 in the same change. All seven leave with their app at stage 7, which is where content goes to zero."
+      "from": 102,
+      "to": 106,
+      "because": "Four app-owned query-key modules (birds/commute/location/health queries.ts) for the TanStack migration. Each app's cache keys and fetchers must live with the app: the alternative was putting them in the platform registry frontend/src/lib/queryKeys.ts, which would have raised literals in a PLATFORM file instead. imports and literals both held flat (20 / 302) across the whole migration, which is the point -- the platform learned nothing new about any app while 21 polls moved onto the cache. These four go to zero with their apps at stage 7, same as the seven from Stage 4."
     }
   }
 }
