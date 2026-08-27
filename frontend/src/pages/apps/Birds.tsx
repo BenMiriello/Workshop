@@ -13,7 +13,7 @@ import { Button, Notice, Segmented, Skeleton, StateBlock, type AppChatDockRender
 import { API, pct, Stat, StatGrid, SpeciesLink, BirdThumb } from "./birds/ui";
 import {
   birdsKeys, fetchActivityDaily, fetchActivityHourly, fetchDetections, fetchLocationActivity,
-  fetchLocationSpecies, fetchLocationSummary, fetchSpecies, fetchSummary,
+  fetchLocationSpecies, fetchLocationSummary, fetchSpecies, fetchSummary, YARD_FEED_LIMIT,
 } from "./birds/queries";
 import { RecordingsBanner } from "./birds/recordings";
 import ActivityCard from "./birds/ActivityCard";
@@ -196,7 +196,12 @@ const PER_PAGE = 10;
 // The whole yard feed the presence rows are folded out of. In the key, because a
 // cache entry that answered "the last 1000" must never be handed to a caller
 // that asked for 80 (the Aviary does).
-const RECENT_LIMIT = 1000;
+//
+// IMPORTED, NOT RESTATED. This page and the Aviary share one entry only while
+// they ask for the same window, and two spellings of one number is exactly the
+// way that sharing stops silently: no wrong data, no error, no gate, just two
+// entries and two requests again.
+const RECENT_LIMIT = YARD_FEED_LIMIT;
 const RECENT_MS = 8000;
 type RecentDet = { date?: string; time: string; common_name: string; scientific_name: string };
 // One empty array, so "nothing yet" keeps a stable identity across renders and

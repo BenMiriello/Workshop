@@ -889,9 +889,9 @@ export function useLiveFeeds(p: { locationId: number | null; need: LiveNeed }) {
  * content: both routes answer "the most recent N detections", so the 1000-row
  * answer already contains every row the 80-row answer would have had.
  *
- * `Birds.tsx` spells the same number as `RECENT_LIMIT`; it is the same fact and
- * the two must stay equal, or the sharing silently stops (two entries again, no
- * incorrect data). Read it from here when that file is next touched.
+ * `Birds.tsx` binds its `RECENT_LIMIT` to this export rather than restating the
+ * number: the two must be equal or the sharing silently stops, and a second
+ * spelling of one fact is what this module exists to prevent.
  */
 export const YARD_FEED_LIMIT = 1000;
 
