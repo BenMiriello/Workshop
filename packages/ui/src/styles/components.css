@@ -653,6 +653,12 @@ a.ws-btn { text-decoration: none; }
 .ws-chat-row__state[data-live] {
   background: var(--live);
   border-color: var(--live);
+  /* Liveness is the one thing that moves: a running chat's dot pulses, the same
+     tempo the running status dot uses elsewhere. */
+  animation: ws-pulse 1.8s var(--ease-in-out) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ws-chat-row__state[data-live] { animation: none; }
 }
 /* The scope's icon says what KIND of place the chat is in (its name is on the
    title attribute, shown on hover). A glyph that identifies, not a control, so
@@ -681,12 +687,12 @@ a.ws-btn { text-decoration: none; }
   min-width: 36px;
   text-align: right;
 }
-/* Line two: the snippet, indented to sit under the title, past the dot and the
-   scope icon (8px dot + 14px icon + the two gaps between them and the title). */
+/* Line two: the snippet. It gets the whole row width, flush left under the dot,
+   and only ellipsizes when the message truly runs past the row's right edge. */
 .ws-chat-row__snippet {
   margin: 0;
+  width: 100%;
   min-width: 0;
-  padding-left: calc(8px + 14px + var(--space-2) * 2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
