@@ -12,6 +12,11 @@
 // state comes from the pure `documentBar()` rule, so the two surfaces cannot
 // drift the way they had by 2026-08-22.
 //
+// A FILE THE BROWSER CAN DRAW IS DRAWN, and that is the same rule read the
+// other way. An image and a PDF have a rendered form and no readable source,
+// so `FilePreview` shows it and there is still nothing to toggle. Only a binary
+// with no preview keeps the "can't be shown here" line it always had.
+//
 // THE HEADER CARRIES SAVE, AND THERE IS NO STICKY ActionBar HERE. Editing still
 // commits explicitly, which is what frontend/CLAUDE.md rule 7 requires; the bar
 // that carries the commit is the document's own header rather than a bar stuck
@@ -44,7 +49,9 @@ import {
 import { Editor, languageForPath } from "@workshop/ui/editor";
 import type { components } from "../../../api/schema.gen";
 import type { AppRecord } from "../../../lib/apps";
+import { previewKindFor } from "../../../lib/filePreview";
 import { useIsWide } from "../../../lib/useMediaQuery";
+import { FilePreview } from "../../../components/FilePreview";
 import { useDirectoryPage } from "../../../components/shell/directory";
 import { useContentTakeover, useDirectoryContent } from "../../../components/shell/takeover";
 import { AppTabPage } from "./AppTabShell";
@@ -169,6 +176,7 @@ function FilePane({
   }
 
   const mode = viewModeFor(file);
+  const preview = previewKindFor(path);
   const canWrite = mode === "editable";
   // A source file has ONE form, so `hasRenderedForm` is false and no toggle is
   // drawn. That is the rule in file-viewer section 4, not a special case here.
@@ -178,7 +186,17 @@ function FilePane({
 
   return frame(
     <Stack>
-      {mode === "binary" && (
+      {/* A file the browser can draw is drawn (an image, a PDF), and that is
+          section 4's rule rather than a new one: those files have a rendered
+          form and no readable source, so the rendered form is the only form
+          there is. A binary with no preview keeps the line it always had. An
+          SVG is text, so it gets BOTH: the picture here and its source in the
+          editor below, which is the markdown case with the toggle already
+          resolved for it. */}
+      {preview !== "none" && (
+        <FilePreview workspace={workspace} path={path} name={fileNameOf(path)} takeover={takeover} />
+      )}
+      {mode === "binary" && preview === "none" && (
         <Notice tone="info">This file is binary, so it can't be shown here.</Notice>
       )}
       {mode === "truncated" && (

@@ -19,6 +19,11 @@
 // write, it says so in one muted line, and it never shows a dead Edit button or
 // a refusal cursor (design rule 10).
 //
+// Markdown is not the only thing with two forms. An image or a PDF in this
+// workspace has a rendered form and no readable source, so the rendered form is
+// `FilePreview` rather than `Markdown`. Before that, opening one gave an empty
+// document under a line saying the file was not text.
+//
 // WRITABILITY IS THE BACKEND'S ANSWER NOW. `GET /api/files/content?workspace=
 // documents` reports `writable` per path from the `documents` workspace's own
 // `write_prefixes` (services/app_files.py). The `path.startsWith("docs/")` rule
@@ -82,7 +87,9 @@ import {
 import { Markdown } from "@workshop/ui/markdown";
 import { Editor } from "@workshop/ui/editor";
 import type { components } from "../../api/schema.gen";
+import { FilePreview } from "../../components/FilePreview";
 import { Ref } from "../../components/Ref";
+import { previewKindFor } from "../../lib/filePreview";
 import { backlinksFor } from "../../lib/refs";
 import { scopeHref, scopeLabel } from "../../lib/tasks";
 import { useResolvedRefs } from "../../lib/useResolvedRefs";
@@ -585,6 +592,14 @@ export function DocDocument({
                 ariaLabel={`${baseName(path)}, markdown source`}
               />
             </>
+          ) : previewKindFor(path) !== "none" ? (
+            // The rendered form of a picture is the picture. Same rule as the
+            // markdown case above it (section 4: a file with two forms opens on
+            // the rendered one), and it is why an image in `documents` no longer
+            // opens as an empty document under a line explaining that it is not
+            // text. An SVG is text as well, so it keeps the Edit toggle and its
+            // source is one tap away.
+            <FilePreview workspace="documents" path={path} name={baseName(path)} takeover={takeover} />
           ) : body.trim() ? (
             <Markdown>{body}</Markdown>
           ) : (

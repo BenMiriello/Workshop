@@ -3,6 +3,7 @@
 
   GET /files/tree     ?workspace=&path=   one level, dirs-first, reports what it filtered
   GET /files/content  ?workspace=&path=   one file, with `writable`
+  GET /files/raw      ?workspace=&path=   one file's bytes, with its media type
   PUT /files/content                       write one text file
 
 `workspace` is a reference `services/app_files.resolve` understands --
@@ -18,10 +19,12 @@ same service through an app id, and `projects.py:get_tree`, `agents.py` and
 Retiring them is item 3 of sec 8, deliberately parked so this stage is not a
 migration. Nothing new should be built against them.
 
-Every response carries a real model, because a route that answers `dict`
+Every JSON response carries a real model, because a route that answers `dict`
 generates `Record<string, never>` in `frontend/src/api/schema.gen.ts` and the
 frontend hand-writes the shape instead (ADR 0023 clause 6, and
-`scripts/check_opaque_fields.py` is the ratchet).
+`scripts/check_opaque_fields.py` is the ratchet). `/files/raw` is the one
+exception and is not one at all: its body is bytes, so there is no schema to
+declare.
 
 WRITABILITY IS THE BACKEND'S ANSWER. A read reports `writable` for the path it
 just read, and a write to a path the workspace marks read-only is refused with
@@ -31,6 +34,7 @@ workspace is writable where.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from services import app_files
@@ -116,6 +120,48 @@ async def file_content(workspace: str = Query(...), path: str = Query(...)) -> d
         raise HTTPException(404, "file not found")
     except IsADirectoryError:
         raise HTTPException(400, "path is a directory, not a file")
+
+
+@router.get("/raw")
+async def file_raw(workspace: str = Query(...), path: str = Query(...)) -> FileResponse:
+    """The BYTES of one file, with its media type, so a browser can display it
+    itself. `/content` answers with JSON and reports a binary file's content as
+    absent, which is right for an editor and useless for an image or a PDF;
+    this is the same file through the door those need.
+
+    Read-only by construction: there is no write counterpart and there does not
+    need to be, since `PUT /content` already owns writes and is text-only.
+    Containment is `app_files.open_file`, which is the same `safe_path` call
+    `/content` makes, so this reaches nothing a text read could not.
+
+    THE TWO HEADERS ARE NOT DECORATION. An SVG is served with its real type so
+    an `<img>` will draw it, and an SVG is also a document that can carry
+    script. `default-src 'none'` means a tab opened straight at this URL
+    executes nothing, and `nosniff` stops a browser from re-typing a file it
+    was told about. Both cost one line and close the only way this route could
+    run agent-authored markup as same-origin code.
+
+    No response model: the body is bytes, not a schema. That is the one shape
+    ADR 0023 clause 6's "declare what you return" does not apply to.
+    """
+    ws = _workspace(workspace)
+    try:
+        target, media = app_files.open_file(ws, path)
+    except app_files.AppFilePathError as e:
+        raise HTTPException(400, str(e))
+    except FileNotFoundError:
+        raise HTTPException(404, "file not found")
+    except IsADirectoryError:
+        raise HTTPException(400, "path is a directory, not a file")
+    return FileResponse(
+        str(target),
+        media_type=media,
+        headers={
+            "Content-Disposition": "inline",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.put("/content", response_model=FileWriteOut, response_model_exclude_unset=True)

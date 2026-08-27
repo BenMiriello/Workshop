@@ -22,6 +22,11 @@ const EXTERNAL = [
   /^react-dom($|\/)/,
   /^lucide-react($|\/)/,
   /^maplibre-gl($|\/)/,
+  // mermaid is external for a second reason on top of the shared-copy one: it
+  // is around a megabyte gzipped and is reached only through a dynamic import
+  // in MermaidDiagram.tsx, so bundling it here would fold that whole payload
+  // into the kit's Markdown entry and undo the lazy chunk.
+  /^mermaid($|\/)/,
   /^pmtiles($|\/)/,
   /^protomaps-themes-base($|\/)/,
   /^react-markdown($|\/)/,

@@ -5277,6 +5277,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/files/raw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * File Raw
+         * @description The BYTES of one file, with its media type, so a browser can display it
+         *     itself. `/content` answers with JSON and reports a binary file's content as
+         *     absent, which is right for an editor and useless for an image or a PDF;
+         *     this is the same file through the door those need.
+         *
+         *     Read-only by construction: there is no write counterpart and there does not
+         *     need to be, since `PUT /content` already owns writes and is text-only.
+         *     Containment is `app_files.open_file`, which is the same `safe_path` call
+         *     `/content` makes, so this reaches nothing a text read could not.
+         *
+         *     THE TWO HEADERS ARE NOT DECORATION. An SVG is served with its real type so
+         *     an `<img>` will draw it, and an SVG is also a document that can carry
+         *     script. `default-src 'none'` means a tab opened straight at this URL
+         *     executes nothing, and `nosniff` stops a browser from re-typing a file it
+         *     was told about. Both cost one line and close the only way this route could
+         *     run agent-authored markup as same-origin code.
+         *
+         *     No response model: the body is bytes, not a schema. That is the one shape
+         *     ADR 0023 clause 6's "declare what you return" does not apply to.
+         */
+        get: operations["file_raw_files_raw_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/files/tree": {
         parameters: {
             query?: never;
@@ -27067,6 +27105,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FileWriteOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    file_raw_files_raw_get: {
+        parameters: {
+            query: {
+                workspace: string;
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

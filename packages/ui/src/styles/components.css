@@ -3321,6 +3321,22 @@ span.ws-filterchip__open { cursor: default; }
 
 .ws-md img { max-width: 100%; height: auto; border-radius: var(--radius-md); }
 
+/* A drawn ```mermaid fence. The SVG paints itself from the tokens (read at
+   render time in MermaidDiagram.tsx, because the colours have to be baked into
+   the SVG string), so this rule only gives the diagram a surface and stops a
+   wide one from pushing the page sideways. Same surface language as a code
+   block, since that is what it replaced. */
+.ws-mermaid {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-block);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  text-align: center;
+}
+.ws-mermaid svg { max-width: 100%; height: auto; }
+
 /* Note body sits directly under the timestamp/author row: small top gap. */
 .ws-md--note { margin-top: var(--space-1); }
 

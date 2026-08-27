@@ -21,12 +21,35 @@
 // shallow compare skips the parse entirely. Keep the plugin array hoisted — a
 // fresh `[remarkGfm]` literal per render is a new prop identity every time,
 // which would defeat both this memo and react-markdown's own internal caching.
-import { memo } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+//
+// ## Diagrams
+//
+// A ```mermaid fence renders as a diagram, everywhere markdown is rendered and
+// with no per-surface configuration. That is one hoisted `components.pre`
+// override (`MARKDOWN_COMPONENTS` below) plus `MermaidDiagram`, which loads the
+// mermaid library lazily and falls back to the code block when a diagram will
+// not parse. Read `MermaidDiagram.tsx`'s header before changing any of it.
+import { memo, useMemo } from "react";
+import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cx } from "./cx";
+import { MermaidDiagram } from "./MermaidDiagram";
+import { mermaidSourceOf } from "./mermaidFence";
 
 const REMARK_PLUGINS = [remarkGfm];
+
+/** The one place a fenced block is inspected. `mermaidSourceOf` reads the hast
+ *  node react-markdown hands every component and answers whether this `pre` is
+ *  a diagram; everything else is drawn as the code block it always was. */
+function MarkdownPre({ node, children, ...rest }: JSX.IntrinsicElements["pre"] & ExtraProps) {
+  const diagram = mermaidSourceOf(node);
+  if (diagram !== null) return <MermaidDiagram code={diagram} />;
+  return <pre {...rest}>{children}</pre>;
+}
+
+// Hoisted for the same reason `REMARK_PLUGINS` is: a fresh object here would be
+// a new prop identity on every render.
+const MARKDOWN_COMPONENTS: Components = { pre: MarkdownPre };
 
 // `components` and `urlTransform` are the two react-markdown knobs a consumer
 // needs to render an in-app link (e.g. Workshop's `workshop:<kind>/...` refs) as
@@ -51,11 +74,19 @@ type MarkdownProps = {
 export const Markdown = memo(function Markdown(
   { children, className, components, urlTransform }: MarkdownProps,
 ) {
+  // The kit's own overrides, with the caller's on top so a consumer can still
+  // replace any of them. `useMemo` keeps the merged object stable: it is a new
+  // identity only when `components` itself changed, which is already the case
+  // the memo above lets through.
+  const merged = useMemo(
+    () => (components ? { ...MARKDOWN_COMPONENTS, ...components } : MARKDOWN_COMPONENTS),
+    [components],
+  );
   return (
     <div className={cx("ws-md", className)}>
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
-        components={components}
+        components={merged}
         urlTransform={urlTransform}
       >
         {children}

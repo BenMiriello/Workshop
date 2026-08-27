@@ -54,6 +54,7 @@ than silent.
 from __future__ import annotations
 
 import datetime
+import mimetypes
 import os
 import tempfile
 from dataclasses import dataclass
@@ -66,7 +67,7 @@ __all__ = [
     "AppFilePathError", "AppFileBinaryError", "AppFileReadOnlyError",
     "WorkspaceNotFound", "Workspace",
     "resolve", "workspace_at", "is_writable",
-    "project_root", "list_tree", "read_file", "write_file",
+    "project_root", "list_tree", "read_file", "open_file", "write_file",
 ]
 
 # Noisy, non-authored directories excluded from listings by name. See module
@@ -412,6 +413,44 @@ def read_file(ws: Workspace, path: str) -> dict:
                 "truncated": False, "encoding": "binary"}
     return {**base, "content": text, "editable": True,
             "truncated": False, "encoding": "utf-8"}
+
+
+# Media types for the extensions a browser can display directly and
+# `mimetypes` does not agree about across Python versions/platforms. Everything
+# else falls through to `mimetypes.guess_type`, and an unknown type is served as
+# a generic byte stream rather than guessed at.
+_MEDIA_TYPES = {
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".avif": "image/avif",
+    ".pdf": "application/pdf",
+    ".md": "text/markdown; charset=utf-8",
+}
+
+
+def open_file(ws: Workspace, path: str) -> tuple[Path, str]:
+    """The contained absolute path of one file plus its media type, for a
+    caller that has to serve the BYTES rather than a JSON body: an image, a
+    PDF, anything a browser renders natively.
+
+    `read_file` answers "what is in this file" and reports binary content as
+    absent, because a JSON body is the wrong shape for it. This answers "where
+    is this file and what is it", and containment is the same `safe_path` call,
+    so a raw read can never reach anywhere a text read could not.
+
+    Raises `AppFilePathError` on an escaping/empty path, `FileNotFoundError`
+    if it doesn't exist, `IsADirectoryError` if it names a directory.
+    """
+    if not (path or "").strip():
+        raise AppFilePathError("path is required")
+    target = safe_path(ws.root.resolve(), path)
+    if not target.exists():
+        raise FileNotFoundError(path)
+    if target.is_dir():
+        raise IsADirectoryError(path)
+    suffix = target.suffix.lower()
+    media = _MEDIA_TYPES.get(suffix) or mimetypes.guess_type(target.name)[0]
+    return target, media or "application/octet-stream"
 
 
 def _atomic_write(target: Path, content: str) -> None:

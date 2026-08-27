@@ -12,6 +12,39 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.6.4 - 2026-08-27 - a mermaid fence renders as a diagram
+
+**Additive.** No export moved and no prop changed. `Markdown` now draws a
+fenced block tagged `mermaid` as a diagram instead of as a code block, on every
+surface that renders markdown, with no per-surface configuration and no new
+prop. A caller that passes its own `components` still wins: the kit's overrides
+are merged UNDER the caller's, so a consumer that already replaces `pre` keeps
+its own behaviour.
+
+### Added
+
+- A `mermaid` fence renders as an SVG diagram. `mermaid` is a new OPTIONAL peer
+  dependency (`>=11`): it is reached through a dynamic `import()` and never
+  through a top-level one, so a consumer that does not install it pays nothing
+  and a fence merely stays a code block. It is around a megabyte gzipped, which
+  is why it is loaded on first sight of a diagram and lands in its own chunk.
+- The diagram is painted from the kit's own tokens (`--fg`, `--bg-inset`,
+  `--border-strong`, `--muted`, ...) rather than from mermaid's palette, and it
+  is redrawn when `data-theme` or `data-palette` changes on `<html>`. Restyling
+  by setting tokens keeps working, including here.
+- `.ws-mermaid` in `styles.css`: the surface a drawn diagram sits on.
+
+### Notes
+
+- Security is unchanged. `Markdown` still does not render raw HTML from the
+  document (there is no rehype-raw and there will not be one). mermaid runs with
+  `securityLevel: "strict"` and `htmlLabels: false`, which keeps its DOMPurify
+  pass on and its click handlers off; the SVG it returns is the only markup
+  injected, and it is mermaid's output, not the author's.
+- A diagram that does not parse renders as the code block it would have been,
+  with the parse error on a `Notice` beside it. That is the common case while a
+  reply is still streaming, not an edge case, so it never blanks or throws.
+
 ## 0.6.3 - 2026-08-25 - the transient backoff schedule is a named export
 
 **Additive.** One new export, `TRANSIENT_BACKOFF_MS`. Nothing existing moved:
