@@ -103,8 +103,8 @@ export type RunningRow = {
 const firstLine = (s: string | null | undefined) =>
   String(s ?? "").split("\n").find((l) => l.trim()) ?? "";
 
-export function needsRows(list: InboxList | null, cap = Infinity): NeedsRow[] {
-  return (list?.items ?? []).slice(0, cap).map((i) => ({
+export function needsRows(list: InboxList | null): NeedsRow[] {
+  return (list?.items ?? []).map((i) => ({
     id: i.id,
     who: i.agent || i.scope || "workshop",
     // The server's own vocabulary (inbox.KINDS), said in the operator's words.
@@ -124,8 +124,8 @@ export function needsRows(list: InboxList | null, cap = Infinity): NeedsRow[] {
   }));
 }
 
-export function continueRows(threads: ThreadSummary[] | null, cap = Infinity): ContinueRow[] {
-  return (threads ?? []).slice(0, cap).map((t) => ({
+export function continueRows(threads: ThreadSummary[] | null): ContinueRow[] {
+  return (threads ?? []).map((t) => ({
     id: t.id,
     title: t.title || "Untitled chat",
     tail: firstLine(t.last_message),
@@ -148,7 +148,7 @@ export function continueRows(threads: ThreadSummary[] | null, cap = Infinity): C
  *  its own, and the second is the one you are less likely to know about.
  */
 export function runningRows(
-  jobs: Job[] | null, threads: ThreadSummary[] | null, cap = Infinity,
+  jobs: Job[] | null, threads: ThreadSummary[] | null,
 ): RunningRow[] {
   const runs: RunningRow[] = (jobs ?? []).map((j) => ({
     id: j.id,
@@ -167,7 +167,7 @@ export function runningRows(
     when: t.last_user_at || t.updated_at || null,
     to: `/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`,
   }));
-  return [...runs, ...chats].slice(0, cap);
+  return [...runs, ...chats];
 }
 
 // ---- the spend line --------------------------------------------------------
@@ -196,43 +196,14 @@ export function formatTokens(n: number): string {
   return String(n);
 }
 
-// ---- how many rows fit -----------------------------------------------------
+// ---- overflow -------------------------------------------------------------
 
-/** Rows a card can show at a given height, and how many that leaves out.
+/** The label a "→" link carries once rows are being left out.
  *
- *  THE CARD IS A FIXED HEIGHT AND CLIPS. That is the layout rule the mockup is
- *  built on, and it is what makes the grid read as a grid rather than as four
- *  boxes of different lengths. So a card shows a WHOLE number of rows and says
- *  what it left out on its own "→" link -- it never half-draws a row at the
- *  clip edge and never grows to fit.
- */
-export function fitRows<T>(rows: T[], cap: number): { shown: T[]; hidden: number } {
-  const shown = rows.slice(0, Math.max(0, cap));
-  return { shown, hidden: Math.max(0, rows.length - shown.length) };
-}
-
-/** How many rows of each kind fit the card at this width.
- *
- *  A CONSTANT WOULD BE WRONG AT ONE OF THE TWO WIDTHS, and it was: three
- *  needs-you blocks fit the 236px desktop card and only two fit the 210px phone
- *  card, so a fixed three half-drew the last one on a phone -- the exact fault
- *  a clipping card must never show, because it reads as a rendering error
- *  rather than as "there is more".
- *
- *  The arithmetic, so the next person can redo it rather than guess. Desktop:
- *  236 card - 30 padding - 17 head - 12 gap = 177 for the list; a block is 55
- *  and the gap 6, so 3*55 + 2*6 = 177. Phone: 210 - 28 - 17 - 12 = 153, which
- *  takes 2. One-line rows are 22 with a 10 gap, so the same sums give 4 and 3.
- *
- *  It is here rather than in the components because it is a decision, and a
- *  decision in a component is a decision nothing can test.
- */
-export function rowCaps(wide: boolean): { needs: number; lines: number } {
-  return wide ? { needs: 3, lines: 4 } : { needs: 2, lines: 3 };
-}
-
-/** The label a "→" link carries once rows are being left out. Plain "→" while
- *  everything fits, because "+0 more" is noise. */
+ *  ONLY THE SERVER'S OWN CAP PUTS A NUMBER HERE. A card scrolls, so it never
+ *  leaves a row out for want of room; the only thing it can be missing is what
+ *  it did not ask for -- more waiting items than its page limit. Plain "→"
+ *  while everything fetched is on screen, because "+0 more" is noise. */
 export function moreLabel(hidden: number, verb: string): string {
   return hidden > 0 ? `${hidden} more ${verb} →` : `${verb} →`;
 }

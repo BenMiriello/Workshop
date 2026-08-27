@@ -2,33 +2,34 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { cx, StateBlock, Skeleton } from "@workshop/ui";
 
-// THE CARD EVERY DASHBOARD CARD IS. One head layout, one clip rule, one set of
-// states, so "how a card behaves" is answered once rather than four times.
+// THE CARD EVERY DASHBOARD CARD IS. One head layout, one scroll rule, one set
+// of states, so "how a card behaves" is answered once rather than four times.
 //
-// FIXED HEIGHT, AND IT CLIPS. That is the layout rule the whole page is built
-// on: the grid sets the row height and a card shows a whole number of rows
-// inside it. A card never grows to fit its content and never half-draws a row
-// at the clip edge; what does not fit is named on the head's link. Cards that
-// size themselves are four boxes of different lengths, which is not a grid.
+// FIXED HEIGHT, AND THE LIST SCROLLS INSIDE IT. The grid sets the row height so
+// a row of cards lines up; what does not fit is reached by scrolling the card,
+// NOT dropped. The first cut clipped each card to two to four rows and named
+// the remainder on the head link, which made a dashboard that showed four of a
+// hundred and thirty chats -- the mockup drew a handful of rows because a
+// mockup has to draw something, and that was read as a rule. It is not one: a
+// card shows everything it was given.
 //
-// `tone="alert"` is the ONE alarm on this page, and only "Needs you" uses it:
-// the card's border and label go warn when something is actually waiting. If a
-// second card ever wants it, that is a conversation, not a prop change.
+// The head's "→" is the way to the full page, and it names an overflow only
+// when the SERVER capped the read (more waiting than the page asked for), never
+// because the card ran out of pixels.
 
 export function DashboardCard({
-  label, count, tone = "plain", link, children, className,
+  label, count, link, children, className,
 }: {
   label: string;
   /** Beside the label. A number the head states, not a badge. */
   count?: ReactNode;
-  tone?: "plain" | "alert";
   /** The way out of this card, right-aligned in the head. */
   link?: { to: string; label: string };
   children: ReactNode;
   className?: string;
 }) {
   return (
-    <section className={cx("ws-dashcard", tone === "alert" && "ws-dashcard--alert", className)}>
+    <section className={cx("ws-dashcard", className)}>
       <header className="ws-dashcard__head">
         <span className="ws-dashcard__label">{label}</span>
         {count != null && <span className="ws-dashcard__count">{count}</span>}
@@ -53,7 +54,7 @@ export function DashboardCardFoot({ children }: { children: ReactNode }) {
  *  is a card nobody can act on; the operator of this instance can read a path.
  */
 export function DashboardState({
-  loading, error, empty, emptyText, endpoint, rows = 3,
+  loading, error, empty, emptyText, endpoint, rows = 4,
 }: {
   loading: boolean;
   error: string | null;

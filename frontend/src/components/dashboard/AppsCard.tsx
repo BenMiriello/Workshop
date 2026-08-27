@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { appPlaces } from "../../apps/registry";
 import { AppGlyph } from "../../lib/appIcon";
@@ -16,52 +16,31 @@ import { DashboardCard } from "./DashboardCard";
 // only one of the four like that, and that is a property of the data, not an
 // omission.
 
-/** Tiles per page. The card is a fixed height, so this is a layout constant,
- *  not a preference: eight is what fits two rows at the grid's row height with
- *  the head and the dots above and below it. */
-const PER_PAGE = 8;
+// EVERY INSTALLED APP, in one scrolling grid. It used to page eight at a time
+// behind a row of dots, which was the short card's constraint dressed up as a
+// feature: paging a list of a dozen tiles hides half of them behind a control
+// nobody asked for. The card scrolls like the other three now.
 
 export function AppsCard() {
   const apps = useMemo(() => appPlaces(), []);
-  const [page, setPage] = useState(0);
-
-  const pages = Math.max(1, Math.ceil(apps.length / PER_PAGE));
-  const current = Math.min(page, pages - 1);
-  const shown = apps.slice(current * PER_PAGE, current * PER_PAGE + PER_PAGE);
 
   return (
     <DashboardCard label="Apps" link={{ to: "/apps", label: "all →" }}>
       {apps.length === 0 ? (
         <p className="ws-dashcard__empty">No apps installed.</p>
       ) : (
-        <>
-          <ul className="ws-dashapps">
-            {shown.map((a) => (
-              <li key={a.id}>
-                <Link className="ws-dashapps__tile" to={a.home} title={a.name}>
-                  <span className="ws-dashapps__glyph">
-                    <AppGlyph icon={a.icon} name={a.name} size={22} textSize="var(--fs-base)" />
-                  </span>
-                  <span className="ws-dashapps__name">{a.name}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-          {pages > 1 && (
-            <div className="ws-dashapps__pager">
-              {Array.from({ length: pages }, (_, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  className={"ws-dashapps__dot" + (i === current ? " is-on" : "")}
-                  aria-label={`Page ${i + 1} of ${pages}`}
-                  aria-current={i === current}
-                  onClick={() => setPage(i)}
-                />
-              ))}
-            </div>
-          )}
-        </>
+        <ul className="ws-dashapps">
+          {apps.map((a) => (
+            <li key={a.id}>
+              <Link className="ws-dashapps__tile" to={a.home} title={a.name}>
+                <span className="ws-dashapps__glyph">
+                  <AppGlyph icon={a.icon} name={a.name} size={22} textSize="var(--fs-base)" />
+                </span>
+                <span className="ws-dashapps__name">{a.name}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
       )}
     </DashboardCard>
   );

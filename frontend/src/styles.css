@@ -3282,9 +3282,9 @@ p.chat-workpanel__note { margin: 0; }
 
 /* THE GRID SETS THE ROW HEIGHT, and that is the whole layout rule. Cards do not
    size themselves: `grid-auto-rows` gives every card the same height and each
-   one clips, so a row of cards lines up whatever is inside them. Four cards of
-   four different lengths is not a grid, and it is what this page looked like
-   before (three stacked bands that each grew with their content).
+   one SCROLLS its own list, so a row of cards lines up whatever is inside them.
+   Four cards of four different lengths is not a grid, and it is what this page
+   looked like before (three stacked bands that each grew with their content).
 
    `auto-fit` + `minmax` is what makes it one column on a phone, two on a
    laptop and three on a wide monitor with no breakpoint list to maintain. */
@@ -3293,7 +3293,12 @@ p.chat-workpanel__note { margin: 0; }
   width: 100%; max-width: 900px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  grid-auto-rows: 236px;
+  /* THE ROW HEIGHT IS THE ONLY THING THAT SETS A CARD'S SIZE, and it is set so
+     a card holds a useful stretch of its list -- about nine one-line rows, or
+     five of the two-line blocks. It was 236px, which held four and three, and a
+     dashboard that showed four of a hundred and thirty chats is a dashboard
+     nobody can use. Past the fold the card SCROLLS; it does not drop rows. */
+  grid-auto-rows: 372px;
   gap: 14px;
   align-content: start;
 }
@@ -3306,12 +3311,11 @@ p.chat-workpanel__note { margin: 0; }
   border: 1px solid var(--border);
   border-radius: 12px;
 }
-/* THE ONE ALARM ON THIS PAGE. Only "Needs you" wears it, and only while
-   something is actually waiting: the border and the label carry it together so
-   it reads at a glance from across the grid without a second colour anywhere
-   else on the card. */
-.ws-dashcard--alert { border-color: var(--warn); }
-.ws-dashcard--alert .ws-dashcard__label { color: var(--warn); }
+/* NO CARD IS PAINTED. "Needs you" used to take a warn border and a warn label
+   while anything was waiting, and since something is essentially always
+   waiting, that was a permanent yellow box rather than an alarm -- a hue that
+   does not vary is not information (frontend/CLAUDE.md, "What color is for").
+   The count beside the label says how many, in ordinary ink. */
 
 .ws-dashcard__head { display: flex; align-items: center; gap: var(--space-2); flex: 0 0 auto; }
 .ws-dashcard__label {
@@ -3323,7 +3327,6 @@ p.chat-workpanel__note { margin: 0; }
   font-family: var(--font-mono); font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums; color: var(--muted); flex: 0 0 auto;
 }
-.ws-dashcard--alert .ws-dashcard__count { color: var(--warn); }
 /* The way out, and the overflow affordance: a capped card says what it left out
    here rather than growing or scrolling. */
 .ws-dashcard__link {
@@ -3332,10 +3335,19 @@ p.chat-workpanel__note { margin: 0; }
   color: var(--faint); text-decoration: none; white-space: nowrap;
 }
 .ws-dashcard__link:hover { color: var(--accent); }
-/* min-height:0 so the body is what clips, not the card: without it a flex child
-   refuses to shrink below its content and the card grows past its grid row. */
+/* THE BODY IS THE SCROLLER. min-height:0 is what makes that work: without it a
+   flex child refuses to shrink below its content and the card grows past its
+   grid row instead of scrolling inside it.
+
+   Scroll chaining is left ON (no overscroll-behavior). Reaching the end of a
+   card and having the page carry on is what a phone reader expects; trapping
+   the gesture inside a 372px box is how a stacked column becomes unscrollable.
+
+   `scrollbar-gutter: stable` keeps the rows from shifting sideways by the width
+   of a scrollbar when a poll takes a card from fitting to not. */
 .ws-dashcard__body {
-  flex: 1 1 auto; min-height: 0; overflow: hidden;
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; -webkit-overflow-scrolling: touch; scrollbar-gutter: stable;
   display: flex; flex-direction: column; gap: var(--space-3);
 }
 .ws-dashcard__foot {
@@ -3355,13 +3367,11 @@ p.chat-workpanel__note { margin: 0; }
   list-style: none; margin: 0; padding: 0; min-width: 0;
   display: flex; flex-direction: column; gap: 10px;
 }
-/* THREE BLOCKS MUST FIT THE FIXED ROW, WHOLE. Measured at the 236px card: the
-   head and its gap take 29, leaving 177 for three blocks and two gaps, so with
-   a 6px gap a block gets 55. At 60 (the first attempt) the third one half-drew
-   at the clip edge, which is precisely what a card that clips must never do --
-   it reads as a rendering fault rather than as "there is more". At 53 it fitted
-   and clipped the DESCENDERS off the second line instead, which is the same
-   fault one notch smaller. */
+/* A two-line block is 55 tall with a 6px gap, so five of them fit the card's
+   scroller and the sixth is reached by scrolling. The exact heights no longer
+   have to divide the card evenly: the body scrolls, so a partly drawn block at
+   the fold is a scroll affordance rather than the rendering fault it was when
+   the card clipped. */
 .ws-dashrows--blocks { gap: 6px; }
 
 /* A one-line row: title, then the tail of what was said, then the reading and
@@ -3457,17 +3467,6 @@ p.chat-workpanel__note { margin: 0; }
   max-width: 100%; font-size: var(--fs-xs); color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Paged rather than scrolled, because the card clips: a half-visible row of
-   tiles at the fold reads as a rendering fault. */
-.ws-dashapps__pager {
-  flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 7px;
-}
-.ws-dashapps__dot {
-  width: 6px; height: 6px; padding: 0; border: none; border-radius: var(--radius-pill);
-  background: var(--border-strong); cursor: pointer;
-  transition: background var(--dur-fast) linear;
-}
-.ws-dashapps__dot.is-on { background: var(--accent); }
 
 /* ---- phone ---------------------------------------------------------------- */
 /* The cards stack in source order and each one is a little shorter. No page
@@ -3476,14 +3475,14 @@ p.chat-workpanel__note { margin: 0; }
 @media (max-width: 900px) {
   .ws-dashboard__grid {
     grid-template-columns: 1fr;
-    grid-auto-rows: 210px;
+    /* Shorter than the desktop card because four of these stack into one
+       column, and taller than the 210px it was because that held two rows.
+       Seven one-line rows, four blocks, and the rest is a scroll away. */
+    grid-auto-rows: 300px;
     gap: 11px;
   }
   .ws-dashcard { padding: 14px; }
-  /* TIGHTER, because two rows of tiles have to fit the shorter card: at the
-     desktop spacing the second row's NAMES were cut in half by the clip edge.
-     46 + 4 + 15 = 65 a row, twice, plus a 10px gap = 140 inside the 153 the
-     phone card leaves under its head. */
+  /* Tighter, so more than one row of tiles is on screen at a phone width. */
   .ws-dashapps { gap: 10px 14px; }
   .ws-dashapps__tile { gap: var(--space-1); }
   .ws-dashapps__name { font-size: 11px; }

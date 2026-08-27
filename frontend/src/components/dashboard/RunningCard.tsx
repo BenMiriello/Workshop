@@ -2,10 +2,9 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { timeAgo } from "@workshop/ui";
 import {
-  fetchRunning, fetchUsage, fitRows, moreLabel, runningRows, spendLine,
+  fetchRunning, fetchUsage, runningRows, spendLine,
 } from "../../lib/dashboard";
 import { DashboardCard, DashboardCardFoot, DashboardState } from "./DashboardCard";
-import { useRowCaps } from "./useRowCaps";
 import type { ThreadsRead } from "./useThreads";
 import { queryKeys } from "../../lib/queryKeys";
 
@@ -57,24 +56,26 @@ export function RunningCard({ read }: { read: ThreadsRead }) {
   // `isError` instead of falling through to the cached payload.
   const usage = usageQuery.isError ? null : usageQuery.data ?? null;
 
-  const ROWS = useRowCaps().lines;
-  const all = runningRows(jobs, read.threads);
-  const { shown, hidden } = fitRows(all, ROWS);
+  // Every run in flight, plus every chat mid-turn, and the card scrolls if that
+  // is more than fits. No overflow number on the link: this endpoint returns a
+  // null total by design (ADR 0023), so beyond its fifty-row limit there is
+  // nothing truthful to count -- and fifty concurrent runs is not a state this
+  // instance reaches.
+  const shown = runningRows(jobs, read.threads);
   const spend = spendLine(usage);
 
   return (
     <DashboardCard
       label="Running now"
-      count={all.length > 0 ? all.length : undefined}
-      link={{ to: "/runs", label: moreLabel(hidden, "runs") }}
+      count={shown.length > 0 ? shown.length : undefined}
+      link={{ to: "/runs", label: "runs →" }}
     >
       <DashboardState
         loading={!jobs && !err}
         error={err}
-        empty={!!jobs && all.length === 0}
+        empty={!!jobs && shown.length === 0}
         emptyText="Nothing running."
         endpoint="/api/jobs"
-        rows={ROWS}
       />
       {shown.length > 0 && (
         <ul className="ws-dashrows">

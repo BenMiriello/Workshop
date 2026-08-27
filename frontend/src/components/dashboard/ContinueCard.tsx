@@ -1,9 +1,8 @@
 import { Link } from "react-router-dom";
 import { timeAgo } from "@workshop/ui";
 import { ContextRing } from "../chat/ContextRing";
-import { continueRows, fitRows, moreLabel } from "../../lib/dashboard";
+import { continueRows } from "../../lib/dashboard";
 import { DashboardCard, DashboardState } from "./DashboardCard";
-import { useRowCaps } from "./useRowCaps";
 import type { ThreadsRead } from "./useThreads";
 
 // WHERE YOU WERE. The chat list's own order (when the operator last spoke), so
@@ -21,22 +20,23 @@ import type { ThreadsRead } from "./useThreads";
 
 export function ContinueCard({ read }: { read: ThreadsRead }) {
   const { threads, error: err } = read;
-  const ROWS = useRowCaps().lines;
-  const all = continueRows(threads);
-  const { shown, hidden } = fitRows(all, ROWS);
+  // EVERY conversation the list route returned, and the card scrolls. That
+  // route is not paged, so there is no remainder to name on the link: what is
+  // here is all of them.
+  const shown = continueRows(threads);
 
   return (
     <DashboardCard
       label="Pick up where you left off"
-      link={{ to: "/chats", label: moreLabel(hidden, "chats") }}
+      count={shown.length > 0 ? shown.length : undefined}
+      link={{ to: "/chats", label: "chats →" }}
     >
       <DashboardState
         loading={!threads && !err}
         error={err}
-        empty={!!threads && all.length === 0}
+        empty={!!threads && shown.length === 0}
         emptyText="No conversations yet."
         endpoint="/api/chat/threads"
-        rows={ROWS}
       />
       {shown.length > 0 && (
         <ul className="ws-dashrows">
