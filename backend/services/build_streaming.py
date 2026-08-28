@@ -1239,6 +1239,35 @@ def answer_segments(segments: list[dict]) -> list[dict]:
     return segments[cut:]
 
 
+def content_from_segments(segments: list[dict]) -> str:
+    """The stored reply body for a turn with these segments.
+
+    Split out from `_turn_content` so a caller that has segments but no live
+    `Turn` can derive the SAME body: the 2026-08-28 backfill of already-stored
+    replies is the reason it exists. A migration that reimplemented this rule
+    would be a second definition of "what did the turn say", which is exactly
+    the failure mode this whole change is undoing.
+
+    See `_turn_content` for what the rule is and what it replaced."""
+    answer = answer_segments(segments)
+    joined = "".join(s["text"] for s in answer if s.get("t") == "text").strip()
+    if not joined:
+        # A TURN THAT ENDED ON A TOOL NEVER ANSWERED, and 12.5% of the operator's
+        # replies are that shape: stopped, interrupted, or out of budget mid-step.
+        # Storing "" for those would be honest about the answer and useless
+        # everywhere content is read as a summary -- the chat list would show a
+        # blank row for every interrupted turn.
+        #
+        # So fall back to the LAST thing the turn said, which is the most recent
+        # narration and the best available account of where it got to. One
+        # segment, not all of them joined: the bug being fixed here is the
+        # joining, and reintroducing it in the fallback would put it back on
+        # exactly the replies most likely to be long.
+        said = [s for s in segments if s.get("t") == "text" and s.get("text", "").strip()]
+        joined = said[-1]["text"].strip() if said else ""
+    return reply_guard.scrub(joined)
+
+
 def _turn_content(turn: "Turn") -> str:
     """The operator-visible answer: the TRAILING run of top-level text.
 
@@ -1260,23 +1289,7 @@ def _turn_content(turn: "Turn") -> str:
     Scrubbed through reply_guard: the guaranteed-clean backstop for the stored
     transcript, so a leaked platform-prompt region never persists even if the
     live per-chunk guard missed a split banner."""
-    answer = answer_segments(turn.segments)
-    joined = "".join(s["text"] for s in answer if s.get("t") == "text").strip()
-    if not joined:
-        # A TURN THAT ENDED ON A TOOL NEVER ANSWERED, and 12.5% of the operator's
-        # replies are that shape: stopped, interrupted, or out of budget mid-step.
-        # Storing "" for those would be honest about the answer and useless
-        # everywhere content is read as a summary -- the chat list would show a
-        # blank row for every interrupted turn.
-        #
-        # So fall back to the LAST thing the turn said, which is the most recent
-        # narration and the best available account of where it got to. One
-        # segment, not all of them joined: the bug being fixed here is the
-        # joining, and reintroducing it in the fallback would put it back on
-        # exactly the replies most likely to be long.
-        said = [s for s in turn.segments if s.get("t") == "text" and s.get("text", "").strip()]
-        joined = said[-1]["text"].strip() if said else ""
-    return reply_guard.scrub(joined)
+    return content_from_segments(turn.segments)
 
 
 def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:

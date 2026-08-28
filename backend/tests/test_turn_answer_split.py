@@ -69,3 +69,35 @@ def test_agent_and_approval_segments_break_the_run_like_a_tool_does():
     # is narration by the same rule.
     for kind in ({"t": "agent", "name": "Explore"}, {"t": "approval", "id": "x"}):
         assert answer_segments([narr(), kind, ANSWER]) == [ANSWER]
+
+
+# ---- what the 2026-08-28 backfill of already-stored replies has to preserve ----
+
+from services.build_streaming import content_from_segments, _turn_content
+
+
+def test_content_is_the_answer_alone():
+    assert content_from_segments([narr(), tool(), ANSWER]) == ANSWER["text"]
+
+
+def test_a_turn_that_ended_on_a_tool_falls_back_to_the_last_thing_said():
+    # Not "" (a blank chat-list row for every interrupted turn) and not the join
+    # (the bug, reappearing on exactly the longest replies). One segment.
+    segs = [narr("one"), tool(), narr("where it got to"), tool()]
+    assert content_from_segments(segs) == "where it got to"
+
+
+def test_a_reply_with_no_text_at_all_has_no_body():
+    # These exist on disk with a system error message as their content
+    # ("The turn ended unexpectedly"). The backfill's suffix guard is what stops
+    # it blanking them; this pins the input side of that.
+    assert content_from_segments([tool(), tool()]) == ""
+
+
+def test_the_live_path_and_the_importable_one_agree():
+    # `_turn_content` is now a thin wrapper. If they ever diverge, the stored
+    # body and the backfilled body would disagree about the same turn.
+    class FakeTurn:
+        segments = [narr(), tool(), ANSWER]
+
+    assert _turn_content(FakeTurn()) == content_from_segments(FakeTurn.segments)
