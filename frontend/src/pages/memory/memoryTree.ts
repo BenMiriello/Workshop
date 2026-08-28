@@ -281,6 +281,37 @@ export function scopeForNewNote(
   }
 }
 
+/** Where Memory remembers you were. One key, per user (`userStorage`). */
+export const LAST_SCOPE_KEY = "memory.lastScope";
+
+/**
+ * WHICH SCOPE MEMORY OPENS AT when you arrive with nothing selected.
+ *
+ * The operator's first complaint on 2026-08-27: "when you link to it, it goes
+ * to memory, but it goes to the home workshop memory, which is odd... we are in
+ * the development scope, so it should go to development scope memory." Arriving
+ * at the root of a tree you never work at the root of is a level of navigation
+ * you have to redo every time.
+ *
+ * So Memory remembers the scope you were last in and opens there. That is a
+ * file browser's ordinary behaviour and it needs no cross-surface plumbing: a
+ * link that already names a scope (`?scope=`, `?note=`) still wins, because
+ * this only answers the case where nothing was named at all.
+ *
+ * It returns null rather than guessing when the remembered scope is not in the
+ * tree any more. A scope can be uninstalled with its app or renamed, and
+ * selecting one that no longer exists would open an empty pane and look like a
+ * bug rather than like a scope that went away.
+ */
+export function openingScope(
+  remembered: string | null,
+  scopeKeys: readonly string[],
+): string | null {
+  const want = (remembered || "").trim();
+  if (!want) return null;
+  return scopeKeys.includes(want) ? want : null;
+}
+
 // ---- URL addressing --------------------------------------------------------
 // Memory's existing deep links are `?scope=&note=` (services/refs.py's note
 // resolver) and `?path=` (its doc resolver). The tree SELECTS through those

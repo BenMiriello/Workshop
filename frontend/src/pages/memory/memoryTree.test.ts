@@ -15,6 +15,7 @@ import {
   notesInScope,
   paramsForNode,
   parentOf,
+  openingScope,
   parseMemoryNode,
   scopeForNewNote,
   searchDocs,
@@ -394,5 +395,31 @@ describe("scopeForNewNote", () => {
 
   it("uses the caller's fallback, not a hardcoded one", () => {
     expect(scopeForNewNote(null, "development")).toBe("development");
+  });
+});
+
+// ---- Where Memory opens (2026-08-27, MEM-16) -------------------------------
+
+describe("openingScope", () => {
+  const scopes = ["workshop", "development", "project:birds"];
+
+  it("opens at the scope you were last in", () => {
+    expect(openingScope("development", scopes)).toBe("development");
+  });
+
+  it("opens at the root when there is nothing remembered", () => {
+    expect(openingScope(null, scopes)).toBe(null);
+    expect(openingScope("", scopes)).toBe(null);
+    expect(openingScope("   ", scopes)).toBe(null);
+  });
+
+  it("opens at the root rather than at a scope that is gone", () => {
+    // A scope can leave with the app that owned it. Selecting one that is not
+    // there any more opens an empty pane, which reads as a bug.
+    expect(openingScope("app:retired", scopes)).toBe(null);
+  });
+
+  it("never invents a scope when the tree has not loaded", () => {
+    expect(openingScope("development", [])).toBe(null);
   });
 });

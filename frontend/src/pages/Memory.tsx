@@ -5,7 +5,7 @@ import {
   CheckSquare, ChevronUp, FilePlus, FileText, FolderTree, MessageSquare,
   RefreshCw, Search,
 } from "lucide-react";
-import { Button, ConfirmDialog, PageActionBar, PageHeader, Row, Stack, Input, StateBlock, Skeleton, Tag, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, shortHttpError } from "@workshop/ui";
+import { Button, ConfirmDialog, PageActionBar, PageHeader, Row, Stack, Input, StateBlock, Skeleton, Tag, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, shortHttpError, userStorage } from "@workshop/ui";
 import { scopeLabel } from "../lib/tasks";
 import { useIsWide } from "../lib/useMediaQuery";
 import { useDirectoryPage } from "../components/shell/directory";
@@ -18,6 +18,8 @@ import {
   encodeMemoryNode,
   isBranch,
   nodeForParams,
+  LAST_SCOPE_KEY,
+  openingScope,
   paramsForNode,
   parseMemoryNode,
   scopeForNewNote,
@@ -282,6 +284,30 @@ function Library() {
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
+
+  // MEMORY OPENS WHERE YOU WERE (MEM-16). Two halves, and they are deliberately
+  // separate: remembering happens on every selection, and restoring happens
+  // ONCE, on arrival, and only when the URL named nothing at all. A link that
+  // carries a scope, a note, a path, a search or `?new=` always wins.
+  useEffect(() => {
+    if (selected?.kind === "note" || selected?.kind === "scope") {
+      userStorage.local.setItem(LAST_SCOPE_KEY, selected.scope);
+    }
+  }, [selected]);
+
+  const restored = useRef(false);
+  useEffect(() => {
+    if (restored.current) return;
+    // Wait for the tree: `openingScope` refuses to select a scope that is not
+    // in it, and before it loads every scope looks like it is not in it.
+    if (!scopeTree.length) return;
+    restored.current = true;
+    if (selected || applied || creating !== null) return;
+    const open = openingScope(userStorage.local.getItem(LAST_SCOPE_KEY), scopeTree.map((n) => n.key));
+    // `replace`, so the root you never actually looked at does not become a
+    // history entry you have to press Back through twice.
+    if (open) setSearchParams({ scope: open }, { replace: true });
+  }, [scopeTree, selected, applied, creating, setSearchParams]);
 
   const onChanged = useCallback((msg?: string) => {
     setNotice(msg ?? null);
