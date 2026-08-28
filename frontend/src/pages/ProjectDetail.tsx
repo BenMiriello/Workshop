@@ -238,6 +238,25 @@ function SpawnAgentModal({
   const [slugTouched, setSlugTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // WHICH TREE IT WILL WORK IN. `POST /api/agents/build` has always accepted
+  // `branch_slug` and resolved the agent's cwd from it, and no create form ever
+  // sent one, so the only working branch pin was reachable from the API alone.
+  // Empty means the project's own tree, which is the default and stays the
+  // default: nobody who did not ask for a branch gets one.
+  const [branchSlug, setBranchSlug] = useState("");
+  const [branches, setBranches] = useState<{ branch_slug: string }[] | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetch(`/api/worktrees/${encodeURIComponent(projectSlug)}`)
+      .then((r) => (r.ok ? r.json() : []))
+      // Not an error state: a project with no branches is the ordinary case,
+      // and the control simply offers the one tree there is.
+      .then((list) => { if (!cancelled) setBranches(list || []); })
+      .catch(() => { if (!cancelled) setBranches([]); });
+    return () => { cancelled = true; };
+  }, [open, projectSlug]);
 
   const effectiveSlug = useMemo(
     () => (slugTouched ? slug : slugify(name)),
@@ -256,6 +275,7 @@ function SpawnAgentModal({
           name: name.trim() || effectiveSlug,
           purpose: purpose.trim(),
           project_slug: projectSlug,
+          branch_slug: branchSlug || null,
         }),
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
@@ -287,7 +307,24 @@ function SpawnAgentModal({
         <Field label="Purpose" help="One sentence. What is this agent working on?">
           <Input value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. build the landing-page hero section" />
         </Field>
-        {err && <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: 0 }}>{err}</p>}
+        {branches !== null && branches.length > 0 && (
+          <Field
+            label="Working tree"
+            help="Its turns run here. A branch keeps its writes off the shared tree; you can move it later."
+          >
+            <Select
+              value={branchSlug}
+              onChange={(e) => setBranchSlug(e.target.value)}
+              aria-label="Working tree"
+            >
+              <option value="">The project's own tree</option>
+              {branches.map((b) => (
+                <option key={b.branch_slug} value={b.branch_slug}>{b.branch_slug}</option>
+              ))}
+            </Select>
+          </Field>
+        )}
+        {err && <Notice tone="error" detail={err}>Couldn't spawn this agent.</Notice>}
         <Row end>
           <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
           <Button variant="primary" onClick={submit} disabled={busy || !effectiveSlug || !name.trim()} loading={busy}>

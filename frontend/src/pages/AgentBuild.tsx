@@ -333,9 +333,14 @@ export default function AgentBuild() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewLog, setPreviewLog] = useState("");
 
-  // Branches
+  // Branches. THE PIN IS THE AGENT'S, NOT THIS PAGE'S, and that is the whole
+  // fix: this used to be a `useState` that nothing but the <Select> ever read,
+  // so choosing a branch moved a variable and changed nothing about where the
+  // agent's turns ran. It now renders `agent.branch_slug` and writes through
+  // PATCH /api/agents/build/{slug}, which re-derives the agent's cwd.
   const [worktrees, setWorktrees] = useState<Worktree[] | null>(null);
-  const [branchSlug, setBranchSlug] = useState<string>("");
+  const [pinBusy, setPinBusy] = useState(false);
+  const [pinErr, setPinErr] = useState<string | null>(null);
   const [newBranchOpen, setNewBranchOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameName, setRenameName] = useState("");
@@ -373,6 +378,29 @@ export default function AgentBuild() {
       setRenameBusy(false);
     }
   }, [agent, renameName, renamePurpose]);
+
+  // Move the agent onto another branch, or back to the project's main tree.
+  // Takes effect from the NEXT turn (a running turn's cwd was fixed when its
+  // process started) and keeps the agent's Claude Code session: the
+  // conversation is about the work, not about the directory.
+  const pinBranch = useCallback(async (next: string) => {
+    if (!slug) return;
+    setPinBusy(true);
+    setPinErr(null);
+    try {
+      const r = await fetch(`/api/agents/build/${slug}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ branch_slug: next }),
+      });
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+      setAgent(await r.json());
+    } catch (e) {
+      setPinErr(String(e));
+    } finally {
+      setPinBusy(false);
+    }
+  }, [slug]);
 
   const loadAll = useCallback(async () => {
     try {
@@ -675,16 +703,18 @@ export default function AgentBuild() {
             <Row style={{ gap: "var(--space-2)" }}>
               <span className="ws-card__meta">Branch</span>
               <Select
-                value={branchSlug}
-                onChange={(e) => setBranchSlug(e.target.value)}
+                value={agent.branch_slug || ""}
+                onChange={(e) => { void pinBranch(e.target.value); }}
+                disabled={pinBusy}
                 aria-label="Branch"
+                title={`Turns run in ${agent.cwd || "this agent's directory"}. Changing this moves the next turn, not the one in flight.`}
               >
                 <option value="">Main branch</option>
                 {worktrees.map((w) => (
                   <option key={w.branch_slug} value={w.branch_slug}>{w.branch_slug}</option>
                 ))}
               </Select>
-              <Button size="sm" variant="ghost" onClick={() => setNewBranchOpen(true)}>
+              <Button size="sm" variant="ghost" onClick={() => setNewBranchOpen(true)} disabled={pinBusy}>
                 <Plus aria-hidden /> New branch
               </Button>
             </Row>
@@ -699,6 +729,12 @@ export default function AgentBuild() {
             <StatusPill status="stopped">No project</StatusPill>
           )}
         </Row>
+        {pinErr && (
+          <Notice tone="error" detail={pinErr}>
+            Couldn't move this agent to that branch. It is still working in{" "}
+            <code className="ws-mono">{agent.cwd}</code>.
+          </Notice>
+        )}
       </Card>
 
       <div className="ws-agent-chat" data-workbench={workbenchOpen ? "open" : "closed"}>
@@ -1042,7 +1078,10 @@ export default function AgentBuild() {
           onCancel={() => setNewBranchOpen(false)}
           onCreated={(s) => {
             setNewBranchOpen(false);
-            setBranchSlug(s);
+            // Cutting a branch from here is a request to WORK in it, so the
+            // agent moves onto it. Creating one and leaving the agent where it
+            // was is the shape that made this control feel inert.
+            void pinBranch(s);
             // Refresh worktrees list
             fetch(`/api/worktrees/${agent.project_slug}`)
               .then((r) => (r.ok ? r.json() : []))

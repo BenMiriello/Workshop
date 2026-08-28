@@ -208,6 +208,50 @@ def rename(slug: str, *, name: str | None = None, purpose: str | None = None) ->
     return {"slug": slug, **rec}
 
 
+def set_branch(slug: str, branch_slug: str | None) -> dict:
+    """Re-pin this agent to a branch of its project, or back to the main tree.
+
+    THE CONTROL THAT WAS ON SCREEN AND INERT. `AgentBuild.tsx` has had a Branch
+    picker beside the status pills since it was built, populated from
+    `GET /worktrees/{project}` -- and nothing read its value, so choosing a
+    branch changed nothing about where the agent's turns ran. `create_agent`
+    accepted a `branch_slug` and resolved a cwd from it, which made the one
+    working pin reachable only from the API.
+
+    THE CWD IS RE-DERIVED, NEVER PATCHED INDEPENDENTLY, and it is derived by the
+    same call `create_agent` uses (`worktrees.branch_dir`), so a pinned agent's
+    directory cannot be one thing at create time and another at re-pin time.
+
+    Takes effect from the NEXT turn: a turn in flight had its cwd fixed when its
+    process started. The Claude Code session is deliberately NOT reset -- the
+    conversation is about the work, not about the directory, and dropping it
+    would make changing branch cost the agent its memory of what it was doing.
+    """
+    data = _load()
+    record = (data.get("build_agents") or {}).get(slug)
+    if not record:
+        raise KeyError(slug)
+    project_slug = record.get("project_slug")
+    if not project_slug:
+        raise ValueError("this agent has no project, so it has no branches")
+    branch_slug = (branch_slug or "").strip() or None
+    if branch_slug:
+        from services import worktrees as _worktrees
+        cwd = _worktrees.branch_dir(project_slug, branch_slug)
+        if not cwd.exists():
+            raise ValueError(f"branch worktree not found: {cwd}")
+    else:
+        pd = _project_dir(project_slug)
+        if not pd:
+            raise ValueError(f"project not found: {project_slug}")
+        cwd = pd
+    record["branch_slug"] = branch_slug
+    record["cwd"] = str(cwd)
+    record["last_active"] = _now()
+    _save(data)
+    return {"slug": slug, **record}
+
+
 def touch(slug: str) -> None:
     data = _load()
     if slug in (data.get("build_agents") or {}):

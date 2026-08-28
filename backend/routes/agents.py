@@ -803,15 +803,38 @@ async def create_build_agent(body: BuildAgentCreate):
     return rec
 
 
-class BuildAgentRename(BaseModel):
+class BuildAgentPatch(BaseModel):
+    """What can be changed about a maker after it exists.
+
+    `branch_slug` IS THE ONE THAT MOVES WHERE ITS TURNS RUN, and it is here
+    because the picker on the agent's own page was inert without it: the value
+    was chosen, held in state, and read by nothing. Three values, three
+    meanings, and the difference matters -- absent leaves the pin alone, a slug
+    moves the agent onto that branch's tree, and an empty string moves it back
+    to the project's main tree. `None` cannot mean "clear it" here because
+    `None` is what "not sent" already means.
+    """
     name: str | None = Field(default=None, max_length=64)
     purpose: str | None = Field(default=None, max_length=280)
+    branch_slug: str | None = Field(default=None, max_length=64)
 
 
 @router.patch("/build/{slug}", response_model=BuildAgent, response_model_exclude_unset=True)
-async def rename_build_agent(slug: str, body: BuildAgentRename):
+async def patch_build_agent(slug: str, body: BuildAgentPatch):
+    """Rename a maker, restate its purpose, or move it to another branch.
+
+    A branch move takes effect from the NEXT turn (the running one's cwd was
+    fixed at spawn) and keeps the agent's Claude Code session, because the
+    conversation is about the work rather than about the directory.
+    """
+    fields = body.model_dump(exclude_unset=True)
     try:
-        return build_agents.rename(slug, name=body.name, purpose=body.purpose)
+        rec = None
+        if "branch_slug" in fields:
+            rec = build_agents.set_branch(slug, fields["branch_slug"])
+        if body.name is not None or body.purpose is not None:
+            rec = build_agents.rename(slug, name=body.name, purpose=body.purpose)
+        return rec if rec is not None else build_agents.get_agent(slug)
     except KeyError:
         raise HTTPException(404, f"build agent not found: {slug}")
     except ValueError as e:
