@@ -1,5 +1,6 @@
 import { defineConfig, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
+import fs from "node:fs";
 import path from "node:path";
 
 // iOS Safari refuses navigator.geolocation with "Origin does not have permission
@@ -113,6 +114,54 @@ const httpsRedirectMiddleware = (): PluginOption => ({
   },
 });
 
+// ---- The optional diagram library ------------------------------------------
+//
+// `mermaid` is an OPTIONAL dependency (frontend/package.json): it is ~84 MB
+// installed and ~3.4 MB of lazily-fetched chunks in a build, and an installation
+// that never draws a diagram should not carry either. It installs by default and
+// leaving it out is `npm install --omit=optional` — with one npm-and-node-18
+// trap written up beside the declaration in frontend/package.json.
+//
+// The catch is that opting out is a BUILD-time failure, not a runtime one:
+// `MermaidDiagram.tsx` reaches the library only through `import("mermaid")`, and
+// rollup cannot resolve that specifier when the package is not on disk, so the
+// build dies before any fallback could run. So the specifier is pointed at the
+// kit's stand-in module instead, which rejects with `MermaidUnavailableError`
+// and lands in the catch the component already has: the fence renders as a plain
+// code block, which is what it was before diagrams existed.
+//
+// Rejected alternatives, both of which leave a broken build or a broken page:
+//   • `rollupOptions.external` — keeps `import("mermaid")` as a bare specifier in
+//     the OUTPUT, which no browser can resolve. The page then fails with a
+//     module-resolution TypeError indistinguishable from a chunk that failed to
+//     download, and the build-time warning about it is only advisory.
+//   • a `define` flag read in the component — the unresolvable import is still in
+//     the module graph, so the build still fails; dead-code elimination behind a
+//     constant is not something to bet a distro's build on.
+//
+// The probe is a filesystem walk rather than `require.resolve`, which answers a
+// slightly different question: it applies an exports map and a set of conditions,
+// so an ESM-only package (mermaid is one) can fail to resolve under `require`
+// even though it is installed, and the build would then silently drop diagrams
+// for an installation that asked for them. "Is the directory there" is the
+// question actually being asked, and npm hoisting is why it is a walk.
+const MERMAID_FALLBACK = path.resolve(__dirname, "../packages/ui/src/mermaidOptional.ts");
+
+function isInstalled(pkg: string, from: string): boolean {
+  let dir = from;
+  for (;;) {
+    if (fs.existsSync(path.join(dir, "node_modules", pkg, "package.json"))) return true;
+    const parent = path.dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
+
+const optionalAliases = () =>
+  isInstalled("mermaid", __dirname)
+    ? []
+    : [{ find: /^mermaid$/, replacement: MERMAID_FALLBACK }];
+
 const clearSiteDataMiddleware = (): PluginOption => ({
   name: "clear-site-data-endpoint",
   configureServer(server) {
@@ -167,6 +216,8 @@ export default defineConfig({
     alias: [
       { find: /^@shared\//, replacement: path.resolve(__dirname, "../shared") + "/" },
       { find: /^@shared$/, replacement: path.resolve(__dirname, "../shared") },
+      // Empty unless an optional dependency is missing; see above.
+      ...optionalAliases(),
     ],
   },
   server: {

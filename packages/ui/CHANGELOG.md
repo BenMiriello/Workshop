@@ -12,6 +12,32 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.7.1 - 2026-08-27 - a diagram library a consumer never installed is not an error
+
+**Fix.** No export moved and nothing changed for a consumer that installs
+mermaid. 0.6.4 said a consumer that does not install it "pays nothing and a
+fence merely stays a code block". That was true of this package — mermaid is an
+optional peer and the kit's own build keeps it external — and NOT true of the
+app bundling it: a bundler resolves `import("mermaid")` at BUILD time, so a
+consumer that left the package out got a failed build rather than a code block.
+
+### Added
+
+- `src/mermaidOptional.ts`: the stand-in a consumer's bundler resolves `mermaid`
+  to when the package is not installed (a resolve alias; `frontend/vite.config.ts`
+  in this repo is the worked example). It rejects with `MermaidUnavailableError`,
+  which lands in the catch `MermaidDiagram` already had, so the fence renders as
+  the code block it was before diagrams existed — and, unlike a diagram that
+  will not parse, with no `Notice` beside it: an install this reader does not
+  control says nothing about what they wrote. Neither name is exported from the
+  package: the module is addressed by the build, not imported by app code.
+- `src/mermaid.d.ts`: an ambient declaration of the slice of mermaid this kit
+  calls (`initialize`, `render`, and the config keys it sets). An ambient
+  declaration is matched before node_modules, so the kit typechecks identically
+  whether or not the package is installed — without it, `tsc` fails with TS2307
+  for exactly the consumers who opted out, and their build never reaches the
+  bundler. Widen it in the same change as the call that needs it.
+
 ## 0.7.0 - 2026-08-27 - a tree you can navigate, and one header for a note and a file
 
 **Minor, because `FileTreeRow` gained a variant.** A consumer that switches

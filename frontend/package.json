@@ -23,10 +23,9 @@
     "@codemirror/view": "^6.43.9",
     "@lezer/highlight": "^1.2.3",
     "@tanstack/react-query": "^5.102.4",
-    "@workshop/ui": "^0.6.0",
+    "@workshop/ui": "^0.7.0",
     "lucide-react": "^1.16.0",
     "maplibre-gl": "^5.24.0",
-    "mermaid": "^11.17.2",
     "pmtiles": "^4.4.1",
     "protomaps-themes-base": "^4.5.0",
     "react": "^18.3.1",
@@ -35,6 +34,26 @@
     "react-router-dom": "^6.28.0",
     "recharts": "^3.8.1",
     "remark-gfm": "^4.0.1"
+  },
+  "//optionalDependencies": [
+    "mermaid draws ```mermaid fences (packages/ui/src/MermaidDiagram.tsx). It is",
+    "~84 MB installed and ~3.4 MB of lazy chunks in a build, for a feature an",
+    "installation may never use, so it is optional rather than required: it is",
+    "installed by default and `npm install --omit=optional` leaves it out. Every",
+    "other command still works without it — a fence then renders as the code block",
+    "it was before diagrams existed. See the optional-dependency section of",
+    "vite.config.ts for how the import survives the package being absent.",
+    "",
+    "CAVEAT, node 18: npm SKIPS an optional dependency whose engines do not match,",
+    "silently and with no way to override (--force and --engine-strict are both",
+    "ignored). mermaid needs marked@16, which declares node >= 20, so a CLEAN",
+    "install under node 18 gets no diagrams no matter what it asks for. An install",
+    "under node >= 20 gets them, and a later node-18 `npm install` keeps what is",
+    "already there rather than pruning it. If diagrams disappear after an install,",
+    "that is what happened: re-run the install once under node >= 20."
+  ],
+  "optionalDependencies": {
+    "mermaid": "^11.17.2"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

@@ -14,6 +14,17 @@
 // The promise is module-scoped, so a page with twelve diagrams downloads and
 // initialises the library once.
 //
+// ---- WHY THE PACKAGE MIGHT NOT BE THERE AT ALL ----------------------------
+//
+// mermaid is an OPTIONAL dependency, so an installation that does not want a
+// megabyte of diagram library omits it and `import("mermaid")` resolves to
+// `mermaidOptional.ts` instead (the consuming app's build decides; see that
+// file and `frontend/vite.config.ts`). Nothing here branches on it: the stand-in
+// rejects with `MermaidUnavailableError`, which lands in the same catch as a
+// diagram that would not draw, and the fence renders as a code block. Do not
+// add an "is it installed" check — the point of the substitution is that this
+// component has one path.
+//
 // ---- WHY THERE IS AN innerHTML HERE, AND WHY IT IS NOT RAW DOCUMENT HTML ---
 //
 // `Markdown` refuses to render HTML written in the document (no rehype-raw),
@@ -34,9 +45,12 @@
 // reader can always read what the author wrote. `suppressErrorRendering` is on
 // so mermaid raises the parse error instead of drawing its own error graphic
 // into the page, and so it cleans up its temporary element on the way out.
+// `diagramNotice` decides whether the reason is worth printing beside it: a
+// broken diagram is, a library this installation never installed is not.
 import { useEffect, useId, useRef, useState } from "react";
 import type { MermaidConfig } from "mermaid";
 import { Notice } from "./feedback";
+import { diagramNotice } from "./mermaidOptional";
 
 /** Appearance tokens the diagram is painted from. Only tokens whose value is a
  *  literal colour are listed: `getComputedStyle().getPropertyValue()` returns a
@@ -171,7 +185,7 @@ export function MermaidDiagram({ code }: { code: string }) {
         .catch((e: unknown) => {
           if (!live) return;
           setSvg(null);
-          setError(e instanceof Error ? e.message : String(e));
+          setError(diagramNotice(e));
         });
     }, SETTLE_MS);
     return () => {
