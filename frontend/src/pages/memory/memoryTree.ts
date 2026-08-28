@@ -249,6 +249,38 @@ export function drillAncestorsFor(
     .map(memoryFileNode);
 }
 
+/**
+ * WHERE A NEW NOTE LANDS: the scope you are standing in.
+ *
+ * The old New note control opened a modal whose first field was a scope
+ * dropdown defaulting to the first scope in the list, so the answer to "where
+ * does this go" was both unasked and unshown until you noticed the dropdown.
+ * The operator's read on 2026-08-27: "there's no way to pick where it goes,
+ * there's no indication of where it will go", and then the rule he wanted --
+ * "if we're doing a file picker folder tree viewer, then whatever you're in
+ * should dictate where it's gonna be. You go to the place where you want to
+ * create it, and then you create it there."
+ *
+ * So the tree IS the picker. A note or a scope tells you its scope directly. A
+ * DOCUMENT does not: `docs/` is a committed directory, not a scope, and a note
+ * cannot be filed into it, so standing on one falls back rather than inventing
+ * a scope out of a path. `fallback` is the caller's answer for that, and for
+ * the root.
+ */
+export function scopeForNewNote(
+  selected: MemoryNode | null,
+  fallback: string,
+): string {
+  if (!selected) return fallback;
+  switch (selected.kind) {
+    case "note":
+    case "scope":
+      return selected.scope;
+    default:
+      return fallback;
+  }
+}
+
 // ---- URL addressing --------------------------------------------------------
 // Memory's existing deep links are `?scope=&note=` (services/refs.py's note
 // resolver) and `?path=` (its doc resolver). The tree SELECTS through those

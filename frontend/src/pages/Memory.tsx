@@ -3,9 +3,9 @@ import { createPortal } from "react-dom";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import {
   CheckSquare, ChevronUp, FilePlus, FileText, FolderTree, MessageSquare,
-  Plus, RefreshCw, Search,
+  RefreshCw, Search,
 } from "lucide-react";
-import { Button, PageActionBar, PageHeader, Row, Stack, Select, Input, Textarea, Field, Modal, StateBlock, Skeleton, Tag, Checkbox, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, shortHttpError } from "@workshop/ui";
+import { Button, ConfirmDialog, PageActionBar, PageHeader, Row, Stack, Input, StateBlock, Skeleton, Tag, FileDrill, catFor, drillCursor, drillTrail, type FileDrillTrail, shortHttpError } from "@workshop/ui";
 import { scopeLabel } from "../lib/tasks";
 import { useIsWide } from "../lib/useMediaQuery";
 import { useDirectoryPage } from "../components/shell/directory";
@@ -20,12 +20,12 @@ import {
   nodeForParams,
   paramsForNode,
   parseMemoryNode,
+  scopeForNewNote,
   type MemoryNode,
   type ScopeNode,
 } from "./memory/memoryTree";
 import { MEMORY_ROOT_NODE, MemoryTreeView, createMemorySource } from "./memory/MemoryTree";
-import { DocDocument, NoteDocument } from "./memory/MemoryDocument";
-import { NOTE_TYPES, freshNoteId, noteTypeLabel, type NoteType } from "./memory/notes";
+import { DocDocument, NewNoteDocument, NoteDocument } from "./memory/MemoryDocument";
 
 // MEMORY: the notes and documents this system knows, as one tree.
 //
@@ -165,7 +165,14 @@ function Library() {
   const [filterText, setFilterText] = useState("");
   const [scopeTree, setScopeTree] = useState<ScopeNode[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  // WHERE A NEW NOTE IS BEING WRITTEN, or null. A scope rather than a boolean:
+  // the answer to "where does this go" is the state, decided by the tree when
+  // you press New and changeable in the document itself (MEM-17).
+  const [creating, setCreating] = useState<string | null>(null);
+  // Has the new note got anything in it, and what were you trying to open when
+  // you clicked away from it. Both only matter while `creating` is set.
+  const [newNoteDirty, setNewNoteDirty] = useState(false);
+  const [leaving, setLeaving] = useState<MemoryNode | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -206,6 +213,16 @@ function Library() {
   const select = useCallback(
     (node: MemoryNode) => {
       setNotice(null);
+      // A NEW NOTE WITH SOMETHING IN IT IS NOT REPLACED SILENTLY. Opening
+      // something from the tree swaps what the pane is showing, and the draft
+      // lives in the pane, so without this a click on a tree row is an
+      // undoable delete of whatever you had typed. An EMPTY new note is just
+      // dropped: there is nothing to lose and a dialog about nothing is worse
+      // than no dialog.
+      if (creating !== null) {
+        if (newNoteDirty) { setLeaving(node); return; }
+        setCreating(null);
+      }
       const params = paramsForNode(node);
       // A branch is a container. Clicking one opens it; it does not become the
       // thing on screen, and it must not blank the document you are reading.
@@ -218,7 +235,10 @@ function Library() {
         for (const [k, v] of Object.entries(params)) next.set(k, v);
       });
     },
-    [setParams],
+    // `creating` and `newNoteDirty` are read above, so they belong here: without
+    // them this closure keeps the values from the render where the new note did
+    // not exist yet, and the guard silently stops guarding.
+    [setParams, creating, newNoteDirty],
   );
 
   const clearSelection = useCallback(() => {
@@ -328,8 +348,47 @@ function Library() {
     clearSelection();
   }, [upTrail, clearSelection]);
 
+  // Every scope a note can be filed into, in the order the backend sorted them.
+  const scopeKeys = useMemo(
+    () => (scopeTree.length ? scopeTree.map((n) => n.key) : ["workshop"]),
+    [scopeTree],
+  );
+
+  // Where New note would file, right now. Read by the control's own label as
+  // well as by the press, so the two cannot disagree.
+  const newNoteScope = scopeForNewNote(selected, scopeKeys[0]);
+  const startNewNote = useCallback(() => {
+    setNotice(null);
+    setCreating(newNoteScope);
+  }, [newNoteScope]);
+
   let pane: JSX.Element;
-  if (applied) {
+  if (creating !== null) {
+    // AHEAD OF THE SELECTION, because it is what you just asked for. Opening a
+    // note while writing a new one would silently drop what you had typed, so
+    // the tree's own select clears this first (see `select`).
+    pane = (
+      <NewNoteDocument
+        scope={creating}
+        scopes={scopeKeys}
+        onScope={setCreating}
+        onDirty={setNewNoteDirty}
+        onCancel={() => { setCreating(null); setNewNoteDirty(false); }}
+        onCreated={(scope, id) => {
+          setCreating(null);
+          setNewNoteDirty(false);
+          setGeneration((n) => n + 1);
+          setNotice(null);
+          setParams((next) => {
+            next.delete("path");
+            next.delete("q");
+            next.set("scope", scope);
+            next.set("note", id);
+          });
+        }}
+      />
+    );
+  } else if (applied) {
     pane = (
       <SearchResults
         query={applied}
@@ -398,7 +457,7 @@ function Library() {
             {!treeOpen && (
               <Button size="sm" onClick={() => setOpen(true)}><FolderTree aria-hidden /> Open the tree</Button>
             )}
-            <Button size="sm" variant="primary" onClick={() => setCreating(true)}><Plus aria-hidden /> New note</Button>
+            <Button size="sm" variant="primary" onClick={startNewNote}><FilePlus aria-hidden /> New note</Button>
           </Row>
         }
       />
@@ -444,13 +503,16 @@ function Library() {
                 aria-label="Search memory. Type to narrow the tree, press Enter to search everything."
               />
             </form>
+            {/* WHERE IT WILL LAND IS ON THE CONTROL. The tree decides it
+                (`scopeForNewNote`), so the control can say it before you press
+                it, which is half of what the old modal never answered. */}
             <Button
               size="sm"
               icon
               variant="ghost"
-              onClick={() => { setNotice(null); setCreating(true); }}
-              aria-label="New note"
-              title="New note"
+              onClick={startNewNote}
+              aria-label={`New note in ${scopeLabel(newNoteScope)}`}
+              title={`New note in ${scopeLabel(newNoteScope)}`}
             >
               <FilePlus aria-hidden />
             </Button>
@@ -547,25 +609,32 @@ function Library() {
           >
             <RefreshCw aria-hidden />
           </Button>
-          <Button variant="primary" onClick={() => { setNotice(null); setCreating(true); }}>
+          <Button variant="primary" onClick={startNewNote}>
             <FilePlus aria-hidden /> New note
           </Button>
         </PageActionBar>
       )}
-      {creating && (
-        <CreateNote
-          scopes={scopeTree.map((n) => n.key)}
-          initialScope={selected?.kind === "note" ? selected.scope : undefined}
-          onClose={() => setCreating(false)}
-          onCreated={(scope, id, msg) => {
-            setCreating(false);
-            setGeneration((n) => n + 1);
-            setNotice(msg);
+      {leaving && (
+        <ConfirmDialog
+          open
+          title="Discard this new note?"
+          body="It has not been saved, so nothing is written and there is nothing to come back to."
+          confirmLabel="Discard"
+          cancelLabel="Keep writing"
+          onCancel={() => setLeaving(null)}
+          onConfirm={() => {
+            const node = leaving;
+            setLeaving(null);
+            setCreating(null);
+            setNewNoteDirty(false);
+            const params = paramsForNode(node);
+            if (!params || isBranch(node)) return;
             setParams((next) => {
+              next.delete("note");
               next.delete("path");
+              next.delete("scope");
               next.delete("q");
-              next.set("scope", scope);
-              next.set("note", id);
+              for (const [k, v] of Object.entries(params)) next.set(k, v);
             });
           }}
         />
@@ -770,118 +839,5 @@ function SearchResults({
         </p>
       )}
     </Stack>
-  );
-}
-
-// ---- Create ----------------------------------------------------------------
-
-function CreateNote({
-  scopes,
-  initialScope,
-  onClose,
-  onCreated,
-}: {
-  scopes: string[];
-  initialScope?: string;
-  onClose: () => void;
-  onCreated: (scope: string, id: string, msg: string) => void;
-}) {
-  const options = scopes.length ? scopes : ["workshop"];
-  const [scope, setScope] = useState<string>(initialScope ?? options[0]);
-  const [title, setTitle] = useState("");
-  const [hook, setHook] = useState("");
-  const [content, setContent] = useState("");
-  const [noteType, setNoteType] = useState<NoteType>("fact");
-  const [pinned, setPinned] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const submit = useCallback(async () => {
-    if (!title.trim() && !content.trim()) { setErr("A title or body is required."); return; }
-    setBusy(true);
-    setErr(null);
-    try {
-      const id = freshNoteId(title);
-      const r = await fetch(
-        `/api/knowledge/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
-        {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            title: title.trim(), content, hook: hook.trim(),
-            author: "operator", note_type: noteType, pinned,
-          }),
-        },
-      );
-      if (!r.ok) throw await httpFail(r);
-      onCreated(scope, id, `Note saved to ${scopeLabel(scope)}.`);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-      setBusy(false);
-    }
-  }, [scope, title, hook, content, noteType, pinned, onCreated]);
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title="New note"
-      size="lg"
-      actions={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={busy} onClick={submit}>Save note</Button>
-        </>
-      }
-    >
-      <Stack gap="lg">
-        <Field label="Scope" htmlFor="new-note-scope">
-          <Select id="new-note-scope" value={scope} onChange={(e) => setScope(e.target.value)} data-autofocus>
-            {options.map((s) => (
-              <option key={s} value={s}>{scopeLabel(s)}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Title" htmlFor="new-note-title">
-          <Input
-            id="new-note-title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="What this note is"
-          />
-        </Field>
-        <Field label="Hook" htmlFor="new-note-hook" optional help="A one-line summary shown in the index and lists.">
-          <Input
-            id="new-note-hook"
-            value={hook}
-            onChange={(e) => setHook(e.target.value)}
-            placeholder="One-line summary (optional)"
-          />
-        </Field>
-        <Row wrap style={{ gap: "var(--space-4)" }}>
-          <Field label="Type" htmlFor="new-note-type" inline>
-            <Select id="new-note-type" value={noteType} onChange={(e) => setNoteType(e.target.value as NoteType)}>
-              {NOTE_TYPES.map((t) => (
-                <option key={t} value={t}>{noteTypeLabel(t)}</option>
-              ))}
-            </Select>
-          </Field>
-          <Checkbox checked={pinned} onChange={setPinned} label="Pinned" />
-        </Row>
-        <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-          Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope.
-        </p>
-        <Field label="Body" htmlFor="new-note-body" optional>
-          <Textarea
-            id="new-note-body"
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            rows={10}
-            placeholder="Markdown body"
-          />
-        </Field>
-        {err && <p className="ws-field__error">{err}</p>}
-      </Stack>
-    </Modal>
   );
 }

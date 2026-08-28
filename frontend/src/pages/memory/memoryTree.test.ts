@@ -16,6 +16,7 @@ import {
   paramsForNode,
   parentOf,
   parseMemoryNode,
+  scopeForNewNote,
   searchDocs,
   titleOfMarkdown,
   type DocRow,
@@ -363,5 +364,35 @@ describe("titleOfMarkdown", () => {
   it("falls back when there is no heading at all", () => {
     expect(titleOfMarkdown("just prose", "notes.md")).toBe("notes.md");
     expect(titleOfMarkdown("", "notes.md")).toBe("notes.md");
+  });
+});
+
+// ---- Where a new note lands (2026-08-27, MEM-17) ---------------------------
+
+describe("scopeForNewNote", () => {
+  it("files into the scope of the note you are reading", () => {
+    expect(scopeForNewNote({ kind: "note", scope: "project:birds", id: "x" }, "workshop"))
+      .toBe("project:birds");
+  });
+
+  it("files into the scope you have selected", () => {
+    expect(scopeForNewNote({ kind: "scope", scope: "development" }, "workshop"))
+      .toBe("development");
+  });
+
+  it("falls back rather than inventing a scope from a document path", () => {
+    // docs/ is a committed directory, not a scope: a note cannot be filed there.
+    expect(scopeForNewNote({ kind: "doc", path: "docs/a/b.md" }, "workshop")).toBe("workshop");
+    expect(scopeForNewNote({ kind: "docdir", path: "docs/a" }, "workshop")).toBe("workshop");
+    expect(scopeForNewNote({ kind: "docs" }, "workshop")).toBe("workshop");
+  });
+
+  it("falls back at the root and with nothing selected", () => {
+    expect(scopeForNewNote({ kind: "root" }, "workshop")).toBe("workshop");
+    expect(scopeForNewNote(null, "workshop")).toBe("workshop");
+  });
+
+  it("uses the caller's fallback, not a hardcoded one", () => {
+    expect(scopeForNewNote(null, "development")).toBe("development");
   });
 });

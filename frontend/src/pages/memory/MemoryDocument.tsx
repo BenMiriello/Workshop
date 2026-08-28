@@ -102,7 +102,7 @@ import { scopeHref, scopeLabel } from "../../lib/tasks";
 import { useResolvedRefs } from "../../lib/useResolvedRefs";
 import { getJson, sendJson } from "./api";
 import { baseName, dirName } from "./memoryTree";
-import { NOTE_TYPES, authorLabel, chatRefsIn, noteTypeLabel, type NoteType } from "./notes";
+import { NOTE_TYPES, authorLabel, chatRefsIn, freshNoteId, noteTypeLabel, type NoteType } from "./notes";
 
 type NoteDetail = components["schemas"]["NoteDetail"];
 type NoteSummary = components["schemas"]["NoteSummary"];
@@ -471,6 +471,183 @@ export function NoteDocument({
         body={<>This removes the note from <strong>{scopeLabel(scope)}</strong>. It can't be undone.</>}
         confirmLabel="Delete note"
       />
+    </div>
+  );
+}
+
+// ---- A note that does not exist yet ----------------------------------------
+//
+// WHY THIS IS A DOCUMENT AND NOT A DIALOG (2026-08-27, MEM-17).
+//
+// New note used to open a modal whose first field was a scope dropdown
+// defaulting to the first scope in the list. Two things were wrong with that,
+// and the operator named both: "there's no way to pick where it goes, there's
+// no indication of where it will go", and then the rule -- "if we're doing a
+// file picker folder tree viewer, then whatever you're in should dictate where
+// it's gonna be. You go to the place where you want to create it, and then you
+// create it there."
+//
+// So the tree is the picker (`scopeForNewNote`), and the thing you are about to
+// write opens where a note opens, in the content pane, wearing the same
+// `DocumentBar` a saved note wears. It is the same surface before and after
+// Save, which is the whole reason a note and a file were folded onto one bar in
+// the first place: a dialog that becomes a document on submit is two designs for
+// one object.
+//
+// The scope is on the bar, where a saved note shows it, so it is answered
+// before you type. It is also CHANGEABLE, in the body with the other fields,
+// because being told where something will go and being unable to move it is
+// only half an answer.
+//
+// The id is minted from the title at SAVE, not at create, which is the other
+// reason this is not "create an empty note and then edit it": a note's id never
+// changes, so a note created before it was titled would carry `note-<stamp>`
+// for the rest of its life.
+
+export function NewNoteDocument({
+  scope,
+  scopes,
+  onScope,
+  onCreated,
+  onCancel,
+  onDirty,
+}: {
+  /** Where it will be filed, decided by the tree. */
+  scope: string;
+  /** Every scope it could be filed into instead. */
+  scopes: string[];
+  onScope: (next: string) => void;
+  onCreated: (scope: string, id: string) => void;
+  onCancel: () => void;
+  /** Is there anything here to lose. Lifted so the PAGE can refuse to replace
+   *  this pane with a note you clicked in the tree without asking first: the
+   *  draft lives here, but the navigation that would drop it happens up there. */
+  onDirty?: (dirty: boolean) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [hook, setHook] = useState("");
+  const [content, setContent] = useState("");
+  const [noteType, setNoteType] = useState<NoteType>("fact");
+  const [pinned, setPinned] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const canSave = !!(title.trim() || content.trim());
+  // Anything typed at all, not just the two fields that make it saveable: a hook
+  // and a type the operator chose are work, and losing them silently is the
+  // thing this reports.
+  const dirty = canSave || !!hook.trim() || pinned || noteType !== "fact";
+  useEffect(() => { onDirty?.(dirty); }, [dirty, onDirty]);
+
+  const save = useCallback(async () => {
+    if (!canSave) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      const id = freshNoteId(title);
+      await sendJson(
+        `/api/knowledge/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
+        "PUT",
+        {
+          title: title.trim(), content, hook: hook.trim(),
+          author: "operator", note_type: noteType, pinned,
+        },
+      );
+      onCreated(scope, id);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setSaving(false);
+    }
+  }, [canSave, scope, title, hook, content, noteType, pinned, onCreated]);
+
+  return (
+    <div className="ws-doc ws-doc--full">
+      <DocumentBar
+        name={title || "Untitled note"}
+        variant="title"
+        onNameChange={setTitle}
+        path={scopeLabel(scope)}
+        // Never saved, so everything in it is unsaved. The dot says so from the
+        // first keystroke rather than only once there is something to compare
+        // against, which is the honest reading for a document with no stored
+        // version behind it.
+        dirty={dirty}
+      >
+        <Button size="sm" variant="ghost" disabled={saving} onClick={onCancel}>
+          Discard
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          loading={saving}
+          disabled={!canSave}
+          onClick={() => { void save(); }}
+        >
+          Save
+        </Button>
+      </DocumentBar>
+
+      <div className="ws-doc__body">
+        <Stack gap="lg">
+          {err && <Notice tone="error" detail={err}>That didn't save.</Notice>}
+
+          <Row wrap style={{ gap: "var(--space-4)", alignItems: "flex-end" }}>
+            {/* WHERE IT GOES, changeable. It is drawn first because it is the
+                question the old modal never answered, and it commits on change
+                because nothing has been written yet: there is no stored value
+                at risk, so rule 7's explicit-commit case does not apply. */}
+            <Field label="Goes in" htmlFor="new-note-scope" inline>
+              <Select
+                id="new-note-scope"
+                value={scope}
+                onChange={(e) => onScope(e.target.value)}
+              >
+                {scopes.map((s) => (
+                  <option key={s} value={s}>{scopeLabel(s)}</option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Type" htmlFor="new-note-type" inline>
+              <Select
+                id="new-note-type"
+                value={noteType}
+                onChange={(e) => setNoteType(e.target.value as NoteType)}
+              >
+                {NOTE_TYPES.map((t) => (
+                  <option key={t} value={t}>{noteTypeLabel(t)}</option>
+                ))}
+              </Select>
+            </Field>
+            <Checkbox checked={pinned} onChange={setPinned} label="Pinned" />
+          </Row>
+
+          <Field
+            label="Hook"
+            htmlFor="new-note-hook"
+            optional
+            help="A one-line summary shown in the index and lists."
+          >
+            <Input
+              id="new-note-hook"
+              value={hook}
+              onChange={(e) => setHook(e.target.value)}
+              placeholder="One-line summary"
+            />
+          </Field>
+
+          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+            Pinned notes, then preferences and decisions, rank first in what gets read into every chat in this scope.
+          </p>
+
+          <Editor
+            value={content}
+            onChange={setContent}
+            path="note.md"
+            profile="prose"
+            ariaLabel="Note body, markdown source"
+          />
+        </Stack>
+      </div>
     </div>
   );
 }
