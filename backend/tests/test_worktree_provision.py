@@ -25,6 +25,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.worktrees import (  # noqa: E402
+
     MIN_FREE_BYTES,
     _free_bytes,
     _hardlink_clone,
@@ -32,6 +33,20 @@ from services.worktrees import (  # noqa: E402
     _write_dep_contract,
     provision_worktree,
 )
+
+
+# THIS MODULE IS FILE-BACKED, AND SAYS SO. Without the redirect these tests
+# resolve the OPERATOR's tenant and write their fixtures into the real database:
+# every provisioned tree wrote an `allocated`/`provisioned` record and a
+# timeline under the operator's org.
+# `conftest._no_test_may_resolve_the_real_tenant` now fails the run rather than
+# letting that happen quietly.
+@pytest.fixture(autouse=True)
+def _file_backed(tmp_path, monkeypatch):
+    from tests.conftest import redirect_file_store
+
+    redirect_file_store(monkeypatch, tmp_path)
+
 
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,20 @@ def _owner():
     ownership.pin_operator()
 
 
+# THIS MODULE IS FILE-BACKED, AND SAYS SO. Without the redirect these tests
+# resolve the OPERATOR's tenant and write their fixtures into the real database:
+# `tasks.claim` takes a real lease, and 174 rows held by `job-<n>` were
+# sitting in the live `lease` table.
+# `conftest._no_test_may_resolve_the_real_tenant` now fails the run rather than
+# letting that happen quietly.
+@pytest.fixture(autouse=True)
+def _file_backed(tmp_path, monkeypatch):
+    from tests.conftest import redirect_file_store
+
+    redirect_file_store(monkeypatch, tmp_path)
+
+
+
 def _past_the_lease(offset_multiple: int = 10) -> datetime.datetime:
     from services import tasks
 

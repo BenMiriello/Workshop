@@ -156,6 +156,133 @@ def _delete_test_users(user_ids) -> None:
                   {"ids": ids})
 
 
+def redirect_file_store(monkeypatch, tmp_path) -> None:
+    """Point this process's file store at a throwaway directory.
+
+    THE SECOND WAY TO SATISFY THE GUARD BELOW, and the right one for a test that
+    never wanted a database in the first place. `services/tenancy.configured()`
+    answers False once `ownership._RUNTIME` has moved since import (see
+    `_file_store_redirected` there), so the record and lease layers degrade to
+    "no relational store on this box" -- which is a leg every one of these code
+    paths already has, because it is what a checkout without Postgres runs.
+
+    Use it from an autouse fixture at the top of a module that drives real git,
+    real tickets or the sweep, and does not care about the durable record:
+
+        @pytest.fixture(autouse=True)
+        def _file_backed(tmp_path, monkeypatch):
+            redirect_file_store(monkeypatch, tmp_path)
+
+    A test that DOES care about the record wants the other way instead: mint a
+    `wstest-` org and pin `tenancy.org_and_user` at it, as `test_leases.py` and
+    `test_worktree_records.py` do.
+    """
+    from services import ownership, tenancy
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(ownership, "_RUNTIME", runtime)
+    tenancy.reset_cache()
+    assert not tenancy.configured(), (
+        "the file store redirect did not take, so this test is still pointed at "
+        "the real installation")
+
+
+@pytest.fixture(autouse=True)
+def _no_test_may_resolve_the_real_tenant(request, monkeypatch):
+    """A test that reaches the operator's own organization FAILS, loudly.
+
+    THE HOLE THIS CLOSES. `_delete_test_orgs` above guards TEARDOWN and nothing
+    guarded CREATION, so a test that never minted an org at all simply inherited
+    the real one: `services/tenancy.org_and_user()` resolves the tenant from the
+    OWNER contextvar, and `ownership.pin_operator()` pins the real operator.
+    Every write underneath then landed in the production database.
+
+    Measured 2026-08-27, then cleaned up by
+    `scripts/prune_test_fixture_rows.py`: 289 `worktree` rows, ALL of them under
+    one pytest fixture's project slug at `/tmp/pytest-of-*` paths, with 577
+    timeline events behind them; 174 leases held by `job-<n>`, which is a
+    fixture's holder id and not the format a real sweep writes; 17 leaked
+    `wstest-*` organizations and the 17 accounts underneath them. A full suite
+    run added eight more worktree rows while this was being written.
+
+    The cost was not disk. `/branches` reads that table, so the operator's own
+    page about what is stuck was describing pytest's temporary directories: it
+    listed ONE branch, at a path that did not exist, while eleven real abandoned
+    worktrees sat on the disk beside it.
+
+    THREE FILES WERE DOING IT AND THIS IS NOT WHAT FIXED THOSE THREE
+    (`test_gc_reap_locked`, `test_worktree_provision` and
+    `test_reclaim_advances_the_fence` each declare themselves file-backed now).
+    This is what catches the fourth. Any test that resolves a tenant it did not create now fails on the
+    call rather than writing silently, and the two ways to satisfy it are the
+    two that are already correct elsewhere in this suite:
+
+      - mint a throwaway org and pin it (`test_leases.py`,
+        `test_worktree_records.py`): `monkeypatch.setattr(tenancy,
+        "org_and_user", lambda: (org_id, user_id))`, with the org carrying the
+        `wstest-` prefix so teardown will accept it;
+      - or redirect the file store (`monkeypatch.setattr(ownership, "_RUNTIME",
+        tmp_path)`), which makes `tenancy.configured()` answer False and the
+        record layer degrade to "no database today", which is the leg most of
+        these tests wanted in the first place.
+
+    IT RAISES A pytest OUTCOME, NOT A ValueError, and that is load-bearing. The
+    record writes go through `worktrees._record`, which catches `Exception` on
+    purpose so a bookkeeping bug cannot fail an allocation. `pytest.fail` raises
+    `Failed`, which derives from `BaseException` precisely so a swallowing
+    `except Exception` cannot hide it. A guard this one could swallow would be a
+    guard that silently stopped working.
+    """
+    marker = request.node.get_closest_marker("reads_the_operators_tenant")
+    if marker is not None:
+        # ONE TEST HAS A REAL REASON: `test_dev_mode_gate` asserts that the
+        # ticket migration did not drop the operator's actual queue, which is a
+        # claim about the real data and cannot be made against a fixture. It is
+        # a READ. The marker takes the reason as its argument so the exemption is
+        # justified where it is taken rather than in a list somewhere else.
+        assert marker.args and str(marker.args[0]).strip(), (
+            "reads_the_operators_tenant needs a reason: say what about the real "
+            "organization this test cannot assert against a fixture")
+
+    from services import ownership, tenancy
+
+    resolve = tenancy.org_for_owner
+
+    def _refuse(owner_id):
+        # CALL THROUGH FIRST, so this wraps the real function rather than
+        # replacing it. `org_for_owner` already fails closed on a redirected file
+        # store, and that refusal is itself pinned
+        # (`test_tenancy_file_store_guard.py`); a guard that short-circuited it
+        # would silently retire the assertion it is standing next to.
+        resolve(owner_id)
+        pytest.fail(
+            f"a test resolved the real tenant for app user {owner_id}. Tests "
+            f"must not read or write the operator's organization: mint a "
+            f"{DB_ORG_PREFIX!r} org and pin `tenancy.org_and_user`, or redirect "
+            f"`ownership._RUNTIME` at a tmp_path. See conftest."
+            f"_no_test_may_resolve_the_real_tenant.")
+
+    if marker is None:
+        monkeypatch.setattr(tenancy, "org_for_owner", _refuse)
+    # THE PIN DOES NOT SURVIVE A TEST EITHER, and that is half the leak rather
+    # than tidiness. `ownership.current_owner()` reads a CONTEXTVAR, which is
+    # process state: a test that pins the operator and does not clear it leaves
+    # every test that runs after it pinned too, and a module that stubs its
+    # stores and never mentions a database still resolves the real tenant
+    # underneath (`tasks.reclaim` -> `_fence_ticket_lease` -> `leases.available`,
+    # measured). That is order-dependent, which is why it was invisible: the same
+    # test passes alone and writes to the operator's org in a full run.
+    #
+    # The resolution cache goes with it, keyed by app-user id, so an answer
+    # resolved before this fixture existed cannot be handed to the next test.
+    ownership.clear_current_owner()
+    tenancy.reset_cache()
+    yield
+    ownership.clear_current_owner()
+    tenancy.reset_cache()
+
+
 @pytest.fixture(autouse=True)
 def _isolate_usage_ledger(tmp_path, monkeypatch):
     """Keep the test suite out of the operator's real usage ledger.

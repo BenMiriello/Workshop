@@ -218,6 +218,10 @@ class TestCliModes:
         ])
         assert mod.main() == 2
 
+    @pytest.mark.reads_the_operators_tenant(
+        "the point of this one is that the real collectors survive the real "
+        "data, which a fixture tree cannot stand in for. It reports and writes "
+        "nothing.")
     def test_smoke_against_the_real_tree_does_not_crash(self, mod, monkeypatch):
         """Not isolated -- exercises the real collectors end to end, the way
         an operator running the script by hand would. Only asserts it

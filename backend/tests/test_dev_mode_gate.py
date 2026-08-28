@@ -465,6 +465,9 @@ class TestDeveloperModeOn:
         keys = [k for k, _ in tasks_all.scope_roots()]
         assert keys.index("development") < keys.index("workshop")
 
+    @pytest.mark.reads_the_operators_tenant(
+        "the claim is about the operator's own queue surviving the cutover, and "
+        "a fixture queue cannot say whether the real one was dropped")
     def test_every_open_root_ticket_is_still_pickupable(self, dev_mode_on):
         """Reads the REAL development queue, which since the cutover is Postgres.
 

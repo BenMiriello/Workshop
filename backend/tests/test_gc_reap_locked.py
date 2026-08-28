@@ -32,6 +32,20 @@ from services import gc, git_service
 import services.worktrees as wt_mod
 
 
+# THIS MODULE IS FILE-BACKED, AND SAYS SO. Without the redirect these tests
+# resolve the OPERATOR's tenant and write their fixtures into the real database:
+# measured 2026-08-27, 281 rows under this file's `test-proj` slug, at
+# `/tmp/pytest-of-*` paths, which is what `/branches` was reading.
+# `conftest._no_test_may_resolve_the_real_tenant` now fails the run rather than
+# letting that happen quietly.
+@pytest.fixture(autouse=True)
+def _file_backed(tmp_path, monkeypatch):
+    from tests.conftest import redirect_file_store
+
+    redirect_file_store(monkeypatch, tmp_path)
+
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
