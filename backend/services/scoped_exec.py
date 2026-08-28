@@ -717,6 +717,23 @@ def _exec_main(argv: list[str]) -> int:
         print("scoped_exec exec: no command given after --", file=sys.stderr)
         return 2
 
+    # PIN THE DATA OWNER BEFORE THE MOUNT IS DECIDED. This is a shell
+    # entrypoint with no request behind it, so nothing has set a current owner;
+    # without this `tree_access.decide` cannot read the lease table, answers
+    # "the lease store could not be read", and fails closed to READ-ONLY -- for
+    # the run that is holding the tree. Measured 2026-08-27 with the flag on: a
+    # holder whose lease `decide` reported `rw` from an owner-pinned process got
+    # `EROFS` from this one. `services/ownership.pin_operator` is the one
+    # set-point for exactly this and its docstring already lists five callers
+    # that learned it the hard way; this is the sixth. Swallowed, because a
+    # checkout with no auth store still has to be able to spawn a confined turn
+    # -- it just gets the read-only answer the flag promises.
+    try:
+        from services import ownership
+        ownership.pin_operator()
+    except Exception:
+        pass
+
     try:
         spawn = spawn_argv(cmd, args.workdir, die_with_parent=True,
                            session_id=args.session_id, holder_kind="run")
