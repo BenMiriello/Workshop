@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { MessagesSquare } from "lucide-react";
+import { MessagesSquare, Pencil } from "lucide-react";
 import { Menu, MenuItem, MenuSeparator } from "@workshop/ui";
 import { chatApi, type ThreadSummary } from "../../lib/chat";
 import { scopeKind } from "./chatScope";
@@ -49,7 +49,7 @@ const recentSlice = (list: ThreadSummary[]): ThreadSummary[] =>
 const RECENT_LIMIT = 8;
 
 export default function RecentChatsMenu({
-  title, activeId, onOpenThread, onSeeAll,
+  title, activeId, onOpenThread, onSeeAll, onEditTitle,
 }: {
   /** The open chat's name, which is the trigger. */
   title: string;
@@ -59,6 +59,8 @@ export default function RecentChatsMenu({
   onOpenThread: (t: ThreadSummary) => void;
   /** The overflow path: more chats exist than this menu shows. */
   onSeeAll: () => void;
+  /** Opens the rename flow for the current chat (pencil on the active row). */
+  onEditTitle: () => void;
 }) {
   const q = useQuery({
     // The shared key. The scope slot is null because this list is deliberately
@@ -117,16 +119,40 @@ export default function RecentChatsMenu({
       {threads?.length === 0 && (
         <MenuItem disabled onSelect={() => {}}>No other chats yet</MenuItem>
       )}
-      {threads?.map((t) => (
-        <MenuItem
-          key={t.id}
-          icon={<ScopeIcon kind={scopeKind(t.context_key)} />}
-          checked={t.id === activeId}
-          onSelect={() => onOpenThread(t)}
-        >
-          {t.title || "Untitled chat"}
-        </MenuItem>
-      ))}
+      {threads?.map((t) => {
+        const isActive = t.id === activeId;
+        if (!isActive) {
+          return (
+            <MenuItem
+              key={t.id}
+              icon={<ScopeIcon kind={scopeKind(t.context_key)} />}
+              onSelect={() => onOpenThread(t)}
+            >
+              {t.title || "Untitled chat"}
+            </MenuItem>
+          );
+        }
+        return (
+          <div key={t.id} className="rcm-title-row">
+            <MenuItem
+              icon={<ScopeIcon kind={scopeKind(t.context_key)} />}
+              checked
+              onSelect={() => onOpenThread(t)}
+            >
+              {t.title || "Untitled chat"}
+            </MenuItem>
+            <button
+              className="rcm-title-row__pencil"
+              role="menuitem"
+              onClick={onEditTitle}
+              title="Rename chat"
+              aria-label="Rename chat"
+            >
+              <Pencil size={12} aria-hidden />
+            </button>
+          </div>
+        );
+      })}
       {/* Overflow, stated rather than silently truncated: this menu shows the
           last few, and says so by handing off to the page that has them all. */}
       {total > RECENT_LIMIT && (

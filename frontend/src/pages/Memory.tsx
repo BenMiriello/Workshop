@@ -168,7 +168,14 @@ function Library() {
   // WHERE A NEW NOTE IS BEING WRITTEN, or null. A scope rather than a boolean:
   // the answer to "where does this go" is the state, decided by the tree when
   // you press New and changeable in the document itself (MEM-17).
-  const [creating, setCreating] = useState<string | null>(null);
+  //
+  // IT LIVES IN THE URL, like every other thing this page can be showing. A
+  // note is `?scope=&note=`, a document is `?path=`, a search is `?q=`, and a
+  // pane that was none of those was the one state you could not link to,
+  // reload into, or reach from anywhere but this page's own button. The DRAFT
+  // is still component state and does not survive a reload; what survives is
+  // "you are writing a new note, and it goes here".
+  const creating = searchParams.get("new");
   // Has the new note got anything in it, and what were you trying to open when
   // you clicked away from it. Both only matter while `creating` is set.
   const [newNoteDirty, setNewNoteDirty] = useState(false);
@@ -209,6 +216,19 @@ function Library() {
     },
     [searchParams, setSearchParams],
   );
+
+  const setCreating = useCallback((scope: string | null) => {
+    setParams((next) => {
+      if (scope) {
+        next.set("new", scope);
+        next.delete("note");
+        next.delete("path");
+        next.delete("q");
+      } else {
+        next.delete("new");
+      }
+    });
+  }, [setParams]);
 
   const select = useCallback(
     (node: MemoryNode) => {
@@ -307,7 +327,8 @@ function Library() {
     // link put the tree over the page column on top of the document the link
     // had just opened, which the operator read, correctly, as the page not
     // knowing where it was. Read once, at registration; see `useDirectoryPage`.
-    openOnArrival: !selected,
+    // `?new=` counts for the same reason: you arrived to write, not to browse.
+    openOnArrival: !selected && creating === null,
   });
 
   // Walking up from a document on a phone means going to what CONTAINS it, not
@@ -341,7 +362,11 @@ function Library() {
   // tree on screen, so the bottom bar stays with it.
   const chrome = directoryChrome({
     wide: isWide,
-    documentOpen: !!applied || selected?.kind === "note" || selected?.kind === "doc",
+    // A NEW NOTE IS A DOCUMENT. It wears the same bar and owns the same pane, so
+    // if it were left out of this the page header would draw above it, which is
+    // the exact defect the header rule was changed to stop.
+    documentOpen:
+      creating !== null || !!applied || selected?.kind === "note" || selected?.kind === "doc",
   });
   const goUp = useCallback(() => {
     if (upTrail) setTrail(upTrail);

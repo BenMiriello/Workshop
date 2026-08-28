@@ -1,6 +1,6 @@
 import {
   Archive, ChevronLeft, Maximize2, MessagesSquare,
-  MoreVertical, PanelsTopLeft, Pencil, Plus, Share2, Ticket,
+  MoreVertical, PanelsTopLeft, Plus, Share2, Ticket,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from "@workshop/ui";
@@ -253,15 +253,8 @@ export default function ChatToolbar({
             activeId={activeId}
             onOpenThread={onOpenThread}
             onSeeAll={() => onNavigate("/chats")}
+            onEditTitle={onEditTitle}
           />
-          <button
-            className="chat-tb__rename"
-            onClick={onEditTitle}
-            title="Rename chat"
-            aria-label="Rename chat"
-          >
-            <Pencil size={12} aria-hidden />
-          </button>
         </span>
       )}
 
@@ -296,10 +289,6 @@ export default function ChatToolbar({
           {workCount > 0 && <span className="chat-tb__badge">{workCount}</span>}
         </button>
       )}
-      <button className="chat-tb__btn" onClick={onNewChat} title="Start a new chat" aria-label="New chat">
-        <Plus size={16} aria-hidden />
-      </button>
-
       <Menu
         label="Chat actions"
         trigger={
@@ -308,6 +297,10 @@ export default function ChatToolbar({
           </button>
         }
       >
+        <MenuItem icon={<Plus size={14} />} onSelect={onNewChat}>
+          New chat
+        </MenuItem>
+        <MenuSeparator />
         <MenuItem icon={<MessagesSquare size={14} />} onSelect={() => onNavigate("/chats")}>
           All chats
         </MenuItem>

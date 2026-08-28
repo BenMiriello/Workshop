@@ -341,6 +341,30 @@ input[type="range"].grad::-moz-range-thumb {
 /* The dot is a mark, not a chip: no label beside it (the pill's own word is the
    label) and no shrinking, so it is the last thing on the bar to give up room. */
 .chat-tb__tree .ws-dot { flex: 0 0 auto; }
+/* PILL SHAPE: the tree picker reads as a pill, not a plain label trigger. Fully
+   rounded ends, 1px border, inset fill one shade darker than the bar. Mono 12px
+   so it reads as a code-like ref rather than body text. Translates the mockup
+   measurements (h:22-26px, p:0 7-8px, border-radius:999px, inset bg, muted
+   border) into kit tokens — never inline hex. Height stays 2rem to match every
+   other button on the bar. */
+.chat-tb__tree {
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  padding: 0 var(--space-2);
+}
+.chat-tb__tree:hover {
+  background: var(--card-hover);
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+.chat-tb__tree[aria-expanded="true"] {
+  background: var(--card-hover);
+  border-color: var(--border-strong);
+}
 /* Where you are, and the way back to the other chats. Sized and reset to read
    as the same quiet label it always was; the hover state is the only hint it is
    a control, the way .chat-tb__picker's is.
@@ -411,49 +435,27 @@ input[type="range"].grad::-moz-range-thumb {
    alone did nothing. See .chat-tb__namegroup — that is the toolbar's actual
    flex item, and it is where this has to be true. */
 .chat-tb__titlemenu { flex: 0 1 auto; min-width: 0; }
-/* The name and the pencil are ONE object, and the toolbar's gap belongs around
-   the pair, not inside it. Everything in this bar is spaced by the same
-   --space-2, which is correct between independent controls and wrong between a
-   name and the thing that renames it: at 8px the pencil read as another action
-   button that happened to sit there.
-
-   AND THIS IS THE TOOLBAR'S FLEX ITEM, so this is where the row's width is won
-   or lost. The pair inherited the title's `flex: 0 0 auto` when it was grouped,
-   which meant the cluster could not give up a pixel at any viewport width; the
-   rule that let the name shrink on a phone was written on `.chat-tb__titlemenu`,
-   one level INSIDE this, where a parent that refuses to shrink makes it
-   unreachable. So the name grew the cluster, the cluster grew the row, and with
-   wrapping off the rest of the bar went off the right edge. A shrink rule has to
-   be true of every element between the flex container and the text, or it is
-   true of none of them. */
+/* The name is the toolbar's flex item: shrinks first when the bar is tight. */
 .chat-tb__namegroup {
   display: flex; align-items: center;
   gap: 0.1rem;
   flex: 0 1 auto; min-width: 0;
 }
-/* NOT a .chat-tb__btn any more. It carried the full button treatment (a border
-   box, --radius-md, the 2rem square's hover) with only its width and height
-   overridden, so it was the same control as the actions at the far end of the
-   bar, drawn slightly smaller. It belongs to the title instead: a 12px glyph
-   against their 16px, no chrome at rest, and the title's own --muted ink so the
-   two read as one thing with the size carrying the hierarchy.
-
-   The BOX is still the row's full height while the ink is small. That is the
-   part worth keeping from the old rule: a 12px icon needs a target bigger than
-   itself, and taking the row height gets that without widening the cluster or
-   reaching into the title's own click area, which opens the recent list and must
-   not lose taps to its neighbour. */
-.chat-tb__rename {
-  flex: 0 0 auto;
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 1.75rem; height: 2rem; padding: 0;
-  background: transparent; border: none; border-radius: var(--radius-sm);
-  color: var(--muted); cursor: pointer;
-  transition: color var(--dur-fast) var(--ease-out),
-              background var(--dur-fast) var(--ease-out);
+/* Active-chat row in the recent-chats menu: the title button covers the row,
+   the pencil button is an absolute overlay on the right so both share the same
+   row height without nesting a button inside a button (invalid HTML). The pencil
+   intercepts pointer events before they reach the title button; the title button's
+   padding-right is widened to avoid text running under the pencil. */
+.rcm-title-row { position: relative; }
+.rcm-title-row .ws-menu__item { padding-right: 2.25rem; }
+.rcm-title-row__pencil {
+  position: absolute; right: 0; top: 0; bottom: 0; width: 2.25rem;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); background: transparent; border: none;
+  cursor: pointer; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
-.chat-tb__rename:hover { color: var(--fg); background: var(--card-hover); }
-.chat-tb__rename:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
+.rcm-title-row__pencil:hover { color: var(--fg); background: var(--card-hover); }
+.rcm-title-row__pencil:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .chat-tb__spacer { flex: 1 1 var(--space-2); min-width: 0; }
 .chat-tb__btn {
   flex: 0 0 auto; position: relative;
@@ -467,6 +469,12 @@ input[type="range"].grad::-moz-range-thumb {
 /* Participant tags carry a slug, so they size to their text. */
 .chat-tb__btn:hover { color: var(--fg); background: var(--card-hover); }
 .chat-tb__btn.is-active { color: var(--accent); background: var(--accent-soft); }
+/* TOOLBAR MENUS DO NOT SCROLL. The kit's global max-height cap exists for menus
+   that hold hundreds of rows; toolbar menus are row-count-bounded in code
+   (RECENT_LIMIT, MAX_ROWS, VISIBLE_BRANCHES). Removing the cap here means the
+   content determines the height and there is never a scrollbar caused by a few
+   pixels of rounding. placeMenu still flips the menu to whichever side fits. */
+.chat-toolbar .ws-menu__list { max-height: none; }
 .chat-tb__badge {
   position: absolute; top: -3px; right: -3px;
   min-width: 1rem; height: 1rem; padding: 0 0.2rem;
@@ -905,7 +913,7 @@ input[type="range"].grad::-moz-range-thumb {
    branched. The kit's menu already scrolls at 16rem; this is the tighter cap
    for the branch list alone, so a heavily branched chat does not open a
    full-height menu off the toolbar. */
-.chat-branch-list { max-height: 8.4rem; overflow-y: auto; overscroll-behavior: contain; }
+.chat-branch-list { overscroll-behavior: contain; }
 .chat-branch-row { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
 .chat-branch-row__sub {
   font-size: 0.75rem; color: var(--muted);

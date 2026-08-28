@@ -88,21 +88,12 @@ export default function BranchPicker({
 
   if (count < 2) return null;
 
-  const rows = branches ?? [];
-  // Nothing has been read yet. A FAILED read counts as read: the effect this
-  // replaces answered a failure with an empty list, so the picker opens empty
-  // rather than sitting on "Loading" forever.
-  // A FAILED read counts as read, so the picker opens empty rather than sitting
-  // on "Loading" forever — which is exactly what the `.catch(() => setBranches([]))`
-  // it replaces did.
-  //
-  // One deliberate behaviour change, recorded because the rule for this
-  // migration was "no behaviour changes": the `useState` this replaces was
-  // per-component and was never reset when the thread changed, so reopening the
-  // picker after a thread switch briefly listed the PREVIOUS thread's branches.
-  // Keyed by thread, that moment is "Loading" instead.
+  const allRows = branches ?? [];
   const cold = branches === undefined && !isError;
-  const overflow = Math.max(0, rows.length - VISIBLE_BRANCHES);
+  // Slice in code so the menu grows to its content and never needs an inner
+  // scroll zone (see .chat-branch-list, which dropped its max-height cap).
+  const rows = allRows.slice(0, VISIBLE_BRANCHES);
+  const overflow = Math.max(0, allRows.length - VISIBLE_BRANCHES);
 
   return (
     <Menu
@@ -135,7 +126,7 @@ export default function BranchPicker({
         ))}
         {cold && <MenuItem disabled onSelect={() => {}}>Loading</MenuItem>}
       </div>
-      {overflow > 0 && <MenuLabel>{overflow} more, scroll to see</MenuLabel>}
+      {overflow > 0 && <MenuLabel>{overflow} more branches</MenuLabel>}
     </Menu>
   );
 }
